@@ -48,6 +48,8 @@ No new transfer fabric/offload tier (mount NIXL/Mooncake/LMCache). Determinism r
 - [`DESIGN.md`](DESIGN.md) — architecture (grounded in vLLM v0.22.0) + roadmap (P0–P4).
 - [`docs/01-market-landscape.md`](docs/01-market-landscape.md) — 3-front market survey synthesis.
 - [`docs/02-vllm-kv-hookpoints.md`](docs/02-vllm-kv-hookpoints.md) — vLLM KV hook-point map (file:line).
-- `docs/03-value-function.md` — value-aware eviction theory + the value-function design *(in progress)*.
-- `docs/04-eval-methodology.md` — workloads + benchmark/eval methodology *(in progress)*.
+- [`docs/03-value-function.md`](docs/03-value-function.md) — value-aware eviction theory, the
+  **crowded-frontier reality-check** (SAECache/LPC/vLLM-T-LRU), and the narrow defensible novelty.
+- [`docs/04-eval-methodology.md`](docs/04-eval-methodology.md) — workloads/traces, metrics, baselines,
+  pitfalls, and the falsifiable MVP gate.
 - `docs/05-open-questions.md` — design dives before any code *(pending)*.
