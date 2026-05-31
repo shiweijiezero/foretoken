@@ -3,117 +3,95 @@
 
 Take **one engine — vLLM — and optimize its KV-cache management to the extreme** for large
 Dense/MoE, multi-node, high concurrency, and **long-lived KV reuse**. Built as **out-of-tree
-vLLM plugins** (custom OffloadingManager + Scheduler + KV connector) — **no core fork for the
-MVP** — with two well-isolated core forks reserved for later. Speculative decoding deferred
-(prior cross_vocab work preserved & resumable). Founded on a 3-front mid-2026 market survey +
-a file:line hook-point map of vLLM v0.22.0.
+vLLM plugins** (no core fork for the MVP), with two well-isolated core forks reserved for later.
+Speculative decoding deferred (prior cross_vocab work preserved & resumable). Founded on a
+3-front market survey + a file:line hook-point map of vLLM v0.22.0 + a value-function /
+eval-methodology deep dive (`docs/01`–`04`).
 
----
+> **Status: research / design phase. No code yet** — finalize positioning + architecture
+> against vLLM's real internals before implementing, to avoid rework and version-churn.
 
 ## 1. Why vLLM, why KV
-vLLM = the engine to bet on (PyTorch-Foundation, Apache-2.0, de-facto substrate, best plugin
-surface, team reliability). Its KV reuse is the headroom: **block-level APC (16-tok hashing),
-prefix-only (RAG non-prefix misses), plain-LRU eviction, no value-/SLO-aware lifecycle, no
-hour/day persistence model** — behind SGLang's token-level radix. Making vLLM's KV best-in-class
-is high-impact (most users) + clear headroom + exactly the "长时间复用 / large-MoE / multi-node"
-target.
+vLLM = the engine to bet on (PyTorch Foundation, Apache-2.0, de-facto substrate, best plugin
+surface, team reliability). Its KV reuse is the headroom: block-level APC, prefix-only, **plain
+LRU**, no value-/SLO-aware lifecycle, no hour/day persistence — behind SGLang's token-level radix.
+Making vLLM's KV best-in-class is high-impact + clear headroom + exactly the long-lived-reuse target.
 
 ## 2. The gaps we close, inside vLLM (ranked)
-1. **Value-aware long-lived cache lifecycle** *(MVP)* — admission/eviction/TTL by
-   `P(future reuse) × recompute_cost × SLO_value`, maximizing **goodput-per-GPU-byte-second**,
-   across GPU→CPU→NVMe→remote tiers, for hour/day session/agentic/RAG persistence.
+1. **Value-aware long-lived cache lifecycle** *(MVP)* — admission/eviction/TTL maximizing
+   **goodput-per-GPU-byte-second**, across GPU→CPU→NVMe→remote tiers, for hour/day persistence.
 2. **Non-prefix / partial reuse** (CacheBlend-style) — RAG chunks that aren't a shared prefix.
 3. **Online reuse-vs-recompute cost model** — per block/tier vs the ~50–100× PCIe↔HBM cliff.
 4. **Finer-than-block reuse** — toward token-level (vLLM wastes partial-block matches).
 5. **Large-MoE multi-node KV** — value-aware KV under attention-DP + wide-EP; long-context wall.
 
-## 3. Architecture — grounded in vLLM v0.22.0 internals
-**Verdict from the hook-point map: the MVP and most of the vision are buildable as out-of-tree
-plugins; only two things require a core fork (both deferred).**
+## 3. Architecture — grounded in vLLM v0.22.0 (`docs/02`)
+**The MVP and most of the vision are out-of-tree plugins; only two things need a core fork (deferred).**
+- **CLEAN surfaces (no fork):** custom **`OffloadingManager`/`OffloadingSpec`** (`spec_module_path`)
+  = the value-aware long-lived lifecycle (admission `prepare_store`, eviction via custom `CachePolicy`,
+  tiering); custom **`Scheduler`** (`scheduler_cls`) = value-aware admission/ordering + reuse-vs-recompute
+  gate; custom **KV connector** (`kv_connector_module_path`; `bind_gpu_block_pool` → GPU pool handle;
+  worker `save_kv_layer` → write any KV slot) = cost model + later non-prefix CacheBlend + cross-rank.
+- **Key insight:** hour/day persistence is NOT a GPU concept (GPU blocks are reclaimed under pressure
+  regardless) → long-lived state lives in the offload tier; **GPU stays LRU**.
+- **Deferred core forks:** (1) value-aware *GPU-tier* eviction (victim hardwired to the recency free
+  queue, no seam); (2) token-level prefix caching (block-quantized). Only if the offload-tier ceiling binds.
+- **Hard constraint:** scheduler↔connector external-hit channel is a scalar prefix count → non-prefix
+  reuse must be worker-side blend (PIECEWISE cudagraph; LMCache-proven) → lifecycle (MVP) is the right
+  first target, non-prefix is later.
+- **Free:** determinism already shipped (`VLLM_BATCH_INVARIANT`) = SGLang parity. **MoE wide-EP:** KV
+  partitioned per DP rank → cross-rank cache = connector + shared content-hash store.
 
-### 3.1 Primary integration surfaces (CLEAN — no core fork, load out-of-tree)
-- **Custom `OffloadingManager` + `OffloadingSpec`** → registered via `spec_module_path`
-  (`v1/kv_offload/factory.py`; ABCs at `v1/kv_offload/base.py:111-220`). **This is where the
-  value-aware long-lived lifecycle lives.** `prepare_store(keys, ReqContext)` = admission (the
-  vLLM reference `CPUOffloadingManager` already gates by a reuse-count `store_threshold`,
-  `cpu/manager.py:145` — we generalize it to `P(reuse)×recompute_cost×SLO_value`); a custom
-  `CachePolicy.evict` (`cpu/policies/base.py:35-83`; ships LRU/ARC) = value-aware eviction;
-  `ReqContext(req_id, kv_transfer_params)` carries per-request value signal. A `TieringOffloadingSpec`
-  already exists for GPU→CPU→disk. **Key insight: hour/day persistence is NOT a GPU concept —
-  GPU blocks are reclaimed under pressure regardless; long-lived state must live in this tier.**
-- **Custom `Scheduler` via `scheduler_cls`** (`config/scheduler.py:127` → `resolve_obj_by_qualname`;
-  `SchedulerInterface` at `sched/interface.py:36`; vLLM ships `AsyncScheduler` this way). Subclass
-  `Scheduler.schedule()` (`sched/scheduler.py:329`) for **value-aware admission/ordering** + the
-  **reuse-vs-recompute gate**. (Caveat: interface marked non-public → version-fragile, but no fork.)
-- **Custom KV connector** (`kv_transfer/kv_connector/v1/base.py:171`; out-of-tree via
-  `kv_connector_module_path`, composes with others through `MultiConnector`). `bind_gpu_block_pool`
-  (`base.py:432`) hands us the GPU `BlockPool` (ref-count/evict/iterate). Worker-side per-layer
-  `save_kv_layer` (`base.py:354-401`, via `@maybe_transfer_kv_layer`) lets us read/write arbitrary
-  KV slots → the path for **(b) non-prefix CacheBlend** (LMCache already ships exactly this as a
-  connector) and **(c) the cost model** (`get_num_new_matched_tokens` returns 0 to decline a load).
+## 4. Novelty & competitive safety (sharpened by `docs/03`)
+**The space is already crowded (late-2025/2026).** "Value-aware KV eviction beats LRU" is NOT novel —
+SAECache (arXiv 2605.18825) is an LHD hit-density policy for KV blocks; LPC (NeurIPS'25) learns reuse;
+**the vLLM T-LRU RFC #37823 is actively building cost+SLO-aware prefix eviction**; TRT-LLM ships priority
+eviction. **The only defensible novelty:** a *single per-byte expected-goodput density* fusing
+**calibrated P(reuse) × recompute-vs-reload cost × SLO/tenant value** into one ranking for **both
+eviction AND cross-tier admission**, reducing provably to **LHD/GDSF/T-LRU** as special cases. No prior
+fuses all three. The genuinely hard, contributory part is the **long-horizon (hour/day) `P(reuse)`
+estimator** (SAECache regresses on single-turn; no calibrated nonstationary long-tail model exists).
+**Competitive safety is day-one:** blend the learned density with a robust policy (S3FIFO/LRU) so the
+worst case stays bounded — never trust the estimator blindly.
+Canonical objective: `Value(b) = P(reuse|Δt,class)·recompute_cost·SLO_value / (size·E[residency|class])`.
 
-### 3.2 The two CORE FORKS — deferred, well-isolated, only if plugins prove insufficient
-- **Value-aware *GPU-tier* eviction**: the victim is hardwired to `FreeKVCacheBlockQueue` recency
-  (`kv_cache_utils.py:164-372`) + `block_pool.py:305-365` — no plugin seam. **MVP leaves GPU
-  eviction as LRU** and puts all value-awareness in the offload tier; fork only later if needed.
-- **True token-level prefix caching**: hash/lookup/allocation is block-quantized end-to-end
-  (gap #4) — a deep fork. Token-level *reuse* (not caching) is reachable via the worker-side blend.
+## 5. MVP & falsifiable gate (`docs/04`)
+A custom value-aware **`OffloadingManager`** (the canonical objective; hot-path analytic + LHD
+64-sample ranking + background per-class param learning; GPU→CPU→NVMe tiers) — a pure out-of-tree
+plugin. **Gate:** on the **long-lived Mooncake replay** (real-time timestamps, working-set > GPU
+capacity, 30–50% structural hit ceiling), beat **stock vLLM LRU APC by ≥15% goodput at equal
+cache-byte budget**, gain concentrated in **long reuse-distance buckets (≥1 min)**, ≥3 seeds with
+non-overlapping 95% CIs, **closing ≥40% of the LRU→PFOO gap**, no TPOT regression — **and
+approach/beat the real competitors (T-LRU, SAECache)**, not just LRU. Determinism preserved.
 
-### 3.3 The one hard structural constraint (drives the design)
-The scheduler↔connector external-hit channel is a **scalar contiguous-prefix token count**
-(`kv_cache_manager.py:341-342`). So **non-prefix reuse cannot go through the scheduler path** — it
-must be a worker-side per-layer blend (PIECEWISE cudagraph, currently mutually exclusive with vLLM
-APC). This makes (a) lifecycle (MVP) the right *first* target (clean offload-tier plugin) and (b)
-non-prefix a *second* phase with known cost.
+## 6. Roadmap (each phase has a falsifiable gate vs a baseline)
+- **P0 — scaffold + baseline harness.** Repo + vLLM-plugin entry points + Mooncake-replay harness;
+  **gate-zero**: measured stock-APC hit-rate ≈ offline hash_id hit-rate (replay correctness) + PFOO oracle.
+- **P1 — value-aware OffloadingManager (MVP).** Gate §5.
+- **P2 — reuse-vs-recompute cost model + value-aware Scheduler** (goodput under concurrency/KV pressure).
+- **P3 — non-prefix CacheBlend connector + cross-rank shared-hash store** (RAG beyond prefix; multi-instance).
+- **P4 (optional) — GPU-tier value-aware eviction core fork**, only if the offload-tier ceiling binds.
+- **Later — speculative decoding** re-enters as one more goodput lever in this loop.
 
-### 3.4 Free wins / non-issues
-- **Determinism already solved**: `VLLM_BATCH_INVARIANT` + attention `num_splits=1`
-  (`flash_attn.py:1048`) = parity with SGLang. Keep as a first-class test invariant; no build work.
-- **MoE wide-EP**: KV is **partitioned per DP rank** (each `DPEngineCoreProc`, `v1/engine/core.py:1651`,
-  owns its own Scheduler+KVCacheManager+BlockPool; engine_id `_dp{rank}`). EP is orthogonal to KV. A
-  cross-rank value-aware cache = our connector + a shared content-hash store (Phase 3).
+## 7. Explicit non-goals
+No from-scratch engine. No cross-engine layer (single-engine vLLM). No general control plane. No new
+transfer fabric/offload tier (mount NIXL/Mooncake/LMCache). Determinism reused, not rebuilt. No
+version-naming.
 
-## 4. MVP — first falsifiable result
-A **custom value-aware `OffloadingManager`** (value model = `P(reuse)×recompute_cost×SLO_value`;
-admission via `prepare_store`, eviction via a custom `CachePolicy`, TTL for hour/day persistence;
-GPU→CPU→NVMe tiers) — a pure out-of-tree plugin on vLLM's offloading subsystem. **Gate:** on a real
-long-session / agentic / RAG trace (Mooncake trace + synthetic), beat **stock vLLM (LRU APC +
-default `CPUOffloadingManager`)** on **cache-hit-rate** and **goodput (SLO-meeting req/s) per
-GPU-byte** at equal hardware, determinism preserved. If we can't beat stock vLLM here, the thesis
-fails — first gate.
+## 8. Rigor commitments
+Every decision cites vLLM v0.22.0 (file:line) + a primary source, and is benchmarked vs stock vLLM +
+the real competitors (T-LRU/SAECache/LMCache) + the PFOO offline optimum. Each component ships a
+falsifiable metric before "done". Determinism/correctness = first-class test. Plugin-first; any core
+fork is isolated + justified by a measured ceiling. Vendor multipliers = upper bounds; we measure ours.
 
-## 5. Roadmap (phased; each phase has a falsifiable gate vs a baseline)
-- **P0 — scaffold & baseline harness.** Repo + vLLM-plugin entry points + a benchmark harness
-  (Mooncake trace + synthetic long-session/RAG) measuring hit-rate / goodput / GPU-byte /
-  TTFT-TPOT, with **stock vLLM (LRU APC + CPUOffloadingManager)** as the baseline. Gate: reproduce
-  stock numbers.
-- **P1 — value-aware OffloadingManager (MVP).** The value model + admission + custom eviction +
-  TTL. Gate: beat stock on the long-session/agentic/RAG trace.
-- **P2 — reuse-vs-recompute cost model + value-aware Scheduler.** Online load-vs-recompute; admission
-  ordering. Gate: goodput gain under high concurrency / KV pressure.
-- **P3 — non-prefix reuse (CacheBlend connector)** + cross-rank shared-hash store for wide-EP MoE.
-  Gate: RAG hit-rate beyond prefix-only; multi-instance reuse.
-- **P4 (optional) — GPU-tier value-aware eviction core fork**, only if P1–P3 show the offload-tier
-  ceiling binds. **Later — speculative decoding** re-enters as one more goodput lever in this loop.
-
-## 6. Explicit non-goals
-No from-scratch engine. No second engine / no cross-engine layer (single-engine vLLM). No general
-control plane. No new transfer fabric/offload tier (mount NIXL/Mooncake/LMCache). No competing
-routing API. Determinism is reused, not rebuilt. Spec decoding deferred.
-
-## 7. Rigor commitments
-Every decision cites vLLM v0.22.0 (file:line) + is benchmarked vs stock vLLM + the named incumbent
-(LMCache/HiCache). Each component ships a falsifiable metric vs a baseline before "done".
-Determinism/correctness = first-class test target. Plugin-first; any core fork is isolated +
-justified by a measured offload-tier ceiling. Vendor multipliers = upper bounds; we measure ours.
-
-## 8. Open design questions (dives before P1)
-- The `P(future reuse)` estimator + per-request-class SLO_value model (the value function).
-- Eviction/TTL data structures for hour/day persistence + overhead budget vs reuse-count + LRU/ARC.
+## 9. Open design questions (dives before P1)
+- The `P(reuse)` estimator + per-class survival fits + uncertainty (the hardest part); SLO_value model.
+- Eviction/TTL data structures for hour/day persistence + overhead budget; the 64-sample ranking impl.
 - Threading the value signal through `ReqContext` (today only `req_id`+`kv_transfer_params`).
-- Benchmark harness: exact traces (Mooncake) + baselines + metric definitions (goodput-per-byte).
-- Upstream-contribution vs maintained-fork posture (plugins favor upstreamable; forks don't).
+- Benchmark harness specifics (Mooncake replay hash→token determinism — gate-zero); the exact baselines.
+- Upstream-contribution vs maintained-fork posture (plugins favor upstreamable).
 
-## 9. Status
-Engine **vLLM locked** (2026-06-01). MVP = value-aware OffloadingManager. vLLM v0.22.0 fork + env
-ready (editable, cu129). Hook-point map done (this doc §3). **Next: P0 scaffold + baseline harness.**
+## 10. Status
+Engine **vLLM locked** (2026-06-01). MVP = value-aware OffloadingManager. vLLM v0.22.0 fork + env ready.
+Surveys + hook-point map + value-function/eval research done (`docs/01`–`04`). Repo:
+github.com/shiweijiezero/kvos (private). **Next: still research — `docs/05` design dives; no code yet.**
