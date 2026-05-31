@@ -1,9 +1,11 @@
 # KVOS *(working name; TBD)*
 
-**Best-in-class KV-cache management for vLLM** — take one engine (vLLM) and optimize its
-KV-cache management *to the extreme* for large Dense/MoE models, multi-node, high
-concurrency, and **long-lived KV reuse**. Built as **out-of-tree vLLM plugins** (no core
-fork for the MVP). Speculative decoding is deferred to a later module.
+**Vision: industrial-grade deployment + inference** of large Dense/MoE models, multi-node,
+high concurrency. We **assemble best-of-breed existing modules on vLLM and build only the
+differentiated ones** — not another engine, not another control plane. The differentiated
+core is **value-aware long-lived KV-cache management**; **MTP speculative decoding** is a key
+module; a goodput-aware control loop ties them together. Every function/module is enumerated
+with an explicit *build-vs-use* call in the **module map → [`docs/00`](docs/00-vision-and-modules.md)**.
 
 > **Status: research / design phase.** Design-first, rigorous, source-grounded. **No code
 > yet** — we finalize positioning + the architecture against vLLM's real internals before
