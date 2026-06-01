@@ -1,4 +1,4 @@
-# KVOS *(working name; TBD)*
+# lm_db
 
 **Vision: industrial-grade deployment + inference** of large Dense/MoE models, multi-node,
 high concurrency. We **assemble best-of-breed existing modules on vLLM and build only the

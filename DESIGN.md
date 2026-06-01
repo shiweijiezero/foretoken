@@ -1,4 +1,4 @@
-# KVOS — best-in-class KV-cache management for vLLM
+# lm_db — best-in-class KV-cache management for vLLM
 *(working name; TBD)*
 
 Take **one engine — vLLM — and optimize its KV-cache management to the extreme** for large
