@@ -81,14 +81,21 @@ Status: ✅ researched · 🔬 needs targeted research · ⬜ not started. Phase
   (D1/D3), the whole control plane + deployment (E*), base metrics/determinism (F1/F2).
 - **Defer:** C3 cross-vocab; E2–E4 fleet; F3 tracing — after the differentiated core proves out.
 
+## Cross-module constraints (found in research — must honor)
+- **MTP draft KV is ephemeral** (`docs/05`): the drafter's `kv_cache_gid` writes KV for rejected drafts
+  that is discarded → **B2/B3 must tag draft KV non-offloadable / non-cacheable** (explicit tag, not
+  automatic). A C1↔B2/B3 contract.
+- **Dynamic spec length (C2) must stay within captured cudagraph buckets**, else eager-fallback erases the gain.
+- **MoE KV is partitioned per DP rank** (`docs/02`) → any cross-rank/global policy (B7) = a connector +
+  shared content-hash store, not a single block manager.
+
 ## Targeted research queue (per 🔬 module, before its phase)
-1. **B8 `P(reuse)` estimator** (hardest; `docs/03 §7`) — per-class survival, long-horizon calibration, safety.
-2. **C1 MTP** — vLLM MTP path internals (glm4_moe_mtp/deepseek), accept rates, draft-length tuning, KV
-   interaction. *(targeted dive needed — the spec-decoding module the user flagged important.)*
-3. **B5 reuse-vs-recompute** — the PCIe↔HBM cost model + tier-load signal.
-4. **D4/C2 goodput control** — the SmartSpec/DistServe goodput objective → our scheduler.
-5. **B7/E1 KV-aware routing** — conform to Gateway API IGW; the shared-hash store for cross-rank.
-6. **F1 metrics** — the KV/goodput telemetry surface.
+- ✅ **B8 `P(reuse)` estimator** → `docs/06` (factorized popularity×survival; token-type-only MVP; competitive-safety blend).
+- ✅ **C1 MTP** → `docs/05` (C1 = USE vLLM native MTP; **C2 = BUILD** the goodput-aware MTP controller — the open slot).
+- 🔬 **B5 reuse-vs-recompute** — the PCIe↔HBM cost model + tier-load signal.
+- 🔬 **D4/C2 goodput control** — SmartSpec/Cascade/AdaServe goodput objective → our scheduler + the MTP controller.
+- 🔬 **B7/E1 KV-aware routing** — conform to Gateway API IGW; the shared-hash store for cross-rank.
+- 🔬 **F1 metrics** — the KV/goodput telemetry surface.
 
 > Each 🔬 row gets a targeted research note (a `docs/` dive) + a build-vs-use confirmation before its
 > phase starts. Still **design/research only — no code** until the queue above is sufficiently covered.
