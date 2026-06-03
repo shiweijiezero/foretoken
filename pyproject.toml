@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "foretoken"
+version = "0.0.0"
+description = "Value-aware KV management, MTP control, and goodput-driven evaluation on top of vLLM (zero-fork, out-of-tree plugins)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# vLLM 只在服务器(A100 / cu128)装;Windows 本地开发不装(vLLM 无 Windows wheel)。
+# 本地只写代码 + 跑非 GPU 单测;真实推理 / 评测跑在服务器。
+server = [
+    "vllm>=0.22",
+]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "pre-commit>=3.5",
+]
+
+# P1 起,插件经 entry_points / spec_module_path 接入(占位;实现后取消注释并指向真实类,见 docs/08)。
+# [project.entry-points."vllm.general_plugins"]
+# foretoken = "foretoken.plugin:register"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/foretoken"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]                  # 不装包也能 import foretoken(本地开发友好)
+addopts = "--import-mode=importlib"   # 允许同名 test 文件(无需 __init__.py)
+markers = [
+    "slow: 起 GPU / 端到端(不进 pre-commit;手动或 CI)",
+    "lossless: 无损校验(开优化 == 原生 vLLM)",
+    "determinism: 确定性 / batch-invariance",
+    "eval: 评测正确性 gate(门槛零 / PFOO)",
+]

@@ -1,2 +1,15 @@
 infra/
 .idea/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+build/
+dist/
+
+# 本地环境(勿提交)
+.env.local
