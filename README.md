@@ -62,7 +62,7 @@ Mooncake 真实时序、对标**真正的竞争者**(原生 LRU / T-LRU / SAECac
 不做版本命名。
 
 ## 文档
-- [`DESIGN.md`](DESIGN.md) —— 架构(基于 vLLM v0.22.0)+ 路线图(P0–P4)。
+- [`docs/DESIGN.md`](docs/DESIGN.md) —— 架构(基于 vLLM v0.22.0)+ 路线图(P0–P4)。
 - [`docs/01-market-landscape.md`](docs/01-market-landscape.md) —— 三条战线的市场调研综述。
 - [`docs/02-vllm-kv-hookpoints.md`](docs/02-vllm-kv-hookpoints.md) —— vLLM KV 钩子点地图(file:line)。
 - [`docs/03-value-function.md`](docs/03-value-function.md) —— 价值感知驱逐理论、
