@@ -1,93 +1,90 @@
-# 06 — `P(reuse)` long-horizon estimator (module B8, the hardest core)
+# 06 —— `P(reuse)` 长视野估计器(模块 B8,最难的核心)
 
-Engine-agnostic design for the reuse-probability term of the value function (`docs/03 §6`).
-Integration in vLLM is via our custom **`CachePolicy`/`OffloadingManager`** (`docs/02`), NOT
-SGLang's `evict_policy.py` (the agent's SGLang anchors are reference examples of the same seam).
+价值函数中复用概率项的引擎无关设计(`docs/03 §6`)。在 vLLM 中的集成经由我们自定义的
+**`CachePolicy`/`OffloadingManager`**(`docs/02`),而**非** SGLang 的 `evict_policy.py`
+(agent 给出的 SGLang 锚点只是同一接缝的参考示例)。
 
-## The reframe (the one finding that defines B8)
-**KV reuse is short-horizon in practice** — 80–90% of reuse is within ~10 min (consumer) / ~10 s
-(business); SAECache inter-turn P50 ≈ 110 s (chat) / 8.5 s (agentic); cross-session reuse < 0.01%.
-**The hour/day mass (shared system prompts, hot RAG chunks, returning sessions) is a thin but
-high-value tail that no prior estimator is fit on** — it's below the noise floor of session-locality
-models and governed by a *different* generative process (cross-request popularity, not within-session
-continuation). **B8's contribution = model that tail; the binding constraint is SAFETY** — a
-miscalibrated long-horizon score that pins dead blocks causes a recompute/I-O storm.
+## 重新框定(定义 B8 的那个发现)
+**KV 复用在实践中是短视野的** —— 80–90% 的复用发生在 ~10 分钟内(消费级)/ ~10 秒内
+(企业级);SAECache 的轮间 P50 ≈ 110 s(聊天)/ 8.5 s(agentic);跨会话复用 < 0.01%。
+**小时/天级的那部分质量(共享系统提示词、热 RAG 分块、回头的会话)是一条又薄又高价值的
+尾巴,没有任何前作估计器是在它上面拟合的** —— 它低于会话局部性模型的噪声底,并由一个
+*不同的*生成过程主宰(跨请求流行度,而非会话内续接)。**B8 的贡献 = 建模那条尾巴;绑定性
+的约束是安全** —— 一个误校准的长视野分数若把死块钉住,会引发重算/I-O 风暴。
 
-## Model it as TWO distributions (conflating them is the classic error)
+## 把它建模为两个分布(把它们混为一谈是经典错误)
 `P(reuse within H) = P(ever-reused | class) · S_class(Δt ≤ H)`
-1. **Popularity / ever-reuse** = zero-inflated Bernoulli (Mooncake: >50% blocks never reused; "in the
-   wild": 10% of blocks → 77% of reuses). S3FIFO's one-hit-wonder quick-demotion handles this mass.
-2. **Inter-reuse time** (given it recurs) = **log-normal survival** `S(Δt)=1−F_LN(Δt;μ,σ)` (human
-   interactivity times are log-normal; why SAECache uses it). Hazard is non-monotone (matches "if not
-   reused in 10 min, wait till next session").
+1. **流行度 / 是否曾被复用** = 零膨胀的 Bernoulli(Mooncake:>50% 的块从不被复用;"in the
+   wild":10% 的块 → 77% 的复用)。S3FIFO 的"一次性命中"快速降级处理了这部分质量。
+2. **复用间隔时间**(在它会再现的前提下)= **log-normal 生存** `S(Δt)=1−F_LN(Δt;μ,σ)`(人类
+   交互时间是 log-normal 的;这正是 SAECache 用它的原因)。风险率(hazard)是非单调的
+   (契合"若 10 分钟内未复用,就要等到下次会话")。
 
-## Closest prior + why short-horizon
-- **SAECache** (2605.18825) — per-class log-normal survival + token-type weights (System **92%** vs CoT
-  **2%**, 42–756× span) + online MLE+EMA; the template to extend. Short-horizon: `(μ,σ)` fit only on
-  *observed* intervals within cache residency → hour/day recurrences are never observed (censored);
-  cross-session treated as negligible (<0.01%).
-- **LPC** (NeurIPS'25) — 118M continuation predictor, but **one coarse score per conversation** (system
-  prompt and throwaway CoT get the same priority); within-session signal, no cross-session channel.
-- **KVFlow** (2507.07400) — workflow steps-to-execution; *deterministic* schedule signal (next few
-  steps), not a stochastic hour/day prior — complementary, B8 covers the open-world case.
-- Orthogonal (not competitors): IMPRESS / "Predicting Future Utility" = *within-prefix token* importance.
+## 最接近的前作 + 为何是短视野
+- **SAECache**(2605.18825)—— 按类的 log-normal 生存 + token 类型权重(System **92%** vs
+  CoT **2%**,42–756× 的跨度)+ 在线 MLE+EMA;可扩展的模板。短视野:`(μ,σ)` 只在缓存驻留期内
+  *观测到的*间隔上拟合 → 小时/天级的再现从未被观测到(删失);跨会话被当作可忽略(<0.01%)。
+- **LPC**(NeurIPS'25)—— 一个 118M 的续接预测器,但**每个会话只有一个粗糙分数**(系统
+  提示词和用完即弃的 CoT 拿到相同优先级);只有会话内信号,没有跨会话通道。
+- **KVFlow**(2507.07400)—— 工作流的"距执行步数";*确定性的*调度信号(接下来几步),而非
+  一个随机的小时/天级先验 —— 互补,B8 覆盖开放世界的情形。
+- 正交的(非竞争者):IMPRESS / "Predicting Future Utility" = *前缀内 token* 的重要性。
 
-## Borrow from web-cache theory
-- **LRB (NSDI'20)** — the key trick: don't regress exact next-access time (heavy-tailed, censored);
-  **relax to the Belady boundary** = binary "next access beyond horizon?" (horizon ≈ 2× cache size).
-  Features = 32 inter-access **deltas** + 10 **EDCs** (multi-timescale decayed counts) + static; GBM on
-  log(time-to-next); 64-sample/30µs; **LRU fallback during warmup**. ⟹ **binary "long-lived vs not" is
-  more robust than exact-time regression** (also Hawkeye/Glider).
-- **LHD (NSDI'18)** — hit-density `P[hit|age]/E[remaining lifetime|age]` from age-binned histograms per
-  class; 64-object sampling; **1% explorers** (never-evict a random fraction → keep gathering the
-  long-horizon labels that are otherwise invisible).
-- **GL-Cache (FAST'23)** — learn at **group level**, not per-block (228× throughput over object-level).
+## 借鉴 Web 缓存理论
+- **LRB(NSDI'20)** —— 关键技巧:不要回归精确的下次访问时间(重尾、删失);**松弛到 Belady
+  边界** = 二值的"下次访问是否超出视野?"(视野 ≈ 2× 缓存大小)。特征 = 32 个访问间 **delta**
+  + 10 个 **EDC**(多时间尺度的衰减计数)+ 静态;在 log(距下次时间)上做 GBM;64 采样/30µs;
+  **预热期 LRU 回退**。⟹ **二值的"长生命周期 vs 否"比精确时间回归更鲁棒**(Hawkeye/Glider
+  亦然)。
+- **LHD(NSDI'18)** —— 命中密度 `P[hit|age]/E[剩余寿命|age]`,来自按类的 age 分箱直方图;
+  64 对象采样;**1% 探索者**(对随机的一小部分永不驱逐 → 持续收集那些否则不可见的长视野
+  标签)。
+- **GL-Cache(FAST'23)** —— 在**分组层面**学习,而非每块(相比对象级有 228× 吞吐)。
 
-## Features + classes (cheap; mostly already on a block/node)
-Token-type (biggest axis), recency `Δt`, reuse-count, EDCs (~10 floats), age, prefix-depth, session-active
-(ref-count), tenant/LoRA (cross-tenant reuse ≈ 0 → key popularity by tenant). **Class = (token-type ×
-tenant/LoRA × coarse-popularity-bucket × diurnal-bucket)** — group learning accumulates samples for the
-thin tail + amortizes overhead.
+## 特征 + 类(廉价;大多已经在块/节点上)
+token 类型(最大的轴)、近因 `Δt`、复用计数、EDC(~10 个浮点)、age、前缀深度、会话活跃
+(引用计数)、租户/LoRA(跨租户复用 ≈ 0 → 按租户对流行度分键)。**类 = (token 类型 ×
+租户/LoRA × 粗流行度桶 × 昼夜桶)** —— 分组学习为那条薄尾累积样本 + 摊薄开销。
 
-## Calibration + safety (what makes a miscalibrated estimator safe — non-negotiable)
-- **Online**: MLE + variance-adaptive EMA (β low when variance high → track drift); fit per class when
-  n≥~20. Ever-reuse Bernoulli via eviction-feedback EWMA. Diurnal class key for the measured day/night drift.
-- **Shrinkage to recency (the key robustness knob)**: empirical-Bayes blend of class MLE with parent-group
-  pooled estimate, weight ∝ n_class → **n→0 degrades gracefully to LRU** ("behave like LRU until evidence").
-- **Competitive-safety blend** (learning-augmented caching, Lykouris–Vassilvitskii ICML'18): the
-  Predictive-Marker bound `CR ≤ min(2+4√(η/OPT), 4·H_k)` — consistency + robustness simultaneously. Instantiate:
-  the learned score is a **tie-breaker/re-ranker inside an S3FIFO frame**, `priority = robust_rank +
-  λ·confidence·learned_score`, **λ→0 for under-sampled / recently-mispredicting classes**. S3FIFO (not LRU)
-  is the robust base — its probationary FIFO already quick-demotes the >50%-never-reused mass.
+## 校准 + 安全(是什么让一个误校准的估计器仍然安全 —— 不可妥协)
+- **在线**:MLE + 方差自适应 EMA(方差高时 β 低 → 追踪漂移);n≥~20 时按类拟合。是否曾复用
+  的 Bernoulli 经由驱逐反馈的 EWMA。昼夜类键用于实测的昼/夜漂移。
+- **向近因收缩(关键的鲁棒性旋钮)**:把类的 MLE 与父分组的汇合估计做经验贝叶斯混合,
+  权重 ∝ n_class → **n→0 时优雅退化为 LRU**("在有证据之前,表现得像 LRU")。
+- **竞争安全混合**(学习增强缓存,Lykouris–Vassilvitskii ICML'18):Predictive-Marker 界
+  `CR ≤ min(2+4√(η/OPT), 4·H_k)` —— 一致性 + 鲁棒性兼得。落地:学习到的分数是 **S3FIFO
+  框架内的一个平局决胜/重排器**,`priority = robust_rank + λ·confidence·learned_score`,
+  **对采样不足 / 近期预测出错的类 λ→0**。S3FIFO(而非 LRU)是鲁棒基座 —— 它的试用期 FIFO
+  已经把 >50%-从不复用 的那部分质量快速降级了。
 
-## Hot-path form (runs at eviction rates, no model inference)
-64-candidate sampling (LHD/LRB) → per candidate a **closed-form** score (survival form:
-`w_type·p_ever·(1−F_LN(Δt;μ_c,σ_c))/Δt` = arithmetic + one `erfc`; or LHD hit-density from histograms) →
-evict lowest; reserve **1% explorers**. **Background daemon** (GL-Cache cadence) updates per-class
-`(μ,σ,p_ever,EDC,w_type)` from an access/eviction ring buffer, publishes lock-free via double-buffer.
+## 热路径形式(以驱逐的速率运行,无模型推理)
+64 候选采样(LHD/LRB)→ 每个候选一个**闭式**分数(生存形式:
+`w_type·p_ever·(1−F_LN(Δt;μ_c,σ_c))/Δt` = 算术 + 一次 `erfc`;或来自直方图的 LHD 命中密度)
+→ 驱逐最低的;保留 **1% 探索者**。**后台守护进程**(GL-Cache 的节奏)从一个访问/驱逐环形
+缓冲区更新按类的 `(μ,σ,p_ever,EDC,w_type)`,经双缓冲无锁发布。
 
-## Honest bottom line
-- Short-horizon mass (80–90%): can match SAECache/LRB (well-calibrated, high good-decision-ratio).
-- **Hour/day tail: intrinsically sample-starved + partly irreducible (censoring)** — you get a **coarse**
-  signal (per-class ever-reuse + token-type prior: system/RAG = keep-long, CoT = evict-now), **not** sharp
-  hour-resolution survival. The win = **avoid catastrophic eviction of the high-value tail**, not precise timing.
-- Failure modes designed against: recompute storm (→ safety blend), cold-start/drift (→ shrink-to-LRU +
-  diurnal/tenant keys), survivorship bias (→ explorers + sample-all-in-window), heavy-tail underfit (→
-  factorized model + binary target), cross-user leakage (→ tenant-keyed popularity).
+## 诚实的结论
+- 短视野质量(80–90%):可以匹敌 SAECache/LRB(校准良好、好决策比例高)。
+- **小时/天级尾巴:本质上样本匮乏 + 部分不可约(删失)** —— 你得到的是一个**粗糙**信号(按类
+  的是否曾复用 + token 类型先验:system/RAG = 长期保留,CoT = 立即驱逐),**而非**小时分辨率
+  的精细生存。赢点 = **避免灾难性地驱逐高价值尾巴**,而非精确的时机。
+- 已针对设计防范的失败模式:重算风暴(→ 安全混合)、冷启动/漂移(→ 收缩到 LRU + 昼夜/租户
+  键)、幸存者偏差(→ 探索者 + 窗口内全采样)、重尾欠拟合(→ 因子化模型 + 二值目标)、跨
+  用户泄漏(→ 按租户分键的流行度)。
 
-## Phased design
-- **P1 (MVP, ship first):** a custom `CachePolicy` returning `priority = w_type[type]·(1−F_LN(Δt;μ_c,σ_c))/Δt`;
-  **classes = token-type only** (system/user/tool/response/CoT); `(μ,σ)` online MLE+EMA (fit n≥20, shrink to
-  global when fewer); `w_type` **fixed prior from SAECache's measured table** (system≈0.92 … CoT≈0.02),
-  EWMA-refined from eviction feedback; wrapped as a **tie-breaker inside S3FIFO** + **LRU warmup** +
-  confidence-gated λ. **Zero new model inference**; reuses recency/hit-count/age; adds a token-type tag at
-  insert + ~5 per-class floats. Provably no-worse-than-LRU by the learning-augmented bound. Captures the
-  dominant 42–756× token-type axis day one.
-- **P2 (full):** EDCs + tenant/LoRA + popularity-bucket + diurnal class keys (GL-Cache group learning) +
-  the factorized ever-reuse Bernoulli + LHD hit-density + a background GBM on the relaxed-Belady binary
-  target as a research upper-bound comparison.
+## 分阶段设计
+- **P1(MVP,先交付):** 一个自定义 `CachePolicy`,返回
+  `priority = w_type[type]·(1−F_LN(Δt;μ_c,σ_c))/Δt`;**类 = 仅 token 类型**
+  (system/user/tool/response/CoT);`(μ,σ)` 在线 MLE+EMA(n≥20 拟合,更少时收缩到全局);
+  `w_type` **取自 SAECache 实测表的固定先验**(system≈0.92 … CoT≈0.02),由驱逐反馈 EWMA
+  精修;包装为 **S3FIFO 内的一个平局决胜器** + **LRU 预热** + 置信度门控的 λ。**零新增模型
+  推理**;复用近因/命中计数/age;在插入时增加一个 token 类型标记 + ~5 个按类的浮点。由学习
+  增强界可证明不差于 LRU。第一天就抓住占主导的 42–756× 的 token 类型轴。
+- **P2(完整):** EDC + 租户/LoRA + 流行度桶 + 昼夜类键(GL-Cache 分组学习)+ 因子化的是否
+  曾复用 Bernoulli + LHD 命中密度 + 一个在松弛-Belady 二值目标上的后台 GBM,作为研究性的
+  上界对比。
 
-## Sources
+## 来源
 SAECache 2605.18825 · LPC NeurIPS'25 · KVFlow 2507.07400 · "KVCache in the Wild" 2506.02634 · Mooncake
 2407.00079 · LRB NSDI'20 · LHD NSDI'18 · S3FIFO SOSP'23 · GL-Cache FAST'23 · Hawkeye/Glider ISCA'16/MICRO'17 ·
 learning-augmented caching (Lykouris–Vassilvitskii ICML'18; Wei 2005.13716; Rohatgi 1910.12172).

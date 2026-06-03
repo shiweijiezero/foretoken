@@ -1,0 +1,77 @@
+S1 Mooncake trace HF: https://huggingface.co/datasets/valeriol29/mooncake-traces
+S2 Mooncake paper FAST25: https://arxiv.org/pdf/2407.00079
+S3 Mooncake repo: https://github.com/kvcache-ai/Mooncake
+S4 vLLM x Mooncake blog 2026-05-06: https://vllm.ai/blog/2026-05-06-mooncake-store
+S5 ServeGen NSDI26: https://arxiv.org/abs/2505.09999
+S6 KVCache in the Wild ATC25: https://arxiv.org/html/2506.02634v1
+S7 Aliyun Bailian trace: https://github.com/alibaba-edu/qwen-bailian-usagetraces-anon
+S8 BurstGPT repo: https://github.com/HPMLL/BurstGPT
+S9 BurstGPT paper KDD25: https://arxiv.org/html/2401.17644v4
+S10 Azure LLM Inference dataset: https://github.com/Azure/AzurePublicDataset
+S11 Azure 2023 (Splitwise ISCA24): https://github.com/Azure/AzurePublicDataset/blob/master/AzureLLMInferenceDataset2023.md
+S12 Azure 2024 (DynamoLLM HPCA25): https://github.com/Azure/AzurePublicDataset/blob/master/AzureLLMInferenceDataset2024.md
+S13 LMSYS-Chat-1M: https://arxiv.org/abs/2309.11998
+S14 vLLM Benchmark CLI: https://docs.vllm.ai/en/latest/benchmarking/cli/
+S15 SGLang bench_serving: https://docs.sglang.io/developer_guide/bench_serving.html
+S16 NVIDIA AIPerf Mooncake trace replay: https://docs.nvidia.com/aiperf/benchmark-modes/trace-replay-with-mooncake-traces
+S17 AIPerf repo: https://github.com/ai-dynamo/aiperf
+S18 Vidur MLSys24: https://arxiv.org/abs/2405.05465
+S19 Vidur repo: https://github.com/microsoft/vidur
+S20 ML-based GPU caching (Belady) preprint: https://arxiv.org/html/2509.20979v1
+S21 Tail-Optimized Caching: https://arxiv.org/html/2510.15152v1
+S22 Dont Break the Cache (agentic): https://arxiv.org/html/2601.06007v2
+S23 LMCache agentic MI300X blog: https://blog.lmcache.ai/en/2026/05/12/benchmarking-lmcache-for-multi-turn-agentic-workloads-on-amd-mi300x/
+S24 kv-cache-tester repo: https://github.com/callanjfox/kv-cache-tester
+S25 DistServe (goodput) OSDI24: https://arxiv.org/pdf/2401.09670
+S26 HF inference-benchmarker: https://github.com/huggingface/inference-benchmarker
+S27 vLLM prefix caching design: https://docs.vllm.ai/en/stable/design/v1/prefix_caching.html
+S28 Strata hierarchical context caching: https://arxiv.org/html/2508.18572v1
+S29 CacheClip RAG: https://arxiv.org/pdf/2510.10129
+S30 llm-d KV cache wins: https://llm-d.ai/blog/kvcache-wins-you-can-see
+S31 vLLM RFC #37823 T-LRU (OPEN 2026-03, ref branch only, no merged PR): https://github.com/vllm-project/vllm/issues/37823
+S32 vLLM RFC #23641 Frequency+Cost Eviction (CLOSED not planned): https://github.com/vllm-project/vllm/issues/23641
+S33 MLPerf Inference v5.1 DeepSeek-R1 (in 800 / out 3880 / max 20k tok; TTFT P99<=2s, TPOT P99<=80ms): https://mlcommons.org/2025/09/deepseek-inference-5-1/
+S34 LiveCodeBench 511-problem stats: https://arxiv.org/html/2403.07974v2
+S35 SWE-bench Verified (vals.ai): https://www.vals.ai/benchmarks/swebench
+S36 SWE-bench Verified (Epoch AI): https://epoch.ai/benchmarks/swe-bench-verified
+S37 SAECache "Not All Tokens Are Worth Caching" 2605.18825: https://arxiv.org/html/2605.18825v1
+S38 SGLang HiCache blog (6x throughput, 80% TTFT, hit 40->80%): https://www.lmsys.org/blog/2025-09-10-sglang-hicache/
+S39 PiKV MoE KV management 2508.06526: https://arxiv.org/html/2508.06526
+S40 SCORPIO heterogeneous-SLO goodput 2505.23022: https://arxiv.org/pdf/2505.23022
+S41 vLLM bench serve CLI (custom/hf dataset, --request-rate, --goodput): https://docs.vllm.ai/en/latest/benchmarking/cli/
+S42 Thinking Machines "Defeating Nondeterminism in LLM Inference" (batch-invariance): https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/
+S43 vLLM batch invariance docs (VLLM_BATCH_INVARIANT=1): https://docs.vllm.ai/en/latest/features/batch_invariance/
+S44 vLLM speculative decoding docs (greedy-equality / rejection-sampler convergence tests): https://docs.vllm.ai/en/latest/features/speculative_decoding/
+S45 Lossless speculative decoding overview: https://www.emergentmind.com/topics/lossless-speculative-decoding
+# docs/11 goodput control loop (unified KV+MTP+scheduling)
+S46 SmartSpec/TurboSpec 2406.14066 (goodput spec control; v2 renamed TurboSpec; vLLM FORK, not merged): https://arxiv.org/abs/2406.14066
+S47 SpecServe/AdaSpec 2503.05096 (SLO-aware adaptive spec, confidence signal, ~2000 LOC on vLLM): https://arxiv.org/html/2503.05096v1
+S48 AdaServe 2501.12162 (multi-SLO spec tree, EuroSys26, goodput +1.9x): https://arxiv.org/abs/2501.12162
+S49 Nightjar 2512.22420 (resource-aware adaptive spec + Squeeze/Expand draft-weights<->KV coupling, MAB): https://arxiv.org/pdf/2512.22420
+S50 DSDE 2509.01083 (KLD-stability per-seq spec): https://arxiv.org/pdf/2509.01083
+S51 AdaSD 2512.11280 (PDF encrypted - signals 待核实): https://arxiv.org/pdf/2512.11280
+S52 MagicDec 2408.11049 (long-context -> memory-bound -> spec turns positive): https://arxiv.org/pdf/2408.11049
+S53 vLLM DynamicProposer/eagle_dynamic PR #26504 (OPEN/needs-rebase; acceptance-rate-only, NOT goodput): https://github.com/vllm-project/vllm/pull/26504
+S54 vLLM DSL confidence early-exit RFC #36657 (OPEN 2026-03; max-softmax<tau, zero-pad avoids recapture): https://github.com/vllm-project/vllm/issues/36657
+S55 vLLM forum Goodput-Guided Spec Decode #485 (TurboSpec still FORK, "plans to integrate soon"): https://discuss.vllm.ai/t/goodput-guided-speculative-decoding/485
+S56 DistServe 2401.09670 (defines per-GPU goodput): https://arxiv.org/pdf/2401.09670
+S57 Sarathi-Serve OSDI24 (token budget, stall-free chunked-prefill): https://www.usenix.org/system/files/osdi24-agrawal.pdf
+S58 JITServe 2504.20068 (goodput-loss-aware preemption): https://arxiv.org/pdf/2504.20068
+S59 FlowPrefill 2602.16603 (heterogeneous-SLO preemption, 2026): https://arxiv.org/html/2602.16603
+S60 TransKV (transactional draft KV under paged memory + token-budget): https://www.techrxiv.org/doi/full/10.36227/techrxiv.177101038.80960856/v1
+S61 EVICPRESS 2512.14946 (joint KV compression+eviction unified utility; no spec): https://arxiv.org/pdf/2512.14946
+S62 vLLM CUDA Graphs design doc (UNIFORM_BATCH, BatchDescriptor, spec query_len=1+K): https://github.com/vllm-project/vllm/blob/main/docs/design/cuda_graphs.md
+S63 vLLM full-cudagraph drafter Issue #33341: https://github.com/vllm-project/vllm/issues/33341
+S64 LAPS 2601.11589 / DuetServe 2511.04791 / RAPID-Serve 2601.11822 (prefill/decode budget, no cache+spec): https://arxiv.org/pdf/2601.11589
+# docs/12 workload profiles (additional)
+S65 Epoch AI output-length data insight (reasoning ~8x output): https://epoch.ai/data-insights/output-length
+S66 LMCache Claude Code reuse pattern (sys-prompt 20k+, staged prefix 92->98%): https://blog.lmcache.ai/en/2025/12/23/context-engineering-reuse-pattern-under-the-hood-of-claude-code/
+S67 Splitwise / Azure 2023 trace (ISCA24): https://arxiv.org/html/2311.18677v2
+S68 CacheBlend (EuroSys25, position-independent RAG reuse, recompute 10-15% HKVD): https://arxiv.org/abs/2405.16444
+S69 CacheBlend LMCache blog: https://blog.lmcache.ai/2025-03-31-eurosys/
+S70 SLOs-Serve 2504.08784 (per-phase heterogeneous SLO template): https://arxiv.org/html/2504.08784v1
+S71 Nitsum 2605.05467 (workload characterization): https://arxiv.org/html/2605.05467
+S72 llm-d predicted-latency scheduling: https://llm-d.ai/blog/predicted-latency-based-scheduling-for-llms
+S73 AIBrix vs Kthena vs Dynamo orchestration compare: https://pacoxu.wordpress.com/2025/12/03/how-to-choose-the-inference-orchestration-solution-aibrix-or-kthena-or-dynamo/
+S74 SkyWalker 2505.24095 (multi-region diurnal + prefix-affinity routing): https://arxiv.org/pdf/2505.24095
+S75 GORGO 2602.11688 (cross-region cache-aware): https://arxiv.org/pdf/2602.11688
