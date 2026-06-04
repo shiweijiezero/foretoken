@@ -105,3 +105,15 @@ Phase = P0–P4(`DESIGN.md §6`)。
 > 每个 🔬 行在其 phase 启动前都会有一份定向研究笔记(一次 `docs/` 深挖)+ 一个 build-vs-use
 > 确认。研究队列已大幅覆盖(B5/B7/F1 部分覆盖,余下随各自 phase 深化);**P0(真实推理基线)
 > 不被任何剩余研究项阻塞,可起步**(见 `ROADMAP.md`)。
+
+## 代码骨架命名约定(`src/foretoken/`,2026-06)
+- **包 = `foretoken`**(我们的命名空间)。**不过早建空占位**:某模块 P1/P2 真动手时才建,命名照此约定。
+- **`bench/`**(P0 重心,已实现)—— 评测台:`goodput` / `oracle`(Belady/PFOO)/ `fidelity`(门槛零)/
+  `workload`(Mooncake 缝合)/ `ablation`(4 对照)/ `metrics`(F1)。
+- **`plugins/`**(P1 起)—— 优化插件 wrapper,子模块**对齐 vLLM 命名**(降认知负担):
+  - `kv_offload/`(B3,对 vLLM `OffloadingManager`/`Spec`,`v1/kv_offload/`)
+  - `cache_policy/`(对 vLLM `CachePolicy`,`v1/kv_offload/cpu/policies/`;含我们的 value / `P(reuse)`)
+  - `sched/`(D2/D4,对 `Scheduler`,`v1/core/sched/`)
+  - `spec_decode/`(C2,对 `custom_class` proposer,`v1/spec_decode/`)
+  - `kv_connector/`(B4,对 `distributed/kv_transfer/kv_connector/`)
+- 本地参考:vLLM 源码经 junction 挂在 `foretoken/vllm/`(已 gitignore,只读参考)。

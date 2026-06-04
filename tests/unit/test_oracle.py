@@ -1,6 +1,6 @@
 import pytest
 
-from foretoken.eval.pfoo import belady_hit_rate, pfoo_hit_rate
+from foretoken.bench.oracle import belady_hit_rate, pfoo_hit_rate
 
 
 def test_belady_distinct_then_repeat():
