@@ -7,7 +7,7 @@ name = "foretoken"
 version = "0.0.0"
 description = "Value-aware KV management, MTP control, and goodput-driven evaluation on top of vLLM (zero-fork, out-of-tree plugins)."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { text = "Apache-2.0" }
 dependencies = [
     "numpy>=1.24",
@@ -34,7 +34,7 @@ packages = ["src/foretoken"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py312"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
