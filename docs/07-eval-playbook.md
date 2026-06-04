@@ -121,7 +121,7 @@ KV(时序+复用+并发)和 MTP(真实内容)**,且不用自录。
 | 维度 | 来自 |
 |---|---|
 | 到达时间戳 / 并发 / 会话轮次 / 轮间间隔 / 每轮长度 | **Mooncake trace(骨架)** |
-| 每轮真实文本内容 | **prompt pool(血肉)**:现成 benchmark prompt / LMSYS 多轮 / kimi-mtp-dataset 抽 prompt |
+| 每轮真实文本内容 | **prompt pool(血肉)**:现成 benchmark prompt / LMSYS 多轮 / **`lightseekorg/kimi-mtp-dataset`**(47.6万行多轮 ShareGPT,正对口 MTP)抽 prompt |
 | 每轮回复 | **真实模型现场生成**(MTP 要测接受率,必须真生成) |
 
 **流程:**
@@ -145,6 +145,37 @@ KV(时序+复用+并发)和 MTP(真实内容)**,且不用自录。
 
 > **分工**:纯 KV 评测用 Mooncake + dummy 更省(无需真模型);**本缝合法的价值在 KV+MTP 端到端**
 > (需要真实内容 + 真模型现场生成)。
+
+## 6.6 数据源确认 + 缝合实现(2026-06,已落地 `bench/stitch.py` + `bench/replay.py`)
+
+**数据源(已核实真实 HF id / vLLM 支持):**
+| 角色 | 用什么 | vLLM 怎么吃 |
+|---|---|---|
+| 时序/并发/复用**骨架** | **Mooncake trace**(`timestamp/input_length/output_length/hash_ids`,**无 session id**) | `--dataset-name timed_trace`(真正的 trace 引擎) |
+| 真实内容**血肉** | **`lightseekorg/kimi-mtp-dataset`**(47.6万行多轮 ShareGPT,Apache-2.0;Kimi-K2.5 生成,正对口 MTP) | 经缝合 → custom / 自写回放 |
+| 纯 MTP benchmark | AIME=`AI-MO/aimo-validation-aime`(vLLM `AIMODataset` 直吃);GPQA=`Idavidrein/gpqa`(gated)/ LCB=`livecodebench/code_generation_lite` → **转 custom jsonl**;SWE-bench=`princeton-nlp/SWE-bench_Verified` → **agent 镜像** | `hf` / `custom` |
+
+**两个确认死扣:**
+- vLLM `--dataset-name` 15 个里,**真正带时序的"trace"只有 `timed_trace` 与 `burstgpt`**;其余是合成(random/sonnet/prefix_repetition)或无时序数据集。vLLM 按 `SUPPORTED_DATASET_PATHS` **白名单**分派 HF 数据集,**不是任意 HF 都吃**。
+- **Mooncake 无 session/user id(隐私)** —— 多轮/会话**全藏在 `hash_ids` 前缀包含**里(相同 hash = 该块及之前 token 全同 = 可复用)。
+
+**"一套全真"(真实内容 + 真实复用 + 真实多用户并发)只有三档:**
+| 档 | 做法 | 多用户并发 | 让步 |
+|---|---|---|---|
+| 自录 agent trace | 真 agent scaffold 跑真任务录请求 | ❌ **单会话串行,造不出并发** | 重;并发缺失=致命 → 出局 |
+| **Mooncake-hash 缝真实块(主选)** | 每个 `hash_id` 绑定固定真实文本块(相同 hash→同块)→ 复用 100% 复刻 Mooncake | ✅ 真(Mooncake) | 块边界偶不连贯;要自写回放器 |
+| 会话累积 + Mooncake 节奏 | 真实多轮对话累积(会话内自然复用)+ 借 Mooncake 时序(= §6.5 法) | ✅ 真(Mooncake) | 复用非复刻 Mooncake、靠对话本身 |
+→ **并发只有真实生产 trace 才有,自录给不了 → 主选「Mooncake-hash 缝真实块」。**(§6.5 的"别复刻 hash"对应第三档;本次为追求复用复刻 + 并发,新增第二档,两者按需选。)
+
+**已落地实现:**
+- `bench/stitch.py`:**模式 A** `expand_conversation`(对话累积→custom jsonl);**模式 B** `fill_mooncake_trace`(hash→真实块,产带 `timestamp` 的 trace)。
+- `bench/replay.py`:按真实 `timestamp` 异步回放 + 采 TTFT/TPOT + `goodput_per_gpu_byte_second`。
+- **回放两条路(同一份缝合数据,只是谁来发):**
+  - **A 路径**:`vllm bench serve --dataset-name custom`,**只用 `prompt`、忽略 `timestamp`**,到达用 `--request-rate`/`--burstiness` **合成** → 零自写,适合 **MTP**(不在乎到达)。
+  - **B 路径**:`bench/replay.py` 读 `timestamp_ms` **按真实时刻发** → 复现真实间隔 + 并发,适合 **KV**(必须真实并发/间隔)。
+- **诚实账单**:走 B 全真 = 放弃 vLLM bench serve、自己重造「发请求/采集/goodput」最小子集(`timed_trace` 只认 hash、`custom` 没 timestamp,都吃不了"真实 prompt + 真实到达")。
+
+**KV 评测为何必须真实 trace(不能只 `--request-rate`)**:① 请求**顺序**直接决定命中(`--request-rate` 全局泊松、不分会话、打散复用);② 我们的**时间感知策略**(`P(reuse|Δt)`/TTL/卸载)吃**绝对间隔**;③ 真实**并发**决定瞬时 KV 压力。三者 Mooncake `timed_trace`(或 B 路径回放)都真。
 
 ## 7. 开跑前 checklist(gate)
 - [ ] **gate-zero(回放保真)**:Mooncake 经**原生 vLLM APC** 回放,实测 token 级命中率 ≈ 离线从
