@@ -1,5 +1,8 @@
 """评测测试台(G1/G2,P0 重心)——只有真正 real 的评测才知道好坏(docs/04 / 07 / 10 / 13)。
 
+**入口 / 主流程:`run.py`(`run_evaluation`)→ `python -m foretoken.bench`;读它就懂下面
+六个工位怎么串成一条流水线。**
+
 - goodput:每 GPU 字节秒 goodput(统一标尺)。
 - oracle:离线最优上界(Belady / PFOO),作"弥合 LRU→最优差距"的分母。
 - fidelity:门槛零(回放保真)——离线 hash_id 命中率 vs 实测 APC 命中率。
