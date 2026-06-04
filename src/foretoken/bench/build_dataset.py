@@ -73,21 +73,24 @@ if __name__ == "__main__":  # pragma: no cover
     ap.add_argument("--out-dir", required=True, help="数据集输出目录(parquet + README)")
     ap.add_argument("--name", default="foretoken-stitched-trace")
     ap.add_argument("--limit", type=int, default=None)
-    ap.add_argument("--content-limit", type=int, default=2000)
     args = ap.parse_args()
 
     from transformers import AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=True)
+    # 1) 读 Mooncake trace 进内存,数唯一 hash(= 需要多少真实块,否则会假复用)
+    trace = list(_stream_hf(args.mooncake, "train", args.limit))
+    need = len({h for row in trace for h in row.get("hash_ids", [])})
+    # 2) 流式读 kimi 造块池,读够 need 块就停(min_blocks);kimi 不设上限,提前 return 不浪费
     pool = build_block_pool(
-        extract_texts(_stream_hf(args.content, "train", args.content_limit)),
+        extract_texts(_stream_hf(args.content, "train", None)),
         encode=lambda s: tok.encode(s, add_special_tokens=False),
+        min_blocks=need,
     )
-    rows = fill_mooncake_trace(
-        _stream_hf(args.mooncake, "train", args.limit),
-        pool,
-        decode=lambda ids: tok.decode(ids),
-    )
+    if len(pool) < need:
+        raise SystemExit(f"内容不够:需 {need} 块、只造出 {len(pool)};增大 --content-limit 或换更大内容集")
+    print(f"unique hashes = {need}, block pool = {len(pool)}")
+    rows = fill_mooncake_trace(iter(trace), pool, decode=lambda ids: tok.decode(ids))
     out = build_hf_dataset(
         rows, args.out_dir, name=args.name, mooncake=args.mooncake,
         content=args.content, tokenizer=args.tokenizer,

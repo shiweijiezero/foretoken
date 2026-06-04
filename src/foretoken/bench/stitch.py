@@ -31,12 +31,25 @@ def build_block_pool(
     texts: Iterable[str],
     encode: Callable[[str], list[int]],
     block_size: int = 512,
+    min_blocks: int | None = None,
 ) -> list[list[int]]:
-    """把真实文本拼接、token 化、切成 block_size-token 的真实 token 块池(供 hash 映射)。"""
-    ids: list[int] = []
+    """真实文本 → block_size-token 块池(供 hash 映射)。
+
+    `min_blocks`:至少造这么多块就停(流式友好)—— 用于保证 **块池 ≥ Mooncake 唯一 hash 数**,
+    否则不同 hash 会撞同一块 = 假复用(见 `fill_mooncake_trace` 的报错)。
+    """
+    blocks: list[list[int]] = []
+    buf: list[int] = []
     for t in texts:
-        ids.extend(encode(t))
-    return [ids[i : i + block_size] for i in range(0, len(ids), block_size) if ids[i : i + block_size]]
+        buf.extend(encode(t))
+        while len(buf) >= block_size:
+            blocks.append(buf[:block_size])
+            buf = buf[block_size:]
+            if min_blocks is not None and len(blocks) >= min_blocks:
+                return blocks
+    if buf:
+        blocks.append(buf)
+    return blocks
 
 
 def fill_mooncake_trace(
@@ -62,7 +75,13 @@ def fill_mooncake_trace(
         token_ids: list[int] = []
         for h in row.get(label_hash_ids, []):
             if h not in hash_to_block:
-                hash_to_block[h] = nxt % len(block_pool)  # 顺序取池 → 同请求的块大体连续、较连贯
+                if nxt >= len(block_pool):
+                    raise ValueError(
+                        f"块池不够({len(block_pool)} 块)< Mooncake 唯一 hash 数 —— 不能循环复用"
+                        "(会让不同 hash 撞同块=假复用);增大内容量(build_block_pool 的 min_blocks "
+                        "/ build_dataset 的 --content-limit)"
+                    )
+                hash_to_block[h] = nxt  # 顺序取池 → 同请求的块大体连续、较连贯
                 nxt += 1
             token_ids.extend(block_pool[hash_to_block[h]])
         input_length = int(row.get(label_input_length, len(token_ids)))
@@ -99,31 +118,4 @@ def _stream_hf(source: str, split: str, limit: int | None) -> Iterator[dict]:
         yield row
 
 
-if __name__ == "__main__":  # pragma: no cover
-    import argparse
-
-    ap = argparse.ArgumentParser(
-        description="模式B缝合:Mooncake 并发骨架 + 真实文本块 → 带 timestamp 的 trace(配 replay.py)"
-    )
-    ap.add_argument("--mooncake", default="valeriol29/mooncake-traces", help="Mooncake trace HF id/路径")
-    ap.add_argument("--content", default="lightseekorg/kimi-mtp-dataset", help="真实多轮内容 HF id/路径")
-    ap.add_argument("--tokenizer", required=True, help="GLM tokenizer(HF id/路径):切 512 块 + 解码")
-    ap.add_argument("--out", required=True, help="输出带 timestamp 的 trace jsonl")
-    ap.add_argument("--limit", type=int, default=None, help="最多读多少行 Mooncake")
-    ap.add_argument("--content-limit", type=int, default=2000, help="读多少条对话造块池")
-    args = ap.parse_args()
-
-    from transformers import AutoTokenizer  # 需 transformers(server extra)
-
-    tok = AutoTokenizer.from_pretrained(args.tokenizer, trust_remote_code=True)
-    pool = build_block_pool(
-        extract_texts(_stream_hf(args.content, "train", args.content_limit)),
-        encode=lambda s: tok.encode(s, add_special_tokens=False),
-    )
-    rows = fill_mooncake_trace(
-        _stream_hf(args.mooncake, "train", args.limit),
-        pool,
-        decode=lambda ids: tok.decode(ids),
-    )
-    count = write_trace_jsonl(rows, args.out)
-    print(f"wrote {count} requests -> {args.out}")
+# 缝合的可执行入口统一在 bench/build_dataset.py(产出 HF 数据集);scripts/build_dataset.sh 是薄壳。
