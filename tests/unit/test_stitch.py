@@ -40,3 +40,18 @@ def test_fill_mooncake_trace_reuse_alignment():
 def test_fill_empty_pool_raises():
     with pytest.raises(ValueError):
         list(fill_mooncake_trace([{"timestamp": 0, "input_length": 1, "hash_ids": [1]}], [], lambda x: ""))
+
+
+def test_fill_pool_too_small_raises():
+    # 块池 2 块,但 trace 有 3 个唯一 hash → 报错(绝不 % 循环造假复用)
+    pool = build_block_pool(["x"], encode=lambda s: [1, 2], block_size=1)
+    assert len(pool) == 2
+    rows = [{"timestamp": 0, "input_length": 3, "output_length": 1, "hash_ids": [10, 11, 12]}]
+    with pytest.raises(ValueError):
+        list(fill_mooncake_trace(rows, pool, lambda ids: ""))
+
+
+def test_build_block_pool_min_blocks_stops_early():
+    # min_blocks 够了就停(流式友好,保证块池 ≥ 唯一 hash 数)
+    pool = build_block_pool(["a", "b", "c"], encode=lambda s: [1, 1], block_size=1, min_blocks=2)
+    assert len(pool) == 2
