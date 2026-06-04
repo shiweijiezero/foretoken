@@ -1,34 +1,18 @@
-"""评测测试台(G1/G2,P0 重心)——只有真正 real 的评测才知道好坏(docs/04 / 07 / 10 / 13)。
+"""评测台(bench)。
 
-**入口 / 主流程:`run.py`(`run_evaluation`)→ `python -m foretoken.bench`;读它就懂下面
-六个工位怎么串成一条流水线。**
+**P0 评测直接用 `vllm bench serve`(见 scripts/serve_glm.sh + run_baseline.sh)——不自建
+负载 / 采集 / 指标。** vLLM 已提供:流量分布(`--request-rate` / `--burstiness`,泊松↔Gamma)、
+时序回放(`--dataset-name timed_trace`)、采集 TTFT/TPOT、按请求 goodput(`--goodput`)。
 
-- goodput:每 GPU 字节秒 goodput(统一标尺)。
-- oracle:离线最优上界(Belady / PFOO),作"弥合 LRU→最优差距"的分母。
-- fidelity:门槛零(回放保真)——离线 hash_id 命中率 vs 实测 APC 命中率。
-- workload:Mooncake trace 回放 + 缝合法骨架(依赖 vLLM 的部分见 TODO)。
-- ablation:4 对照配置(全关 / 只 KV / 只 MTP / 全开)driver。
-- metrics:KV / goodput 指标遥测(F1)。
+本模块留到 **P1**:评我们自己的 KV 策略时,才补 vLLM 没有的那几样——每 GPU 字节秒 goodput、
+门槛零(回放保真)、PFOO/Belady 最优上界、4 配置拆贡献。**前期不实现**(这些是 P1 才需要的尺子)。
 """
-from foretoken.bench.fidelity import gate_zero_ok, offline_prefix_hit_rate
-from foretoken.bench.goodput import (
-    SLO,
-    RequestRecord,
-    attains_slo,
-    goodput_per_gpu_byte_second,
-    goodput_tokens_per_s,
-    slo_attainment,
-)
-from foretoken.bench.oracle import belady_hit_rate
+from __future__ import annotations
 
-__all__ = [
-    "SLO",
-    "RequestRecord",
-    "attains_slo",
-    "goodput_per_gpu_byte_second",
-    "goodput_tokens_per_s",
-    "slo_attainment",
-    "belady_hit_rate",
-    "offline_prefix_hit_rate",
-    "gate_zero_ok",
-]
+
+def run_evaluation(*args, **kwargs):
+    """评测我们自己优化(KV 策略等)的入口 —— P1 再实现。
+
+    P0 不走这里:P0 评测 = `vllm bench serve`(scripts/run_baseline.sh)。
+    """
+    raise NotImplementedError("P0 用 vllm bench serve;本入口留到 P1(补 vLLM 没有的独有指标)。")

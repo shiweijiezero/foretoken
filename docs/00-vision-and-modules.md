@@ -108,8 +108,9 @@ Phase = P0–P4(`DESIGN.md §6`)。
 
 ## 代码骨架命名约定(`src/foretoken/`,2026-06)
 - **包 = `foretoken`**(我们的命名空间)。**不过早建空占位**:某模块 P1/P2 真动手时才建,命名照此约定。
-- **`bench/`**(P0 重心,已实现)—— 评测台:`goodput` / `oracle`(Belady/PFOO)/ `fidelity`(门槛零)/
-  `workload`(Mooncake 缝合)/ `ablation`(4 对照)/ `metrics`(F1)。
+- **`bench/`**(P1)—— 我们独有的评测指标(**vLLM 没有的**):每 GPU 字节秒 goodput / 门槛零(回放
+  保真)/ PFOO·Belady 最优上界 / 4 配置拆贡献。**P0 评测直接用 `vllm bench serve`**(`scripts/
+  run_baseline.sh`,带 `--goodput` / `--burstiness` / `timed_trace`),不自建。
 - **`plugins/`**(P1 起)—— 优化插件 wrapper,子模块**对齐 vLLM 命名**(降认知负担):
   - `kv_offload/`(B3,对 vLLM `OffloadingManager`/`Spec`,`v1/kv_offload/`)
   - `cache_policy/`(对 vLLM `CachePolicy`,`v1/kv_offload/cpu/policies/`;含我们的 value / `P(reuse)`)
