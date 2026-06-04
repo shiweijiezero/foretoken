@@ -1,4 +1,9 @@
-from foretoken.bench.stitch import expand_conversation, stitch_dataset
+from foretoken.bench.stitch import (
+    build_block_pool,
+    expand_conversation,
+    fill_mooncake_trace,
+    stitch_dataset,
+)
 
 
 def _wc(s: str) -> int:
@@ -61,3 +66,29 @@ def test_stitch_dataset_numbers_sessions():
     assert {r.session_id for r in reqs} == {"s0", "s1"}
     assert len(reqs) == 2
     assert all(r.timestamp_ms is None for r in reqs)  # superset 字段默认空,B 路径再填
+
+
+# ── 模式 B:Mooncake hash→真实文本块 填充 ──────────────────────────────────────
+
+
+def test_build_block_pool_chunks():
+    # 2 段文本 × 3 token = 6 token,block_size 2 → 3 块
+    pool = build_block_pool(["a", "b"], encode=lambda s: [1, 2, 3], block_size=2)
+    assert [len(b) for b in pool] == [2, 2, 2]
+
+
+def test_fill_mooncake_trace_reuse_alignment():
+    pool = build_block_pool(["unused"], encode=lambda s: list(range(2000)), block_size=512)
+    assert len(pool) >= 3
+    decode = lambda ids: ",".join(map(str, ids))  # noqa: E731
+    rows = [
+        {"timestamp": 0, "input_length": 1024, "output_length": 10, "hash_ids": [1, 2]},
+        {"timestamp": 5000, "input_length": 1536, "output_length": 7, "hash_ids": [1, 2, 3]},
+    ]
+    out = list(fill_mooncake_trace(rows, pool, decode))
+    # ★ 相同 hash 前缀 [1,2] → 第二行 prompt 严格以第一行 prompt 为前缀(复用结构 100% 对齐 Mooncake)
+    assert out[1]["prompt"].startswith(out[0]["prompt"])
+    # 真实时序 + 输出长度从 Mooncake 透传
+    assert out[0]["timestamp_ms"] == 0
+    assert out[1]["timestamp_ms"] == 5000
+    assert out[1]["expected_output_len"] == 7
