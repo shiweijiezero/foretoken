@@ -1,98 +1,119 @@
-"""缝合器(主线 = 模式 B):Mooncake 真实并发骨架 + 真实文本块 → "含多用户并发的一套全真"负载。
+"""缝合器:用 Mooncake hash 重建会话骨架,塞真实多轮对话(连贯内容 + 累积复用,配置无关)。
 
-给 Mooncake trace 的每个 hash_id 绑定一段固定真实文本块(**相同 hash → 同一真实块**)→ Mooncake
-的块级前缀复用 100% 映射成真实文本前缀复用;并发 / 到达 / 复用逐条来自 Mooncake(只有真实生产
-trace 才有的多用户并发),内容来自真实多轮对话(`lightseekorg/kimi-mtp-dataset`)。
+**为什么不复刻 hash 块复用**:Mooncake 的 512 块 hash 是 **Kimi 生产配置(块大小/缓存/内容)特定**
+的;我们 vLLM 16 块、GLM、缓存不同,硬对齐它的 512 量化没意义(docs/07 §6.6)。复用本质是内容决定
+的(token 级、配置无关)—— 真实多轮对话自己就有真实复用(会话内累积 + 跨会话系统提示)+ 价值区分
+(系统提示高 P(reuse)、会话内容中、一次性低)。所以:
 
-产出带 `timestamp_ms` 的 trace → 配 `bench/replay.py` 按真实时刻回放(B 路径)= KV + MTP 一套通吃。
+    Mooncake hash ──重建──→ 会话(谁是同一会话第几轮 + 每轮 timestamp + 并发)
+    真实多轮对话 ──塞──→ 每轮 prompt = 累积前 k 轮(连贯)
 
-**为什么没有 A 路径**:A 路径(对话累积 → custom + `--request-rate` 合成到达)**没有真实多用户
-并发**(docs/07 §6.6),是退化版;而纯 MTP benchmark(AIME/sharegpt,不在乎到达)直接用
-`vllm bench serve --dataset-name hf/sharegpt + --request-rate`(vLLM 原生、零自写)。两头都不需要 A。
+产出带 `timestamp_ms` 的 trace → 配 `bench/replay.py` 回放 = KV(对话累积复用)+ MTP(连贯内容)一套全真。
 
-纯数据处理(切块 / 映射),tokenizer 注入;本地可跑可测(真跑 main 需 datasets + GLM tokenizer)。
+纯数据处理,tokenizer / len_fn 注入;本地可跑可测(真跑 main 需 datasets + GLM tokenizer)。
 """
 from __future__ import annotations
 
 import json
+import random
 from collections.abc import Callable, Iterable, Iterator
 
 
-def extract_texts(records: Iterable[dict]) -> Iterator[str]:
-    """从对话记录提取真实文本片段(human/gpt 的 value),作块池原料(跳过多模态非 str)。"""
-    for rec in records:
-        for msg in rec.get("conversations", []):
-            v = msg.get("value")
-            if isinstance(v, str) and v:
-                yield v
+def _approx_token_len(text: str) -> int:
+    """粗估 token 数(~4 char/token);落地用真 tokenizer 更准(main 里注入)。"""
+    return max(1, len(text) // 4)
 
 
-def build_block_pool(
-    texts: Iterable[str],
-    encode: Callable[[str], list[int]],
-    block_size: int = 512,
-    min_blocks: int | None = None,
-) -> list[list[int]]:
-    """真实文本 → block_size-token 块池(供 hash 映射)。
-
-    `min_blocks`:至少造这么多块就停(流式友好)—— 用于保证 **块池 ≥ Mooncake 唯一 hash 数**,
-    否则不同 hash 会撞同一块 = 假复用(见 `fill_mooncake_trace` 的报错)。
-    """
-    blocks: list[list[int]] = []
-    buf: list[int] = []
-    for t in texts:
-        buf.extend(encode(t))
-        while len(buf) >= block_size:
-            blocks.append(buf[:block_size])
-            buf = buf[block_size:]
-            if min_blocks is not None and len(blocks) >= min_blocks:
-                return blocks
-    if buf:
-        blocks.append(buf)
-    return blocks
+def to_turns(conversation: list[dict]) -> tuple[str | None, list[tuple[str, str]]]:
+    """ShareGPT 对话 → (system, [(user, assistant), ...])。多模态(value 非 str)返回 (None, [])。"""
+    system: str | None = None
+    turns: list[tuple[str, str]] = []
+    pending_user: str | None = None
+    for msg in conversation:
+        role, val = msg.get("from"), msg.get("value")
+        if not isinstance(val, str):
+            return None, []  # 多模态 / 非文本,跳过整条
+        if role == "system":
+            system = val
+        elif role == "human":
+            pending_user = val
+        elif role == "gpt" and pending_user is not None:
+            turns.append((pending_user, val))
+            pending_user = None
+    return system, turns
 
 
-def fill_mooncake_trace(
+def reconstruct_sessions(
     trace_rows: Iterable[dict],
-    block_pool: list[list[int]],
-    decode: Callable[[list[int]], str],
     *,
     label_hash_ids: str = "hash_ids",
     label_timestamp: str = "timestamp",
-    label_input_length: str = "input_length",
-    label_output_length: str = "output_length",
-) -> Iterator[dict]:
-    """给 Mooncake trace 的每个 hash_id 绑定固定真实文本块 → 带真实内容 + 真实时序的请求。
+) -> list[list[dict]]:
+    """从 Mooncake hash 前缀延续链重建会话(每个会话 = 按时间排序的多轮请求)。
 
-    **相同 hash_id 永远映到同一真实块** → Mooncake 块级前缀复用 100% 映射成真实文本前缀复用。
-    并发 / 到达 / 复用全保留(Mooncake),内容真实(块池),截到 input_length。
+    请求 B 是请求 A 的下一轮 ⟺ A.hash_ids 是 B.hash_ids 的**真前缀**(B 比 A 多尾部块)。
+    跨会话共享系统提示**不会误链**:要求"某请求的完整 hash" == B 的前缀,只共享开头不算。
     """
-    if not block_pool:
-        raise ValueError("block_pool 为空;先用 build_block_pool 从真实文本造块池")
-    hash_to_block: dict[int, int] = {}
-    nxt = 0
-    for row in trace_rows:
-        token_ids: list[int] = []
-        for h in row.get(label_hash_ids, []):
-            if h not in hash_to_block:
-                if nxt >= len(block_pool):
-                    raise ValueError(
-                        f"块池不够({len(block_pool)} 块)< Mooncake 唯一 hash 数 —— 不能循环复用"
-                        "(会让不同 hash 撞同块=假复用);增大内容量(build_block_pool 的 min_blocks "
-                        "/ build_dataset 的 --content-limit)"
-                    )
-                hash_to_block[h] = nxt  # 顺序取池 → 同请求的块大体连续、较连贯
-                nxt += 1
-            token_ids.extend(block_pool[hash_to_block[h]])
-        input_length = int(row.get(label_input_length, len(token_ids)))
-        token_ids = token_ids[:input_length]
-        yield {
-            "timestamp_ms": int(row[label_timestamp]),
-            "prompt_token_ids": token_ids,        # ★ 复用边界精确(回放优先用它;decode→encode 会漂移)
-            "prompt": decode(token_ids),          # 文本备查 / 通用 endpoint
-            "expected_output_len": int(row.get(label_output_length, 0)),
-            "hash_ids": list(row.get(label_hash_ids, [])),
-        }
+    rows = sorted(trace_rows, key=lambda r: r[label_timestamp])
+    sessions: list[list[dict]] = []
+    prefix_to_sess: dict[tuple, int] = {}  # 某请求完整 hash → 所属会话 index
+    for r in rows:
+        h = tuple(r.get(label_hash_ids, []))
+        sess: int | None = None
+        for n in range(len(h) - 1, 0, -1):  # 最长真前缀优先
+            if h[:n] in prefix_to_sess:
+                sess = prefix_to_sess[h[:n]]
+                break
+        if sess is None:
+            sessions.append([r])
+            sess = len(sessions) - 1
+        else:
+            sessions[sess].append(r)
+        prefix_to_sess[h] = sess
+    return sessions
+
+
+def fill_sessions(
+    sessions: list[list[dict]],
+    conversations: Iterable[dict],
+    *,
+    len_fn: Callable[[str], int] = _approx_token_len,
+    seed: int = 0,
+    sep: str = "\n\n",
+    label_timestamp: str = "timestamp",
+) -> Iterator[dict]:
+    """把真实多轮对话塞进重建的会话槽位。
+
+    对话池先 **shuffle**;每个会话(M 轮)取一个**轮数 ≥ M** 的对话,塞前 M 轮 —— 每轮 prompt =
+    累积前 k 轮(连贯,会话内复用自然产生),timestamp = 该轮 Mooncake 时间戳。**大致按轮数对齐,
+    不严格对齐长度**(配置无关,本就不该对齐 Mooncake 的 input_length)。
+    """
+    pool: list[tuple[str | None, list[tuple[str, str]]]] = []
+    for rec in conversations:
+        system, turns = to_turns(rec.get("conversations", []))
+        if turns:
+            pool.append((system, turns))
+    random.Random(seed).shuffle(pool)
+
+    idx = 0
+    for sess in sessions:
+        m = len(sess)
+        while idx < len(pool) and len(pool[idx][1]) < m:  # 跳过轮数不够的对话
+            idx += 1
+        if idx >= len(pool):
+            break  # 对话池用尽(轮数够的不够多)→ 剩余会话不填
+        system, turns = pool[idx]
+        idx += 1
+        prefix: list[str] = [f"system: {system}"] if system else []
+        for k in range(m):
+            user, assistant = turns[k]
+            yield {
+                "timestamp_ms": int(sess[k][label_timestamp]),
+                "prompt": sep.join([*prefix, f"user: {user}"]),
+                "expected_output_len": len_fn(assistant),
+            }
+            prefix.append(f"user: {user}")
+            prefix.append(f"assistant: {assistant}")
 
 
 def write_trace_jsonl(rows: Iterable[dict], path: str) -> int:
@@ -116,6 +137,3 @@ def _stream_hf(source: str, split: str, limit: int | None) -> Iterator[dict]:
         if limit is not None and i >= limit:
             break
         yield row
-
-
-# 缝合的可执行入口统一在 bench/build_dataset.py(产出 HF 数据集);scripts/build_dataset.sh 是薄壳。

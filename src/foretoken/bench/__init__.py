@@ -7,8 +7,9 @@
 本模块留到 **P1**:评我们自己的 KV 策略时,才补 vLLM 没有的那几样——每 GPU 字节秒 goodput、
 门槛零(回放保真)、PFOO/Belady 最优上界、4 配置拆贡献。**前期不实现**(这些是 P1 才需要的尺子)。
 
-**已实现:`stitch.py`**(Mooncake-hash 缝真实文本块 → 带 timestamp 的 trace)+ **`replay.py`**
-(按真实 timestamp 回放、采 TTFT/TPOT、算 goodput)= 含多用户并发的"一套全真"(KV+MTP 通吃)。
+**已实现:`stitch.py`**(Mooncake hash 重建会话 + 塞真实多轮对话 → 带 timestamp 的 trace)
++ **`build_dataset.py`**(打包可复现 HF 数据集)+ **`replay.py`**(按真实 timestamp 回放、采
+TTFT/TPOT、算 goodput)= 含多用户并发的"一套全真"(KV 对话累积复用 + MTP 连贯内容,通吃)。
 """
 from __future__ import annotations
 
