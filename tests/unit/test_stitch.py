@@ -1,78 +1,19 @@
-from foretoken.bench.stitch import (
-    build_block_pool,
-    expand_conversation,
-    fill_mooncake_trace,
-    stitch_dataset,
-)
+import pytest
+
+from foretoken.bench.stitch import build_block_pool, extract_texts, fill_mooncake_trace
 
 
-def _wc(s: str) -> int:
-    return max(1, len(s.split()))
-
-
-def test_multi_turn_accumulates_prefix():
-    conv = [
-        {"from": "human", "value": "hi"},
-        {"from": "gpt", "value": "hello there"},
-        {"from": "human", "value": "more"},
-        {"from": "gpt", "value": "ok sure"},
-    ]
-    reqs = expand_conversation(conv, "s0", len_fn=_wc)
-    assert len(reqs) == 2
-    assert (reqs[0].turn, reqs[1].turn) == (1, 2)
-    # ★ 真实复用:turn2 的 prompt 严格以 turn1 的 prompt 为前缀
-    assert reqs[1].prompt.startswith(reqs[0].prompt)
-    # expected_output_len = 该轮 gpt 回复长度
-    assert reqs[0].expected_output_len == _wc("hello there")
-    assert reqs[1].expected_output_len == _wc("ok sure")
-
-
-def test_system_prefix_included():
-    conv = [
-        {"from": "system", "value": "you are helpful"},
-        {"from": "human", "value": "q1"},
-        {"from": "gpt", "value": "a1"},
-    ]
-    reqs = expand_conversation(conv, "s0", len_fn=_wc)
-    assert len(reqs) == 1
-    assert reqs[0].prompt.startswith("system: you are helpful")
-    assert "user: q1" in reqs[0].prompt
-
-
-def test_multimodal_conversation_skipped():
-    conv = [
-        {"from": "human", "value": [{"type": "image_url", "image_url": {"url": "x"}}]},
-        {"from": "gpt", "value": "desc"},
-    ]
-    assert expand_conversation(conv, "s0") == []
-
-
-def test_dangling_human_yields_no_request():
-    conv = [
-        {"from": "human", "value": "h1"},
-        {"from": "gpt", "value": "g1"},
-        {"from": "human", "value": "h2-no-reply"},
-    ]
-    reqs = expand_conversation(conv, "s0", len_fn=_wc)
-    assert len(reqs) == 1  # 只有成对的 h1/g1 产请求
-
-
-def test_stitch_dataset_numbers_sessions():
+def test_extract_texts_skips_nonstring():
     records = [
-        {"conversations": [{"from": "human", "value": "a"}, {"from": "gpt", "value": "b"}]},
-        {"conversations": [{"from": "human", "value": "c"}, {"from": "gpt", "value": "d"}]},
+        {"conversations": [{"from": "human", "value": "hi"}, {"from": "gpt", "value": "yo"}]},
+        {"conversations": [{"from": "human", "value": [{"image": "x"}]}, {"from": "gpt", "value": "desc"}]},
     ]
-    reqs = list(stitch_dataset(records, len_fn=_wc))
-    assert {r.session_id for r in reqs} == {"s0", "s1"}
-    assert len(reqs) == 2
-    assert all(r.timestamp_ms is None for r in reqs)  # superset 字段默认空,B 路径再填
-
-
-# ── 模式 B:Mooncake hash→真实文本块 填充 ──────────────────────────────────────
+    # 多模态的 list value 跳过,同记录的纯文本仍保留
+    assert list(extract_texts(records)) == ["hi", "yo", "desc"]
 
 
 def test_build_block_pool_chunks():
-    # 2 段文本 × 3 token = 6 token,block_size 2 → 3 块
+    # 2 段 × 3 token = 6 token,block_size 2 → 3 块
     pool = build_block_pool(["a", "b"], encode=lambda s: [1, 2, 3], block_size=2)
     assert [len(b) for b in pool] == [2, 2, 2]
 
@@ -86,9 +27,14 @@ def test_fill_mooncake_trace_reuse_alignment():
         {"timestamp": 5000, "input_length": 1536, "output_length": 7, "hash_ids": [1, 2, 3]},
     ]
     out = list(fill_mooncake_trace(rows, pool, decode))
-    # ★ 相同 hash 前缀 [1,2] → 第二行 prompt 严格以第一行 prompt 为前缀(复用结构 100% 对齐 Mooncake)
+    # ★ 相同 hash 前缀 [1,2] → 第二行 prompt 严格以第一行为前缀(复用 100% 对齐 Mooncake)
     assert out[1]["prompt"].startswith(out[0]["prompt"])
     # 真实时序 + 输出长度从 Mooncake 透传
     assert out[0]["timestamp_ms"] == 0
     assert out[1]["timestamp_ms"] == 5000
     assert out[1]["expected_output_len"] == 7
+
+
+def test_fill_empty_pool_raises():
+    with pytest.raises(ValueError):
+        list(fill_mooncake_trace([{"timestamp": 0, "input_length": 1, "hash_ids": [1]}], [], lambda x: ""))

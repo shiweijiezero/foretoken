@@ -165,15 +165,17 @@ KV(时序+复用+并发)和 MTP(真实内容)**,且不用自录。
 | 自录 agent trace | 真 agent scaffold 跑真任务录请求 | ❌ **单会话串行,造不出并发** | 重;并发缺失=致命 → 出局 |
 | **Mooncake-hash 缝真实块(主选)** | 每个 `hash_id` 绑定固定真实文本块(相同 hash→同块)→ 复用 100% 复刻 Mooncake | ✅ 真(Mooncake) | 块边界偶不连贯;要自写回放器 |
 | 会话累积 + Mooncake 节奏 | 真实多轮对话累积(会话内自然复用)+ 借 Mooncake 时序(= §6.5 法) | ✅ 真(Mooncake) | 复用非复刻 Mooncake、靠对话本身 |
-→ **并发只有真实生产 trace 才有,自录给不了 → 主选「Mooncake-hash 缝真实块」。**(§6.5 的"别复刻 hash"对应第三档;本次为追求复用复刻 + 并发,新增第二档,两者按需选。)
+→ **并发只有真实生产 trace 才有,自录给不了 → 主选「Mooncake-hash 缝真实块」(第二档),代码只实现它**;第三档(会话累积 / §6.5)作文档备选、不落代码。
 
-**已落地实现:**
-- `bench/stitch.py`:**模式 A** `expand_conversation`(对话累积→custom jsonl);**模式 B** `fill_mooncake_trace`(hash→真实块,产带 `timestamp` 的 trace)。
+**已落地实现(只主线 B,A 已砍):**
+- `bench/stitch.py`(模式 B):`fill_mooncake_trace`(hash→真实块)+ `build_block_pool`/`extract_texts`
+  + main(Mooncake loader + GLM tokenizer + 写带 `timestamp` 的 trace)。
 - `bench/replay.py`:按真实 `timestamp` 异步回放 + 采 TTFT/TPOT + `goodput_per_gpu_byte_second`。
-- **回放两条路(同一份缝合数据,只是谁来发):**
-  - **A 路径**:`vllm bench serve --dataset-name custom`,**只用 `prompt`、忽略 `timestamp`**,到达用 `--request-rate`/`--burstiness` **合成** → 零自写,适合 **MTP**(不在乎到达)。
-  - **B 路径**:`bench/replay.py` 读 `timestamp_ms` **按真实时刻发** → 复现真实间隔 + 并发,适合 **KV**(必须真实并发/间隔)。
-- **诚实账单**:走 B 全真 = 放弃 vLLM bench serve、自己重造「发请求/采集/goodput」最小子集(`timed_trace` 只认 hash、`custom` 没 timestamp,都吃不了"真实 prompt + 真实到达")。
+- **为什么砍 A**:A 路径(对话累积 + `--request-rate` 合成到达)**没真实多用户并发**,是退化版;它仅有
+  的两个用途都有更好替代——要真实并发 → B;纯 MTP benchmark(不在乎到达)→ 直接 `vllm bench serve
+  --dataset-name hf/sharegpt`(vLLM 原生)。**B 通吃 KV+MTP,A 两头不靠 → 砍。**
+- **诚实账单**:走 B 全真 = 放弃 vLLM bench serve、自己重造「发请求/采集/goodput」最小子集
+  (`timed_trace` 只认 hash、`custom` 没 timestamp,都吃不了"真实 prompt + 真实到达")。
 
 **KV 评测为何必须真实 trace(不能只 `--request-rate`)**:① 请求**顺序**直接决定命中(`--request-rate` 全局泊松、不分会话、打散复用);② 我们的**时间感知策略**(`P(reuse|Δt)`/TTL/卸载)吃**绝对间隔**;③ 真实**并发**决定瞬时 KV 压力。三者 Mooncake `timed_trace`(或 B 路径回放)都真。
 
