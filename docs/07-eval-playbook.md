@@ -146,38 +146,35 @@ KV(时序+复用+并发)和 MTP(真实内容)**,且不用自录。
 > **分工**:纯 KV 评测用 Mooncake + dummy 更省(无需真模型);**本缝合法的价值在 KV+MTP 端到端**
 > (需要真实内容 + 真模型现场生成)。
 
-## 6.6 数据源确认 + 缝合实现(2026-06,已落地 `bench/stitch.py` + `bench/replay.py`)
+## 6.6 评测负载:会话重建缝合
 
-**数据源(已核实真实 HF id / vLLM 支持):**
-| 角色 | 用什么 | vLLM 怎么吃 |
-|---|---|---|
-| 时序/并发/复用**骨架** | **Mooncake trace**(`timestamp/input_length/output_length/hash_ids`,**无 session id**) | `--dataset-name timed_trace`(真正的 trace 引擎) |
-| 真实内容**血肉** | **`lightseekorg/kimi-mtp-dataset`**(47.6万行多轮 ShareGPT,Apache-2.0;Kimi-K2.5 生成,正对口 MTP) | 经缝合 → custom / 自写回放 |
-| 纯 MTP benchmark | AIME=`AI-MO/aimo-validation-aime`(vLLM `AIMODataset` 直吃);GPQA=`Idavidrein/gpqa`(gated)/ LCB=`livecodebench/code_generation_lite` → **转 custom jsonl**;SWE-bench=`princeton-nlp/SWE-bench_Verified` → **agent 镜像** | `hf` / `custom` |
+将 Mooncake trace 的会话与时序结构,与真实多轮对话的内容结合,得到同时具备真实复用、真实并发与真实内容的负载,用于在同一份负载上评测 KV 管理与 MTP。实现见 `bench/`。
 
-**两个确认死扣:**
-- vLLM `--dataset-name` 15 个里,**真正带时序的"trace"只有 `timed_trace` 与 `burstgpt`**;其余是合成(random/sonnet/prefix_repetition)或无时序数据集。vLLM 按 `SUPPORTED_DATASET_PATHS` **白名单**分派 HF 数据集,**不是任意 HF 都吃**。
-- **Mooncake 无 session/user id(隐私)** —— 多轮/会话**全藏在 `hash_ids` 前缀包含**里(相同 hash = 该块及之前 token 全同 = 可复用)。
+### 数据源
+| 角色 | 数据集 |
+|---|---|
+| 会话 / 时序 / 并发骨架 | Mooncake trace —— `valeriol29/mooncake-traces`(字段 `timestamp` / `input_length` / `output_length` / `hash_ids`;无 session id) |
+| 内容 | `lightseekorg/kimi-mtp-dataset`(47.6 万行多轮 ShareGPT,Apache-2.0) |
+| 纯 MTP benchmark(可选) | AIME `AI-MO/aimo-validation-aime`(vLLM `AIMODataset` 直读);GPQA `Idavidrein/gpqa`(gated);LiveCodeBench `livecodebench/code_generation_lite`;SWE-bench `princeton-nlp/SWE-bench_Verified` |
 
-**"一套全真"(真实内容 + 真实复用 + 真实多用户并发)只有三档:**
-| 档 | 做法 | 多用户并发 | 让步 |
-|---|---|---|---|
-| 自录 agent trace | 真 agent scaffold 跑真任务录请求 | ❌ **单会话串行,造不出并发** | 重;并发缺失=致命 → 出局 |
-| **Mooncake-hash 缝真实块(主选)** | 每个 `hash_id` 绑定固定真实文本块(相同 hash→同块)→ 复用 100% 复刻 Mooncake | ✅ 真(Mooncake) | 块边界偶不连贯;要自写回放器 |
-| 会话累积 + Mooncake 节奏 | 真实多轮对话累积(会话内自然复用)+ 借 Mooncake 时序(= §6.5 法) | ✅ 真(Mooncake) | 复用非复刻 Mooncake、靠对话本身 |
-→ **并发只有真实生产 trace 才有,自录给不了 → 主选「Mooncake-hash 缝真实块」(第二档),代码只实现它**;第三档(会话累积 / §6.5)作文档备选、不落代码。
+### 前提
+- vLLM `--dataset-name` 中仅 `timed_trace` 与 `burstgpt` 自带真实时序;HF 数据集按 `SUPPORTED_DATASET_PATHS` 白名单分派,并非任意 HF 数据集均可直接使用。
+- Mooncake 无 session/user id;会话关系由 `hash_ids` 的前缀包含隐式编码(相同 hash 表示该块及其前序 token 完全相同,可复用)。
 
-**已落地实现(只主线 B,A 已砍):**
-- `bench/stitch.py`(模式 B):`fill_mooncake_trace`(hash→真实块)+ `build_block_pool`/`extract_texts`
-  + main(Mooncake loader + GLM tokenizer + 写带 `timestamp` 的 trace)。
-- `bench/replay.py`:按真实 `timestamp` 异步回放 + 采 TTFT/TPOT + `goodput_per_gpu_byte_second`。
-- **为什么砍 A**:A 路径(对话累积 + `--request-rate` 合成到达)**没真实多用户并发**,是退化版;它仅有
-  的两个用途都有更好替代——要真实并发 → B;纯 MTP benchmark(不在乎到达)→ 直接 `vllm bench serve
-  --dataset-name hf/sharegpt`(vLLM 原生)。**B 通吃 KV+MTP,A 两头不靠 → 砍。**
-- **诚实账单**:走 B 全真 = 放弃 vLLM bench serve、自己重造「发请求/采集/goodput」最小子集
-  (`timed_trace` 只认 hash、`custom` 没 timestamp,都吃不了"真实 prompt + 真实到达")。
+### 方法
+1. `reconstruct_sessions`:按 `hash_ids` 的最长前缀延续链重建会话——请求 B 是请求 A 的后续轮,当且仅当 A 的完整 `hash_ids` 是 B 的真前缀。仅共享开头(如系统提示)不视为同一会话,以避免误并。
+2. `fill_sessions`:打乱对话池,为每个会话(M 轮)选取一条轮数不少于 M 的对话逐轮填入;每轮 prompt 为前 k 轮的累积,timestamp 取自该轮对应的 Mooncake 记录。长度按轮数粗对齐,不对齐 `input_length`;期望输出长度由 tokenizer 估算。
 
-**KV 评测为何必须真实 trace(不能只 `--request-rate`)**:① 请求**顺序**直接决定命中(`--request-rate` 全局泊松、不分会话、打散复用);② 我们的**时间感知策略**(`P(reuse|Δt)`/TTL/卸载)吃**绝对间隔**;③ 真实**并发**决定瞬时 KV 压力。三者 Mooncake `timed_trace`(或 B 路径回放)都真。
+不复刻 Mooncake 的 512 块 hash 复用:该粒度取决于 Kimi 生产环境的块大小、缓存与内容,与本项目的 vLLM(16 块)/ GLM 配置不一致。复用关系由内容决定、与缓存配置无关——真实多轮对话本身即产生会话内累积复用与跨会话系统提示共享,并具备价值分层(系统提示、会话历史、一次性内容),即价值感知策略的评测对象。内容连贯亦使 MTP 接受率不受块边界影响。
+
+### 实现(`bench/`)
+- `stitch.py`:`reconstruct_sessions` / `fill_sessions` / `to_turns`。
+- `build_dataset.py`:打包为 parquet 与 dataset card,供 `load_dataset` 直接复用。
+- `replay.py`:按 `timestamp` 异步回放,采集 TTFT/TPOT,计算每 GPU 字节秒 goodput。
+- 回放自建的原因:vLLM `timed_trace` 仅接受 hash、`custom` 不含 timestamp,二者均无法同时承载真实 prompt 与真实到达时刻。
+
+### KV 评测须使用真实 trace
+请求顺序决定缓存命中;时间感知策略(`P(reuse|Δt)`、TTL、卸载)依赖绝对时间间隔;真实并发决定瞬时 KV 压力。`--request-rate` 为全局泊松到达且不区分会话,无法满足上述任一条件。
 
 ## 7. 开跑前 checklist(gate)
 - [ ] **gate-zero(回放保真)**:Mooncake 经**原生 vLLM APC** 回放,实测 token 级命中率 ≈ 离线从
