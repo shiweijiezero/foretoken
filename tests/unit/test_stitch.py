@@ -1,57 +1,53 @@
-import pytest
-
-from foretoken.bench.stitch import build_block_pool, extract_texts, fill_mooncake_trace
+from foretoken.bench.stitch import fill_sessions, reconstruct_sessions, to_turns
 
 
-def test_extract_texts_skips_nonstring():
-    records = [
-        {"conversations": [{"from": "human", "value": "hi"}, {"from": "gpt", "value": "yo"}]},
-        {"conversations": [{"from": "human", "value": [{"image": "x"}]}, {"from": "gpt", "value": "desc"}]},
+def test_to_turns_pairs_and_system():
+    conv = [
+        {"from": "system", "value": "you are helpful"},
+        {"from": "human", "value": "h1"}, {"from": "gpt", "value": "g1"},
+        {"from": "human", "value": "h2"}, {"from": "gpt", "value": "g2"},
     ]
-    # 多模态的 list value 跳过,同记录的纯文本仍保留
-    assert list(extract_texts(records)) == ["hi", "yo", "desc"]
+    system, turns = to_turns(conv)
+    assert system == "you are helpful"
+    assert turns == [("h1", "g1"), ("h2", "g2")]
 
 
-def test_build_block_pool_chunks():
-    # 2 段 × 3 token = 6 token,block_size 2 → 3 块
-    pool = build_block_pool(["a", "b"], encode=lambda s: [1, 2, 3], block_size=2)
-    assert [len(b) for b in pool] == [2, 2, 2]
+def test_to_turns_multimodal_skipped():
+    conv = [{"from": "human", "value": [{"img": "x"}]}, {"from": "gpt", "value": "d"}]
+    assert to_turns(conv) == (None, [])
 
 
-def test_fill_mooncake_trace_reuse_alignment():
-    pool = build_block_pool(["unused"], encode=lambda s: list(range(2000)), block_size=512)
-    assert len(pool) >= 3
-    decode = lambda ids: ",".join(map(str, ids))  # noqa: E731
+def test_reconstruct_sessions_not_fooled_by_shared_prefix():
     rows = [
-        {"timestamp": 0, "input_length": 1024, "output_length": 10, "hash_ids": [1, 2]},
-        {"timestamp": 5000, "input_length": 1536, "output_length": 7, "hash_ids": [1, 2, 3]},
+        {"timestamp": 0, "hash_ids": [1, 2]},
+        {"timestamp": 5, "hash_ids": [1, 2, 3]},   # 续 r0(真前缀延续)
+        {"timestamp": 3, "hash_ids": [1, 9]},      # 另一会话:共享 hash[0]=1 但分叉
     ]
-    out = list(fill_mooncake_trace(rows, pool, decode))
-    # ★ 相同 hash 前缀 [1,2] → 第二行严格以第一行为前缀(复用 100% 对齐 Mooncake)
-    assert out[1]["prompt"].startswith(out[0]["prompt"])
-    p0, p1 = out[0]["prompt_token_ids"], out[1]["prompt_token_ids"]
-    assert p1[: len(p0)] == p0  # token 级前缀(回放优先用 token_ids,边界精确)
-    # 真实时序 + 输出长度从 Mooncake 透传
+    sessions = reconstruct_sessions(rows)
+    assert len(sessions) == 2
+    # r0,r1 同会话;r2 单独(只共享开头不算延续)
+    assert sorted(len(s) for s in sessions) == [1, 2]
+
+
+def test_fill_sessions_accumulates_and_uses_timestamps():
+    sessions = [[{"timestamp": 0}, {"timestamp": 5000}]]  # 1 会话,2 轮
+    conversations = [
+        {"conversations": [
+            {"from": "human", "value": "h1"}, {"from": "gpt", "value": "g1"},
+            {"from": "human", "value": "h2"}, {"from": "gpt", "value": "g2"},
+        ]}
+    ]
+    out = list(fill_sessions(sessions, conversations, len_fn=len, seed=0))
+    assert len(out) == 2
+    assert out[1]["prompt"].startswith(out[0]["prompt"])  # ★ 会话内累积复用
     assert out[0]["timestamp_ms"] == 0
     assert out[1]["timestamp_ms"] == 5000
-    assert out[1]["expected_output_len"] == 7
+    assert out[0]["expected_output_len"] == len("g1")
 
 
-def test_fill_empty_pool_raises():
-    with pytest.raises(ValueError):
-        list(fill_mooncake_trace([{"timestamp": 0, "input_length": 1, "hash_ids": [1]}], [], lambda x: ""))
-
-
-def test_fill_pool_too_small_raises():
-    # 块池 2 块,但 trace 有 3 个唯一 hash → 报错(绝不 % 循环造假复用)
-    pool = build_block_pool(["x"], encode=lambda s: [1, 2], block_size=1)
-    assert len(pool) == 2
-    rows = [{"timestamp": 0, "input_length": 3, "output_length": 1, "hash_ids": [10, 11, 12]}]
-    with pytest.raises(ValueError):
-        list(fill_mooncake_trace(rows, pool, lambda ids: ""))
-
-
-def test_build_block_pool_min_blocks_stops_early():
-    # min_blocks 够了就停(流式友好,保证块池 ≥ 唯一 hash 数)
-    pool = build_block_pool(["a", "b", "c"], encode=lambda s: [1, 1], block_size=1, min_blocks=2)
-    assert len(pool) == 2
+def test_fill_sessions_skips_too_short_conversation():
+    sessions = [[{"timestamp": 0}, {"timestamp": 1}, {"timestamp": 2}]]  # 需 3 轮
+    conversations = [
+        {"conversations": [{"from": "human", "value": "a"}, {"from": "gpt", "value": "b"}]},  # 1 轮,不够
+    ]
+    assert list(fill_sessions(sessions, conversations, len_fn=lambda s: 1)) == []
