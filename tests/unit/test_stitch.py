@@ -27,8 +27,10 @@ def test_fill_mooncake_trace_reuse_alignment():
         {"timestamp": 5000, "input_length": 1536, "output_length": 7, "hash_ids": [1, 2, 3]},
     ]
     out = list(fill_mooncake_trace(rows, pool, decode))
-    # ★ 相同 hash 前缀 [1,2] → 第二行 prompt 严格以第一行为前缀(复用 100% 对齐 Mooncake)
+    # ★ 相同 hash 前缀 [1,2] → 第二行严格以第一行为前缀(复用 100% 对齐 Mooncake)
     assert out[1]["prompt"].startswith(out[0]["prompt"])
+    p0, p1 = out[0]["prompt_token_ids"], out[1]["prompt_token_ids"]
+    assert p1[: len(p0)] == p0  # token 级前缀(回放优先用 token_ids,边界精确)
     # 真实时序 + 输出长度从 Mooncake 透传
     assert out[0]["timestamp_ms"] == 0
     assert out[1]["timestamp_ms"] == 5000
