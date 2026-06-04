@@ -1,4 +1,4 @@
-from foretoken.eval.goodput import (
+from foretoken.bench.goodput import (
     SLO,
     RequestRecord,
     attains_slo,

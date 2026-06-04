@@ -7,7 +7,7 @@ set -euo pipefail
 
 PORT="${PORT:-8000}"
 MODEL="${MODEL:-GLM-4.5-Air}"
-DATASET="${DATASET:-custom}"          # custom / hf;Mooncake 缝合见 src/foretoken/eval/replay.py
+DATASET="${DATASET:-custom}"          # custom / hf;Mooncake 缝合见 src/foretoken/bench/workload.py
 REQUEST_RATE="${REQUEST_RATE:-inf}"
 
 # vllm bench serve 原生支持 --goodput(docs/10):ttft / tpot 阈值(ms);

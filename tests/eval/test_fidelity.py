@@ -1,6 +1,6 @@
 import pytest
 
-from foretoken.eval.gate_zero import gate_zero_ok, offline_prefix_hit_rate
+from foretoken.bench.fidelity import gate_zero_ok, offline_prefix_hit_rate
 
 pytestmark = pytest.mark.eval
 
