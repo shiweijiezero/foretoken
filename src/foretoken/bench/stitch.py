@@ -9,6 +9,13 @@
 - **B 路径**(将来):同一份数据 + 自写回放器读 `timestamp_ms` 复现真实到达。
 
 纯数据处理,不依赖 GPU / vLLM,本地可跑可测。
+
+两种模式:
+- **模式 A(对话累积,expand_conversation)**:真实多轮对话 → 累积 prompt 的 custom jsonl;
+  配 `vllm bench serve --dataset-name custom` + `--request-rate`(纯 MTP 内容,无 Mooncake、无并发)。
+- **模式 B(Mooncake 填充,fill_mooncake_trace)**:给 Mooncake 真实并发骨架的每个 `hash_id`
+  绑定一段固定真实文本块(**相同 hash → 同一真实块**)→ 复用结构 100% 对齐 Mooncake + 内容真实,
+  产出带 `timestamp` 的 trace;配自写回放器 = **含多用户并发的"一套全真"**。
 """
 from __future__ import annotations
 
@@ -95,6 +102,69 @@ def write_jsonl(requests: Iterable[StitchedRequest], path: str) -> int:
             f.write(json.dumps(asdict(r), ensure_ascii=False) + "\n")
             n += 1
     return n
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 模式 B:Mooncake 真实并发骨架 + 真实文本块填充(含多用户并发的"一套全真")
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def extract_texts(records: Iterable[dict]) -> Iterator[str]:
+    """从对话记录提取真实文本片段(human/gpt 的 value),作为文本块池原料。"""
+    for rec in records:
+        for msg in rec.get("conversations", []):
+            v = msg.get("value")
+            if isinstance(v, str) and v:
+                yield v
+
+
+def build_block_pool(
+    texts: Iterable[str],
+    encode: Callable[[str], list[int]],
+    block_size: int = 512,
+) -> list[list[int]]:
+    """把真实文本拼接、token 化、切成 block_size-token 的真实 token 块池(供 hash 映射)。"""
+    ids: list[int] = []
+    for t in texts:
+        ids.extend(encode(t))
+    return [ids[i : i + block_size] for i in range(0, len(ids), block_size) if ids[i : i + block_size]]
+
+
+def fill_mooncake_trace(
+    trace_rows: Iterable[dict],
+    block_pool: list[list[int]],
+    decode: Callable[[list[int]], str],
+    *,
+    label_hash_ids: str = "hash_ids",
+    label_timestamp: str = "timestamp",
+    label_input_length: str = "input_length",
+    label_output_length: str = "output_length",
+) -> Iterator[dict]:
+    """给 Mooncake trace 的每个 hash_id 绑定一段固定真实文本块 → 产出带真实内容 + 真实时序的请求。
+
+    **相同 hash_id 永远映到同一真实块** → Mooncake 的块级前缀复用结构 100% 映射成真实文本前缀
+    复用(相同 hash 前缀 ⇒ 相同真实 prompt 前缀)。并发 / 到达 / 复用全保留(Mooncake),内容真实
+    (块池)。截到 input_length。配回放器按 timestamp 回放 = 含多用户并发的"一套全真"。
+    """
+    if not block_pool:
+        raise ValueError("block_pool 为空;先用 build_block_pool 从真实文本造块池")
+    hash_to_block: dict[int, int] = {}
+    nxt = 0
+    for row in trace_rows:
+        token_ids: list[int] = []
+        for h in row.get(label_hash_ids, []):
+            if h not in hash_to_block:
+                hash_to_block[h] = nxt % len(block_pool)  # 顺序取池 → 同请求的块大体连续、较连贯
+                nxt += 1
+            token_ids.extend(block_pool[hash_to_block[h]])
+        input_length = int(row.get(label_input_length, len(token_ids)))
+        token_ids = token_ids[:input_length]
+        yield {
+            "timestamp_ms": int(row[label_timestamp]),
+            "prompt": decode(token_ids),
+            "expected_output_len": int(row.get(label_output_length, 0)),
+            "hash_ids": list(row.get(label_hash_ids, [])),
+        }
 
 
 def _read_kimi(source: str, limit: int | None = None) -> Iterator[dict]:
