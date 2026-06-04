@@ -69,7 +69,8 @@ def fill_mooncake_trace(
         token_ids = token_ids[:input_length]
         yield {
             "timestamp_ms": int(row[label_timestamp]),
-            "prompt": decode(token_ids),
+            "prompt_token_ids": token_ids,        # ★ 复用边界精确(回放优先用它;decode→encode 会漂移)
+            "prompt": decode(token_ids),          # 文本备查 / 通用 endpoint
             "expected_output_len": int(row.get(label_output_length, 0)),
             "hash_ids": list(row.get(label_hash_ids, [])),
         }

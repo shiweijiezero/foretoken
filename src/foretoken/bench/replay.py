@@ -107,7 +107,7 @@ async def replay(
                     client,
                     base_url,
                     model,
-                    req["prompt"],
+                    req.get("prompt_token_ids") or req["prompt"],  # 优先 token_ids(复用边界精确)
                     int(req.get("expected_output_len", 128)),
                     str(req.get("session_or_id", req.get("hash_ids", ""))),
                 )
