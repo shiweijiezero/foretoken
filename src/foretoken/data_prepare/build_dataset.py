@@ -61,6 +61,8 @@ if __name__ == "__main__":  # pragma: no cover
 
     ap = argparse.ArgumentParser(description="缝合(会话重建 + 真实对话)→ 可复现 HF 数据集")
     ap.add_argument("--mooncake", default="valeriol29/mooncake-traces")
+    ap.add_argument("--mooncake-config", default="conversation",
+                    help="Mooncake config:conversation/mooncake/synthetic/toolagent")
     ap.add_argument("--content", default="lightseekorg/kimi-mtp-dataset")
     ap.add_argument("--out-dir", default="data/foretoken-trace")
     ap.add_argument("--name", default="foretoken-stitched-trace")
@@ -69,7 +71,9 @@ if __name__ == "__main__":  # pragma: no cover
     args = ap.parse_args()
 
     # 1) 由 Mooncake 重建会话与时序结构(同一会话的轮次顺序、每轮 timestamp、并发)
-    sessions = reconstruct_sessions(_stream_hf(args.mooncake, "train", args.limit))
+    sessions = reconstruct_sessions(
+        _stream_hf(args.mooncake, "train", args.limit, config=args.mooncake_config)
+    )
     print(f"reconstructed sessions = {len(sessions)}")
     # 2) 读取足量真实对话(滤除过短后仍充足),打乱后按轮数填入,得到累积 prompt 与 Mooncake timestamp
     n_conv = max(10000, len(sessions) * 5)
