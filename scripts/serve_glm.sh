@@ -1,31 +1,41 @@
 #!/usr/bin/env bash
-# 起 GLM-4.5-Air OpenAI 兼容服务(P0 真实推理基线)。跑在服务器 A100(8x80GB)。
+# 启动 GLM-4.5-Air 的 OpenAI 兼容服务(P0 真实推理基线),运行于 A100 8x80GB。
 #
-# ⚠️ A100 = sm80,无原生 FP8(docs/09):GLM-4.5-Air 必须 BF16 权重,别拉 -FP8 变体
-#    (Ampere 上 MoE-FP8 会报错)。
-# ⚠️ 路径一律用环境变量,勿把内网路径写进本脚本(infra/servers.md 才是私有笔记)。
+# 注意:
+#   - A100(sm80)无原生 FP8(docs/09),GLM-4.5-Air 须使用 BF16 权重;FP8 变体在 Ampere 上的
+#     MoE 路径会报错。
+#   - 路径一律通过环境变量传入,勿将内网路径写入本脚本(私有笔记见 infra/servers.md)。
+#
+# 用法:
+#   MODEL_PATH=<weights dir> HF_HOME=<cache dir> [TP=8] [PORT=8000] [ENABLE_MTP=1] \
+#     bash scripts/serve_glm.sh
+#
+# 环境变量:
+#   MODEL_PATH   GLM-4.5-Air 权重目录(必填)
+#   HF_HOME      模型缓存目录(必填)
+#   TP           tensor parallel size(默认 8)
+#   PORT         服务端口(默认 8000)
+#   ENABLE_MTP   置 1 启用内嵌 MTP(num_speculative_tokens=1)
 set -euo pipefail
 
-# 必填(在 shell export,或写进未提交的 .env.local):
-#   MODEL_PATH  GLM-4.5-Air 权重目录(绝对路径,见本地 infra 笔记)
-#   HF_HOME     指向放权重的 cache 盘
-: "${MODEL_PATH:?need MODEL_PATH (GLM-4.5-Air weights dir)}"
-: "${HF_HOME:?need HF_HOME (cache dir)}"
+: "${MODEL_PATH:?MODEL_PATH 必填:GLM-4.5-Air 权重目录}"
+: "${HF_HOME:?HF_HOME 必填:模型缓存目录}"
 export HF_HOME
 
-# 锁空卡(用前 nvidia-smi 看占用)。
+# 选择 GPU;运行前用 nvidia-smi 确认占用。
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 
-TP="${TP:-8}"        # A100 是 PCIe(非 NVLink):大 TP all-reduce 较贵,可试 TP=4 + DP(docs/09)
+# A100 为 PCIe 互联(非 NVLink),大 TP 的 all-reduce 开销较高,可尝试 TP=4 + DP(docs/09)。
+TP="${TP:-8}"
 PORT="${PORT:-8000}"
 
-# MTP(C1):GLM 自带 MTP 头;基线先关,ENABLE_MTP=1 打开(num_speculative_tokens=1 常最优)。
+# C1 内嵌 MTP:基线默认关闭,置 ENABLE_MTP=1 启用(num_speculative_tokens=1 通常最优)。
 MTP_ARGS=()
 if [[ "${ENABLE_MTP:-0}" == "1" ]]; then
   MTP_ARGS=(--speculative-config '{"method":"mtp","num_speculative_tokens":1}')
 fi
 
-# 具体 flag 以届时 `vllm serve --help` 为准。
+# 具体参数以 `vllm serve --help` 为准。
 vllm serve "${MODEL_PATH}" \
   --tensor-parallel-size "${TP}" \
   --dtype bfloat16 \

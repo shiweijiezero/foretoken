@@ -1,16 +1,16 @@
-"""缝合器:用 Mooncake hash 重建会话骨架,塞真实多轮对话(连贯内容 + 累积复用,配置无关)。
+"""会话重建缝合:由 Mooncake hash 重建会话与时序结构,填入真实多轮对话内容。
 
-**为什么不复刻 hash 块复用**:Mooncake 的 512 块 hash 是 **Kimi 生产配置(块大小/缓存/内容)特定**
-的;我们 vLLM 16 块、GLM、缓存不同,硬对齐它的 512 量化没意义(docs/07 §6.6)。复用本质是内容决定
-的(token 级、配置无关)—— 真实多轮对话自己就有真实复用(会话内累积 + 跨会话系统提示)+ 价值区分
-(系统提示高 P(reuse)、会话内容中、一次性低)。所以:
+不复刻 Mooncake 的 512 块 hash 复用:该粒度取决于 Kimi 生产环境的块大小、缓存与内容,与本项目的
+vLLM(16 块)/ GLM 配置不一致(docs/07 §6.6)。复用关系由内容决定、与缓存配置无关——真实多轮对话
+本身即产生会话内累积复用与跨会话系统提示共享,并具备价值分层(系统提示复用概率高、会话历史居中、
+一次性内容低),即价值感知策略的评测对象。
 
-    Mooncake hash ──重建──→ 会话(谁是同一会话第几轮 + 每轮 timestamp + 并发)
-    真实多轮对话 ──塞──→ 每轮 prompt = 累积前 k 轮(连贯)
+流程:由 Mooncake hash 重建会话(同一会话的轮次顺序、每轮 timestamp、并发);为每个会话逐轮填入
+真实多轮对话,每轮 prompt 为前 k 轮的累积。产出带 `timestamp_ms` 的 trace,供 `bench/replay.py`
+回放,在同一份负载上覆盖 KV(会话内累积复用)与 MTP(连贯内容)。
 
-产出带 `timestamp_ms` 的 trace → 配 `bench/replay.py` 回放 = KV(对话累积复用)+ MTP(连贯内容)一套全真。
-
-纯数据处理,tokenizer / len_fn 注入;本地可跑可测(真跑 main 需 datasets + GLM tokenizer)。
+纯数据处理,len_fn 可由调用方注入(build_dataset 注入 tiktoken;默认仅为无依赖回退);本地可运行
+可测试(运行 main 需 datasets 与 tiktoken)。
 """
 from __future__ import annotations
 
@@ -19,7 +19,10 @@ from collections.abc import Callable, Iterable, Iterator
 
 
 def _approx_token_len(text: str) -> int:
-    """粗估 token 数(~4 char/token);落地用真 tokenizer 更准(main 里注入)。"""
+    """无依赖回退:粗估 token 数(约 4 char/token)。
+
+    仅在未注入 len_fn 时使用(本地测试)。落地由 build_dataset 注入 tiktoken,准确且多语言。
+    """
     return max(1, len(text) // 4)
 
 
@@ -48,10 +51,10 @@ def reconstruct_sessions(
     label_hash_ids: str = "hash_ids",
     label_timestamp: str = "timestamp",
 ) -> list[list[dict]]:
-    """从 Mooncake hash 前缀延续链重建会话(每个会话 = 按时间排序的多轮请求)。
+    """从 Mooncake hash 前缀延续链重建会话(每个会话为按时间排序的多轮请求)。
 
-    请求 B 是请求 A 的下一轮 ⟺ A.hash_ids 是 B.hash_ids 的**真前缀**(B 比 A 多尾部块)。
-    跨会话共享系统提示**不会误链**:要求"某请求的完整 hash" == B 的前缀,只共享开头不算。
+    请求 B 是请求 A 的下一轮,当且仅当 A.hash_ids 是 B.hash_ids 的真前缀(B 比 A 多尾部块)。
+    跨会话共享系统提示不会误并:要求某请求的完整 hash 等于 B 的前缀,仅共享开头不视为同一会话。
     """
     rows = sorted(trace_rows, key=lambda r: r[label_timestamp])
     sessions: list[list[dict]] = []
@@ -81,11 +84,11 @@ def fill_sessions(
     sep: str = "\n\n",
     label_timestamp: str = "timestamp",
 ) -> Iterator[dict]:
-    """把真实多轮对话塞进重建的会话槽位。
+    """把真实多轮对话填入重建的会话槽位。
 
-    对话池先 **shuffle**;每个会话(M 轮)取一个**轮数 ≥ M** 的对话,塞前 M 轮 —— 每轮 prompt =
-    累积前 k 轮(连贯,会话内复用自然产生),timestamp = 该轮 Mooncake 时间戳。**大致按轮数对齐,
-    不严格对齐长度**(配置无关,本就不该对齐 Mooncake 的 input_length)。
+    对话池先打乱;每个会话(M 轮)取一条轮数不少于 M 的对话,填入前 M 轮——每轮 prompt 为前 k 轮的
+    累积(会话内复用由此自然产生),timestamp 取自该轮的 Mooncake 记录。按轮数粗对齐,不严格对齐
+    长度(配置无关,不应对齐 Mooncake 的 input_length)。
     """
     pool: list[tuple[str | None, list[tuple[str, str]]]] = []
     for rec in conversations:
