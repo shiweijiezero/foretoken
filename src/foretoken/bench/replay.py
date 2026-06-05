@@ -1,10 +1,11 @@
-"""回放器:按真实 timestamp 异步回放缝合 trace,采 TTFT/TPOT,算 goodput。
+"""回放器:按真实 timestamp 异步回放缝合 trace,采集 TTFT/TPOT,计算 goodput。
 
-⚠️ 代价说明:vLLM 原生 `timed_trace` 只认 hash、`custom` 没 timestamp —— **都吃不了"真实 prompt
-+ 真实到达"**。所以"含多用户并发的一套全真"必须自写回放,这等于把 vLLM bench serve 的
-发请求 / 采集 / goodput **最小重造**回来。真发请求需 OpenAI 兼容 endpoint(vllm serve)。
+自建回放的原因:vLLM 原生 `timed_trace` 仅接受 hash、`custom` 不含 timestamp,二者均无法同时承载
+真实 prompt 与真实到达时刻。因此在同一份含多用户并发的负载上回放,需自行实现发请求 / 采集 /
+goodput(对应 vLLM bench serve 的相应部分)。发请求需 OpenAI 兼容 endpoint(vllm serve)。
 
-纯函数(relative_delays_ms / goodput_per_gpu_byte_second)本地可测;httpx 延迟 import,不装也能测。
+纯函数(relative_delays_ms / goodput_per_gpu_byte_second)本地可测试;httpx 延迟导入,未安装亦可
+测试纯函数部分。
 """
 from __future__ import annotations
 
@@ -78,7 +79,7 @@ async def _send_one(client, base_url, model, prompt, max_tokens, req_id) -> Repl
         ttft = (first - start) * 1000.0
         tpot = ((time.perf_counter() - first) * 1000.0 / (n - 1)) if n > 1 else 0.0
         return ReplayResult(req_id, ttft, tpot, n, ok=True)
-    except Exception:  # noqa: BLE001  回放器要稳:单条失败不拖垮整轮
+    except Exception:  # noqa: BLE001  单条请求失败不应中断整轮回放
         return ReplayResult(req_id, 0.0, 0.0, 0, ok=False)
 
 

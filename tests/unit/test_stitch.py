@@ -39,7 +39,7 @@ def test_fill_sessions_accumulates_and_uses_timestamps():
     ]
     out = list(fill_sessions(sessions, conversations, len_fn=len, seed=0))
     assert len(out) == 2
-    assert out[1]["prompt"].startswith(out[0]["prompt"])  # ★ 会话内累积复用
+    assert out[1]["prompt"].startswith(out[0]["prompt"])  # 会话内累积复用
     assert out[0]["timestamp_ms"] == 0
     assert out[1]["timestamp_ms"] == 5000
     assert out[0]["expected_output_len"] == len("g1")

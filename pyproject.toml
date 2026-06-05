@@ -20,7 +20,7 @@ server = [
     "vllm>=0.22",
     "httpx>=0.27",        # 回放器发请求用(bench/replay.py)
     "datasets>=2.20",     # 读 Mooncake trace / kimi 内容(data_prepare/stitch.py)
-    "transformers>=4.44", # GLM tokenizer 估算 token(data_prepare/build_dataset.py main)
+    "tiktoken>=0.7",      # 估算输出长度(data_prepare/build_dataset.py main)
 ]
 dev = [
     "pytest>=8",
