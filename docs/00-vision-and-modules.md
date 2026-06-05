@@ -107,7 +107,8 @@
 ## 代码骨架命名约定(`src/foretoken/`,2026-06)
 
 - **包 = `foretoken`**(命名空间)。不预先建立空占位:某模块 P1/P2 真正实现时才建立,命名照此约定。
-- **`bench/`**(P1)— 项目独有、vLLM 未提供的评测指标:每 GPU 字节秒 goodput / 门槛零(回放保真)/ PFOO·Belady 最优上界 / 4 配置拆贡献。P0 评测直接用 `vllm bench serve`(`scripts/run_baseline.sh`,带 `--goodput` / `--burstiness` / `timed_trace`),不自建。
+- **`data_prepare/`**(P1)— 评测负载的数据准备:Mooncake 重建会话骨架 + 真实多轮对话缝合(`stitch.py`)→ 打包可复现 HF 数据集(`build_dataset.py`,入口 `scripts/build_dataset.sh`)。与 `bench/` 分开:这里造负载,`bench/` 用负载。
+- **`bench/`**(P1)— 评测台:`replay.py` 按真实 timestamp 回放 `data_prepare/` 的负载、采 TTFT/TPOT、算每 GPU 字节秒 goodput;P1 再补 vLLM 未提供的门槛零(回放保真)/ PFOO·Belady 最优上界 / 4 配置拆贡献。P0 评测直接用 `vllm bench serve`(`scripts/run_baseline.sh`,带 `--goodput` / `--burstiness` / `timed_trace`),不自建。
 - **`plugins/`**(P1 起)— 优化插件 wrapper,子模块对齐 vLLM 命名以降低认知负担:
   - `kv_offload/`(B3,对 vLLM `OffloadingManager`/`Spec`,`v1/kv_offload/`)
   - `cache_policy/`(对 vLLM `CachePolicy`,`v1/kv_offload/cpu/policies/`;含 value / `P(reuse)`)

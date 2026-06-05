@@ -58,7 +58,7 @@ def build_hf_dataset(
 if __name__ == "__main__":  # pragma: no cover
     import argparse
 
-    from foretoken.bench.stitch import _stream_hf, fill_sessions, reconstruct_sessions
+    from foretoken.data_prepare.stitch import _stream_hf, fill_sessions, reconstruct_sessions
 
     ap = argparse.ArgumentParser(description="缝合(会话重建 + 真实对话)→ 可复现 HF 数据集")
     ap.add_argument("--mooncake", default="valeriol29/mooncake-traces")
