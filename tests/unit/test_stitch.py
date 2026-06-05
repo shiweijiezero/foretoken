@@ -37,12 +37,12 @@ def test_fill_sessions_accumulates_and_uses_timestamps():
             {"from": "human", "value": "h2"}, {"from": "gpt", "value": "g2"},
         ]}
     ]
-    out = list(fill_sessions(sessions, conversations, len_fn=len, seed=0))
+    out = list(fill_sessions(sessions, conversations, seed=0))
     assert len(out) == 2
     assert out[1]["prompt"].startswith(out[0]["prompt"])  # 会话内累积复用
     assert out[0]["timestamp_ms"] == 0
     assert out[1]["timestamp_ms"] == 5000
-    assert out[0]["expected_output_len"] == len("g1")
+    assert set(out[0]) == {"timestamp_ms", "prompt"}  # 只产两字段,不预设输出长度
 
 
 def test_fill_sessions_skips_too_short_conversation():
@@ -50,4 +50,21 @@ def test_fill_sessions_skips_too_short_conversation():
     conversations = [
         {"conversations": [{"from": "human", "value": "a"}, {"from": "gpt", "value": "b"}]},  # 1 轮,不够
     ]
-    assert list(fill_sessions(sessions, conversations, len_fn=lambda s: 1)) == []
+    assert list(fill_sessions(sessions, conversations)) == []
+
+
+def test_fill_sessions_matches_by_turns_without_waste():
+    # 短对话不被长会话跳过丢弃:M=2 会话用 2 轮对话、M=3 会话用 3 轮对话,两者都填上(无浪费)
+    def conv(n):
+        msgs = []
+        for i in range(n):
+            msgs += [{"from": "human", "value": f"h{i}"}, {"from": "gpt", "value": f"g{i}"}]
+        return {"conversations": msgs}
+
+    sessions = [
+        [{"timestamp": 0}, {"timestamp": 1}, {"timestamp": 2}],  # M=3
+        [{"timestamp": 10}, {"timestamp": 11}],                  # M=2
+    ]
+    out = list(fill_sessions(sessions, [conv(2), conv(3)]))
+    assert len(out) == 5  # 两个会话都填上;原单调跳过会丢掉 2 轮对话,只剩 3 行
+    assert {r["timestamp_ms"] for r in out} == {0, 1, 2, 10, 11}

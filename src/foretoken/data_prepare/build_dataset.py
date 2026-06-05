@@ -24,12 +24,11 @@ Foretoken 评测负载,在同一份数据上覆盖 KV 管理与 MTP:由 Mooncake
 - 会话 / 时序 / 并发:来自 Mooncake trace(以 hash 前缀链重建会话,保留每轮真实 timestamp);
 - 内容:来自 `{content}`(真实多轮对话),复用来自会话内累积(连贯,由内容决定、与缓存配置无关,
   不复刻 Mooncake 的 512 块量化);
-- 输出长度:由 tiktoken(o200k_base)估算;prompt 为文本,回放时由 vLLM 自行 tokenize。
+- 回放:prompt 为文本,由 vLLM 自行 tokenize;输出长度交回放阶段(统一 max_tokens 上限 + 自然 EOS),不预设。
 
 ## 字段
 - `timestamp_ms` — 真实到达时刻(供 foretoken `bench/replay.py` 回放)
 - `prompt` — 累积的多轮真实文本
-- `expected_output_len` — 该轮真实回复的 token 估算
 
 来源:Mooncake `{mooncake}`、内容 `{content}`。生成:`scripts/build_dataset.sh`。
 """
@@ -58,8 +57,6 @@ def build_hf_dataset(
 if __name__ == "__main__":  # pragma: no cover
     import argparse
 
-    import tiktoken
-
     from foretoken.data_prepare.stitch import _stream_hf, fill_sessions, reconstruct_sessions
 
     ap = argparse.ArgumentParser(description="缝合(会话重建 + 真实对话)→ 可复现 HF 数据集")
@@ -71,18 +68,12 @@ if __name__ == "__main__":  # pragma: no cover
     ap.add_argument("--seed", type=int, default=0, help="对话打乱种子")
     args = ap.parse_args()
 
-    enc = tiktoken.get_encoding("o200k_base")  # 多语言,仅用于估算输出长度
     # 1) 由 Mooncake 重建会话与时序结构(同一会话的轮次顺序、每轮 timestamp、并发)
     sessions = reconstruct_sessions(_stream_hf(args.mooncake, "train", args.limit))
     print(f"reconstructed sessions = {len(sessions)}")
     # 2) 读取足量真实对话(滤除过短后仍充足),打乱后按轮数填入,得到累积 prompt 与 Mooncake timestamp
     n_conv = max(10000, len(sessions) * 5)
-    rows = fill_sessions(
-        sessions,
-        _stream_hf(args.content, "train", n_conv),
-        len_fn=lambda s: len(enc.encode(s)),
-        seed=args.seed,
-    )
+    rows = fill_sessions(sessions, _stream_hf(args.content, "train", n_conv), seed=args.seed)
     out = build_hf_dataset(
         rows, args.out_dir, name=args.name, mooncake=args.mooncake, content=args.content,
     )

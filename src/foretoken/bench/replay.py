@@ -89,8 +89,13 @@ async def replay(
     model: str,
     *,
     sec_multiplier: float = 1.0,
+    max_tokens: int = 4096,
 ) -> list[ReplayResult]:
-    """按 `timestamp_ms` 异步回放(真实到达 + 真实并发),返回每条的 ReplayResult。需要 httpx。"""
+    """按 `timestamp_ms` 异步回放(真实到达 + 真实并发),返回每条的 ReplayResult。需要 httpx。
+
+    输出长度不预设:统一 `max_tokens` 仅作安全上限,模型自然生成到 EOS(temp=0 + 无损校验下,
+    同一 prompt 在各配置生成相同输出,可比可复现)。
+    """
     try:
         import httpx
     except ImportError as e:  # pragma: no cover
@@ -109,7 +114,7 @@ async def replay(
                     base_url,
                     model,
                     req.get("prompt_token_ids") or req["prompt"],  # 优先 token_ids(复用边界精确)
-                    int(req.get("expected_output_len", 128)),
+                    max_tokens,  # 统一安全上限,自然 EOS
                     str(req.get("session_or_id", req.get("hash_ids", ""))),
                 )
             )

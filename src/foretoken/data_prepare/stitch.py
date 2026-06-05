@@ -9,21 +9,12 @@ vLLM(16 块)/ GLM 配置不一致(docs/07 §6.6)。复用关系由内容决定�
 真实多轮对话,每轮 prompt 为前 k 轮的累积。产出带 `timestamp_ms` 的 trace,供 `bench/replay.py`
 回放,在同一份负载上覆盖 KV(会话内累积复用)与 MTP(连贯内容)。
 
-纯数据处理,len_fn 可由调用方注入(build_dataset 注入 tiktoken;默认仅为无依赖回退);本地可运行
-可测试(运行 main 需 datasets 与 tiktoken)。
+纯数据处理;本地可运行可测试(运行 main 需 datasets)。
 """
 from __future__ import annotations
 
 import random
-from collections.abc import Callable, Iterable, Iterator
-
-
-def _approx_token_len(text: str) -> int:
-    """无依赖回退:粗估 token 数(约 4 char/token)。
-
-    仅在未注入 len_fn 时使用(本地测试)。落地由 build_dataset 注入 tiktoken,准确且多语言。
-    """
-    return max(1, len(text) // 4)
+from collections.abc import Iterable, Iterator
 
 
 def to_turns(conversation: list[dict]) -> tuple[str | None, list[tuple[str, str]]]:
@@ -79,31 +70,37 @@ def fill_sessions(
     sessions: list[list[dict]],
     conversations: Iterable[dict],
     *,
-    len_fn: Callable[[str], int] = _approx_token_len,
     seed: int = 0,
     sep: str = "\n\n",
     label_timestamp: str = "timestamp",
 ) -> Iterator[dict]:
-    """把真实多轮对话填入重建的会话槽位。
+    """把真实多轮对话填入重建的会话槽位,尽量减少数据浪费。
 
-    对话池先打乱;每个会话(M 轮)取一条轮数不少于 M 的对话,填入前 M 轮——每轮 prompt 为前 k 轮的
-    累积(会话内复用由此自然产生),timestamp 取自该轮的 Mooncake 记录。按轮数粗对齐,不严格对齐
-    长度(配置无关,不应对齐 Mooncake 的 input_length)。
+    会话按所需轮数 M 升序、对话池按轮数升序配对(双指针):每个会话取轮数 ≥ M 中最接近 M 的对话。
+    这样短对话优先供短会话(不被长会话跳过丢弃),长对话留给长会话(多出的轮次最少)。每轮 prompt
+    为前 k 轮的累积(会话内复用由此自然产生),timestamp 取自该轮的 Mooncake 记录。长度按轮数粗对齐,
+    不严格对齐 Mooncake 的 input_length(配置无关)。
+
+    只产 timestamp_ms 与 prompt:输出长度交回放阶段(统一 max_tokens 上限 + 自然 EOS),不预设。
     """
     pool: list[tuple[str | None, list[tuple[str, str]]]] = []
     for rec in conversations:
         system, turns = to_turns(rec.get("conversations", []))
         if turns:
             pool.append((system, turns))
-    random.Random(seed).shuffle(pool)
+    random.Random(seed).shuffle(pool)  # 先打乱,消除原始顺序偏置
+    pool.sort(key=lambda st: len(st[1]))  # 再按轮数升序(稳定排序,同轮数内仍随机)
 
+    # 会话按 M 升序处理;双指针保证短对话不被长会话跳过丢弃
+    order = sorted(range(len(sessions)), key=lambda i: len(sessions[i]))
     idx = 0
-    for sess in sessions:
+    for si in order:
+        sess = sessions[si]
         m = len(sess)
-        while idx < len(pool) and len(pool[idx][1]) < m:  # 跳过轮数不够的对话
+        while idx < len(pool) and len(pool[idx][1]) < m:  # 轮数不足者已供更短会话或无处可用
             idx += 1
         if idx >= len(pool):
-            break  # 对话池用尽(轮数够的不够多)→ 剩余会话不填
+            break  # 轮数足够的对话已用尽 → 剩余(更长)会话不填
         system, turns = pool[idx]
         idx += 1
         prefix: list[str] = [f"system: {system}"] if system else []
@@ -112,7 +109,6 @@ def fill_sessions(
             yield {
                 "timestamp_ms": int(sess[k][label_timestamp]),
                 "prompt": sep.join([*prefix, f"user: {user}"]),
-                "expected_output_len": len_fn(assistant),
             }
             prefix.append(f"user: {user}")
             prefix.append(f"assistant: {assistant}")
