@@ -31,7 +31,7 @@ Foretoken 评测负载,在同一份数据上覆盖 KV 管理与 MTP:由 Mooncake
 - `prompt` — 累积的多轮真实文本
 - `expected_output_len` — 该轮真实回复的 token 估算
 
-来源:Mooncake `{mooncake}`、内容 `{content}`。生成:`python -m foretoken.data_prepare.build_dataset`。
+来源:Mooncake `{mooncake}`、内容 `{content}`。生成:`scripts/build_dataset.sh`。
 """
 
 
