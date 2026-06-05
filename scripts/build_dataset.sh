@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 生成可复现的 Foretoken 评测数据集(模式 B:Mooncake 并发骨架 + 真实文本块)。
+# 生成可复现的 Foretoken 评测数据集(Mooncake 重建会话骨架 + 真实多轮对话内容)。
 # 库逻辑在 src/foretoken/bench/{stitch,build_dataset}.py;本脚本只是操作入口(薄壳)。
 # 需要 datasets + transformers + GLM tokenizer(foretoken[server])。
 set -euo pipefail
