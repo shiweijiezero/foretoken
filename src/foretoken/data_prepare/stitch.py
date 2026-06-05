@@ -114,13 +114,15 @@ def fill_sessions(
             prefix.append(f"assistant: {assistant}")
 
 
-def _stream_hf(source: str, split: str, limit: int | None) -> Iterator[dict]:
-    """流式读 HF 数据集(Mooncake trace / 对话内容)。需要 datasets。"""
+def _stream_hf(
+    source: str, split: str, limit: int | None, *, config: str | None = None
+) -> Iterator[dict]:
+    """流式读 HF 数据集(Mooncake trace / 对话内容)。config 用于含多 config 的数据集。需要 datasets。"""
     try:
         from datasets import load_dataset
     except ImportError as e:  # pragma: no cover
         raise SystemExit("需要 datasets:pip install datasets(或装 foretoken[server])") from e
-    ds = load_dataset(source, split=split, streaming=True)
+    ds = load_dataset(source, config, split=split, streaming=True)
     for i, row in enumerate(ds):
         if limit is not None and i >= limit:
             break
