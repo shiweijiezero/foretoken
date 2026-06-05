@@ -10,7 +10,7 @@
 
 - stitch.py:reconstruct_sessions(hash 前缀链重建会话)+ fill_sessions(逐轮填入累积 prompt)。
 - build_dataset.py:打包为 parquet + dataset card,供 load_dataset 直接复用(入口
-  python -m foretoken.data_prepare.build_dataset)。
+  scripts/build_dataset.sh)。
 
 产出三字段:timestamp_ms / prompt / expected_output_len,供 bench/replay.py 回放。纯数据处理,
 本地可运行可测试(运行 build_dataset 需 datasets 与 tiktoken)。
