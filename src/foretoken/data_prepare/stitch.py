@@ -14,7 +14,6 @@
 """
 from __future__ import annotations
 
-import json
 import random
 from collections.abc import Callable, Iterable, Iterator
 
@@ -114,16 +113,6 @@ def fill_sessions(
             }
             prefix.append(f"user: {user}")
             prefix.append(f"assistant: {assistant}")
-
-
-def write_trace_jsonl(rows: Iterable[dict], path: str) -> int:
-    """写带 timestamp 的 trace jsonl(给 bench/replay.py 回放);返回条数。"""
-    n = 0
-    with open(path, "w", encoding="utf-8") as f:
-        for r in rows:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-            n += 1
-    return n
 
 
 def _stream_hf(source: str, split: str, limit: int | None) -> Iterator[dict]:

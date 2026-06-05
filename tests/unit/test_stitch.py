@@ -1,4 +1,4 @@
-from foretoken.bench.stitch import fill_sessions, reconstruct_sessions, to_turns
+from foretoken.data_prepare.stitch import fill_sessions, reconstruct_sessions, to_turns
 
 
 def test_to_turns_pairs_and_system():

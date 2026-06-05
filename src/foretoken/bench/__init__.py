@@ -1,15 +1,15 @@
-"""评测台(bench)。
+"""评测台(bench):回放负载、采集指标、算 goodput。
 
-**P0 评测直接用 `vllm bench serve`(见 scripts/serve_glm.sh + run_baseline.sh)——不自建
-负载 / 采集 / 指标。** vLLM 已提供:流量分布(`--request-rate` / `--burstiness`,泊松↔Gamma)、
-时序回放(`--dataset-name timed_trace`)、采集 TTFT/TPOT、按请求 goodput(`--goodput`)。
+P0 评测直接用 `vllm bench serve`(见 scripts/serve_glm.sh + run_baseline.sh),不自建负载 /
+采集 / 指标:vLLM 已提供流量分布(`--request-rate` / `--burstiness`,泊松↔Gamma)、时序回放
+(`--dataset-name timed_trace`)、采集 TTFT/TPOT、按请求 goodput(`--goodput`)。
 
-本模块留到 **P1**:评我们自己的 KV 策略时,才补 vLLM 没有的那几样——每 GPU 字节秒 goodput、
-门槛零(回放保真)、PFOO/Belady 最优上界、4 配置拆贡献。**前期不实现**(这些是 P1 才需要的尺子)。
+已实现 `replay.py`:按真实 timestamp 异步回放 data_prepare/ 缝合的负载,采 TTFT/TPOT、算每 GPU
+字节秒 goodput。回放自建的原因——vLLM `timed_trace` 仅认 hash、`custom` 无 timestamp,二者均吃
+不下"真实 prompt + 真实到达"(负载的缝合 / 打包在姊妹包 data_prepare/)。
 
-**已实现:`stitch.py`**(Mooncake hash 重建会话 + 塞真实多轮对话 → 带 timestamp 的 trace)
-+ **`build_dataset.py`**(打包可复现 HF 数据集)+ **`replay.py`**(按真实 timestamp 回放、采
-TTFT/TPOT、算 goodput)= 含多用户并发的"一套全真"(KV 对话累积复用 + MTP 连贯内容,通吃)。
+留到 P1:评自己的 KV 策略时,补 vLLM 没有的那几样——门槛零(回放保真)、PFOO/Belady 最优上界、
+4 配置拆贡献;run_evaluation 是该入口的占位。
 """
 from __future__ import annotations
 

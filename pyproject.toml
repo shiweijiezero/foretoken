@@ -18,9 +18,9 @@ dependencies = [
 # 本地只写代码 + 跑非 GPU 单测;真实推理 / 评测跑在服务器。
 server = [
     "vllm>=0.22",
-    "httpx>=0.27",        # B 路径回放器发请求用(bench/replay.py)
-    "datasets>=2.20",     # 读 Mooncake trace / kimi 内容(bench/stitch.py)
-    "transformers>=4.44", # GLM tokenizer 切 512 块 / 解码(bench/stitch.py main)
+    "httpx>=0.27",        # 回放器发请求用(bench/replay.py)
+    "datasets>=2.20",     # 读 Mooncake trace / kimi 内容(data_prepare/stitch.py)
+    "transformers>=4.44", # GLM tokenizer 估算 token(data_prepare/build_dataset.py main)
 ]
 dev = [
     "pytest>=8",
