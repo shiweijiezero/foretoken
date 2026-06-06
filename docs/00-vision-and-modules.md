@@ -115,4 +115,4 @@
   - `sched/`(D2/D4,对 `Scheduler`,`v1/core/sched/`)
   - `spec_decode/`(C2,对 `custom_class` proposer,`v1/spec_decode/`)
   - `kv_connector/`(B4,对 `distributed/kv_transfer/kv_connector/`)
-- 本地参考:vLLM 源码经 junction 挂在 `foretoken/vllm/`(已 gitignore,只读参考)。
+- 本地参考:vLLM 源码经 junction 挂在 `vendor/vllm/`(已 gitignore,只读参考)。
