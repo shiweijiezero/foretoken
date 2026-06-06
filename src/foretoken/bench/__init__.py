@@ -11,6 +11,7 @@ P0 评测直接用 `vllm bench serve`(见 scripts/serve_glm.sh、run_baseline.sh
 留到 P1:评测自有 KV 策略时,补足 vLLM 未提供的指标——门槛零(回放保真)、PFOO/Belady 最优上界、
 4 配置拆贡献;run_evaluation 是该入口的占位。
 """
+
 from __future__ import annotations
 
 

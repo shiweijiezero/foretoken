@@ -2,7 +2,7 @@
 
 > **Value-aware KV management, MTP control, and goodput-driven evaluation — built on vLLM, zero-fork.**
 
-**状态:** pre-P0(设计完成,即将进入真实推理基线) · 基于 vLLM 树外插件(不 fork) · Apache-2.0
+**状态:** 评测数据集已发布([weijiezz/foretoken-trace](https://huggingface.co/datasets/weijiezz/foretoken-trace)) · 即将进入 P0 真实推理基线 · 基于 vLLM 树外插件(不 fork) · Apache-2.0
 
 Foretoken 是一个基于 vLLM 的推理优化项目。它不重写引擎、不 fork vLLM,而是全程通过 vLLM 的官方扩展点(`OffloadingSpec` / `scheduler_cls` / KV connector / `entry_points`)接入,在工业级真实推理之上,把 KV-cache 当作按价值定价的一等资源来管理、用自适应 MTP 投机解码,并用真实评测检验每一项优化。当前从单人维护起步,聚焦 LM 长上下文 / reasoning 场景。
 
@@ -18,7 +18,7 @@ Foretoken 是一个基于 vLLM 的推理优化项目。它不重写引擎、不 
 
 ## 状态
 
-设计与文档梳理完成,环境就绪(最新 vLLM 已 clone、A100 集群可用),**即将进入 P0(真实推理基线)**。P0 不依赖任何升级,空卡 + 用户态即可起步。各阶段门槛见 [`ROADMAP.md`](ROADMAP.md)。
+设计与文档梳理完成,环境就绪(最新 vLLM 已 clone、A100 集群可用)。**第一个功能——评测负载(数据准备)——已完成并发布**:由 Mooncake 真实时序 + 真实多轮对话构建的评测数据集已上线 [`weijiezz/foretoken-trace`](https://huggingface.co/datasets/weijiezz/foretoken-trace)(conversation / mooncake / toolagent 三 split,公开,可 `load_dataset` 直用)。**下一步进入 P0(真实推理基线)**——不依赖任何升级,空卡 + 用户态即可起步。各阶段门槛见 [`ROADMAP.md`](ROADMAP.md)。
 
 ## 快速开始
 
@@ -43,8 +43,10 @@ MODEL_PATH=<权重目录> HF_HOME=<缓存目录> bash scripts/serve_glm.sh
 # 3. 跑 benchmark,测 TTFT / TPOT / goodput
 bash scripts/run_baseline.sh
 
-# (可选)由 Mooncake 时序 + 真实多轮对话构建可复现评测数据集
-bash scripts/build_dataset.sh --out-dir <DIR>
+# 评测负载:已发布数据集可直接用,或本地重新构建(可复现)
+#   from datasets import load_dataset
+#   load_dataset("weijiezz/foretoken-trace", "conversation")  # 三 split: conversation/mooncake/toolagent
+bash scripts/build_dataset.sh --out-dir <DIR>                 # 本地重新构建
 ```
 
 各脚本的必填环境变量见脚本头部注释;vLLM 参数以 `vllm serve --help` / `vllm bench serve --help` 为准。

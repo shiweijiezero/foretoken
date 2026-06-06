@@ -14,7 +14,7 @@ def test_relative_delays_empty():
 
 def test_goodput_counts_only_slo_met():
     results = [
-        ReplayResult("a", ttft_ms=100, tpot_ms=20, output_tokens=50, ok=True),   # 达标 → 计 50
+        ReplayResult("a", ttft_ms=100, tpot_ms=20, output_tokens=50, ok=True),  # 达标 → 计 50
         ReplayResult("b", ttft_ms=9999, tpot_ms=20, output_tokens=99, ok=True),  # TTFT 超 → 不计
         ReplayResult("c", ttft_ms=100, tpot_ms=20, output_tokens=10, ok=False),  # 失败 → 不计
     ]

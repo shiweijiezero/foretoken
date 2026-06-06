@@ -40,9 +40,9 @@ C1 用 GLM 内嵌 MTP(自测加载)→ C2 自适应 spec 长度控制(`scheduler
 全开)→ 量 goodput / TTFT / TPOT /
 显存 + 拆出 KV(命中率、每字节 goodput)和 MTP(接受率、加速)各自贡献 + 无损校验(输出 == 原生)+
 对标真正的竞争者(LRU / T-LRU / SAECache / LMCache)与 PFOO 离线最优。每个优化模块在“完成”前都要过一个
-对标基线的可证伪门槛(未达成即判定失败)。详见 `docs/04`(原则)+ `docs/07`(实操)。
+对标基线的可证伪门槛(未达成即判定失败)。详见 `docs/04`(原则)+ `docs/07`(实操)。负载的数据准备已实现并发布(数据集 [`weijiezz/foretoken-trace`](https://huggingface.co/datasets/weijiezz/foretoken-trace))。
 
 ## 当前状态
-- 已完成:设计 / 文档梳理(定位、评测方案、不 fork 集成路径,已源码核实)、vLLM 扩展点设计(`docs/08`)。
-- 已就绪:环境(最新 vLLM 已 clone);zxcpu A100 集群摸清(zxcpu2 常空可用)+ RAID 自动组装已加固。
+- 已完成:设计 / 文档梳理(定位、评测方案、不 fork 集成路径,已源码核实)、vLLM 扩展点设计(`docs/08`);**评测负载(数据准备)已实现并发布**——数据集 [`weijiezz/foretoken-trace`](https://huggingface.co/datasets/weijiezz/foretoken-trace)(会话重建缝合,conversation/mooncake/toolagent 三 split,公开)。
+- 已就绪:环境(最新 vLLM 已 clone、服务器 uv 环境跑通);zxcpu A100 集群摸清(zxcpu2 常空可用)+ RAID 自动组装已加固。
 - 待办:P0 起步(不被任何升级阻塞,空卡 + 用户态即可)。

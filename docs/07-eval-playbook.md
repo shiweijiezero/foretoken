@@ -132,7 +132,7 @@ dummy 仅作快速扫 KV 容量时的可选辅助,不是独立的一套评测。
 ### 数据源
 | 角色 | 数据集 |
 |---|---|
-| 会话 / 时序 / 并发骨架 | Mooncake trace —— `valeriol29/mooncake-traces`(字段 `timestamp` / `input_length` / `output_length` / `hash_ids`;无 session id) |
+| 会话 / 时序 / 并发结构 | Mooncake trace —— `valeriol29/mooncake-traces`(字段 `timestamp` / `input_length` / `output_length` / `hash_ids`;无 session id) |
 | 内容 | `lightseekorg/kimi-mtp-dataset`(47.6 万行多轮 ShareGPT,Apache-2.0) |
 | 纯 MTP benchmark(可选) | AIME `AI-MO/aimo-validation-aime`(vLLM `AIMODataset` 直读);GPQA `Idavidrein/gpqa`(gated);LiveCodeBench `livecodebench/code_generation_lite`;SWE-bench `princeton-nlp/SWE-bench_Verified` |
 
