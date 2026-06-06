@@ -68,8 +68,6 @@ if __name__ == "__main__":  # pragma: no cover
     ap.add_argument("--name", default="foretoken-stitched-trace")
     ap.add_argument("--limit", type=int, default=None, help="最多读取的 Mooncake 行数")
     ap.add_argument("--seed", type=int, default=0, help="对话打乱种子")
-    ap.add_argument("--truncate", action="store_true",
-                    help="无足够长对话时截断会话保数量(默认 drop;截断会失真,行打 truncated 标记)")
     args = ap.parse_args()
 
     # 1) 各 config 自适应重建会话并合并;timestamp 按 config 顺序错开,避免多 config 挤在 t=0
@@ -85,8 +83,7 @@ if __name__ == "__main__":  # pragma: no cover
         print(f"  {cfg}: {len(sess_c)} sessions")
     print(f"reconstructed sessions = {len(sessions)}")
     # 2) 流式读真实对话(按需:数据足时只读刚够填满会话,不足则读尽全源 + drop/log),长会话优先填入
-    rows = fill_sessions(sessions, _stream_hf(args.content, "train", None),
-                         seed=args.seed, truncate=args.truncate)
+    rows = fill_sessions(sessions, _stream_hf(args.content, "train", None), seed=args.seed)
     out = build_hf_dataset(
         rows, args.out_dir, name=args.name, mooncake=args.mooncake, content=args.content,
     )
