@@ -16,23 +16,35 @@ from __future__ import annotations
 
 import random
 import sys
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 
 
-def to_turns(conversation: list[dict]) -> tuple[str | None, list[tuple[str, str]]]:
-    """ShareGPT 对话 → (system, [(user, assistant), ...])。多模态(value 非 str)返回 (None, [])。"""
+def to_turns(
+    conversation: list[dict],
+    *,
+    role_key: str = "from",
+    text_key: str = "value",
+    system_role: str = "system",
+    user_role: str = "human",
+    assistant_role: str = "gpt",
+) -> tuple[str | None, list[tuple[str, str]]]:
+    """对话 → (system, [(user, assistant), ...])。字段 / 角色可配以适配不同格式。
+
+    默认 ShareGPT;OpenAI 格式传 role_key="role"、text_key="content"、user_role="user"、
+    assistant_role="assistant"。多模态(text 非 str)返回 (None, [])。
+    """
     system: str | None = None
     turns: list[tuple[str, str]] = []
     pending_user: str | None = None
     for msg in conversation:
-        role, val = msg.get("from"), msg.get("value")
+        role, val = msg.get(role_key), msg.get(text_key)
         if not isinstance(val, str):
             return None, []  # 多模态 / 非文本,跳过整条
-        if role == "system":
+        if role == system_role:
             system = val
-        elif role == "human":
+        elif role == user_role:
             pending_user = val
-        elif role == "gpt" and pending_user is not None:
+        elif role == assistant_role and pending_user is not None:
             turns.append((pending_user, val))
             pending_user = None
     return system, turns
@@ -93,6 +105,23 @@ def reconstruct_sessions(
     return sessions
 
 
+def group_by_session(
+    trace_rows: Iterable[dict],
+    *,
+    label_session: str = "session_id",
+    label_timestamp: str = "timestamp",
+) -> list[list[dict]]:
+    """trace 自带 session/user id 时,直接按 id 分组重建会话(各会话内按 timestamp 排序)。
+
+    用于带显式会话标识的 trace(如 BurstGPT);Mooncake 无 id,改用 reconstruct_sessions(hash 重建)。
+    两者均返回 list[list[dict]],fill_sessions 通用接收。
+    """
+    groups: dict = {}
+    for r in trace_rows:
+        groups.setdefault(r[label_session], []).append(r)
+    return [sorted(g, key=lambda r: r[label_timestamp]) for g in groups.values()]
+
+
 def fill_sessions(
     sessions: list[list[dict]],
     conversations: Iterable[dict],
@@ -100,6 +129,7 @@ def fill_sessions(
     seed: int = 0,
     sep: str = "\n\n",
     label_timestamp: str = "timestamp",
+    turns_fn: Callable[[dict], tuple[str | None, list[tuple[str, str]]]] | None = None,
 ) -> Iterator[dict]:
     """把真实多轮对话填入重建的会话槽位,长会话优先;超长会话拼接多条对话凑够轮数。
 
@@ -110,8 +140,13 @@ def fill_sessions(
 
     读取按需:流式读对话,累计轮数足以覆盖所有会话(拼接可填任何会话,故只需总轮数够)或源耗尽即停。
 
+    turns_fn:一条 content 记录 → (system, turns),默认 ShareGPT(to_turns + "conversations" 键);
+    适配其他对话格式时注入(如 OpenAI:lambda r: to_turns(r["messages"], role_key="role", ...))。
     只产 timestamp_ms / prompt:输出长度交回放阶段(统一 max_tokens 上限 + 自然 EOS),不预设。
     """
+    if turns_fn is None:
+        def turns_fn(rec: dict) -> tuple[str | None, list[tuple[str, str]]]:
+            return to_turns(rec.get("conversations", []))
     sess_lens = [len(s) for s in sessions]
     if not sess_lens:
         return
@@ -121,7 +156,7 @@ def fill_sessions(
     buckets: dict[int, list] = {}
     have_turns = 0
     for rec in conversations:
-        system, turns = to_turns(rec.get("conversations", []))
+        system, turns = turns_fn(rec)
         if not turns:
             continue
         buckets.setdefault(len(turns), []).append((system, turns))
