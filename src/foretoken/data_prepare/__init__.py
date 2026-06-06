@@ -8,10 +8,10 @@
 缝合方式:由 Mooncake 重建会话与时序结构,填入真实多轮对话内容,得到会话内累积复用(由内容决定、
 配置无关,不复刻 Kimi 的 512 块量化)。
 
-- make_workload.py:reconstruct_sessions(去尾满块前缀重建会话,自适应防误连,多 config 合并)
+- make_workload.py:reconstruct_sessions(去尾满块前缀重建会话,自适应防误连)
   + fill_sessions(逐轮填入累积 prompt)。
-- build_dataset.py:打包为 parquet + dataset card,供 load_dataset 直接复用(入口
-  scripts/build_dataset.sh)。
+- build_dataset.py:各 config 各作为一个 split,打包为 parquet + dataset card,供 load_dataset
+  直接复用(入口 scripts/build_dataset.sh)。
 
 产出两字段:timestamp_ms / prompt,供 bench/replay.py 回放(输出长度交回放阶段统一 max_tokens 上限,
 不预设)。纯数据处理,本地可运行可测试(运行 build_dataset 需 datasets)。
