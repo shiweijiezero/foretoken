@@ -19,7 +19,7 @@ dependencies = [
 server = [
     "vllm>=0.22",
     "httpx>=0.27",        # 回放器发请求用(bench/replay.py)
-    "datasets>=2.20",     # 读 Mooncake trace / kimi 内容(data_prepare/stitch.py)
+    "datasets>=2.20",     # 读 Mooncake trace / kimi 内容(data_prepare/make_workload.py)
 ]
 dev = [
     "pytest>=8",

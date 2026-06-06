@@ -1,4 +1,4 @@
-from foretoken.data_prepare.stitch import fill_sessions, reconstruct_sessions, to_turns
+from foretoken.data_prepare.make_workload import fill_sessions, reconstruct_sessions, to_turns
 
 
 def test_to_turns_pairs_and_system():
@@ -66,5 +66,33 @@ def test_fill_sessions_matches_by_turns_without_waste():
         [{"timestamp": 10}, {"timestamp": 11}],                  # M=2
     ]
     out = list(fill_sessions(sessions, [conv(2), conv(3)]))
-    assert len(out) == 5  # 两个会话都填上;原单调跳过会丢掉 2 轮对话,只剩 3 行
+    assert len(out) == 5  # 对话充足:长会话优先下两个会话仍都填上
     assert {r["timestamp_ms"] for r in out} == {0, 1, 2, 10, 11}
+
+
+def test_fill_sessions_prefers_long_session_when_scarce():
+    # 对话稀缺(只有一条 3 轮):长会话 M=3 应保住,短会话 M=2 被 drop(长会话优先)
+    sessions = [
+        [{"timestamp": 0}, {"timestamp": 1}],                       # M=2(短,牺牲)
+        [{"timestamp": 10}, {"timestamp": 11}, {"timestamp": 12}],  # M=3(长,保住)
+    ]
+    conv3 = {"conversations": [
+        {"from": "human", "value": "h0"}, {"from": "gpt", "value": "g0"},
+        {"from": "human", "value": "h1"}, {"from": "gpt", "value": "g1"},
+        {"from": "human", "value": "h2"}, {"from": "gpt", "value": "g2"},
+    ]}
+    out = list(fill_sessions(sessions, [conv3]))
+    assert len(out) == 3                                     # 填了 M=3 会话
+    assert {r["timestamp_ms"] for r in out} == {10, 11, 12}  # 长会话保住,短会话 drop
+
+
+def test_fill_sessions_truncate_keeps_count_with_flag():
+    # 无足够长对话时 truncate=True 截断会话保数量,并给行打 truncated 标记
+    sessions = [[{"timestamp": 0}, {"timestamp": 1}, {"timestamp": 2}]]  # M=3
+    conv2 = {"conversations": [
+        {"from": "human", "value": "h0"}, {"from": "gpt", "value": "g0"},
+        {"from": "human", "value": "h1"}, {"from": "gpt", "value": "g1"},
+    ]}  # 只 2 轮
+    out = list(fill_sessions(sessions, [conv2], truncate=True))
+    assert len(out) == 2                           # 截断为 2 轮
+    assert all(r.get("truncated") for r in out)    # 行打 truncated 标记

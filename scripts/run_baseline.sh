@@ -11,7 +11,7 @@
 #   PORT          服务端口(默认 8000)
 #   MODEL         模型名(默认 GLM-4.5-Air)
 #   DATASET       vllm bench serve 的 --dataset-name(默认 custom;Mooncake 缝合见
-#                 src/foretoken/data_prepare/stitch.py)
+#                 src/foretoken/data_prepare/make_workload.py)
 #   REQUEST_RATE  请求速率(默认 inf)
 set -euo pipefail
 
@@ -20,8 +20,7 @@ MODEL="${MODEL:-GLM-4.5-Air}"
 DATASET="${DATASET:-custom}"
 REQUEST_RATE="${REQUEST_RATE:-inf}"
 
-# --goodput 的 ttft / tpot 阈值(ms):默认取 MLPerf v5.1 DeepSeek-R1 档(TTFT<=2s / TPOT<=80ms),
-# 按场景调整。
+# --goodput 的 ttft / tpot 阈值(ms):默认取 MLPerf v5.1 DeepSeek-R1 档(TTFT<=2s / TPOT<=80ms), 按场景调整。
 vllm bench serve \
   --backend openai \
   --model "${MODEL}" \
@@ -29,4 +28,5 @@ vllm bench serve \
   --dataset-name "${DATASET}" \
   --request-rate "${REQUEST_RATE}" \
   --goodput ttft:2000 tpot:80 \
+  --plot-dataset-stats \
   --save-result

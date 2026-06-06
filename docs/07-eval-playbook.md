@@ -167,7 +167,7 @@ KV(时序+复用+并发)和 MTP(真实内容),且不用自录。
 不复刻 Mooncake 的 512 块 hash 复用:该粒度取决于 Kimi 生产环境的块大小、缓存与内容,与本项目的 vLLM(16 块)/ GLM 配置不一致。复用关系由内容决定、与缓存配置无关——真实多轮对话本身即产生会话内累积复用与跨会话系统提示共享,并具备价值分层(系统提示、会话历史、一次性内容),即价值感知策略的评测对象。内容连贯亦使 MTP 接受率不受块边界影响。
 
 ### 实现(`data_prepare/` 缝合打包 + `bench/` 回放)
-- `data_prepare/stitch.py`:`reconstruct_sessions` / `fill_sessions` / `to_turns`。
+- `data_prepare/make_workload.py`:`reconstruct_sessions` / `fill_sessions` / `to_turns`。
 - `data_prepare/build_dataset.py`:打包为 parquet 与 dataset card,供 `load_dataset` 直接复用。
 - `bench/replay.py`:按 `timestamp` 异步回放,采集 TTFT/TPOT,计算每 GPU 字节秒 goodput。
 - 回放自建的原因:vLLM `timed_trace` 仅接受 hash、`custom` 不含 timestamp,二者均无法同时承载真实 prompt 与真实到达时刻。

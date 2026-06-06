@@ -8,7 +8,7 @@
 缝合方式:由 Mooncake 重建会话与时序结构,填入真实多轮对话内容,得到会话内累积复用(由内容决定、
 配置无关,不复刻 Kimi 的 512 块量化)。
 
-- stitch.py:reconstruct_sessions(hash 前缀链重建会话)+ fill_sessions(逐轮填入累积 prompt)。
+- make_workload.py:reconstruct_sessions(hash 前缀链重建会话)+ fill_sessions(逐轮填入累积 prompt)。
 - build_dataset.py:打包为 parquet + dataset card,供 load_dataset 直接复用(入口
   scripts/build_dataset.sh)。
 
