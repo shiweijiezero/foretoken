@@ -59,10 +59,10 @@ if __name__ == "__main__":  # pragma: no cover
 
     from foretoken.data_prepare.make_workload import _stream_hf, fill_sessions, reconstruct_sessions
 
-    ap = argparse.ArgumentParser(description="缝合(会话重建 + 真实对话)→ 可复现 HF 数据集")
+    ap = argparse.ArgumentParser(description="使用 会话时间戳 + 真实对话 构建仿真数据集")
     ap.add_argument("--mooncake", default="valeriol29/mooncake-traces")
-    ap.add_argument("--mooncake-config", default="conversation",
-                    help="Mooncake config:conversation/mooncake/synthetic/toolagent")
+    ap.add_argument("--mooncake-config", default="conversation,mooncake,toolagent",
+                    help="Mooncake config(逗号分隔多个;synthetic 无真多轮,默认不含)")
     ap.add_argument("--content", default="lightseekorg/kimi-mtp-dataset")
     ap.add_argument("--out-dir", default="data/foretoken-trace")
     ap.add_argument("--name", default="foretoken-stitched-trace")
@@ -72,10 +72,17 @@ if __name__ == "__main__":  # pragma: no cover
                     help="无足够长对话时截断会话保数量(默认 drop;截断会失真,行打 truncated 标记)")
     args = ap.parse_args()
 
-    # 1) 由 Mooncake 重建会话与时序结构(同一会话的轮次顺序、每轮 timestamp、并发)
-    sessions = reconstruct_sessions(
-        _stream_hf(args.mooncake, "train", args.limit, config=args.mooncake_config)
-    )
+    # 1) 各 config 自适应重建会话并合并;timestamp 按 config 顺序错开,避免多 config 挤在 t=0
+    sessions: list = []
+    ts_offset = 0
+    for cfg in (c.strip() for c in args.mooncake_config.split(",") if c.strip()):
+        sess_c = reconstruct_sessions(list(_stream_hf(args.mooncake, "train", args.limit, config=cfg)))
+        for s in sess_c:
+            for r in s:
+                r["timestamp"] = int(r["timestamp"]) + ts_offset
+        sessions.extend(sess_c)
+        ts_offset = max((int(r["timestamp"]) for s in sess_c for r in s), default=ts_offset) + 60_000
+        print(f"  {cfg}: {len(sess_c)} sessions")
     print(f"reconstructed sessions = {len(sessions)}")
     # 2) 流式读真实对话(按需:数据足时只读刚够填满会话,不足则读尽全源 + drop/log),长会话优先填入
     rows = fill_sessions(sessions, _stream_hf(args.content, "train", None),
