@@ -75,8 +75,6 @@ if __name__ == "__main__":  # pragma: no cover
     ap.add_argument("--out-dir", default="data/foretoken-trace")
     ap.add_argument("--name", default="foretoken-stitched-trace")
     ap.add_argument("--limit", type=int, default=None, help="最多读取的 Mooncake 行数")
-    ap.add_argument("--content-limit", type=int, default=200000,
-                    help="每个 config 最多读取的对话行数(避免超长会话拖着读尽全源;设 0 为全量)")
     ap.add_argument("--seed", type=int, default=0, help="对话打乱种子")
     args = ap.parse_args()
 
@@ -85,7 +83,7 @@ if __name__ == "__main__":  # pragma: no cover
     for cfg in (c.strip() for c in args.mooncake_config.split(",") if c.strip()):
         sess_c = reconstruct_sessions(list(_stream_hf(args.mooncake, "train", args.limit, config=cfg)))
         rows_c = list(fill_sessions(
-            sess_c, _stream_hf(args.content, "train", args.content_limit or None), seed=args.seed))
+            sess_c, _stream_hf(args.content, "train", None), seed=args.seed))
         splits[cfg] = rows_c
         print(f"  {cfg}: {len(sess_c)} sessions, {len(rows_c)} rows")
     out = build_hf_dataset(

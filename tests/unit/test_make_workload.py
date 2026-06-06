@@ -106,13 +106,17 @@ def test_fill_sessions_prefers_long_session_when_scarce():
     assert {r["timestamp_ms"] for r in out} == {10, 11, 12}  # 长会话优先拿到,短会话因耗尽未填
 
 
-def test_fill_sessions_truncates_when_no_long_enough_conversation():
-    # 无足够长对话时用最长可用对话截断填充(保数量,不打标记)
-    sessions = [[{"timestamp": 0}, {"timestamp": 1}, {"timestamp": 2}]]  # M=3
-    conv2 = {"conversations": [
-        {"from": "human", "value": "h0"}, {"from": "gpt", "value": "g0"},
-        {"from": "human", "value": "h1"}, {"from": "gpt", "value": "g1"},
-    ]}  # 只 2 轮
-    out = list(fill_sessions(sessions, [conv2]))
-    assert len(out) == 2                                          # 截断为 2 轮
-    assert all(set(r) == {"timestamp_ms", "prompt"} for r in out)  # 无 truncated 标记
+def test_fill_sessions_splices_long_session_from_short():
+    # 超长会话 M=4、无单条 ≥4 对话 → 用两条 2 轮拼成 4 轮;prompt 跨拼接边界仍累积
+    sessions = [[{"timestamp": 0}, {"timestamp": 1}, {"timestamp": 2}, {"timestamp": 3}]]  # M=4
+
+    def conv2(tag):
+        return {"conversations": [
+            {"from": "human", "value": f"{tag}h0"}, {"from": "gpt", "value": f"{tag}g0"},
+            {"from": "human", "value": f"{tag}h1"}, {"from": "gpt", "value": f"{tag}g1"},
+        ]}
+
+    out = list(fill_sessions(sessions, [conv2("A"), conv2("B")]))
+    assert len(out) == 4                                  # 两条 2 轮拼成 4 轮
+    assert out[3]["prompt"].startswith(out[0]["prompt"])  # 跨拼接边界仍累积
+    assert all(set(r) == {"timestamp_ms", "prompt"} for r in out)
