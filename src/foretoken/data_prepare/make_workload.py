@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import random
 import sys
-from collections import Counter
 from collections.abc import Iterable, Iterator
 
 
@@ -102,67 +101,63 @@ def fill_sessions(
     sep: str = "\n\n",
     label_timestamp: str = "timestamp",
 ) -> Iterator[dict]:
-    """把真实多轮对话填入重建的会话槽位,长会话优先取较长对话。
+    """把真实多轮对话填入重建的会话槽位,长会话优先;超长会话拼接多条对话凑够轮数。
 
-    会话按所需轮数 M 降序,每个取「轮数 ≥ M 中最接近 M 的可用对话」:长会话优先抢占稀缺的长对话,
-    短会话用充足的短对话。每轮 prompt 为前 k 轮的累积(会话内复用由此产生),timestamp 取自该轮的
-    Mooncake 记录。
+    会话按所需轮数 M 降序:能配到单条「轮数 ≥ M」对话的用单条(完全连贯);配不到的(超长会话,超过
+    任一单条对话的轮数)用多条对话拼接凑够 M 轮。拼接处的 prompt 仍逐轮累积(会话内 KV 复用保留、
+    累积前缀字节一致),仅接头处下一轮开头语义跳变(MTP 接受率在接头略降,占比小)。每轮 prompt 为
+    前 k 轮的累积,timestamp 取自该轮的 Mooncake 记录。
 
-    读取按需、无固定上限:流式读对话,直到所有会话都可填满(Hall 条件:对每个 t,已读到的轮数 ≥t 的
-    对话数 ≥ 需要 ≥t 的会话数)或源耗尽即停——数据足时只读刚够,不足时读尽全源。配不上足够长对话的
-    会话用最长可用对话截断填充:产出仍是真实对话的前 k 轮累积(轮数 = 对话轮数 < Mooncake M、少用了
-    后几轮 timestamp),非假数据,故不打标记;截断比例打到 stderr 供知悉失真程度。
+    读取按需:流式读对话,累计轮数足以覆盖所有会话(拼接可填任何会话,故只需总轮数够)或源耗尽即停。
 
     只产 timestamp_ms / prompt:输出长度交回放阶段(统一 max_tokens 上限 + 自然 EOS),不预设。
     """
     sess_lens = [len(s) for s in sessions]
     if not sess_lens:
         return
-    max_m = max(sess_lens)
-    need_cnt = Counter(sess_lens)
-    need_ge = [0] * (max_m + 2)  # need_ge[t] = 轮数 ≥ t 的会话数(读取停止条件用)
-    for t in range(max_m, 0, -1):
-        need_ge[t] = need_ge[t + 1] + need_cnt.get(t, 0)
+    total_need = sum(sess_lens)
 
-    # 流式读对话入桶(按轮数分桶);可填满所有会话(Hall 条件)或源耗尽即停
+    # 流式读对话入桶(按轮数分桶);累计轮数够覆盖所有会话(拼接可填)或源耗尽即停
     buckets: dict[int, list] = {}
-
-    def can_fill_all() -> bool:
-        have_ge = 0
-        for t in range(max_m, 0, -1):
-            have_ge += len(buckets.get(t, ()))
-            if have_ge < need_ge[t]:
-                return False
-        return True
-
+    have_turns = 0
     for rec in conversations:
         system, turns = to_turns(rec.get("conversations", []))
         if not turns:
             continue
         buckets.setdefault(len(turns), []).append((system, turns))
-        if len(turns) <= max_m and can_fill_all():
-            break  # 已能填满所有会话 → 停止读取(数据足时只读刚够)
+        have_turns += len(turns)
+        if have_turns >= total_need:
+            break  # 总轮数够 → 拼接能填满所有会话
 
     rng = random.Random(seed)
     for bucket in buckets.values():  # 桶内打乱,消除原始顺序偏置(同轮数内随机)
         rng.shuffle(bucket)
 
-    # 会话按 M 降序:长会话优先取「≥M 的最小可用对话」;无够长对话则用最长可用对话截断填充
+    # 会话按 M 降序:长会话优先。单条 ≥M 对话用单条(连贯);否则拼接多条凑够 M
     order = sorted(range(len(sessions)), key=lambda i: len(sessions[i]), reverse=True)
-    n_filled = n_truncated = 0
+    n_filled = n_spliced = 0
     for si in order:
         sess = sessions[si]
         m = len(sess)
         pick = min((t for t in buckets if t >= m and buckets[t]), default=None)
-        if pick is None:  # 无 ≥M 对话 → 用最长可用对话截断填充
-            pick = max((t for t in buckets if buckets[t]), default=None)
-            if pick is None:
+        if pick is not None:  # 单条 ≥M 对话(完全连贯)
+            system, turns = buckets[pick].pop()
+        else:  # 拼接多条短对话凑够 M(超长会话)
+            system, turns = None, []
+            while len(turns) < m:
+                avail = max((t for t in buckets if buckets[t]), default=None)
+                if avail is None:
+                    break  # 对话池耗尽
+                sys_i, turns_i = buckets[avail].pop()
+                if system is None:
+                    system = sys_i  # 用第一条对话的 system
+                turns.extend(turns_i)
+            if not turns:
                 break  # 对话池耗尽
-            n_truncated += 1
-        system, turns = buckets[pick].pop()
+            n_spliced += 1
         n_filled += 1
         prefix: list[str] = [f"system: {system}"] if system else []
-        for k in range(min(m, len(turns))):  # 正常 = m;截断 = 对话轮数 < m
+        for k in range(min(m, len(turns))):  # 单条/拼接均凑够 m(除非源耗尽)
             user, assistant = turns[k]
             yield {
                 "timestamp_ms": int(sess[k][label_timestamp]),
@@ -173,8 +168,8 @@ def fill_sessions(
 
     if n_filled:
         print(
-            f"[make_workload] 截断填充 {n_truncated}/{n_filled} 会话 "
-            f"({100 * n_truncated / n_filled:.1f}%,无足够长对话、用较短对话截断;增大或更换 content 源可降低)",
+            f"[make_workload] 拼接填充 {n_spliced}/{n_filled} 会话 "
+            f"({100 * n_spliced / n_filled:.1f}%,超长会话用多条对话拼接,接头处 MTP 略降)",
             file=sys.stderr,
         )
 
