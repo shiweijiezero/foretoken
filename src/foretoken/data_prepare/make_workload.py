@@ -14,6 +14,8 @@ vLLM(16 块)/ GLM 配置不一致(docs/07 §6.6)。复用关系由内容决定�
 from __future__ import annotations
 
 import random
+import sys
+from collections import Counter
 from collections.abc import Iterable, Iterator
 
 
@@ -73,45 +75,100 @@ def fill_sessions(
     seed: int = 0,
     sep: str = "\n\n",
     label_timestamp: str = "timestamp",
+    truncate: bool = False,
 ) -> Iterator[dict]:
-    """把真实多轮对话填入重建的会话槽位,尽量减少数据浪费。
+    """把真实多轮对话填入重建的会话槽位,长会话优先(KV 价值高的不被丢弃)。
 
-    会话按所需轮数 M 升序、对话池按轮数升序配对(双指针):每个会话取轮数 ≥ M 中最接近 M 的对话。
-    这样短对话优先供短会话(不被长会话跳过丢弃),长对话留给长会话(多出的轮次最少)。每轮 prompt
-    为前 k 轮的累积(会话内复用由此自然产生),timestamp 取自该轮的 Mooncake 记录。长度按轮数粗对齐,
-    不严格对齐 Mooncake 的 input_length(配置无关)。
+    会话按所需轮数 M 降序,每个取「轮数 ≥ M 中最接近 M 的可用对话」:长会话优先抢占稀缺的长对话,
+    短会话用充足的短对话。填充总数仍是最大(等价二分匹配的最大基数),降序只决定「容量不足时牺牲谁」
+    ——把损耗从珍贵的长会话转移到低价值的短会话。每轮 prompt 为前 k 轮的累积(会话内复用由此产生),
+    timestamp 取自该轮的 Mooncake 记录。
 
-    只产 timestamp_ms 与 prompt:输出长度交回放阶段(统一 max_tokens 上限 + 自然 EOS),不预设。
+    读取按需、无固定上限:流式读对话,直到所有会话都可填满(Hall 条件:对每个 t,已读到的轮数 ≥t 的
+    对话数 ≥ 需要 ≥t 的会话数)或源耗尽即停——数据足时只读刚够,不足时读尽全源。配不上长对话的会话:
+    默认 drop(留下的会话轮数 = Mooncake 真实轮数、时序完整),丢弃统计打到 stderr;truncate=True 时改用
+    最长可用对话截断填充、给行打 `truncated` 标记(保数量,但复用距离 / 累积深度失真)。
+
+    只产 timestamp_ms / prompt(truncate 的行附 truncated):输出长度交回放阶段(统一 max_tokens 上限 +
+    自然 EOS),不预设。
     """
-    pool: list[tuple[str | None, list[tuple[str, str]]]] = []
+    sess_lens = [len(s) for s in sessions]
+    if not sess_lens:
+        return
+    max_m = max(sess_lens)
+    need_cnt = Counter(sess_lens)
+    need_ge = [0] * (max_m + 2)  # need_ge[t] = 轮数 ≥ t 的会话数(读取停止条件用)
+    for t in range(max_m, 0, -1):
+        need_ge[t] = need_ge[t + 1] + need_cnt.get(t, 0)
+
+    # 流式读对话入桶(按轮数分桶);可填满所有会话(Hall 条件)或源耗尽即停
+    buckets: dict[int, list] = {}
+
+    def can_fill_all() -> bool:
+        have_ge = 0
+        for t in range(max_m, 0, -1):
+            have_ge += len(buckets.get(t, ()))
+            if have_ge < need_ge[t]:
+                return False
+        return True
+
     for rec in conversations:
         system, turns = to_turns(rec.get("conversations", []))
-        if turns:
-            pool.append((system, turns))
-    random.Random(seed).shuffle(pool)  # 先打乱,消除原始顺序偏置
-    pool.sort(key=lambda st: len(st[1]))  # 再按轮数升序(稳定排序,同轮数内仍随机)
+        if not turns:
+            continue
+        buckets.setdefault(len(turns), []).append((system, turns))
+        if len(turns) <= max_m and can_fill_all():
+            break  # 已能填满所有会话 → 停止读取(数据足时只读刚够)
 
-    # 会话按 M 升序处理;双指针保证短对话不被长会话跳过丢弃
-    order = sorted(range(len(sessions)), key=lambda i: len(sessions[i]))
-    idx = 0
+    rng = random.Random(seed)
+    for bucket in buckets.values():  # 桶内打乱,消除原始顺序偏置(同轮数内随机)
+        rng.shuffle(bucket)
+
+    # 会话按 M 降序:长会话优先取「≥M 的最小可用对话」(内容浪费最少)
+    order = sorted(range(len(sessions)), key=lambda i: len(sessions[i]), reverse=True)
+    dropped: list[int] = []
+    n_truncated = 0
     for si in order:
         sess = sessions[si]
         m = len(sess)
-        while idx < len(pool) and len(pool[idx][1]) < m:  # 轮数不足者已供更短会话或无处可用
-            idx += 1
-        if idx >= len(pool):
-            break  # 轮数足够的对话已用尽 → 剩余(更长)会话不填
-        system, turns = pool[idx]
-        idx += 1
+        pick = min((t for t in buckets if t >= m and buckets[t]), default=None)
+        is_trunc = False
+        if pick is None:  # 无 ≥M 对话
+            if not truncate:
+                dropped.append(m)
+                continue
+            pick = max((t for t in buckets if buckets[t]), default=None)  # 最长可用,截断填充
+            if pick is None:
+                dropped.append(m)
+                continue
+            is_trunc = True
+        system, turns = buckets[pick].pop()
+        if is_trunc:
+            n_truncated += 1
         prefix: list[str] = [f"system: {system}"] if system else []
-        for k in range(m):
+        for k in range(min(m, len(turns))):  # 正常 = m;截断 = 对话轮数 < m
             user, assistant = turns[k]
-            yield {
+            row = {
                 "timestamp_ms": int(sess[k][label_timestamp]),
                 "prompt": sep.join([*prefix, f"user: {user}"]),
             }
+            if is_trunc:
+                row["truncated"] = True
+            yield row
             prefix.append(f"user: {user}")
             prefix.append(f"assistant: {assistant}")
+
+    if dropped:
+        print(
+            f"[make_workload] drop {len(dropped)} 个会话(无足够长对话),最长 M={max(dropped)};"
+            f"增大 / 更换 content 源,或用 truncate=True 保数量。",
+            file=sys.stderr,
+        )
+    if n_truncated:
+        print(
+            f"[make_workload] 截断 {n_truncated} 个会话(轮数降级,行已打 truncated 标记)。",
+            file=sys.stderr,
+        )
 
 
 def _stream_hf(

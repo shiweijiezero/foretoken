@@ -57,7 +57,7 @@ def build_hf_dataset(
 if __name__ == "__main__":  # pragma: no cover
     import argparse
 
-    from foretoken.data_prepare.stitch import _stream_hf, fill_sessions, reconstruct_sessions
+    from foretoken.data_prepare.make_workload import _stream_hf, fill_sessions, reconstruct_sessions
 
     ap = argparse.ArgumentParser(description="缝合(会话重建 + 真实对话)→ 可复现 HF 数据集")
     ap.add_argument("--mooncake", default="valeriol29/mooncake-traces")
@@ -68,6 +68,8 @@ if __name__ == "__main__":  # pragma: no cover
     ap.add_argument("--name", default="foretoken-stitched-trace")
     ap.add_argument("--limit", type=int, default=None, help="最多读取的 Mooncake 行数")
     ap.add_argument("--seed", type=int, default=0, help="对话打乱种子")
+    ap.add_argument("--truncate", action="store_true",
+                    help="无足够长对话时截断会话保数量(默认 drop;截断会失真,行打 truncated 标记)")
     args = ap.parse_args()
 
     # 1) 由 Mooncake 重建会话与时序结构(同一会话的轮次顺序、每轮 timestamp、并发)
@@ -75,9 +77,9 @@ if __name__ == "__main__":  # pragma: no cover
         _stream_hf(args.mooncake, "train", args.limit, config=args.mooncake_config)
     )
     print(f"reconstructed sessions = {len(sessions)}")
-    # 2) 读取足量真实对话(滤除过短后仍充足),打乱后按轮数填入,得到累积 prompt 与 Mooncake timestamp
-    n_conv = max(10000, len(sessions) * 5)
-    rows = fill_sessions(sessions, _stream_hf(args.content, "train", n_conv), seed=args.seed)
+    # 2) 流式读真实对话(按需:数据足时只读刚够填满会话,不足则读尽全源 + drop/log),长会话优先填入
+    rows = fill_sessions(sessions, _stream_hf(args.content, "train", None),
+                         seed=args.seed, truncate=args.truncate)
     out = build_hf_dataset(
         rows, args.out_dir, name=args.name, mooncake=args.mooncake, content=args.content,
     )

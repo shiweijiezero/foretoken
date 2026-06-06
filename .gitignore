@@ -14,5 +14,7 @@ dist/
 # 本地环境(勿提交)
 .env.local
 
-# 本地参考:vLLM 源码(junction → ../vllm),只读参考,不进 repo
+# 本地参考:vLLM 源码(只读参考,不进 repo)
+# vendor/vllm = 本机 clone(mac/linux);/vllm = junction → ../vllm(Windows 开发机)
+/vendor/
 /vllm/
