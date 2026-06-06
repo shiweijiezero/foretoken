@@ -7,6 +7,7 @@ goodput(对应 vLLM bench serve 的相应部分)。发请求需 OpenAI 兼容 en
 纯函数(relative_delays_ms / goodput_per_gpu_byte_second)本地可测试;httpx 延迟导入,未安装亦可
 测试纯函数部分。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -45,9 +46,7 @@ def goodput_per_gpu_byte_second(
     if gpu_bytes <= 0:
         raise ValueError("gpu_bytes must be > 0")
     good = sum(
-        r.output_tokens
-        for r in results
-        if r.ok and r.ttft_ms <= ttft_ms and r.tpot_ms <= tpot_ms
+        r.output_tokens for r in results if r.ok and r.ttft_ms <= ttft_ms and r.tpot_ms <= tpot_ms
     )
     return good / (duration_s * gpu_bytes)
 
@@ -119,5 +118,5 @@ async def replay(
                 )
             )
 
-        await asyncio.gather(*(_one(r, d) for r, d in zip(requests, delays)))
+        await asyncio.gather(*(_one(r, d) for r, d in zip(requests, delays, strict=False)))
     return results

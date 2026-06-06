@@ -12,6 +12,7 @@ split(build_dataset),保留各自真实时序、互不串联。
 
 纯数据处理;本地可运行可测试(运行 main 需 datasets)。
 """
+
 from __future__ import annotations
 
 import random
@@ -145,8 +146,10 @@ def fill_sessions(
     只产 timestamp_ms / prompt:输出长度交回放阶段(统一 max_tokens 上限 + 自然 EOS),不预设。
     """
     if turns_fn is None:
+
         def turns_fn(rec: dict) -> tuple[str | None, list[tuple[str, str]]]:
             return to_turns(rec.get("conversations", []))
+
     sess_lens = [len(s) for s in sessions]
     if not sess_lens:
         return
@@ -212,7 +215,10 @@ def fill_sessions(
 def _stream_hf(
     source: str, split: str, limit: int | None, *, config: str | None = None
 ) -> Iterator[dict]:
-    """流式读 HF 数据集(Mooncake trace / 对话内容)。config 用于含多 config 的数据集。需要 datasets。"""
+    """流式读 HF 数据集(Mooncake trace / 对话内容)。
+
+    config 用于含多 config 的数据集;运行需 datasets。
+    """
     try:
         from datasets import load_dataset
     except ImportError as e:  # pragma: no cover

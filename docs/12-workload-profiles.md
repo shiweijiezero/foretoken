@@ -8,7 +8,7 @@
 1. **KV 复用价值的上界。** 没有复用结构,value-aware 无从谈起。
 2. **评测真实性。** 长度、复用、到达三要素一旦失真,goodput 数据失去意义(见 `docs/04` 门槛零)。
 
-现有文档覆盖了 4 类负载骨架(agentic / 多轮 / RAG / 长上下文),但缺少 reasoning 实测结构、跨节点到达、
+现有文档覆盖了 4 类负载结构(agentic / 多轮 / RAG / 长上下文),但缺少 reasoning 实测结构、跨节点到达、
 租户异质 SLO,以及与 llm-d / Dynamo / AIBrix 的对标维度。本篇补齐这些维度,并据此给出对 `docs/07`
 评测负载的具体修订。
 
@@ -72,7 +72,7 @@ KV 复用价值 = 复用结构(谁能命中)× 复用时距(命中前是否被�
 
 | trace | 规模 / 时长 | input/output(实测) | 时间戳 | 前缀复用 hash | 突发刻画 | 主用途 | 来源 |
 |---|---|---|---|---|---|---|---|
-| **Mooncake** | 1h × 三子集 | in 891–126k | ✅ ms | ✅ **512-block hash_ids** | session 节奏 | 多轮/agentic/长上下文复用骨架 | [2407.00079](https://arxiv.org/html/2407.00079v1) |
+| **Mooncake** | 1h × 三子集 | in 891–126k | ✅ ms | ✅ **512-block hash_ids** | session 节奏 | 多轮/agentic/长上下文复用结构 | [2407.00079](https://arxiv.org/html/2407.00079v1) |
 | **vLLM×Mooncake Codex/SWE** | **610 traces、中位 33 轮** | ctx 至 80K/turn30、max 180K;in:out 131:1 | ✅ 轮间 **5.2s 中位 / 81.4s P99** | ✅ 块 hash | 轮间空闲 | **agentic 时间维度建模** | [vLLM blog](https://vllm.ai/blog/2026-05-06-mooncake-store) |
 | **BurstGPT** | **10.31M 请求 / 213 天** | 请求长 Zipf;输出近高斯 | ✅ + session | ❌ | ✅ **Gamma,CV=1/√α**;conv 周期/API 非周期 | 真实突发 + 会话边界 | [2401.17644](https://arxiv.org/html/2401.17644v4) |
 | **Azure 2023**(Splitwise) | 2 服务,2023-11-11 | **coding 中位 1500/13;conv 1020/129** | ✅ 到达 | ❌ | 短窗重尾 | 到达 + 长度重尾(in:out 极不均) | [2311.18677](https://arxiv.org/html/2311.18677v2) |

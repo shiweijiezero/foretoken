@@ -41,7 +41,7 @@
 | rejection sampler | Triton kernel | 内联在采样热循环 | ❌ |
 | attention backend | Enum | 类型安全 + 编译期常量折叠 | ✅ `register_backend` |
 | platform | 单选、≥2 报错 | 线程/内存/通信平台特有、互斥 | ❌ |
-| 量化方法 | 预定义 dict、无 register | 直接影响精度 + 每种对应专用 kernel | ⚠️ dict 可程序扩展 |
+| 量化方法 | 预定义 dict、无 register | 直接影响精度 + 每种对应专用 kernel | dict 可程序扩展 |
 
 取舍原则:冷路径开放(ABC + factory + 运行时 dispatch),热路径封闭(Literal + 编译期常量);
 无扩展需求处不留扩展点;`custom_class` 式逃生舱覆盖剩余 10% 的长尾。

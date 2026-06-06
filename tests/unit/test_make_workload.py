@@ -9,8 +9,10 @@ from foretoken.data_prepare.make_workload import (
 def test_to_turns_pairs_and_system():
     conv = [
         {"from": "system", "value": "you are helpful"},
-        {"from": "human", "value": "h1"}, {"from": "gpt", "value": "g1"},
-        {"from": "human", "value": "h2"}, {"from": "gpt", "value": "g2"},
+        {"from": "human", "value": "h1"},
+        {"from": "gpt", "value": "g1"},
+        {"from": "human", "value": "h2"},
+        {"from": "gpt", "value": "g2"},
     ]
     system, turns = to_turns(conv)
     assert system == "you are helpful"
@@ -25,8 +27,8 @@ def test_to_turns_multimodal_skipped():
 def test_reconstruct_sessions_not_fooled_by_shared_prefix():
     rows = [
         {"timestamp": 0, "hash_ids": [1, 2]},
-        {"timestamp": 5, "hash_ids": [1, 2, 3]},   # 续 r0(真前缀延续)
-        {"timestamp": 3, "hash_ids": [1, 9]},      # 另一会话:共享 hash[0]=1 但分叉
+        {"timestamp": 5, "hash_ids": [1, 2, 3]},  # 续 r0(真前缀延续)
+        {"timestamp": 3, "hash_ids": [1, 9]},  # 另一会话:共享 hash[0]=1 但分叉
     ]
     sessions = reconstruct_sessions(rows, min_shared_blocks=2)
     assert len(sessions) == 2
@@ -37,8 +39,8 @@ def test_reconstruct_sessions_not_fooled_by_shared_prefix():
 def test_reconstruct_tolerates_partial_tail_block():
     # 512 块尾部不满,下一轮累积会填满该块、其 hash 改变;故比去尾满块前缀而非完整 hash
     rows = [
-        {"timestamp": 0, "hash_ids": [1, 2, 3]},      # 第 1 轮,尾块 3 不满
-        {"timestamp": 5, "hash_ids": [1, 2, 9, 4]},   # 第 2 轮:满块 [1,2] 不变,尾块 3 被填满→9,加新块 4
+        {"timestamp": 0, "hash_ids": [1, 2, 3]},  # 第 1 轮,尾块 3 不满(partial)
+        {"timestamp": 5, "hash_ids": [1, 2, 9, 4]},  # 第 2 轮:满块 [1,2] 不变,尾块填满→9
     ]
     sessions = reconstruct_sessions(rows, min_shared_blocks=2)
     # 去尾比前缀 → 正确识别为同一会话;若比完整 hash([1,2,3] 非 [1,2,9,4] 前缀)会漏成 2 个单轮
@@ -58,10 +60,14 @@ def test_reconstruct_rejects_concurrent_same_timestamp():
 def test_fill_sessions_accumulates_and_uses_timestamps():
     sessions = [[{"timestamp": 0}, {"timestamp": 5000}]]  # 1 会话,2 轮
     conversations = [
-        {"conversations": [
-            {"from": "human", "value": "h1"}, {"from": "gpt", "value": "g1"},
-            {"from": "human", "value": "h2"}, {"from": "gpt", "value": "g2"},
-        ]}
+        {
+            "conversations": [
+                {"from": "human", "value": "h1"},
+                {"from": "gpt", "value": "g1"},
+                {"from": "human", "value": "h2"},
+                {"from": "gpt", "value": "g2"},
+            ]
+        }
     ]
     out = list(fill_sessions(sessions, conversations, seed=0))
     assert len(out) == 2
@@ -88,7 +94,7 @@ def test_fill_sessions_matches_by_turns_without_waste():
 
     sessions = [
         [{"timestamp": 0}, {"timestamp": 1}, {"timestamp": 2}],  # M=3
-        [{"timestamp": 10}, {"timestamp": 11}],                  # M=2
+        [{"timestamp": 10}, {"timestamp": 11}],  # M=2
     ]
     out = list(fill_sessions(sessions, [conv(2), conv(3)]))
     assert len(out) == 5  # 对话充足:长会话优先下两个会话仍都填上
@@ -98,16 +104,21 @@ def test_fill_sessions_matches_by_turns_without_waste():
 def test_fill_sessions_prefers_long_session_when_scarce():
     # 对话稀缺(只有一条 3 轮):长会话 M=3 优先拿到,短会话 M=2 因对话耗尽未填
     sessions = [
-        [{"timestamp": 0}, {"timestamp": 1}],                       # M=2(短)
+        [{"timestamp": 0}, {"timestamp": 1}],  # M=2(短)
         [{"timestamp": 10}, {"timestamp": 11}, {"timestamp": 12}],  # M=3(长,优先)
     ]
-    conv3 = {"conversations": [
-        {"from": "human", "value": "h0"}, {"from": "gpt", "value": "g0"},
-        {"from": "human", "value": "h1"}, {"from": "gpt", "value": "g1"},
-        {"from": "human", "value": "h2"}, {"from": "gpt", "value": "g2"},
-    ]}
+    conv3 = {
+        "conversations": [
+            {"from": "human", "value": "h0"},
+            {"from": "gpt", "value": "g0"},
+            {"from": "human", "value": "h1"},
+            {"from": "gpt", "value": "g1"},
+            {"from": "human", "value": "h2"},
+            {"from": "gpt", "value": "g2"},
+        ]
+    }
     out = list(fill_sessions(sessions, [conv3]))
-    assert len(out) == 3                                     # 填了 M=3 会话
+    assert len(out) == 3  # 填了 M=3 会话
     assert {r["timestamp_ms"] for r in out} == {10, 11, 12}  # 长会话优先拿到,短会话因耗尽未填
 
 
@@ -116,13 +127,17 @@ def test_fill_sessions_splices_long_session_from_short():
     sessions = [[{"timestamp": 0}, {"timestamp": 1}, {"timestamp": 2}, {"timestamp": 3}]]  # M=4
 
     def conv2(tag):
-        return {"conversations": [
-            {"from": "human", "value": f"{tag}h0"}, {"from": "gpt", "value": f"{tag}g0"},
-            {"from": "human", "value": f"{tag}h1"}, {"from": "gpt", "value": f"{tag}g1"},
-        ]}
+        return {
+            "conversations": [
+                {"from": "human", "value": f"{tag}h0"},
+                {"from": "gpt", "value": f"{tag}g0"},
+                {"from": "human", "value": f"{tag}h1"},
+                {"from": "gpt", "value": f"{tag}g1"},
+            ]
+        }
 
     out = list(fill_sessions(sessions, [conv2("A"), conv2("B")]))
-    assert len(out) == 4                                  # 两条 2 轮拼成 4 轮
+    assert len(out) == 4  # 两条 2 轮拼成 4 轮
     assert out[3]["prompt"].startswith(out[0]["prompt"])  # 跨拼接边界仍累积
     assert all(set(r) == {"timestamp_ms", "prompt"} for r in out)
 
@@ -131,10 +146,12 @@ def test_to_turns_configurable_openai_format():
     # 字段 / 角色可配:OpenAI 格式(role/content、user/assistant)
     conv = [
         {"role": "system", "content": "sys"},
-        {"role": "user", "content": "h1"}, {"role": "assistant", "content": "g1"},
+        {"role": "user", "content": "h1"},
+        {"role": "assistant", "content": "g1"},
     ]
-    system, turns = to_turns(conv, role_key="role", text_key="content",
-                             user_role="user", assistant_role="assistant")
+    system, turns = to_turns(
+        conv, role_key="role", text_key="content", user_role="user", assistant_role="assistant"
+    )
     assert system == "sys"
     assert turns == [("h1", "g1")]
 
@@ -155,14 +172,25 @@ def test_group_by_session_by_id():
 def test_fill_sessions_custom_turns_fn():
     # 注入 turns_fn 适配不同 content 格式(messages 键 + OpenAI 角色)
     sessions = [[{"timestamp": 0}, {"timestamp": 1}]]
-    content = [{"messages": [
-        {"role": "user", "content": "h1"}, {"role": "assistant", "content": "g1"},
-        {"role": "user", "content": "h2"}, {"role": "assistant", "content": "g2"},
-    ]}]
+    content = [
+        {
+            "messages": [
+                {"role": "user", "content": "h1"},
+                {"role": "assistant", "content": "g1"},
+                {"role": "user", "content": "h2"},
+                {"role": "assistant", "content": "g2"},
+            ]
+        }
+    ]
 
     def tf(r):
-        return to_turns(r["messages"], role_key="role", text_key="content",
-                        user_role="user", assistant_role="assistant")
+        return to_turns(
+            r["messages"],
+            role_key="role",
+            text_key="content",
+            user_role="user",
+            assistant_role="assistant",
+        )
 
     out = list(fill_sessions(sessions, content, turns_fn=tf))
     assert len(out) == 2

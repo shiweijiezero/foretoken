@@ -54,7 +54,7 @@
 
 | # | 模块 | 判定 | 工具 / 做法 | 状态 | phase |
 |---|---|---|---|---|---|
-| E1 | KV 感知路由器 | **Use/Extend** | Gateway API Inference Extension(遵循);或一层薄封装喂给 B7 | 🔬 | P3+ |
+| E1 | KV 感知路由器 | **Use/Extend** | Gateway API Inference Extension(遵循);或一层薄封装提供给 B7 | 🔬 | P3+ |
 | E2 | 自动扩缩(SLO/KV 利用率感知) | **Use** | Dynamo Planner / llm-d / AIBrix | ✅ | later |
 | E3 | 多模型 / 多租户 | **Use/Defer** | AIBrix / KServe | ✅ | later |
 | E4 | 部署(K8s、Helm、serving API) | **Use** | vLLM production-stack / KServe / llm-d;OpenAI 兼容的前门 | ✅ | later |

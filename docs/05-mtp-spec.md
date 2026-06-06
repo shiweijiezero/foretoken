@@ -1,7 +1,7 @@
 # 05 — MTP 投机解码(模块 C1 = 复用;C2 = 自建)
 
 基于 vLLM fork(v0.22.0)+ DeepSeek-V3 / SGLang。C1(MTP 本身)= 复用 vLLM 的原生 MTP,不自建
-drafter。C2(goodput 感知的自适应 MTP 控制)= 自建,是可守的空位。
+drafter。C2(goodput 感知的自适应 MTP 控制)= 自建,是未被上游覆盖的空间。
 
 ## MTP 概述
 
@@ -56,7 +56,7 @@ vLLM 主线尚无已合入的自适应投机长度(仅静态 `num_speculative_to
 纯每步 max-softmax)。C2 的利基因此从"自适应"收窄到 **goodput 感知 + 与 KV/调度跨层耦合 +
 MTP-on-EP'd-MoE 专用**。定义此目标的文献 —— SmartSpec(2406.14066,dense)、AdaServe
 (2501.12162,SLO 定制)、**Cascade(2506.20675,唯一 MoE 感知,不在 vLLM 中,也非 MTP 专用)**
-—— 均不在 vLLM 内。**C2 可守的利基**:一个 goodput/效用感知的控制器,从观测到的接受率 +
+—— 均不在 vLLM 内。**C2 的差异化定位**:一个 goodput/效用感知的控制器,从观测到的接受率 +
 batch/KV 负载 + MoE 专家暂存成本出发,**逐步(per step)**地选取 `num_speculative_tokens`(以及
 是否投机),**受桶约束**,为 MTP-on-EP'd-MoE 专门定制。该能力在上游缺失。
 

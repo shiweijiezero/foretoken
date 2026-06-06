@@ -41,7 +41,7 @@
   `toolagent` 子集的复用画像(`07` §6),也是 `04` 所谓「长生命周期、时间上分隔的复用」。用它做
   KV 复用主战场;但注意 SWE-bench 原生是单轮 patch 评测,要测 KV 复用必须跑 agent 框架
   (多步工具调用)才会产生累积上下文,否则退化成一次性长 prefill,复用为零。
-- **据此修订 `07` 的措辞**:`07` 把四个 benchmark 并列当「KV+MTP 通吃」的验证主线,不准确。
+- **据此修订 `07` 的措辞**:`07` 把四个 benchmark 并列当「KV+MTP 同时覆盖」的验证主线,不准确。
   正确分工是:KV 复用 → SWE-bench(agent 模式)/ 长文档多轮 QA;MTP 接受率 → AIME/GPQA/
   LiveCodeBench。这条分工写进 §7 的修订建议。
 
@@ -61,7 +61,7 @@ harness 上按到达过程并发回放,只采 TTFT/TPOT/完成情况。
 
 **三条具体路径(从轻到重):**
 
-1. **直接喂现成 serving harness(最快)**:`vllm bench serve` 原生支持 `--dataset-name custom`
+1. **直接接入现成 serving harness(最快)**:`vllm bench serve` 原生支持 `--dataset-name custom`
    (`.jsonl`,每条带 `prompt` 字段)和 `--dataset-name hf`(直接拉 HF 数据集)。把 benchmark
    的 prompt 列导出成 `prompt` 字段即可当负载。配 `--request-rate <R>`(`inf`=压满 / 有限值
    =受控到达)和 `--goodput KEY:VALUE`(直接传 SLO,如 `ttft:2000 tpot:80`,单位 ms),
@@ -122,7 +122,7 @@ harness 上按到达过程并发回放,只采 TTFT/TPOT/完成情况。
 | **PiKV**(arXiv 2508.06526) | MoE 专用 KV 管理,expert-aware 驱逐 | query 驱动 + 专家路由感知 | 2–3× 额外吞吐;2026-03 加 FPGA RTL | 2026 新 MoE 调度信号;正交于前缀缓存,但若 Foretoken 触 MoE 路由须引为相关工作 |
 
 **总结**:到 2026,「价值感知 KV 驱逐胜过 LRU」已被 T-LRU/SAECache/HiCache 占满(`03` §0 的
-现实核查继续成立,且更紧)。Foretoken 的可守新意仍是 `03` §5 那句窄陈述:把经校准 P(reuse) ×
+现实核查继续成立,且更紧)。Foretoken 的差异化新意仍是 `03` §5 那句窄陈述:把经校准 P(reuse) ×
 物理重算成本 × SLO 价值融进单一每字节密度、同治驱逐 AND 跨层准入、并可证退化到
 LHD/GDSF/T-LRU,三个对手各缺其中一两维(T-LRU 缺校准复用+每字节;SAECache/LPC 缺成本+SLO;
 HiCache 驱逐仍近因)。门槛(`04`)须同时击败 LRU 与 T-LRU/SAECache 这两个真竞品,不止 LRU。
@@ -191,7 +191,7 @@ rejection-sampler convergence 测试)。
 
 ## 7. 对 Foretoken 评测计划的具体修订建议
 
-1. **拆分 benchmark 角色(订正 `07`)**:把「四 benchmark 通吃 KV+MTP」改为明确分工 ——
+1. **拆分 benchmark 角色(订正 `07`)**:把「四 benchmark 兼顾 KV+MTP」改为明确分工 ——
    KV 复用主线 = SWE-bench-Verified(agent 模式)+ 长文档多轮 QA(有大共享前缀+累积历史);
    MTP 接受率主线 = AIME/GPQA/LiveCodeBench(短入超长出)。理由见 §2。
 2. **先实测长度分布再固化**:在 GLM-4.5-Air 上对每个 benchmark 跑一遍,记 input/output 的
