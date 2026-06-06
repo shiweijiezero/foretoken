@@ -15,4 +15,7 @@
 
 产出两字段:timestamp_ms / prompt,供 bench/replay.py 回放(输出长度交回放阶段统一 max_tokens 上限,
 不预设)。纯数据处理,本地可运行可测试(运行 build_dataset 需 datasets)。
+
+当前仅文本多轮对话(to_turns 跳过多模态条目);多模态内容(VLM 图文 / VLA 动作 / omni 全模态)为
+远期扩展(ROADMAP P3+)。
 """

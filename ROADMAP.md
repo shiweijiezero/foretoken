@@ -30,8 +30,8 @@ C1 用 GLM 内嵌 MTP(自测加载)→ C2 自适应 spec 长度控制(`scheduler
 量接受率 / 加速。新 MTP 算法(若做)走 `custom_class`(`docs/05`)。
 
 ### P3+ · 后续
-非前缀复用(CacheBlend)、跨 rank 共享、goodput 调度、EAGLE3 自训草稿头(可选研究)、多模型扩展
-(VLM/VLA/diffusion 等,远期)。
+非前缀复用(CacheBlend)、跨 rank 共享、goodput 调度、EAGLE3 自训草稿头(可选研究)、多模态扩展
+(VLM 图文 / VLA 动作 / omni 全模态 / diffusion 等,推理与评测负载均为远期)。
 
 ## 评测(核心支柱,贯穿全程)
 评测是与推理、优化并列的第三件核心事,以真实评测判断优化的好坏(厂商倍数是营销上界,启发式策略
