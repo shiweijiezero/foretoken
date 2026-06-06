@@ -18,13 +18,16 @@ tags: [llm-serving, kv-cache, mtp, benchmark, mooncake, foretoken]
 
 # {name}
 
-Foretoken 评测负载,在同一份数据上覆盖 KV 管理与 MTP:由 Mooncake 重建会话与时序结构,填入真实
-多轮对话内容。
+Foretoken 评测负载,覆盖 KV 管理与 MTP:由 Mooncake 重建会话与时序结构,填入真实多轮对话内容。
 
-- 会话 / 时序 / 并发:来自 Mooncake trace(以 hash 前缀链重建会话,保留每轮真实 timestamp);
+- 会话 / 时序 / 并发:来自 Mooncake trace(以 hash 去尾满块前缀重建会话,保留每轮真实 timestamp);
 - 内容:来自 `{content}`(真实多轮对话),复用来自会话内累积(连贯,由内容决定、与缓存配置无关,
   不复刻 Mooncake 的 512 块量化);
 - 回放:prompt 为文本,由 vLLM 自行 tokenize;输出长度交回放阶段(统一 max_tokens 上限 + 自然 EOS),不预设。
+
+## split
+按 Mooncake config 分场景:`{splits}`。各 split 保留各自真实的 0~1 小时时序,互不串联;按需分场景
+回放(对话 / agent 各自的 KV/MTP 表现)或合并回放。
 
 ## 字段
 - `timestamp_ms` — 真实到达时刻(供 foretoken `bench/replay.py` 回放)
@@ -35,22 +38,23 @@ Foretoken 评测负载,在同一份数据上覆盖 KV 管理与 MTP:由 Mooncake
 
 
 def build_hf_dataset(
-    rows: Iterable[dict],
+    splits: dict[str, Iterable[dict]],
     out_dir: str,
     *,
     name: str,
     mooncake: str,
     content: str,
 ) -> str:
-    """把缝合 rows 写成 parquet 与 dataset card 到 out_dir,返回 out_dir。需要 datasets。"""
+    """把各 config 的 rows 分别写成 parquet split(`<split>.parquet`)+ dataset card。需要 datasets。"""
     try:
         from datasets import Dataset
     except ImportError as e:  # pragma: no cover
         raise SystemExit("需要 datasets:pip install datasets(或装 foretoken[server])") from e
     os.makedirs(out_dir, exist_ok=True)
-    Dataset.from_list(list(rows)).to_parquet(os.path.join(out_dir, "data.parquet"))
+    for split, rows in splits.items():
+        Dataset.from_list(list(rows)).to_parquet(os.path.join(out_dir, f"{split}.parquet"))
     with open(os.path.join(out_dir, "README.md"), "w", encoding="utf-8") as f:
-        f.write(_CARD.format(name=name, mooncake=mooncake, content=content))
+        f.write(_CARD.format(name=name, mooncake=mooncake, content=content, splits=", ".join(splits)))
     return out_dir
 
 
@@ -70,21 +74,14 @@ if __name__ == "__main__":  # pragma: no cover
     ap.add_argument("--seed", type=int, default=0, help="对话打乱种子")
     args = ap.parse_args()
 
-    # 1) 各 config 自适应重建会话并合并;timestamp 按 config 顺序错开,避免多 config 挤在 t=0
-    sessions: list = []
-    ts_offset = 0
+    # 各 config 各自自适应重建会话、各自填充,作为一个 split(保留各自真实 0~1h 时序,互不串联)
+    splits: dict = {}
     for cfg in (c.strip() for c in args.mooncake_config.split(",") if c.strip()):
         sess_c = reconstruct_sessions(list(_stream_hf(args.mooncake, "train", args.limit, config=cfg)))
-        for s in sess_c:
-            for r in s:
-                r["timestamp"] = int(r["timestamp"]) + ts_offset
-        sessions.extend(sess_c)
-        ts_offset = max((int(r["timestamp"]) for s in sess_c for r in s), default=ts_offset) + 60_000
-        print(f"  {cfg}: {len(sess_c)} sessions")
-    print(f"reconstructed sessions = {len(sessions)}")
-    # 2) 流式读真实对话(按需:数据足时只读刚够填满会话,不足则读尽全源 + drop/log),长会话优先填入
-    rows = fill_sessions(sessions, _stream_hf(args.content, "train", None), seed=args.seed)
+        rows_c = list(fill_sessions(sess_c, _stream_hf(args.content, "train", None), seed=args.seed))
+        splits[cfg] = rows_c
+        print(f"  {cfg}: {len(sess_c)} sessions, {len(rows_c)} rows")
     out = build_hf_dataset(
-        rows, args.out_dir, name=args.name, mooncake=args.mooncake, content=args.content,
+        splits, args.out_dir, name=args.name, mooncake=args.mooncake, content=args.content,
     )
     print(f"dataset -> {out}")

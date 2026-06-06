@@ -143,7 +143,7 @@ dummy 仅作快速扫 KV 容量时的可选辅助,不是独立的一套评测。
 ### 方法
 1. `reconstruct_sessions`:按去尾满块前缀的延续链重建会话——B 续 A,当 A 的去尾满块前缀是 B 的 `hash_ids` 前缀。两道防误连:① 共享前缀须 ≥ `min_shared_blocks` 块,自适应(自动检测各 config 公共前缀块数:conversation 1 块、mooncake/toolagent 12 块,取其后),排除仅共享公共 system/few-shot 的不同会话;② B 的 timestamp 须严格晚于该会话上一轮,排除同时刻并发请求被并入。
 2. `fill_sessions`:打乱对话池,长会话优先取轮数最接近的对话逐轮填入;每轮 prompt 为前 k 轮的累积,timestamp 取自该轮对应的 Mooncake 记录。长度按轮数粗对齐,不对齐 `input_length`;不预设输出长度,回放给统一 `max_tokens` 上限并自然 EOS。
-3. 多 config 合并:`conversation`(对话)、`mooncake`(混合)、`toolagent`(agent/工具)三个真实子集各自自适应重建后合并,timestamp 按 config 顺序错开(避免挤在 t=0);`synthetic` 为合成负载、无真实多轮,排除。
+3. 多 config 分 split:`conversation`(对话)、`mooncake`(混合)、`toolagent`(agent/工具)三个真实子集各自自适应重建、各作为一个 split(保留各自真实的 0~1 小时时序,互不串联;按需分场景或合并回放);`synthetic` 为合成负载、无真实多轮,排除。
 
 不复刻 Mooncake 的 512 块 hash 复用:该粒度取决于 Kimi 生产环境的块大小、缓存与内容,与本项目的 vLLM(16 块)/ GLM 配置不一致。复用关系由内容决定、与缓存配置无关——真实多轮对话本身即产生会话内累积复用与跨会话系统提示共享,并具备价值分层(系统提示、会话历史、一次性内容),即价值感知策略的评测对象。内容连贯亦使 MTP 接受率不受块边界影响。
 

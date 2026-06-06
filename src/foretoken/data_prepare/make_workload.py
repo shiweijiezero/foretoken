@@ -5,10 +5,10 @@ vLLM(16 块)/ GLM 配置不一致(docs/07 §6.6)。复用关系由内容决定�
 本身即产生会话内累积复用与跨会话系统提示共享,并具备价值分层(系统提示复用概率高、会话历史居中、
 一次性内容低),即价值感知策略的评测对象。
 
-流程:由 Mooncake hash 的去尾满块前缀延续链重建会话(自适应防误连,详见 reconstruct_sessions),
-多个真实 config 合并;为每个会话逐轮填入真实多轮对话,每轮 prompt 为前 k 轮的累积。产出带
-`timestamp_ms` 的 trace,供 `bench/replay.py` 回放,在同一份负载上覆盖 KV(会话内累积复用)与
-MTP(连贯内容)。
+流程:由 Mooncake hash 的去尾满块前缀延续链重建会话(自适应防误连,详见 reconstruct_sessions);
+为每个会话逐轮填入真实多轮对话,每轮 prompt 为前 k 轮的累积。产出带 `timestamp_ms` 的 trace,供
+`bench/replay.py` 回放,覆盖 KV(会话内累积复用)与 MTP(连贯内容)。多个真实 config 各作为一个
+split(build_dataset),保留各自真实时序、互不串联。
 
 纯数据处理;本地可运行可测试(运行 main 需 datasets)。
 """
