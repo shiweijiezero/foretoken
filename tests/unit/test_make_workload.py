@@ -23,10 +23,31 @@ def test_reconstruct_sessions_not_fooled_by_shared_prefix():
         {"timestamp": 5, "hash_ids": [1, 2, 3]},   # 续 r0(真前缀延续)
         {"timestamp": 3, "hash_ids": [1, 9]},      # 另一会话:共享 hash[0]=1 但分叉
     ]
-    sessions = reconstruct_sessions(rows)
+    sessions = reconstruct_sessions(rows, min_shared_blocks=2)
     assert len(sessions) == 2
     # r0,r1 同会话;r2 单独(只共享开头不算延续)
     assert sorted(len(s) for s in sessions) == [1, 2]
+
+
+def test_reconstruct_tolerates_partial_tail_block():
+    # 512 块尾部不满,下一轮累积会填满该块、其 hash 改变;故比去尾满块前缀而非完整 hash
+    rows = [
+        {"timestamp": 0, "hash_ids": [1, 2, 3]},      # 第 1 轮,尾块 3 不满
+        {"timestamp": 5, "hash_ids": [1, 2, 9, 4]},   # 第 2 轮:满块 [1,2] 不变,尾块 3 被填满→9,加新块 4
+    ]
+    sessions = reconstruct_sessions(rows, min_shared_blocks=2)
+    # 去尾比前缀 → 正确识别为同一会话;若比完整 hash([1,2,3] 非 [1,2,9,4] 前缀)会漏成 2 个单轮
+    assert len(sessions) == 1
+    assert len(sessions[0]) == 2
+
+
+def test_reconstruct_rejects_concurrent_same_timestamp():
+    # 同时刻的两个请求共享长前缀,是并发(非多轮),timestamp 不严格递增 → 不并入同一会话
+    rows = [
+        {"timestamp": 0, "hash_ids": [1, 2, 3]},
+        {"timestamp": 0, "hash_ids": [1, 2, 3, 4]},
+    ]
+    assert len(reconstruct_sessions(rows, min_shared_blocks=2)) == 2
 
 
 def test_fill_sessions_accumulates_and_uses_timestamps():

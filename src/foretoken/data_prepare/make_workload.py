@@ -38,33 +38,58 @@ def to_turns(conversation: list[dict]) -> tuple[str | None, list[tuple[str, str]
     return system, turns
 
 
+def _common_prefix_blocks(rows: list[dict], label_hash_ids: str, threshold: float = 0.5) -> int:
+    """公共前缀块数:从开头连续、被 ≥ threshold 请求共享的块数(公共 system/few-shot/工具定义)。"""
+    k = 0
+    while True:
+        vals = [r[label_hash_ids][k] for r in rows if len(r.get(label_hash_ids, [])) > k]
+        if not vals or (len(vals) - len(set(vals))) / len(vals) < threshold:
+            return k
+        k += 1
+
+
 def reconstruct_sessions(
     trace_rows: Iterable[dict],
     *,
     label_hash_ids: str = "hash_ids",
     label_timestamp: str = "timestamp",
+    min_shared_blocks: int | None = None,
 ) -> list[list[dict]]:
     """从 Mooncake hash 前缀延续链重建会话(每个会话为按时间排序的多轮请求)。
 
-    请求 B 是请求 A 的下一轮,当且仅当 A.hash_ids 是 B.hash_ids 的真前缀(B 比 A 多尾部块)。
-    跨会话共享系统提示不会误并:要求某请求的完整 hash 等于 B 的前缀,仅共享开头不视为同一会话。
+    请求 B 续 A,当 A 的去尾满块前缀(去掉尾部不满的 partial 块)是 B.hash_ids 的前缀。Mooncake 块为
+    512 token、input 几乎不是 512 的整数倍,故每请求尾块不满;下一轮累积会把该尾块填满、其 hash
+    改变,所以须比去尾满块前缀而非完整 hash——否则前缀在尾块断裂,会把真实多轮漏成单轮。
+
+    防误连:① 共享前缀须 ≥ min_shared_blocks 块(排除仅共享公共 system/few-shot 的不同会话);
+    各 config 公共前缀长度不同,min_shared_blocks 默认自适应——自动检测公共前缀块数后取其后一块,
+    显式传值则覆盖。② B 的 timestamp 须严格晚于该会话上一轮(排除同时刻并发请求被并入)。
     """
     rows = sorted(trace_rows, key=lambda r: r[label_timestamp])
+    if min_shared_blocks is None:
+        min_shared_blocks = max(2, _common_prefix_blocks(rows, label_hash_ids) + 1)
     sessions: list[list[dict]] = []
-    prefix_to_sess: dict[tuple, int] = {}  # 某请求完整 hash → 所属会话 index
+    last_ts: list = []  # 每个会话最后一轮的 timestamp(用于 ② 严格递增约束)
+    prefix_to_sess: dict[tuple, int] = {}  # 满块前缀 → 所属会话 index
     for r in rows:
         h = tuple(r.get(label_hash_ids, []))
+        ts = r[label_timestamp]
         sess: int | None = None
-        for n in range(len(h) - 1, 0, -1):  # 最长真前缀优先
-            if h[:n] in prefix_to_sess:
-                sess = prefix_to_sess[h[:n]]
+        for n in range(len(h) - 1, min_shared_blocks - 1, -1):  # 最长前缀优先,≥min_shared 块
+            cand = prefix_to_sess.get(h[:n])
+            if cand is not None and ts > last_ts[cand]:  # 须严格晚于上一轮,防并发误连
+                sess = cand
                 break
         if sess is None:
             sessions.append([r])
             sess = len(sessions) - 1
+            last_ts.append(ts)
         else:
             sessions[sess].append(r)
-        prefix_to_sess[h] = sess
+            last_ts[sess] = ts
+        # 注册「去尾 1 块」到全长的各前缀(容忍 partial 尾块),供后续轮匹配
+        for k in range(max(min_shared_blocks, len(h) - 1), len(h) + 1):
+            prefix_to_sess[h[:k]] = sess
     return sessions
 
 
