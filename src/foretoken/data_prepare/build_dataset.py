@@ -12,6 +12,8 @@ from collections.abc import Iterable
 _CARD = """\
 ---
 license: apache-2.0
+configs:
+{configs}
 task_categories: [text-generation]
 tags: [llm-serving, kv-cache, mtp, benchmark, mooncake, foretoken]
 ---
@@ -53,8 +55,10 @@ def build_hf_dataset(
     os.makedirs(out_dir, exist_ok=True)
     for split, rows in splits.items():
         Dataset.from_list(list(rows)).to_parquet(os.path.join(out_dir, f"{split}.parquet"))
+    configs = "\n".join(f"- config_name: {s}\n  data_files: {s}.parquet" for s in splits)
     with open(os.path.join(out_dir, "README.md"), "w", encoding="utf-8") as f:
-        f.write(_CARD.format(name=name, mooncake=mooncake, content=content, splits=", ".join(splits)))
+        f.write(_CARD.format(name=name, mooncake=mooncake, content=content,
+                             splits=", ".join(splits), configs=configs))
     return out_dir
 
 
