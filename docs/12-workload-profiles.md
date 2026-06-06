@@ -9,8 +9,8 @@
 2. **评测真实性。** 长度、复用、到达三要素一旦失真,goodput 数据失去意义(见 `docs/04` 门槛零)。
 
 现有文档覆盖了 4 类负载骨架(agentic / 多轮 / RAG / 长上下文),但缺少 reasoning 实测结构、跨节点到达、
-租户异质 SLO,以及与 llm-d / Dynamo / AIBrix 的对标维度。本篇补齐这些维度,并据此给出对 `docs/07` 缝合法
-的具体修订。
+租户异质 SLO,以及与 llm-d / Dynamo / AIBrix 的对标维度。本篇补齐这些维度,并据此给出对 `docs/07`
+评测负载的具体修订。
 
 三类负载将 KV/MTP 优化拉向不同极端:
 
@@ -83,7 +83,7 @@ KV 复用价值 = 复用结构(谁能命中)× 复用时距(命中前是否被�
 
 对比要点:
 
-1. 仅 Mooncake 系列开箱带前缀复用 hash,是缝合法骨架的唯一选择(`docs/07`)。
+1. 仅 Mooncake 系列开箱带前缀复用 hash,是会话重建缝合中时序 / 并发 / 会话结构来源的唯一选择(`docs/07`)。
 2. reasoning 无公开带 hash 的到达 trace,只能用 MLPerf DS-R1 长度分布 + ServeGen 的 Poisson-like 到达合成
    (见 §7)。
 3. Azure / BurstGPT 提供真实到达但无复用 hash,用于注入真实突发而非复用评测(与 `docs/04` 一致)。
@@ -168,10 +168,10 @@ SLO 不是单一阈值,而是按"应用类 × 处理阶段"分层。SLOs-Serve(M
 
 ---
 
-## 7. 对 Foretoken 缝合法的具体修订(改 `docs/07 §6.5`)
+## 7. 对 Foretoken 评测负载的具体修订(改 `docs/07 §6.6`)
 
-`docs/07` 缝合法 = Mooncake 骨架(时序 / 并发 / 轮次 / 复用)+ prompt pool(内容)+ 真模型生成。本篇画像
-要求四处修订 / 新增:
+`docs/07` §6.6 的评测负载 = 会话重建缝合:Mooncake trace 提供真实时序 / 并发 / 会话结构,真实多轮
+对话集提供内容,真模型现场生成回复。本篇画像要求四处修订 / 新增:
 
 1. **新增 reasoning arm(原缝合法缺)**。Mooncake 三子集不含 reasoning;reasoning 无公开带 hash 的 trace。
    做法:用 **MLPerf DS-R1 长度分布(in ~800 / out ~3,880, max 20K)** + **ServeGen 的 Poisson-like 到达

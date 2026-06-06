@@ -69,9 +69,9 @@ harness 上按到达过程并发回放,只采 TTFT/TPOT/完成情况。
    - 局限:`custom`/`hf` 默认无真实到达时间戳、无前缀复用结构,适合 AIME/GPQA/LiveCodeBench
      (本就无复用),不适合直接评 SWE-bench 的 KV 复用。
 
-2. **缝合法注入时序/复用(`07` §6.5)**:对要测 KV 复用的负载(SWE-bench agentic / 长文档
-   多轮),把 benchmark prompt 当 prompt pool 的内容,Mooncake 当骨架(时序/并发/轮次/复用),
-   真模型现场生成,这样既有真实内容(MTP)又有真实复用结构(KV)。harness 走
+2. **会话重建缝合注入时序/复用(`07` §6.6)**:对要测 KV 复用的负载(SWE-bench agentic / 长文档
+   多轮),用 Mooncake trace 提供真实时序/并发/会话结构、真实多轮对话集提供内容,真模型现场生成,
+   这样既有真实内容(MTP)又有真实复用结构(KV)。harness 走
    `--dataset-name timed_trace --self-timed --timed-trace-chunk-hash-size 512`(`07` §2)。
 
 3. **跑 agent 框架再镜像流量(最贴真,SWE-bench 专用)**:SWE-bench 的 KV 复用只在 agent 多步
@@ -216,7 +216,7 @@ rejection-sampler convergence 测试)。
 - **SWE-bench 的 KV 复用强依赖 agent scaffold**:不同 scaffold(SWE-agent / OpenHands / 自研)产生
   的共享前缀与累积历史差异很大,复用画像是否 scaffold-dependent?需固定一个 scaffold 并报告。
 - **benchmark prompt 缺真实到达时序**:AIME/GPQA/LCB 本身无时间戳,`--request-rate` 是合成泊松,
-  突发性失真。是否需把它们也缝进 Mooncake 骨架(而非仅当无时序 pool)?权衡见 `07` §6.5。
+  突发性失真。是否需把它们也按 Mooncake 的真实时序回放(而非仅当无时序内容源)?权衡见 `07` §6.6。
 - **batch-invariant 的硬件门槛**:`VLLM_BATCH_INVARIANT=1` 仅 H100/H200/B 系且有性能损,在
   A100(GLM-4.5-Air 跑得动)上如何做无损校验?是否退而用「固定 batch/并发 + 同 seed」近似?(待核实)
 - **MoE 路由与 KV 价值的耦合**:若后续上 MoE(PiKV 这类 2026 工作),专家路由的 cache 价值与前缀

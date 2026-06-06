@@ -66,12 +66,11 @@ def test_fill_sessions_accumulates_and_uses_timestamps():
     assert set(out[0]) == {"timestamp_ms", "prompt"}  # 只产两字段,不预设输出长度
 
 
-def test_fill_sessions_skips_too_short_conversation():
-    sessions = [[{"timestamp": 0}, {"timestamp": 1}, {"timestamp": 2}]]  # 需 3 轮
-    conversations = [
-        {"conversations": [{"from": "human", "value": "a"}, {"from": "gpt", "value": "b"}]},  # 1 轮,不够
-    ]
-    assert list(fill_sessions(sessions, conversations)) == []
+def test_fill_sessions_empty_pool_yields_nothing():
+    # 对话池为空(全为多模态、被 to_turns 跳过)→ 无可填,输出空
+    sessions = [[{"timestamp": 0}, {"timestamp": 1}]]
+    multimodal = [{"conversations": [{"from": "human", "value": [{"img": "x"}]}]}]
+    assert list(fill_sessions(sessions, multimodal)) == []
 
 
 def test_fill_sessions_matches_by_turns_without_waste():
@@ -92,10 +91,10 @@ def test_fill_sessions_matches_by_turns_without_waste():
 
 
 def test_fill_sessions_prefers_long_session_when_scarce():
-    # 对话稀缺(只有一条 3 轮):长会话 M=3 应保住,短会话 M=2 被 drop(长会话优先)
+    # 对话稀缺(只有一条 3 轮):长会话 M=3 优先拿到,短会话 M=2 因对话耗尽未填
     sessions = [
-        [{"timestamp": 0}, {"timestamp": 1}],                       # M=2(短,牺牲)
-        [{"timestamp": 10}, {"timestamp": 11}, {"timestamp": 12}],  # M=3(长,保住)
+        [{"timestamp": 0}, {"timestamp": 1}],                       # M=2(短)
+        [{"timestamp": 10}, {"timestamp": 11}, {"timestamp": 12}],  # M=3(长,优先)
     ]
     conv3 = {"conversations": [
         {"from": "human", "value": "h0"}, {"from": "gpt", "value": "g0"},
@@ -104,16 +103,16 @@ def test_fill_sessions_prefers_long_session_when_scarce():
     ]}
     out = list(fill_sessions(sessions, [conv3]))
     assert len(out) == 3                                     # 填了 M=3 会话
-    assert {r["timestamp_ms"] for r in out} == {10, 11, 12}  # 长会话保住,短会话 drop
+    assert {r["timestamp_ms"] for r in out} == {10, 11, 12}  # 长会话优先拿到,短会话因耗尽未填
 
 
-def test_fill_sessions_truncate_keeps_count_with_flag():
-    # 无足够长对话时 truncate=True 截断会话保数量,并给行打 truncated 标记
+def test_fill_sessions_truncates_when_no_long_enough_conversation():
+    # 无足够长对话时用最长可用对话截断填充(保数量,不打标记)
     sessions = [[{"timestamp": 0}, {"timestamp": 1}, {"timestamp": 2}]]  # M=3
     conv2 = {"conversations": [
         {"from": "human", "value": "h0"}, {"from": "gpt", "value": "g0"},
         {"from": "human", "value": "h1"}, {"from": "gpt", "value": "g1"},
     ]}  # 只 2 轮
-    out = list(fill_sessions(sessions, [conv2], truncate=True))
-    assert len(out) == 2                           # 截断为 2 轮
-    assert all(r.get("truncated") for r in out)    # 行打 truncated 标记
+    out = list(fill_sessions(sessions, [conv2]))
+    assert len(out) == 2                                          # 截断为 2 轮
+    assert all(set(r) == {"timestamp_ms", "prompt"} for r in out)  # 无 truncated 标记

@@ -5,9 +5,10 @@ vLLM(16 块)/ GLM 配置不一致(docs/07 §6.6)。复用关系由内容决定�
 本身即产生会话内累积复用与跨会话系统提示共享,并具备价值分层(系统提示复用概率高、会话历史居中、
 一次性内容低),即价值感知策略的评测对象。
 
-流程:由 Mooncake hash 重建会话(同一会话的轮次顺序、每轮 timestamp、并发);为每个会话逐轮填入
-真实多轮对话,每轮 prompt 为前 k 轮的累积。产出带 `timestamp_ms` 的 trace,供 `bench/replay.py`
-回放,在同一份负载上覆盖 KV(会话内累积复用)与 MTP(连贯内容)。
+流程:由 Mooncake hash 的去尾满块前缀延续链重建会话(自适应防误连,详见 reconstruct_sessions),
+多个真实 config 合并;为每个会话逐轮填入真实多轮对话,每轮 prompt 为前 k 轮的累积。产出带
+`timestamp_ms` 的 trace,供 `bench/replay.py` 回放,在同一份负载上覆盖 KV(会话内累积复用)与
+MTP(连贯内容)。
 
 纯数据处理;本地可运行可测试(运行 main 需 datasets)。
 """
@@ -100,22 +101,19 @@ def fill_sessions(
     seed: int = 0,
     sep: str = "\n\n",
     label_timestamp: str = "timestamp",
-    truncate: bool = False,
 ) -> Iterator[dict]:
-    """把真实多轮对话填入重建的会话槽位,长会话优先(KV 价值高的不被丢弃)。
+    """把真实多轮对话填入重建的会话槽位,长会话优先取较长对话。
 
     会话按所需轮数 M 降序,每个取「轮数 ≥ M 中最接近 M 的可用对话」:长会话优先抢占稀缺的长对话,
-    短会话用充足的短对话。填充总数仍是最大(等价二分匹配的最大基数),降序只决定「容量不足时牺牲谁」
-    ——把损耗从珍贵的长会话转移到低价值的短会话。每轮 prompt 为前 k 轮的累积(会话内复用由此产生),
-    timestamp 取自该轮的 Mooncake 记录。
+    短会话用充足的短对话。每轮 prompt 为前 k 轮的累积(会话内复用由此产生),timestamp 取自该轮的
+    Mooncake 记录。
 
     读取按需、无固定上限:流式读对话,直到所有会话都可填满(Hall 条件:对每个 t,已读到的轮数 ≥t 的
-    对话数 ≥ 需要 ≥t 的会话数)或源耗尽即停——数据足时只读刚够,不足时读尽全源。配不上长对话的会话:
-    默认 drop(留下的会话轮数 = Mooncake 真实轮数、时序完整),丢弃统计打到 stderr;truncate=True 时改用
-    最长可用对话截断填充、给行打 `truncated` 标记(保数量,但复用距离 / 累积深度失真)。
+    对话数 ≥ 需要 ≥t 的会话数)或源耗尽即停——数据足时只读刚够,不足时读尽全源。配不上足够长对话的
+    会话用最长可用对话截断填充:产出仍是真实对话的前 k 轮累积(轮数 = 对话轮数 < Mooncake M、少用了
+    后几轮 timestamp),非假数据,故不打标记;截断比例打到 stderr 供知悉失真程度。
 
-    只产 timestamp_ms / prompt(truncate 的行附 truncated):输出长度交回放阶段(统一 max_tokens 上限 +
-    自然 EOS),不预设。
+    只产 timestamp_ms / prompt:输出长度交回放阶段(统一 max_tokens 上限 + 自然 EOS),不预设。
     """
     sess_lens = [len(s) for s in sessions]
     if not sess_lens:
@@ -149,49 +147,34 @@ def fill_sessions(
     for bucket in buckets.values():  # 桶内打乱,消除原始顺序偏置(同轮数内随机)
         rng.shuffle(bucket)
 
-    # 会话按 M 降序:长会话优先取「≥M 的最小可用对话」(内容浪费最少)
+    # 会话按 M 降序:长会话优先取「≥M 的最小可用对话」;无够长对话则用最长可用对话截断填充
     order = sorted(range(len(sessions)), key=lambda i: len(sessions[i]), reverse=True)
-    dropped: list[int] = []
-    n_truncated = 0
+    n_filled = n_truncated = 0
     for si in order:
         sess = sessions[si]
         m = len(sess)
         pick = min((t for t in buckets if t >= m and buckets[t]), default=None)
-        is_trunc = False
-        if pick is None:  # 无 ≥M 对话
-            if not truncate:
-                dropped.append(m)
-                continue
-            pick = max((t for t in buckets if buckets[t]), default=None)  # 最长可用,截断填充
+        if pick is None:  # 无 ≥M 对话 → 用最长可用对话截断填充
+            pick = max((t for t in buckets if buckets[t]), default=None)
             if pick is None:
-                dropped.append(m)
-                continue
-            is_trunc = True
-        system, turns = buckets[pick].pop()
-        if is_trunc:
+                break  # 对话池耗尽
             n_truncated += 1
+        system, turns = buckets[pick].pop()
+        n_filled += 1
         prefix: list[str] = [f"system: {system}"] if system else []
         for k in range(min(m, len(turns))):  # 正常 = m;截断 = 对话轮数 < m
             user, assistant = turns[k]
-            row = {
+            yield {
                 "timestamp_ms": int(sess[k][label_timestamp]),
                 "prompt": sep.join([*prefix, f"user: {user}"]),
             }
-            if is_trunc:
-                row["truncated"] = True
-            yield row
             prefix.append(f"user: {user}")
             prefix.append(f"assistant: {assistant}")
 
-    if dropped:
+    if n_filled:
         print(
-            f"[make_workload] drop {len(dropped)} 个会话(无足够长对话),最长 M={max(dropped)};"
-            f"增大 / 更换 content 源,或用 truncate=True 保数量。",
-            file=sys.stderr,
-        )
-    if n_truncated:
-        print(
-            f"[make_workload] 截断 {n_truncated} 个会话(轮数降级,行已打 truncated 标记)。",
+            f"[make_workload] 截断填充 {n_truncated}/{n_filled} 会话 "
+            f"({100 * n_truncated / n_filled:.1f}%,无足够长对话、用较短对话截断;增大或更换 content 源可降低)",
             file=sys.stderr,
         )
 

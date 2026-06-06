@@ -19,8 +19,8 @@
 ## 0.5 评测方案总纲(一套真实场景 + 4 对照配置)
 KV 与 MTP 共用同一套评测:在同一份真实场景负载上跑 4 个开关配置,KV/MTP 是其中
 被评的优化,不改评测本身。
-- **负载(一套)**:§6.5 缝合法——Mooncake 骨架(时序/并发/轮次/复用)+ prompt pool 填内容 +
-  真实模型现场生成,带真实时序/并发/复用/内容。全程真模型(测 MTP 接受率不能用 dummy)。
+- **负载(一套)**:会话重建缝合(§6.6)——Mooncake trace 提供真实时序/并发/会话结构,真实多轮
+  对话集提供内容,真实模型现场生成回复,带真实时序/并发/复用/内容。全程真模型(测 MTP 接受率不能用 dummy)。
 - **4 个对照配置**(同一负载,只切优化开关):① 原生 vLLM(全关=基线)② 只开 KV ③ 只开 MTP
   ④ 全开 → 对比可拆出 KV 与 MTP 各自的贡献 + 端到端总效果,用于归因。
 - **量**:端到端 goodput / TTFT / TPOT / 显存;拆 KV(命中率、每字节 goodput)+ MTP(接受率、加速);
@@ -28,7 +28,7 @@ KV 与 MTP 共用同一套评测:在同一份真实场景负载上跑 4 个开�
 - **dummy 作可选加速**:需快速扫大量 KV 缓存容量点(纯机制隔离、省 GPU)时,可临时用
   Mooncake + dummy 跑该子实验;主线评测为上述统一的真实场景。
 
-## 1. 用什么 trace(为缝合法提供时序/并发/复用骨架)
+## 1. 用什么 trace(为会话重建缝合提供时序/并发/复用结构)
 | trace | 时间戳 | 长度分布 | 前缀复用 hash | 用途 | 来源 |
 |---|---|---|---|---|---|
 | **Mooncake trace**(主选) | ✅ ms | ✅ in 891–126k | ✅ **512-block `hash_ids`** | 多轮/agentic/长上下文全覆盖 | HF `valeriol29/mooncake-traces` |
@@ -105,44 +105,24 @@ dummy 仅作快速扫 KV 容量时的可选辅助,不是独立的一套评测。
   position-independent 复用(CacheBlend/CacheClip 路线)则明确划为 out-of-scope。
 - **长上下文**:Mooncake input 直到 126k 天然覆盖;分层缓存(GPU/CPU/SSD)参考 Strata(2508.18572)。
 
-## 6.5 负载缝合法:Mooncake 骨架 + prompt pool(一套负载同时压 KV 和 MTP)
-动机:贴 2026 业务的真实数据存在缺口——有真实时序/复用的 trace(Mooncake/Inferact)无内容;
-有真实内容的(benchmark/对话集)无时序/并发。缝合二者可同时满足两侧:Mooncake 作骨架(时序/并发/
-轮次/间隔/长度),prompt pool 作内容(真实内容),模型真实生成回复。产出的一套多轮负载同时满足
-KV(时序+复用+并发)和 MTP(真实内容),且不用自录。
+## 6.5 一套负载同时压 KV 与 MTP(动机)
+贴 2026 业务的真实数据存在缺口:有真实时序/复用的 trace(Mooncake)无内容;有真实内容的
+(benchmark/对话集)无时序/并发。将两者缝合,可在同一份负载上同时满足 KV(真实时序+复用+并发)
+与 MTP(真实内容)两侧,且不用自录。具体方法与实现见 §6.6。
 
-> 单独跑 benchmark 时 KV/MTP 分工不同(`docs/10` 用一手长度数据核实):AIME / GPQA /
-> LiveCodeBench(短输入 + 超长 output + 无跨题共享前缀)主压 MTP 接受率,几乎压不出 KV
-> 复用;SWE-bench-Verified(agent 模式)(大型共享系统前缀 + 累积历史)主压 KV 复用。因此
-> "一套负载同时压 KV+MTP"依赖缝合(Mooncake 时序骨架注入复用结构),而非任一 benchmark
-> 天然覆盖两者。
+单独跑 benchmark 时 KV 与 MTP 的压测分工不同(`docs/10` 用一手长度数据核实):
 
-**各部分来源:**
-| 维度 | 来自 |
-|---|---|
-| 到达时间戳 / 并发 / 会话轮次 / 轮间间隔 / 每轮长度 | **Mooncake trace(骨架)** |
-| 每轮真实文本内容 | **prompt pool(血肉)**:现成 benchmark prompt / LMSYS 多轮 / **`lightseekorg/kimi-mtp-dataset`**(47.6万行多轮 ShareGPT,正对口 MTP)抽 prompt |
-| 每轮回复 | **真实模型现场生成**(MTP 要测接受率,必须真生成) |
+- **AIME / GPQA / LiveCodeBench**(短输入 + 超长 output + 无跨题共享前缀)主压 MTP 接受率,几乎
+  压不出 KV 复用。
+- **SWE-bench-Verified(agent 模式)**(大型共享系统前缀 + 累积历史)主压 KV 复用。
 
-**流程:**
-1. 从 Mooncake trace 抽**会话骨架**:每会话的起始时刻、轮数 N、各轮 input/output 长度、轮间间隔。
-2. 为每会话从 pool 取**一个连贯的多轮序列**(轮数 ≈ N)填充各轮 user 输入;**所有会话用同一份系统提示**(见下"复用")。
-3. 按骨架时序**多会话并发回放**:每轮把 user 输入 + **累积历史**喂真实模型生成回复,轮间按间隔 sleep;多会话的到达/轮次在全局时间轴上交错 = 真实并发。
-4. 量:KV(命中率 / goodput / 每字节 goodput)+ MTP(接受率 / 加速)+ **无损校验**(输出 == 原生 vLLM)。
+因此"一套负载同时压 KV+MTP"需要缝合真实时序与真实多轮内容,而非依赖任一 benchmark 天然覆盖两者。
 
-**三个保真要点:**
-- **复用结构**:① 会话内(第 N+1 轮吃前 N 轮历史)——同会话同序列填,字节一致累积、自然真实
-  (KV 复用的主要来源);② 跨会话(共享前缀,主要是系统提示/工具定义)——用 pool 填后默认会丢,
-  让所有会话填同一份系统提示即可保留。
-- **长度不对齐**:不对齐 Mooncake 的逐请求长度,按轮数匹配对话(以 Mooncake 时序/轮次为准,长度
-  由 kimi 内容自然定)。
-- **输出真生成**:输出必须真模型生成(MTP 需要),回放给统一 `max_tokens` 上限并自然 EOS,不预设
-  每条输出长度、不塞假输出。
+缝合负载中的 KV 复用来自两处:① 会话内累积——同一会话第 k 轮的 prompt 为前 k 轮的累积,字节一致、
+逐轮增长(KV 复用的主要来源);② 跨会话公共前缀——多个会话共享的系统提示 / 工具定义,经多 config
+合并后由各子集自身的公共前缀自然保留。两处复用均由内容决定,不依赖缓存块大小。
 
-**实用权衡**:严格复刻 Mooncake 每个 `hash_id` 的复用模式工作量大且无必要。取 Mooncake
-的"时序 + 并发 + 轮次节奏"作骨架;复用靠"会话内多轮历史"自然产生 + "跨会话统一系统提示"对齐。
-
-> 分工:纯 KV 评测用 Mooncake + dummy 更省(无需真模型);本缝合法的价值在 KV+MTP 端到端
+> 分工:纯 KV 评测用 Mooncake + dummy 更省(无需真模型);缝合负载的价值在 KV+MTP 端到端
 > (需要真实内容 + 真模型现场生成)。
 
 ## 6.6 评测负载:会话重建缝合
@@ -158,11 +138,12 @@ KV(时序+复用+并发)和 MTP(真实内容),且不用自录。
 
 ### 前提
 - vLLM `--dataset-name` 中仅 `timed_trace` 与 `burstgpt` 自带真实时序;HF 数据集按 `SUPPORTED_DATASET_PATHS` 白名单分派,并非任意 HF 数据集均可直接使用。
-- Mooncake 无 session/user id;会话关系由 `hash_ids` 的前缀包含隐式编码(相同 hash 表示该块及其前序 token 完全相同,可复用)。
+- Mooncake 无 session/user id,会话关系由 `hash_ids` 的前缀延续隐式编码。`hash_ids` 按 512-token 块滚动累积哈希;input 几乎不是 512 的整数倍,故每请求尾块不满,下一轮累积会把该尾块填满、其 hash 改变。因此须比"去尾满块前缀"而非完整 `hash_ids`——否则前缀在尾块处断裂,真实多轮会被全部漏判为单轮。
 
 ### 方法
-1. `reconstruct_sessions`:按 `hash_ids` 的最长前缀延续链重建会话——请求 B 是请求 A 的后续轮,当且仅当 A 的完整 `hash_ids` 是 B 的真前缀。仅共享开头(如系统提示)不视为同一会话,以避免误并。
-2. `fill_sessions`:打乱对话池,为每个会话(M 轮)选取一条轮数不少于 M 的对话逐轮填入;每轮 prompt 为前 k 轮的累积,timestamp 取自该轮对应的 Mooncake 记录。长度按轮数粗对齐,不对齐 `input_length`;不预设输出长度,回放给统一 `max_tokens` 上限并自然 EOS。
+1. `reconstruct_sessions`:按去尾满块前缀的延续链重建会话——B 续 A,当 A 的去尾满块前缀是 B 的 `hash_ids` 前缀。两道防误连:① 共享前缀须 ≥ `min_shared_blocks` 块,自适应(自动检测各 config 公共前缀块数:conversation 1 块、mooncake/toolagent 12 块,取其后),排除仅共享公共 system/few-shot 的不同会话;② B 的 timestamp 须严格晚于该会话上一轮,排除同时刻并发请求被并入。
+2. `fill_sessions`:打乱对话池,长会话优先取轮数最接近的对话逐轮填入;每轮 prompt 为前 k 轮的累积,timestamp 取自该轮对应的 Mooncake 记录。长度按轮数粗对齐,不对齐 `input_length`;不预设输出长度,回放给统一 `max_tokens` 上限并自然 EOS。
+3. 多 config 合并:`conversation`(对话)、`mooncake`(混合)、`toolagent`(agent/工具)三个真实子集各自自适应重建后合并,timestamp 按 config 顺序错开(避免挤在 t=0);`synthetic` 为合成负载、无真实多轮,排除。
 
 不复刻 Mooncake 的 512 块 hash 复用:该粒度取决于 Kimi 生产环境的块大小、缓存与内容,与本项目的 vLLM(16 块)/ GLM 配置不一致。复用关系由内容决定、与缓存配置无关——真实多轮对话本身即产生会话内累积复用与跨会话系统提示共享,并具备价值分层(系统提示、会话历史、一次性内容),即价值感知策略的评测对象。内容连贯亦使 MTP 接受率不受块边界影响。
 
