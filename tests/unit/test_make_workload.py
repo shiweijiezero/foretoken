@@ -1,4 +1,9 @@
-from foretoken.data_prepare.make_workload import fill_sessions, reconstruct_sessions, to_turns
+from foretoken.data_prepare.make_workload import (
+    fill_sessions,
+    group_by_session,
+    reconstruct_sessions,
+    to_turns,
+)
 
 
 def test_to_turns_pairs_and_system():
@@ -120,3 +125,45 @@ def test_fill_sessions_splices_long_session_from_short():
     assert len(out) == 4                                  # 两条 2 轮拼成 4 轮
     assert out[3]["prompt"].startswith(out[0]["prompt"])  # 跨拼接边界仍累积
     assert all(set(r) == {"timestamp_ms", "prompt"} for r in out)
+
+
+def test_to_turns_configurable_openai_format():
+    # 字段 / 角色可配:OpenAI 格式(role/content、user/assistant)
+    conv = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "h1"}, {"role": "assistant", "content": "g1"},
+    ]
+    system, turns = to_turns(conv, role_key="role", text_key="content",
+                             user_role="user", assistant_role="assistant")
+    assert system == "sys"
+    assert turns == [("h1", "g1")]
+
+
+def test_group_by_session_by_id():
+    # trace 自带 session id → 直接按 id 分组,各会话内按 timestamp 排序
+    rows = [
+        {"session_id": "a", "timestamp": 5},
+        {"session_id": "b", "timestamp": 1},
+        {"session_id": "a", "timestamp": 2},
+    ]
+    sessions = group_by_session(rows)
+    assert sorted(len(s) for s in sessions) == [1, 2]
+    a = next(s for s in sessions if len(s) == 2)
+    assert [r["timestamp"] for r in a] == [2, 5]  # 会话内按 timestamp 升序
+
+
+def test_fill_sessions_custom_turns_fn():
+    # 注入 turns_fn 适配不同 content 格式(messages 键 + OpenAI 角色)
+    sessions = [[{"timestamp": 0}, {"timestamp": 1}]]
+    content = [{"messages": [
+        {"role": "user", "content": "h1"}, {"role": "assistant", "content": "g1"},
+        {"role": "user", "content": "h2"}, {"role": "assistant", "content": "g2"},
+    ]}]
+
+    def tf(r):
+        return to_turns(r["messages"], role_key="role", text_key="content",
+                        user_role="user", assistant_role="assistant")
+
+    out = list(fill_sessions(sessions, content, turns_fn=tf))
+    assert len(out) == 2
+    assert out[1]["prompt"].startswith(out[0]["prompt"])
