@@ -1,22 +1,25 @@
-"""读 `config/models/<model>.toml`:每模型一文件(采样 + serve),见 docs/14。"""
+"""模型推理参数配置:`[sampling]` + `[serve]` 两段的 toml,见 docs/14。
+
+`replay --config <path>` 直接指定文件(任意路径);缺省回退 `config/models/default.toml`。
+"""
 
 from __future__ import annotations
 
 import tomllib
 from pathlib import Path
 
-_DIR = Path(__file__).parents[3] / "config" / "models"
+_DEFAULT = Path(__file__).parents[3] / "config" / "models" / "default.toml"
 
 
-def params_for(model: str, kind: str = "sampling") -> dict:
-    """按 `config/models/<name>.toml` 文件名 substring 匹配模型;无匹配回退 default.toml。"""
-    m = model.lower()
-    default: dict = {}
-    for f in sorted(_DIR.glob("*.toml")):
-        with open(f, "rb") as fh:
-            cfg = tomllib.load(fh)
-        if f.stem == "default":
-            default = cfg.get(kind, {})
-        elif f.stem.lower() in m:
-            return dict(cfg.get(kind, {}))
-    return dict(default)
+def resolve(config: str | None = None) -> Path:
+    """配置文件路径:显式 `config` 文件(任意路径)优先,否则 `config/models/default.toml`。"""
+    return Path(config) if config else _DEFAULT
+
+
+def read(path: str | Path, kind: str = "sampling") -> dict:
+    """读 toml 文件的 `[kind]` 段(`sampling` / `serve`);文件不存在 → `{}`。"""
+    p = Path(path)
+    if not p.exists():
+        return {}
+    with p.open("rb") as fh:
+        return dict(tomllib.load(fh).get(kind, {}))

@@ -1,5 +1,5 @@
 from foretoken.bench.replay import TurnResult
-from foretoken.bench.report import goodput_ladder, percentiles, summarize
+from foretoken.bench.report import goodput_ladder, percentiles, summarize, throughput
 
 _SLO = [(2000, 80), (10000, 150), (60000, 200)]
 
@@ -30,6 +30,14 @@ def test_goodput_ladder_no_gpu_bytes():
     assert rows[0]["tok_per_s_gpubyte"] is None  # 无显存信息 → 归一化置空
 
 
+def test_throughput_raw_not_slo_filtered():
+    # 原始吞吐:ok 轮全部输出 tok(50+100=150)/ 10s,不按 SLO 过滤
+    t = throughput(_results(), duration_s=10, num_gpus=2)
+    assert t["output_tok_s"] == 15.0
+    assert t["output_tok_s_per_gpu"] == 7.5
+    assert t["request_s"] == 0.2  # 2 ok / 10s
+
+
 def test_percentiles_and_summary():
     p = percentiles(_results())
     assert set(p) == {"ttft_ms", "tpot_ms"}
@@ -38,3 +46,4 @@ def test_percentiles_and_summary():
     assert s["completed"] == 2  # ok 轮
     assert s["total"] == 3
     assert len(s["goodput"]) == 3  # 三档 SLO
+    assert s["throughput"]["output_tok_s"] == 15.0  # 原始吞吐(对照 goodput 严档 5.0)

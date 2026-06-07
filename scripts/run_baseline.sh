@@ -19,7 +19,7 @@
 #   VENV                  uv venv 目录(默认 <repo>/.venv)
 #   CUDA_HOME             nvcc>=12 的 CUDA(默认 /usr/local/cuda-12.3)
 #   CUDA_VISIBLE_DEVICES  锁空卡(默认 0-7)
-#   NAME                  config/报告用逻辑名(默认 GLM-4.5-Air)
+#   CONFIG                配置文件路径(默认 config/models/GLM-4.5-Air.toml;报告名取其 stem)
 #   SPLIT                 数据集 split(默认 conversation)
 #   WINDOW                时间窗分钟 N 或 A:B(默认 0:5)
 #   N_REQUESTS            目标 request(轮)数:会话级下采样到此量,匹配单实例(空=不采样跑全量)
@@ -40,7 +40,7 @@ export CUDA_HOME="${CUDA_HOME:-/usr/local/cuda-12.3}"
 export PATH="${VENV}/bin:${CUDA_HOME}/bin:${PATH}"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}"
 
-NAME="${NAME:-GLM-4.5-Air}"
+CONFIG="${CONFIG:-${REPO}/config/models/GLM-4.5-Air.toml}"
 SPLIT="${SPLIT:-conversation}"
 WINDOW="${WINDOW:-0:5}"
 TAG="${TAG:-baselineA}"
@@ -55,7 +55,7 @@ NREQ_ARG=()
 
 # -u 不缓冲,summary 实时刷出;引擎在进程内,脚本退出即释放 GPU。
 PYTHONPATH="${REPO}/src" "${VENV}/bin/python" -u -m foretoken.bench.replay \
-  --model "${MODEL_PATH}" --name "${NAME}" \
+  --model "${MODEL_PATH}" --config "${CONFIG}" \
   --split "${SPLIT}" --window "${WINDOW}" "${NREQ_ARG[@]}" \
   --tag "${TAG}" --runs-dir "${RUNS_DIR}" \
   --tail-factor "${TAIL_FACTOR}" --sec-multiplier "${SEC_MULTIPLIER}" \

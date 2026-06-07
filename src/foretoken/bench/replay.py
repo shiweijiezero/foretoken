@@ -14,9 +14,19 @@ from __future__ import annotations
 import asyncio
 import json
 import random
+import socket
+import subprocess
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+from foretoken.bench import report
+from foretoken.bench.model_params import read, resolve
+
+# 注意:vllm / datasets / torch / matplotlib 仅服务器装(本地无 vLLM wheel),故在用到的函数内延迟导入,
+# 以保本模块纯函数层可在本地无重依赖单测(见模块 docstring)。
 
 
 @dataclass
@@ -94,6 +104,24 @@ def sample_sessions(
             raise ValueError("fraction must be in (0, 1]")
         keep = set(sids[: max(1, round(len(sids) * fraction))])
     return {sid: s for sid, s in sessions.items() if sid in keep}  # 保原 session 顺序
+
+
+def load_rows(dataset: str, split: str | None = None) -> list[dict]:
+    """加载回放数据行(行 schema:session_id/turn/timestamp_ms/user;可选 assistant/system)。
+
+    `dataset` 可为:本地 `.jsonl`/`.json`/`.parquet`/`.csv` 文件、本地 HF 数据集目录,或 HF hub id
+    (配 `split`=配置名,如 conversation/mooncake/toolagent)。不绑定单一数据源,便于自带 trace。
+    """
+    from datasets import load_dataset  # 仅服务器装(见模块顶部说明)
+
+    p = Path(dataset)
+    if p.is_file():  # 本地文件:按扩展名选 builder
+        ext = p.suffix.lstrip(".")
+        fmt = {"jsonl": "json", "json": "json", "parquet": "parquet", "csv": "csv"}.get(ext, ext)
+        return list(load_dataset(fmt, data_files=str(p), split="train"))
+    if p.is_dir():  # 本地 HF 数据集目录
+        return list(load_dataset(str(p), name=split, split="train"))
+    return list(load_dataset(dataset, split, split="train"))  # HF hub id;split=配置名
 
 
 def parse_window(spec: str | None) -> tuple[int, int] | None:
@@ -238,19 +266,20 @@ def _summary(results: list[TurnResult]) -> None:
         print(f"TPOT ms  {d}")
 
 
-def _build_sampling(args) -> dict:
-    """组装采样:config 官方值 → 常用项 CLI 覆盖 → --param 透传任意 vLLM 采样参数 → 固定 seed。"""
-    from foretoken.bench.model_params import params_for
+def _cfg_name(args) -> str:
+    """报告 / 目录用逻辑名:有 --config 用其文件名 stem,否则取 --model 的 basename。"""
+    return Path(args.config).stem if args.config else Path(args.model).name
 
-    sampling = params_for(args.name or args.model)  # config/models/<model>.toml 的官方采样
-    overrides = {
-        "temperature": args.temperature,
-        "top_p": args.top_p,
-        "top_k": args.top_k,
-        "max_tokens": args.max_tokens,
-    }
-    sampling.update({k: v for k, v in overrides.items() if v is not None})
-    for kv in args.param:  # 任意 vLLM 采样参数(K=V,值按 JSON 解析)
+
+def _cfg_path(args):
+    """配置文件路径:--config 直接指定的文件,缺省 default.toml(见 model_params)。"""
+    return resolve(args.config)
+
+
+def _build_sampling(args) -> dict:
+    """组装采样:config 官方值 → --param 透传/覆盖任意 vLLM 采样参数 → 固定 seed。"""
+    sampling = read(_cfg_path(args))  # 配置文件的 [sampling](官方采样)
+    for kv in args.param:  # 覆盖 / 透传任意 vLLM 采样参数(K=V,值按 JSON 解析)
         k, _, v = kv.partition("=")
         try:
             sampling[k] = json.loads(v)
@@ -262,9 +291,7 @@ def _build_sampling(args) -> dict:
 
 def _build_engine_kwargs(args) -> dict:
     """组装引擎参数:config [serve] → --engine-param 透传/覆盖任意 AsyncEngineArgs 字段。"""
-    from foretoken.bench.model_params import params_for
-
-    serve = params_for(args.name or args.model, kind="serve")  # config 的 [serve](默认即配置 A)
+    serve = read(_cfg_path(args), "serve")  # 配置文件的 [serve](默认即配置 A)
     serve["model"] = args.model
     serve.setdefault("seed", args.seed)
     for kv in args.engine_param:  # 任意 AsyncEngineArgs 字段(K=V,值按 JSON 解析)
@@ -318,9 +345,6 @@ def _gpu_info(hint: int) -> dict:
 
 
 def _git_commit() -> str:
-    import subprocess
-    from pathlib import Path
-
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -337,9 +361,21 @@ if __name__ == "__main__":  # pragma: no cover
 
     ap = argparse.ArgumentParser(description="进程内闭环回放 foretoken-trace,测 TTFT/TPOT/goodput")
     ap.add_argument("--model", required=True, help="权重目录或 HF id(起引擎 + 分词器)")
-    ap.add_argument("--name", default=None, help="config/报告用逻辑名(默认按 --model 子串匹配)")
-    ap.add_argument("--dataset", default="weijiezz/foretoken-trace")
-    ap.add_argument("--split", required=True, help="conversation / mooncake / toolagent")
+    ap.add_argument(
+        "--config",
+        default=None,
+        help="配置文件路径(任意位置,[sampling]+[serve]);缺省 config/models/default.toml",
+    )
+    ap.add_argument(
+        "--dataset",
+        default="weijiezz/foretoken-trace",
+        help="HF 数据集 id,或本地 .jsonl/.parquet 文件 / 目录(schema 见 load_rows)",
+    )
+    ap.add_argument(
+        "--split",
+        default=None,
+        help="HF 数据集配置名(conversation/mooncake/toolagent);本地文件可省",
+    )
     ap.add_argument("--window", default=None, help="时间窗(分钟):N 或 A:B")
     ap.add_argument(
         "--n-requests",
@@ -353,10 +389,6 @@ if __name__ == "__main__":  # pragma: no cover
         default=None,
         help="会话级下采样比例 (0,1](与 --n-requests 二选一)",
     )
-    ap.add_argument("--temperature", type=float, default=None, help="覆盖 config(默认按模型)")
-    ap.add_argument("--top-p", type=float, default=None, help="覆盖 config")
-    ap.add_argument("--top-k", type=int, default=None, help="覆盖 config")
-    ap.add_argument("--max-tokens", type=int, default=None, help="覆盖 config")
     ap.add_argument("--seed", type=int, default=0, help="采样 seed(固定以可复现)")
     ap.add_argument(
         "--sec-multiplier",
@@ -388,20 +420,9 @@ if __name__ == "__main__":  # pragma: no cover
     ap.add_argument("--runs-dir", default="runs", help="实验记录根目录(默认 runs/)")
     args = ap.parse_args()
 
-    try:
-        from datasets import load_dataset
-    except ImportError as e:
-        raise SystemExit("需要 datasets:pip install datasets(或装 foretoken[server])") from e
+    import vllm  # 仅服务器装(见模块顶部说明)
 
-    import socket
-    from datetime import datetime
-    from pathlib import Path
-
-    import vllm
-
-    from foretoken.bench import report
-
-    rows = list(load_dataset(args.dataset, args.split, split="train"))
+    rows = load_rows(args.dataset, args.split)
     window = parse_window(args.window)
     sessions = group_sessions(rows, window=window)
     sessions = sample_sessions(  # 会话级下采样匹配硬件
@@ -414,8 +435,9 @@ if __name__ == "__main__":  # pragma: no cover
     dl = f"{deadline:.0f}s" if deadline else "无"
     sampling = _build_sampling(args)
     engine_kwargs = _build_engine_kwargs(args)
+    name = _cfg_name(args)
     print(
-        f"{args.split}: {len(sessions)} 会话, {n_turns} 轮 | "
+        f"{name}: {len(sessions)} 会话, {n_turns} 轮 | "
         f"n_requests={args.n_requests} sample={args.sample} | 时限 {dl} | 采样 {sampling}"
     )
 
@@ -425,14 +447,18 @@ if __name__ == "__main__":  # pragma: no cover
     _summary(results)
 
     now = datetime.now()
-    name = args.name or Path(args.model).name
     meta = {
         "timestamp": now.strftime("%Y-%m-%d %H:%M"),
         "host": socket.gethostname(),
         "vllm": vllm.__version__,
         "commit": _git_commit(),
         "tag": args.tag,
-        "model": {"name": name, "path": args.model, "engine_args": engine_kwargs},
+        "model": {
+            "name": name,
+            "path": args.model,
+            "config": str(_cfg_path(args)),
+            "engine_args": engine_kwargs,
+        },
         "sampling": sampling,
         "workload": {
             "dataset": args.dataset,
@@ -450,7 +476,7 @@ if __name__ == "__main__":  # pragma: no cover
         "duration_s": duration,
     }
     win = (args.window or "all").replace(":", "-")
-    run_name = f"{now.strftime('%Y-%m-%d_%H%M')}__{name}__{args.tag}__{args.split}_{win}"
+    run_name = f"{now.strftime('%Y-%m-%d_%H%M')}__{name}__{args.tag}__{args.split or 'data'}_{win}"
     runs_dir = Path(args.runs_dir)
     run = report.write_run(results, meta, runs_dir / run_name)
     report.append_index(runs_dir / "INDEX.md", run, run_name)
