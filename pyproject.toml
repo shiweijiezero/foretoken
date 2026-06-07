@@ -17,11 +17,11 @@ dependencies = [
 # vLLM 只在服务器(A100 / cu128)装;Windows 本地开发不装(vLLM 无 Windows wheel)。
 # 本地只写代码 + 跑非 GPU 单测;真实推理 / 评测跑在服务器。
 server = [
-    "vllm>=0.22",         # 推理引擎;cu 版本随 driver(见 scripts/setup_server.sh),PyPI 默认 cu13 需 driver 580+
+    "vllm>=0.22",         # 推理引擎;进程内自起 AsyncLLM(bench/replay.py),cu 版本随 driver(见 infra),PyPI 默认 cu13 需 driver 580+
     "ninja>=1.11",        # vLLM inductor 编译 / cudagraph capture 需要
-    "httpx>=0.27",        # 回放器发请求用(bench/replay.py)
     "datasets>=2.20",     # 读 Mooncake trace / kimi 内容(data_prepare/)
     "pyarrow>=15",        # 打包评测数据集 parquet(data_prepare/build_dataset.py)
+    "matplotlib>=3.8",    # 实验记录出图(bench/report.py;无则跳过出图)
 ]
 dev = [
     "pytest>=8",

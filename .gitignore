@@ -17,3 +17,10 @@ dist/
 # 本地参考:vLLM 源码(只读参考,不进 repo)
 # vendor/vllm = 本机 clone,或 junction → ../vllm(Windows 开发机)
 /vendor/
+
+# 实验记录:保留人读的 summary.md / run.json / INDEX.md,忽略重产物
+runs/**/turns.jsonl
+runs/**/*.png
+
+# 临时 / 缓存(服务器日志等)
+tmp/
