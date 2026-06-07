@@ -1,9 +1,12 @@
-"""闭环会话回放:按会话维护上下文、模型现场生成回复拼下一轮,采集 TTFT/TPOT/E2E、算 goodput。
+"""闭环会话回放:进程内自起 vLLM 引擎(AsyncLLM),按会话维护上下文、模型现场生成回复拼下一轮,
+采集 TTFT/TPOT/E2E、算 goodput。
 
+引擎随本进程生命周期:进程退出 / engine.shutdown() 即释放 GPU,无独立 HTTP server、无孤儿占卡。
 时间调度(每会话):首轮按绝对 timestamp;之后上一轮按时完成(C ≤ T_k)则按绝对 T_k,超时则
-C + 原间隔(T_k − T_{k-1})。跨会话并发、会话内串行。需 OpenAI 兼容 endpoint(vllm serve)。
-纯函数(next_send_ms / group_sessions / parse_window / goodput_per_gpu_byte_second)可本地测;
-httpx 延迟导入,未安装亦可测纯函数。
+C + 原间隔(T_k − T_{k-1})。跨会话并发、会话内串行。
+
+纯函数(next_send_ms / group_sessions / parse_window / deadline_seconds / goodput_per_gpu_byte_second)
+顶层无 vllm 依赖,可本地单测;引擎相关(_gen_once / replay / main)延迟导入 vllm。
 """
 
 from __future__ import annotations
@@ -38,20 +41,26 @@ def next_send_ms(turn_idx: int, t_cur: int, t_prev: int, complete_prev_ms: float
 def group_sessions(
     rows: Iterable[dict], *, window: tuple[int, int] | None = None
 ) -> dict[int, list[dict]]:
-    """按 session_id 分组(组内按 turn 排序);window=(a_ms,b_ms) 则仅纳入首轮 timestamp 落窗内的会话。
+    """按 session_id 分组(组内按 turn 排序);window=(a_ms,b_ms) 按真实 ts 截取轮次。
 
-    准入按会话首轮、整组纳入——背压把会话拖出窗也跑完,不硬截。
+    会话首轮 ts 须落 [a,b] 才纳入(准入);后续轮真实 ts > b 的**截断**、不回放(只留窗内轮)。
+    背压(decoding 慢导致实际发出晚)不在此截——那些轮真实 ts 在窗内,回放时自然拖、跑完。
     """
     sess: dict[int, list[dict]] = {}
     for r in rows:
         sess.setdefault(r["session_id"], []).append(r)
     for s in sess.values():
         s.sort(key=lambda r: r["turn"])
-    if window is not None:
-        t0 = min(s[0]["timestamp_ms"] for s in sess.values())
-        a, b = window
-        sess = {k: s for k, s in sess.items() if a <= s[0]["timestamp_ms"] - t0 <= b}
-    return sess
+    if window is None:
+        return sess
+    t0 = min(r["timestamp_ms"] for s in sess.values() for r in s)
+    a, b = window
+    out: dict[int, list[dict]] = {}
+    for k, s in sess.items():
+        if not (a <= s[0]["timestamp_ms"] - t0 <= b):  # 首轮不在窗内 → 整会话不纳入
+            continue
+        out[k] = [r for r in s if r["timestamp_ms"] - t0 <= b]  # 截断真实 ts 超 b 的后续轮
+    return out
 
 
 def parse_window(spec: str | None) -> tuple[int, int] | None:
@@ -62,6 +71,19 @@ def parse_window(spec: str | None) -> tuple[int, int] | None:
         a, b = spec.split(":", 1)
         return (int(float(a) * 60_000), int(float(b) * 60_000))
     return (0, int(float(spec) * 60_000))
+
+
+def deadline_seconds(
+    window: tuple[int, int] | None, sec_multiplier: float, tail_factor: float
+) -> float | None:
+    """回放墙钟上限 s = 窗口跨度 × sec_multiplier × tail_factor;到点取消在飞请求。
+
+    掐长尾:个别会话(高温采样易陷退化循环)会一路顶到 max_tokens、独占引擎拖垮整轮。
+    无窗口或 tail_factor<=0 → None(不设限,跑到全部完成)。
+    """
+    if not window or tail_factor <= 0:
+        return None
+    return (window[1] - window[0]) / 1000.0 * sec_multiplier * tail_factor
 
 
 def goodput_per_gpu_byte_second(
@@ -83,81 +105,83 @@ def goodput_per_gpu_byte_second(
     return good / (duration_s * gpu_bytes)
 
 
-async def _chat_once(client, base_url, model, messages, sampling):
-    """流式 chat completion → (text, ttft_ms, tpot_ms, e2e_ms, n_tokens, ok)。需 httpx。
+async def _gen_once(engine, tokenizer, messages, sampling_params, request_id):
+    """进程内流式生成 → (text, ttft_ms, tpot_ms, e2e_ms, n_tokens, ok)。
 
-    sampling:采样参数(temperature/top_p/top_k/max_tokens/seed),直接并入请求(vLLM 接受 top_k/seed)。
+    apply_chat_template 把对话拼成 prompt;engine.generate 流式产出累积 RequestOutput,
+    首个含 token 的产出计 TTFT,末次的 token 数计长度。被取消时 abort 该请求以释放引擎槽位。
     """
+    prompt = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
     start = time.perf_counter()
     first: float | None = None
-    chunks: list[str] = []
-    payload = {"model": model, "messages": messages, "stream": True, **sampling}
+    n = 0
+    text = ""
     try:
-        async with client.stream("POST", f"{base_url}/v1/chat/completions", json=payload) as resp:
-            async for line in resp.aiter_lines():
-                if not line.startswith("data: ") or line.strip().endswith("[DONE]"):
-                    continue
-                try:
-                    delta = json.loads(line[6:])["choices"][0]["delta"].get("content")
-                except (KeyError, IndexError, ValueError):
-                    delta = None
-                if delta:
-                    if first is None:
-                        first = time.perf_counter()
-                    chunks.append(delta)
+        async for out in engine.generate(prompt, sampling_params, request_id):
+            co = out.outputs[0]
+            if first is None and co.token_ids:
+                first = time.perf_counter()
+            n = len(co.token_ids)
+            text = co.text
+    except asyncio.CancelledError:
+        await engine.abort(request_id)  # 取消:回收引擎中的在飞请求
+        raise
     except Exception:  # noqa: BLE001  单条失败不中断整轮回放
         return "", 0.0, 0.0, 0.0, 0, False
     if first is None:
         return "", 0.0, 0.0, 0.0, 0, False
     end = time.perf_counter()
-    n = len(chunks)
     ttft = (first - start) * 1000.0
     tpot = ((end - first) * 1000.0 / (n - 1)) if n > 1 else 0.0
-    return "".join(chunks), ttft, tpot, (end - start) * 1000.0, n, True
+    return text, ttft, tpot, (end - start) * 1000.0, n, True
 
 
 async def replay(
     sessions: dict[int, list[dict]],
-    base_url: str,
-    model: str,
+    engine,
+    tokenizer,
     *,
-    sampling: dict,
+    sampling_params,
     sec_multiplier: float = 1.0,
+    deadline_s: float | None = None,
 ) -> list[TurnResult]:
-    """闭环回放:跨会话并发、会话内串行(现场生成回复 + 混合时间调度)。需 httpx。
+    """闭环回放:跨会话并发、会话内串行(现场生成回复 + 混合时间调度)。
 
-    sampling:官方采样参数 + seed(见 model_params / docs/14),逐请求一致以保可复现。
+    engine/tokenizer:进程内 vLLM 引擎与其分词器(见 main)。sampling_params 逐请求一致以可复现。
+    deadline_s:墙钟上限(见 deadline_seconds);到点取消在飞会话,只保留已完成轮。
     """
-    try:
-        import httpx
-    except ImportError as e:  # pragma: no cover
-        raise SystemExit("需要 httpx:pip install httpx(或装 foretoken[server])") from e
     t0 = min(s[0]["timestamp_ms"] for s in sessions.values())
     results: list[TurnResult] = []
+    start = time.perf_counter()
 
-    async with httpx.AsyncClient(timeout=None) as client:
-        start = time.perf_counter()
+    async def run_session(turns: list[dict]) -> None:
+        sid = turns[0]["session_id"]
+        system = turns[0].get("system")
+        messages = [{"role": "system", "content": system}] if system else []
+        complete_prev = 0.0
+        t_prev = turns[0]["timestamp_ms"]
+        for k, turn in enumerate(turns):
+            send_rel = next_send_ms(k, turn["timestamp_ms"], t_prev, complete_prev, t0)
+            now_ms = (time.perf_counter() - start) * 1000.0
+            await asyncio.sleep(max(0.0, (send_rel * sec_multiplier - now_ms) / 1000.0))
+            messages.append({"role": "user", "content": turn["user"]})
+            text, ttft, tpot, e2e, n, ok = await _gen_once(
+                engine, tokenizer, messages, sampling_params, f"{sid}-{k}"
+            )
+            complete_prev = (time.perf_counter() - start) * 1000.0  # C_k 相对完成时刻
+            messages.append({"role": "assistant", "content": text})  # 现场回复接回历史
+            results.append(TurnResult(sid, k, ttft, tpot, e2e, n, text, ok))
+            t_prev = turn["timestamp_ms"]
 
-        async def run_session(turns: list[dict]) -> None:
-            sid = turns[0]["session_id"]
-            system = turns[0].get("system")
-            messages = [{"role": "system", "content": system}] if system else []
-            complete_prev = 0.0
-            t_prev = turns[0]["timestamp_ms"]
-            for k, turn in enumerate(turns):
-                send_rel = next_send_ms(k, turn["timestamp_ms"], t_prev, complete_prev, t0)
-                now_ms = (time.perf_counter() - start) * 1000.0
-                await asyncio.sleep(max(0.0, (send_rel * sec_multiplier - now_ms) / 1000.0))
-                messages.append({"role": "user", "content": turn["user"]})
-                text, ttft, tpot, e2e, n, ok = await _chat_once(
-                    client, base_url, model, messages, sampling
-                )
-                complete_prev = (time.perf_counter() - start) * 1000.0  # C_k 相对完成时刻
-                messages.append({"role": "assistant", "content": text})  # 现场回复接回历史
-                results.append(TurnResult(sid, k, ttft, tpot, e2e, n, text, ok))
-                t_prev = turn["timestamp_ms"]
-
-        await asyncio.gather(*(run_session(s) for s in sessions.values()))
+    tasks = [asyncio.create_task(run_session(s)) for s in sessions.values()]
+    if not tasks:
+        return results
+    _done, pending = await asyncio.wait(tasks, timeout=deadline_s)
+    if pending:  # 到点未完成的会话:取消并回收(只保留已记录的完成轮)
+        for t in pending:
+            t.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)  # 等取消落定
+        print(f"达回放时限 {deadline_s:.0f}s:取消 {len(pending)} 个未完成会话")
     return results
 
 
@@ -180,26 +204,108 @@ def _summary(results: list[TurnResult]) -> None:
         print(f"TPOT ms  {d}")
 
 
+def _build_sampling(args) -> dict:
+    """组装采样:config 官方值 → 常用项 CLI 覆盖 → --param 透传任意 vLLM 采样参数 → 固定 seed。"""
+    from foretoken.bench.model_params import params_for
+
+    sampling = params_for(args.name or args.model)  # config/models/<model>.toml 的官方采样
+    overrides = {
+        "temperature": args.temperature,
+        "top_p": args.top_p,
+        "top_k": args.top_k,
+        "max_tokens": args.max_tokens,
+    }
+    sampling.update({k: v for k, v in overrides.items() if v is not None})
+    for kv in args.param:  # 任意 vLLM 采样参数(K=V,值按 JSON 解析)
+        k, _, v = kv.partition("=")
+        try:
+            sampling[k] = json.loads(v)
+        except json.JSONDecodeError:
+            sampling[k] = v
+    sampling["seed"] = args.seed
+    return sampling
+
+
+def _build_engine_args(args):
+    """组装引擎参数:config [serve] → --engine-param 透传/覆盖任意 AsyncEngineArgs 字段。"""
+    from vllm.engine.arg_utils import AsyncEngineArgs
+
+    from foretoken.bench.model_params import params_for
+
+    serve = params_for(args.name or args.model, kind="serve")  # config 的 [serve](默认即配置 A)
+    serve["model"] = args.model
+    serve.setdefault("seed", args.seed)
+    for kv in args.engine_param:  # 任意 AsyncEngineArgs 字段(K=V,值按 JSON 解析)
+        k, _, v = kv.partition("=")
+        try:
+            serve[k] = json.loads(v)
+        except json.JSONDecodeError:
+            serve[k] = v
+    return AsyncEngineArgs(**serve)
+
+
+async def _run(args, sessions, deadline) -> list[TurnResult]:
+    """进程内起引擎 → 回放 → finally 关停(释放 GPU)。"""
+    from vllm import SamplingParams
+    from vllm.v1.engine.async_llm import AsyncLLM
+
+    sampling = _build_sampling(args)
+    print(f"采样 {sampling}")
+    engine = AsyncLLM.from_engine_args(_build_engine_args(args))
+    try:
+        tokenizer = engine.get_tokenizer()
+        sampling_params = SamplingParams(**sampling)
+        return await replay(
+            sessions,
+            engine,
+            tokenizer,
+            sampling_params=sampling_params,
+            sec_multiplier=args.sec_multiplier,
+            deadline_s=deadline,
+        )
+    finally:
+        engine.shutdown()  # 关停引擎、释放 GPU(正常 / 报错 / 中断都走)
+
+
 if __name__ == "__main__":  # pragma: no cover
     import argparse
 
-    ap = argparse.ArgumentParser(description="闭环回放 foretoken-trace,测 TTFT/TPOT/goodput")
+    ap = argparse.ArgumentParser(description="进程内闭环回放 foretoken-trace,测 TTFT/TPOT/goodput")
+    ap.add_argument("--model", required=True, help="权重目录或 HF id(起引擎 + 分词器)")
+    ap.add_argument("--name", default=None, help="config/报告用逻辑名(默认按 --model 子串匹配)")
     ap.add_argument("--dataset", default="weijiezz/foretoken-trace")
     ap.add_argument("--split", required=True, help="conversation / mooncake / toolagent")
     ap.add_argument("--window", default=None, help="时间窗(分钟):N 或 A:B")
-    ap.add_argument("--base-url", default="http://localhost:8000")
-    ap.add_argument("--model", required=True)
     ap.add_argument("--temperature", type=float, default=None, help="覆盖 config(默认按模型)")
     ap.add_argument("--top-p", type=float, default=None, help="覆盖 config")
     ap.add_argument("--top-k", type=int, default=None, help="覆盖 config")
     ap.add_argument("--max-tokens", type=int, default=None, help="覆盖 config")
     ap.add_argument("--seed", type=int, default=0, help="采样 seed(固定以可复现)")
     ap.add_argument(
+        "--sec-multiplier",
+        type=float,
+        default=1.0,
+        help="时间缩放(<1 加速回放、压缩真实间隔提并发;1=真实节奏)",
+    )
+    ap.add_argument(
+        "--tail-factor",
+        type=float,
+        default=2.0,
+        help="回放墙钟上限 = 窗口跨度 × sec_multiplier × 此值;到点取消在飞请求(掐长尾)。<=0 不设限",
+    )
+    ap.add_argument(
         "--param",
         action="append",
         default=[],
         metavar="K=V",
         help="透传任意 vLLM 采样参数(可重复),如 --param repetition_penalty=1.1",
+    )
+    ap.add_argument(
+        "--engine-param",
+        action="append",
+        default=[],
+        metavar="K=V",
+        help="透传任意 AsyncEngineArgs 字段(可重复),如 --engine-param kv_cache_dtype=fp8",
     )
     args = ap.parse_args()
 
@@ -208,26 +314,12 @@ if __name__ == "__main__":  # pragma: no cover
     except ImportError as e:
         raise SystemExit("需要 datasets:pip install datasets(或装 foretoken[server])") from e
 
-    from foretoken.bench.model_params import params_for
-
-    sampling = params_for(args.model)  # config/models/<model>.toml 的官方采样
-    overrides = {
-        "temperature": args.temperature,
-        "top_p": args.top_p,
-        "top_k": args.top_k,
-        "max_tokens": args.max_tokens,
-    }
-    sampling.update({k: v for k, v in overrides.items() if v is not None})  # 常用项 CLI 覆盖
-    for kv in args.param:  # 任意 vLLM 参数透传(K=V,值按 JSON 解析)
-        k, _, v = kv.partition("=")
-        try:
-            sampling[k] = json.loads(v)
-        except json.JSONDecodeError:
-            sampling[k] = v
-    sampling["seed"] = args.seed
     rows = list(load_dataset(args.dataset, args.split, split="train"))
-    sessions = group_sessions(rows, window=parse_window(args.window))
+    window = parse_window(args.window)
+    sessions = group_sessions(rows, window=window)
+    deadline = deadline_seconds(window, args.sec_multiplier, args.tail_factor)
     n_turns = sum(len(s) for s in sessions.values())
-    print(f"{args.split}: {len(sessions)} 会话, {n_turns} 轮 | 采样 {sampling}")
-    results = asyncio.run(replay(sessions, args.base_url, args.model, sampling=sampling))
+    dl = f"{deadline:.0f}s" if deadline else "无"
+    print(f"{args.split}: {len(sessions)} 会话, {n_turns} 轮 | 时限 {dl}")
+    results = asyncio.run(_run(args, sessions, deadline))
     _summary(results)

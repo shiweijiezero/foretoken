@@ -2,10 +2,10 @@
 
 [sampling]
 temperature = 1.0
-top_p = 1.0
-max_tokens = 96000
+max_tokens = 32768
 
 [serve]
 tensor_parallel_size = 4
 dtype = "bfloat16"
-max_model_len = 65536
+max_model_len = 131072
+gpu_memory_utilization = 0.92
