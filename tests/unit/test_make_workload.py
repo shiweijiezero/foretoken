@@ -57,11 +57,12 @@ def test_reconstruct_rejects_concurrent_same_timestamp():
     assert len(reconstruct_sessions(rows, min_shared_blocks=2)) == 2
 
 
-def test_fill_sessions_accumulates_and_uses_timestamps():
+def test_fill_sessions_yields_turns_with_timestamps():
     sessions = [[{"timestamp": 0}, {"timestamp": 5000}]]  # 1 会话,2 轮
     conversations = [
         {
             "conversations": [
+                {"from": "system", "value": "sys"},
                 {"from": "human", "value": "h1"},
                 {"from": "gpt", "value": "g1"},
                 {"from": "human", "value": "h2"},
@@ -71,10 +72,13 @@ def test_fill_sessions_accumulates_and_uses_timestamps():
     ]
     out = list(fill_sessions(sessions, conversations, seed=0))
     assert len(out) == 2
-    assert out[1]["prompt"].startswith(out[0]["prompt"])  # 会话内累积复用
-    assert out[0]["timestamp_ms"] == 0
-    assert out[1]["timestamp_ms"] == 5000
-    assert set(out[0]) == {"timestamp_ms", "prompt"}  # 只产两字段,不预设输出长度
+    assert {r["session_id"] for r in out} == {0}  # 同一会话
+    assert [r["turn"] for r in out] == [0, 1]
+    assert [r["timestamp_ms"] for r in out] == [0, 5000]  # 各轮真实时间戳
+    assert (out[0]["user"], out[0]["assistant"]) == ("h1", "g1")
+    assert (out[1]["user"], out[1]["assistant"]) == ("h2", "g2")
+    assert out[0]["system"] == "sys" and out[1]["system"] is None  # system 仅首轮带
+    assert set(out[0]) == {"session_id", "turn", "timestamp_ms", "user", "assistant", "system"}
 
 
 def test_fill_sessions_empty_pool_yields_nothing():
@@ -123,7 +127,7 @@ def test_fill_sessions_prefers_long_session_when_scarce():
 
 
 def test_fill_sessions_splices_long_session_from_short():
-    # 超长会话 M=4、无单条 ≥4 对话 → 用两条 2 轮拼成 4 轮;prompt 跨拼接边界仍累积
+    # 超长会话 M=4、无单条 ≥4 对话 → 用两条 2 轮拼成 4 轮(同一会话、轮序连续)
     sessions = [[{"timestamp": 0}, {"timestamp": 1}, {"timestamp": 2}, {"timestamp": 3}]]  # M=4
 
     def conv2(tag):
@@ -138,8 +142,10 @@ def test_fill_sessions_splices_long_session_from_short():
 
     out = list(fill_sessions(sessions, [conv2("A"), conv2("B")]))
     assert len(out) == 4  # 两条 2 轮拼成 4 轮
-    assert out[3]["prompt"].startswith(out[0]["prompt"])  # 跨拼接边界仍累积
-    assert all(set(r) == {"timestamp_ms", "prompt"} for r in out)
+    assert {r["session_id"] for r in out} == {0}  # 拼接后仍同一会话
+    assert [r["turn"] for r in out] == [0, 1, 2, 3]
+    fields = {"session_id", "turn", "timestamp_ms", "user", "assistant", "system"}
+    assert all(set(r) == fields for r in out)
 
 
 def test_to_turns_configurable_openai_format():
@@ -194,4 +200,4 @@ def test_fill_sessions_custom_turns_fn():
 
     out = list(fill_sessions(sessions, content, turns_fn=tf))
     assert len(out) == 2
-    assert out[1]["prompt"].startswith(out[0]["prompt"])
+    assert [r["user"] for r in out] == ["h1", "h2"]  # 注入 turns_fn 取到各轮 user

@@ -21,21 +21,27 @@ tags: [llm-serving, kv-cache, mtp, benchmark, mooncake, foretoken]
 
 # {name}
 
-Foretoken 评测负载,覆盖 KV 管理与 MTP:由 Mooncake 重建会话与时序结构,填入真实多轮对话内容。
+Foretoken 评测负载,覆盖 KV 管理与 MTP:由 Mooncake 重建会话与时序结构,填入真实多轮对话的用户输入。
 
 - 会话 / 时序 / 并发:来自 Mooncake trace(以 hash 去尾满块前缀重建会话,保留每轮真实 timestamp);
-- 内容:来自 `{content}`(真实多轮对话),复用来自会话内累积(连贯,由内容决定、与缓存配置无关,
-  不复刻 Mooncake 的 512 块量化);
-- 回放:prompt 为文本,由 vLLM 自行 tokenize;输出长度交回放阶段(统一 max_tokens 上限 + 自然
-  EOS),不预设。
+- 内容:来自 `{content}`(真实多轮对话),按会话逐轮填入;不复刻 Mooncake 的 512 块量化,复用关系由
+  内容决定、与缓存配置无关。
+- **闭环回放**:数据只存每轮用户输入与时间结构,**不预拼 prompt**;回放(`bench/replay.py`)按会话维护
+  上下文——第 k+1 轮 = 前 k 轮(用户输入 + 模型**现场生成**的回复)累积,助手回复由真实模型生成、不用
+  预录答案;输出长度不预设(统一 max_tokens 上限 + 自然 EOS)。
 
 ## split
-按 Mooncake config 分场景:`{splits}`。各 split 保留各自真实的 0~1 小时时序,互不串联;按需分场景
-回放(对话 / agent 各自的 KV/MTP 表现)或合并回放。
+按 Mooncake config 分:`{splits}`。各 split 保留各自真实的约 1 小时时序,互不串联,可分别或合并回放。
+注:`conversation` 为一类对话内容;`mooncake` 与 `toolagent` 会话结构高度相似(重建后内容同源),仅到达
+时序不同。
 
-## 字段
-- `timestamp_ms` — 真实到达时刻(供 foretoken `bench/replay.py` 回放)
-- `prompt` — 累积的多轮真实文本
+## 字段(每行 = 一个会话的一轮)
+- `session_id` — 会话分组 id(回放按它分组、维护上下文)
+- `turn` — 会话内轮序号(0 起)
+- `timestamp_ms` — 该轮真实到达时刻
+- `user` — 该轮用户输入
+- `assistant` — 数据集**预录**答案(原始素材 / 对照;闭环回放不用,改用模型现场生成)
+- `system` — 系统提示(仅 turn 0 非空)
 
 来源:Mooncake `{mooncake}`、内容 `{content}`。生成:`scripts/build_dataset.sh`。
 """
