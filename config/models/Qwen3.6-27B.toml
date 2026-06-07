@@ -1,0 +1,14 @@
+# Qwen3.6-27B 参数(见 docs/14)。thinking 模式官方采样;27B 稠密 + 混合线性注意力(KV 省),1 卡可跑。
+
+[sampling]
+temperature = 1.0
+top_p = 0.95
+top_k = 20
+max_tokens = 32768
+
+[serve]
+tensor_parallel_size = 1
+dtype = "bfloat16"
+max_model_len = 65536
+gpu_memory_utilization = 0.92
+language_model_only = true

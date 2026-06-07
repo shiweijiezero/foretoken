@@ -71,6 +71,19 @@ def goodput_ladder(
     return rows
 
 
+def throughput(results, *, duration_s: float, num_gpus: int) -> dict:
+    """原始吞吐(不按 SLO 过滤):ok 轮输出 tok/s(及 /GPU)+ 完成请求 req/s。与 goodput 对照。"""
+    ok = [r for r in results if r.ok]
+    out_tok = sum(r.output_tokens for r in ok)
+    return {
+        "output_tok_s": out_tok / duration_s if duration_s > 0 else 0.0,
+        "output_tok_s_per_gpu": (out_tok / duration_s / num_gpus)
+        if duration_s > 0 and num_gpus > 0
+        else 0.0,
+        "request_s": len(ok) / duration_s if duration_s > 0 else 0.0,
+    }
+
+
 def summarize(
     results,
     *,
@@ -79,11 +92,12 @@ def summarize(
     num_gpus: int,
     slo: Sequence[tuple[int, int]] = DEFAULT_SLO,
 ) -> dict:
-    """聚合一次 run 的结果指标(延迟分位 + 完成数 + goodput 阶梯)。"""
+    """聚合一次 run 的结果指标(延迟分位 + 完成数 + 原始吞吐 + goodput 阶梯)。"""
     return {
         "completed": sum(1 for r in results if r.ok),
         "total": len(results),
         "latency": percentiles(results),
+        "throughput": throughput(results, duration_s=duration_s, num_gpus=num_gpus),
         "goodput": goodput_ladder(
             results, duration_s=duration_s, gpu_bytes=gpu_bytes, num_gpus=num_gpus, slo=slo
         ),
@@ -106,7 +120,7 @@ def _load_spec(w: dict) -> str:
 
 def _render_md(run: dict) -> str:
     m, gpu, w = run["model"], run["gpu"], run["workload"]
-    lat, lo = run["latency"], run["load"]
+    lat, lo, tp = run["latency"], run["load"], run["throughput"]
     off = lo.get("offered_turn_s")
     off_s = f" · offered {off:.2f} 轮/s" if off else ""
     load_spec = _load_spec(w)
@@ -135,7 +149,10 @@ def _render_md(run: dict) -> str:
         f"  TPOT       {_fmt_ms(lat['tpot_ms']['p50']):>8} {_fmt_ms(lat['tpot_ms']['p90']):>9} "
         f"{_fmt_ms(lat['tpot_ms']['p99']):>9}",
         "",
-        "goodput (SLO 达成阶梯)",
+        f"throughput   输出 {tp['output_tok_s']:.0f} tok/s ({tp['output_tok_s_per_gpu']:.0f}/GPU)"
+        f" · 完成 {tp['request_s']:.2f} req/s",
+        "",
+        "goodput (SLO 达成阶梯;good=满足该档 SLO 的有效输出)",
         "  SLO(TTFT,TPOT)        达成%   good tok/s   /GPU   tok/(s·GPU字节)",
     ]
     for g in run["goodput"]:
@@ -207,8 +224,8 @@ def write_run(
 _INDEX_HEADER = (
     "# Runs\n\n"
     "| 日期 | 模型 | 配置 | 负载 | 下采样 | offered 轮/s | 完成/总 | "
-    "TTFT p50 | TPOT p50 | good tok/s @2s,80ms | 目录 |\n"
-    "|---|---|---|---|---|---|---|---|---|---|---|\n"
+    "TTFT p50 | TPOT p50 | out tok/s | good tok/s @2s,80ms | 目录 |\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|---|\n"
 )
 
 
@@ -225,6 +242,7 @@ def append_index(index_path, run: dict, run_dirname: str) -> None:
         f"{w['split']} {w['window']} | {_load_spec(w)} | {f'{off:.2f}' if off else '-'} | "
         f"{run['completed']}/{run['total']} | "
         f"{_fmt_ms(lat['ttft_ms']['p50'])} | {_fmt_ms(lat['tpot_ms']['p50'])} | "
+        f"{run['throughput']['output_tok_s']:.0f} | "
         f"{g0['good_tok_s']:.0f} | [→]({run_dirname}/summary.md) |\n"
     )
     with idx.open("a", encoding="utf-8") as f:
