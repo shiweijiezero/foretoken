@@ -479,5 +479,5 @@ if __name__ == "__main__":  # pragma: no cover
     run_name = f"{now.strftime('%Y-%m-%d_%H%M')}__{name}__{args.tag}__{args.split or 'data'}_{win}"
     runs_dir = Path(args.runs_dir)
     run = report.write_run(results, meta, runs_dir / run_name)
-    report.append_index(runs_dir / "INDEX.md", run, run_name)
+    report.rebuild_index(runs_dir)
     print(f"记录写入 {runs_dir / run_name}")

@@ -229,21 +229,34 @@ _INDEX_HEADER = (
 )
 
 
-def append_index(index_path, run: dict, run_dirname: str) -> None:
-    """向 runs/INDEX.md 追加一行排行榜(不存在则建表头)。"""
-    idx = Path(index_path)
-    if not idx.exists():
-        idx.write_text(_INDEX_HEADER, encoding="utf-8")
-    lat, w = run["latency"], run["workload"]
-    off = run["load"].get("offered_turn_s")
-    g0 = run["goodput"][0]  # 最严 SLO 档作排行榜头条
-    row = (
-        f"| {run['timestamp']} | {run['model']['name']} | {run['tag']} | "
-        f"{w['split']} {w['window']} | {_load_spec(w)} | {f'{off:.2f}' if off else '-'} | "
-        f"{run['completed']}/{run['total']} | "
-        f"{_fmt_ms(lat['ttft_ms']['p50'])} | {_fmt_ms(lat['tpot_ms']['p50'])} | "
-        f"{run['throughput']['output_tok_s']:.0f} | "
-        f"{g0['good_tok_s']:.0f} | [→]({run_dirname}/summary.md) |\n"
+def _index_row(run: dict, dirname: str) -> str:
+    """一行排行榜;对旧 run 缺的字段宽容(显示 '-'),容忍 schema 演进。"""
+    lat, w = run.get("latency", {}), run.get("workload", {})
+    ttft, tpot = lat.get("ttft_ms", {}), lat.get("tpot_ms", {})
+    off = run.get("load", {}).get("offered_turn_s")
+    out_tok = run.get("throughput", {}).get("output_tok_s")
+    gp = run.get("goodput") or [{}]
+    good = gp[0].get("good_tok_s")
+    ms = lambda d, k: _fmt_ms(d[k]) if d.get(k) is not None else "-"  # noqa: E731
+    num = lambda v, f="{:.0f}": f.format(v) if v is not None else "-"  # noqa: E731
+    return (
+        f"| {run.get('timestamp', '?')} | {run.get('model', {}).get('name', '?')} | "
+        f"{run.get('tag', '?')} | {w.get('split', '')} {w.get('window', '')} | {_load_spec(w)} | "
+        f"{num(off, '{:.2f}')} | {run.get('completed', '?')}/{run.get('total', '?')} | "
+        f"{ms(ttft, 'p50')} | {ms(tpot, 'p50')} | {num(out_tok)} | {num(good)} | "
+        f"[→]({dirname}/summary.md) |\n"
     )
-    with idx.open("a", encoding="utf-8") as f:
-        f.write(row)
+
+
+def rebuild_index(runs_dir) -> None:
+    """扫描 runs/*/run.json,按时间戳重建 INDEX.md(整表重写,不 append,故 schema 改了也不错位)。"""
+    root = Path(runs_dir)
+    runs = []
+    for rj in root.glob("*/run.json"):
+        try:
+            runs.append((json.loads(rj.read_text(encoding="utf-8")), rj.parent.name))
+        except (OSError, ValueError):
+            continue
+    runs.sort(key=lambda r: r[0].get("timestamp", ""))
+    body = "".join(_index_row(run, name) for run, name in runs)
+    (root / "INDEX.md").write_text(_INDEX_HEADER + body, encoding="utf-8")
