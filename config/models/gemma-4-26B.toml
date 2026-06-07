@@ -1,0 +1,12 @@
+# gemma-4-26B-A4B-it 参数(见 docs/14)。
+
+[sampling]
+temperature = 1.0
+top_p = 0.95
+top_k = 64
+max_tokens = 32768
+
+[serve]
+tensor_parallel_size = 2
+dtype = "bfloat16"
+max_model_len = 65536

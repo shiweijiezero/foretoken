@@ -1,4 +1,4 @@
-"""会话重建缝合:由 Mooncake hash 重建会话与时序结构,填入真实多轮对话内容。
+"""会话重建:由 Mooncake hash 重建会话与时序结构,填入真实多轮对话内容。
 
 不复刻 Mooncake 的 512 块 hash 复用:该粒度取决于 Kimi 生产环境的块大小、缓存与内容,与本项目的
 vLLM(16 块)/ GLM 配置不一致(docs/07 §6.6)。复用关系由内容决定、与缓存配置无关——真实多轮对话
@@ -128,22 +128,13 @@ def fill_sessions(
     conversations: Iterable[dict],
     *,
     seed: int = 0,
-    sep: str = "\n\n",
     label_timestamp: str = "timestamp",
     turns_fn: Callable[[dict], tuple[str | None, list[tuple[str, str]]]] | None = None,
 ) -> Iterator[dict]:
-    """把真实多轮对话填入重建的会话槽位,长会话优先;超长会话拼接多条对话凑够轮数。
+    """填充会话槽位,每轮产出 `{session_id, turn, timestamp_ms, user, assistant, system}`。
 
-    会话按所需轮数 M 降序:能配到单条「轮数 ≥ M」对话的用单条(完全连贯);配不到的(超长会话,超过
-    任一单条对话的轮数)用多条对话拼接凑够 M 轮。拼接处的 prompt 仍逐轮累积(会话内 KV 复用保留、
-    累积前缀字节一致),仅接头处下一轮开头语义跳变(MTP 接受率在接头略降,占比小)。每轮 prompt 为
-    前 k 轮的累积,timestamp 取自该轮的 Mooncake 记录。
-
-    读取按需:流式读对话,累计轮数足以覆盖所有会话(拼接可填任何会话,故只需总轮数够)或源耗尽即停。
-
-    turns_fn:一条 content 记录 → (system, turns),默认 ShareGPT(to_turns + "conversations" 键);
-    适配其他对话格式时注入(如 OpenAI:lambda r: to_turns(r["messages"], role_key="role", ...))。
-    只产 timestamp_ms / prompt:输出长度交回放阶段(统一 max_tokens 上限 + 自然 EOS),不预设。
+    session_id 为会话下标(回放按它分组跑闭环);assistant 为预录答案,仅留作对照,闭环回放改用模型现场
+    生成。会话按轮数 M 降序:优先单条「轮数 ≥ M」对话,否则拼多条凑够 M。turns_fn 默认 ShareGPT。
     """
     if turns_fn is None:
 
@@ -194,15 +185,16 @@ def fill_sessions(
                 break  # 对话池耗尽
             n_spliced += 1
         n_filled += 1
-        prefix: list[str] = [f"system: {system}"] if system else []
         for k in range(min(m, len(turns))):  # 单条/拼接均凑够 m(除非源耗尽)
-            user, assistant = turns[k]
+            user, assistant = turns[k]  # assistant 仅留作对照,闭环回放用模型现场生成
             yield {
+                "session_id": si,
+                "turn": k,
                 "timestamp_ms": int(sess[k][label_timestamp]),
-                "prompt": sep.join([*prefix, f"user: {user}"]),
+                "user": user,
+                "assistant": assistant,
+                "system": system if k == 0 else None,
             }
-            prefix.append(f"user: {user}")
-            prefix.append(f"assistant: {assistant}")
 
     if n_filled:
         print(
@@ -216,8 +208,7 @@ def _stream_hf(
     source: str, split: str, limit: int | None, *, config: str | None = None
 ) -> Iterator[dict]:
     """流式读 HF 数据集(Mooncake trace / 对话内容)。
-
-    config 用于含多 config 的数据集;运行需 datasets。
+    config 用于含多 config 的数据集
     """
     try:
         from datasets import load_dataset

@@ -1,0 +1,5 @@
+# 未匹配模型的回退参数。
+
+[sampling]
+temperature = 0.0
+max_tokens = 8192
