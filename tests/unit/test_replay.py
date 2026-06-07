@@ -11,6 +11,7 @@ from foretoken.bench.replay import (
     next_send_ms,
     parse_window,
     replay,
+    sample_sessions,
 )
 
 
@@ -31,7 +32,8 @@ class _FakeEngine:
         for i in range(3):
             await asyncio.sleep(self.step_delay)
             text += "x"
-            yield SimpleNamespace(outputs=[SimpleNamespace(token_ids=list(range(i + 1)), text=text)])
+            co = SimpleNamespace(token_ids=list(range(i + 1)), text=text)
+            yield SimpleNamespace(outputs=[co])
 
     async def abort(self, request_id):
         self.aborted.append(request_id)
@@ -82,6 +84,41 @@ def test_parse_window():
     assert parse_window("10:20") == (600_000, 1_200_000)
 
 
+def _sessions(n, turns_each=1):
+    return {
+        i: [{"session_id": i, "turn": t, "timestamp_ms": t} for t in range(turns_each)]
+        for i in range(n)
+    }
+
+
+def test_sample_sessions_none_returns_all():
+    s = _sessions(10)
+    assert sample_sessions(s) is s  # 不给采样口径 → 原样
+
+
+def test_sample_sessions_fraction_keeps_whole_sessions():
+    s = _sessions(10, turns_each=2)
+    out = sample_sessions(s, fraction=0.3, seed=0)
+    assert len(out) == 3  # round(10*0.3)
+    assert all(len(out[k]) == 2 for k in out)  # 整会话保留(多轮不拆)
+
+
+def test_sample_sessions_n_requests_reaches_target():
+    s = _sessions(50, turns_each=3)  # 每会话 3 轮
+    out = sample_sessions(s, n_requests=10, seed=0)
+    total = sum(len(v) for v in out.values())
+    assert total >= 10  # 累计达目标(整会话保留,末个可能略超)
+    assert total < 10 + 3  # 不会超过一个会话的轮数
+    assert all(len(v) == 3 for v in out.values())  # 不拆会话
+
+
+def test_sample_sessions_reproducible():
+    s = _sessions(20)
+    assert set(sample_sessions(s, fraction=0.5, seed=7)) == set(
+        sample_sessions(s, fraction=0.5, seed=7)
+    )
+
+
 def test_deadline_seconds():
     # 窗口跨度 5 分钟 × factor 2 = 600s;sec_multiplier 压缩同比例缩短
     assert deadline_seconds((0, 300_000), sec_multiplier=1.0, tail_factor=2.0) == 600.0
@@ -109,17 +146,23 @@ def test_replay_completes_without_deadline():
         2: [{"session_id": 2, "turn": 0, "timestamp_ms": 0, "user": "yo", "system": None}],
     }
     eng = _FakeEngine(step_delay=0.001)
-    results = asyncio.run(replay(sessions, eng, _FakeTok(), sampling_params=None, deadline_s=None))
+    results, cancelled = asyncio.run(
+        replay(sessions, eng, _FakeTok(), sampling_params=None, deadline_s=None)
+    )
     assert len(results) == 2
     assert all(r.ok and r.output_tokens == 3 for r in results)
+    assert cancelled == 0
     assert eng.aborted == []  # 无取消 → 无 abort
 
 
 def test_replay_deadline_cancels_inflight():
     sessions = {1: [{"session_id": 1, "turn": 0, "timestamp_ms": 0, "user": "hi", "system": None}]}
     eng = _FakeEngine(step_delay=0.5)  # 单轮 ~1.5s,远超 deadline
-    results = asyncio.run(replay(sessions, eng, _FakeTok(), sampling_params=None, deadline_s=0.05))
+    results, cancelled = asyncio.run(
+        replay(sessions, eng, _FakeTok(), sampling_params=None, deadline_s=0.05)
+    )
     assert results == []  # 到点在飞被取消,无完成轮
+    assert cancelled == 1
     assert eng.aborted == ["1-0"]  # 取消时 abort 了该请求
 
 

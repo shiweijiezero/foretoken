@@ -5,14 +5,15 @@
 时间调度(每会话):首轮按绝对 timestamp;之后上一轮按时完成(C ≤ T_k)则按绝对 T_k,超时则
 C + 原间隔(T_k − T_{k-1})。跨会话并发、会话内串行。
 
-纯函数(next_send_ms / group_sessions / parse_window / deadline_seconds / goodput_per_gpu_byte_second)
-顶层无 vllm 依赖,可本地单测;引擎相关(_gen_once / replay / main)延迟导入 vllm。
+纯函数(next_send_ms / group_sessions / parse_window / deadline_seconds / goodput_*)顶层无 vllm
+依赖,可本地单测;引擎相关(_gen_once / replay / main)延迟导入 vllm。
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import random
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -61,6 +62,38 @@ def group_sessions(
             continue
         out[k] = [r for r in s if r["timestamp_ms"] - t0 <= b]  # 截断真实 ts 超 b 的后续轮
     return out
+
+
+def sample_sessions(
+    sessions: dict[int, list[dict]],
+    *,
+    n_requests: int | None = None,
+    fraction: float | None = None,
+    seed: int = 0,
+) -> dict[int, list[dict]]:
+    """会话级下采样,**整会话保留**(多轮完整,绝不拆会话);把集群级 trace 负载匹配单实例。
+
+    二选一:`n_requests` 随机选整会话直到累计轮(request)数达目标(整会话保留,末个会话可能略超);
+    `fraction` 留该比例会话。都不给 → 原样。真实时间戳 / 突发形态不变,可复现(seed)。
+    """
+    if n_requests is None and fraction is None:
+        return sessions
+    sids = sorted(sessions)
+    random.Random(seed).shuffle(sids)  # 可复现的随机序
+    if n_requests is not None:
+        kept: list[int] = []
+        total = 0
+        for sid in sids:
+            if total >= n_requests:
+                break
+            kept.append(sid)
+            total += len(sessions[sid])
+        keep = set(kept)
+    else:
+        if not 0.0 < fraction <= 1.0:
+            raise ValueError("fraction must be in (0, 1]")
+        keep = set(sids[: max(1, round(len(sids) * fraction))])
+    return {sid: s for sid, s in sessions.items() if sid in keep}  # 保原 session 顺序
 
 
 def parse_window(spec: str | None) -> tuple[int, int] | None:
@@ -144,8 +177,8 @@ async def replay(
     sampling_params,
     sec_multiplier: float = 1.0,
     deadline_s: float | None = None,
-) -> list[TurnResult]:
-    """闭环回放:跨会话并发、会话内串行(现场生成回复 + 混合时间调度)。
+) -> tuple[list[TurnResult], int]:
+    """闭环回放:跨会话并发、会话内串行(现场生成回复 + 混合时间调度)。返回 (已完成轮, 取消会话数)。
 
     engine/tokenizer:进程内 vLLM 引擎与其分词器(见 main)。sampling_params 逐请求一致以可复现。
     deadline_s:墙钟上限(见 deadline_seconds);到点取消在飞会话,只保留已完成轮。
@@ -175,14 +208,15 @@ async def replay(
 
     tasks = [asyncio.create_task(run_session(s)) for s in sessions.values()]
     if not tasks:
-        return results
+        return results, 0
     _done, pending = await asyncio.wait(tasks, timeout=deadline_s)
+    cancelled = len(pending)
     if pending:  # 到点未完成的会话:取消并回收(只保留已记录的完成轮)
         for t in pending:
             t.cancel()
         await asyncio.gather(*pending, return_exceptions=True)  # 等取消落定
-        print(f"达回放时限 {deadline_s:.0f}s:取消 {len(pending)} 个未完成会话")
-    return results
+        print(f"达回放时限 {deadline_s:.0f}s:取消 {cancelled} 个未完成会话")
+    return results, cancelled
 
 
 def _summary(results: list[TurnResult]) -> None:
@@ -226,10 +260,8 @@ def _build_sampling(args) -> dict:
     return sampling
 
 
-def _build_engine_args(args):
+def _build_engine_kwargs(args) -> dict:
     """组装引擎参数:config [serve] → --engine-param 透传/覆盖任意 AsyncEngineArgs 字段。"""
-    from vllm.engine.arg_utils import AsyncEngineArgs
-
     from foretoken.bench.model_params import params_for
 
     serve = params_for(args.name or args.model, kind="serve")  # config 的 [serve](默认即配置 A)
@@ -241,21 +273,21 @@ def _build_engine_args(args):
             serve[k] = json.loads(v)
         except json.JSONDecodeError:
             serve[k] = v
-    return AsyncEngineArgs(**serve)
+    return serve
 
 
-async def _run(args, sessions, deadline) -> list[TurnResult]:
-    """进程内起引擎 → 回放 → finally 关停(释放 GPU)。"""
+async def _run(args, sessions, deadline, sampling, engine_kwargs):
+    """进程内起引擎 → 回放 → finally 关停(释放 GPU)。返回 (results, cancelled, duration_s)。"""
     from vllm import SamplingParams
+    from vllm.engine.arg_utils import AsyncEngineArgs
     from vllm.v1.engine.async_llm import AsyncLLM
 
-    sampling = _build_sampling(args)
-    print(f"采样 {sampling}")
-    engine = AsyncLLM.from_engine_args(_build_engine_args(args))
+    engine = AsyncLLM.from_engine_args(AsyncEngineArgs(**engine_kwargs))
     try:
         tokenizer = engine.get_tokenizer()
         sampling_params = SamplingParams(**sampling)
-        return await replay(
+        t = time.perf_counter()
+        results, cancelled = await replay(
             sessions,
             engine,
             tokenizer,
@@ -263,8 +295,41 @@ async def _run(args, sessions, deadline) -> list[TurnResult]:
             sec_multiplier=args.sec_multiplier,
             deadline_s=deadline,
         )
+        return results, cancelled, time.perf_counter() - t
     finally:
         engine.shutdown()  # 关停引擎、释放 GPU(正常 / 报错 / 中断都走)
+
+
+def _gpu_info(hint: int) -> dict:
+    """主进程查可见 GPU 数 / 单卡显存(归一化 goodput 用);失败回退 hint(=TP)。"""
+    try:
+        import torch
+
+        n = torch.cuda.device_count()
+        p = torch.cuda.get_device_properties(0)
+        return {
+            "count": n,
+            "name": p.name,
+            "bytes_per_gpu": p.total_memory,
+            "total_bytes": n * p.total_memory,
+        }
+    except Exception:  # noqa: BLE001
+        return {"count": hint, "name": "?", "bytes_per_gpu": 0, "total_bytes": 0}
+
+
+def _git_commit() -> str:
+    import subprocess
+    from pathlib import Path
+
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).parent,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except Exception:  # noqa: BLE001  服务器经 rsync 同步、无 .git
+        return "unknown"
 
 
 if __name__ == "__main__":  # pragma: no cover
@@ -276,6 +341,18 @@ if __name__ == "__main__":  # pragma: no cover
     ap.add_argument("--dataset", default="weijiezz/foretoken-trace")
     ap.add_argument("--split", required=True, help="conversation / mooncake / toolagent")
     ap.add_argument("--window", default=None, help="时间窗(分钟):N 或 A:B")
+    ap.add_argument(
+        "--n-requests",
+        type=int,
+        default=None,
+        help="目标 request(轮)数:会话级下采样到此量,匹配单实例硬件(整会话保留)",
+    )
+    ap.add_argument(
+        "--sample",
+        type=float,
+        default=None,
+        help="会话级下采样比例 (0,1](与 --n-requests 二选一)",
+    )
     ap.add_argument("--temperature", type=float, default=None, help="覆盖 config(默认按模型)")
     ap.add_argument("--top-p", type=float, default=None, help="覆盖 config")
     ap.add_argument("--top-k", type=int, default=None, help="覆盖 config")
@@ -307,6 +384,8 @@ if __name__ == "__main__":  # pragma: no cover
         metavar="K=V",
         help="透传任意 AsyncEngineArgs 字段(可重复),如 --engine-param kv_cache_dtype=fp8",
     )
+    ap.add_argument("--tag", default="baselineA", help="配置标签(报告/排行榜用),如 kv-opt/mtp")
+    ap.add_argument("--runs-dir", default="runs", help="实验记录根目录(默认 runs/)")
     args = ap.parse_args()
 
     try:
@@ -314,12 +393,65 @@ if __name__ == "__main__":  # pragma: no cover
     except ImportError as e:
         raise SystemExit("需要 datasets:pip install datasets(或装 foretoken[server])") from e
 
+    import socket
+    from datetime import datetime
+    from pathlib import Path
+
+    import vllm
+
+    from foretoken.bench import report
+
     rows = list(load_dataset(args.dataset, args.split, split="train"))
     window = parse_window(args.window)
     sessions = group_sessions(rows, window=window)
+    sessions = sample_sessions(  # 会话级下采样匹配硬件
+        sessions, n_requests=args.n_requests, fraction=args.sample, seed=args.seed
+    )
     deadline = deadline_seconds(window, args.sec_multiplier, args.tail_factor)
     n_turns = sum(len(s) for s in sessions.values())
+    span_s = (window[1] - window[0]) / 1000.0 if window else None
+    offered_turn_s = (n_turns / span_s) if span_s else None  # 提供负载(轮/s),扫描曲线 x 轴
     dl = f"{deadline:.0f}s" if deadline else "无"
-    print(f"{args.split}: {len(sessions)} 会话, {n_turns} 轮 | 时限 {dl}")
-    results = asyncio.run(_run(args, sessions, deadline))
+    sampling = _build_sampling(args)
+    engine_kwargs = _build_engine_kwargs(args)
+    print(
+        f"{args.split}: {len(sessions)} 会话, {n_turns} 轮 | "
+        f"n_requests={args.n_requests} sample={args.sample} | 时限 {dl} | 采样 {sampling}"
+    )
+
+    results, cancelled, duration = asyncio.run(
+        _run(args, sessions, deadline, sampling, engine_kwargs)
+    )
     _summary(results)
+
+    now = datetime.now()
+    name = args.name or Path(args.model).name
+    meta = {
+        "timestamp": now.strftime("%Y-%m-%d %H:%M"),
+        "host": socket.gethostname(),
+        "vllm": vllm.__version__,
+        "commit": _git_commit(),
+        "tag": args.tag,
+        "model": {"name": name, "path": args.model, "engine_args": engine_kwargs},
+        "sampling": sampling,
+        "workload": {
+            "dataset": args.dataset,
+            "split": args.split,
+            "window": args.window or "all",
+            "n_requests": args.n_requests,
+            "sample": args.sample,
+            "sec_multiplier": args.sec_multiplier,
+            "tail_factor": args.tail_factor,
+            "deadline_s": deadline,
+        },
+        "gpu": _gpu_info(engine_kwargs.get("tensor_parallel_size", 1)),
+        "load": {"sessions": len(sessions), "turns": n_turns, "offered_turn_s": offered_turn_s},
+        "cancelled_sessions": cancelled,
+        "duration_s": duration,
+    }
+    win = (args.window or "all").replace(":", "-")
+    run_name = f"{now.strftime('%Y-%m-%d_%H%M')}__{name}__{args.tag}__{args.split}_{win}"
+    runs_dir = Path(args.runs_dir)
+    run = report.write_run(results, meta, runs_dir / run_name)
+    report.append_index(runs_dir / "INDEX.md", run, run_name)
+    print(f"记录写入 {runs_dir / run_name}")
