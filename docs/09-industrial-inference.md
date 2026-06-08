@@ -179,4 +179,4 @@ KV cache 量化文档(e4m3 CUDA11.8+/ROCm、e5m2 CUDA11.8+)<https://docs.vllm.ai
 - vLLM 参数指南(KV 容量公式):<https://medium.com/@kaige.yang0110/vllm-throughput-optimization-1-basic-of-vllm-parameters-c39ace00a519>
 - 355B GPU 档位(第三方,待核实):<https://www.gmicloud.ai/en/blog/where-to-run-glm-5-inference-in-the-cloud-gpu-requirements-deployment-options-and-scaling-considerations>
 
-> **硬件信息范围**:本篇只写硬件类型(A100 80GB PCIe / driver 550 / CUDA 12.4);内网 IP / 路径 / 账号见 `infra/servers.md`(勿提交),不入本文。
+> **硬件信息范围**:本篇只写硬件类型(A100 80GB PCIe / driver 550 / CUDA 12.4);内网 IP / 路径 / 账号等敏感信息不入本仓库。

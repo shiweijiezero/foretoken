@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 """把缝合产物打包为可复现的 HF 数据集(parquet + dataset card),供 load_dataset 直接加载。
 
 固定数据集的好处:可复现(同一份,利于回放保真校验)、省时(无需每次重新缝合)、可开源。方法:由
@@ -9,6 +11,8 @@ from __future__ import annotations
 
 import os
 from collections.abc import Iterable
+
+from datasets import Dataset
 
 _CARD = """\
 ---
@@ -55,11 +59,7 @@ def build_hf_dataset(
     mooncake: str,
     content: str,
 ) -> str:
-    """把各 config 的 rows 各写成一个 parquet split + dataset card 到 out_dir。需要 datasets。"""
-    try:
-        from datasets import Dataset
-    except ImportError as e:  # pragma: no cover
-        raise SystemExit("需要 datasets:pip install datasets(或装 foretoken[server])") from e
+    """把各 config 的 rows 各写成一个 parquet split + dataset card 到 out_dir。"""
     os.makedirs(out_dir, exist_ok=True)
     for split, rows in splits.items():
         Dataset.from_list(list(rows)).to_parquet(os.path.join(out_dir, f"{split}.parquet"))

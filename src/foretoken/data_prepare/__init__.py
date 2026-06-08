@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 """数据准备(data_prepare):缝合真实数据源,打包为可复现的评测数据集。
 
 与评测台(bench/)分工:data_prepare 生成负载,bench 回放负载。单一真实源各缺一半(docs/07 §6.6):
@@ -14,7 +16,7 @@
   直接复用(入口 scripts/build_dataset.sh)。
 
 产出两字段:timestamp_ms / prompt,供 bench/replay.py 回放(输出长度交回放阶段统一 max_tokens 上限,
-不预设)。纯数据处理,本地可运行可测试(运行 build_dataset 需 datasets)。
+不预设)。核心缝合逻辑用标准库实现、可单测;读 HF 数据集 / 打包 parquet 走 datasets。
 
 可切换数据源:trace 用 reconstruct_sessions(hash 重建)或 group_by_session(自带 session id);
 content 用 to_turns 的字段 / 角色参数 + fill_sessions 的 turns_fn 适配不同格式

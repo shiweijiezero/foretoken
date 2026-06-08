@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 from foretoken.data_prepare.make_workload import (
     fill_sessions,
     group_by_session,

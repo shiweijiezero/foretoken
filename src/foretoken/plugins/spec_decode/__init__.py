@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 """spec_decode:MTP 投机控制(C2,P2/P3)。对应 vLLM `v1/spec_decode/`。
 
 C1(MTP 本体)复用 vLLM 原生 MTP(不自建 drafter);C2(自建)为 goodput 感知的自适应投机长度。

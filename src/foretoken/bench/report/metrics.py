@@ -1,17 +1,15 @@
-"""评测指标(纯统计,无第三方依赖,可单测):延迟分位 / goodput 阶梯 / 原始吞吐 / 汇总。"""
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+"""评测指标(纯统计):延迟分位 / goodput 阶梯 / 原始吞吐 / 汇总。"""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 
-# 默认 SLO 阶梯 (TTFT_ms, TPOT_ms):严 / 中 / 松——让饱和程度一眼可见。可被 replay --slo 覆盖。
-DEFAULT_SLO: list[tuple[int, int]] = [(2000, 80), (10000, 150), (60000, 200)]
-
 
 def parse_slo(specs: list[str]) -> list[tuple[int, int]]:
-    """解析 --slo:["2000:80", "10000:150"] → [(2000,80),(10000,150)];空 → DEFAULT_SLO。"""
-    out = [tuple(int(x) for x in s.split(":", 1)) for s in specs]
-    return out or list(DEFAULT_SLO)  # type: ignore[return-value]
+    """解析 SLO 阶梯:["2000:80", "10000:150"] → [(2000,80),(10000,150)];默认阶梯由 CLI 给。"""
+    return [tuple(int(x) for x in s.split(":", 1)) for s in specs]  # type: ignore[misc]
 
 
 def fmt_ms(ms: float) -> str:
@@ -41,7 +39,7 @@ def goodput_ladder(
     duration_s: float,
     gpu_bytes: float,
     num_gpus: int,
-    slo: Sequence[tuple[int, int]] = DEFAULT_SLO,
+    slo: Sequence[tuple[int, int]],
 ) -> list[dict]:
     """逐 SLO 档算:达成率 + 合格输出 tok/s(及 /GPU)+ 归一化 tok/(s·GPU字节)。
 
@@ -106,7 +104,7 @@ def summarize(
     duration_s: float,
     gpu_bytes: float,
     num_gpus: int,
-    slo: Sequence[tuple[int, int]] = DEFAULT_SLO,
+    slo: Sequence[tuple[int, int]],
     engine_stats: list[dict] | None = None,
 ) -> dict:
     """聚合 run 指标(延迟分位含 E2E + 尾部比 + 输出长度 + 吞吐 + goodput + 引擎 KV/并发)。"""
