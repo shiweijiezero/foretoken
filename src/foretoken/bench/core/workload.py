@@ -105,7 +105,7 @@ def parse_window(spec: str | None) -> tuple[int, int] | None:
 def deadline_seconds(
     window: tuple[int, int] | None, sec_multiplier: float, tail_factor: float
 ) -> float | None:
-    """回放墙钟上限 s = 窗口跨度 × sec_multiplier × tail_factor;到点取消在飞请求(掐长尾)。
+    """回放墙钟上限 s = 窗口跨度 × sec_multiplier × tail_factor;到点取消运行中请求(截长尾)。
 
     无窗口或 tail_factor<=0 → None(不设限,跑到全部完成)。
     """

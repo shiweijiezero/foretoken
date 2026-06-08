@@ -40,7 +40,7 @@ class InProcessBackend:
                 n_prompt = len(out.prompt_token_ids or [])
                 text = co.text
         except asyncio.CancelledError:
-            await self.engine.abort(request_id)  # 取消:回收引擎中的在飞请求
+            await self.engine.abort(request_id)  # 取消:回收引擎里运行中的请求
             raise
         except Exception:  # noqa: BLE001  单条失败不中断整轮回放
             return "", 0.0, 0.0, 0.0, 0, 0, False
@@ -64,7 +64,7 @@ async def run_replay(
     """
     samples: list[tuple] = []
 
-    class _Capture(StatLoggerBase):  # 每步收 SchedulerStats:KV 利用率 / 在飞 / 排队
+    class _Capture(StatLoggerBase):  # 每步收 SchedulerStats:KV 利用率 / 运行中 / 排队
         def __init__(self, *a, **k):
             pass
 
