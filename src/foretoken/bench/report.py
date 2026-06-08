@@ -165,8 +165,40 @@ def _render_md(run: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+# 已注册字体里按序挑中文字体(服务器 mplfonts 装的 Noto / 本地 Windows 雅黑等)
+_CJK_FONTS = [
+    "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC",
+    "WenQuanYi Micro Hei", "WenQuanYi Zen Hei", "Microsoft YaHei", "PingFang SC", "SimHei",
+]
+# (metric 属性, 文件名前缀, 指标名, strict SLO 参考线 ms, {lang: (xlabel, ylabel)})
+_PLOT_SPECS = [
+    ("ttft_ms", "ttft_cdf", "TTFT", 2000,
+     {"en": ("TTFT (ms)", "CDF"), "zh": ("首 token 延迟 TTFT (ms)", "累积占比")}),
+    ("tpot_ms", "tpot_cdf", "TPOT", 80,
+     {"en": ("TPOT (ms)", "CDF"), "zh": ("每 token 延迟 TPOT (ms)", "累积占比")}),
+]
+_TITLE = {"en": "{m} CDF (n={n})", "zh": "{m} 累积分布 (n={n})"}
+_SLO_LABEL = {"en": "SLO", "zh": "SLO 线"}
+
+
+def _resolve_cjk_font() -> str | None:
+    """可用中文字体名:env FORETOKEN_CJK_FONT(名或 ttf 路径)优先,否则在已注册字体里挑;无 → None。"""
+    import os
+
+    from matplotlib import font_manager as fm
+
+    env = os.environ.get("FORETOKEN_CJK_FONT")
+    if env:
+        if Path(env).exists():
+            fm.fontManager.addfont(env)
+            return fm.FontProperties(fname=env).get_name()
+        return env
+    avail = {f.name for f in fm.fontManager.ttflist}
+    return next((c for c in _CJK_FONTS if c in avail), None)
+
+
 def _plots(results, out: Path) -> list[str]:
-    """TTFT / TPOT 累积分布图(CDF;重尾用 CDF 最清楚)。无 matplotlib 则跳过。"""
+    """TTFT / TPOT 累积分布图(CDF),每张出 en + zh 两份(无 CJK 字体只出 en)。无 matplotlib 跳过。"""
     try:
         import matplotlib
 
@@ -174,28 +206,50 @@ def _plots(results, out: Path) -> list[str]:
         import matplotlib.pyplot as plt
     except ImportError:
         return []
+    cjk = _resolve_cjk_font()
     ok = [r for r in results if r.ok]
     made: list[str] = []
-    for key, fname, label in (
-        ("ttft_ms", "ttft_cdf.png", "TTFT (ms)"),
-        ("tpot_ms", "tpot_cdf.png", "TPOT (ms)"),
-    ):
+    for key, base, metric, slo_ms, lab in _PLOT_SPECS:
         xs = sorted(v for v in (getattr(r, key) for r in ok) if v > 0)
         if not xs:
             continue
+        (out / f"{base}.png").unlink(missing_ok=True)  # 清旧的无后缀图
         ys = [(i + 1) / len(xs) for i in range(len(xs))]
-        fig, ax = plt.subplots(figsize=(5, 3.2))
-        ax.plot(xs, ys)
-        ax.set_xscale("log")
-        ax.set_xlabel(label)
-        ax.set_ylabel("CDF")
-        ax.set_title(f"{label} CDF (n={len(xs)})")
-        ax.grid(True, alpha=0.3)
-        fig.tight_layout()
-        fig.savefig(out / fname, dpi=110)
-        plt.close(fig)
-        made.append(fname)
+        for lang, font in [("en", None), *([("zh", cjk)] if cjk else [])]:
+            xlab, ylab = lab[lang]
+            rc = {"axes.unicode_minus": False}
+            if font:
+                rc["font.sans-serif"] = [font]
+            with plt.rc_context(rc):
+                fig, ax = plt.subplots(figsize=(5, 3.2))
+                ax.plot(xs, ys)
+                ax.axvline(slo_ms, ls="--", color="gray", lw=1)
+                ax.text(
+                    slo_ms, 0.03, f" {_fmt_ms(slo_ms)} {_SLO_LABEL[lang]}", color="gray", fontsize=8
+                )
+                ax.set_xscale("log")
+                ax.set_xlabel(xlab)
+                ax.set_ylabel(ylab)
+                ax.set_title(_TITLE[lang].format(m=metric, n=len(xs)))
+                ax.grid(True, alpha=0.3)
+                fig.tight_layout()
+                fname = f"{base}_{lang}.png"
+                fig.savefig(out / fname, dpi=110)
+                plt.close(fig)
+            made.append(fname)
     return made
+
+
+def regen_plots(run_dir) -> list[str]:
+    """从 turns.jsonl 重画该 run 的图(en+zh);给旧 run 补图 / 字体变更后重出。"""
+    from types import SimpleNamespace
+
+    p = Path(run_dir)
+    tj = p / "turns.jsonl"
+    if not tj.exists():
+        return []
+    rows = [json.loads(ln) for ln in tj.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    return _plots([SimpleNamespace(**r) for r in rows], p)
 
 
 def write_run(
@@ -262,9 +316,14 @@ def rebuild_index(runs_dir) -> None:
     (root / "INDEX.md").write_text(_INDEX_HEADER + body, encoding="utf-8")
 
 
-if __name__ == "__main__":  # 手动重建 INDEX:python -m foretoken.bench.report [runs_dir]
+if __name__ == "__main__":  # python -m foretoken.bench.report [runs_dir] [--plots]
     import sys
 
-    d = sys.argv[1] if len(sys.argv) > 1 else "runs"
+    argv = [a for a in sys.argv[1:] if not a.startswith("-")]
+    d = argv[0] if argv else "runs"
+    if "--plots" in sys.argv:  # 给所有 run 重画图(en+zh)
+        for tj in sorted(Path(d).glob("*/turns.jsonl")):
+            regen_plots(tj.parent)
+        print(f"已重画各 run 图(en+zh):{d}")
     rebuild_index(d)
     print(f"INDEX 重建:{d}/INDEX.md")
