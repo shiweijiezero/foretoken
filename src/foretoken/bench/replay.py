@@ -23,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 from foretoken.bench import report
-from foretoken.bench.model_params import read, resolve
+from foretoken.config import read, resolve
 
 # 注意:vllm / datasets / torch / matplotlib 仅服务器装(本地无 vLLM wheel),故在用到的函数内延迟导入,
 # 以保本模块纯函数层可在本地无重依赖单测(见模块 docstring)。
@@ -280,7 +280,7 @@ def _cfg_name(args) -> str:
 
 
 def _cfg_path(args):
-    """配置文件路径:--config 直接指定的文件,缺省 default.toml(见 model_params)。"""
+    """配置文件路径:--config 直接指定的文件,缺省 default.toml(见 foretoken.config)。"""
     return resolve(args.config)
 
 
