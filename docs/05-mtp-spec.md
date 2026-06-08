@@ -47,6 +47,10 @@ drafter。C2(goodput 感知的自适应 MTP 控制)= 自建,是未被上游覆�
 - **C2 钩子**:投机长度是一个单一的静态 int(`num_lookahead_tokens`,`scheduler.py:213`),即
   负载自适应控制器的注入点。**约束**:动态 K 必须待在已捕获的 **cudagraph 桶**内,否则 eager
   回退会抹掉增益(最尖锐的风险)。
+- **MTP 与 chunked prefill 当前不兼容**(部署约束):一个 batch step 既混入 prefill 块、又要做
+  多 token 草稿验证时,attention mask / KV 写入 / 调度对不上,故 hybrid 模型的 MTP recipe(如
+  Qwen3-Next `qwen3_next_mtp`)要求 `--no-enable-chunked-prefill`。这是**实现层约束、未来可能解除,
+  非原理上必须**;评测 MTP(P2)时配置须同时关 chunked prefill,否则报错 / 失真。
 
 ## C2 = 自建空位(goodput 感知的自适应 MTP 控制)
 
