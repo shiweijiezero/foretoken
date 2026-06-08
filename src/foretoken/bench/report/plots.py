@@ -29,6 +29,13 @@ _T = {  # 双语词表
     "tput_y": {"en": "output tokens/s", "zh": "输出 tok/s"},
     "tput": {"en": "output throughput over time", "zh": "输出吞吐随时间"},
     "cmp": {"en": "comparison", "zh": "对照"},
+    "time_s": {"en": "time (s)", "zh": "时刻 (s)"},
+    "kv_y": {"en": "KV cache usage (%)", "zh": "KV 利用率 (%)"},
+    "kv_title": {"en": "KV cache usage over time", "zh": "KV 利用率随时间"},
+    "conc_y": {"en": "requests", "zh": "请求数"},
+    "conc_title": {"en": "concurrency over time", "zh": "并发随时间"},
+    "running": {"en": "running", "zh": "在飞"},
+    "waiting": {"en": "waiting", "zh": "排队"},
 }
 
 
@@ -70,8 +77,12 @@ _METRICS = [
      {"en": "TTFT (ms)", "zh": "首 token 延迟 TTFT (ms)"}, True, True),
     ("tpot_ms", "tpot", {"en": "TPOT", "zh": "TPOT"},
      {"en": "TPOT (ms)", "zh": "每 token 延迟 TPOT (ms)"}, True, True),
+    ("e2e_ms", "e2e", {"en": "E2E", "zh": "端到端"},
+     {"en": "E2E latency (ms)", "zh": "端到端延迟 (ms)"}, True, True),
     ("output_tokens", "tokens", {"en": "output length", "zh": "输出长度"},
      {"en": "output tokens", "zh": "输出 token 数"}, True, False),
+    ("prompt_tokens", "prompt", {"en": "prompt length", "zh": "输入长度"},
+     {"en": "prompt tokens", "zh": "输入 token 数"}, True, False),
 ]
 
 
@@ -148,7 +159,10 @@ def _apply_fmt(ax, xfn=None, yfn=None):
 
 
 # 各指标 x 轴的领域格式器:延迟→ms 人读(1000→1s)、token 数→k 缩写
-_XFMT = {"ttft_ms": fmt_ms, "tpot_ms": fmt_ms, "output_tokens": _fmt_k}
+_XFMT = {
+    "ttft_ms": fmt_ms, "tpot_ms": fmt_ms, "e2e_ms": fmt_ms,
+    "output_tokens": _fmt_k, "prompt_tokens": _fmt_k,
+}
 
 
 def _vline(ax, x, lang):
@@ -160,8 +174,10 @@ def _vline(ax, x, lang):
     )
 
 
-def make_plots(results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_SLO) -> list[str]:
-    """每指标出 CDF + 直方图(延迟带 SLO 线),外加输出长度分布 + TTFT 随到达时刻散点;en + zh。"""
+def make_plots(
+    results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_SLO, engine_stats=None
+) -> list[str]:
+    """每指标 CDF + 直方图、E2E、输入/输出长度、时间线、吞吐、引擎 KV%/并发随时间;en + zh。"""
     try:
         import matplotlib
 
@@ -245,6 +261,34 @@ def make_plots(results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_S
                 ax.set_ylabel(_T["tput_y"][lang])
                 ax.set_title(f"{_T['tput'][lang]} (n={len(ok)})")
                 emit(fig, "throughput_timeline", lang)
+
+    if engine_stats is None:  # regen 时从盘读引擎时间序列
+        ej = out / "engine_stats.jsonl"
+        if ej.exists():
+            engine_stats = [json.loads(x) for x in ej.read_text("utf-8").splitlines() if x.strip()]
+    if engine_stats:
+        et = [s["t"] for s in engine_stats]
+        kv = [s["kv"] * 100 for s in engine_stats]
+        run_, wait_ = [s["running"] for s in engine_stats], [s["waiting"] for s in engine_stats]
+        for lang, font in _langs(cjk):
+            with _fig_ctx(plt, font):  # KV cache 利用率随时间
+                fig, ax = plt.subplots(figsize=(5, 3.2))
+                ax.plot(et, kv)
+                ax.fill_between(et, kv, alpha=0.18)
+                ax.set_ylim(0, max(100, max(kv) if kv else 100))
+                ax.set_xlabel(_T["time_s"][lang])
+                ax.set_ylabel(_T["kv_y"][lang])
+                ax.set_title(_T["kv_title"][lang])
+                emit(fig, "kv_timeline", lang)
+            with _fig_ctx(plt, font):  # 并发(在飞 + 排队)随时间
+                fig, ax = plt.subplots(figsize=(5, 3.2))
+                ax.plot(et, run_, label=_T["running"][lang])
+                ax.plot(et, wait_, label=_T["waiting"][lang])
+                ax.set_xlabel(_T["time_s"][lang])
+                ax.set_ylabel(_T["conc_y"][lang])
+                ax.set_title(_T["conc_title"][lang])
+                ax.legend(loc="upper right")
+                emit(fig, "concurrency_timeline", lang)
     return made
 
 

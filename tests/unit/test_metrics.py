@@ -40,7 +40,7 @@ def test_throughput_raw_not_slo_filtered():
 
 def test_percentiles_and_summary():
     p = percentiles(_results())
-    assert set(p) == {"ttft_ms", "tpot_ms"}
+    assert set(p) == {"ttft_ms", "tpot_ms", "e2e_ms"}
     assert set(p["ttft_ms"]) == {"p50", "p90", "p99"}
     s = summarize(_results(), duration_s=10, gpu_bytes=2, num_gpus=2, slo=_SLO)
     assert s["completed"] == 2  # ok 轮

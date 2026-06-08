@@ -37,9 +37,12 @@ class TurnResult:
     tpot_ms: float
     e2e_ms: float
     output_tokens: int
+    prompt_tokens: int = 0  # 输入 token 数(引擎统计;供总吞吐 / prompt 长度分布)
     send_ms: float = 0.0  # 实际发出时刻(相对回放起点 ms;供时间线 / 并发图,从 turns.jsonl 可重现)
     complete_ms: float = 0.0  # 完成时刻(相对回放起点 ms)
-    text: str = ""  # 现场生成的回复(供无损校验 / 对照)
+    text: str = ""  # 现场生成的回复(写 cases,不入 turns.jsonl)
+    user: str = ""  # 该轮用户输入(写 cases)
+    system: str | None = None  # 系统提示(仅 turn 0;写 cases)
     ok: bool = True
 
 
@@ -169,7 +172,7 @@ def goodput_per_gpu_byte_second(
 
 
 async def _gen_once(engine, tokenizer, messages, sampling_params, request_id):
-    """进程内流式生成 → (text, ttft_ms, tpot_ms, e2e_ms, n_tokens, ok)。
+    """进程内流式生成 → (text, ttft_ms, tpot_ms, e2e_ms, n_tokens, prompt_tokens, ok)。
 
     apply_chat_template 把对话拼成 prompt;engine.generate 流式产出累积 RequestOutput,
     首个含 token 的产出计 TTFT,末次的 token 数计长度。被取消时 abort 该请求以释放引擎槽位。
@@ -178,6 +181,7 @@ async def _gen_once(engine, tokenizer, messages, sampling_params, request_id):
     start = time.perf_counter()
     first: float | None = None
     n = 0
+    n_prompt = 0
     text = ""
     try:
         async for out in engine.generate(prompt, sampling_params, request_id):
@@ -185,18 +189,19 @@ async def _gen_once(engine, tokenizer, messages, sampling_params, request_id):
             if first is None and co.token_ids:
                 first = time.perf_counter()
             n = len(co.token_ids)
+            n_prompt = len(out.prompt_token_ids or [])
             text = co.text
     except asyncio.CancelledError:
         await engine.abort(request_id)  # 取消:回收引擎中的在飞请求
         raise
     except Exception:  # noqa: BLE001  单条失败不中断整轮回放
-        return "", 0.0, 0.0, 0.0, 0, False
+        return "", 0.0, 0.0, 0.0, 0, 0, False
     if first is None:
-        return "", 0.0, 0.0, 0.0, 0, False
+        return "", 0.0, 0.0, 0.0, 0, 0, False
     end = time.perf_counter()
     ttft = (first - start) * 1000.0
     tpot = ((end - first) * 1000.0 / (n - 1)) if n > 1 else 0.0
-    return text, ttft, tpot, (end - start) * 1000.0, n, True
+    return text, ttft, tpot, (end - start) * 1000.0, n, n_prompt, True
 
 
 async def replay(
@@ -229,15 +234,16 @@ async def replay(
             await asyncio.sleep(max(0.0, (send_rel * sec_multiplier - now_ms) / 1000.0))
             messages.append({"role": "user", "content": turn["user"]})
             send_ms = (time.perf_counter() - start) * 1000.0  # 实际发出时刻(经过 sleep 后)
-            text, ttft, tpot, e2e, n, ok = await _gen_once(
+            text, ttft, tpot, e2e, n, n_prompt, ok = await _gen_once(
                 engine, tokenizer, messages, sampling_params, f"{sid}-{k}"
             )
             complete_prev = (time.perf_counter() - start) * 1000.0  # C_k 相对完成时刻
             messages.append({"role": "assistant", "content": text})  # 现场回复接回历史
             results.append(
                 TurnResult(
-                    sid, k, ttft, tpot, e2e, n,
-                    send_ms=send_ms, complete_ms=complete_prev, text=text, ok=ok,
+                    sid, k, ttft, tpot, e2e, n, prompt_tokens=n_prompt,
+                    send_ms=send_ms, complete_ms=complete_prev, text=text,
+                    user=turn["user"], system=system if k == 0 else None, ok=ok,
                 )
             )
             t_prev = turn["timestamp_ms"]
@@ -312,12 +318,44 @@ def _build_engine_kwargs(args) -> dict:
 
 
 async def _run(args, sessions, deadline, sampling, engine_kwargs):
-    """进程内起引擎 → 回放 → finally 关停(释放 GPU)。返回 (results, cancelled, duration_s)。"""
+    """进程内起引擎 → 回放 → finally 关停。返回 (results, cancelled, duration_s, engine_stats)。
+
+    engine_stats:逐 iteration 的引擎 SchedulerStats 序列(KV%/并发/排队),经自定义 stat logger 采集。
+    """
     from vllm import SamplingParams
     from vllm.engine.arg_utils import AsyncEngineArgs
     from vllm.v1.engine.async_llm import AsyncLLM
+    from vllm.v1.metrics.loggers import StatLoggerBase
 
-    engine = AsyncLLM.from_engine_args(AsyncEngineArgs(**engine_kwargs))
+    samples: list[tuple] = []
+
+    class _Capture(StatLoggerBase):  # 每步收 SchedulerStats:KV 利用率 / 在飞 / 排队
+        def __init__(self, *a, **k):
+            pass
+
+        def record(self, scheduler_stats, iteration_stats=None, mm_cache_stats=None, engine_idx=0):
+            s = scheduler_stats
+            if s is not None:
+                samples.append((
+                    time.perf_counter(),
+                    getattr(s, "kv_cache_usage", 0.0),
+                    getattr(s, "num_running_reqs", 0),
+                    getattr(s, "num_waiting_reqs", 0),
+                ))
+
+        def log(self):
+            pass
+
+        def log_engine_initialized(self):
+            pass
+
+        def record_sleep_state(self, *a, **k):
+            pass
+
+    engine = AsyncLLM.from_engine_args(
+        AsyncEngineArgs(**dict(engine_kwargs, disable_log_stats=False)),
+        stat_loggers=[lambda *a, **k: _Capture()],
+    )
     try:
         tokenizer = engine.get_tokenizer()
         sampling_params = SamplingParams(**sampling)
@@ -330,7 +368,13 @@ async def _run(args, sessions, deadline, sampling, engine_kwargs):
             sec_multiplier=args.sec_multiplier,
             deadline_s=deadline,
         )
-        return results, cancelled, time.perf_counter() - t
+        dur = time.perf_counter() - t
+        stats = [  # 取回放期间(t 之后)的样本,时刻相对回放起点
+            {"t": at - t, "kv": kv, "running": run, "waiting": wait}
+            for (at, kv, run, wait) in samples
+            if at - t >= 0
+        ]
+        return results, cancelled, dur, stats
     finally:
         engine.shutdown()  # 关停引擎、释放 GPU(正常 / 报错 / 中断都走)
 
@@ -471,7 +515,7 @@ if __name__ == "__main__":  # pragma: no cover
         f"n_requests={args.n_requests} sample={args.sample} | 时限 {dl} | 采样 {sampling}"
     )
 
-    results, cancelled, duration = asyncio.run(
+    results, cancelled, duration, engine_stats = asyncio.run(
         _run(args, sessions, deadline, sampling, engine_kwargs)
     )
     _summary(results)
@@ -508,6 +552,12 @@ if __name__ == "__main__":  # pragma: no cover
     win = (args.window or "all").replace(":", "-")
     run_name = f"{now.strftime('%Y-%m-%d_%H%M')}__{name}__{args.tag}__{args.split or 'data'}_{win}"
     runs_dir = Path(args.runs_dir)
-    run = report.write_run(results, meta, runs_dir / run_name, slo=report.parse_slo(args.slo))
+    run = report.write_run(
+        results,
+        meta,
+        runs_dir / run_name,
+        slo=report.parse_slo(args.slo),
+        engine_stats=engine_stats,
+    )
     report.rebuild_index(runs_dir)
     print(f"记录写入 {runs_dir / run_name}")

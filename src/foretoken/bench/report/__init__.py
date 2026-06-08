@@ -47,9 +47,10 @@ def _row(*cells) -> str:
 _PLOT_GROUPS = [
     ("TTFT", ["ttft_cdf", "ttft_hist"]),
     ("TPOT", ["tpot_cdf", "tpot_hist"]),
-    ("输出长度", ["tokens_hist"]),
-    ("时间线", ["ttft_timeline"]),
-    ("吞吐随时间", ["throughput_timeline"]),
+    ("E2E", ["e2e_cdf", "e2e_hist"]),
+    ("输出 / 输入长度", ["tokens_hist", "prompt_hist"]),
+    ("时间线 / 吞吐", ["ttft_timeline", "throughput_timeline"]),
+    ("KV 利用率 / 并发", ["kv_timeline", "concurrency_timeline"]),
 ]
 
 
@@ -57,7 +58,7 @@ def _render_md(run: dict) -> str:
     """渲染 summary.md(标准 markdown:标题 + 表格 + 内嵌图)。"""
     m, gpu, w = run["model"], run["gpu"], run["workload"]
     lat, lo, tp = run["latency"], run["load"], run["throughput"]
-    t, p = lat["ttft_ms"], lat["tpot_ms"]
+    t, p, e = lat["ttft_ms"], lat["tpot_ms"], lat.get("e2e_ms", {})
     eng_s = ", ".join(f"{k}={v}" for k, v in m.get("engine_args", {}).items() if k != "model")
     samp_s = ", ".join(f"{k}={v}" for k, v in run["sampling"].items())
     off = lo.get("offered_turn_s")
@@ -95,9 +96,14 @@ def _render_md(run: dict) -> str:
         _row("---", "---", "---", "---"),
         _row("TTFT", fmt_ms(t["p50"]), fmt_ms(t["p90"]), fmt_ms(t["p99"])),
         _row("TPOT", fmt_ms(p["p50"]), fmt_ms(p["p90"]), fmt_ms(p["p99"])),
+        *([_row("E2E", fmt_ms(e["p50"]), fmt_ms(e["p90"]), fmt_ms(e["p99"]))] if e else []),
+        "",
+        f"尾部比 TTFT p99/p50 = **{run.get('tail_ratio_ttft', 0):.1f}×**"
+        f" · 输出长度均值 {run.get('output_len', {}).get('mean', 0):.0f} tok",
         "",
         "## 吞吐",
-        f"原始输出 **{tp['output_tok_s']:.0f} tok/s**({tp['output_tok_s_per_gpu']:.0f}/GPU)"
+        f"输出 **{tp['output_tok_s']:.0f} tok/s**({tp['output_tok_s_per_gpu']:.0f}/GPU)"
+        f" · 总(含输入) **{tp.get('total_tok_s', 0):.0f} tok/s**"
         f" · 完成 **{tp['request_s']:.2f} req/s**",
         "",
         "## goodput(SLO 达成阶梯)",
@@ -115,6 +121,15 @@ def _render_md(run: dict) -> str:
                 norm,
             )
         )
+    eng = run.get("engine")
+    if eng:
+        L += [
+            "",
+            "## 引擎(逐 iteration)",
+            f"峰值 KV 利用率 **{100 * eng['peak_kv']:.0f}%**(均值 {100 * eng['mean_kv']:.0f}%)"
+            f" · 最大在飞 **{eng['max_running']}** · 最大排队 **{eng['max_waiting']}**",
+        ]
+    L += ["", "样例输入输出:`cases.jsonl`(全量)/ `cases.md`(可读样例)。"]
     plots = run.get("plots", [])
     if plots:
 
@@ -130,25 +145,66 @@ def _render_md(run: dict) -> str:
     return "\n".join(L) + "\n"
 
 
+_HEAVY = {"text", "user", "system"}  # 不入 turns.jsonl(指标表)的重字段;另存 cases
+
+
+def _write_cases(results, out: Path, max_md_sessions: int = 5) -> None:
+    """写每轮输入输出:cases.jsonl(全量,机器/grep)+ cases.md(前若干会话,可读)。"""
+    with (out / "cases.jsonl").open("w", encoding="utf-8") as f:
+        for r in results:
+            d = asdict(r)
+            f.write(
+                json.dumps(
+                    {k: d[k] for k in ("session_id", "turn", "system", "user", "ok")}
+                    | {"assistant": d["text"]},
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+    by_sid: dict = {}
+    for r in results:
+        by_sid.setdefault(r.session_id, []).append(r)
+    md = ["# 样例输入输出(前若干会话;完整见 cases.jsonl)"]
+    for sid in list(by_sid)[:max_md_sessions]:
+        md.append(f"\n## session {sid}")
+        for r in sorted(by_sid[sid], key=lambda x: x.turn):
+            if r.turn == 0 and r.system:
+                md.append(f"\n**system**\n\n{r.system}")
+            md.append(f"\n**user**\n\n{r.user}")
+            md.append(f"\n**assistant**\n\n{r.text}")
+    (out / "cases.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+
+
 def write_run(
-    results, meta: dict, out_dir, *, slo: Sequence[tuple[int, int]] = DEFAULT_SLO
+    results,
+    meta: dict,
+    out_dir,
+    *,
+    slo: Sequence[tuple[int, int]] = DEFAULT_SLO,
+    engine_stats: list[dict] | None = None,
 ) -> dict:
-    """写 turns.jsonl / run.json / summary.md / 图;返回完整 run dict。"""
+    """写 turns.jsonl / cases / engine_stats / run.json / summary.md / 图;返回完整 run dict。"""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     with (out / "turns.jsonl").open("w", encoding="utf-8") as f:
-        for r in results:  # 不存 text(重,仅无损校验需要),只留指标
-            f.write(json.dumps({k: v for k, v in asdict(r).items() if k != "text"}) + "\n")
+        for r in results:  # 指标表:剔除重字段(输入输出另存 cases)
+            f.write(json.dumps({k: v for k, v in asdict(r).items() if k not in _HEAVY}) + "\n")
+    _write_cases(results, out)
+    if engine_stats:
+        with (out / "engine_stats.jsonl").open("w", encoding="utf-8") as f:
+            for s in engine_stats:
+                f.write(json.dumps(s) + "\n")
     summary = summarize(
         results,
         duration_s=meta["duration_s"],
         gpu_bytes=meta["gpu"]["total_bytes"],
         num_gpus=meta["gpu"]["count"],
         slo=slo,
+        engine_stats=engine_stats,
     )
     run = {**meta, **summary}
     (out / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")
-    run["plots"] = make_plots(results, out, slo=slo)
+    run["plots"] = make_plots(results, out, slo=slo, engine_stats=engine_stats)
     (out / "summary.md").write_text(_render_md(run), encoding="utf-8")
     return run
 
