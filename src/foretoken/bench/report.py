@@ -197,8 +197,8 @@ def _render_md(run: dict) -> str:
     plots = run.get("plots", [])
     if plots:
 
-        def pick(b):  # 该图优先 zh、否则 en
-            return next((f"{b}_{lg}.png" for lg in ("zh", "en") if f"{b}_{lg}.png" in plots), None)
+        def pick(b):  # 该图优先 zh、否则 en(图在 <run>/<lang>/ 子目录)
+            return next((f"{lg}/{b}.png" for lg in ("zh", "en") if f"{lg}/{b}.png" in plots), None)
 
         L += ["", "## 图"]
         for title, bases in _PLOT_GROUPS:
@@ -284,18 +284,20 @@ def _plots(results, out: Path) -> list[str]:
     cjk = _resolve_cjk_font()
     ok = [r for r in results if r.ok]
     made: list[str] = []
+    for p in out.glob("*.png"):  # 清旧的扁平布局图(现按 en/ zh/ 分目录)
+        p.unlink()
 
-    def emit(fig, base, lang):
+    def emit(fig, base, lang):  # 按语言分目录:<run>/<lang>/<base>.png
         fig.tight_layout()
-        fig.savefig(out / f"{base}_{lang}.png", dpi=110)
+        (out / lang).mkdir(exist_ok=True)
+        fig.savefig(out / lang / f"{base}.png", dpi=110)
         plt.close(fig)
-        made.append(f"{base}_{lang}.png")
+        made.append(f"{lang}/{base}.png")
 
     for attr, base, name, xlab, slo_ms, log_x, do_cdf in _METRICS:
         xs = sorted(v for v in (getattr(r, attr, 0) for r in ok) if v and v > 0)
         if not xs:
             continue
-        (out / f"{base}_cdf.png").unlink(missing_ok=True)  # 清旧的无后缀图
         ys = [(i + 1) / len(xs) for i in range(len(xs))]
         bins = np.logspace(np.log10(xs[0]), np.log10(xs[-1]), 40) if xs[-1] > xs[0] else "auto"
         for lang, font in _langs(cjk):
@@ -389,9 +391,10 @@ def compare_runs(runs_dir, out_dir=None) -> list[str]:
                 ax.grid(True, alpha=0.3)
                 ax.legend(fontsize=8, loc="lower right")
                 fig.tight_layout()
-                fig.savefig(out / f"compare_{base}_cdf_{lang}.png", dpi=120)
+                (out / lang).mkdir(exist_ok=True)
+                fig.savefig(out / lang / f"compare_{base}_cdf.png", dpi=120)
                 plt.close(fig)
-                made.append(f"compare_{base}_cdf_{lang}.png")
+                made.append(f"{lang}/compare_{base}_cdf.png")
     return made
 
 
