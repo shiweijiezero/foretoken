@@ -1,23 +1,12 @@
-"""评测台(bench):回放负载、采集指标、计算 goodput。
+"""评测台(bench):闭环回放真实会话负载,采集 TTFT/TPOT、算吞吐与 goodput,出可复现记录。
 
-P0 评测直接用 `vllm bench serve`(见 scripts/serve_glm.sh、run_baseline.sh),不自建负载 / 采集 /
-指标:vLLM 已提供流量分布(`--request-rate` / `--burstiness`,泊松↔Gamma)、时序回放
-(`--dataset-name timed_trace`)、采集 TTFT/TPOT、按请求 goodput(`--goodput`)。
+- `replay.py`:进程内自起 vLLM 引擎(`AsyncLLM`),按真实 timestamp 异步回放 `data_prepare/` 缝合的会话
+  负载(现场生成回复拼下一轮),采每轮 TTFT/TPOT/输出 token;会话级下采样匹配单实例硬件,墙钟时限掐长尾。
+- `model_params.py`:采样 + 引擎配置(`config/models/*.toml`)。
+- `report.py`:聚合(延迟分位 / 原始吞吐 / goodput SLO 阶梯)+ 人读产物(`summary.md` / 图 / `INDEX`)。
 
-已实现 `replay.py`:按真实 timestamp 异步回放 data_prepare/ 缝合的负载,采集 TTFT/TPOT、计算每 GPU
-字节秒 goodput。自建回放的原因——vLLM `timed_trace` 仅接受 hash、`custom` 不含 timestamp,二者均
-无法同时承载真实 prompt 与真实到达时刻(负载的缝合 / 打包在 data_prepare/)。
-
-留到 P1:评测自有 KV 策略时,补足 vLLM 未提供的指标——门槛零(回放保真)、PFOO/Belady 最优上界、
-4 配置拆贡献;run_evaluation 是该入口的占位。
+自建闭环回放(而非 `vllm bench serve`)的原因:vLLM 的 `timed_trace` 仅接受 hash、`custom` 不含
+timestamp,均无法同时承载真实 prompt 与真实到达时刻;且评测需闭环(下一轮 prompt 用模型现场回复)。
 """
 
 from __future__ import annotations
-
-
-def run_evaluation(*args, **kwargs):
-    """评测自有优化(KV 策略等)的入口,P1 再实现。
-
-    P0 不使用此入口:P0 评测用 `vllm bench serve`(scripts/run_baseline.sh)。
-    """
-    raise NotImplementedError("P0 使用 vllm bench serve;此入口留到 P1(补足 vLLM 未提供的指标)。")
