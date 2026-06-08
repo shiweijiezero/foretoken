@@ -22,7 +22,7 @@ async def replay(
 
     backend.gen_once(messages, request_id) → (text, ttft_ms, tpot_ms, e2e_ms, n, prompt_tokens, ok)
     (进程内引擎或 HTTP server 两种实现见 core.vllm_engine / core.backend)。
-    deadline_s:墙钟上限(见 workload.deadline_seconds);到点取消在飞会话,只保留已完成轮。
+    deadline_s:墙钟上限(见 workload.deadline_seconds);到点取消运行中会话,只保留已完成轮。
     """
     t0 = min(s[0]["timestamp_ms"] for s in sessions.values())
     results: list[TurnResult] = []

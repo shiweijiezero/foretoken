@@ -45,7 +45,7 @@ output_length, hash_ids[]}`;`hash_ids` 按 **512-token 块**滚动前缀哈希,�
 ## 2. 怎么跑(闭环回放,三种后端)
 主线 harness 是项目自带的**闭环回放**(`bench/replay.py`),非 `vllm bench serve`——后者 `timed_trace`
 仅接受 hash、`custom` 不含 timestamp,均无法同时承载真实 prompt + 真实到达时刻;且闭环要求下一轮 prompt
-用模型**现场回复**(非预录答案)。回放逻辑(时间调度 / 会话化 / 现场拼下一轮)三种后端一致,区别在请求发往
+用模型**现场回复**(非预录答案)。回放逻辑(时间调度 / 会话化 / 现场拼接下一轮)三种后端一致,区别在请求发往
 哪、测到哪一层——各测什么 / 何时用见 [README「三种后端形式」](../README.md)。
 
 ```bash
@@ -60,13 +60,14 @@ CUDA_VISIBLE_DEVICES=0 HF_HOME=<cache> bash scripts/bench.sh \
 ```
 - `--config` 配置文件(`[sampling]` 官方采样 + `[serve]` 引擎,见 `docs/14`);`--dataset` 默认 HF `foretoken-trace`,也可接本地 `.jsonl`/`.parquet`/目录。
 - **负载匹配硬件(关键)**:真实 trace 是集群级到达,单实例(如 4×A100)1× 全量回放必然过载(TTFT 飙到分钟级)。`--rate R`(req/min,自动换算 total_requests=R×窗口分钟)或 `--total-requests N` 会话级下采样到该 request 量(整会话保留 = 负载均衡分给本实例的份额),或 `--sec-multiplier` 拉伸时间;扫不同 `--rate` 出 goodput-vs-load 曲线、拐点即可持续容量。
-- `--window N|A:B`(分钟)截时间片;`--deadline SEC` / `--tail-factor`(默认 2.0)墙钟上限,到点取消在飞请求(掐长尾——个别高温采样会一路顶到 max_tokens 拖垮整轮);`--slo TTFT_ms:TPOT_ms`(可重复)定 goodput 达标阈值;`--tag` 标优化变体(`vllm-default`/`kv-aware`/`mtp`);`--param`/`--engine-param` 透传任意 vLLM 采样 / 引擎字段。
+- `--window N|A:B`(分钟)截时间片;`--deadline SEC` / `--tail-factor`(默认 2.0)墙钟上限,到点取消运行中请求(截长尾——个别高温采样会一路顶到 max_tokens 拖垮整轮);`--slo TTFT_ms:TPOT_ms`(可重复)定 goodput 达标阈值;`--tag` 标优化变体(`vllm-default`/`kv-aware`/`mtp`);`--param`/`--engine-param` 透传任意 vLLM 采样 / 引擎字段。
 
 ### 产出(每 run 一目录,见 §4 指标)
-`runs/<时间>__<model>__<tag>__<split>_<window>/`:`run.json`(配置+聚合指标)、`turns.jsonl`(每轮指标原始,
+`results/runs/<时间>__<model>__<tag>__<split>_<window>/`:`run.json`(配置+聚合指标)、`turns.jsonl`(每轮指标原始,
 事后换 SLO 重算/画图)、`cases.md`/`cases.jsonl`(每轮输入输出,由 `--cases off|sample|full` 控,默认 sample)、`engine_stats.jsonl`
-(逐 iteration 引擎 KV%/在飞/排队)、`summary.md`(markdown 摘要+内嵌图)、`en/`·`zh/`(双语论文级图)。
-跨 run:`runs/INDEX.md` 排行榜、`runs/compare/` 对照图;`python -m foretoken.bench.report runs --plots --compare` 可重生成。
+(逐 iteration 引擎 KV%/运行中/排队)、`summary.md`(markdown 摘要+内嵌图)、`en/`·`zh/`(双语论文级图)。
+跨 run:`results/runs/INDEX.md` 排行榜;多组对比 `bash scripts/compare.sh results/runs/<A> results/runs/<B> ...` →
+`results/compare/<时间戳>/summary.md`(全指标表 + CDF/分位柱/goodput/吞吐对比图,每次独立留存)。
 
 ### 交叉验证(可选,非主线)
 SGLang `bench_serving --dataset-name mooncake --use-trace-timestamps`、NVIDIA **AIPerf**(原生 goodput)、
@@ -97,7 +98,7 @@ dummy 仅作快速扫 KV 容量时的可选辅助,不是独立的一套评测。
 - **goodput**(首要,非裸 throughput)= 满足 SLO(TTFT≤a 且 TPOT≤b)的**有效输出 tok/s**,按严/中/松
   SLO 阶梯(`--slo` 可配)报达成% + /GPU + 归一化 **tok/(s·GPU字节)**;只算完整完成的请求。
 - **引擎 GPU 监控**(取引擎 `SchedulerStats`,自定义 stat logger):**KV cache 利用率**(峰值/均值 + 随时间)、
-  并发(在飞/排队随时间)。
+  并发(运行中/排队随时间)。
 - 输入/输出**长度分布**、TTFT 随到达时刻散点、跨 run 对照 CDF。
 
 **KV 专项(规划,value-aware KV 落地后补)**:
@@ -189,7 +190,7 @@ dummy 仅作快速扫 KV 容量时的可选辅助,不是独立的一套评测。
 
 ## 8. 一句话配方
 > 用 `foretoken-trace`(Mooncake 时序/会话结构 + 真实多轮内容缝合)经**进程内闭环回放**
-> (`bench/replay.py`:真模型现场生成、按真实时间戳、会话级下采样匹配硬件、墙钟时限掐长尾)作主线,
+> (`bench/replay.py`:真模型现场生成、按真实时间戳、会话级下采样匹配硬件、墙钟时限截长尾)作主线,
 > SGLang/AIPerf 交叉验证;主报 goodput、p99 TTFT/E2E、KV 利用率,对标 LRU 与 Belady;自研
 > goodput-per-GPU-byte 作为 value-aware 的核心指标;再用 BurstGPT/Azure 注入真实突发、用
 > kv-cache-tester + "Don't Break the Cache" 式负载做 agentic 深评。三要素缺一(真实时间戳/真实长度/

@@ -110,7 +110,7 @@ def render_summary(run: dict) -> str:
             "",
             "## 引擎(逐 iteration)",
             f"峰值 KV 利用率 **{100 * eng['peak_kv']:.0f}%**(均值 {100 * eng['mean_kv']:.0f}%)"
-            f" · 最大在飞 **{eng['max_running']}** · 最大排队 **{eng['max_waiting']}**",
+            f" · 最大运行中 **{eng['max_running']}** · 最大排队 **{eng['max_waiting']}**",
         ]
     cases = run.get("cases", "full")
     if cases != "off":

@@ -108,7 +108,7 @@
 
 - **包 = `foretoken`**(命名空间)。不预先建立空占位:某模块 P1/P2 真正实现时才建立,命名照此约定。
 - **`data_prepare/`**(P1)— 评测负载的数据准备:由 Mooncake 重建会话与时序结构、填入真实多轮对话(`make_workload.py`),打包为可复现 HF 数据集(`build_dataset.py`,入口 `scripts/build_dataset.sh`)。data_prepare 生成负载,`bench/` 回放负载。
-- **`bench/`** — 评测台:`replay.py` 进程内自起 vLLM 引擎(`AsyncLLM`)、按真实 timestamp 闭环回放 `data_prepare/` 的负载(现场生成回复拼下一轮),采 TTFT/TPOT、算原始吞吐与 goodput;`report.py` 出可复现记录(`summary.md` / CDF·直方图·对照图 / `INDEX`);入口 `scripts/bench.sh`(配置加载见顶层 `foretoken.config`)。自建闭环(非 `vllm bench serve`)因后者无法同载真实 prompt + 真实到达时刻、且评测需闭环。后续补门槛零(回放保真)/ PFOO·Belady 最优上界 / 配置拆贡献。
+- **`bench/`** — 评测台:`replay.py` 进程内自起 vLLM 引擎(`AsyncLLM`)、按真实 timestamp 闭环回放 `data_prepare/` 的负载(现场生成回复拼接下一轮),采 TTFT/TPOT、算原始吞吐与 goodput;`report.py` 出可复现记录(`summary.md` / CDF·直方图·对照图 / `INDEX`);入口 `scripts/bench.sh`(配置加载见顶层 `foretoken.config`)。自建闭环(非 `vllm bench serve`)因后者无法同载真实 prompt + 真实到达时刻、且评测需闭环。后续补门槛零(回放保真)/ PFOO·Belady 最优上界 / 配置拆贡献。
 - **`plugins/`**(P1 起)— 优化插件 wrapper,子模块对齐 vLLM 命名以降低认知负担:
   - `kv_offload/`(B3,对 vLLM `OffloadingManager`/`Spec`,`v1/kv_offload/`)
   - `cache_policy/`(对 vLLM `CachePolicy`,`v1/kv_offload/cpu/policies/`;含 value / `P(reuse)`)

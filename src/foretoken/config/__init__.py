@@ -3,7 +3,7 @@
 """配置加载:模型的 `[sampling]` + `[serve]` 两段 toml(`config/models/*.toml`),见 docs/14。
 
 `replay --config <path>` 直接指定文件(任意路径);缺省回退 `config/models/default.toml`。
-采样喂回放、serve 配置喂引擎,故置于顶层(不专属 bench)。
+采样供回放、serve 配置供引擎,故置于顶层(不专属 bench)。
 """
 
 from __future__ import annotations

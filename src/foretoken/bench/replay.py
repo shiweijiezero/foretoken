@@ -170,7 +170,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--tail-factor",
         type=float,
         default=2.0,
-        help="回放墙钟上限 = 窗口跨度 × sec_multiplier × 此值;到点取消在飞请求(掐长尾)。<=0 不设限",
+        help="墙钟上限 = 窗口跨度 × sec_multiplier × 此值;到点取消运行中请求(截长尾)。<=0 不设限",
     )
     ap.add_argument(
         "--deadline",
@@ -241,7 +241,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default="sample",
         help="逐轮输入输出:off 不存 / sample 仅 cases.md / full 加全量 cases.jsonl(大 run 慎用)",
     )
-    ap.add_argument("--runs-dir", default="runs", help="实验记录根目录(默认 runs/)")
+    ap.add_argument(
+        "--runs-dir", default="results/runs", help="单实验记录根目录(默认 results/runs/)"
+    )
     return ap
 
 
