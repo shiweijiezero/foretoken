@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 """kv_offload:价值感知 KV 卸载生命周期(B3,P1,MVP)。对应 vLLM `v1/kv_offload/`。
 
 准入 / 驱逐 / TTL,目标为每 GPU 字节秒 goodput。接入方式(零 fork,docs/02 / 08):自定义

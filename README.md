@@ -10,26 +10,42 @@
 
 数据准备命令:
 ```bash
-pip install -e '.[server]'
+pip install -e .
 bash scripts/build_dataset.sh
 ```
 
-## 评测(跑 benchmark)
+## 评测 benchmark
 
 进程内闭环回放真实会话负载:引擎在回放进程内自起(`AsyncLLM`)、按真实 timestamp 回放、模型现场生成回复拼下一轮(非预录答案),采集 TTFT/TPOT/E2E、吞吐与 goodput,并监控引擎 KV/并发;进程退出即释放 GPU。
 
 ```bash
-pip install -e '.[server]'   # 服务器(GPU)装 vLLM
-# 模型采样 + 引擎配置见 config/models/<model>.toml(详见 docs/14)
-CUDA_VISIBLE_DEVICES=0 HF_HOME=<cache> bash scripts/bench.sh \
-  --model <weights|HF id> --config config/models/<model>.toml \
-  --split conversation --window 0:10 --n-requests 200
+pip install -e .   # 装依赖(含 vLLM;需 GPU 机器)
+# 权重从 HF 拉取,数据集默认公开的 weijiezz/foretoken-trace,
+# 不传 --config 即用 config/models/default.toml(贪心解码) 换更大的模型时配上它的 `config`(采样 + 引擎并行)
+CUDA_VISIBLE_DEVICES=0 bash scripts/bench.sh \
+  --model Qwen/Qwen3-4B-Instruct-2507 \
+  --split conversation --window 0:10 --rate 20
+```
+
+`--window 0:10 --rate 20` = 回放第 0–10 分钟、到达率 20 req/min(换算 total_requests = rate × 窗口分钟数 = 200)。
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 bash scripts/bench.sh \
+  --model Qwen/Qwen3.6-27B --config config/models/Qwen3.6-27B.toml \
+  --split conversation --window 0:10 --rate 20
 # 全部参数与默认值:python -m foretoken.bench.replay --help
 ```
 
-每 run 落 `runs/<…>/`:`summary.md`(markdown 摘要 + 内嵌图)、`run.json` / `turns.jsonl` / `cases.jsonl`(每轮输入输出)/ `engine_stats.jsonl`、`en/`·`zh/` 双语图;`runs/INDEX.md` 排行榜。指标:TTFT/TPOT/E2E 分位、原始吞吐 vs SLO-goodput、KV 利用率 / 并发随时间。完整实操见 [`docs/07`](docs/07-eval-playbook.md)。
+每 run 落 `runs/<…>/`:`summary.md`(markdown 摘要 + 内嵌图)、`run.json` / `turns.jsonl` / `cases.jsonl`(每轮输入输出)/ `engine_stats.jsonl`、`en/`·`zh/` 双语图;`runs/INDEX.md` 排行榜。完整命令集合查看 [`docs/07`](docs/07-eval-playbook.md)。
 
-> 真实 trace 是集群级到达,单实例 1× 全量回放会过载;用 `--n-requests` 会话级下采样把负载匹配到硬件,扫不同量得 goodput-vs-load 曲线、拐点即可持续容量。
+指标分四组(`summary.md` / `run.json`):
+
+- **延迟**:TTFT(首 token)、TPOT(逐 token 间隔)、E2E(整轮)的 p50/p90/p99,及尾部比 p99/p50。
+- **吞吐**:输出 / 输入 / 总 tok/s(及 /GPU)、完成 req/s。
+- **goodput**:按 SLO 阶梯(严/中/松,TTFT+TPOT 双门限)只计达标轮的 tok/s,及 /GPU、归一化 tok/(s·GPU字节);阶梯可用 `--slo TTFT_ms:TPOT_ms` 自定义。
+- **SchedulerStats**:KV cache 利用率、在飞 / 排队请求数随时间。
+
+> 真实 trace 是集群级到达,单实例 1× 全量回放会过载;用 `--rate`(或 `--total-requests`)会话级下采样把负载匹配到硬件,扫不同到达率得 goodput-vs-load 曲线、拐点即可持续容量。
 
 ## License
 

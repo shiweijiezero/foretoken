@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 """会话重建:由 Mooncake hash 重建会话与时序结构,填入真实多轮对话内容。
 
 不复刻 Mooncake 的 512 块 hash 复用:该粒度取决于 Kimi 生产环境的块大小、缓存与内容,与本项目的
@@ -10,7 +12,7 @@ vLLM(16 块)/ GLM 配置不一致(docs/07 §6.6)。复用关系由内容决定�
 `bench/replay.py` 回放,覆盖 KV(会话内累积复用)与 MTP(连贯内容)。多个真实 config 各作为一个
 split(build_dataset),保留各自真实时序、互不串联。
 
-纯数据处理;本地可运行可测试(运行 main 需 datasets)。
+纯数据处理逻辑(to_turns / reconstruct_sessions 等)用标准库实现、可单测;读 HF 数据集走 datasets。
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ from __future__ import annotations
 import random
 import sys
 from collections.abc import Callable, Iterable, Iterator
+
+from datasets import load_dataset
 
 
 def to_turns(
@@ -210,10 +214,6 @@ def _stream_hf(
     """流式读 HF 数据集(Mooncake trace / 对话内容)。
     config 用于含多 config 的数据集
     """
-    try:
-        from datasets import load_dataset
-    except ImportError as e:  # pragma: no cover
-        raise SystemExit("需要 datasets:pip install datasets(或装 foretoken[server])") from e
     ds = load_dataset(source, config, split=split, streaming=True)
     for i, row in enumerate(ds):
         if limit is not None and i >= limit:

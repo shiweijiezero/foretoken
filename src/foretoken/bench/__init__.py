@@ -1,8 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 """评测台(bench):闭环回放真实会话负载,采集 TTFT/TPOT、算吞吐与 goodput,出可复现记录。
 
-- `replay.py`:进程内自起 vLLM 引擎(`AsyncLLM`),按真实 timestamp 异步回放 `data_prepare/` 缝合的会话
-  负载(现场生成回复拼下一轮),采每轮 TTFT/TPOT/输出 token;会话级下采样匹配单实例硬件,墙钟时限掐长尾。
-- `report.py`:聚合(延迟分位 / 原始吞吐 / goodput SLO 阶梯)+ 人读产物(`summary.md` / 图 / `INDEX`)。
+- `replay.py`:命令行入口,解析参数 → 构造负载 → 起引擎回放 → 写记录(见 `bench.sh`)。
+- `core/`:回放核心——`types`(TurnResult)、`workload`(加载 / 窗口 / 采样 / 调度 / goodput)、
+  `vllm_engine`(进程内自起 `AsyncLLM`、闭环回放、逐 iteration 监控);进程退出即释放 GPU。
+- `report/`:聚合(延迟分位 / 原始吞吐 / goodput SLO 阶梯)+ 人读产物(`summary.md` / 图 / `INDEX`)。
 
 采样 + 引擎配置加载见顶层 `foretoken.config`(读 `config/models/*.toml`)。
 
