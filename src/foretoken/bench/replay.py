@@ -432,6 +432,13 @@ if __name__ == "__main__":  # pragma: no cover
         help="透传任意 AsyncEngineArgs 字段(可重复),如 --engine-param kv_cache_dtype=fp8",
     )
     ap.add_argument(
+        "--slo",
+        action="append",
+        default=[],
+        metavar="TTFT_ms:TPOT_ms",
+        help="goodput 的 SLO 阶梯(可重复),如 --slo 2000:80 --slo 10000:150;缺省严/中/松三档",
+    )
+    ap.add_argument(
         "--tag",
         default="vllm-default",
         help="优化变体标签(自描述,排行榜区分):vllm-default(stock 基线)/ kv-aware / mtp / kv+mtp",
@@ -501,6 +508,6 @@ if __name__ == "__main__":  # pragma: no cover
     win = (args.window or "all").replace(":", "-")
     run_name = f"{now.strftime('%Y-%m-%d_%H%M')}__{name}__{args.tag}__{args.split or 'data'}_{win}"
     runs_dir = Path(args.runs_dir)
-    run = report.write_run(results, meta, runs_dir / run_name)
+    run = report.write_run(results, meta, runs_dir / run_name, slo=report.parse_slo(args.slo))
     report.rebuild_index(runs_dir)
     print(f"记录写入 {runs_dir / run_name}")

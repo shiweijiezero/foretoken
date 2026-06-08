@@ -1,5 +1,5 @@
 from foretoken.bench.replay import TurnResult
-from foretoken.bench.report import goodput_ladder, percentiles, summarize, throughput
+from foretoken.bench.report.metrics import goodput_ladder, percentiles, summarize, throughput
 
 _SLO = [(2000, 80), (10000, 150), (60000, 200)]
 
