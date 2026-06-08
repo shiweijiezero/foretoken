@@ -16,7 +16,7 @@ bash scripts/build_dataset.sh
 
 ## 评测 benchmark
 
-进程内闭环回放真实会话负载:引擎在回放进程内自起(`AsyncLLM`)、按真实 timestamp 回放、模型现场生成回复拼下一轮(非预录答案),采集 TTFT/TPOT/E2E、吞吐与 goodput,并监控引擎 KV/并发;进程退出即释放 GPU。
+闭环回放真实会话负载:按真实 timestamp 回放、模型现场生成回复拼下一轮(非预录答案),采集 TTFT/TPOT/E2E、吞吐与 goodput。默认在回放进程内自起引擎(`AsyncLLM`,退出即释放 GPU);也可打 `vllm serve`(三种后端形式见下)。
 
 ```bash
 pip install -e .   # 装依赖(含 vLLM;需 GPU 机器)
@@ -27,14 +27,31 @@ CUDA_VISIBLE_DEVICES=0 bash scripts/bench.sh \
   --split conversation --window 0:10 --rate 20
 ```
 
-`--window 0:10 --rate 20` = 回放第 0–10 分钟、到达率 20 req/min(换算 total_requests = rate × 窗口分钟数 = 200)。
+`--window 0:10 --rate 20` = 回放第 0–10 分钟、到达率 20 req/min(换算 total_requests = rate × 窗口分钟数 = 200)。换更大模型配上其 `config`(采样 + 引擎并行)与多卡 `CUDA_VISIBLE_DEVICES`。
+
+### 三种后端形式
+
+闭环回放本身(时间调度 / 会话化 / 现场拼下一轮)三种形式一致,区别只在请求发往哪里、测到哪一层:
+
+| 后端 | 测什么 | 何时用 |
+|---|---|---|
+| **进程内**(默认) | 纯引擎能力(KV / 调度 / 解码)+ 逐 iteration KV%/并发监控 | 优化 A/B(KV/MTP 插件对照),隔离引擎、开销最低 |
+| **`--endpoint URL`** | 全生产栈(HTTP + 前端 tokenize/detok + `--api-server-count` + DP 路由) | 部署级真实容量;`vllm serve` 由你自管 |
+| **`--serve`** | 同上,但 bench 自起 vllm serve、回放完整组 kill 释放 GPU | 一条命令端到端、自动收尾 server |
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 bash scripts/bench.sh \
-  --model Qwen/Qwen3.6-27B --config config/models/Qwen3.6-27B.toml \
+# 打已有 vllm serve(自己先 vllm serve <model> --port 8000)
+bash scripts/bench.sh --endpoint http://localhost:8000 --model <served-name> \
+  --split conversation --window 0:10 --rate 20 --gpus <服务器卡数>
+
+# 自起 vllm serve、跑完自动关停(引擎配置取 config [serve])
+CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/bench.sh --serve --dp 4 --api-server-count 4 \
+  --model <weights> --config config/models/<m>.toml \
   --split conversation --window 0:10 --rate 20
 # 全部参数与默认值:python -m foretoken.bench.replay --help
 ```
+
+> 进程内只测引擎(单 bench 进程做全部 tokenize/detok,高并发下客户端可能先于 GPU 封顶);API 形式把前端移到 `vllm serve` 侧(`--api-server-count` 可多开),用以区分引擎与前端瓶颈。API 形式无逐 iteration 引擎监控,`--gpus` 给服务器卡数算 goodput/GPU。
 
 每 run 落 `runs/<…>/`:`summary.md`(markdown 摘要 + 内嵌图)、`run.json` / `turns.jsonl` / `cases.jsonl`(每轮输入输出)/ `engine_stats.jsonl`、`en/`·`zh/` 双语图;`runs/INDEX.md` 排行榜。完整命令集合查看 [`docs/07`](docs/07-eval-playbook.md)。
 
