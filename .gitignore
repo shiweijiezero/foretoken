@@ -20,6 +20,9 @@ dist/
 
 # 实验记录:保留人读的 summary.md / run.json / INDEX.md,忽略重产物
 runs/**/turns.jsonl
+runs/**/cases.jsonl
+runs/**/cases.md
+runs/**/engine_stats.jsonl
 runs/**/*.png
 
 # 临时 / 缓存(服务器日志等)

@@ -33,7 +33,7 @@ class _FakeEngine:
             await asyncio.sleep(self.step_delay)
             text += "x"
             co = SimpleNamespace(token_ids=list(range(i + 1)), text=text)
-            yield SimpleNamespace(outputs=[co])
+            yield SimpleNamespace(outputs=[co], prompt_token_ids=[1, 2, 3, 4])
 
     async def abort(self, request_id):
         self.aborted.append(request_id)
