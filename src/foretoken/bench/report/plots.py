@@ -109,6 +109,17 @@ def _fig_ctx(plt, font):
     return plt.rc_context(rc)
 
 
+def _plain_ticks(ax):
+    """坐标轴用普通数字,不用科学计数法 / 偏移(log 轴的 decade 也标普通值)。"""
+    from matplotlib.ticker import ScalarFormatter
+
+    for axis in (ax.xaxis, ax.yaxis):
+        sf = ScalarFormatter()
+        sf.set_scientific(False)
+        sf.set_useOffset(False)
+        axis.set_major_formatter(sf)
+
+
 def _vline(ax, x, lang):
     """竖直 SLO 参考线 + 标注(y 用 axes 比例,CDF / 直方图通用)。"""
     ax.axvline(x, ls="--", color="gray", lw=1)
@@ -134,7 +145,8 @@ def make_plots(results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_S
     for p in out.glob("*.png"):  # 清旧的扁平布局图(现按 en/ zh/ 分目录)
         p.unlink()
 
-    def emit(fig, base, lang):  # 按语言分目录:<run>/<lang>/<base>.png
+    def emit(fig, ax, base, lang):  # 按语言分目录:<run>/<lang>/<base>.png
+        _plain_ticks(ax)
         fig.tight_layout()
         (out / lang).mkdir(exist_ok=True)
         fig.savefig(out / lang / f"{base}.png", dpi=110)
@@ -160,7 +172,7 @@ def make_plots(results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_S
                     ax.set_ylabel(_T["cdf_y"][lang])
                     ax.set_title(f"{name[lang]} {_T['cdf'][lang]} (n={len(xs)})")
                     ax.grid(True, alpha=0.3)
-                    emit(fig, f"{base}_cdf", lang)
+                    emit(fig, ax, f"{base}_cdf", lang)
             with _fig_ctx(plt, font):
                 fig, ax = plt.subplots(figsize=(5, 3.2))
                 ax.hist(xs, bins=bins, color="#4c78a8", edgecolor="white", linewidth=0.3)
@@ -172,7 +184,7 @@ def make_plots(results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_S
                 ax.set_ylabel(_T["hist_y"][lang])
                 ax.set_title(f"{name[lang]} {_T['hist'][lang]} (n={len(xs)})")
                 ax.grid(True, alpha=0.3, axis="y")
-                emit(fig, f"{base}_hist", lang)
+                emit(fig, ax, f"{base}_hist", lang)
 
     ref = _slo_ref("ttft_ms", slo)
     pts = [(r.send_ms / 1000.0, r.ttft_ms) for r in ok if getattr(r, "send_ms", 0)]
@@ -188,7 +200,7 @@ def make_plots(results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_S
                 ax.set_ylabel("TTFT (ms)")
                 ax.set_title(f"{_T['timeline'][lang]} (n={len(pts)})")
                 ax.grid(True, alpha=0.3)
-                emit(fig, "ttft_timeline", lang)
+                emit(fig, ax, "ttft_timeline", lang)
 
     series = _throughput_series(ok)
     if series:
@@ -202,7 +214,7 @@ def make_plots(results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_S
                 ax.set_ylabel(_T["tput_y"][lang])
                 ax.set_title(f"{_T['tput'][lang]} (n={len(ok)})")
                 ax.grid(True, alpha=0.3)
-                emit(fig, "throughput_timeline", lang)
+                emit(fig, ax, "throughput_timeline", lang)
     return made
 
 
@@ -273,6 +285,7 @@ def compare_runs(
                 ax.set_title(f"{name[lang]} {_T['cdf'][lang]} — {_T['cmp'][lang]}")
                 ax.grid(True, alpha=0.3)
                 ax.legend(fontsize=8, loc="lower right")
+                _plain_ticks(ax)
                 fig.tight_layout()
                 (out / lang).mkdir(exist_ok=True)
                 fig.savefig(out / lang / f"compare_{base}_cdf.png", dpi=120)
