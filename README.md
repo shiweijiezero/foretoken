@@ -10,9 +10,26 @@
 
 数据准备命令:
 ```bash
-pip install -e '.[dev]'
-bash scripts/build_dataset.sh 
+pip install -e '.[server]'
+bash scripts/build_dataset.sh
 ```
+
+## 评测(跑 benchmark)
+
+进程内闭环回放真实会话负载:引擎在回放进程内自起(`AsyncLLM`)、按真实 timestamp 回放、模型现场生成回复拼下一轮(非预录答案),采集 TTFT/TPOT/E2E、吞吐与 goodput,并监控引擎 KV/并发;进程退出即释放 GPU。
+
+```bash
+pip install -e '.[server]'   # 服务器(GPU)装 vLLM
+# 模型采样 + 引擎配置见 config/models/<model>.toml(详见 docs/14)
+CUDA_VISIBLE_DEVICES=0 HF_HOME=<cache> bash scripts/bench.sh \
+  --model <weights|HF id> --config config/models/<model>.toml \
+  --split conversation --window 0:10 --n-requests 200
+# 全部参数与默认值:python -m foretoken.bench.replay --help
+```
+
+每 run 落 `runs/<…>/`:`summary.md`(markdown 摘要 + 内嵌图)、`run.json` / `turns.jsonl` / `cases.jsonl`(每轮输入输出)/ `engine_stats.jsonl`、`en/`·`zh/` 双语图;`runs/INDEX.md` 排行榜。指标:TTFT/TPOT/E2E 分位、原始吞吐 vs SLO-goodput、KV 利用率 / 并发随时间。完整实操见 [`docs/07`](docs/07-eval-playbook.md)。
+
+> 真实 trace 是集群级到达,单实例 1× 全量回放会过载;用 `--n-requests` 会话级下采样把负载匹配到硬件,扫不同量得 goodput-vs-load 曲线、拐点即可持续容量。
 
 ## License
 
