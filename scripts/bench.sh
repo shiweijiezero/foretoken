@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
-# 闭环基线启动器:从仓库根运行 replay CLI,基准参数原样透传。
-# 参数与默认值见 `python -m foretoken.bench.replay --help`;引擎进程内自起、脚本退出即释放 GPU。
+# 闭环回放启动器:从仓库根运行 replay CLI,参数原样透传。
+# 全部参数与默认值见 `python -m foretoken.bench.replay --help`。
 #
-# 用法:
-#   bash scripts/bench.sh --model <weights> --config config/models/<m>.toml \
-#     --split conversation --window 0:10 --n-requests 200
+# 三种后端(择一):
+#   1) 进程内(默认):自起 AsyncLLM,退出即释放 GPU
+#        bash scripts/bench.sh --model <weights> --config config/models/<m>.toml \
+#          --split conversation --window 0:10 --rate 20
+#   2) 打已有 vllm serve:
+#        bash scripts/bench.sh --endpoint http://localhost:8000 --model <served-name> \
+#          --split conversation --window 0:10 --rate 20 --gpus <服务器卡数>
+#   3) 自起 vllm serve,回放完整组 kill 释放 GPU(引擎配置取 config [serve]):
+#        bash scripts/bench.sh --serve --dp 4 --api-server-count 4 \
+#          --model <weights> --config config/models/<m>.toml \
+#          --split conversation --window 0:10 --rate 20
 #
 # 可选环境变量:
 #   VENV       Python venv 目录(默认 <repo>/.venv;存在则用,否则用 PATH 中的 python3)
 #   CUDA_HOME  若设则把其 bin 前置到 PATH(部分环境的 flashinfer JIT 需 nvcc>=12)
-# 部署相关(CUDA_VISIBLE_DEVICES / HF_HOME 等)由调用者按自己环境设置,例如:
-#   CUDA_VISIBLE_DEVICES=0 HF_HOME=~/.cache/huggingface bash scripts/bench.sh --model ... --config ...
+# 部署相关(CUDA_VISIBLE_DEVICES / HF_HOME 等)由调用者按环境设置,例如:
+#   CUDA_VISIBLE_DEVICES=0,1,2,3 HF_HOME=~/.cache/huggingface bash scripts/bench.sh --serve --model ... --config ...
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
