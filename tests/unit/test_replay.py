@@ -1,12 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 
+from foretoken.bench.core.loop import replay
 from foretoken.bench.core.types import TurnResult
-from foretoken.bench.core.vllm_engine import replay
 from foretoken.bench.core.workload import (
     deadline_seconds,
     goodput_per_gpu_byte_second,
@@ -17,28 +16,21 @@ from foretoken.bench.core.workload import (
 )
 
 
-class _FakeTok:
-    def apply_chat_template(self, messages, add_generation_prompt, tokenize):
-        return "P"
-
-
-class _FakeEngine:
-    """模拟流式引擎:每轮分步产出累积 RequestOutput;记录被 abort 的请求。"""
+class _FakeBackend:
+    """模拟后端:gen_once 分步生成(可被取消);记录被取消的请求 id。"""
 
     def __init__(self, step_delay):
         self.step_delay = step_delay
         self.aborted: list[str] = []
 
-    async def generate(self, prompt, sampling_params, request_id):
-        text = ""
-        for i in range(3):
-            await asyncio.sleep(self.step_delay)
-            text += "x"
-            co = SimpleNamespace(token_ids=list(range(i + 1)), text=text)
-            yield SimpleNamespace(outputs=[co], prompt_token_ids=[1, 2, 3, 4])
-
-    async def abort(self, request_id):
-        self.aborted.append(request_id)
+    async def gen_once(self, messages, request_id):
+        try:
+            for _ in range(3):
+                await asyncio.sleep(self.step_delay)
+            return "xxx", 1.0, 0.5, 3.0, 3, 4, True  # text, ttft, tpot, e2e, n, n_prompt, ok
+        except asyncio.CancelledError:
+            self.aborted.append(request_id)
+            raise
 
 
 def test_next_send_first_turn_absolute():
@@ -147,25 +139,21 @@ def test_replay_completes_without_deadline():
         1: [{"session_id": 1, "turn": 0, "timestamp_ms": 0, "user": "hi", "system": None}],
         2: [{"session_id": 2, "turn": 0, "timestamp_ms": 0, "user": "yo", "system": None}],
     }
-    eng = _FakeEngine(step_delay=0.001)
-    results, cancelled = asyncio.run(
-        replay(sessions, eng, _FakeTok(), sampling_params=None, deadline_s=None)
-    )
+    be = _FakeBackend(step_delay=0.001)
+    results, cancelled = asyncio.run(replay(sessions, be, deadline_s=None))
     assert len(results) == 2
     assert all(r.ok and r.output_tokens == 3 for r in results)
     assert cancelled == 0
-    assert eng.aborted == []  # 无取消 → 无 abort
+    assert be.aborted == []  # 无取消 → 无 abort
 
 
 def test_replay_deadline_cancels_inflight():
     sessions = {1: [{"session_id": 1, "turn": 0, "timestamp_ms": 0, "user": "hi", "system": None}]}
-    eng = _FakeEngine(step_delay=0.5)  # 单轮 ~1.5s,远超 deadline
-    results, cancelled = asyncio.run(
-        replay(sessions, eng, _FakeTok(), sampling_params=None, deadline_s=0.05)
-    )
+    be = _FakeBackend(step_delay=0.5)  # 单轮 ~1.5s,远超 deadline
+    results, cancelled = asyncio.run(replay(sessions, be, deadline_s=0.05))
     assert results == []  # 到点在飞被取消,无完成轮
     assert cancelled == 1
-    assert eng.aborted == ["1-0"]  # 取消时 abort 了该请求
+    assert be.aborted == ["1-0"]  # 取消时记录该请求
 
 
 def test_goodput_invalid_denominators():
