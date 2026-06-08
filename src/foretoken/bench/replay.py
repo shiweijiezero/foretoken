@@ -416,7 +416,11 @@ if __name__ == "__main__":  # pragma: no cover
         metavar="K=V",
         help="透传任意 AsyncEngineArgs 字段(可重复),如 --engine-param kv_cache_dtype=fp8",
     )
-    ap.add_argument("--tag", default="baselineA", help="配置标签(报告/排行榜用),如 kv-opt/mtp")
+    ap.add_argument(
+        "--tag",
+        default="vllm-default",
+        help="优化变体标签(自描述,排行榜区分):vllm-default(stock 基线)/ kv-aware / mtp / kv+mtp",
+    )
     ap.add_argument("--runs-dir", default="runs", help="实验记录根目录(默认 runs/)")
     args = ap.parse_args()
 
