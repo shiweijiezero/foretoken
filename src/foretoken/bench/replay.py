@@ -37,6 +37,8 @@ class TurnResult:
     tpot_ms: float
     e2e_ms: float
     output_tokens: int
+    send_ms: float = 0.0  # 实际发出时刻(相对回放起点 ms;供时间线 / 并发图,从 turns.jsonl 可重现)
+    complete_ms: float = 0.0  # 完成时刻(相对回放起点 ms)
     text: str = ""  # 现场生成的回复(供无损校验 / 对照)
     ok: bool = True
 
@@ -226,12 +228,18 @@ async def replay(
             now_ms = (time.perf_counter() - start) * 1000.0
             await asyncio.sleep(max(0.0, (send_rel * sec_multiplier - now_ms) / 1000.0))
             messages.append({"role": "user", "content": turn["user"]})
+            send_ms = (time.perf_counter() - start) * 1000.0  # 实际发出时刻(经过 sleep 后)
             text, ttft, tpot, e2e, n, ok = await _gen_once(
                 engine, tokenizer, messages, sampling_params, f"{sid}-{k}"
             )
             complete_prev = (time.perf_counter() - start) * 1000.0  # C_k 相对完成时刻
             messages.append({"role": "assistant", "content": text})  # 现场回复接回历史
-            results.append(TurnResult(sid, k, ttft, tpot, e2e, n, text, ok))
+            results.append(
+                TurnResult(
+                    sid, k, ttft, tpot, e2e, n,
+                    send_ms=send_ms, complete_ms=complete_prev, text=text, ok=ok,
+                )
+            )
             t_prev = turn["timestamp_ms"]
 
     tasks = [asyncio.create_task(run_session(s)) for s in sessions.values()]
@@ -403,6 +411,13 @@ if __name__ == "__main__":  # pragma: no cover
         help="回放墙钟上限 = 窗口跨度 × sec_multiplier × 此值;到点取消在飞请求(掐长尾)。<=0 不设限",
     )
     ap.add_argument(
+        "--deadline",
+        type=float,
+        default=None,
+        metavar="SEC",
+        help="回放墙钟上限秒数:直接指定(覆盖 --tail-factor 的窗口推算);省略则按 tail-factor",
+    )
+    ap.add_argument(
         "--param",
         action="append",
         default=[],
@@ -432,7 +447,11 @@ if __name__ == "__main__":  # pragma: no cover
     sessions = sample_sessions(  # 会话级下采样匹配硬件
         sessions, n_requests=args.n_requests, fraction=args.sample, seed=args.seed
     )
-    deadline = deadline_seconds(window, args.sec_multiplier, args.tail_factor)
+    deadline = (
+        args.deadline
+        if args.deadline is not None
+        else deadline_seconds(window, args.sec_multiplier, args.tail_factor)
+    )
     n_turns = sum(len(s) for s in sessions.values())
     span_s = (window[1] - window[0]) / 1000.0 if window else None
     offered_turn_s = (n_turns / span_s) if span_s else None  # 提供负载(轮/s),扫描曲线 x 轴
