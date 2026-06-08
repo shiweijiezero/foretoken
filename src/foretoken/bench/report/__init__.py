@@ -30,9 +30,11 @@ __all__ = [
 
 
 def _load_spec(w: dict) -> str:
-    """负载下采样口径(人读):n=N / sample=F / full。"""
-    if w.get("n_requests"):
-        return f"n={w['n_requests']}"
+    """负载下采样口径(人读):total_requests=N(@rate/min)/ sample=F / full。"""
+    total = w.get("total_requests") or w.get("n_requests")  # 兼容旧 run
+    if total:
+        r = w.get("rate_per_min")
+        return f"total_requests={total}" + (f"@{r:g}/min" if r else "")
     if w.get("sample"):
         return f"sample={w['sample']}"
     return "full"
