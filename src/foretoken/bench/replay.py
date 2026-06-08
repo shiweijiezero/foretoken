@@ -430,16 +430,23 @@ if __name__ == "__main__":  # pragma: no cover
     )
     ap.add_argument("--window", default=None, help="时间窗(分钟):N 或 A:B")
     ap.add_argument(
-        "--n-requests",
+        "--rate",
+        type=float,
+        default=None,
+        metavar="REQ_PER_MIN",
+        help="到达率 req/min(优先于 --total-requests):total_requests=rate×window 分钟数",
+    )
+    ap.add_argument(
+        "--total-requests",
         type=int,
         default=None,
-        help="目标 request(轮)数:会话级下采样到此量,匹配单实例硬件(整会话保留)",
+        help="目标 request(轮)总数:会话级下采样到此量,匹配单实例硬件(整会话保留)",
     )
     ap.add_argument(
         "--sample",
         type=float,
         default=None,
-        help="会话级下采样比例 (0,1](与 --n-requests 二选一)",
+        help="会话级下采样比例 (0,1](与 --total-requests / --rate 互斥)",
     )
     ap.add_argument("--seed", type=int, default=0, help="采样 seed(固定以可复现)")
     ap.add_argument(
@@ -494,9 +501,11 @@ if __name__ == "__main__":  # pragma: no cover
 
     rows = load_rows(args.dataset, args.split)
     window = parse_window(args.window)
+    span_min = (window[1] - window[0]) / 60_000.0 if window else None
+    n_req = round(args.rate * span_min) if (args.rate and span_min) else args.total_requests
     sessions = group_sessions(rows, window=window)
-    sessions = sample_sessions(  # 会话级下采样匹配硬件
-        sessions, n_requests=args.n_requests, fraction=args.sample, seed=args.seed
+    sessions = sample_sessions(  # 会话级下采样匹配硬件(rate→n 见上)
+        sessions, n_requests=n_req, fraction=args.sample, seed=args.seed
     )
     deadline = (
         args.deadline
@@ -511,8 +520,8 @@ if __name__ == "__main__":  # pragma: no cover
     engine_kwargs = _build_engine_kwargs(args)
     name = _cfg_name(args)
     print(
-        f"{name}: {len(sessions)} 会话, {n_turns} 轮 | "
-        f"n_requests={args.n_requests} sample={args.sample} | 时限 {dl} | 采样 {sampling}"
+        f"{name}: {len(sessions)} 会话, {n_turns} 轮 | rate={args.rate} total_requests={n_req} | "
+        f"时限 {dl} | 采样 {sampling}"
     )
 
     results, cancelled, duration, engine_stats = asyncio.run(
@@ -538,7 +547,8 @@ if __name__ == "__main__":  # pragma: no cover
             "dataset": args.dataset,
             "split": args.split,
             "window": args.window or "all",
-            "n_requests": args.n_requests,
+            "total_requests": n_req,
+            "rate_per_min": args.rate,
             "sample": args.sample,
             "sec_multiplier": args.sec_multiplier,
             "tail_factor": args.tail_factor,
