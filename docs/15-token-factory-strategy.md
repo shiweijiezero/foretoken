@@ -42,6 +42,14 @@ SLA 自动扩缩 P:D,最小化 TCO)、多层 KVBM、K8s。
 - `OffloadingConnector` + factory / `OffloadingSpec` 接进引擎(经 `kv_transfer_config` / `scheduler_cls`)。
 - **为什么 offload 层而非 GPU 层驱逐**:GPU 层驱逐无官方接缝(要 fork),offload 层有 ABC → 零 fork。
 
+> **⚠️ 架构约束(2026-06-09 实测,见 `docs/16`)**:KV offload 与 disaggregated P/D 都依赖**外部 KV
+> connector**,而 vLLM 0.22.1 的 **Mamba 块调度器显式拒绝外部 KV connector**(`scheduler.py`
+> `_mamba_block_aligned_split: External KV connector is not verified yet`)。故 **offload / disagg 这两条
+> KV 编排路线目前只适用于标准注意力模型**;对混合 / Mamba 模型(如 Qwen3.6-27B),要么等上游支持、要么换
+> 机制(LMCache)、要么仅在满注意力层做。**选型含义**:若把 KV offload / disaggregated 作为核心杠杆,
+> 模型侧应优先标准注意力架构,或将混合模型的 KV 编排显式列为需上游协作的风险项。价值感知 KV 策略(P1)的
+> 挂载点同样受此限制。
+
 **卡少 → offload 价值更大**:让一张卡装下更多「有效」KV(更高复用)= 每卡更多 goodput,正是 token 工厂
 卡少时的核心杠杆。对标:vLLM LRU / T-LRU / LMCache / SGLang HiCache / Mooncake + Belady 离线上界(`docs/03`)。
 
