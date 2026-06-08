@@ -1,0 +1,8 @@
+# 统一行尾为 LF:本项目面向 Linux 部署,shell 脚本带 CRLF 会被 bash 拒绝执行。
+* text=auto eol=lf
+*.sh text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.png binary
+*.parquet binary
