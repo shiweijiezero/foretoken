@@ -2,7 +2,7 @@
 
 > Industrial LLM inference on vLLM, with plugin-based optimization and real-workload evaluation.
 
-基于 vLLM 的推理优化项目:在工业级真实推理之上,以树外插件做各项优化(KV 管理、MTP 等),并用真实业务负载检验每一项优化的好坏。
+基于 vLLM 的推理优化项目:在工业级真实推理之上,以树外插件做各项优化(KV 管理、MTP 等),并用真实业务负载检验每一项优化的好坏，以服务Token工厂。
 
 ## 评测数据准备
 
@@ -53,7 +53,7 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/bench.sh --serve --dp 4 --api-server-c
 
 > 进程内只测引擎(单 bench 进程做全部 tokenize/detok,高并发下客户端可能先于 GPU 封顶);API 形式把前端移到 `vllm serve` 侧(`--api-server-count` 可多开),用以区分引擎与前端瓶颈。API 形式无逐 iteration 引擎监控,`--gpus` 给服务器卡数算 goodput/GPU。
 
-每 run 落 `runs/<…>/`:`summary.md`(markdown 摘要 + 内嵌图)、`run.json` / `turns.jsonl` / `cases.jsonl`(每轮输入输出)/ `engine_stats.jsonl`、`en/`·`zh/` 双语图;`runs/INDEX.md` 排行榜。完整命令集合查看 [`docs/07`](docs/07-eval-playbook.md)。
+每 run 落 `runs/<…>/`:`summary.md`(markdown 摘要 + 内嵌图)、`run.json` / `turns.jsonl` / `engine_stats.jsonl`、`en/`·`zh/` 双语图;`runs/INDEX.md` 排行榜。逐轮输入输出由 `--cases` 控制(默认仅可读样例 `cases.md`,`full` 另出全量 `cases.jsonl`,`off` 不存)。完整命令查看 [`docs/07`](docs/07-eval-playbook.md)。
 
 指标分四组(`summary.md` / `run.json`):
 
