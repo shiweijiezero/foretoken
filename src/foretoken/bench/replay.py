@@ -235,6 +235,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="API 形式下服务器 GPU 数(算 goodput/GPU;远端显存测不到,归一化按字节记 None)",
     )
+    ap.add_argument(
+        "--cases",
+        choices=["off", "sample", "full"],
+        default="sample",
+        help="逐轮输入输出:off 不存 / sample 仅 cases.md / full 加全量 cases.jsonl(大 run 慎用)",
+    )
     ap.add_argument("--runs-dir", default="runs", help="实验记录根目录(默认 runs/)")
     return ap
 
@@ -365,7 +371,8 @@ def main() -> None:
     slo_specs = args.slo if args.slo is not None else _DEFAULT_SLO
     run_dir = runs_dir / run_name
     report.write_run(
-        results, meta, run_dir, slo=report.parse_slo(slo_specs), engine_stats=engine_stats
+        results, meta, run_dir, slo=report.parse_slo(slo_specs),
+        engine_stats=engine_stats, cases=args.cases,
     )
     report.rebuild_index(runs_dir)
     print(f"记录写入 {run_dir}")

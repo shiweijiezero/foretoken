@@ -30,7 +30,7 @@ def _cases_md(rows, max_md_sessions: int = 5) -> str:
     by_sid: dict = {}
     for d in rows:
         by_sid.setdefault(d["session_id"], []).append(d)
-    md = ["# 样例输入输出(前若干会话;完整见 cases.jsonl)"]
+    md = [f"# 样例输入输出(前 {max_md_sessions} 个会话)"]
     for sid in list(by_sid)[:max_md_sessions]:
         md.append(f"\n## session {sid}")
         for d in sorted(by_sid[sid], key=lambda x: x["turn"]):
@@ -43,17 +43,18 @@ def _cases_md(rows, max_md_sessions: int = 5) -> str:
     return "\n".join(md) + "\n"
 
 
-def _write_cases(results, out: Path, max_md_sessions: int = 5) -> None:
-    """写每轮输入输出:cases.jsonl(全量,机器/grep)+ cases.md(前若干会话,可读)。"""
-    rows = []
-    with (out / "cases.jsonl").open("w", encoding="utf-8") as f:
-        for r in results:
-            d = asdict(r)
-            row = {k: d[k] for k in ("session_id", "turn", "system", "user", "ok")} | {
-                "assistant": d["text"]
-            }
-            rows.append(row)
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+def _write_cases(results, out: Path, *, mode: str = "sample", max_md_sessions: int = 5) -> None:
+    """写每轮输入输出:off 不写 / sample 仅 cases.md(前若干会话,可读)/ full 加 cases.jsonl(全量)。"""
+    if mode == "off":
+        return
+    rows = [
+        {k: d[k] for k in ("session_id", "turn", "system", "user", "ok")} | {"assistant": d["text"]}
+        for d in (asdict(r) for r in results)
+    ]
+    if mode == "full":  # 全量(JSONL,大文件友好 / 可 grep)
+        with (out / "cases.jsonl").open("w", encoding="utf-8") as f:
+            for row in rows:
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
     (out / "cases.md").write_text(_cases_md(rows, max_md_sessions), encoding="utf-8")
 
 
@@ -74,14 +75,18 @@ def write_run(
     *,
     slo: Sequence[tuple[int, int]],
     engine_stats: list[dict] | None = None,
+    cases: str = "sample",
 ) -> dict:
-    """写 turns.jsonl / cases / engine_stats / run.json / summary.md / 图;返回完整 run dict。"""
+    """写 turns.jsonl / cases / engine_stats / run.json / summary.md / 图;返回完整 run dict。
+
+    cases ∈ {off, sample, full}:off 不存、sample 仅可读样例 cases.md、full 加全量 cases.jsonl。
+    """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     with (out / "turns.jsonl").open("w", encoding="utf-8") as f:
         for r in results:  # 指标表:剔除重字段(输入输出另存 cases)
             f.write(json.dumps({k: v for k, v in asdict(r).items() if k not in _HEAVY}) + "\n")
-    _write_cases(results, out)
+    _write_cases(results, out, mode=cases)
     if engine_stats:
         with (out / "engine_stats.jsonl").open("w", encoding="utf-8") as f:
             for s in engine_stats:
@@ -94,7 +99,7 @@ def write_run(
         slo=slo,
         engine_stats=engine_stats,
     )
-    run = {**meta, **summary}
+    run = {**meta, **summary, "cases": cases}
     (out / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")
     run["plots"] = make_plots(results, out, slo=slo, engine_stats=engine_stats)
     (out / "summary.md").write_text(render_summary(run), encoding="utf-8")

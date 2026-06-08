@@ -64,7 +64,7 @@ CUDA_VISIBLE_DEVICES=0 HF_HOME=<cache> bash scripts/bench.sh \
 
 ### 产出(每 run 一目录,见 §4 指标)
 `runs/<时间>__<model>__<tag>__<split>_<window>/`:`run.json`(配置+聚合指标)、`turns.jsonl`(每轮指标原始,
-事后换 SLO 重算/画图)、`cases.jsonl`+`cases.md`(每轮输入输出,给人看模型实际生成)、`engine_stats.jsonl`
+事后换 SLO 重算/画图)、`cases.md`/`cases.jsonl`(每轮输入输出,由 `--cases off|sample|full` 控,默认 sample)、`engine_stats.jsonl`
 (逐 iteration 引擎 KV%/在飞/排队)、`summary.md`(markdown 摘要+内嵌图)、`en/`·`zh/`(双语论文级图)。
 跨 run:`runs/INDEX.md` 排行榜、`runs/compare/` 对照图;`python -m foretoken.bench.report runs --plots --compare` 可重生成。
 
