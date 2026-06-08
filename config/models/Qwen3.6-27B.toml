@@ -1,4 +1,4 @@
-# Qwen3.6-27B 参数(见 docs/14)。thinking 模式官方采样;27B 稠密 + 混合线性注意力(KV 省),1 卡可跑。
+# Qwen3.6-27B 参数。thinking 模式官方采样;27B 稠密 + 混合线性注意力(KV 省),1 卡可跑。
 
 [sampling]
 temperature = 1.0
@@ -9,6 +9,8 @@ max_tokens = 32768
 [serve]
 tensor_parallel_size = 1
 dtype = "bfloat16"
-max_model_len = 65536
+max_model_len = 131072
 gpu_memory_utilization = 0.92
 language_model_only = true
+# vLLM 对 hybrid 注意力默认关前缀缓存(实验性);显式锁开,得到含 KV 复用的基线(仅满注意力层生效)。
+enable_prefix_caching = true

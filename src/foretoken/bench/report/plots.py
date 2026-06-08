@@ -43,7 +43,7 @@ _T = {  # 双语词表
     "kv_title": {"en": "KV cache usage over time", "zh": "KV 利用率随时间"},
     "conc_y": {"en": "requests", "zh": "请求数"},
     "conc_title": {"en": "concurrency over time", "zh": "并发随时间"},
-    "running": {"en": "running", "zh": "在飞"},
+    "running": {"en": "running", "zh": "运行中"},
     "waiting": {"en": "waiting", "zh": "排队"},
     "rate_x": {"en": "arrival rate (req/min)", "zh": "到达率 (req/min)"},
     "total_x": {"en": "requests", "zh": "请求总数"},
@@ -301,7 +301,7 @@ def make_plots(
                 ax.set_ylabel(_T["kv_y"][lang])
                 ax.set_title(_T["kv_title"][lang])
                 emit(fig, "kv_timeline", lang)
-            with _fig_ctx(plt, font):  # 并发(在飞 + 排队)随时间
+            with _fig_ctx(plt, font):  # 并发(运行中 + 排队)随时间
                 fig, ax = plt.subplots(figsize=(5, 3.2))
                 ax.plot(et, run_, label=_T["running"][lang])
                 ax.plot(et, wait_, label=_T["waiting"][lang])

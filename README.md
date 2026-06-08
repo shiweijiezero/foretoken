@@ -16,7 +16,7 @@ bash scripts/build_dataset.sh
 
 ## 评测 benchmark
 
-闭环回放真实会话负载:按真实 timestamp 回放、模型现场生成回复拼下一轮(非预录答案),采集 TTFT/TPOT/E2E、吞吐与 goodput。默认在回放进程内自起引擎(`AsyncLLM`,退出即释放 GPU);也可打 `vllm serve`(三种后端形式见下)。
+闭环回放真实会话负载:按真实 timestamp 回放、模型现场生成回复拼接下一轮(非预录答案),采集 TTFT/TPOT/E2E、吞吐与 goodput。默认在回放进程内自起引擎(`AsyncLLM`,退出即释放 GPU);也可打 `vllm serve`(三种后端形式见下)。
 
 ```bash
 pip install -e .   # 装依赖(含 vLLM;需 GPU 机器)
@@ -31,7 +31,7 @@ CUDA_VISIBLE_DEVICES=0 bash scripts/bench.sh \
 
 ### 三种后端形式
 
-闭环回放本身(时间调度 / 会话化 / 现场拼下一轮)三种形式一致,区别只在请求发往哪里、测到哪一层:
+闭环回放本身(时间调度 / 会话化 / 现场拼接下一轮)三种形式一致,区别只在请求发往哪里、测到哪一层:
 
 | 后端 | 测什么 | 何时用 |
 |---|---|---|
@@ -53,14 +53,20 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/bench.sh --serve --dp 4 --api-server-c
 
 > 进程内只测引擎(单 bench 进程做全部 tokenize/detok,高并发下客户端可能先于 GPU 封顶);API 形式把前端移到 `vllm serve` 侧(`--api-server-count` 可多开),用以区分引擎与前端瓶颈。API 形式无逐 iteration 引擎监控,`--gpus` 给服务器卡数算 goodput/GPU。
 
-每 run 落 `runs/<…>/`:`summary.md`(markdown 摘要 + 内嵌图)、`run.json` / `turns.jsonl` / `engine_stats.jsonl`、`en/`·`zh/` 双语图;`runs/INDEX.md` 排行榜。逐轮输入输出由 `--cases` 控制(默认仅可读样例 `cases.md`,`full` 另出全量 `cases.jsonl`,`off` 不存)。完整命令查看 [`docs/07`](docs/07-eval-playbook.md)。
+每 run 落 `results/runs/<…>/`:`summary.md`(markdown 摘要 + 内嵌图)、`run.json` / `turns.jsonl` / `engine_stats.jsonl`、`en/`·`zh/` 双语图;`results/runs/INDEX.md` 排行榜。逐轮输入输出由 `--cases` 控制(默认仅可读样例 `cases.md`,`full` 另出全量 `cases.jsonl`,`off` 不存)。完整命令查看 [`docs/07`](docs/07-eval-playbook.md)。
 
 指标分四组(`summary.md` / `run.json`):
 
 - **延迟**:TTFT(首 token)、TPOT(逐 token 间隔)、E2E(整轮)的 p50/p90/p99,及尾部比 p99/p50。
 - **吞吐**:输出 / 输入 / 总 tok/s(及 /GPU)、完成 req/s。
 - **goodput**:按 SLO 阶梯(严/中/松,TTFT+TPOT 双门限)只计达标轮的 tok/s,及 /GPU、归一化 tok/(s·GPU字节);阶梯可用 `--slo TTFT_ms:TPOT_ms` 自定义。
-- **SchedulerStats**:KV cache 利用率、在飞 / 排队请求数随时间。
+- **SchedulerStats**:KV cache 利用率、运行中 / 排队请求数随时间。
+
+对比多组实验:
+```bash
+bash scripts/compare.sh results/runs/<A> results/runs/<B> ...   # 或 results/runs 比全部
+```
+出 `results/compare/<时间戳>/summary.md`(每次对比独立留存、不覆盖):全指标对比表(TTFT/TPOT/E2E 各 p50/p90/p99、尾部比、吞吐、goodput 三档+达成、KV/并发)+ 对比图(CDF 叠加 / 分位柱 / goodput / 原始-vs-good 吞吐,双语)。负载扫描曲线另见 `python -m foretoken.bench.report --sweep --x rate <runs...>`。
 
 > 真实 trace 是集群级到达,单实例 1× 全量回放会过载;用 `--rate`(或 `--total-requests`)会话级下采样把负载匹配到硬件,扫不同到达率得 goodput-vs-load 曲线、拐点即可持续容量。
 

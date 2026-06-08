@@ -86,7 +86,7 @@ def throughput(results, *, duration_s: float, num_gpus: int) -> dict:
 
 
 def engine_summary(engine_stats: list[dict] | None) -> dict | None:
-    """引擎 SchedulerStats 时间序列 → 峰值 KV% / 均值 KV% / 最大在飞 / 最大排队。无则 None。"""
+    """引擎 SchedulerStats 时间序列 → 峰值 KV% / 均值 KV% / 最大运行中 / 最大排队。无则 None。"""
     if not engine_stats:
         return None
     kv = [s["kv"] for s in engine_stats]

@@ -18,12 +18,13 @@ dist/
 # vendor/vllm = 本机 clone,或 junction → ../vllm(Windows 开发机)
 /vendor/
 
-# 实验记录:保留人读的 summary.md / run.json / INDEX.md,忽略重产物
-runs/**/turns.jsonl
-runs/**/cases.jsonl
-runs/**/cases.md
-runs/**/engine_stats.jsonl
-runs/**/*.png
+# 实验记录(results/runs 单实验、results/compare/<时间戳> 对比):
+# 保留人读的 summary.md / run.json / INDEX.md,忽略重产物与图
+results/runs/**/turns.jsonl
+results/runs/**/cases.jsonl
+results/runs/**/cases.md
+results/runs/**/engine_stats.jsonl
+results/**/*.png
 
 # 临时 / 缓存(服务器日志等)
 tmp/

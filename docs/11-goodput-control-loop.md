@@ -48,7 +48,7 @@
 | 工作 | goodput 怎么挂钩 | 准入/排序/抢占 | 开源 |
 |---|---|---|---|
 | **DistServe**(2401.09670,OSDI'24) | 定义「每 GPU goodput」= 满足 SLO 达标目标下的最大 req/s(`docs/04` 主指标的出处) | P/D 分离 + 放置搜索 | 是 |
-| **Sarathi-Serve**(2403.02310,OSDI'24) | token budget + chunked-prefill + stall-free(decode 优先,prefill 切块塞进预算) | 不暂停 decode 地准入新请求 | 是(已影响 vLLM chunked-prefill) |
+| **Sarathi-Serve**(2403.02310,OSDI'24) | token budget + chunked-prefill + stall-free(decode 优先,prefill 切块放入预算) | 不暂停 decode 地准入新请求 | 是(已影响 vLLM chunked-prefill) |
 | **Mooncake**(2407.00079,FAST'25) | KVCache-centric;SLO 下早拒(过载预测) | 准入(reject)+ KV 感知路由 | 是 |
 | **JITServe**(2504.20068) | 估计抢占的 goodput 损失,仅当净收益为正才抢占 | 抢占 | 待核实 |
 | **FlowPrefill**(2602.16603,2026) | 异构 SLO 下及时抢占低优先级 prefill;算子级 prefill 抢占 | 抢占/准入 | 待核实 |
