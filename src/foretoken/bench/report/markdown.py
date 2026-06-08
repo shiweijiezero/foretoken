@@ -112,7 +112,11 @@ def render_summary(run: dict) -> str:
             f"峰值 KV 利用率 **{100 * eng['peak_kv']:.0f}%**(均值 {100 * eng['mean_kv']:.0f}%)"
             f" · 最大在飞 **{eng['max_running']}** · 最大排队 **{eng['max_waiting']}**",
         ]
-    L += ["", "样例输入输出:`cases.jsonl`(全量)/ `cases.md`(可读样例)。"]
+    cases = run.get("cases", "full")
+    if cases != "off":
+        line = "样例输入输出:`cases.md`(可读样例)"
+        line += " + `cases.jsonl`(全量)。" if cases == "full" else "(`--cases full` 另出全量)。"
+        L += ["", line]
     plots = run.get("plots", [])
     if plots:
 
