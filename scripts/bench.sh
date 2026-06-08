@@ -5,7 +5,7 @@
 # 进程内引擎随脚本退出释放 GPU(engine.shutdown() + 进程退出)。
 #
 # 用法(基准参数直接给 replay,环境用 env 前缀):
-#   CUDA_VISIBLE_DEVICES=1 HF_HOME=<cache> bash scripts/run_baseline.sh \
+#   CUDA_VISIBLE_DEVICES=1 HF_HOME=<cache> bash scripts/bench.sh \
 #     --model <weights> --config config/models/<m>.toml --split conversation --window 0:10 --n-requests 200
 #
 # 环境变量(进程内引擎跑 flashinfer JIT;各机 CUDA / 占卡细节见私有 infra/servers.md):
