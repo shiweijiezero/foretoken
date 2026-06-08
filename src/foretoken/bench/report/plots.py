@@ -1,7 +1,9 @@
-"""出图(matplotlib,可选):每指标 CDF + 直方图、输出长度分布、TTFT 随到达时刻散点,跨 run 对照。
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+"""出图:每指标 CDF + 直方图、输出长度分布、TTFT 随到达时刻散点,跨 run 对照。
 
 全部从 saved per-turn 数据(turns.jsonl)生成,en + zh 双份(`<run>/en/`、`<run>/zh/`);
-无 CJK 字体只出 en,无 matplotlib 跳过。SLO 参考线取 `slo` 阶梯最严档。
+无 CJK 字体只出 en。SLO 参考线取 `slo` 阶梯最严档。
 """
 
 from __future__ import annotations
@@ -10,9 +12,15 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
-from .metrics import DEFAULT_SLO, fmt_ms
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
 
-# 已注册字体里按序挑中文字体(服务器 mplfonts 装的 Noto / 本地 Windows 雅黑等)
+from .metrics import fmt_ms
+
+matplotlib.use("Agg")  # 固定 Agg 后端(无显示环境出图);须在创建任何 figure 前
+
+# 已注册字体里按序挑中文字体(覆盖各平台常见 CJK 字体名;无则只出 en)
 _CJK_FONTS = [
     "Noto Sans CJK SC", "Noto Sans SC", "Source Han Sans SC",
     "WenQuanYi Micro Hei", "WenQuanYi Zen Hei", "Microsoft YaHei", "PingFang SC", "SimHei",
@@ -28,6 +36,7 @@ _T = {  # 双语词表
     "tput_x": {"en": "time (s)", "zh": "时刻 (s)"},
     "tput_y": {"en": "output tokens/s", "zh": "输出 tok/s"},
     "tput": {"en": "output throughput over time", "zh": "输出吞吐随时间"},
+    "tput_good": {"en": "goodput (SLO-met)", "zh": "goodput(达标)"},
     "cmp": {"en": "comparison", "zh": "对照"},
     "time_s": {"en": "time (s)", "zh": "时刻 (s)"},
     "kv_y": {"en": "KV cache usage (%)", "zh": "KV 利用率 (%)"},
@@ -36,16 +45,24 @@ _T = {  # 双语词表
     "conc_title": {"en": "concurrency over time", "zh": "并发随时间"},
     "running": {"en": "running", "zh": "在飞"},
     "waiting": {"en": "waiting", "zh": "排队"},
+    "rate_x": {"en": "arrival rate (req/min)", "zh": "到达率 (req/min)"},
+    "total_x": {"en": "requests", "zh": "请求总数"},
+    "win_x": {"en": "window (min)", "zh": "窗口 (min)"},
+    "tps_y": {"en": "throughput (tokens/s)", "zh": "吞吐 (tok/s)"},
+    "attain_y": {"en": "SLO attainment (%)", "zh": "SLO 达成率 (%)"},
+    "raw_tput": {"en": "raw output", "zh": "原始输出"},
+    "gp_strict": {"en": "goodput (strict)", "zh": "goodput(严)"},
+    "gp_medium": {"en": "goodput (medium)", "zh": "goodput(中)"},
+    "gp_loose": {"en": "goodput (loose)", "zh": "goodput(松)"},
+    "sweep_title": {"en": "goodput vs load", "zh": "goodput 随负载"},
+    "knee": {"en": "goodput peak", "zh": "goodput 峰值"},
 }
 
 
-def _throughput_series(ok, n_bins: int = 80):
-    """输出吞吐随时间:每轮 output_tokens 按 decode 区间 [首token, 完成] 均摊到时间桶 → tok/s。
-
-    需 send_ms(旧 run 无则返回 None)。返回 (桶中心时刻 s, 每桶 tok/s)。
-    """
+def _decode_intervals(turns):
+    """每轮 decode 区间 [首 token 时刻, 完成时刻](秒)+ tokens;需 send_ms(旧 run 无则跳过)。"""
     iv = []
-    for r in ok:
+    for r in turns:
         s0 = getattr(r, "send_ms", 0)
         if not s0:
             continue
@@ -53,12 +70,14 @@ def _throughput_series(ok, n_bins: int = 80):
         e = getattr(r, "complete_ms", 0) / 1000.0
         if e > s and r.output_tokens > 0:
             iv.append((s, e, r.output_tokens))
-    if not iv:
-        return None
-    t0 = min(s for s, _, _ in iv)
-    t1 = max(e for _, e, _ in iv)
-    if t1 <= t0:
-        return None
+    return iv
+
+
+def _bin_rate(iv, t0: float, t1: float, n_bins: int):
+    """各区间 tokens 按重叠均摊到 [t0,t1] 的 n_bins 桶 → (桶中心时刻 s, 每桶 tok/s)。
+
+    raw 与 goodput 传同一 (t0,t1,n_bins) 即落在同一时间网格、可叠同图。空区间返回全 0。
+    """
     width = (t1 - t0) / n_bins
     rate = [0.0] * n_bins
     for s, e, tok in iv:
@@ -175,17 +194,9 @@ def _vline(ax, x, lang):
 
 
 def make_plots(
-    results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_SLO, engine_stats=None
+    results, out: Path, *, slo: Sequence[tuple[int, int]], engine_stats=None
 ) -> list[str]:
     """每指标 CDF + 直方图、E2E、输入/输出长度、时间线、吞吐、引擎 KV%/并发随时间;en + zh。"""
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        import numpy as np
-    except ImportError:
-        return []
     cjk = _resolve_cjk_font()
     ok = [r for r in results if r.ok]
     made: list[str] = []
@@ -248,19 +259,29 @@ def make_plots(
                 ax.set_title(f"{_T['timeline'][lang]} (n={len(pts)})")
                 emit(fig, "ttft_timeline", lang)
 
-    series = _throughput_series(ok)
-    if series:
-        xs_t, rate = series
-        for lang, font in _langs(cjk):
-            with _fig_ctx(plt, font):
-                fig, ax = plt.subplots(figsize=(5, 3.2))
-                ax.plot(xs_t, rate)
-                ax.fill_between(xs_t, rate, alpha=0.18)
-                _apply_fmt(ax, yfn=_fmt_k)
-                ax.set_xlabel(_T["tput_x"][lang])
-                ax.set_ylabel(_T["tput_y"][lang])
-                ax.set_title(f"{_T['tput'][lang]} (n={len(ok)})")
-                emit(fig, "throughput_timeline", lang)
+    iv_all = _decode_intervals(ok)  # 吞吐随时间:原始输出 vs goodput(只计达标轮)叠同图
+    if iv_all:
+        t0, t1, n_bins = min(s for s, _, _ in iv_all), max(e for _, e, _ in iv_all), 80
+        if t1 > t0:
+            xs_t, raw = _bin_rate(iv_all, t0, t1, n_bins)
+            strict = slo[0] if slo else None  # 最严档 (TTFT_ms, TPOT_ms)
+            good_turns = [
+                r for r in ok if strict and r.ttft_ms <= strict[0] and r.tpot_ms <= strict[1]
+            ]
+            _, good = _bin_rate(_decode_intervals(good_turns), t0, t1, n_bins)
+            for lang, font in _langs(cjk):
+                with _fig_ctx(plt, font):
+                    fig, ax = plt.subplots(figsize=(5, 3.2))
+                    ax.plot(xs_t, raw, color="#8c8c8c", label=_T["raw_tput"][lang])
+                    ax.fill_between(xs_t, raw, alpha=0.10, color="#8c8c8c")
+                    ax.plot(xs_t, good, color=_PALETTE[0], label=_T["tput_good"][lang])
+                    ax.fill_between(xs_t, good, alpha=0.22, color=_PALETTE[0])
+                    _apply_fmt(ax, yfn=_fmt_k)
+                    ax.set_xlabel(_T["tput_x"][lang])
+                    ax.set_ylabel(_T["tput_y"][lang])
+                    ax.set_title(f"{_T['tput'][lang]} (n={len(ok)})")
+                    ax.legend(loc="upper right")
+                    emit(fig, "throughput_timeline", lang)
 
     if engine_stats is None:  # regen 时从盘读引擎时间序列
         ej = out / "engine_stats.jsonl"
@@ -300,25 +321,18 @@ def regen_plots(run_dir, *, slo: Sequence[tuple[int, int]] | None = None) -> lis
     tj = p / "turns.jsonl"
     if not tj.exists():
         return []
-    if slo is None:
+    if slo is None:  # 缺省取 run.json 已算的 goodput 阶梯(该 run 当初用的 SLO)
         rj = p / "run.json"
         gp = json.loads(rj.read_text(encoding="utf-8")).get("goodput", []) if rj.exists() else []
-        slo = [(g["ttft_ms"], g["tpot_ms"]) for g in gp] or DEFAULT_SLO
+        slo = [(g["ttft_ms"], g["tpot_ms"]) for g in gp]
     rows = [json.loads(ln) for ln in tj.read_text(encoding="utf-8").splitlines() if ln.strip()]
     return make_plots([SimpleNamespace(**r) for r in rows], p, slo=slo)
 
 
 def compare_runs(
-    runs_dir, out_dir=None, *, slo: Sequence[tuple[int, int]] = DEFAULT_SLO
+    runs_dir, out_dir=None, *, slo: Sequence[tuple[int, int]] | None = None
 ) -> list[str]:
     """跨 run 叠加对照图(TTFT / TPOT CDF),读各 run turns.jsonl + run.json 标签;en + zh。"""
-    try:
-        import matplotlib
-
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-    except ImportError:
-        return []
     root = Path(runs_dir)
     out = Path(out_dir) if out_dir else root
     cjk = _resolve_cjk_font()
@@ -335,6 +349,8 @@ def compare_runs(
         runs.append((meta, [r for r in rows if r.get("ok")]))
     if len(runs) < 2:
         return []
+    if slo is None:  # 缺省取首个 run 记录的 goodput 阶梯作 SLO 参考线
+        slo = [(g["ttft_ms"], g["tpot_ms"]) for g in runs[0][0].get("goodput", [])]
     made: list[str] = []
     for attr, base, name, xlab, _log, _cdf in _METRICS[:2]:  # TTFT, TPOT
         slo_ms = _slo_ref(attr, slo)
@@ -365,4 +381,104 @@ def compare_runs(
                 fig.savefig(sub / f"compare_{base}_cdf.png")
                 plt.close(fig)
                 made.append(f"compare/{lang}/compare_{base}_cdf.png")
+    return made
+
+
+def _win_span_min(window) -> float | None:
+    """窗口跨度(分钟):'0:10'→10、'10'→10、None→None。"""
+    if not window:
+        return None
+    try:
+        s = str(window)
+        if ":" in s:
+            a, b = s.split(":", 1)
+            return float(b) - float(a)
+        return float(s)
+    except ValueError:
+        return None
+
+
+_SWEEP_X = {  # x_key → (从 workload 取 x, 词表键)
+    "rate": (lambda w: w.get("rate_per_min"), "rate_x"),
+    "total": (lambda w: w.get("total_requests") or w.get("n_requests"), "total_x"),
+    "window": (lambda w: _win_span_min(w.get("window")), "win_x"),
+}
+_TIER_KEYS = ["gp_strict", "gp_medium", "gp_loose"]
+
+
+def sweep_curve(run_dirs, out_dir=None, *, x_key: str = "rate") -> list[str]:
+    """负载扫描图:goodput(SLO 严/中/松)+ 原始输出吞吐随负载,右轴叠 SLO 达成率;en + zh。
+
+    读各 run.json 的 workload/goodput/throughput;x_key ∈ {rate, total, window}。
+    """
+    getx, xlab_key = _SWEEP_X.get(x_key, _SWEEP_X["rate"])
+    pts = []
+    for d in run_dirs:
+        rj = Path(d) / "run.json"
+        if not rj.exists():
+            continue
+        try:
+            r = json.loads(rj.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        x, gp = getx(r.get("workload", {})), r.get("goodput") or []
+        if x is None or not gp:
+            continue
+        pts.append(
+            {
+                "x": x,
+                "raw": r.get("throughput", {}).get("output_tok_s", 0.0),
+                "good": [g.get("good_tok_s", 0.0) for g in gp],
+                "attain": gp[0].get("attain", 0.0),
+            }
+        )
+    if len(pts) < 2:
+        return []
+    pts.sort(key=lambda p: p["x"])
+    xs = [p["x"] for p in pts]
+    n_tiers = min(len(p["good"]) for p in pts)
+    gstrict = [p["good"][0] for p in pts]
+    kx = xs[gstrict.index(max(gstrict))]  # goodput 峰值(拐点)
+    out = Path(out_dir) if out_dir else Path(run_dirs[0]).parent
+    cjk = _resolve_cjk_font()
+    made: list[str] = []
+    for lang, font in _langs(cjk):
+        with _fig_ctx(plt, font):
+            fig, ax = plt.subplots(figsize=(6.4, 4))
+            ax.plot(
+                xs, [p["raw"] for p in pts], "--", color="#8c8c8c",
+                marker="o", ms=4, label=_T["raw_tput"][lang],
+            )
+            for ti in range(min(n_tiers, len(_TIER_KEYS))):
+                ax.plot(
+                    xs, [p["good"][ti] for p in pts],
+                    marker="o", ms=4, label=_T[_TIER_KEYS[ti]][lang],
+                )
+            ax.axvline(kx, ls=":", color="gray", lw=1)
+            ax.text(
+                kx, 0.02, f" {_T['knee'][lang]}", color="gray", fontsize=8,
+                transform=ax.get_xaxis_transform(), va="bottom",
+            )
+            ax.set_xlabel(_T[xlab_key][lang])
+            ax.set_ylabel(_T["tps_y"][lang])
+            ax.set_xticks(xs)
+            ax.set_ylim(bottom=0)
+            ax.set_title(_T["sweep_title"][lang])
+            ax.legend(loc="upper left")
+            ax2 = ax.twinx()  # 右轴:最严档 SLO 达成率(%)
+            ax2.grid(False)
+            ax2.spines["top"].set_visible(False)
+            ax2.plot(
+                xs, [100 * p["attain"] for p in pts], color="#6a4c93",
+                lw=1.2, ls="-.", marker="s", ms=3, alpha=0.8,
+            )
+            ax2.set_ylabel(_T["attain_y"][lang], color="#6a4c93")
+            ax2.tick_params(axis="y", labelcolor="#6a4c93")
+            ax2.set_ylim(0, 100)
+            fig.tight_layout()
+            sub = out / "compare" / lang
+            sub.mkdir(parents=True, exist_ok=True)
+            fig.savefig(sub / f"sweep_{x_key}.png")
+            plt.close(fig)
+            made.append(f"compare/{lang}/sweep_{x_key}.png")
     return made

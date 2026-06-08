@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 """一等测试占位(docs/13 L1)。P1 起代码后填实;现在用 skip 表达意图、保留目录与 markers。"""
 
 import pytest

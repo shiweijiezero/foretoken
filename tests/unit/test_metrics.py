@@ -1,4 +1,6 @@
-from foretoken.bench.replay import TurnResult
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+from foretoken.bench.core.types import TurnResult
 from foretoken.bench.report.metrics import goodput_ladder, percentiles, summarize, throughput
 
 _SLO = [(2000, 80), (10000, 150), (60000, 200)]

@@ -1,16 +1,18 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 import asyncio
 from types import SimpleNamespace
 
 import pytest
 
-from foretoken.bench.replay import (
-    TurnResult,
+from foretoken.bench.core.types import TurnResult
+from foretoken.bench.core.vllm_engine import replay
+from foretoken.bench.core.workload import (
     deadline_seconds,
     goodput_per_gpu_byte_second,
     group_sessions,
     next_send_ms,
     parse_window,
-    replay,
     sample_sessions,
 )
 

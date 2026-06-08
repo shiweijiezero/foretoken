@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 """Foretoken — 基于 vLLM 的工业级推理 + 优化(KV/MTP/goodput)+ 真实评测。
 
 三支柱(见 README.md / docs/):
@@ -10,4 +12,9 @@
 entry_points,见 docs/08)。
 """
 
-__version__ = "0.0.0"
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("foretoken")
+except PackageNotFoundError:  # 源码树未安装(如 PYTHONPATH=src 直接运行)
+    __version__ = "0.0.0"
