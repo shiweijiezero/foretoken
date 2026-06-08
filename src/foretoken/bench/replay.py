@@ -560,7 +560,10 @@ if __name__ == "__main__":  # pragma: no cover
         "duration_s": duration,
     }
     win = (args.window or "all").replace(":", "-")
-    run_name = f"{now.strftime('%Y-%m-%d_%H%M')}__{name}__{args.tag}__{args.split or 'data'}_{win}"
+    load = f"_r{args.rate:g}" if args.rate else (f"_t{n_req}" if n_req else "")
+    run_name = (
+        f"{now.strftime('%Y-%m-%d_%H%M')}__{name}__{args.tag}__{args.split or 'data'}_{win}{load}"
+    )
     runs_dir = Path(args.runs_dir)
     run = report.write_run(
         results,
