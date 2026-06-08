@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-"""闭环会话回放的命令行入口:解析参数 → 构造负载 → 进程内起引擎回放 → 写记录。
+"""闭环会话回放的命令行入口:解析参数 → 构造负载 → 起引擎回放 → 写记录。
 
-核心见 `core/`(workload 负载、vllm_engine 引擎)与 `report/`(聚合出图);本模块只做参数解析与编排。
-引擎随本进程生命周期,进程退出即释放 GPU(无独立 HTTP server)。
+三种后端:缺省**进程内**(`core.vllm_engine` 自起 AsyncLLM、退出释放 GPU);
+`--endpoint` 打已有 `vllm serve`(API 形式);`--serve` 自起 vllm serve、回放完整组 kill 释放 GPU。
+核心见 `core/` 与 `report/`;vllm / torch 仅进程内后端需要,故在该分支体内按需 import。
 
 运行:`python -m foretoken.bench.replay --help`(或 scripts/bench.sh)。
 """
@@ -15,15 +16,15 @@ import asyncio
 import json
 import socket
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
-import torch
-import vllm
-
 from foretoken.bench import report
+from foretoken.bench.core.backend import HttpBackend
+from foretoken.bench.core.loop import replay as replay_loop
+from foretoken.bench.core.serve import vllm_serve
 from foretoken.bench.core.types import TurnResult
-from foretoken.bench.core.vllm_engine import run_replay
 from foretoken.bench.core.workload import (
     deadline_seconds,
     group_sessions,
@@ -94,6 +95,8 @@ def _build_engine_kwargs(args) -> dict:
 def _gpu_info(hint: int) -> dict:
     """主进程查可见 GPU 数 / 单卡显存(归一化 goodput 用);失败回退 hint(=TP)。"""
     try:
+        import torch  # 惰性:仅进程内 / serve 后端用到(API 形式无 GPU 句柄)
+
         n = torch.cuda.device_count()
         p = torch.cuda.get_device_properties(0)
         return {
@@ -203,8 +206,54 @@ def _build_parser() -> argparse.ArgumentParser:
         default="vllm-default",
         help="优化变体标签(自描述,排行榜区分):vllm-default(stock 基线)/ kv-aware / mtp / kv+mtp",
     )
+    ap.add_argument(
+        "--endpoint",
+        default=None,
+        metavar="URL",
+        help="API 形式:打已有 vllm serve 地址(如 http://localhost:8000);省略则进程内自起引擎",
+    )
+    ap.add_argument(
+        "--serve",
+        action="store_true",
+        help="自起 vllm serve 跑 API 形式,回放完整组 kill 释放 GPU(引擎配置取 [serve])",
+    )
+    ap.add_argument("--port", type=int, default=18000, help="--serve 的监听端口(默认 18000)")
+    ap.add_argument("--dp", type=int, default=None, help="--serve:data-parallel 引擎副本数(-dp)")
+    ap.add_argument(
+        "--api-server-count", type=int, default=None, help="--serve:前端 API server 进程数"
+    )
+    ap.add_argument(
+        "--serve-arg",
+        action="append",
+        default=[],
+        metavar="ARG",
+        help="--serve:透传任意 vllm serve 参数(可重复),如 --serve-arg=--enforce-eager",
+    )
+    ap.add_argument(
+        "--gpus",
+        type=int,
+        default=None,
+        help="API 形式下服务器 GPU 数(算 goodput/GPU;远端显存测不到,归一化按字节记 None)",
+    )
     ap.add_argument("--runs-dir", default="runs", help="实验记录根目录(默认 runs/)")
     return ap
+
+
+def _run_http(sessions, model, sampling, endpoint, *, sec_multiplier, deadline_s):
+    """API 形式回放:HttpBackend 打 vllm serve,finally 关 client(连接不泄漏)。"""
+    backend = HttpBackend(endpoint, model, sampling)
+
+    async def _go():
+        t = time.perf_counter()
+        try:
+            res, canc = await replay_loop(
+                sessions, backend, sec_multiplier=sec_multiplier, deadline_s=deadline_s
+            )
+        finally:
+            await backend.aclose()  # 及时关闭 client(连接/会话不泄漏)
+        return res, canc, time.perf_counter() - t
+
+    return asyncio.run(_go())
 
 
 def main() -> None:
@@ -227,29 +276,60 @@ def main() -> None:
     offered_turn_s = (n_turns / span_s) if span_s else None  # 提供负载(轮/s),扫描曲线 x 轴
     dl = f"{deadline:.0f}s" if deadline else "无"
     sampling = _build_sampling(args)
-    engine_kwargs = _build_engine_kwargs(args)
     name = _cfg_name(args)
     print(
-        f"{name}: {len(sessions)} 会话, {n_turns} 轮 | rate={args.rate} total_requests={n_req} | "
+        f"{name} [{'API ' + args.endpoint if args.endpoint else '进程内'}]: "
+        f"{len(sessions)} 会话, {n_turns} 轮 | rate={args.rate} total_requests={n_req} | "
         f"时限 {dl} | 采样 {sampling}"
     )
 
-    results, cancelled, duration, engine_stats = asyncio.run(
-        run_replay(
-            sessions,
-            sampling=sampling,
-            engine_kwargs=engine_kwargs,
-            sec_multiplier=args.sec_multiplier,
-            deadline_s=deadline,
+    vllm_ver = None
+    engine_stats = None
+    if args.serve:  # 自起 vllm serve 子进程跑 API 形式,退出整组 kill 释放 GPU
+        serve_cfg = read(_cfg_path(args), "serve")
+        engine_kwargs = {
+            k: v
+            for k, v in {**serve_cfg, "data_parallel_size": args.dp,
+                         "api_server_count": args.api_server_count}.items()
+            if v is not None
+        }
+        gpu = _gpu_info((args.dp or 1) * serve_cfg.get("tensor_parallel_size", 1))
+        with vllm_serve(
+            args.model, serve_cfg, port=args.port, dp=args.dp,
+            api_server_count=args.api_server_count, serve_args=args.serve_arg,
+        ) as endpoint:
+            results, cancelled, duration = _run_http(
+                sessions, args.model, sampling, endpoint,
+                sec_multiplier=args.sec_multiplier, deadline_s=deadline,
+            )
+    elif args.endpoint:  # 打已有 vllm serve(引擎在服务器侧,无逐 iteration 监控)
+        engine_kwargs = {}
+        gpu = {"count": args.gpus or 0, "name": "remote", "bytes_per_gpu": 0, "total_bytes": 0}
+        results, cancelled, duration = _run_http(
+            sessions, args.model, sampling, args.endpoint,
+            sec_multiplier=args.sec_multiplier, deadline_s=deadline,
         )
-    )
+    else:  # 进程内自起引擎(vllm 仅此分支需要 → 惰性 import)
+        import vllm
+
+        from foretoken.bench.core.vllm_engine import run_replay
+
+        vllm_ver = vllm.__version__
+        engine_kwargs = _build_engine_kwargs(args)
+        gpu = _gpu_info(engine_kwargs.get("tensor_parallel_size", 1))
+        results, cancelled, duration, engine_stats = asyncio.run(
+            run_replay(
+                sessions, sampling=sampling, engine_kwargs=engine_kwargs,
+                sec_multiplier=args.sec_multiplier, deadline_s=deadline,
+            )
+        )
     _summary(results)
 
     now = datetime.now()
     meta = {
         "timestamp": now.strftime("%Y-%m-%d %H:%M"),
         "host": socket.gethostname(),
-        "vllm": vllm.__version__,
+        "vllm": vllm_ver,
         "commit": _git_commit(),
         "tag": args.tag,
         "model": {
@@ -257,6 +337,7 @@ def main() -> None:
             "path": args.model,
             "config": str(_cfg_path(args)),
             "engine_args": engine_kwargs,
+            "endpoint": args.endpoint,
         },
         "sampling": sampling,
         "workload": {
@@ -270,7 +351,7 @@ def main() -> None:
             "tail_factor": args.tail_factor,
             "deadline_s": deadline,
         },
-        "gpu": _gpu_info(engine_kwargs.get("tensor_parallel_size", 1)),
+        "gpu": gpu,
         "load": {"sessions": len(sessions), "turns": n_turns, "offered_turn_s": offered_turn_s},
         "cancelled_sessions": cancelled,
         "duration_s": duration,

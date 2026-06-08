@@ -17,6 +17,7 @@ dependencies = [
     "datasets>=2.20",  # 读 trace / 对话内容(data_prepare/)
     "pyarrow>=15",     # 打包评测数据集 parquet(data_prepare/build_dataset.py)
     "matplotlib>=3.8", # 实验记录出图(bench/report/)
+    "openai>=1.40",    # API 形式回放:打 vllm serve 的 /v1/chat/completions(bench/core/backend.py)
     "pytest>=8",       # 单测 / 正确性子集
     "ruff>=0.6",       # lint + format
     "mypy>=1.11",      # 类型检查
