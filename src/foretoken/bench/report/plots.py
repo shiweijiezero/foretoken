@@ -102,22 +102,53 @@ def _langs(cjk: str | None) -> list[tuple[str, str | None]]:
     return [("en", None), *([("zh", cjk)] if cjk else [])]
 
 
+# 专业配色 + 论文级样式(去顶/右边框、柔和网格、克制配色、150dpi、tight 裁剪)
+_PALETTE = ["#2c6fbb", "#d1495b", "#2a9d8f", "#e9a23b", "#6a4c93", "#8c8c8c"]
+_HIST = "#5b8fc9"
+_STYLE = {
+    "figure.dpi": 150, "savefig.dpi": 150, "savefig.bbox": "tight", "savefig.pad_inches": 0.06,
+    "figure.facecolor": "white", "font.size": 11, "axes.titlesize": 11.5, "axes.labelsize": 10.5,
+    "xtick.labelsize": 9, "ytick.labelsize": 9, "legend.fontsize": 8.5,
+    "axes.linewidth": 0.8, "axes.edgecolor": "#444444", "axes.axisbelow": True,
+    "axes.spines.top": False, "axes.spines.right": False,
+    "axes.grid": True, "grid.color": "#cccccc", "grid.linewidth": 0.6, "grid.alpha": 0.5,
+    "lines.linewidth": 1.9, "lines.solid_capstyle": "round", "legend.frameon": False,
+    "xtick.direction": "out", "ytick.direction": "out", "axes.formatter.useoffset": False,
+}
+
+
 def _fig_ctx(plt, font):
-    rc = {"axes.unicode_minus": False}
+    from cycler import cycler
+
+    rc = dict(_STYLE, **{"axes.prop_cycle": cycler(color=_PALETTE), "axes.unicode_minus": False})
     if font:
         rc["font.sans-serif"] = [font]
     return plt.rc_context(rc)
 
 
-def _plain_ticks(ax):
-    """坐标轴用普通数字,不用科学计数法 / 偏移(log 轴的 decade 也标普通值)。"""
-    from matplotlib.ticker import ScalarFormatter
+def _fmt_k(v) -> str:
+    """大数缩写:1000→1k、1.5e6→1.5M;小数普通(避免 100000 这种僵化大数)。"""
+    a = abs(v)
+    if a >= 1e6:
+        return f"{v / 1e6:g}M"
+    if a >= 1e3:
+        return f"{v / 1e3:g}k"
+    return f"{v:g}"
 
-    for axis in (ax.xaxis, ax.yaxis):
-        sf = ScalarFormatter()
-        sf.set_scientific(False)
-        sf.set_useOffset(False)
-        axis.set_major_formatter(sf)
+
+def _apply_fmt(ax, xfn=None, yfn=None):
+    """给指定轴设领域格式器(log 轴尤其需要:否则 decade 标成僵化大数);minor 不标。"""
+    from matplotlib.ticker import FuncFormatter, NullFormatter
+
+    for axis, fn in ((ax.xaxis, xfn), (ax.yaxis, yfn)):
+        if fn is None:
+            continue
+        axis.set_major_formatter(FuncFormatter(lambda v, _, f=fn: f(v)))
+        axis.set_minor_formatter(NullFormatter())
+
+
+# 各指标 x 轴的领域格式器:延迟→ms 人读(1000→1s)、token 数→k 缩写
+_XFMT = {"ttft_ms": fmt_ms, "tpot_ms": fmt_ms, "output_tokens": _fmt_k}
 
 
 def _vline(ax, x, lang):
@@ -145,11 +176,10 @@ def make_plots(results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_S
     for p in out.glob("*.png"):  # 清旧的扁平布局图(现按 en/ zh/ 分目录)
         p.unlink()
 
-    def emit(fig, ax, base, lang):  # 按语言分目录:<run>/<lang>/<base>.png
-        _plain_ticks(ax)
+    def emit(fig, base, lang):  # 按语言分目录:<run>/<lang>/<base>.png
         fig.tight_layout()
         (out / lang).mkdir(exist_ok=True)
-        fig.savefig(out / lang / f"{base}.png", dpi=110)
+        fig.savefig(out / lang / f"{base}.png")
         plt.close(fig)
         made.append(f"{lang}/{base}.png")
 
@@ -157,7 +187,7 @@ def make_plots(results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_S
         xs = sorted(v for v in (getattr(r, attr, 0) for r in ok) if v and v > 0)
         if not xs:
             continue
-        slo_ms = _slo_ref(attr, slo)
+        slo_ms, xfn = _slo_ref(attr, slo), _XFMT.get(attr)
         ys = [(i + 1) / len(xs) for i in range(len(xs))]
         bins = np.logspace(np.log10(xs[0]), np.log10(xs[-1]), 40) if xs[-1] > xs[0] else "auto"
         for lang, font in _langs(cjk):
@@ -168,23 +198,23 @@ def make_plots(results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_S
                     if slo_ms:
                         _vline(ax, slo_ms, lang)
                     ax.set_xscale("log")
+                    _apply_fmt(ax, xfn=xfn)
                     ax.set_xlabel(xlab[lang])
                     ax.set_ylabel(_T["cdf_y"][lang])
                     ax.set_title(f"{name[lang]} {_T['cdf'][lang]} (n={len(xs)})")
-                    ax.grid(True, alpha=0.3)
-                    emit(fig, ax, f"{base}_cdf", lang)
+                    emit(fig, f"{base}_cdf", lang)
             with _fig_ctx(plt, font):
                 fig, ax = plt.subplots(figsize=(5, 3.2))
-                ax.hist(xs, bins=bins, color="#4c78a8", edgecolor="white", linewidth=0.3)
+                ax.hist(xs, bins=bins, color=_HIST, edgecolor="white", linewidth=0.3)
                 if slo_ms:
                     _vline(ax, slo_ms, lang)
                 if log_x:
                     ax.set_xscale("log")
+                    _apply_fmt(ax, xfn=xfn)
                 ax.set_xlabel(xlab[lang])
                 ax.set_ylabel(_T["hist_y"][lang])
                 ax.set_title(f"{name[lang]} {_T['hist'][lang]} (n={len(xs)})")
-                ax.grid(True, alpha=0.3, axis="y")
-                emit(fig, ax, f"{base}_hist", lang)
+                emit(fig, f"{base}_hist", lang)
 
     ref = _slo_ref("ttft_ms", slo)
     pts = [(r.send_ms / 1000.0, r.ttft_ms) for r in ok if getattr(r, "send_ms", 0)]
@@ -192,15 +222,15 @@ def make_plots(results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_S
         for lang, font in _langs(cjk):
             with _fig_ctx(plt, font):
                 fig, ax = plt.subplots(figsize=(5, 3.2))
-                ax.scatter([p[0] for p in pts], [p[1] for p in pts], s=8, alpha=0.5)
+                ax.scatter([p[0] for p in pts], [p[1] for p in pts], s=10, alpha=0.55)
                 if ref:
-                    ax.axhline(ref, ls="--", color="gray", lw=1)
+                    ax.axhline(ref, ls="--", color="#888888", lw=1)
                 ax.set_yscale("log")
+                _apply_fmt(ax, yfn=fmt_ms)
                 ax.set_xlabel(_T["time_x"][lang])
-                ax.set_ylabel("TTFT (ms)")
+                ax.set_ylabel("TTFT")
                 ax.set_title(f"{_T['timeline'][lang]} (n={len(pts)})")
-                ax.grid(True, alpha=0.3)
-                emit(fig, ax, "ttft_timeline", lang)
+                emit(fig, "ttft_timeline", lang)
 
     series = _throughput_series(ok)
     if series:
@@ -209,12 +239,12 @@ def make_plots(results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_S
             with _fig_ctx(plt, font):
                 fig, ax = plt.subplots(figsize=(5, 3.2))
                 ax.plot(xs_t, rate)
-                ax.fill_between(xs_t, rate, alpha=0.2)
+                ax.fill_between(xs_t, rate, alpha=0.18)
+                _apply_fmt(ax, yfn=_fmt_k)
                 ax.set_xlabel(_T["tput_x"][lang])
                 ax.set_ylabel(_T["tput_y"][lang])
                 ax.set_title(f"{_T['tput'][lang]} (n={len(ok)})")
-                ax.grid(True, alpha=0.3)
-                emit(fig, ax, "throughput_timeline", lang)
+                emit(fig, "throughput_timeline", lang)
     return made
 
 
@@ -280,15 +310,15 @@ def compare_runs(
                 if slo_ms:
                     _vline(ax, slo_ms, lang)
                 ax.set_xscale("log")
+                _apply_fmt(ax, xfn=_XFMT.get(attr))
                 ax.set_xlabel(xlab[lang])
                 ax.set_ylabel(_T["cdf_y"][lang])
                 ax.set_title(f"{name[lang]} {_T['cdf'][lang]} — {_T['cmp'][lang]}")
-                ax.grid(True, alpha=0.3)
-                ax.legend(fontsize=8, loc="lower right")
-                _plain_ticks(ax)
+                ax.legend(loc="lower right")
                 fig.tight_layout()
-                (out / lang).mkdir(exist_ok=True)
-                fig.savefig(out / lang / f"compare_{base}_cdf.png", dpi=120)
+                sub = out / "compare" / lang  # 对照图放 <runs>/compare/<lang>/
+                sub.mkdir(parents=True, exist_ok=True)
+                fig.savefig(sub / f"compare_{base}_cdf.png")
                 plt.close(fig)
-                made.append(f"{lang}/compare_{base}_cdf.png")
+                made.append(f"compare/{lang}/compare_{base}_cdf.png")
     return made
