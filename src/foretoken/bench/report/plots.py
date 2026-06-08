@@ -25,8 +25,45 @@ _T = {  # 双语词表
     "slo": {"en": "SLO", "zh": "SLO"},
     "time_x": {"en": "arrival time (s)", "zh": "到达时刻 (s)"},
     "timeline": {"en": "TTFT over arrival time", "zh": "TTFT 随到达时刻"},
+    "tput_x": {"en": "time (s)", "zh": "时刻 (s)"},
+    "tput_y": {"en": "output tokens/s", "zh": "输出 tok/s"},
+    "tput": {"en": "output throughput over time", "zh": "输出吞吐随时间"},
     "cmp": {"en": "comparison", "zh": "对照"},
 }
+
+
+def _throughput_series(ok, n_bins: int = 80):
+    """输出吞吐随时间:每轮 output_tokens 按 decode 区间 [首token, 完成] 均摊到时间桶 → tok/s。
+
+    需 send_ms(旧 run 无则返回 None)。返回 (桶中心时刻 s, 每桶 tok/s)。
+    """
+    iv = []
+    for r in ok:
+        s0 = getattr(r, "send_ms", 0)
+        if not s0:
+            continue
+        s = (s0 + r.ttft_ms) / 1000.0
+        e = getattr(r, "complete_ms", 0) / 1000.0
+        if e > s and r.output_tokens > 0:
+            iv.append((s, e, r.output_tokens))
+    if not iv:
+        return None
+    t0 = min(s for s, _, _ in iv)
+    t1 = max(e for _, e, _ in iv)
+    if t1 <= t0:
+        return None
+    width = (t1 - t0) / n_bins
+    rate = [0.0] * n_bins
+    for s, e, tok in iv:
+        per_s = tok / (e - s)  # 该轮平均产出速率
+        b0 = max(0, int((s - t0) / width))
+        b1 = min(n_bins - 1, int((e - t0) / width))
+        for b in range(b0, b1 + 1):
+            lo = t0 + b * width
+            ov = min(e, lo + width) - max(s, lo)  # 与该桶的重叠秒数
+            if ov > 0:
+                rate[b] += per_s * ov / width
+    return [t0 + (b + 0.5) * width for b in range(n_bins)], rate
 # 指标:attr, 文件前缀, 名{en,zh}, x 轴{en,zh}, log_x, 出 CDF?(SLO 参考线由 _slo_ref 从 slo 取)
 _METRICS = [
     ("ttft_ms", "ttft", {"en": "TTFT", "zh": "TTFT"},
@@ -152,6 +189,20 @@ def make_plots(results, out: Path, *, slo: Sequence[tuple[int, int]] = DEFAULT_S
                 ax.set_title(f"{_T['timeline'][lang]} (n={len(pts)})")
                 ax.grid(True, alpha=0.3)
                 emit(fig, "ttft_timeline", lang)
+
+    series = _throughput_series(ok)
+    if series:
+        xs_t, rate = series
+        for lang, font in _langs(cjk):
+            with _fig_ctx(plt, font):
+                fig, ax = plt.subplots(figsize=(5, 3.2))
+                ax.plot(xs_t, rate)
+                ax.fill_between(xs_t, rate, alpha=0.2)
+                ax.set_xlabel(_T["tput_x"][lang])
+                ax.set_ylabel(_T["tput_y"][lang])
+                ax.set_title(f"{_T['tput'][lang]} (n={len(ok)})")
+                ax.grid(True, alpha=0.3)
+                emit(fig, "throughput_timeline", lang)
     return made
 
 

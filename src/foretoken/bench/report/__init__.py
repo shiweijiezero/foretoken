@@ -49,6 +49,7 @@ _PLOT_GROUPS = [
     ("TPOT", ["tpot_cdf", "tpot_hist"]),
     ("输出长度", ["tokens_hist"]),
     ("时间线", ["ttft_timeline"]),
+    ("吞吐随时间", ["throughput_timeline"]),
 ]
 
 
