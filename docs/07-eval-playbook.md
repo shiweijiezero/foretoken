@@ -42,21 +42,24 @@ KV 与 MTP 共用同一套评测:在同一份真实场景负载上跑 4 个开�
 output_length, hash_ids[]}`;`hash_ids` 按 **512-token 块**滚动前缀哈希,相同 id 表示该块及全部
 前导块 token 相同,KV 可复用。
 
-## 2. 怎么跑(主线:进程内闭环回放)
-主线 harness 是项目自带的**进程内闭环回放**(`bench/replay.py`),非 `vllm bench serve`——后者
-`timed_trace` 仅接受 hash、`custom` 不含 timestamp,均无法同时承载真实 prompt + 真实到达时刻;且闭环
-要求下一轮 prompt 用模型**现场回复**(非预录答案)。引擎进程内自起(`AsyncLLM`),进程退出即释放 GPU、
-无独立 server、无孤儿占卡。
+## 2. 怎么跑(闭环回放,三种后端)
+主线 harness 是项目自带的**闭环回放**(`bench/replay.py`),非 `vllm bench serve`——后者 `timed_trace`
+仅接受 hash、`custom` 不含 timestamp,均无法同时承载真实 prompt + 真实到达时刻;且闭环要求下一轮 prompt
+用模型**现场回复**(非预录答案)。回放逻辑(时间调度 / 会话化 / 现场拼下一轮)三种后端一致,区别在请求发往
+哪、测到哪一层——各测什么 / 何时用见 [README「三种后端形式」](../README.md)。
 
 ```bash
 # bench.sh 设好引擎环境(CUDA_HOME / PATH),其余参数原样透传给 replay 的 CLI
+# 1) 进程内(默认):自起 AsyncLLM、退出释放 GPU,测纯引擎 + 逐 iteration KV/并发
 CUDA_VISIBLE_DEVICES=0 HF_HOME=<cache> bash scripts/bench.sh \
   --model <weights|HF id> --config config/models/<model>.toml \
-  --split conversation --window 0:10 --n-requests 200
+  --split conversation --window 0:10 --rate 20
+# 2) 打已有 vllm serve:--endpoint http://host:8000 --gpus <服务器卡数>
+# 3) 自起 vllm serve、跑完整组 kill 释放 GPU:--serve --dp 4 --api-server-count 4
 # 全部参数与默认值:python -m foretoken.bench.replay --help
 ```
 - `--config` 配置文件(`[sampling]` 官方采样 + `[serve]` 引擎,见 `docs/14`);`--dataset` 默认 HF `foretoken-trace`,也可接本地 `.jsonl`/`.parquet`/目录。
-- **负载匹配硬件(关键)**:真实 trace 是集群级到达,单实例(如 4×A100)1× 全量回放必然过载(TTFT 飙到分钟级)。`--n-requests N` 会话级下采样到该 request 量(整会话保留 = 负载均衡分给本实例的份额),或 `--sec-multiplier` 拉伸时间;扫不同 `--n-requests` 出 goodput-vs-load 曲线、拐点即可持续容量。
+- **负载匹配硬件(关键)**:真实 trace 是集群级到达,单实例(如 4×A100)1× 全量回放必然过载(TTFT 飙到分钟级)。`--rate R`(req/min,自动换算 total_requests=R×窗口分钟)或 `--total-requests N` 会话级下采样到该 request 量(整会话保留 = 负载均衡分给本实例的份额),或 `--sec-multiplier` 拉伸时间;扫不同 `--rate` 出 goodput-vs-load 曲线、拐点即可持续容量。
 - `--window N|A:B`(分钟)截时间片;`--deadline SEC` / `--tail-factor`(默认 2.0)墙钟上限,到点取消在飞请求(掐长尾——个别高温采样会一路顶到 max_tokens 拖垮整轮);`--slo TTFT_ms:TPOT_ms`(可重复)定 goodput 达标阈值;`--tag` 标优化变体(`vllm-default`/`kv-aware`/`mtp`);`--param`/`--engine-param` 透传任意 vLLM 采样 / 引擎字段。
 
 ### 产出(每 run 一目录,见 §4 指标)
