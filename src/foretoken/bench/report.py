@@ -260,3 +260,11 @@ def rebuild_index(runs_dir) -> None:
     runs.sort(key=lambda r: r[0].get("timestamp", ""))
     body = "".join(_index_row(run, name) for run, name in runs)
     (root / "INDEX.md").write_text(_INDEX_HEADER + body, encoding="utf-8")
+
+
+if __name__ == "__main__":  # 手动重建 INDEX:python -m foretoken.bench.report [runs_dir]
+    import sys
+
+    d = sys.argv[1] if len(sys.argv) > 1 else "runs"
+    rebuild_index(d)
+    print(f"INDEX 重建:{d}/INDEX.md")
