@@ -4,8 +4,6 @@
 #
 # 用法:
 #   bash scripts/build_dataset.sh [--out-dir DIR] [--limit N] [--seed N]
-#
-# 依赖:datasets(pip install 'foretoken[server]')。
 set -euo pipefail
 
 python -m foretoken.data_prepare.build_dataset "$@"
