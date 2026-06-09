@@ -1,4 +1,4 @@
-# gemma-4-26B-A4B-it 参数(见 docs/14)。
+# gemma-4-26B-A4B-it 参数。
 
 [sampling]
 temperature = 1.0

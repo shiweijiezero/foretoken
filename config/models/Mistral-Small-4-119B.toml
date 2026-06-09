@@ -1,4 +1,4 @@
-# Mistral-Small-4-119B-2603 参数(见 docs/14)。
+# Mistral-Small-4-119B-2603 参数。
 
 [sampling]
 temperature = 0.7
