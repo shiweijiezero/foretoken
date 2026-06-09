@@ -28,3 +28,6 @@ results/**/*.png
 
 # 临时 / 缓存(服务器日志等)
 tmp/
+
+# 私人 docs(战略 / IP,不进公开 repo)
+my_docs/
