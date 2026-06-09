@@ -12,7 +12,7 @@ from typing import Protocol
 
 from openai import AsyncOpenAI
 
-from foretoken.bench.core.timer import StreamTimer
+from foretoken.bench.utils.timer import StreamTimer
 
 # (text, ttft_ms, tpot_ms, e2e_ms, n_tokens, prompt_tokens, ok)
 GenResult = tuple[str, float, float, float, int, int, bool]
