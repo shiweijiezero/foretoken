@@ -5,8 +5,8 @@
 # 用法:
 #   bash scripts/costreport.sh results/runs/<A> results/runs/<B> ...   # 比指定几组
 #   bash scripts/costreport.sh results/runs                            # 比全部
-#   GPU 时价覆盖 / 选 SLO 档:
-#   bash scripts/costreport.sh results/runs --gpu-rate A100=1.8 --gpu-rate 4090=0.4 --slo-tier 0
+#   GPU 时价(人民币 元/GPU·h)覆盖 / 选 SLO 档:
+#   bash scripts/costreport.sh results/runs --gpu-rate A100=8 --gpu-rate 4090=2.5 --slo-tier 0
 # 产出:results/compare/<时间戳>-cost/cost.md(+ en/ zh/ 柱图)。COST_OUT 可覆盖输出目录。
 set -euo pipefail
 
