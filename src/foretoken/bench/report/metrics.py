@@ -1,10 +1,25 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-"""评测指标(纯统计):延迟分位 / goodput 阶梯 / 原始吞吐 / 汇总。"""
+"""评测指标(纯统计):延迟分位 / goodput 阶梯 / 原始吞吐 / 计价成本 / 汇总。"""
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+
+# 国内 GPU 云(AutoDL 类)参考按量价(人民币 元 / GPU·h);按 GPU 名子串匹配,无匹配回退默认。
+_GPU_RATES = {
+    "A100": 8.0, "H100": 18.0, "H200": 22.0, "L40": 6.0, "L20": 5.0,
+    "4090": 2.5, "A10": 1.5, "V100": 3.0,
+}
+_FALLBACK_RATE = 8.0
+
+
+def gpu_rate(name: str) -> float:
+    """按 GPU 名子串匹配时价(元 / GPU·h);无匹配回退默认。"""
+    for key, val in _GPU_RATES.items():
+        if key.upper() in (name or "").upper():
+            return val
+    return _FALLBACK_RATE
 
 
 def parse_slo(specs: list[str]) -> list[tuple[int, int]]:
@@ -98,6 +113,39 @@ def engine_summary(engine_stats: list[dict] | None) -> dict | None:
     }
 
 
+def cost(
+    results,
+    *,
+    duration_s: float,
+    num_gpus: int,
+    gpu_name: str,
+    slo: Sequence[tuple[int, int]],
+) -> dict:
+    """计价成本(普通 metric):运行成本 + 每百万 token 成本(原始 / 各 SLO 档)。元,按 GPU 时价。
+
+    达成口径只计满足 SLO、即可交付的 token,是定价依据;时价由 GPU 名解析(见 gpu_rate)。
+    """
+    rate = gpu_rate(gpu_name)
+    run_cost = num_gpus * duration_s / 3600.0 * rate
+    ok = [r for r in results if r.ok]
+    out_tok = sum(r.output_tokens for r in ok)
+
+    def per_mtok(tok: int) -> float | None:
+        return (run_cost / (tok / 1e6)) if (tok and run_cost) else None
+
+    tiers = [
+        per_mtok(sum(r.output_tokens for r in ok if r.ttft_ms <= ttft and r.tpot_ms <= tpot))
+        for ttft, tpot in slo
+    ]
+    return {
+        "gpu_rate_cny_h": rate,
+        "run_cost_cny": run_cost,
+        "cny_per_mtok_raw": per_mtok(out_tok),
+        "cny_per_mtok": tiers,  # 对应 slo 各档(达成口径)
+        "tok_per_cny": (out_tok / run_cost) if run_cost else None,
+    }
+
+
 def summarize(
     results,
     *,
@@ -105,9 +153,10 @@ def summarize(
     gpu_bytes: float,
     num_gpus: int,
     slo: Sequence[tuple[int, int]],
+    gpu_name: str = "",
     engine_stats: list[dict] | None = None,
 ) -> dict:
-    """聚合 run 指标(延迟分位含 E2E + 尾部比 + 输出长度 + 吞吐 + goodput + 引擎 KV/并发)。"""
+    """聚合 run 指标(延迟分位含 E2E + 尾部比 + 输出长度 + 吞吐 + goodput + 计价成本 + 引擎)。"""
     ok = [r for r in results if r.ok]
     out_lens = [r.output_tokens for r in ok]
     lat = percentiles(results)
@@ -124,6 +173,9 @@ def summarize(
         "throughput": throughput(results, duration_s=duration_s, num_gpus=num_gpus),
         "goodput": goodput_ladder(
             results, duration_s=duration_s, gpu_bytes=gpu_bytes, num_gpus=num_gpus, slo=slo
+        ),
+        "cost": cost(
+            results, duration_s=duration_s, num_gpus=num_gpus, gpu_name=gpu_name, slo=slo
         ),
         "engine": engine_summary(engine_stats),
     }

@@ -97,6 +97,7 @@ def write_run(
         gpu_bytes=meta["gpu"]["total_bytes"],
         num_gpus=meta["gpu"]["count"],
         slo=slo,
+        gpu_name=meta["gpu"]["name"],
         engine_stats=engine_stats,
     )
     run = {**meta, **summary, "cases": cases}
