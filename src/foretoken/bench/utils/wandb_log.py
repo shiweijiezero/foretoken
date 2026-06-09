@@ -35,6 +35,8 @@ def log_run(run: dict, *, project: str, group: str | None = None, name: str | No
     for k in ("p50", "p90", "p99"):
         metrics[f"ttft/{k}"] = lat["ttft_ms"][k]
         metrics[f"tpot/{k}"] = lat["tpot_ms"][k]
+    for k in ("p10", "p50", "p90"):  # 生成速度 1000/TPOT
+        metrics[f"gen_tok_s/{k}"] = lat.get("gen_tok_s", {}).get(k)
     for i, g in enumerate(run.get("goodput", [])[:3]):
         metrics[f"goodput/{_TIERS[i]}_attain"] = g["attain"]
         metrics[f"goodput/{_TIERS[i]}_tok_s"] = g["good_tok_s"]
@@ -48,6 +50,16 @@ def log_run(run: dict, *, project: str, group: str | None = None, name: str | No
     if eng:
         metrics["engine/peak_kv"] = eng["peak_kv"]
         metrics["engine/max_waiting"] = eng["max_waiting"]
+        metrics["engine/preempted"] = eng.get("total_preempted", 0)
+        if eng.get("prefix_hit_rate") is not None:
+            metrics["engine/prefix_hit_rate"] = eng["prefix_hit_rate"]
+        if eng.get("decode_tok_s") is not None:
+            metrics["engine/decode_tok_s"] = eng["decode_tok_s"]
+    er = run.get("engine_requests") or {}
+    for key in ("queued_ms", "prefill_ms", "decode_ms", "tpot_ms"):  # 引擎时间分解
+        if key in er:
+            metrics[f"engine_req/{key}_p50"] = er[key]["p50"]
+            metrics[f"engine_req/{key}_p99"] = er[key]["p99"]
     if ch.get("samples"):
         metrics["client/loop_lag_mean_ms"] = ch["loop_lag_mean_ms"]
         metrics["client/loop_lag_max_ms"] = ch["loop_lag_max_ms"]

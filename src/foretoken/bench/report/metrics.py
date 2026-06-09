@@ -39,14 +39,18 @@ def _pct(xs: list[float], q: float) -> float:
 
 
 def percentiles(results) -> dict:
-    """TTFT / TPOT / E2E 的 p50/p90/p99(TPOT 仅统计 >0 的轮,单 token 轮无 TPOT)。"""
+    """TTFT / TPOT / E2E 的 p50/p90/p99(TPOT 仅统计 >0 的轮);外加用户感知生成速度 gen_tok_s。"""
     ok = [r for r in results if r.ok]
     cols = {
         "ttft_ms": [r.ttft_ms for r in ok],
         "tpot_ms": [r.tpot_ms for r in ok if r.tpot_ms > 0],
         "e2e_ms": [r.e2e_ms for r in ok],
     }
-    return {k: {f"p{int(q * 100)}": _pct(v, q) for q in (0.5, 0.9, 0.99)} for k, v in cols.items()}
+    out = {k: {f"p{int(q * 100)}": _pct(v, q) for q in (0.5, 0.9, 0.99)} for k, v in cols.items()}
+    # 用户感知生成速度 = 1000/TPOT;p10 = 慢尾(体感底线)
+    spd = [1000.0 / r.tpot_ms for r in ok if r.tpot_ms > 0]
+    out["gen_tok_s"] = {f"p{int(q * 100)}": _pct(spd, q) for q in (0.1, 0.5, 0.9)}
+    return out
 
 
 def goodput_ladder(
@@ -101,16 +105,54 @@ def throughput(results, *, duration_s: float, num_gpus: int) -> dict:
     }
 
 
-def engine_summary(engine_stats: list[dict] | None) -> dict | None:
-    """引擎 SchedulerStats 时间序列 → 峰值 KV% / 均值 KV% / 最大运行中 / 最大排队。无则 None。"""
+def engine_summary(engine_stats: list[dict] | None, *, duration_s: float = 0.0) -> dict | None:
+    """引擎逐 iteration 序列 → 峰值/均值 KV%、最大运行中/排队、prefix 命中率、总抢占、引擎 decode 吞吐。"""
     if not engine_stats:
         return None
     kv = [s["kv"] for s in engine_stats]
+    pc_q = sum(s.get("pc_q", 0) for s in engine_stats)
+    pc_h = sum(s.get("pc_h", 0) for s in engine_stats)
+    gen = sum(s.get("gen_tok", 0) for s in engine_stats)
     return {
         "peak_kv": max(kv),
         "mean_kv": sum(kv) / len(kv),
         "max_running": max(s["running"] for s in engine_stats),
         "max_waiting": max(s["waiting"] for s in engine_stats),
+        "prefix_hit_rate": (pc_h / pc_q) if pc_q else None,  # token 级
+        "total_preempted": sum(s.get("preempted", 0) for s in engine_stats),
+        "decode_tok_s": (gen / duration_s) if duration_s > 0 else None,  # 引擎侧 decode 吞吐
+    }
+
+
+def engine_requests_summary(reqs: list[dict] | None) -> dict | None:
+    """完成请求引擎分解 → 排队/prefill/decode/TPOT/E2E 分位(ms)+ finish_reason 分布 + 缓存命中。
+
+    queued_ms 偏斜反映队列拥塞;finish_reason 量化截断(length=max_tokens / abort=取消)。
+    """
+    if not reqs:
+        return None
+
+    def q(key: str) -> dict:  # 秒 → ms 的 p50/p99
+        xs = [r.get(key, 0.0) * 1000.0 for r in reqs]
+        return {f"p{int(p * 100)}": _pct(xs, p) for p in (0.5, 0.99)}
+
+    reasons: dict[str, int] = {}
+    for r in reqs:
+        fr = r.get("finish_reason", "")
+        reasons[fr] = reasons.get(fr, 0) + 1
+    cached = sum(r.get("cached", 0) for r in reqs)
+    prompt = sum(r.get("n_prompt", 0) for r in reqs)
+    return {
+        "count": len(reqs),
+        "queued_ms": q("queued_s"),
+        "prefill_ms": q("prefill_s"),
+        "decode_ms": q("decode_s"),
+        "tpot_ms": q("mtpot_s"),
+        "e2e_ms": q("e2e_s"),
+        "finish_reason": reasons,
+        "cached_tokens": cached,
+        "prompt_tokens": prompt,
+        "cached_token_frac": (cached / prompt) if prompt else None,
     }
 
 
@@ -156,6 +198,7 @@ def summarize(
     slo: Sequence[tuple[int, int]],
     gpu_name: str = "",
     engine_stats: list[dict] | None = None,
+    engine_requests: list[dict] | None = None,
 ) -> dict:
     """聚合 run 指标(延迟分位含 E2E + 尾部比 + 输出长度 + 吞吐 + goodput + 计价成本 + 引擎)。"""
     ok = [r for r in results if r.ok]
@@ -178,5 +221,6 @@ def summarize(
         "cost": cost(
             results, duration_s=duration_s, num_gpus=num_gpus, gpu_name=gpu_name, slo=slo
         ),
-        "engine": engine_summary(engine_stats),
+        "engine": engine_summary(engine_stats, duration_s=duration_s),
+        "engine_requests": engine_requests_summary(engine_requests),
     }

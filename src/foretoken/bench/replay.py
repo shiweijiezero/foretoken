@@ -299,7 +299,7 @@ def main() -> None:
     )
 
     vllm_ver = None
-    engine_stats = None
+    engine_stats = engine_requests = None
     if args.serve:  # 自起 vllm serve 子进程跑 API 形式,退出整组 kill 释放 GPU
         serve_cfg = read(_cfg_path(args), "serve")
         engine_kwargs = {
@@ -332,7 +332,7 @@ def main() -> None:
         vllm_ver = vllm.__version__
         engine_kwargs = _build_engine_kwargs(args)
         gpu = _gpu_info(engine_kwargs.get("tensor_parallel_size", 1))
-        results, cancelled, duration, engine_stats, health = asyncio.run(
+        results, cancelled, duration, engine_stats, engine_requests, health = asyncio.run(
             run_replay(
                 sessions, sampling=sampling, engine_kwargs=engine_kwargs,
                 sec_multiplier=args.sec_multiplier, deadline_s=deadline,
@@ -382,7 +382,7 @@ def main() -> None:
     run_dir = runs_dir / run_name
     run = report.write_run(
         results, meta, run_dir, slo=report.parse_slo(slo_specs),
-        engine_stats=engine_stats, cases=args.cases,
+        engine_stats=engine_stats, engine_requests=engine_requests, cases=args.cases,
     )
     report.rebuild_index(runs_dir)
     print(f"记录写入 {run_dir}")
