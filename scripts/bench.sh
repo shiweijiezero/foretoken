@@ -3,13 +3,13 @@
 # 全部参数与默认值见 `python -m foretoken.bench.replay --help`。
 #
 # 三种后端(择一):
-#   1) 进程内(默认):自起 AsyncLLM,退出即释放 GPU
+#   1) 进程内(默认):自启 AsyncLLM,退出即释放 GPU
 #        bash scripts/bench.sh --model <weights> --config config/models/<m>.toml \
 #          --split conversation --window 0:10 --rate 20
 #   2) 打已有 vllm serve:
 #        bash scripts/bench.sh --endpoint http://localhost:8000 --model <served-name> \
 #          --split conversation --window 0:10 --rate 20 --gpus <服务器卡数>
-#   3) 自起 vllm serve,回放完整组 kill 释放 GPU(引擎配置取 config [serve]):
+#   3) 自启 vllm serve,回放完整组 kill 释放 GPU(引擎配置取 config [serve]):
 #        bash scripts/bench.sh --serve --dp 4 --api-server-count 4 \
 #          --model <weights> --config config/models/<m>.toml \
 #          --split conversation --window 0:10 --rate 20

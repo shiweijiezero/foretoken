@@ -242,7 +242,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--cases",
         choices=["off", "sample", "full"],
         default="sample",
-        help="逐轮输入输出:off 不存 / sample 仅 cases.md / full 加全量 cases.jsonl(大 run 数据量大)",
+        help="逐轮输入输出:off 不存 / sample 仅 cases.md / full 加全量 cases.jsonl",
     )
     ap.add_argument(
         "--runs-dir", default="results/runs", help="单实验记录根目录(默认 results/runs/)"
