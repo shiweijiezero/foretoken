@@ -173,7 +173,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="墙钟上限的乘数 = 窗口跨度 × sec_multiplier × 此值;到点取消运行中请求(截长尾)。<=0 不乘",
     )
     ap.add_argument(
-        "--tail-add",
+        "--tail-grace",
         type=float,
         default=0.0,
         metavar="MIN",
@@ -284,7 +284,7 @@ def main() -> None:
     deadline = (
         args.deadline
         if args.deadline is not None
-        else deadline_seconds(window, args.sec_multiplier, args.tail_factor, args.tail_add * 60)
+        else deadline_seconds(window, args.sec_multiplier, args.tail_factor, args.tail_grace * 60)
     )
     n_turns = sum(len(s) for s in sessions.values())
     span_s = (window[1] - window[0]) / 1000.0 if window else None
@@ -364,7 +364,7 @@ def main() -> None:
             "sample": args.sample,
             "sec_multiplier": args.sec_multiplier,
             "tail_factor": args.tail_factor,
-            "tail_add_min": args.tail_add,
+            "tail_grace_min": args.tail_grace,
             "deadline_s": deadline,
         },
         "gpu": gpu,
