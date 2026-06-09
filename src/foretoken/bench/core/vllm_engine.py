@@ -58,7 +58,7 @@ async def run_replay(
     sec_multiplier: float = 1.0,
     deadline_s: float | None = None,
 ):
-    """进程内起引擎 → 回放 → finally 关停。返回 (results, cancelled, duration_s, engine_stats)。
+    """进程内起引擎 → 回放 → finally 关停。返回 (results, cancelled, duration_s, engine_stats, client_health)。
 
     engine_stats:逐 iteration 的引擎 SchedulerStats 序列(KV%/并发/排队),经自定义 stat logger 采集。
     """
@@ -94,7 +94,7 @@ async def run_replay(
     try:
         backend = InProcessBackend(engine, engine.get_tokenizer(), SamplingParams(**sampling))
         t = time.perf_counter()
-        results, cancelled = await replay(
+        results, cancelled, health = await replay(
             sessions, backend, sec_multiplier=sec_multiplier, deadline_s=deadline_s
         )
         dur = time.perf_counter() - t
@@ -103,6 +103,6 @@ async def run_replay(
             for (at, kv, run, wait) in samples
             if at - t >= 0
         ]
-        return results, cancelled, dur, stats
+        return results, cancelled, dur, stats, health
     finally:
         engine.shutdown()  # 关停引擎、释放 GPU(正常 / 报错 / 中断都走)
