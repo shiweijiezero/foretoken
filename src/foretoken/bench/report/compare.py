@@ -207,8 +207,27 @@ _GROUPS = [
 ]
 
 
+def _cost_section(loaded, out: Path) -> list[str]:
+    """把计价成本(表 + 双语柱图)一并并入对比报告;时价用 cost 模块默认(单独定制走 --cost)。"""
+    from .cost import DEFAULT_RATES, _cost_plot, cost_rows, cost_table  # 局部导入:cost 反向依赖本模块
+
+    rows = cost_rows(loaded, rates=DEFAULT_RATES, slo_tier=0)
+    slo = None
+    for _, run, _ in loaded:  # 严档 SLO 阈值用于表头
+        t = _gp(run)[0]
+        if t:
+            slo = (t.get("ttft_ms"), t.get("tpot_ms"))
+            break
+    plots = _cost_plot(rows, out)
+    img = next((p for p in plots if p.startswith("zh")), plots[0] if plots else None)
+    md = ["## 计价成本(¥/Mtok)", cost_table(rows, slo)]
+    if img:
+        md += [f"![{img}]({img})", ""]
+    return md
+
+
 def compare(run_dirs, out_dir=None) -> Path | None:
-    """对比多组实验 → 写 <out>/summary.md(全指标表 + 内嵌图)+ 双语图;返回 out 目录。
+    """对比多组实验 → 写 <out>/summary.md(全指标表 + 内嵌图 + 计价成本)+ 双语图;返回 out 目录。
 
     out_dir 缺省 `results/compare/<时间戳>`(每次独立留存、不覆盖);sh 传 out_dir 可指定。
     """
@@ -232,5 +251,6 @@ def compare(run_dirs, out_dir=None) -> Path | None:
         imgs = [i for i in (pick(b) for b in bases) if i]
         if imgs:
             md += [f"## {title}", *[f"![{i}]({i})" for i in imgs], ""]
+    md += _cost_section(loaded, out)  # 成本表 + 成本图一并并入对比报告
     (out / "summary.md").write_text("\n".join(md) + "\n", encoding="utf-8")
     return out
