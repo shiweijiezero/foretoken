@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import socket
 import subprocess
 import time
@@ -247,10 +248,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--runs-dir", default="results/runs", help="单实验记录根目录(默认 results/runs/)"
     )
     ap.add_argument(
-        "--wandb-project", default=None, help="给定则把本次 run 的配置+指标上报 WandB 到该 project"
+        "--wandb-project",
+        default=os.environ.get("WANDB_PROJECT", "foretoken"),
+        help="上报 WandB 的 project(默认 env WANDB_PROJECT 或 foretoken);--no-wandb 关闭",
     )
     ap.add_argument("--wandb-group", default=None, help="WandB group(把一组实验归到一起对比)")
     ap.add_argument("--wandb-name", default=None, help="WandB run 名(缺省取目录名/tag)")
+    ap.add_argument("--no-wandb", action="store_true", help="关闭 WandB 上报(默认开)")
     return ap
 
 
@@ -386,12 +390,15 @@ def main() -> None:
     )
     report.rebuild_index(runs_dir)
     print(f"记录写入 {run_dir}")
-    if args.wandb_project:  # 可选上报(wandb 仅此分支需要)
-        from foretoken.bench.utils.wandb_log import log_run
+    if args.wandb_project and not args.no_wandb:  # 默认上报;无 key/网络时容错跳过
+        try:
+            from foretoken.bench.utils.wandb_log import log_run
 
-        log_run(run, project=args.wandb_project, group=args.wandb_group,
-                name=args.wandb_name or run_name)
-        print(f"WandB 上报:{args.wandb_project}")
+            log_run(run, project=args.wandb_project, group=args.wandb_group,
+                    name=args.wandb_name or run_name)
+            print(f"WandB 上报:{args.wandb_project}")
+        except Exception as e:  # noqa: BLE001  上报失败不影响已写的 run
+            print(f"WandB 上报跳过:{e}")
 
 
 if __name__ == "__main__":  # pragma: no cover
