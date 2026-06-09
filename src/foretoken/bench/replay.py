@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-"""闭环会话回放的命令行入口:解析参数 → 构造负载 → 起引擎回放 → 写记录。
+"""闭环会话回放的命令行入口:解析参数 → 构造负载 → 启动引擎回放 → 写记录。
 
-三种后端:缺省**进程内**(`core.vllm_engine` 自起 AsyncLLM、退出释放 GPU);
-`--endpoint` 打已有 `vllm serve`(API 形式);`--serve` 自起 vllm serve、回放完整组 kill 释放 GPU。
+三种后端:缺省进程内(`core.vllm_engine` 自启 AsyncLLM、退出释放 GPU);
+`--endpoint` 打已有 `vllm serve`(API 形式);`--serve` 自启 vllm serve、回放完整组 kill 释放 GPU。
 核心见 `core/` 与 `report/`;vllm / torch 仅进程内后端需要,故在该分支体内按需 import。
 
 运行:`python -m foretoken.bench.replay --help`(或 scripts/bench.sh)。
@@ -124,7 +124,7 @@ def _git_commit() -> str:
 
 def _build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="进程内闭环回放 foretoken-trace,测 TTFT/TPOT/goodput")
-    ap.add_argument("--model", required=True, help="权重目录或 HF id(起引擎 + 分词器)")
+    ap.add_argument("--model", required=True, help="权重目录或 HF id(启动引擎 + 分词器)")
     ap.add_argument(
         "--config",
         default=None,
@@ -213,12 +213,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--endpoint",
         default=None,
         metavar="URL",
-        help="API 形式:打已有 vllm serve 地址(如 http://localhost:8000);省略则进程内自起引擎",
+        help="API 形式:打已有 vllm serve 地址(如 http://localhost:8000);省略则进程内自启引擎",
     )
     ap.add_argument(
         "--serve",
         action="store_true",
-        help="自起 vllm serve 跑 API 形式,回放完整组 kill 释放 GPU(引擎配置取 [serve])",
+        help="自启 vllm serve 跑 API 形式,回放完整组 kill 释放 GPU(引擎配置取 [serve])",
     )
     ap.add_argument("--port", type=int, default=18000, help="--serve 的监听端口(默认 18000)")
     ap.add_argument("--dp", type=int, default=None, help="--serve:data-parallel 引擎副本数(-dp)")
@@ -242,7 +242,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--cases",
         choices=["off", "sample", "full"],
         default="sample",
-        help="逐轮输入输出:off 不存 / sample 仅 cases.md / full 加全量 cases.jsonl(大 run 慎用)",
+        help="逐轮输入输出:off 不存 / sample 仅 cases.md / full 加全量 cases.jsonl(大 run 数据量大)",
     )
     ap.add_argument(
         "--runs-dir", default="results/runs", help="单实验记录根目录(默认 results/runs/)"
@@ -304,7 +304,7 @@ def main() -> None:
 
     vllm_ver = None
     engine_stats = engine_requests = None
-    if args.serve:  # 自起 vllm serve 子进程跑 API 形式,退出整组 kill 释放 GPU
+    if args.serve:  # 自启 vllm serve 子进程跑 API 形式,退出整组 kill 释放 GPU
         serve_cfg = read(_cfg_path(args), "serve")
         engine_kwargs = {
             k: v
@@ -328,7 +328,7 @@ def main() -> None:
             sessions, args.model, sampling, args.endpoint,
             sec_multiplier=args.sec_multiplier, deadline_s=deadline,
         )
-    else:  # 进程内自起引擎(vllm 仅此分支需要 → 惰性 import)
+    else:  # 进程内自启引擎(vllm 仅此分支需要 → 惰性 import)
         import vllm
 
         from foretoken.bench.core.vllm_engine import run_replay

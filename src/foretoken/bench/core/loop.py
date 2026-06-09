@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-"""闭环回放主循环(后端无关):跨会话并发、会话内串行,现场回复接回历史 + 混合时间调度。
+"""闭环回放主循环(后端无关):跨会话并发、会话内串行,模型回复追加进对话历史 + 混合时间调度。
 
 附带两个轻量观测:进度(有 deadline 按时间、否则按请求)、客户端健康(事件循环延迟探针)。
 """
@@ -20,7 +20,12 @@ from foretoken.bench.core.workload import next_send_ms
 def _health(lags: list[float]) -> dict:
     """事件循环延迟统计 ms(漂移大 = 单事件循环饱和 = 客户端可能是瓶颈,非引擎)。"""
     if not lags:
-        return {"loop_lag_mean_ms": 0.0, "loop_lag_max_ms": 0.0, "loop_lag_p99_ms": 0.0, "samples": 0}
+        return {
+            "loop_lag_mean_ms": 0.0,
+            "loop_lag_max_ms": 0.0,
+            "loop_lag_p99_ms": 0.0,
+            "samples": 0,
+        }
     s = sorted(lags)
     return {
         "loop_lag_mean_ms": sum(s) / len(s),
@@ -83,7 +88,7 @@ async def replay(
             text, ttft, tpot, e2e, n, n_prompt, ok = await backend.gen_once(messages, f"{sid}-{k}")
             c["done"] += 1
             complete_prev = (time.perf_counter() - start) * 1000.0  # C_k 相对完成时刻
-            messages.append({"role": "assistant", "content": text})  # 现场回复接回历史
+            messages.append({"role": "assistant", "content": text})  # 模型回复追加进对话历史
             results.append(
                 TurnResult(
                     sid, k, ttft, tpot, e2e, n, prompt_tokens=n_prompt,
@@ -121,7 +126,8 @@ async def replay(
             el = time.perf_counter() - start
             if tty:  # tqdm:时间(或请求)填进度,请求计数作后缀
                 pbar.update(min(units, round(el) if deadline_s else c["done"]) - pbar.n)
-                pbar.set_postfix_str(f"发{c['sent']}/{total} 完成{c['done']} 运行中{c['sent'] - c['done']}")
+                inflight = c["sent"] - c["done"]
+                pbar.set_postfix_str(f"发{c['sent']}/{total} 完成{c['done']} 运行中{inflight}")
             else:
                 print(_progress_line(el, deadline_s, total, c), file=sys.stderr, flush=True)
 
@@ -143,7 +149,8 @@ async def replay(
         pbar.update(units - pbar.n)  # 补满
         pbar.close()
     else:
-        print(_progress_line(time.perf_counter() - start, deadline_s, total, c), file=sys.stderr, flush=True)
+        line = _progress_line(time.perf_counter() - start, deadline_s, total, c)
+        print(line, file=sys.stderr, flush=True)
     if pending:
         print(f"达回放时限 {deadline_s:.0f}s:取消 {cancelled} 个未完成会话")
     return results, cancelled, _health(lags)

@@ -17,7 +17,8 @@ def log_run(run: dict, *, project: str, group: str | None = None, name: str | No
     """把 run dict(meta + 指标)推到 WandB;name 缺省取 tag。"""
     m, w, gpu = run["model"], run["workload"], run["gpu"]
     config = {
-        "model": m["name"], "tag": run.get("tag"), "split": w.get("split"), "window": w.get("window"),
+        "model": m["name"], "tag": run.get("tag"),
+        "split": w.get("split"), "window": w.get("window"),
         "rate_per_min": w.get("rate_per_min"), "total_requests": w.get("total_requests"),
         "sec_multiplier": w.get("sec_multiplier"), "deadline_s": w.get("deadline_s"),
         "gpu_count": gpu.get("count"), "gpu_name": gpu.get("name"),

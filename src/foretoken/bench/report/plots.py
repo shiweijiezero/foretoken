@@ -157,7 +157,7 @@ def _fig_ctx(plt, font):
 
 
 def _fmt_k(v) -> str:
-    """大数缩写:1000→1k、1.5e6→1.5M;小数普通(避免 100000 这种僵化大数)。"""
+    """大数缩写:1000→1k、1.5e6→1.5M;小数普通(避免 100000 这类长数字)。"""
     a = abs(v)
     if a >= 1e6:
         return f"{v / 1e6:g}M"
@@ -167,7 +167,7 @@ def _fmt_k(v) -> str:
 
 
 def _apply_fmt(ax, xfn=None, yfn=None):
-    """给指定轴设领域格式器(log 轴尤其需要:否则 decade 标成僵化大数);minor 不标。"""
+    """给指定轴设领域格式器(log 轴尤其需要:否则 decade 标成长数字);minor 不标。"""
     from matplotlib.ticker import FuncFormatter, NullFormatter
 
     for axis, fn in ((ax.xaxis, xfn), (ax.yaxis, yfn)):

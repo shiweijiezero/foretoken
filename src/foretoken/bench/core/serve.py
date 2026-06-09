@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-"""自起 / 关停 `vllm serve` 子进程:就绪后供 API 形式回放,退出时整组 kill 释放 GPU。
+"""启停 `vllm serve` 子进程:就绪后供 API 形式回放,退出时整组 kill 释放 GPU。
 
 整组回收(`start_new_session` + `killpg`):vllm serve 会派生 EngineCore / 前端 worker 子进程,
 只杀父进程会留孤儿占卡。POSIX only(serve 跑在 GPU 机器,即 Linux)。
@@ -65,12 +65,12 @@ def _terminate(proc: subprocess.Popen, grace: float = 20.0) -> None:
     if proc.poll() is not None:
         return
     with contextlib.suppress(ProcessLookupError):
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)  # 整组先礼
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)  # 整组先发 SIGTERM 优雅终止
     try:
         proc.wait(timeout=grace)
     except subprocess.TimeoutExpired:
         with contextlib.suppress(ProcessLookupError):
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # 不退则后兵
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)  # 宽限内未退则 SIGKILL 强制
 
 
 @contextlib.contextmanager
@@ -84,12 +84,12 @@ def vllm_serve(
     serve_args: list[str] | None = None,
     ready_timeout: float = 900.0,
 ):
-    """起 vllm serve(新进程组),就绪后 yield endpoint;退出整组 SIGTERM→SIGKILL 释放 GPU。"""
+    """启动 vllm serve(新进程组),就绪后 yield endpoint;退出整组 SIGTERM→SIGKILL 释放 GPU。"""
     cmd = _serve_cmd(
         model, serve_cfg, port=port, dp=dp,
         api_server_count=api_server_count, serve_args=serve_args or [],
     )
-    print("起 vllm serve:", " ".join(cmd))
+    print("启动 vllm serve:", " ".join(cmd))
     proc = subprocess.Popen(cmd, start_new_session=True)  # 独立进程组,便于整组回收
     try:
         _wait_healthy(f"http://localhost:{port}/health", ready_timeout)

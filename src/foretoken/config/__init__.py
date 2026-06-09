@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-"""配置加载:模型的 `[sampling]` + `[serve]` 两段 toml(`config/models/*.toml`),见 docs/14。
+"""配置加载:模型的 `[sampling]` + `[serve]` 两段 toml(`config/models/*.toml`)。
 
 `replay --config <path>` 直接指定文件(任意路径);缺省回退 `config/models/default.toml`。
 采样供回放、serve 配置供引擎,故置于顶层(不专属 bench)。
