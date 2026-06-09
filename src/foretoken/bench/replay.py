@@ -170,7 +170,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--tail-factor",
         type=float,
         default=2.0,
-        help="墙钟上限 = 窗口跨度 × sec_multiplier × 此值;到点取消运行中请求(截长尾)。<=0 不设限",
+        help="墙钟上限的乘数 = 窗口跨度 × sec_multiplier × 此值;到点取消运行中请求(截长尾)。<=0 不乘",
+    )
+    ap.add_argument(
+        "--tail-add",
+        type=float,
+        default=0.0,
+        metavar="MIN",
+        help="墙钟上限的加法宽限(分钟):上限 = 窗口跨度×tail-factor + 此值;与 --tail-factor 叠加",
     )
     ap.add_argument(
         "--deadline",
@@ -277,7 +284,7 @@ def main() -> None:
     deadline = (
         args.deadline
         if args.deadline is not None
-        else deadline_seconds(window, args.sec_multiplier, args.tail_factor)
+        else deadline_seconds(window, args.sec_multiplier, args.tail_factor, args.tail_add * 60)
     )
     n_turns = sum(len(s) for s in sessions.values())
     span_s = (window[1] - window[0]) / 1000.0 if window else None
@@ -357,6 +364,7 @@ def main() -> None:
             "sample": args.sample,
             "sec_multiplier": args.sec_multiplier,
             "tail_factor": args.tail_factor,
+            "tail_add_min": args.tail_add,
             "deadline_s": deadline,
         },
         "gpu": gpu,

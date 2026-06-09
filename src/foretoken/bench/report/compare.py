@@ -89,7 +89,8 @@ def compare_table(loaded) -> str:
 
     head = [
         "run", "完成", "TTFT p50/p90/p99", "TPOT p50/p90/p99", "E2E p50/p90/p99", "尾部",
-        "out tok/s", "req/s", "good@严(达成)", "good@中", "good@松", "峰值KV", "运行中", "排队",
+        "out tok/s", "req/s", "good@严(达成)", "good@中", "good@松", "¥/Mtok@严",
+        "峰值KV", "运行中", "排队",
     ]
     out = ["| " + " | ".join(head) + " |", "|" + "|".join(["---"] * len(head)) + "|"]
     for lbl, run, _ in loaded:
@@ -98,12 +99,14 @@ def compare_table(loaded) -> str:
         gp = _gp(run)
         eng = run.get("engine") or {}
         kv = f"{eng['peak_kv'] * 100:.0f}%" if eng.get("peak_kv") is not None else "-"
+        cpm = ((run.get("cost") or {}).get("cny_per_mtok") or [None])[0]
+        cny = f"¥{cpm:.2f}" if cpm is not None else "-"
         cells = [
             lbl, f"{run.get('completed', '?')}/{run.get('total', '?')}",
             lat3(lat.get("ttft_ms", {})), lat3(lat.get("tpot_ms", {})), lat3(lat.get("e2e_ms", {})),
             f"{run.get('tail_ratio_ttft', 0):.1f}×",
             num(tp.get("output_tok_s")), num(tp.get("request_s"), "{:.2f}"),
-            gpc(gp[0]), gpc(gp[1]), gpc(gp[2]), kv,
+            gpc(gp[0]), gpc(gp[1]), gpc(gp[2]), cny, kv,
             num(eng.get("max_running")), num(eng.get("max_waiting")),
         ]
         out.append("| " + " | ".join(str(c) for c in cells) + " |")
@@ -207,25 +210,6 @@ _GROUPS = [
 ]
 
 
-def _cost_section(loaded, out: Path) -> list[str]:
-    """把计价成本(表 + 双语柱图)一并并入对比报告;时价用 cost 模块默认(单独定制走 --cost)。"""
-    from .cost import DEFAULT_RATES, _cost_plot, cost_rows, cost_table  # 局部导入:cost 反向依赖本模块
-
-    rows = cost_rows(loaded, rates=DEFAULT_RATES, slo_tier=0)
-    slo = None
-    for _, run, _ in loaded:  # 严档 SLO 阈值用于表头
-        t = _gp(run)[0]
-        if t:
-            slo = (t.get("ttft_ms"), t.get("tpot_ms"))
-            break
-    plots = _cost_plot(rows, out)
-    img = next((p for p in plots if p.startswith("zh")), plots[0] if plots else None)
-    md = ["## 计价成本(¥/Mtok)", cost_table(rows, slo)]
-    if img:
-        md += [f"![{img}]({img})", ""]
-    return md
-
-
 def compare(run_dirs, out_dir=None) -> Path | None:
     """对比多组实验 → 写 <out>/summary.md(全指标表 + 内嵌图 + 计价成本)+ 双语图;返回 out 目录。
 
@@ -251,6 +235,5 @@ def compare(run_dirs, out_dir=None) -> Path | None:
         imgs = [i for i in (pick(b) for b in bases) if i]
         if imgs:
             md += [f"## {title}", *[f"![{i}]({i})" for i in imgs], ""]
-    md += _cost_section(loaded, out)  # 成本表 + 成本图一并并入对比报告
     (out / "summary.md").write_text("\n".join(md) + "\n", encoding="utf-8")
     return out

@@ -90,20 +90,31 @@ def render_summary(run: dict) -> str:
         f" · 完成 **{tp['request_s']:.2f} req/s**",
         "",
         "## goodput(SLO 达成阶梯)",
-        _row("SLO (TTFT, TPOT)", "达成%", "good tok/s", "/GPU", "tok/(s·GPU字节)"),
-        _row("---", "---", "---", "---", "---"),
+        _row("SLO (TTFT, TPOT)", "达成%", "good tok/s", "/GPU", "¥/Mtok", "tok/(s·GPU字节)"),
+        _row("---", "---", "---", "---", "---", "---"),
     ]
-    for g in run["goodput"]:
+    cpm = (run.get("cost") or {}).get("cny_per_mtok") or []
+    for i, g in enumerate(run["goodput"]):
         norm = "-" if g["tok_per_s_gpubyte"] is None else f"{g['tok_per_s_gpubyte']:.2e}"
+        cny = f"¥{cpm[i]:.2f}" if i < len(cpm) and cpm[i] is not None else "-"
         L.append(
             _row(
                 f"{fmt_ms(g['ttft_ms'])}, {g['tpot_ms']}ms",
                 f"{100 * g['attain']:.0f}%",
                 f"{g['good_tok_s']:.0f}",
                 f"{g['good_tok_s_per_gpu']:.0f}",
+                cny,
                 norm,
             )
         )
+    c = run.get("cost") or {}
+    if c.get("run_cost_cny") is not None:
+        raw = c.get("cny_per_mtok_raw")
+        L += [
+            "",
+            f"成本(¥{c['gpu_rate_cny_h']:g}/GPU·h):运行 **¥{c['run_cost_cny']:.2f}**"
+            f" · 原始 **{f'¥{raw:.2f}' if raw else '-'}/Mtok**(达成口径见上表)",
+        ]
     eng = run.get("engine")
     if eng:
         L += [
@@ -135,8 +146,8 @@ def render_summary(run: dict) -> str:
 _INDEX_HEADER = (
     "# Runs\n\n"
     "| 日期 | 模型 | 配置 | 负载 | 下采样 | offered 轮/s | 完成/总 | "
-    "TTFT p50 | TPOT p50 | out tok/s | good tok/s @strict SLO | 目录 |\n"
-    "|---|---|---|---|---|---|---|---|---|---|---|---|\n"
+    "TTFT p50 | TPOT p50 | out tok/s | good tok/s @strict SLO | ¥/Mtok @strict | 目录 |\n"
+    "|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
 )
 
 
@@ -148,13 +159,15 @@ def _index_row(run: dict, dirname: str) -> str:
     out_tok = run.get("throughput", {}).get("output_tok_s")
     gp = run.get("goodput") or [{}]
     good = gp[0].get("good_tok_s")
+    cpm = (run.get("cost") or {}).get("cny_per_mtok") or [None]
     ms = lambda d, k: fmt_ms(d[k]) if d.get(k) is not None else "-"  # noqa: E731
     num = lambda v, f="{:.0f}": f.format(v) if v is not None else "-"  # noqa: E731
+    cny = f"¥{cpm[0]:.2f}" if cpm[0] is not None else "-"
     return (
         f"| {run.get('timestamp', '?')} | {run.get('model', {}).get('name', '?')} | "
         f"{run.get('tag', '?')} | {w.get('split', '')} {w.get('window', '')} | {_load_spec(w)} | "
         f"{num(off, '{:.2f}')} | {run.get('completed', '?')}/{run.get('total', '?')} | "
-        f"{ms(ttft, 'p50')} | {ms(tpot, 'p50')} | {num(out_tok)} | {num(good)} | "
+        f"{ms(ttft, 'p50')} | {ms(tpot, 'p50')} | {num(out_tok)} | {num(good)} | {cny} | "
         f"[→]({dirname}/summary.md) |\n"
     )
 

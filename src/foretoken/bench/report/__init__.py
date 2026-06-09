@@ -12,14 +12,13 @@
 from __future__ import annotations
 
 from .compare import compare
-from .cost import cost_report
 from .markdown import rebuild_index, render_summary
-from .metrics import goodput_ladder, parse_slo, percentiles, summarize, throughput
+from .metrics import goodput_ladder, gpu_rate, parse_slo, percentiles, summarize, throughput
 from .plots import compare_runs, make_plots, regen_plots, sweep_curve
 from .writer import regen_cases, write_run
 
 __all__ = [
-    "parse_slo", "summarize", "percentiles", "goodput_ladder", "throughput",
-    "make_plots", "compare_runs", "compare", "cost_report", "sweep_curve", "regen_plots",
+    "parse_slo", "summarize", "percentiles", "goodput_ladder", "throughput", "gpu_rate",
+    "make_plots", "compare_runs", "compare", "sweep_curve", "regen_plots",
     "regen_cases", "render_summary", "write_run", "rebuild_index",
 ]
