@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 """数据准备(data_prepare):缝合真实数据源,打包为可复现的评测数据集。
 
-与评测台(bench/)分工:data_prepare 生成负载,bench 回放负载。单一真实源各缺一半(docs/07 §6.6):
+与评测台(bench/)分工:data_prepare 生成负载,bench 回放负载。单一真实源各缺一半:
 
 - Mooncake trace 有真实并发 / 时序 / 会话结构(hash 前缀链),但无真实文本、无 session id;
 - 真实多轮对话(kimi-mtp-dataset)有真实文本,但无并发 / 时序。
@@ -22,6 +22,6 @@
 content 用 to_turns 的字段 / 角色参数 + fill_sessions 的 turns_fn 适配不同格式
 (默认 Mooncake + ShareGPT)。
 
-当前仅文本多轮对话(to_turns 跳过多模态条目);多模态内容(VLM 图文 / VLA 动作 / omni 全模态)为
-远期扩展(ROADMAP P3+)。
+当前仅文本多轮对话(to_turns 跳过多模态条目);多模态内容(VLM 图文 / VLA 动作 / omni 全模态)
+暂不支持。
 """

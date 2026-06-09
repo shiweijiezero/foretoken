@@ -76,8 +76,10 @@ def test_gen_tok_s_skips_zero_tpot():
 
 def test_engine_summary_aggregates_prefix_preempt_decode():
     stats = [
-        {"kv": 0.5, "running": 2, "waiting": 1, "pc_q": 100, "pc_h": 40, "gen_tok": 10, "preempted": 1},
-        {"kv": 0.8, "running": 3, "waiting": 5, "pc_q": 100, "pc_h": 60, "gen_tok": 20, "preempted": 2},
+        {"kv": 0.5, "running": 2, "waiting": 1, "pc_q": 100,
+         "pc_h": 40, "gen_tok": 10, "preempted": 1},
+        {"kv": 0.8, "running": 3, "waiting": 5, "pc_q": 100,
+         "pc_h": 60, "gen_tok": 20, "preempted": 2},
     ]
     e = engine_summary(stats, duration_s=10.0)
     assert e["peak_kv"] == 0.8 and e["max_waiting"] == 5 and e["max_running"] == 3

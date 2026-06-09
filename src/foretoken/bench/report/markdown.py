@@ -148,7 +148,7 @@ def render_summary(run: dict) -> str:
         ]
     ch = run.get("client_health") or {}
     if ch.get("samples"):
-        verdict = "客户端可能是瓶颈(发送侧饱和)" if ch["loop_lag_max_ms"] > 100 else "客户端未拖后腿"
+        verdict = "可能是瓶颈(发送侧饱和)" if ch["loop_lag_max_ms"] > 100 else "客户端非瓶颈"
         L += [
             "",
             "## 客户端健康(事件循环延迟,漂移大 = 单事件循环饱和、瓶颈在发送侧而非引擎)",

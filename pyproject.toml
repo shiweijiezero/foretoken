@@ -21,7 +21,7 @@ dependencies = [
     "tqdm>=4.66",      # 回放进度条(bench/core/loop.py;非 TTY 退化为稀疏日志行)
     "wandb>=0.17",     # 可选 run 上报(bench/utils/wandb_log.py;--wandb-project 触发)
     "pytest>=8",       # 单测 / 正确性子集
-    "ruff>=0.6",       # lint + format
+    "ruff>=0.14,<0.15", # lint + format(与 .pre-commit-config 钉的 v0.14 对齐,防 format 漂移)
     "mypy>=1.11",      # 类型检查
     "pre-commit>=3.5", # 提交前钩子
 ]

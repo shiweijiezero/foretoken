@@ -24,10 +24,10 @@ def next_send_ms(
     t0: int,
     sec_multiplier: float = 1.0,
 ) -> float:
-    """该轮发出的相对(对回放 start)**墙钟** ms。全程墙钟口径(complete_prev 即墙钟,故避免单位混算)。
+    """该轮发出的相对(对回放 start)墙钟 ms。全程墙钟口径(complete_prev 即墙钟,故避免单位混算)。
 
     首轮 / 上轮按时完成 → 跟 trace 位置(× sec_multiplier 缩放到墙钟);
-    上轮超时 → 完成时刻 + **缩放后**的原思考间隔。调用方 sleep 到此墙钟时刻,不再二次缩放。
+    上轮超时 → 完成时刻 + 缩放后的原思考间隔。调用方 sleep 到此墙钟时刻,不再二次缩放。
     """
     target = (t_cur - t0) * sec_multiplier  # trace 位置 → 墙钟
     if turn_idx == 0 or complete_prev_ms <= target:
@@ -63,7 +63,7 @@ def sample_sessions(
     fraction: float | None = None,
     seed: int = 0,
 ) -> dict[int, list[dict]]:
-    """会话级下采样,**整会话保留**(多轮完整,绝不拆会话);把集群级 trace 负载匹配单实例。
+    """会话级下采样,整会话保留(多轮完整,绝不拆会话);把集群级 trace 负载匹配单实例。
 
     二选一:`n_requests` 随机选整会话直到累计轮(request)数达目标(整会话保留,末个会话可能略超);
     `fraction` 留该比例会话。都不给 → 原样。真实时间戳 / 突发形态不变,可复现(seed)。

@@ -115,9 +115,9 @@ def test_sample_sessions_reproducible():
 
 def test_deadline_seconds():
     # 上限 = 窗口跨度 × sec_multiplier + 宽限秒;sec_multiplier 压缩窗口跨度
-    assert deadline_seconds((0, 300_000), sec_multiplier=1.0, tail_grace_s=300) == 600.0  # 5min+5min
-    assert deadline_seconds((0, 300_000), sec_multiplier=0.5, tail_grace_s=300) == 450.0  # 2.5min+5min
-    assert deadline_seconds((600_000, 1_200_000), sec_multiplier=1.0, tail_grace_s=0) == 600.0  # 仅跨度
+    assert deadline_seconds((0, 300_000), sec_multiplier=1.0, tail_grace_s=300) == 600.0
+    assert deadline_seconds((0, 300_000), sec_multiplier=0.5, tail_grace_s=300) == 450.0
+    assert deadline_seconds((600_000, 1_200_000), sec_multiplier=1.0, tail_grace_s=0) == 600.0
     # 无窗口或宽限<0 → 不设限
     assert deadline_seconds(None, sec_multiplier=1.0, tail_grace_s=300) is None
     assert deadline_seconds((0, 300_000), sec_multiplier=1.0, tail_grace_s=-1) is None
