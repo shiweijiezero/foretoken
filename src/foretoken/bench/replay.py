@@ -35,11 +35,9 @@ from foretoken.bench.core.workload import (
 )
 from foretoken.config import read, resolve
 
-_DEFAULT_SLO = ["2000:80", "10000:150", "60000:200"]  # 缺省 SLO 阶梯(严/中/松);--slo 整体替换
-
 
 def _summary(results: list[TurnResult]) -> None:
-    """打印 TTFT/TPOT 分位 + 完成数(简版;详细汇总 / 图见 report/)。"""
+    """打印 TTFT/TPOT 分位 + 完成数"""
     ok = [r for r in results if r.ok]
 
     def pct(xs: list[float], q: float) -> float:
@@ -198,10 +196,10 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     ap.add_argument(
         "--slo",
-        action="append",
-        default=None,
+        nargs="+",
+        default=["2000:80", "10000:150", "60000:200"],
         metavar="TTFT_ms:TPOT_ms",
-        help="goodput 的 SLO 阶梯 TTFT_ms:TPOT_ms(可重复,替换缺省);"
+        help="goodput 的 SLO 阶梯 TTFT_ms:TPOT_ms(可多档,整体替换缺省);"
         "缺省严/中/松三档 2000:80 / 10000:150 / 60000:200",
     )
     ap.add_argument(
@@ -382,10 +380,9 @@ def main() -> None:
         f"{now.strftime('%Y-%m-%d_%H%M')}__{name}__{args.tag}__{args.split or 'data'}_{win}{load}"
     )
     runs_dir = Path(args.runs_dir)
-    slo_specs = args.slo if args.slo is not None else _DEFAULT_SLO
     run_dir = runs_dir / run_name
     run = report.write_run(
-        results, meta, run_dir, slo=report.parse_slo(slo_specs),
+        results, meta, run_dir, slo=report.parse_slo(args.slo),
         engine_stats=engine_stats, engine_requests=engine_requests, cases=args.cases,
     )
     report.rebuild_index(runs_dir)
