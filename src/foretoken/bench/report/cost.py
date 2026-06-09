@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 """计价成本报告:按 GPU 时价把各配置折算成单位 token 成本,横向对比。
 
-token 工厂的核心经济指标是每百万 token 的成本。原始口径(`$/Mtok`)只看产能;
-达成口径(`$/Mtok@SLO`)只计满足延迟 SLO、即真正可交付的 token —— 后者才是定价依据。
-默认时价取参考云上按需价(USD/h);自建 / 沐曦集群成本不同,用 `--gpu-rate` 覆盖。
+token 工厂的核心经济指标是每百万 token 的成本。原始口径(`¥/Mtok`)只看产能;
+达成口径(`¥/Mtok@SLO`)只计满足延迟 SLO、即真正可交付的 token —— 后者才是定价依据。
+默认时价取国内 GPU 云(AutoDL 类)按量价(元/GPU·h);自建 / 沐曦集群成本不同,用 `--gpu-rate` 覆盖。
 """
 
 from __future__ import annotations
@@ -16,16 +16,16 @@ import matplotlib.pyplot as plt
 from .compare import _bars, _gp, _load
 from .plots import _apply_fmt, _fig_ctx, _langs, _resolve_cjk_font
 
-# 参考云上按需价(USD / GPU·h);按 GPU 名子串匹配,--gpu-rate 覆盖。
+# 国内 GPU 云(AutoDL 类)参考按量价(人民币 元 / GPU·h);按 GPU 名子串匹配,--gpu-rate 覆盖。
 DEFAULT_RATES = {
-    "A100": 1.8, "H100": 3.0, "H200": 3.5, "L40": 1.0, "L20": 0.8,
-    "4090": 0.4, "A10": 0.75, "V100": 0.8,
+    "A100": 8.0, "H100": 18.0, "H200": 22.0, "L40": 6.0, "L20": 5.0,
+    "4090": 2.5, "A10": 1.5, "V100": 3.0,
 }
-_FALLBACK_RATE = 2.0
+_FALLBACK_RATE = 8.0
 
 _T = {
     "title": {"en": "cost per 1M tokens by config", "zh": "各配置每百万 token 成本"},
-    "y": {"en": "USD / 1M tokens", "zh": "美元 / 百万 token"},
+    "y": {"en": "CNY / 1M tokens", "zh": "人民币 / 百万 token"},
     "raw": {"en": "raw", "zh": "原始"},
     "good": {"en": "SLO-met", "zh": "达成 SLO"},
 }
@@ -40,7 +40,7 @@ def _rate(gpu_name: str, rates: dict[str, float]) -> float:
 
 
 def cost_rows(loaded, *, rates: dict[str, float], slo_tier: int = 0) -> list[dict]:
-    """逐 run 折算成本:GPU·h、运行成本、$/Mtok(原始 / 达成)、tok/$。按 $/Mtok@SLO 升序。"""
+    """逐 run 折算成本:GPU·h、运行成本、¥/Mtok(原始 / 达成)、tok/¥。按 ¥/Mtok@SLO 升序。"""
     rows: list[dict] = []
     for lbl, run, _ in loaded:
         gpu = run.get("gpu", {})
@@ -79,25 +79,25 @@ def _short_gpu(name: str) -> str:
     return name.split()[-1] if name else "?"
 
 
-def _usd(v) -> str:
-    return f"${v:,.2f}" if isinstance(v, int | float) else "-"
+def _cny(v) -> str:
+    return f"¥{v:,.2f}" if isinstance(v, int | float) else "-"
 
 
 def cost_table(rows: list[dict], slo: tuple[int, int] | None) -> str:
     """成本对比表(markdown);按可交付 token 成本排序,最便宜在前。"""
     tier = f"@SLO {slo[0]}/{slo[1]}ms" if slo else "@SLO"
     head = [
-        "run", "GPU", "$/GPU·h", "时长", "out tok/s", "$/Mtok(原始)",
-        f"达成{tier}", "good tok/s", f"**$/Mtok({tier})**", "tok/$",
+        "run", "GPU", "¥/GPU·h", "时长", "out tok/s", "¥/Mtok(原始)",
+        f"达成{tier}", "good tok/s", f"**¥/Mtok({tier})**", "tok/¥",
     ]
     out = ["| " + " | ".join(head) + " |", "|" + "|".join(["---"] * len(head)) + "|"]
     for r in rows:
         cells = [
-            r["label"], r["gpus"], f"${r['rate']:.2f}", f"{r['dur_s'] / 60:.0f}min",
+            r["label"], r["gpus"], f"¥{r['rate']:.2f}", f"{r['dur_s'] / 60:.0f}min",
             f"{r['raw_tok_s']:.0f}",
-            _usd(r["usd_per_mtok_raw"]),
+            _cny(r["usd_per_mtok_raw"]),
             f"{r['attain'] * 100:.0f}%", f"{r['good_tok_s']:.0f}",
-            _usd(r["usd_per_mtok_good"]),
+            _cny(r["usd_per_mtok_good"]),
             f"{r['tok_per_usd']:,.0f}" if r["tok_per_usd"] else "-",
         ]
         out.append("| " + " | ".join(str(c) for c in cells) + " |")
@@ -105,7 +105,7 @@ def cost_table(rows: list[dict], slo: tuple[int, int] | None) -> str:
 
 
 def _cost_plot(rows: list[dict], out: Path) -> list[str]:
-    """双语柱图:各配置 $/Mtok(原始 vs 达成 SLO)。"""
+    """双语柱图:各配置 ¥/Mtok(原始 vs 达成 SLO)。"""
     cjk = _resolve_cjk_font()
     made: list[str] = []
     labels = [r["label"] for r in rows]
@@ -115,7 +115,7 @@ def _cost_plot(rows: list[dict], out: Path) -> list[str]:
         with _fig_ctx(plt, font):
             fig, ax = plt.subplots(figsize=(7.2, 4))
             _bars(ax, labels, [(_T["raw"][lang], raw), (_T["good"][lang], good)])
-            _apply_fmt(ax, yfn=lambda v: f"${v:.1f}")
+            _apply_fmt(ax, yfn=lambda v: f"¥{v:.1f}")
             ax.set_ylabel(_T["y"][lang])
             ax.set_title(_T["title"][lang])
             ax.legend(loc="upper left")
@@ -154,7 +154,7 @@ def cost_report(
     md = [
         f"# 计价成本报告({len(rows)} 组)",
         "",
-        "时价为参考云上按需价(USD / GPU·h);自建 / 沐曦集群成本不同,以 `--gpu-rate` 覆盖。",
+        "时价为国内 GPU 云(AutoDL 类)参考按量价(人民币 元 / GPU·h);自建 / 沐曦集群成本不同,以 `--gpu-rate` 覆盖。",
         "原始口径只看产能;达成口径只计满足 SLO、即可交付的 token,是定价依据。",
         "",
         cost_table(rows, slo),

@@ -4,7 +4,7 @@
 
   python -m foretoken.bench.report [runs_dir] [--plots] [--cases]
   python -m foretoken.bench.report --compare <run_dir> <run_dir> ...   (或 runs/ 比全部)
-  python -m foretoken.bench.report --cost <run_dir> ... [--gpu-rate A100=1.8 --slo-tier 0]
+  python -m foretoken.bench.report --cost <run_dir> ... [--gpu-rate A100=8 --slo-tier 0]
   python -m foretoken.bench.report --sweep [--x rate|total|window] <run_dir> ...
 """
 
