@@ -167,24 +167,19 @@ def _build_parser() -> argparse.ArgumentParser:
         help="时间缩放(<1 加速回放、压缩真实间隔提并发;1=真实节奏)",
     )
     ap.add_argument(
-        "--tail-factor",
-        type=float,
-        default=2.0,
-        help="墙钟上限的乘数 = 窗口跨度 × sec_multiplier × 此值;到点取消运行中请求(截长尾)。<=0 不乘",
-    )
-    ap.add_argument(
         "--tail-grace",
         type=float,
-        default=0.0,
+        default=5.0,
         metavar="MIN",
-        help="墙钟上限的加法宽限(分钟):上限 = 窗口跨度×tail-factor + 此值;与 --tail-factor 叠加",
+        help="回放墙钟上限 = 窗口跨度 × sec_multiplier + 此宽限(分钟),到点取消运行中请求(截长尾)。"
+        "默认 5min(即窗口跑完再留 5min 排空);<0 不设限(跑到全部完成)",
     )
     ap.add_argument(
         "--deadline",
         type=float,
         default=None,
         metavar="SEC",
-        help="回放墙钟上限秒数:直接指定(覆盖 --tail-factor 的窗口推算);省略则按 tail-factor",
+        help="回放墙钟上限秒数:直接指定(覆盖窗口+宽限的推算);省略则按 --tail-grace 推算",
     )
     ap.add_argument(
         "--param",
@@ -289,7 +284,7 @@ def main() -> None:
     deadline = (
         args.deadline
         if args.deadline is not None
-        else deadline_seconds(window, args.sec_multiplier, args.tail_factor, args.tail_grace * 60)
+        else deadline_seconds(window, args.sec_multiplier, args.tail_grace * 60)
     )
     n_turns = sum(len(s) for s in sessions.values())
     span_s = (window[1] - window[0]) / 1000.0 if window else None
@@ -368,7 +363,6 @@ def main() -> None:
             "rate_per_min": args.rate,
             "sample": args.sample,
             "sec_multiplier": args.sec_multiplier,
-            "tail_factor": args.tail_factor,
             "tail_grace_min": args.tail_grace,
             "deadline_s": deadline,
         },
