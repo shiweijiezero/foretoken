@@ -117,17 +117,17 @@ def deadline_seconds(
     window: tuple[int, int] | None,
     sec_multiplier: float,
     tail_factor: float,
-    tail_add_s: float = 0.0,
+    tail_grace_s: float = 0.0,
 ) -> float | None:
-    """回放墙钟上限 s = 窗口跨度 × sec_multiplier × tail_factor + tail_add_s;到点取消运行中请求。
+    """回放墙钟上限 s = 窗口跨度 × sec_multiplier × tail_factor + tail_grace_s;到点取消运行中请求。
 
-    乘法(× tail_factor,如 ×2)与加法(+ tail_add_s 宽限,如 +5min)可叠加;
+    乘法(× tail_factor,如 ×2)与加法(+ tail_grace_s 宽限,如 +5min)可叠加;
     无窗口、或两者都 ≤0 → None(不设限,跑到全部完成)。
     """
     if not window:
         return None
     span = (window[1] - window[0]) / 1000.0 * sec_multiplier
-    total = (span * tail_factor if tail_factor > 0 else 0.0) + max(0.0, tail_add_s)
+    total = (span * tail_factor if tail_factor > 0 else 0.0) + max(0.0, tail_grace_s)
     return total if total > 0 else None
 
 
