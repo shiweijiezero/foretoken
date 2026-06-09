@@ -60,7 +60,7 @@ CUDA_VISIBLE_DEVICES=0 HF_HOME=<cache> bash scripts/bench.sh \
 ```
 - `--config` 配置文件(`[sampling]` 官方采样 + `[serve]` 引擎,见 `docs/14`);`--dataset` 默认 HF `foretoken-trace`,也可接本地 `.jsonl`/`.parquet`/目录。
 - **负载匹配硬件(关键)**:真实 trace 是集群级到达,单实例(如 4×A100)1× 全量回放必然过载(TTFT 飙到分钟级)。`--rate R`(req/min,自动换算 total_requests=R×窗口分钟)或 `--total-requests N` 会话级下采样到该 request 量(整会话保留 = 负载均衡分给本实例的份额),或 `--sec-multiplier` 拉伸时间;扫不同 `--rate` 出 goodput-vs-load 曲线、拐点即可持续容量。
-- `--window N|A:B`(分钟)截时间片;`--deadline SEC` / `--tail-factor`(默认 2.0)墙钟上限,到点取消运行中请求(截长尾——个别高温采样会一路顶到 max_tokens 拖垮整轮);`--slo TTFT_ms:TPOT_ms`(可重复)定 goodput 达标阈值;`--tag` 标优化变体(`vllm-default`/`kv-aware`/`mtp`);`--param`/`--engine-param` 透传任意 vLLM 采样 / 引擎字段。
+- `--window N|A:B`(分钟)截时间片;`--deadline SEC` / `--tail-grace MIN`(默认 5;墙钟上限 = 窗口跨度 × sec_multiplier + 宽限)到点取消运行中请求(截长尾——个别高温采样会一路顶到 max_tokens 拖垮整轮);`--slo TTFT_ms:TPOT_ms`(可重复)定 goodput 达标阈值;`--tag` 标优化变体(`vllm-default`/`kv-aware`/`mtp`);`--param`/`--engine-param` 透传任意 vLLM 采样 / 引擎字段。
 
 ### 产出(每 run 一目录,见 §4 指标)
 `results/runs/<时间>__<model>__<tag>__<split>_<window>/`:`run.json`(配置+聚合指标)、`turns.jsonl`(每轮指标原始,

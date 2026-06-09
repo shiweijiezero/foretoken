@@ -116,19 +116,15 @@ def parse_window(spec: str | None) -> tuple[int, int] | None:
 def deadline_seconds(
     window: tuple[int, int] | None,
     sec_multiplier: float,
-    tail_factor: float,
-    tail_grace_s: float = 0.0,
+    tail_grace_s: float = 300.0,
 ) -> float | None:
-    """回放墙钟上限 s = 窗口跨度 × sec_multiplier × tail_factor + tail_grace_s;到点取消运行中请求。
+    """回放墙钟上限 s = 窗口跨度 × sec_multiplier + tail_grace_s(窗口跑完再留宽限排空长尾)。
 
-    乘法(× tail_factor,如 ×2)与加法(+ tail_grace_s 宽限,如 +5min)可叠加;
-    无窗口、或两者都 ≤0 → None(不设限,跑到全部完成)。
+    缺省宽限 300s(5min)。无窗口、或 tail_grace_s < 0 → None(不设限,跑到全部完成)。
     """
-    if not window:
+    if not window or tail_grace_s < 0:
         return None
-    span = (window[1] - window[0]) / 1000.0 * sec_multiplier
-    total = (span * tail_factor if tail_factor > 0 else 0.0) + max(0.0, tail_grace_s)
-    return total if total > 0 else None
+    return (window[1] - window[0]) / 1000.0 * sec_multiplier + tail_grace_s
 
 
 def goodput_per_gpu_byte_second(
