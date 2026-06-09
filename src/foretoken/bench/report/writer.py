@@ -75,6 +75,7 @@ def write_run(
     *,
     slo: Sequence[tuple[int, int]],
     engine_stats: list[dict] | None = None,
+    engine_requests: list[dict] | None = None,
     cases: str = "sample",
 ) -> dict:
     """写 turns.jsonl / cases / engine_stats / run.json / summary.md / 图;返回完整 run dict。
@@ -91,6 +92,10 @@ def write_run(
         with (out / "engine_stats.jsonl").open("w", encoding="utf-8") as f:
             for s in engine_stats:
                 f.write(json.dumps(s) + "\n")
+    if engine_requests:  # 完成请求的时间分解
+        with (out / "engine_requests.jsonl").open("w", encoding="utf-8") as f:
+            for r in engine_requests:
+                f.write(json.dumps(r) + "\n")
     summary = summarize(
         results,
         duration_s=meta["duration_s"],
@@ -99,6 +104,7 @@ def write_run(
         slo=slo,
         gpu_name=meta["gpu"]["name"],
         engine_stats=engine_stats,
+        engine_requests=engine_requests,
     )
     run = {**meta, **summary, "cases": cases}
     (out / "run.json").write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")

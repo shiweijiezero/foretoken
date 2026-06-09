@@ -82,7 +82,9 @@ def render_summary(run: dict) -> str:
         *([_row("E2E", fmt_ms(e["p50"]), fmt_ms(e["p90"]), fmt_ms(e["p99"]))] if e else []),
         "",
         f"尾部比 TTFT p99/p50 = **{run.get('tail_ratio_ttft', 0):.1f}×**"
-        f" · 输出长度均值 {run.get('output_len', {}).get('mean', 0):.0f} tok",
+        f" · 输出长度均值 {run.get('output_len', {}).get('mean', 0):.0f} tok"
+        + (f" · 生成速度(1000/TPOT)p50 **{g['p50']:.0f}** tok/s(慢尾 p10 {g['p10']:.0f})"
+           if (g := lat.get("gen_tok_s")) else ""),
         "",
         "## 吞吐",
         f"输出 **{tp['output_tok_s']:.0f} tok/s**({tp['output_tok_s_per_gpu']:.0f}/GPU)"
@@ -117,11 +119,32 @@ def render_summary(run: dict) -> str:
         ]
     eng = run.get("engine")
     if eng:
+        extra = []
+        if eng.get("prefix_hit_rate") is not None:
+            extra.append(f"prefix 命中率 **{100 * eng['prefix_hit_rate']:.0f}%**")
+        if eng.get("decode_tok_s") is not None:
+            extra.append(f"引擎 decode **{eng['decode_tok_s']:.0f} tok/s**")
+        extra.append(f"抢占 **{eng.get('total_preempted', 0)}**")
         L += [
             "",
             "## 引擎(逐 iteration)",
             f"峰值 KV 利用率 **{100 * eng['peak_kv']:.0f}%**(均值 {100 * eng['mean_kv']:.0f}%)"
-            f" · 最大运行中 **{eng['max_running']}** · 最大排队 **{eng['max_waiting']}**",
+            f" · 最大运行中 **{eng['max_running']}** · 最大排队 **{eng['max_waiting']}**"
+            + (" · " + " · ".join(extra) if extra else ""),
+        ]
+    er = run.get("engine_requests")
+    if er:
+        rs = " · ".join(f"{k or '?'}={v}" for k, v in er["finish_reason"].items())
+        frac = er.get("cached_token_frac")
+        L += [
+            "",
+            "## 引擎侧请求分解(完成请求,p50 / p99)",
+            f"排队 **{fmt_ms(er['queued_ms']['p50'])} / {fmt_ms(er['queued_ms']['p99'])}**"
+            f" · prefill {fmt_ms(er['prefill_ms']['p50'])} / {fmt_ms(er['prefill_ms']['p99'])}"
+            f" · decode {fmt_ms(er['decode_ms']['p50'])} / {fmt_ms(er['decode_ms']['p99'])}"
+            f" · 引擎 TPOT {fmt_ms(er['tpot_ms']['p50'])} / {fmt_ms(er['tpot_ms']['p99'])}",
+            f"结束原因:{rs}"
+            + (f" · 缓存命中 token 占比 {100 * frac:.0f}%" if frac is not None else ""),
         ]
     ch = run.get("client_health") or {}
     if ch.get("samples"):

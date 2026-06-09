@@ -58,25 +58,46 @@ async def run_replay(
     sec_multiplier: float = 1.0,
     deadline_s: float | None = None,
 ):
-    """进程内起引擎 → 回放 → finally 关停。返回 (results, cancelled, duration_s, engine_stats, client_health)。
+    """进程内起引擎 → 回放 → finally 关停。
+    返回 (results, cancelled, duration_s, engine_stats, engine_requests, client_health)。
 
-    engine_stats:逐 iteration 的引擎 SchedulerStats 序列(KV%/并发/排队),经自定义 stat logger 采集。
+    engine_stats:逐 iteration 快照(KV%/并发/排队 + prefix 命中增量 + 抢占 + decode token)。
+    engine_requests:每个完成请求的引擎分解(排队 / prefill / decode 时间、TPOT、finish_reason、缓存命中)。
     """
-    samples: list[tuple] = []
+    samples: list[dict] = []
+    fin: list[dict] = []
 
-    class _Capture(StatLoggerBase):  # 每步收 SchedulerStats:KV 利用率 / 运行中 / 排队
+    class _Capture(StatLoggerBase):  # 逐 iteration 快照 + 完成请求分解
         def __init__(self, *a, **k):
             pass
 
         def record(self, scheduler_stats, iteration_stats=None, mm_cache_stats=None, engine_idx=0):
-            s = scheduler_stats
-            if s is not None:
-                samples.append((
-                    time.perf_counter(),
-                    getattr(s, "kv_cache_usage", 0.0),
-                    getattr(s, "num_running_reqs", 0),
-                    getattr(s, "num_waiting_reqs", 0),
-                ))
+            s, it = scheduler_stats, iteration_stats
+            if s is not None:  # 调度器快照 + prefix / decode / 抢占增量
+                pc = getattr(s, "prefix_cache_stats", None)
+                samples.append({
+                    "at": time.perf_counter(),
+                    "kv": getattr(s, "kv_cache_usage", 0.0),
+                    "running": getattr(s, "num_running_reqs", 0),
+                    "waiting": getattr(s, "num_waiting_reqs", 0),
+                    "pc_q": getattr(pc, "queries", 0) if pc is not None else 0,
+                    "pc_h": getattr(pc, "hits", 0) if pc is not None else 0,
+                    "gen_tok": getattr(it, "num_generation_tokens", 0) if it is not None else 0,
+                    "preempted": getattr(it, "num_preempted_reqs", 0) if it is not None else 0,
+                })
+            if it is not None:  # 完成请求的时间分解
+                for fr in getattr(it, "finished_requests", None) or []:
+                    fin.append({
+                        "finish_reason": str(getattr(fr, "finish_reason", "")),
+                        "e2e_s": getattr(fr, "e2e_latency", 0.0),
+                        "queued_s": getattr(fr, "queued_time", 0.0),
+                        "prefill_s": getattr(fr, "prefill_time", 0.0),
+                        "decode_s": getattr(fr, "decode_time", 0.0),
+                        "mtpot_s": getattr(fr, "mean_time_per_output_token", 0.0),
+                        "n_prompt": getattr(fr, "num_prompt_tokens", 0),
+                        "n_gen": getattr(fr, "num_generation_tokens", 0),
+                        "cached": getattr(fr, "num_cached_tokens", 0),
+                    })
 
         def log(self):
             pass
@@ -98,11 +119,11 @@ async def run_replay(
             sessions, backend, sec_multiplier=sec_multiplier, deadline_s=deadline_s
         )
         dur = time.perf_counter() - t
-        stats = [  # 取回放期间(t 之后)的样本,时刻相对回放起点
-            {"t": at - t, "kv": kv, "running": run, "waiting": wait}
-            for (at, kv, run, wait) in samples
-            if at - t >= 0
+        stats = [  # 回放期间样本,时刻相对回放起点
+            {k: v for k, v in s.items() if k != "at"} | {"t": s["at"] - t}
+            for s in samples
+            if s["at"] - t >= 0
         ]
-        return results, cancelled, dur, stats, health
+        return results, cancelled, dur, stats, fin, health
     finally:
         engine.shutdown()  # 关停引擎、释放 GPU(正常 / 报错 / 中断都走)
