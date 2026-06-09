@@ -6,12 +6,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-# 国内 GPU 云(AutoDL 类)参考按量价(人民币 元 / GPU·h);按 GPU 名子串匹配,无匹配回退默认。
+# 国内 GPU 云(AutoDL 类)按量参考价(人民币 元 / GPU·h;A100/A800/4090 为 2026-06 核 AutoDL 实价,
+# H100/H200 等稀缺/受限卡为粗略估值)。按 GPU 名子串匹配 —— A100 须在 A10 前,否则 A100 误匹配 A10。
 _GPU_RATES = {
-    "A100": 8.0, "H100": 18.0, "H200": 22.0, "L40": 6.0, "L20": 5.0,
-    "4090": 2.5, "A10": 1.5, "V100": 3.0,
+    "A100": 6.8, "A800": 6.0, "H100": 25.0, "H200": 30.0,
+    "4090": 2.5, "L40": 6.0, "L20": 5.0, "V100": 3.0, "A10": 1.5,
 }
-_FALLBACK_RATE = 8.0
+_FALLBACK_RATE = 6.8
 
 
 def gpu_rate(name: str) -> float:
