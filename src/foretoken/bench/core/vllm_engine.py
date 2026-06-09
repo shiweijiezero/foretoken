@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-"""进程内 vLLM 引擎后端:InProcessBackend(流式生成)+ run_replay(起停引擎 + 逐 iteration 监控)。"""
+"""进程内 vLLM 引擎后端:InProcessBackend(流式生成)+ run_replay(启停引擎 + 逐 iteration 监控)。"""
 
 from __future__ import annotations
 
@@ -58,11 +58,11 @@ async def run_replay(
     sec_multiplier: float = 1.0,
     deadline_s: float | None = None,
 ):
-    """进程内起引擎 → 回放 → finally 关停。
+    """进程内启动引擎 → 回放 → finally 关停。
     返回 (results, cancelled, duration_s, engine_stats, engine_requests, client_health)。
 
     engine_stats:逐 iteration 快照(KV%/并发/排队 + prefix 命中增量 + 抢占 + decode token)。
-    engine_requests:每个完成请求的引擎分解(排队 / prefill / decode 时间、TPOT、finish_reason、缓存命中)。
+    engine_requests:逐完成请求的引擎分解(排队/prefill/decode 时间、TPOT、finish_reason、命中)。
     """
     samples: list[dict] = []
     fin: list[dict] = []
