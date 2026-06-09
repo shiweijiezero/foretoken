@@ -13,7 +13,7 @@ from vllm.v1.engine.async_llm import AsyncLLM
 from vllm.v1.metrics.loggers import StatLoggerBase
 
 from foretoken.bench.core.loop import replay
-from foretoken.bench.core.timer import StreamTimer
+from foretoken.bench.utils.timer import StreamTimer
 
 
 class InProcessBackend:

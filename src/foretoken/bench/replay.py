@@ -387,7 +387,7 @@ def main() -> None:
     report.rebuild_index(runs_dir)
     print(f"记录写入 {run_dir}")
     if args.wandb_project:  # 可选上报(wandb 仅此分支需要)
-        from foretoken.bench.wandb_log import log_run
+        from foretoken.bench.utils.wandb_log import log_run
 
         log_run(run, project=args.wandb_project, group=args.wandb_group,
                 name=args.wandb_name or run_name)

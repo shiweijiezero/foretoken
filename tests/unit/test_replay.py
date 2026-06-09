@@ -140,7 +140,7 @@ def test_replay_completes_without_deadline():
         2: [{"session_id": 2, "turn": 0, "timestamp_ms": 0, "user": "yo", "system": None}],
     }
     be = _FakeBackend(step_delay=0.001)
-    results, cancelled = asyncio.run(replay(sessions, be, deadline_s=None))
+    results, cancelled, _health = asyncio.run(replay(sessions, be, deadline_s=None))
     assert len(results) == 2
     assert all(r.ok and r.output_tokens == 3 for r in results)
     assert cancelled == 0
@@ -150,7 +150,7 @@ def test_replay_completes_without_deadline():
 def test_replay_deadline_cancels_inflight():
     sessions = {1: [{"session_id": 1, "turn": 0, "timestamp_ms": 0, "user": "hi", "system": None}]}
     be = _FakeBackend(step_delay=0.5)  # 单轮 ~1.5s,远超 deadline
-    results, cancelled = asyncio.run(replay(sessions, be, deadline_s=0.05))
+    results, cancelled, _health = asyncio.run(replay(sessions, be, deadline_s=0.05))
     assert results == []  # 到点在飞被取消,无完成轮
     assert cancelled == 1
     assert be.aborted == ["1-0"]  # 取消时记录该请求
