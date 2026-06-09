@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-"""CLI:重画图 / 重建 cases / 负载扫描招牌图 / 多组对比 / 重建 INDEX。
+"""CLI:重画图 / 重建 cases / 负载扫描招牌图 / 多组对比 / 计价成本 / 重建 INDEX。
 
   python -m foretoken.bench.report [runs_dir] [--plots] [--cases]
   python -m foretoken.bench.report --compare <run_dir> <run_dir> ...   (或 runs/ 比全部)
+  python -m foretoken.bench.report --cost <run_dir> ... [--gpu-rate A100=8 --slo-tier 0]
   python -m foretoken.bench.report --sweep [--x rate|total|window] <run_dir> ...
 """
 
@@ -12,7 +13,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from foretoken.bench.report import compare, rebuild_index, regen_cases, regen_plots, sweep_curve
+from foretoken.bench.report import (
+    compare,
+    cost_report,
+    rebuild_index,
+    regen_cases,
+    regen_plots,
+    sweep_curve,
+)
 
 argv = sys.argv[1:]
 flags = {a for a in argv if a.startswith("-")}
@@ -35,6 +43,17 @@ if "--compare" in flags:  # 多组实验对比:全指标表 + 对比图 → <out
     dirs = [a for a in pos if a != out] or ["results/runs"]
     res = compare(dirs, out_dir=out or None)
     print(f"对比写入:{res / 'summary.md'}" if res else "对比需 ≥2 个 run(检查路径)")
+    sys.exit(0)
+
+if "--cost" in flags:  # 计价成本:各配置 $/Mtok(原始 / 达成 SLO)→ <out>/cost.md
+    out = _opt("--out", "")
+    tier_s = _opt("--slo-tier", "0")
+    rate_vals = [argv[i + 1] for i, a in enumerate(argv) if a == "--gpu-rate" and i + 1 < len(argv)]
+    rates = {k: float(v) for k, _, v in (rv.partition("=") for rv in rate_vals) if v}
+    consumed = {out, tier_s, *rate_vals}
+    dirs = [a for a in pos if a not in consumed] or ["results/runs"]
+    res = cost_report(dirs, out_dir=out or None, rates=rates, slo_tier=int(tier_s))
+    print(f"成本报告写入:{res / 'cost.md'}" if res else "无可读 run(检查路径)")
     sys.exit(0)
 
 d = pos[0] if pos else "results/runs"
