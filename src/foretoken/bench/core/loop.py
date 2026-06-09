@@ -35,9 +35,11 @@ async def replay(
         complete_prev = 0.0
         t_prev = turns[0]["timestamp_ms"]
         for k, turn in enumerate(turns):
-            send_rel = next_send_ms(k, turn["timestamp_ms"], t_prev, complete_prev, t0)
+            send_rel = next_send_ms(
+                k, turn["timestamp_ms"], t_prev, complete_prev, t0, sec_multiplier
+            )  # 已含 sec_multiplier 缩放(墙钟 ms),sleep 不再二次缩放
             now_ms = (time.perf_counter() - start) * 1000.0
-            await asyncio.sleep(max(0.0, (send_rel * sec_multiplier - now_ms) / 1000.0))
+            await asyncio.sleep(max(0.0, (send_rel - now_ms) / 1000.0))
             messages.append({"role": "user", "content": turn["user"]})
             send_ms = (time.perf_counter() - start) * 1000.0  # 实际发出时刻(经过 sleep 后)
             text, ttft, tpot, e2e, n, n_prompt, ok = await backend.gen_once(messages, f"{sid}-{k}")

@@ -16,12 +16,23 @@ from datasets import load_dataset
 from foretoken.bench.core.types import TurnResult
 
 
-def next_send_ms(turn_idx: int, t_cur: int, t_prev: int, complete_prev_ms: float, t0: int) -> float:
-    """该轮发出的相对(对 t0)时刻 ms。首轮 = 绝对;上一轮按时完成 → 绝对,超时 → 完成 + 原间隔。"""
-    t_cur_rel = t_cur - t0
-    if turn_idx == 0 or complete_prev_ms <= t_cur_rel:
-        return float(t_cur_rel)
-    return complete_prev_ms + (t_cur - t_prev)  # 超时:完成时刻 + 原本的思考间隔
+def next_send_ms(
+    turn_idx: int,
+    t_cur: int,
+    t_prev: int,
+    complete_prev_ms: float,
+    t0: int,
+    sec_multiplier: float = 1.0,
+) -> float:
+    """该轮发出的相对(对回放 start)**墙钟** ms。全程墙钟口径(complete_prev 即墙钟,故避免单位混算)。
+
+    首轮 / 上轮按时完成 → 跟 trace 位置(× sec_multiplier 缩放到墙钟);
+    上轮超时 → 完成时刻 + **缩放后**的原思考间隔。调用方 sleep 到此墙钟时刻,不再二次缩放。
+    """
+    target = (t_cur - t0) * sec_multiplier  # trace 位置 → 墙钟
+    if turn_idx == 0 or complete_prev_ms <= target:
+        return float(target)
+    return complete_prev_ms + (t_cur - t_prev) * sec_multiplier  # 墙钟完成 + 缩放后思考间隔
 
 
 def group_sessions(
