@@ -1,8 +1,8 @@
 # Foretoken
 
-> Industrial LLM inference on vLLM, with plugin-based optimization and real-workload evaluation.
+> Real-workload benchmark and optimization layer for industrial LLM inference on vLLM — value-aware KV, speculative decoding, scheduling; measured by goodput and ¥/Mtok@SLO.
 
-基于 vLLM 的推理优化项目:在工业级真实推理之上,以树外插件做各项优化(KV 管理、MTP 等),并用真实业务负载检验每一项优化的好坏，以服务Token工厂。
+Foretoken 基于 vLLM:在工业级真实推理之上做价值感知 KV / 投机解码 / 调度等优化,并用真实业务负载检验每项优化的好坏——以 **goodput**(满足 SLO 的有效吞吐)与**裸吞吐**并重衡量产能、**¥/Mtok@SLO**(每百万可交付 token 成本)衡量成本。vLLM 是当前底座:优化经其扩展点接入、评测进程内自起其引擎,GPU 驱逐 LRU 等约束由其定义;评测层后端无关,也可打任意 OpenAI 兼容服务。愿景是做成 Token 工厂(高效 token 生产)的质量度量与优化层。
 
 ## 评测数据准备
 
@@ -19,7 +19,7 @@ bash scripts/build_dataset.sh
 闭环回放真实会话负载:按真实 timestamp 回放、模型现场生成回复拼接下一轮(非预录答案),采集 TTFT/TPOT/E2E、吞吐与 goodput。默认在回放进程内自起引擎(`AsyncLLM`,退出即释放 GPU);也可打 `vllm serve`(三种后端形式见下)。
 
 ```bash
-pip install -e .   # 装依赖(含 vLLM;需 GPU 机器)
+pip install -e .   # 装依赖(含底座 vLLM;需 GPU 机器)
 # 权重从 HF 拉取,数据集默认公开的 weijiezz/foretoken-trace,
 # 不传 --config 即用 config/models/default.toml(贪心解码) 换更大的模型时配上它的 `config`(采样 + 引擎并行)
 CUDA_VISIBLE_DEVICES=0 bash scripts/bench.sh \
@@ -53,14 +53,14 @@ CUDA_VISIBLE_DEVICES=0,1,2,3 bash scripts/bench.sh --serve --dp 4 --api-server-c
 
 > 进程内只测引擎(单 bench 进程做全部 tokenize/detok,高并发下客户端可能先于 GPU 封顶);API 形式把前端移到 `vllm serve` 侧(`--api-server-count` 可多开),用以区分引擎与前端瓶颈。API 形式无逐 iteration 引擎监控,`--gpus` 给服务器卡数算 goodput/GPU。
 
-每 run 落 `results/runs/<…>/`:`summary.md`(markdown 摘要 + 内嵌图)、`run.json` / `turns.jsonl` / `engine_stats.jsonl`、`en/`·`zh/` 双语图;`results/runs/INDEX.md` 排行榜。逐轮输入输出由 `--cases` 控制(默认仅可读样例 `cases.md`,`full` 另出全量 `cases.jsonl`,`off` 不存)。完整命令查看 [`docs/07`](docs/07-eval-playbook.md)。
+每 run 落 `results/runs/<…>/`:`summary.md`(markdown 摘要 + 内嵌图)、`run.json` / `turns.jsonl` / `engine_stats.jsonl`、`en/`·`zh/` 双语图;`results/runs/INDEX.md` 排行榜。逐轮输入输出由 `--cases` 控制(默认仅可读样例 `cases.md`,`full` 另出全量 `cases.jsonl`,`off` 不存)。完整命令见 `python -m foretoken.bench.replay --help`。
 
 指标分四组(`summary.md` / `run.json`):
 
 - **延迟**:TTFT(首 token)、TPOT(逐 token 间隔)、E2E(整轮)的 p50/p90/p99,及尾部比 p99/p50。
-- **吞吐**:输出 / 输入 / 总 tok/s(及 /GPU)、完成 req/s。
-- **goodput**:按 SLO 阶梯(严/中/松,TTFT+TPOT 双门限)只计达标轮的 tok/s,及 /GPU、归一化 tok/(s·GPU字节);阶梯可用 `--slo TTFT_ms:TPOT_ms` 自定义。
-- **SchedulerStats**:KV cache 利用率、运行中 / 排队请求数随时间。
+- **吞吐**:输出 / 输入 / 总 tok/s(及 /GPU)、完成 req/s。衡量产能上限。
+- **goodput**:按 SLO 阶梯(严/中/松,TTFT+TPOT 双门限)只计达标轮的 tok/s,及 /GPU、归一化 tok/(s·GPU字节);阶梯可用 `--slo TTFT_ms:TPOT_ms` 自定义。与吞吐并重、对照看。
+- **引擎监控**:KV cache 利用率、运行中 / 排队请求数随时间;逐请求排队 / prefill / decode 时间分解、prefix 命中率(进程内后端)。
 
 对比多组实验:
 ```bash
@@ -69,6 +69,10 @@ bash scripts/compare.sh results/runs/<A> results/runs/<B> ...   # 或 results/ru
 出 `results/compare/<时间戳>/summary.md`(每次对比独立留存、不覆盖):全指标对比表(TTFT/TPOT/E2E 各 p50/p90/p99、尾部比、吞吐、goodput 三档+达成、KV/并发)+ 对比图(CDF 叠加 / 分位柱 / goodput / 原始-vs-good 吞吐,双语)。负载扫描曲线另见 `python -m foretoken.bench.report --sweep --x rate <runs...>`。
 
 > 真实 trace 是集群级到达,单实例 1× 全量回放会过载;用 `--rate`(或 `--total-requests`)会话级下采样把负载匹配到硬件,扫不同到达率得 goodput-vs-load 曲线、拐点即可持续容量。
+
+## 文档
+
+详细文档随功能逐步补充,见 [`docs/`](docs/)。
 
 ## License
 
