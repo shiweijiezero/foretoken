@@ -123,6 +123,15 @@ def render_summary(run: dict) -> str:
             f"峰值 KV 利用率 **{100 * eng['peak_kv']:.0f}%**(均值 {100 * eng['mean_kv']:.0f}%)"
             f" · 最大运行中 **{eng['max_running']}** · 最大排队 **{eng['max_waiting']}**",
         ]
+    ch = run.get("client_health") or {}
+    if ch.get("samples"):
+        verdict = "客户端可能是瓶颈(发送侧饱和)" if ch["loop_lag_max_ms"] > 100 else "客户端未拖后腿"
+        L += [
+            "",
+            "## 客户端健康(事件循环延迟,漂移大 = 单事件循环饱和、瓶颈在发送侧而非引擎)",
+            f"均值 **{ch['loop_lag_mean_ms']:.0f}ms** · p99 **{ch['loop_lag_p99_ms']:.0f}ms**"
+            f" · 峰值 **{ch['loop_lag_max_ms']:.0f}ms** —— {verdict}",
+        ]
     cases = run.get("cases", "full")
     if cases != "off":
         line = "样例输入输出:`cases.md`(可读样例)"

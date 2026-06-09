@@ -251,6 +251,11 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--runs-dir", default="results/runs", help="单实验记录根目录(默认 results/runs/)"
     )
+    ap.add_argument(
+        "--wandb-project", default=None, help="给定则把本次 run 的配置+指标上报 WandB 到该 project"
+    )
+    ap.add_argument("--wandb-group", default=None, help="WandB group(把一组实验归到一起对比)")
+    ap.add_argument("--wandb-name", default=None, help="WandB run 名(缺省取目录名/tag)")
     return ap
 
 
@@ -261,12 +266,12 @@ def _run_http(sessions, model, sampling, endpoint, *, sec_multiplier, deadline_s
     async def _go():
         t = time.perf_counter()
         try:
-            res, canc = await replay_loop(
+            res, canc, health = await replay_loop(
                 sessions, backend, sec_multiplier=sec_multiplier, deadline_s=deadline_s
             )
         finally:
             await backend.aclose()  # 及时关闭 client(连接/会话不泄漏)
-        return res, canc, time.perf_counter() - t
+        return res, canc, health, time.perf_counter() - t
 
     return asyncio.run(_go())
 
@@ -313,14 +318,14 @@ def main() -> None:
             args.model, serve_cfg, port=args.port, dp=args.dp,
             api_server_count=args.api_server_count, serve_args=args.serve_arg,
         ) as endpoint:
-            results, cancelled, duration = _run_http(
+            results, cancelled, health, duration = _run_http(
                 sessions, args.model, sampling, endpoint,
                 sec_multiplier=args.sec_multiplier, deadline_s=deadline,
             )
     elif args.endpoint:  # 打已有 vllm serve(引擎在服务器侧,无逐 iteration 监控)
         engine_kwargs = {}
         gpu = {"count": args.gpus or 0, "name": "remote", "bytes_per_gpu": 0, "total_bytes": 0}
-        results, cancelled, duration = _run_http(
+        results, cancelled, health, duration = _run_http(
             sessions, args.model, sampling, args.endpoint,
             sec_multiplier=args.sec_multiplier, deadline_s=deadline,
         )
@@ -332,7 +337,7 @@ def main() -> None:
         vllm_ver = vllm.__version__
         engine_kwargs = _build_engine_kwargs(args)
         gpu = _gpu_info(engine_kwargs.get("tensor_parallel_size", 1))
-        results, cancelled, duration, engine_stats = asyncio.run(
+        results, cancelled, duration, engine_stats, health = asyncio.run(
             run_replay(
                 sessions, sampling=sampling, engine_kwargs=engine_kwargs,
                 sec_multiplier=args.sec_multiplier, deadline_s=deadline,
@@ -371,6 +376,7 @@ def main() -> None:
         "load": {"sessions": len(sessions), "turns": n_turns, "offered_turn_s": offered_turn_s},
         "cancelled_sessions": cancelled,
         "duration_s": duration,
+        "client_health": health,
     }
     win = (args.window or "all").replace(":", "-")
     load = f"_r{args.rate:g}" if args.rate else (f"_t{n_req}" if n_req else "")
@@ -380,12 +386,18 @@ def main() -> None:
     runs_dir = Path(args.runs_dir)
     slo_specs = args.slo if args.slo is not None else _DEFAULT_SLO
     run_dir = runs_dir / run_name
-    report.write_run(
+    run = report.write_run(
         results, meta, run_dir, slo=report.parse_slo(slo_specs),
         engine_stats=engine_stats, cases=args.cases,
     )
     report.rebuild_index(runs_dir)
     print(f"记录写入 {run_dir}")
+    if args.wandb_project:  # 可选上报(wandb 仅此分支需要)
+        from foretoken.bench.wandb_log import log_run
+
+        log_run(run, project=args.wandb_project, group=args.wandb_group,
+                name=args.wandb_name or run_name)
+        print(f"WandB 上报:{args.wandb_project}")
 
 
 if __name__ == "__main__":  # pragma: no cover
