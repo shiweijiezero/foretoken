@@ -1,0 +1,9 @@
+apiVersion: gateway.foretoken.ai/v1alpha1
+kind: RoutingProfile
+metadata:
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/managed-by: kustomize
+  name: routingprofile-sample
+spec:
+  # TODO(user): Add fields here

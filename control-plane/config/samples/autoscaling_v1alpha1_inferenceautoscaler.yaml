@@ -1,0 +1,9 @@
+apiVersion: autoscaling.foretoken.ai/v1alpha1
+kind: InferenceAutoscaler
+metadata:
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/managed-by: kustomize
+  name: inferenceautoscaler-sample
+spec:
+  # TODO(user): Add fields here
