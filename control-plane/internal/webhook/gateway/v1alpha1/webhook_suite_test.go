@@ -37,6 +37,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	gatewayv1alpha1 "github.com/foretoken/foretoken/control-plane/api/gateway/v1alpha1"
 	// +kubebuilder:scaffold:imports
