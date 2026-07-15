@@ -1,5 +1,6 @@
 infra/
 .idea/
+.vscode/
 
 # Python
 __pycache__/
