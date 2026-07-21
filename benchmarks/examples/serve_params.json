@@ -1,0 +1,12 @@
+[
+  {
+    "_benchmark_name": "mns32",
+    "max_num_seqs": 32,
+    "max_num_batched_tokens": 1024
+  },
+  {
+    "_benchmark_name": "mns64",
+    "max_num_seqs": 64,
+    "max_num_batched_tokens": 2048
+  }
+]
