@@ -1,5 +1,5 @@
 {
-  "$schema": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.schema.json",
+  "$schema": "https://cdn.jsdelivr.net/gh/devcontainers/spec@main/schemas/devContainer.schema.json",
   "name": "Foretoken Dev Container",
   "build": {
     "dockerfile": "Dockerfile",
@@ -26,17 +26,11 @@
 
   "features": {
     "ghcr.io/devcontainers/features/go:1": {
-      "version": "1.25"
-    },
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {
-      "version": "latest",
-      "dockerDashComposeVersion": "none",
-      "installDockerComposeSwitch": false
+      "version": "1.25.7"
     }
   },
 
   "runArgs": [
-    "--privileged",
     "--init",
     "--add-host=host.docker.internal:host-gateway"
   ],
@@ -98,6 +92,5 @@
     "source=/tmp/,target=/tmp/,type=bind"
   ],
 
-  "postCreateCommand": "bash /workspace/.devcontainer/post-install.sh",
-  "postStartCommand": "bash -lc 'for i in {1..30}; do docker info >/dev/null 2>&1 && exit 0; sleep 1; done; echo \"WARNING: Docker not ready after 30s\" >&2'"
+  "postCreateCommand": "bash /workspace/.devcontainer/post-install.sh"
 }

@@ -37,27 +37,6 @@ load_tool_versions() {
   done < "${TOOL_VERSIONS_FILE}"
 }
 
-# Rust follows the standard rustup convention: the repo-level toolchain file is
-# the source of truth unless RUST_TOOLCHAIN is explicitly set by the caller.
-read_rust_toolchain() {
-  local toolchain_file="${REPO_ROOT}/rust-toolchain.toml"
-  local channel=""
-
-  if [ -f "${toolchain_file}" ]; then
-    channel="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${toolchain_file}" | head -n 1)"
-  fi
-
-  if [ -z "${channel}" ]; then
-    echo "ERROR: Rust toolchain channel not found in ${toolchain_file}" >&2
-    return 1
-  fi
-
-  printf '%s\n' "${channel}"
-}
-
-load_tool_versions
-RUST_TOOLCHAIN="${RUST_TOOLCHAIN:-$(read_rust_toolchain)}"
-
 # User-local install/cache paths. LOCALBIN is provided by devcontainer.json in
 # normal runs, while these fallbacks keep the script usable when run manually.
 BIN_DIR="${LOCALBIN:-${HOME}/.cache/foretoken/control-plane-bin}"
@@ -67,12 +46,16 @@ HISTFILE="${HISTFILE:-${HOME}/.commandhistory}"
 HISTFILE_DIR="${HISTFILE%/*}"
 FAILED_INSTALLS=()
 
-# Normalize upper/lowercase proxy variables because different tools honor
-# different spellings during downloads, git operations, and package installs.
-# Localhost proxies from the host are rewritten for Docker Desktop containers:
-# inside the container, 127.0.0.1/localhost is the container itself, while
-# host.docker.internal points back to the host machine.
-rewrite_container_proxy_url() {
+# Network defaults. Keep URL-containing defaults in shell rather than
+# devcontainer.json because Dev Container interpolation treats ':' specially.
+DEFAULT_NO_PROXY="localhost,127.0.0.1,host.docker.internal,.svc,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+DEFAULT_GOPROXY="https://proxy.golang.org,direct"
+DEFAULT_GOSUMDB="sum.golang.org"
+
+# Rewrite host-local proxy endpoints for Docker Desktop containers. Inside the
+# container, localhost/127.0.0.1 is the container itself; host.docker.internal is
+# the route back to the host machine.
+rewrite_host_local_proxy_url() {
   local value="$1"
 
   value="${value//:\/\/localhost/:\/\/host.docker.internal}"
@@ -94,25 +77,8 @@ rewrite_container_proxy_url() {
   printf '%s\n' "${value}"
 }
 
-normalize_proxy_env() {
-  export HTTP_PROXY="${HTTP_PROXY:-${http_proxy:-}}"
-  export HTTPS_PROXY="${HTTPS_PROXY:-${https_proxy:-}}"
-  export ALL_PROXY="${ALL_PROXY:-${all_proxy:-}}"
-  export NO_PROXY="${NO_PROXY:-${no_proxy:-localhost,127.0.0.1,host.docker.internal,.svc,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}}"
-
-  HTTP_PROXY="$(rewrite_container_proxy_url "${HTTP_PROXY}")"
-  HTTPS_PROXY="$(rewrite_container_proxy_url "${HTTPS_PROXY}")"
-  ALL_PROXY="$(rewrite_container_proxy_url "${ALL_PROXY}")"
-
-  export HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
-  export http_proxy="${http_proxy:-${HTTP_PROXY}}"
-  export https_proxy="${https_proxy:-${HTTPS_PROXY}}"
-  export all_proxy="${all_proxy:-${ALL_PROXY}}"
-  export no_proxy="${no_proxy:-${NO_PROXY}}"
-}
-
-# Print sanitized proxy diagnostics so download failures can be debugged without
-# leaking credentials embedded in proxy URLs.
+# Best-effort redaction for diagnostics. Avoid printing credentials from proxy
+# URLs such as http://user:pass@host:port.
 sanitize_proxy_url() {
   local value="$1"
 
@@ -128,20 +94,51 @@ sanitize_proxy_url() {
   fi
 }
 
+normalize_proxy_env() {
+  # 1. Choose canonical values from either uppercase or lowercase inputs.
+  local http="${HTTP_PROXY:-${http_proxy:-}}"
+  local https="${HTTPS_PROXY:-${https_proxy:-}}"
+  local all="${ALL_PROXY:-${all_proxy:-}}"
+  local no="${NO_PROXY:-${no_proxy:-${DEFAULT_NO_PROXY}}}"
+
+  # 2. Rewrite host-local proxy endpoints for container use.
+  http="$(rewrite_host_local_proxy_url "${http}")"
+  https="$(rewrite_host_local_proxy_url "${https}")"
+  all="$(rewrite_host_local_proxy_url "${all}")"
+
+  # 3. Export canonical values in both cases. Force lowercase variants to the
+  # same canonical values.
+  # curl may prefer lowercase variables, so preserving stale lowercase
+  # localhost values can bypass the rewrite and point back at the container.
+  export HTTP_PROXY="${http}"
+  export HTTPS_PROXY="${https}"
+  export ALL_PROXY="${all}"
+  export NO_PROXY="${no}"
+  export http_proxy="${http}"
+  export https_proxy="${https}"
+  export all_proxy="${all}"
+  export no_proxy="${no}"
+}
+
 print_proxy_diagnostics() {
-  echo "Proxy diagnostics (sanitized):"
+  echo "Proxy diagnostics after normalization (sanitized):"
   echo "  HTTP_PROXY=$(sanitize_proxy_url "${HTTP_PROXY:-}")"
   echo "  HTTPS_PROXY=$(sanitize_proxy_url "${HTTPS_PROXY:-}")"
   echo "  ALL_PROXY=$(sanitize_proxy_url "${ALL_PROXY:-}")"
   echo "  NO_PROXY=${NO_PROXY:-<unset>}"
 }
 
-# Keep Go defaults in shell logic instead of devcontainer.json localEnv defaults:
-# Dev Container interpolation treats ':' specially, so URL defaults such as
-# https://proxy.golang.org can be truncated if written directly in JSON.
+# Go network defaults. Keep these in shell instead of devcontainer.json because
+# Dev Container localEnv interpolation treats ':' specially.
 normalize_go_env() {
-  export GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}"
-  export GOSUMDB="${GOSUMDB:-sum.golang.org}"
+  export GOPROXY="${GOPROXY:-${DEFAULT_GOPROXY}}"
+  export GOSUMDB="${GOSUMDB:-${DEFAULT_GOSUMDB}}"
+}
+
+configure_network_env() {
+  normalize_proxy_env
+  normalize_go_env
+  print_proxy_diagnostics
 }
 
 echo "===================================="
@@ -226,23 +223,6 @@ detect_arch() {
   esac
 }
 
-# rustup's direct binary fallback uses Rust target triples, not Docker asset
-# names. Keep this separate from detect_arch so both mappings stay obvious.
-detect_rustup_arch() {
-  case "$(uname -m)" in
-    x86_64)
-      echo "x86_64-unknown-linux-gnu"
-      ;;
-    aarch64|arm64)
-      echo "aarch64-unknown-linux-gnu"
-      ;;
-    *)
-      echo "ERROR: Unsupported rustup architecture: $(uname -m)" >&2
-      return 1
-      ;;
-  esac
-}
-
 # Append a shell startup line only once; devcontainer lifecycle hooks may be
 # rerun, so all shell customization must be idempotent.
 ensure_bashrc_line() {
@@ -253,6 +233,69 @@ ensure_bashrc_line() {
   if ! grep -qxF "${line}" "${bashrc}"; then
     printf '%s\n' "${line}" >> "${bashrc}"
   fi
+}
+
+# Replace a named .bashrc block on every run. Use this for values that can
+# change between rebuilds, such as normalized proxy variables from localEnv.
+write_bashrc_managed_block() {
+  local name="$1"
+  local content="$2"
+  local bashrc="${HOME}/.bashrc"
+  local begin="# >>> foretoken ${name} >>>"
+  local end="# <<< foretoken ${name} <<<"
+  local tmp="${bashrc}.tmp.$$"
+  local in_block=false
+
+  touch "${bashrc}"
+  : > "${tmp}"
+
+  while IFS= read -r line || [ -n "${line}" ]; do
+    if [ "${line}" = "${begin}" ]; then
+      in_block=true
+      continue
+    fi
+    if [ "${line}" = "${end}" ]; then
+      in_block=false
+      continue
+    fi
+    if [ "${in_block}" != true ]; then
+      printf '%s\n' "${line}" >> "${tmp}"
+    fi
+  done < "${bashrc}"
+
+  if [ -n "${content}" ]; then
+    {
+      printf '%s\n' "${begin}"
+      printf '%s' "${content}"
+      printf '%s\n' "${end}"
+    } >> "${tmp}"
+  fi
+
+  mv "${tmp}" "${bashrc}"
+}
+
+configure_shell_proxy_env() {
+  local content=""
+  local name value
+
+  for name in HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY http_proxy https_proxy all_proxy no_proxy; do
+    value="${!name:-}"
+    if [ -n "${value}" ]; then
+      content+="$(printf 'export %s=%q' "${name}" "${value}")"
+      content+=$'\n'
+    fi
+  done
+
+  write_bashrc_managed_block "proxy-env" "${content}"
+}
+
+ensure_go_user_dirs() {
+  # Go module/build caches are Docker volumes. Old containers or root-run setup
+  # attempts can leave them root-owned, which breaks `go install` and tests.
+  ensure_user_writable_dir "/go/pkg/mod"
+  ensure_user_writable_dir "/go/pkg/mod/cache"
+  ensure_user_writable_dir "/go/pkg/sumdb"
+  ensure_user_writable_dir "${HOME}/.cache/go-build"
 }
 
 # Ensure mounted Docker volumes or cache paths are writable by the remote user.
@@ -288,8 +331,63 @@ ensure_user_writable_file() {
   sudo chown "$(id -u):$(id -g)" "${file}"
 }
 
+# Optionally verify release binaries with SHA256 values from the environment,
+# e.g. KUBEBUILDER_SHA256. Empty checksum variables skip this check.
+verify_binary_checksum() {
+  local name="$1"
+  local file="$2"
+  local var_name
+  var_name="$(printf '%s_SHA256' "${name}" | tr '[:lower:]-' '[:upper:]_')"
+  local expected="${!var_name:-}"
+
+  if [ -z "${expected}" ]; then
+    return 0
+  fi
+
+  if ! command -v sha256sum >/dev/null 2>&1; then
+    echo "ERROR: ${var_name} is set, but sha256sum is not available" >&2
+    return 1
+  fi
+
+  local actual
+  actual="$(sha256sum "${file}" | cut -d ' ' -f 1)"
+  if [ "${actual}" != "${expected}" ]; then
+    echo "ERROR: ${name} checksum mismatch: expected ${expected}, got ${actual}" >&2
+    return 1
+  fi
+}
+
+# Verify that a downloaded binary reports the version configured in
+# tool-versions.env, preventing silent drift to a latest/default release.
+verify_binary_version() {
+  local name="$1"
+  local version="$2"
+  local binary="$3"
+  local output
+
+  case "${name}" in
+    kind)
+      output="$("${binary}" version 2>&1 || true)"
+      ;;
+    kubebuilder)
+      output="$("${binary}" version 2>&1 || true)"
+      ;;
+    kubectl)
+      output="$("${binary}" version --client 2>&1 || true)"
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  if [[ "${output}" != *"${version}"* ]]; then
+    echo "ERROR: ${name} version mismatch: expected ${version}, got: ${output}" >&2
+    return 1
+  fi
+}
+
 # Install single-file release binaries as versioned targets plus stable symlinks,
-# e.g. kind-v0.30.0 and kind -> kind-v0.30.0. This makes active versions visible
+# e.g. kubectl-v1.35.0 and kubectl -> kubectl-v1.35.0. This makes active versions visible
 # while preserving stable command names on PATH.
 install_binary() {
   local name="$1"
@@ -299,7 +397,7 @@ install_binary() {
   local link="${BIN_DIR}/${name}"
   local tmp="${target}.download"
 
-  if [ -x "${target}" ]; then
+  if [ -x "${target}" ] && verify_binary_version "${name}" "${version}" "${target}"; then
     ln -sf "${target}" "${link}"
     echo "${name} ${version} already installed in ${target}"
     return 0
@@ -312,9 +410,21 @@ install_binary() {
     echo "Downloading ${name} from ${url}"
     if curl --fail --show-error --silent --location \
       --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
+      --max-time "${DOWNLOAD_MAX_TIME_SECONDS}" \
+      --speed-limit "${DOWNLOAD_MIN_SPEED_BYTES}" --speed-time "${DOWNLOAD_MIN_SPEED_TIME_SECONDS}" \
       -o "${tmp}" "${url}"; then
+      verify_binary_checksum "${name}" "${tmp}" || {
+        rm -f "${tmp}"
+        echo "WARNING: Failed to verify ${name} downloaded from ${url}" >&2
+        continue
+      }
       mv "${tmp}" "${target}"
       chmod +x "${target}"
+      if ! verify_binary_version "${name}" "${version}" "${target}"; then
+        rm -f "${target}"
+        echo "WARNING: Failed to verify ${name} ${version} downloaded from ${url}" >&2
+        continue
+      fi
       ln -sf "${target}" "${link}"
       echo "${name} installed in ${target}"
       return 0
@@ -342,42 +452,99 @@ install_completion() {
   fi
 }
 
-# Install Rust with rustup only when rustc/cargo are missing. The requested
-# toolchain comes from rust-toolchain.toml unless RUST_TOOLCHAIN overrides it.
-# The shell installer is tried first, then the official static rustup-init
-# binary is used as a fallback when sh.rustup.rs fails under proxy/TLS rules.
+# Rust toolchain. rust-toolchain.toml is the repo source of truth; RUST_TOOLCHAIN
+# is only an explicit local override for testing a different toolchain.
+rust_is_installed() {
+  command -v rustc >/dev/null 2>&1 && command -v cargo >/dev/null 2>&1
+}
+
+read_rust_toolchain() {
+  local toolchain_file="${REPO_ROOT}/rust-toolchain.toml"
+  local channel=""
+
+  if [ -f "${toolchain_file}" ]; then
+    channel="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "${toolchain_file}" | head -n 1)"
+  fi
+
+  if [ -z "${channel}" ]; then
+    echo "ERROR: Rust toolchain channel not found in ${toolchain_file}" >&2
+    return 1
+  fi
+
+  printf '%s\n' "${channel}"
+}
+
+# rustup's direct binary fallback uses Rust target triples, not Docker asset
+# names. Keep this separate from detect_arch so both mappings stay obvious.
+detect_rustup_arch() {
+  case "$(uname -m)" in
+    x86_64)
+      echo "x86_64-unknown-linux-gnu"
+      ;;
+    aarch64|arm64)
+      echo "aarch64-unknown-linux-gnu"
+      ;;
+    *)
+      echo "ERROR: Unsupported rustup architecture: $(uname -m)" >&2
+      return 1
+      ;;
+  esac
+}
+
+rustup_direct_url() {
+  local rustup_arch="$1"
+  printf '%s/%s/rustup-init\n' "${RUSTUP_DIRECT_BASE_URL}" "${rustup_arch}"
+}
+
+ensure_rust_user_dirs() {
+  # Old containers or root-run setup attempts can leave Rust directories
+  # root-owned. Fix them before rustup tries to create ~/.cargo/bin.
+  ensure_user_writable_dir "${HOME}/.cargo"
+  ensure_user_writable_dir "${HOME}/.cargo/bin"
+  ensure_user_writable_dir "${HOME}/.rustup"
+}
+
+# Install Rust with rustup only when rustc/cargo are missing. The shell installer
+# is tried first, then the official static rustup-init binary is used as a
+# fallback when sh.rustup.rs fails under proxy/TLS rules.
 install_rust() {
-  if command -v rustc >/dev/null 2>&1 && command -v cargo >/dev/null 2>&1; then
+  if rust_is_installed; then
     echo "Rust already installed: $(rustc --version)"
     return 0
   fi
 
-  echo "Installing Rust toolchain ${RUST_TOOLCHAIN} with rustup..."
-  local rustup_init="${BIN_DIR}/rustup-init.sh"
-  local rustup_bin="${BIN_DIR}/rustup-init"
-  local rustup_arch
-  rustup_arch="$(detect_rustup_arch)"
+  ensure_rust_user_dirs
 
-  rm -f "${rustup_init}" "${rustup_bin}"
+  echo "Installing Rust toolchain ${RUST_TOOLCHAIN} with rustup..."
+  local shell_installer="${BIN_DIR}/rustup-init.sh"
+  local binary_installer="${BIN_DIR}/rustup-init"
+  local direct_url
+  direct_url="$(rustup_direct_url "$(detect_rustup_arch)")"
+
+  rm -f "${shell_installer}" "${binary_installer}"
   if curl --fail --show-error --silent --location \
     --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
-    -o "${rustup_init}" "${RUSTUP_INIT_URL}"; then
-    sh "${rustup_init}" -y --default-toolchain "${RUST_TOOLCHAIN}" --profile default
-    rm -f "${rustup_init}"
+    --max-time "${DOWNLOAD_MAX_TIME_SECONDS}" \
+    --speed-limit "${DOWNLOAD_MIN_SPEED_BYTES}" --speed-time "${DOWNLOAD_MIN_SPEED_TIME_SECONDS}" \
+    -o "${shell_installer}" "${RUSTUP_INIT_URL}"; then
+    sh "${shell_installer}" -y --default-toolchain "${RUST_TOOLCHAIN}" --profile default
+    rm -f "${shell_installer}"
   else
-    rm -f "${rustup_init}"
+    rm -f "${shell_installer}"
     echo "WARNING: Failed to download rustup shell installer from ${RUSTUP_INIT_URL}" >&2
     echo "Trying direct rustup-init binary fallback..."
 
     if curl --fail --show-error --silent --location \
       --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 20 \
-      -o "${rustup_bin}" "${RUSTUP_DIRECT_BASE_URL}/${rustup_arch}/rustup-init"; then
-      chmod +x "${rustup_bin}"
-      "${rustup_bin}" -y --default-toolchain "${RUST_TOOLCHAIN}" --profile default
-      rm -f "${rustup_bin}"
+      --max-time "${DOWNLOAD_MAX_TIME_SECONDS}" \
+      --speed-limit "${DOWNLOAD_MIN_SPEED_BYTES}" --speed-time "${DOWNLOAD_MIN_SPEED_TIME_SECONDS}" \
+      -o "${binary_installer}" "${direct_url}"; then
+      chmod +x "${binary_installer}"
+      "${binary_installer}" -y --default-toolchain "${RUST_TOOLCHAIN}" --profile default
+      rm -f "${binary_installer}"
     else
-      rm -f "${rustup_bin}"
-      echo "ERROR: Failed to download rustup from both ${RUSTUP_INIT_URL} and ${RUSTUP_DIRECT_BASE_URL}/${rustup_arch}/rustup-init" >&2
+      rm -f "${binary_installer}"
+      echo "ERROR: Failed to download rustup from both ${RUSTUP_INIT_URL} and ${direct_url}" >&2
       return 1
     fi
   fi
@@ -414,24 +581,10 @@ verify_command() {
   fi
 }
 
-# Docker-in-Docker may take a few seconds to become ready after container start.
-wait_for_docker() {
-  echo "Waiting for Docker to be ready..."
-  for _ in {1..30}; do
-    if docker info >/dev/null 2>&1; then
-      echo "Docker is ready"
-      return 0
-    fi
-    sleep 1
-  done
+load_tool_versions
+RUST_TOOLCHAIN="${RUST_TOOLCHAIN:-$(read_rust_toolchain)}"
 
-  echo "WARNING: Docker not ready after 30s"
-  return 1
-}
-
-normalize_proxy_env
-normalize_go_env
-print_proxy_diagnostics
+configure_network_env
 configure_apt_mirror
 
 ARCH="$(detect_arch)"
@@ -441,6 +594,7 @@ ensure_user_writable_dir "${BIN_DIR}"
 ensure_user_writable_dir "${BASH_COMPLETIONS_DIR}"
 ensure_user_writable_dir "${HISTFILE_DIR}"
 ensure_user_writable_file "${HISTFILE}"
+ensure_go_user_dirs
 export PATH="${BIN_DIR}:${PATH}"
 
 echo ""
@@ -456,22 +610,18 @@ ensure_bashrc_line 'export GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}"
 ensure_bashrc_line 'export GOSUMDB="${GOSUMDB:-sum.golang.org}"'
 ensure_bashrc_line '[ -z "${HF_TOKEN:-}" ] && unset HF_TOKEN'
 ensure_bashrc_line '[ -z "${GITHUB_TOKEN:-}" ] && unset GITHUB_TOKEN'
+configure_shell_proxy_env
 
 echo ""
 echo "------------------------------------"
 echo "Installing development tools..."
 echo "------------------------------------"
 
-install_or_warn "kind" install_binary \
-  "kind" \
-  "${KIND_VERSION}" \
-  "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-${ARCH}" \
-  "https://github.com/kubernetes-sigs/kind/releases/download/${KIND_VERSION}/kind-linux-${ARCH}"
-
 install_or_warn "kubebuilder" install_binary \
   "kubebuilder" \
   "${KUBEBUILDER_VERSION}" \
-  "https://go.kubebuilder.io/dl/${KUBEBUILDER_VERSION}/linux/${ARCH}"
+  "https://go.kubebuilder.io/dl/${KUBEBUILDER_VERSION}/linux/${ARCH}" \
+  "${KUBEBUILDER_GITHUB_BASE_URL}/v${KUBEBUILDER_VERSION}/kubebuilder_linux_${ARCH}"
 
 install_or_warn "kubectl" install_binary \
   "kubectl" \
@@ -484,10 +634,6 @@ echo ""
 echo "------------------------------------"
 echo "Installing user-level bash completions..."
 echo "------------------------------------"
-
-if command -v kind >/dev/null 2>&1; then
-  install_completion "kind" kind completion bash
-fi
 
 if command -v kubebuilder >/dev/null 2>&1; then
   install_completion "kubebuilder" kubebuilder completion bash
@@ -503,28 +649,12 @@ fi
 
 echo ""
 echo "------------------------------------"
-echo "Configuring Docker environment..."
-echo "------------------------------------"
-
-if wait_for_docker; then
-  if ! docker network inspect kind >/dev/null 2>&1; then
-    if docker network create kind >/dev/null 2>&1; then
-      echo "Created kind network"
-    else
-      echo "WARNING: Failed to create kind network"
-    fi
-  fi
-fi
-
-echo ""
-echo "------------------------------------"
 echo "Verifying installations..."
 echo "------------------------------------"
 
-verify_command "kind" kind version
 verify_command "kubebuilder" kubebuilder version
 verify_command "kubectl" kubectl version --client
-docker --version || true
+verify_command "docker" docker --version
 verify_command "go" go version
 
 cat <<EOF
@@ -534,11 +664,11 @@ DevContainer ready.
 ====================================
 Workspace: /workspace
 
-Common commands:
+Control-plane commands (no Kind required):
+  cd /workspace/control-plane
   make test
   make lint
   make manifests generate
-  make test-e2e
 
 Project-managed Go tools are installed by the Makefile into:
   ${BIN_DIR}
