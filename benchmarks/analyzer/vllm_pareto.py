@@ -1,5 +1,9 @@
 """Adapters to reuse vLLM ``bench sweep`` Pareto helpers when installed.
 
+Optional path only: foretoken can plot Pareto without vLLM via matplotlib.
+When ``vllm`` (+ pandas/seaborn) is installed, reuse official helpers for
+alignment with vLLM ``plot_pareto``.
+
 vLLM reference (v0.18+):
   ``vllm.benchmarks.sweep.plot_pareto``
   - ``_prepare_records``: tokens/s/user = output_throughput / concurrency
@@ -13,7 +17,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from benchmarks.arguments import metric_parallel
-from benchmarks.deps import vllm as vllm_deps
+from benchmarks.deps import vllm_plot as vllm_deps
 
 
 def token_throughput(item: dict[str, Any]) -> float:

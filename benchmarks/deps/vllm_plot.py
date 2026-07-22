@@ -1,4 +1,4 @@
-"""Lazy vLLM Pareto helpers (optional dependency)."""
+"""Lazy import of vLLM Pareto plot helpers (optional dependency)."""
 
 from __future__ import annotations
 

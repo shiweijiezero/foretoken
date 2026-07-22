@@ -23,76 +23,83 @@ def metrics_to_evalscope_message(
 
     Returned dict is logged to W&B; EvalScope keys unchanged, plus
     ``Output Throughput per User (tok/s)``.
+
+    Core fields are read directly from the aggregator schema (missing keys
+    raise). EvalScope-only optionals that foretoken never emits use ``-1``
+    as the documented N/A sentinel.
     """
     from benchmarks.deps.evalscope import require_benchmark_metrics
 
     BenchmarkMetrics = require_benchmark_metrics()
 
-    latency = metrics.get("latency") or {}
-    ttft = metrics.get("ttft") or {}
-    tpot = metrics.get("tpot") or {}
-    itl = metrics.get("itl") or tpot
-    throughput = metrics.get("throughput") or {}
+    latency = metrics["latency"]
+    ttft = metrics["ttft"]
+    tpot = metrics["tpot"]
+    itl = metrics["itl"]
+    throughput = metrics["throughput"]
 
-    conc = parallel
-    if conc is None and metrics.get("parallel") is not None:
+    if parallel is not None:
+        conc = int(parallel)
+    elif "parallel" in metrics:
         conc = int(metrics["parallel"])
-    if conc is None and metrics.get("concurrency") is not None:
+    elif "concurrency" in metrics:
         conc = int(metrics["concurrency"])
+    else:
+        raise KeyError("parallel/concurrency required for BenchmarkMetrics")
 
     if request_rate is not None:
         rate = float(request_rate)
-    elif metrics.get("rate") is not None:
+    elif "rate" in metrics:
         rate = float(metrics["rate"])
     else:
+        # EvalScope: rate=-1 means no pacing.
         rate = -1.0
 
-    def _opt(key: str, default: float = -1.0) -> float:
+    def _evalscope_optional(key: str) -> float:
+        """Foretoken-absent fields → EvalScope N/A sentinel (-1)."""
         if key not in metrics or metrics[key] is None:
-            return default
+            return -1.0
         return float(metrics[key])
 
-    turns = _opt("avg_turns_per_request", -1.0)
+    turns = float(metrics["avg_turns_per_request"])
     if turns <= 0:
+        # EvalScope: no multi-turn → -1.
         turns = -1.0
 
-    in_tok_s = float(throughput.get("input_token/s") or 0.0)
-    out_tok_s = float(
-        throughput.get("output_token/s")
-        or throughput.get("token/s")
-        or 0.0
-    )
-    total_tok_s = float(
-        throughput.get("total_token/s") or (in_tok_s + out_tok_s)
-    )
+    in_tok_s = float(throughput["input_token/s"])
+    out_tok_s = float(throughput["output_token/s"])
+    total_tok_s = float(throughput["total_token/s"])
 
     message = BenchmarkMetrics(
-        concurrency=int(conc or 0),
+        concurrency=conc,
         rate=rate,
-        total_requests=int(metrics.get("request_num") or 0),
-        succeed_requests=int(metrics.get("success_num") or 0),
-        failed_requests=int(metrics.get("failed_num") or 0),
-        total_time=float(metrics.get("benchmark_time") or 0.0),
-        avg_latency=float(latency.get("mean") or 0.0),
-        avg_first_chunk_latency=float(ttft.get("mean") or 0.0),
-        avg_time_per_output_token=float(tpot.get("mean") or 0.0),
-        avg_inter_token_latency=float(itl.get("mean") or 0.0),
-        qps=float(throughput.get("request/s") or 0.0),
-        avg_prompt_tokens=float(metrics.get("avg_input_tokens") or 0.0),
-        avg_completion_tokens=float(metrics.get("avg_output_tokens") or 0.0),
+        total_requests=int(metrics["request_num"]),
+        succeed_requests=int(metrics["success_num"]),
+        failed_requests=int(metrics["failed_num"]),
+        total_time=float(metrics["benchmark_time"]),
+        avg_latency=float(latency["mean"]),
+        avg_first_chunk_latency=float(ttft["mean"]),
+        avg_time_per_output_token=float(tpot["mean"]),
+        avg_inter_token_latency=float(itl["mean"]),
+        qps=float(throughput["request/s"]),
+        avg_prompt_tokens=float(metrics["avg_input_tokens"]),
+        avg_completion_tokens=float(metrics["avg_output_tokens"]),
         avg_input_token_throughput=in_tok_s,
         avg_output_token_throughput=out_tok_s,
         avg_total_token_throughput=total_tok_s,
         avg_turns_per_request=turns,
-        avg_cached_percent=_opt("avg_cached_percent", -1.0),
-        avg_first_turn_ttft=_opt("avg_first_turn_ttft", -1.0),
-        avg_subsequent_turn_ttft=_opt("avg_subsequent_turn_ttft", -1.0),
+        avg_cached_percent=_evalscope_optional("avg_cached_percent"),
+        avg_first_turn_ttft=_evalscope_optional("avg_first_turn_ttft"),
+        avg_subsequent_turn_ttft=_evalscope_optional(
+            "avg_subsequent_turn_ttft"
+        ),
     ).create_message(api_type=api_type)
 
-    tok_user = throughput.get("token/s/user")
-    if tok_user is None:
+    if "token/s/user" in throughput:
+        tok_user = float(throughput["token/s/user"])
+    else:
         tok_user = tokens_per_s_per_user(out_tok_s, conc)
-    message[TOK_S_PER_USER_KEY] = round(float(tok_user), 4)
+    message[TOK_S_PER_USER_KEY] = round(tok_user, 4)
     return message
 
 
@@ -350,12 +357,11 @@ class WandbWriter:
         if not self.active or self._wandb_stack is None:
             return
 
-        if parallel is not None or "token/s/user" not in (
-            metrics.get("throughput") or {}
-        ):
+        throughput = metrics["throughput"]
+        if parallel is not None or "token/s/user" not in throughput:
             metrics = attach_user_throughput(
                 dict(metrics),
-                parallel=parallel if parallel is not None else metrics.get("parallel"),
+                parallel=parallel if parallel is not None else metrics["parallel"],
             )
 
         try:

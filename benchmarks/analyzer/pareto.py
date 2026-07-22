@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from benchmarks.arguments import metric_parallel
-from benchmarks.analyzer.vllm_compat import (
+from benchmarks.analyzer.vllm_pareto import (
     prepare_vllm_pareto_rows,
     token_throughput,
     vllm_pareto_available,

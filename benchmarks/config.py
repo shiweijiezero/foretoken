@@ -1,9 +1,12 @@
-"""CLI options, parsing, and command handlers for ``foretoken bench``."""
+"""CLI option definitions for ``foretoken bench``.
+
+Validates flags → ``BenchArguments``, then hands off to ``run_benchmark``.
+"""
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any
 
 import typer
 
@@ -14,63 +17,22 @@ Option = typer.Option
 _d = cli_default  # Option defaults ← BenchArguments (single source)
 
 
-def run_bench(args: BenchArguments) -> None:
-    path = f" path={args.primary_dataset_path}" if args.dataset_path else ""
-    print(
-        "\n==============================\n"
-        " Foretoken Benchmark\n"
-        "==============================\n"
-        f"Configuration:\n"
-        f"  URL        : {args.url}\n"
-        f"  Model      : {args.model}\n"
-        f"  Parallel   : {args.parallel}\n"
-        f"  Number     : {args.number}\n"
-        f"  Rate       : {args.rate}\n"
-        f"  Open Loop  : {args.open_loop}\n"
-        f"  Stream     : {args.stream}\n"
-        f"  Dataset    : mode={args.dataset}{path}\n"
-    )
-    asyncio.run(run_benchmark(args))
-
-
-def build_bench_arguments(
-    *,
-    ctx: Optional[typer.Context] = None,
-    require_url_model: bool = True,
-    **opts: Any,
-) -> Optional[BenchArguments]:
-    """Validate CLI opts and build ``BenchArguments``.
-
-    Returns ``None`` when a Typer subcommand was invoked (callback should no-op).
-    """
-    if ctx is not None and ctx.invoked_subcommand is not None:
-        return None
-
-    dry_run = bool(opts.get("dry_run", False))
-    param_sweep = bool(opts.get("serve_params") or opts.get("bench_params"))
-    if dry_run and param_sweep:
-        opts["url"] = opts.get("url") or "http://127.0.0.1:8000/v1/chat/completions"
-        opts["model"] = opts.get("model") or "model"
-    elif require_url_model and not (opts.get("url") and opts.get("model")):
+def build_bench_arguments(**opts: Any) -> BenchArguments:
+    """Validate CLI opts and build ``BenchArguments``."""
+    if not (opts.get("url") and opts.get("model")):
         raise typer.BadParameter(
-            "--url and --model are required for `foretoken bench` "
-            "(except --dry-run param sweep)"
+            "--url and --model are required for `foretoken bench`"
         )
     return BenchArguments.from_cli(**opts)
 
 
-def _dispatch(ctx: Optional[typer.Context] = None, **opts: Any) -> None:
-    args = build_bench_arguments(ctx=ctx, **opts)
-    if args is not None:
-        run_bench(args)
-
-
 def bench(
-    ctx: typer.Context,
-    url: Optional[str] = Option(None, help="OpenAI compatible API URL"),
-    model: Optional[str] = Option(None, help="Model name"),
+    # --- target ---
+    url: str = Option(..., help="OpenAI compatible API URL"),
+    model: str = Option(..., help="Model name"),
     api_key: str = Option(_d("api_key"), help="API key (optional)"),
     timeout: int = Option(_d("timeout"), help="Request timeout seconds"),
+    # --- load shape ---
     parallel: str = Option(
         _d("parallel"), help="Concurrency; list like 1,2,4,8 triggers sweep"
     ),
@@ -94,11 +56,13 @@ def bench(
             "(semaphore = --parallel)."
         ),
     ),
+    # --- generation ---
     max_tokens: int = Option(_d("max_tokens"), help="Max generation tokens"),
     temperature: float = Option(_d("temperature"), help="Sampling temperature"),
     stream: bool = Option(
         _d("stream"), help="Use streaming to measure TTFT/TPOT"
     ),
+    # --- dataset / prompts ---
     dataset: str = Option(
         _d("dataset"),
         help=(
@@ -135,7 +99,7 @@ def bench(
     prefix_length: int = Option(
         _d("prefix_length"), help="Prefix length (random dataset only)"
     ),
-    apply_chat_template: Optional[bool] = Option(
+    apply_chat_template: bool | None = Option(
         _d("apply_chat_template"),
         "--apply-chat-template/--no-apply-chat-template",
         help="Apply chat template (default: auto from URL)",
@@ -144,10 +108,11 @@ def bench(
         _d("prompt"),
         help="Fixed prompt text (evalscope --prompt; overrides dataset)",
     ),
-    max_turns: Optional[int] = Option(
+    max_turns: int | None = Option(
         _d("max_turns"),
         help="Max user turns for custom_multi_turn (truncate long chats)",
     ),
+    # --- analysis / outputs ---
     sla_auto_tune: bool = Option(
         _d("sla_auto_tune"), help="Enable SLA search (Phase 2 — not implemented)"
     ),
@@ -161,6 +126,7 @@ def bench(
     outputs_dir: str = Option(
         _d("outputs_dir"), help="Results root directory"
     ),
+    # --- wandb ---
     wandb: bool = Option(
         _d("wandb"), help="Enable Weights & Biases logging"
     ),
@@ -173,6 +139,7 @@ def bench(
             "(EvalScope style)"
         ),
     ),
+    # --- engine metrics ---
     collect_engine_metrics: bool = Option(
         _d("collect_engine_metrics"),
         help="Collect vLLM engine metrics (Phase M1)",
@@ -184,6 +151,7 @@ def bench(
         _d("engine_metrics_interval"),
         help="Engine /metrics polling interval seconds",
     ),
+    # --- param sweep (serve × bench product) ---
     serve_params: str = Option(
         _d("serve_params"),
         help=(
@@ -222,52 +190,21 @@ def bench(
         help="Param-sweep experiment subdir under --outputs-dir",
     ),
 ) -> None:
-    """Unified entry: `foretoken bench [OPTIONS]`."""
-    _dispatch(ctx, **{k: v for k, v in locals().items() if k != "ctx"})
-
-
-def run_legacy(
-    url: str = Option(..., help="OpenAI compatible API URL"),
-    model: str = Option(..., help="Model name"),
-    number: int = Option(
-        100, "--number", "--num-prompts",
-        help="Number of requests (alias: --num-prompts)",
-    ),
-    parallel: int = Option(
-        1, "--parallel", "--concurrency",
-        help="Max parallel requests (alias: --concurrency); default 1",
-    ),
-    max_tokens: int = Option(_d("max_tokens")),
-    temperature: float = Option(_d("temperature")),
-    stream: bool = Option(_d("stream")),
-    dataset_path: str = Option(_d("dataset_path")),
-    outputs_dir: str = Option(_d("outputs_dir")),
-    api_key: str = Option(_d("api_key")),
-    timeout: int = Option(_d("timeout")),
-) -> None:
-    """Deprecated thin wrapper → unified bench (prefer `foretoken bench`)."""
-    _dispatch(
-        **{**locals(), "parallel": str(parallel), "number": str(number)}
+    """``foretoken bench [OPTIONS]`` — validate flags, then run."""
+    args = build_bench_arguments(**locals())
+    path = f" path={args.primary_dataset_path}" if args.dataset_path else ""
+    print(
+        "\n==============================\n"
+        " Foretoken Benchmark\n"
+        "==============================\n"
+        f"Configuration:\n"
+        f"  URL        : {args.url}\n"
+        f"  Model      : {args.model}\n"
+        f"  Parallel   : {args.parallel}\n"
+        f"  Number     : {args.number}\n"
+        f"  Rate       : {args.rate}\n"
+        f"  Open Loop  : {args.open_loop}\n"
+        f"  Stream     : {args.stream}\n"
+        f"  Dataset    : mode={args.dataset}{path}\n"
     )
-
-
-def sweep_legacy(
-    url: str = Option(...),
-    model: str = Option(...),
-    number: int = Option(100, "--number", "--num-prompts"),
-    parallel: str = Option(
-        "1,2,4,8,16",
-        "--parallel",
-        "--concurrency-list",
-        help="Comma-separated parallel values (alias: --concurrency-list)",
-    ),
-    max_tokens: int = Option(_d("max_tokens")),
-    temperature: float = Option(_d("temperature")),
-    stream: bool = Option(_d("stream")),
-    dataset_path: str = Option(_d("dataset_path")),
-    outputs_dir: str = Option(_d("outputs_dir")),
-    api_key: str = Option(_d("api_key")),
-    timeout: int = Option(_d("timeout")),
-) -> None:
-    """Deprecated thin wrapper → unified bench sweep."""
-    _dispatch(**{**locals(), "number": str(number)})
+    asyncio.run(run_benchmark(args))

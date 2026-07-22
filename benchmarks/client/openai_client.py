@@ -32,7 +32,7 @@ def _result(
     }
 
 
-class VLLMClient:
+class OpenAICompatClient:
     """OpenAI-compatible chat client with optional streaming (TTFT)."""
 
     def __init__(

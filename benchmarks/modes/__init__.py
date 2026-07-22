@@ -11,31 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Typer entrypoint: register ``foretoken`` / ``foretoken bench`` commands."""
+"""Benchmark run modes: single shot and list sweep."""
 
-from __future__ import annotations
+from benchmarks.modes.single import SingleMode
+from benchmarks.modes.sweep import SweepMode
 
-import typer
-
-from benchmarks.config import bench
-
-app = typer.Typer(
-    name="foretoken",
-    help=(
-        "LLM inference orchestration for SLO/SLA targets "
-        "and heterogeneous accelerators"
-    ),
-    no_args_is_help=True,
-)
-
-
-@app.callback()
-def _root() -> None:
-    """Force a subcommand name even when only ``bench`` is registered."""
-
-
-app.command("bench")(bench)
-
-
-if __name__ == "__main__":
-    app()
+__all__ = ["SingleMode", "SweepMode"]

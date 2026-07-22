@@ -6,7 +6,7 @@ from typing import Any, Optional
 import matplotlib.pyplot as plt
 
 from benchmarks.analyzer.pareto import pareto_xy
-from benchmarks.analyzer.vllm_compat import plot_vllm_pareto, vllm_pareto_available
+from benchmarks.analyzer.vllm_pareto import plot_vllm_pareto, vllm_pareto_available
 
 
 def _plot_with_matplotlib(

@@ -25,8 +25,8 @@ from benchmarks.analyzer.pareto import (
     attach_pareto_metrics,
     pareto_frontier,
 )
-from benchmarks.analyzer.vllm_compat import vllm_pareto_available
-from benchmarks.visualization.pareto_plot import plot_pareto
+from benchmarks.analyzer.vllm_pareto import vllm_pareto_available
+from benchmarks.sweep.pareto_plot import plot_pareto
 from benchmarks.sweep.overrides import apply_bench_overrides
 from benchmarks.sweep.param_sweep import (
     ParameterSweepItem,
