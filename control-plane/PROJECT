@@ -3,10 +3,9 @@
 # and allow the plugins properly work.
 # More info: https://book.kubebuilder.io/reference/project-config.html
 cliVersion: 4.14.0
-domain: foretoken.ai
+domain: ai
 layout:
 - go.kubebuilder.io/v4
-multigroup: true
 projectName: control-plane
 repo: github.com/foretoken/foretoken/control-plane
 resources:
@@ -14,78 +13,9 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: foretoken.ai
-  group: model
+  domain: ai
+  group: foretoken
   kind: ModelService
-  path: github.com/foretoken/foretoken/control-plane/api/model/v1alpha1
+  path: github.com/foretoken/foretoken/control-plane/api/v1alpha1
   version: v1alpha1
-  webhooks:
-    defaulting: true
-    validation: true
-    webhookVersion: v1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: foretoken.ai
-  group: orchestration
-  kind: InferencePool
-  path: github.com/foretoken/foretoken/control-plane/api/orchestration/v1alpha1
-  version: v1alpha1
-  webhooks:
-    defaulting: true
-    validation: true
-    webhookVersion: v1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: foretoken.ai
-  group: orchestration
-  kind: InferenceGroup
-  path: github.com/foretoken/foretoken/control-plane/api/orchestration/v1alpha1
-  version: v1alpha1
-  webhooks:
-    defaulting: true
-    validation: true
-    webhookVersion: v1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: foretoken.ai
-  group: orchestration
-  kind: KVCache
-  path: github.com/foretoken/foretoken/control-plane/api/orchestration/v1alpha1
-  version: v1alpha1
-  webhooks:
-    defaulting: true
-    validation: true
-    webhookVersion: v1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: foretoken.ai
-  group: gateway
-  kind: RoutingProfile
-  path: github.com/foretoken/foretoken/control-plane/api/gateway/v1alpha1
-  version: v1alpha1
-  webhooks:
-    defaulting: true
-    validation: true
-    webhookVersion: v1
-- api:
-    crdVersion: v1
-    namespaced: true
-  controller: true
-  domain: foretoken.ai
-  group: autoscaling
-  kind: InferenceAutoscaler
-  path: github.com/foretoken/foretoken/control-plane/api/autoscaling/v1alpha1
-  version: v1alpha1
-  webhooks:
-    defaulting: true
-    validation: true
-    webhookVersion: v1
 version: "3"

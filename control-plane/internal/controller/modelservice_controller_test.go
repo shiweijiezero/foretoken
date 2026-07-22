@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package gateway
+package controller
 
 import (
 	"context"
@@ -27,10 +27,10 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	gatewayv1alpha1 "github.com/foretoken/foretoken/control-plane/api/gateway/v1alpha1"
+	foretokenv1alpha1 "github.com/foretoken/foretoken/control-plane/api/v1alpha1"
 )
 
-var _ = Describe("RoutingProfile Controller", func() {
+var _ = Describe("ModelService Controller", func() {
 	Context("When reconciling a resource", func() {
 		const resourceName = "test-resource"
 
@@ -40,13 +40,13 @@ var _ = Describe("RoutingProfile Controller", func() {
 			Name:      resourceName,
 			Namespace: "default", // TODO(user):Modify as needed
 		}
-		routingprofile := &gatewayv1alpha1.RoutingProfile{}
+		modelservice := &foretokenv1alpha1.ModelService{}
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind RoutingProfile")
-			err := k8sClient.Get(ctx, typeNamespacedName, routingprofile)
+			By("creating the custom resource for the Kind ModelService")
+			err := k8sClient.Get(ctx, typeNamespacedName, modelservice)
 			if err != nil && errors.IsNotFound(err) {
-				resource := &gatewayv1alpha1.RoutingProfile{
+				resource := &foretokenv1alpha1.ModelService{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      resourceName,
 						Namespace: "default",
@@ -59,16 +59,16 @@ var _ = Describe("RoutingProfile Controller", func() {
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &gatewayv1alpha1.RoutingProfile{}
+			resource := &foretokenv1alpha1.ModelService{}
 			err := k8sClient.Get(ctx, typeNamespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Cleanup the specific resource instance RoutingProfile")
+			By("Cleanup the specific resource instance ModelService")
 			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
 		})
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
-			controllerReconciler := &RoutingProfileReconciler{
+			controllerReconciler := &ModelServiceReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
 			}

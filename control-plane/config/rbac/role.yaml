@@ -5,59 +5,7 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
-  - autoscaling.foretoken.ai
-  resources:
-  - inferenceautoscalers
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - autoscaling.foretoken.ai
-  resources:
-  - inferenceautoscalers/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - autoscaling.foretoken.ai
-  resources:
-  - inferenceautoscalers/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - gateway.foretoken.ai
-  resources:
-  - routingprofiles
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - gateway.foretoken.ai
-  resources:
-  - routingprofiles/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - gateway.foretoken.ai
-  resources:
-  - routingprofiles/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - model.foretoken.ai
+  - foretoken.ai
   resources:
   - modelservices
   verbs:
@@ -69,47 +17,15 @@ rules:
   - update
   - watch
 - apiGroups:
-  - model.foretoken.ai
+  - foretoken.ai
   resources:
   - modelservices/finalizers
   verbs:
   - update
 - apiGroups:
-  - model.foretoken.ai
+  - foretoken.ai
   resources:
   - modelservices/status
-  verbs:
-  - get
-  - patch
-  - update
-- apiGroups:
-  - orchestration.foretoken.ai
-  resources:
-  - inferencegroups
-  - inferencepools
-  - kvcaches
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - orchestration.foretoken.ai
-  resources:
-  - inferencegroups/finalizers
-  - inferencepools/finalizers
-  - kvcaches/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - orchestration.foretoken.ai
-  resources:
-  - inferencegroups/status
-  - inferencepools/status
-  - kvcaches/status
   verbs:
   - get
   - patch

@@ -1,9 +1,4 @@
 ## Append samples of your project ##
 resources:
-- model_v1alpha1_modelservice.yaml
-- orchestration_v1alpha1_inferencepool.yaml
-- orchestration_v1alpha1_inferencegroup.yaml
-- orchestration_v1alpha1_kvcache.yaml
-- gateway_v1alpha1_routingprofile.yaml
-- autoscaling_v1alpha1_inferenceautoscaler.yaml
+- foretoken_v1alpha1_modelservice.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples

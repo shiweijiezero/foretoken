@@ -1,9 +1,0 @@
-apiVersion: orchestration.foretoken.ai/v1alpha1
-kind: KVCache
-metadata:
-  labels:
-    app.kubernetes.io/name: control-plane
-    app.kubernetes.io/managed-by: kustomize
-  name: kvcache-sample
-spec:
-  # TODO(user): Add fields here

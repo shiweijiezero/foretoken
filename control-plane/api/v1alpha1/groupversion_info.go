@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package v1alpha1 contains API Schema definitions for the autoscaling v1alpha1 API group.
+// Package v1alpha1 contains API Schema definitions for the foretoken v1alpha1 API group.
 // +kubebuilder:object:generate=true
-// +groupName=autoscaling.foretoken.ai
+// +groupName=foretoken.ai
 package v1alpha1
 
 import (
@@ -27,7 +27,7 @@ import (
 var (
 	// SchemeGroupVersion is group version used to register these objects.
 	// This name is used by applyconfiguration generators (e.g. controller-gen).
-	SchemeGroupVersion = schema.GroupVersion{Group: "autoscaling.foretoken.ai", Version: "v1alpha1"}
+	SchemeGroupVersion = schema.GroupVersion{Group: "foretoken.ai", Version: "v1alpha1"}
 
 	// GroupVersion is an alias for SchemeGroupVersion, for backward compatibility.
 	GroupVersion = SchemeGroupVersion

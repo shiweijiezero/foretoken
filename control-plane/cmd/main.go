@@ -35,18 +35,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	autoscalingv1alpha1 "github.com/foretoken/foretoken/control-plane/api/autoscaling/v1alpha1"
-	gatewayv1alpha1 "github.com/foretoken/foretoken/control-plane/api/gateway/v1alpha1"
-	modelv1alpha1 "github.com/foretoken/foretoken/control-plane/api/model/v1alpha1"
-	orchestrationv1alpha1 "github.com/foretoken/foretoken/control-plane/api/orchestration/v1alpha1"
-	autoscalingcontroller "github.com/foretoken/foretoken/control-plane/internal/controller/autoscaling"
-	gatewaycontroller "github.com/foretoken/foretoken/control-plane/internal/controller/gateway"
-	modelcontroller "github.com/foretoken/foretoken/control-plane/internal/controller/model"
-	orchestrationcontroller "github.com/foretoken/foretoken/control-plane/internal/controller/orchestration"
-	webhookautoscalingv1alpha1 "github.com/foretoken/foretoken/control-plane/internal/webhook/autoscaling/v1alpha1"
-	webhookgatewayv1alpha1 "github.com/foretoken/foretoken/control-plane/internal/webhook/gateway/v1alpha1"
-	webhookmodelv1alpha1 "github.com/foretoken/foretoken/control-plane/internal/webhook/model/v1alpha1"
-	webhookorchestrationv1alpha1 "github.com/foretoken/foretoken/control-plane/internal/webhook/orchestration/v1alpha1"
+	foretokenv1alpha1 "github.com/foretoken/foretoken/control-plane/api/v1alpha1"
+	"github.com/foretoken/foretoken/control-plane/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -58,10 +48,7 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
-	utilruntime.Must(modelv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(orchestrationv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(gatewayv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(autoscalingv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(foretokenv1alpha1.AddToScheme(scheme))
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -173,7 +160,7 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "4164bb90.foretoken.ai",
+		LeaderElectionID:       "4164bb90.ai",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -191,89 +178,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&modelcontroller.ModelServiceReconciler{
+	if err := (&controller.ModelServiceReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "model-modelservice")
+		setupLog.Error(err, "Failed to create controller", "controller", "modelservice")
 		os.Exit(1)
-	}
-	if err := (&orchestrationcontroller.InferencePoolReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "orchestration-inferencepool")
-		os.Exit(1)
-	}
-	if err := (&orchestrationcontroller.InferenceGroupReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "orchestration-inferencegroup")
-		os.Exit(1)
-	}
-	if err := (&orchestrationcontroller.KVCacheReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "orchestration-kvcache")
-		os.Exit(1)
-	}
-	if err := (&gatewaycontroller.RoutingProfileReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "gateway-routingprofile")
-		os.Exit(1)
-	}
-	if err := (&autoscalingcontroller.InferenceAutoscalerReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Failed to create controller", "controller", "autoscaling-inferenceautoscaler")
-		os.Exit(1)
-	}
-	// nolint:goconst
-	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err := webhookmodelv1alpha1.SetupModelServiceWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "ModelService")
-			os.Exit(1)
-		}
-	}
-	// nolint:goconst
-	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err := webhookorchestrationv1alpha1.SetupInferencePoolWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "InferencePool")
-			os.Exit(1)
-		}
-	}
-	// nolint:goconst
-	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err := webhookorchestrationv1alpha1.SetupInferenceGroupWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "InferenceGroup")
-			os.Exit(1)
-		}
-	}
-	// nolint:goconst
-	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err := webhookorchestrationv1alpha1.SetupKVCacheWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "KVCache")
-			os.Exit(1)
-		}
-	}
-	// nolint:goconst
-	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err := webhookgatewayv1alpha1.SetupRoutingProfileWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "RoutingProfile")
-			os.Exit(1)
-		}
-	}
-	// nolint:goconst
-	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err := webhookautoscalingv1alpha1.SetupInferenceAutoscalerWebhookWithManager(mgr); err != nil {
-			setupLog.Error(err, "Failed to create webhook", "webhook", "InferenceAutoscaler")
-			os.Exit(1)
-		}
 	}
 	// +kubebuilder:scaffold:builder
 
