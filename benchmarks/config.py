@@ -1,210 +1,208 @@
-"""CLI option definitions for ``foretoken bench``.
-
-Validates flags → ``BenchArguments``, then hands off to ``run_benchmark``.
-"""
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+"""Typed benchmark configuration: one dataclass per concern."""
 
 from __future__ import annotations
 
-import asyncio
-from typing import Any
-
-import typer
-
-from benchmarks.arguments import BenchArguments, cli_default
-from benchmarks.main import run_benchmark
-
-Option = typer.Option
-_d = cli_default  # Option defaults ← BenchArguments (single source)
+from dataclasses import asdict, dataclass, field
+from typing import Any, Optional
 
 
-def build_bench_arguments(**opts: Any) -> BenchArguments:
-    """Validate CLI opts and build ``BenchArguments``."""
-    if not (opts.get("url") and opts.get("model")):
-        raise typer.BadParameter(
-            "--url and --model are required for `foretoken bench`"
+@dataclass
+class TargetConfig:
+    """Inference service endpoint."""
+
+    url: str
+    model: str
+    api_key: str = ""
+    timeout: int = 300
+
+
+@dataclass
+class LoadConfig:
+    """Concurrency, request count, arrival rate, and open/closed loop."""
+
+    parallel: list[int] = field(default_factory=lambda: [1])
+    number: list[int] = field(default_factory=lambda: [100])
+    # -1 = no pacing; >0 = Poisson pacing. Open-loop needs open_loop=True.
+    rate: list[float] = field(default_factory=lambda: [-1.0])
+    open_loop: bool = False
+
+    @property
+    def is_sweep(self) -> bool:
+        return len(self.parallel) > 1 or len(self.number) > 1 or len(self.rate) > 1
+
+    @property
+    def primary_parallel(self) -> int:
+        return self.parallel[0]
+
+    @property
+    def primary_number(self) -> int:
+        return self.number[0]
+
+    @property
+    def primary_rate(self) -> float:
+        return float(self.rate[0])
+
+    def number_for(self, index: int) -> int:
+        if len(self.number) == 1:
+            return self.number[0]
+        return self.number[index] if index < len(self.number) else self.number[-1]
+
+    def rate_for(self, index: int) -> float:
+        if len(self.rate) == 1:
+            return float(self.rate[0])
+        return float(self.rate[index] if index < len(self.rate) else self.rate[-1])
+
+    def sweep_points(self) -> list[tuple[int, int, float]]:
+        """``(parallel, number, rate)`` triples; rate list wins over parallel."""
+        base_parallel = self.primary_parallel
+        base_rate = self.primary_rate
+        if len(self.rate) > 1:
+            return [
+                (base_parallel, self.number_for(i), self.rate_for(i))
+                for i in range(len(self.rate))
+            ]
+        if len(self.parallel) > 1:
+            return [
+                (parallel, self.number_for(i), base_rate)
+                for i, parallel in enumerate(self.parallel)
+            ]
+        if len(self.number) > 1:
+            return [(base_parallel, number, base_rate) for number in self.number]
+        return [(base_parallel, self.primary_number, base_rate)]
+
+    def validate(self) -> None:
+        """Reject incompatible open-loop / multi-list sweep combinations."""
+        if self.open_loop and len(self.parallel) > 1:
+            raise ValueError(
+                "--open-loop uses unlimited concurrency (EvalScope "
+                "parallel=-1); do not combine with a multi-value "
+                "--parallel list. Use a single --parallel or sweep "
+                "--number / --rate instead."
+            )
+        if len(self.rate) > 1 and len(self.parallel) > 1:
+            raise ValueError(
+                "Cannot sweep both --rate and --parallel lists at once; "
+                "sweep_points prioritizes --rate and would silently ignore "
+                "all but the first --parallel value. Pass one multi-value "
+                "list at a time."
+            )
+
+
+@dataclass
+class GenerationConfig:
+    """Sampling / generation parameters."""
+
+    max_tokens: int = 128
+    temperature: float = 0.0
+    stream: bool = True
+
+
+@dataclass
+class DatasetConfig:
+    """Dataset plugin, paths, and prompt shaping."""
+
+    dataset: str = "openqa"
+    dataset_path: list[str] = field(default_factory=list)
+    dataset_offset: int = 0
+    tokenizer_path: str = ""
+    min_prompt_length: int = 0
+    max_prompt_length: int = 131072
+    prefix_length: int = 0
+    apply_chat_template: Optional[bool] = None
+    prompt: str = ""
+    max_turns: Optional[int] = None
+
+    @property
+    def primary_dataset_path(self) -> str:
+        return self.dataset_path[0] if self.dataset_path else ""
+
+
+@dataclass
+class OutputConfig:
+    """Result location and analysis knobs."""
+
+    outputs_dir: str = "results"
+    gpu_count: int = 1
+    eval_suite: str = "none"
+    sla_auto_tune: bool = False
+
+
+@dataclass
+class WandbConfig:
+    """Weights & Biases logging."""
+
+    enabled: bool = False
+    project: str = "foretoken-bench"
+    entity: str = ""
+    run_name: str = ""
+
+
+@dataclass
+class EngineMetricsConfig:
+    """Engine Prometheus ``/metrics`` collection."""
+
+    collect: bool = True
+    url: str = ""
+    interval: float = 1.0
+
+
+@dataclass
+class ParamSweepConfig:
+    """Serve × bench parameter product sweep."""
+
+    serve_params: str = ""
+    bench_params: str = ""
+    link_vars: str = ""
+    num_runs: int = 1
+    dry_run: bool = False
+    experiment_name: str = ""
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.serve_params or self.bench_params)
+
+
+@dataclass
+class BenchConfig:
+    """Root benchmark configuration (framework contract)."""
+
+    target: TargetConfig
+    load: LoadConfig = field(default_factory=LoadConfig)
+    generation: GenerationConfig = field(default_factory=GenerationConfig)
+    dataset: DatasetConfig = field(default_factory=DatasetConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
+    wandb: WandbConfig = field(default_factory=WandbConfig)
+    engine: EngineMetricsConfig = field(default_factory=EngineMetricsConfig)
+    param_sweep: ParamSweepConfig = field(default_factory=ParamSweepConfig)
+
+    def validate(self) -> None:
+        """Validate nested configs before a run starts."""
+        self.load.validate()
+
+    def summary(self) -> str:
+        """Human-readable config banner for the console."""
+        path = (
+            f" path={self.dataset.primary_dataset_path}"
+            if self.dataset.dataset_path
+            else ""
         )
-    return BenchArguments.from_cli(**opts)
+        return (
+            "\n==============================\n"
+            " Foretoken Benchmark\n"
+            "==============================\n"
+            f"Configuration:\n"
+            f"  URL        : {self.target.url}\n"
+            f"  Model      : {self.target.model}\n"
+            f"  Parallel   : {self.load.parallel}\n"
+            f"  Number     : {self.load.number}\n"
+            f"  Rate       : {self.load.rate}\n"
+            f"  Open Loop  : {self.load.open_loop}\n"
+            f"  Stream     : {self.generation.stream}\n"
+            f"  Dataset    : mode={self.dataset.dataset}{path}\n"
+        )
 
-
-def bench(
-    # --- target ---
-    url: str = Option(..., help="OpenAI compatible API URL"),
-    model: str = Option(..., help="Model name"),
-    api_key: str = Option(_d("api_key"), help="API key (optional)"),
-    timeout: int = Option(_d("timeout"), help="Request timeout seconds"),
-    # --- load shape ---
-    parallel: str = Option(
-        _d("parallel"), help="Concurrency; list like 1,2,4,8 triggers sweep"
-    ),
-    number: str = Option(
-        _d("number"), help="Request count; list aligns with parallel"
-    ),
-    rate: str = Option(
-        _d("rate"),
-        help=(
-            "Arrival rate (req/s). -1 = no pacing; >0 = Poisson pacing "
-            "(EvalScope-style absolute time). Still closed-loop (semaphore) "
-            "unless --open-loop. List e.g. 5,10,20 for sweep"
-        ),
-    ),
-    open_loop: bool = Option(
-        _d("open_loop"),
-        "--open-loop/--closed-loop",
-        help=(
-            "Open-loop: no concurrency limit (EvalScope parallel=-1); "
-            "optionally pace with --rate. Default is closed-loop "
-            "(semaphore = --parallel)."
-        ),
-    ),
-    # --- generation ---
-    max_tokens: int = Option(_d("max_tokens"), help="Max generation tokens"),
-    temperature: float = Option(_d("temperature"), help="Sampling temperature"),
-    stream: bool = Option(
-        _d("stream"), help="Use streaming to measure TTFT/TPOT"
-    ),
-    # --- dataset / prompts ---
-    dataset: str = Option(
-        _d("dataset"),
-        help=(
-            "Dataset mode: EvalScope plugin (openqa | random | "
-            "line_by_line | custom_multi_turn | ...) or multi-dataset "
-            "schedule (sequential | mixed) with multiple --dataset-path. "
-            "Not a file path."
-        ),
-    ),
-    dataset_path: str = Option(
-        _d("dataset_path"),
-        help=(
-            "Dataset file or directory path(s), comma-separated. With "
-            "--dataset sequential|mixed use multiple paths (Phase 3). "
-            "Example: conversation.jsonl with --dataset custom_multi_turn"
-        ),
-    ),
-    dataset_offset: int = Option(
-        _d("dataset_offset"),
-        help="Global token-sequence offset for random datasets",
-    ),
-    tokenizer_path: str = Option(
-        _d("tokenizer_path"),
-        help="Tokenizer path (required for --dataset random)",
-    ),
-    min_prompt_length: int = Option(
-        _d("min_prompt_length"),
-        help="Minimum prompt length (tokens if tokenizer set)",
-    ),
-    max_prompt_length: int = Option(
-        _d("max_prompt_length"),
-        help="Maximum prompt length (tokens if tokenizer set)",
-    ),
-    prefix_length: int = Option(
-        _d("prefix_length"), help="Prefix length (random dataset only)"
-    ),
-    apply_chat_template: bool | None = Option(
-        _d("apply_chat_template"),
-        "--apply-chat-template/--no-apply-chat-template",
-        help="Apply chat template (default: auto from URL)",
-    ),
-    prompt: str = Option(
-        _d("prompt"),
-        help="Fixed prompt text (evalscope --prompt; overrides dataset)",
-    ),
-    max_turns: int | None = Option(
-        _d("max_turns"),
-        help="Max user turns for custom_multi_turn (truncate long chats)",
-    ),
-    # --- analysis / outputs ---
-    sla_auto_tune: bool = Option(
-        _d("sla_auto_tune"), help="Enable SLA search (Phase 2 — not implemented)"
-    ),
-    gpu_count: int = Option(
-        _d("gpu_count"), help="GPU count for Pareto tokens/s/GPU axis"
-    ),
-    eval_suite: str = Option(
-        _d("eval_suite"),
-        help="none | general | tool | both (Phase 0.5 — not implemented)",
-    ),
-    outputs_dir: str = Option(
-        _d("outputs_dir"), help="Results root directory"
-    ),
-    # --- wandb ---
-    wandb: bool = Option(
-        _d("wandb"), help="Enable Weights & Biases logging"
-    ),
-    wandb_project: str = Option(_d("wandb_project"), help="W&B project"),
-    wandb_entity: str = Option(_d("wandb_entity"), help="W&B entity"),
-    wandb_run_name: str = Option(
-        _d("wandb_run_name"),
-        help=(
-            "W&B run name; default {model}_{YYYYMMDD_HHMMSS} "
-            "(EvalScope style)"
-        ),
-    ),
-    # --- engine metrics ---
-    collect_engine_metrics: bool = Option(
-        _d("collect_engine_metrics"),
-        help="Collect vLLM engine metrics (Phase M1)",
-    ),
-    engine_metrics_url: str = Option(
-        _d("engine_metrics_url"), help="Prometheus /metrics URL"
-    ),
-    engine_metrics_interval: float = Option(
-        _d("engine_metrics_interval"),
-        help="Engine /metrics polling interval seconds",
-    ),
-    # --- param sweep (serve × bench product) ---
-    serve_params: str = Option(
-        _d("serve_params"),
-        help=(
-            "JSON path of serve parameter combinations (list of dicts or "
-            "named dict; vLLM-compatible). Cartesian product with "
-            "--bench-params; recorded as metadata only (external server "
-            "must already match)."
-        ),
-    ),
-    bench_params: str = Option(
-        _d("bench_params"),
-        help=(
-            "JSON path of bench parameter combinations (list of dicts or "
-            "named dict; vLLM-compatible). Keys override foretoken bench "
-            "flags (parallel/max_concurrency, number/num_prompts, ...)."
-        ),
-    ),
-    link_vars: str = Option(
-        _d("link_vars"),
-        help=(
-            "Comma-separated serve_key=bench_key filters for the product, "
-            "e.g. max_num_seqs=parallel"
-        ),
-    ),
-    num_runs: int = Option(
-        _d("num_runs"),
-        help="Repeats per serve×bench combination (param sweep)",
-    ),
-    dry_run: bool = Option(
-        _d("dry_run"),
-        "--dry-run",
-        help="Print serve×bench plan without executing",
-    ),
-    experiment_name: str = Option(
-        _d("experiment_name"),
-        help="Param-sweep experiment subdir under --outputs-dir",
-    ),
-) -> None:
-    """``foretoken bench [OPTIONS]`` — validate flags, then run."""
-    args = build_bench_arguments(**locals())
-    path = f" path={args.primary_dataset_path}" if args.dataset_path else ""
-    print(
-        "\n==============================\n"
-        " Foretoken Benchmark\n"
-        "==============================\n"
-        f"Configuration:\n"
-        f"  URL        : {args.url}\n"
-        f"  Model      : {args.model}\n"
-        f"  Parallel   : {args.parallel}\n"
-        f"  Number     : {args.number}\n"
-        f"  Rate       : {args.rate}\n"
-        f"  Open Loop  : {args.open_loop}\n"
-        f"  Stream     : {args.stream}\n"
-        f"  Dataset    : mode={args.dataset}{path}\n"
-    )
-    asyncio.run(run_benchmark(args))
+    def to_dict(self) -> dict[str, Any]:
+        """Nested dict snapshot (e.g. param-sweep plan base config)."""
+        return asdict(self)
