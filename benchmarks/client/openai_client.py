@@ -1,3 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+
+"""OpenAI-compatible chat client with optional streaming (TTFT)."""
+
 from __future__ import annotations
 
 import json
@@ -73,13 +79,6 @@ class OpenAICompatClient:
         temperature: float = 0.0,
         stream: bool = True,
     ) -> dict[str, Any]:
-        """
-        Single request.
-
-        Returns keys:
-          success, status_code, latency, ttft, tpot,
-          input_tokens, output_tokens, error
-        """
         if self.session is None:
             await self.start()
 
@@ -109,10 +108,7 @@ class OpenAICompatClient:
             return [{"role": "user", "content": prompt}]
         raise ValueError("Either prompt or messages must be provided")
 
-    async def _generate_non_stream(
-        self,
-        payload: dict[str, Any],
-    ) -> dict[str, Any]:
+    async def _generate_non_stream(self, payload: dict[str, Any]) -> dict[str, Any]:
         start_time = time.perf_counter()
         try:
             assert self.session is not None
@@ -141,10 +137,7 @@ class OpenAICompatClient:
                 error=str(e),
             )
 
-    async def _generate_stream(
-        self,
-        payload: dict[str, Any],
-    ) -> dict[str, Any]:
+    async def _generate_stream(self, payload: dict[str, Any]) -> dict[str, Any]:
         start_time = time.perf_counter()
         ttft: Optional[float] = None
         output_tokens = 0
@@ -180,8 +173,7 @@ class OpenAICompatClient:
                     usage = chunk.get("usage")
                     if usage:
                         input_tokens = int(
-                            usage.get("prompt_tokens", input_tokens)
-                            or input_tokens
+                            usage.get("prompt_tokens", input_tokens) or input_tokens
                         )
                         output_tokens = int(
                             usage.get("completion_tokens", output_tokens)

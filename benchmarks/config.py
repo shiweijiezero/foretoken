@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+
 """Typed benchmark configuration: one dataclass per concern."""
 
 from __future__ import annotations
@@ -188,6 +190,22 @@ class BenchConfig:
             if self.dataset.dataset_path
             else ""
         )
+        open_loop = self.load.open_loop
+        if open_loop:
+            parallel_s = "unlimited (open-loop)"
+        else:
+            parallel_s = str(self.load.parallel)
+
+        if len(self.load.rate) == 1:
+            rate = float(self.load.rate[0])
+            if rate > 0:
+                mode = "open-loop" if open_loop else "closed-loop"
+                rate_s = f"{rate:g} req/s ({mode}, Poisson pacing)"
+            else:
+                rate_s = "INF (no pacing)"
+        else:
+            rate_s = str(self.load.rate)
+
         return (
             "\n==============================\n"
             " Foretoken Benchmark\n"
@@ -195,10 +213,10 @@ class BenchConfig:
             f"Configuration:\n"
             f"  URL        : {self.target.url}\n"
             f"  Model      : {self.target.model}\n"
-            f"  Parallel   : {self.load.parallel}\n"
+            f"  Parallel   : {parallel_s}\n"
             f"  Number     : {self.load.number}\n"
-            f"  Rate       : {self.load.rate}\n"
-            f"  Open Loop  : {self.load.open_loop}\n"
+            f"  Rate       : {rate_s}\n"
+            f"  Open Loop  : {open_loop}\n"
             f"  Stream     : {self.generation.stream}\n"
             f"  Dataset    : mode={self.dataset.dataset}{path}\n"
         )
