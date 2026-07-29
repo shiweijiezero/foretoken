@@ -1,0 +1,13 @@
+[workspace]
+resolver = "3"
+members = [
+    "src/backend-registry",
+    "src/chat",
+    "src/cmd",
+    "src/engine-core-client",
+    "src/kv-index",
+    "src/llm-facade",
+    "src/router",
+    "src/server",
+    "src/text",
+]
