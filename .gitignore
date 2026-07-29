@@ -25,11 +25,3 @@ tmp/
 # Private docs (strategy / IP — never commit to this repo)
 my_docs/
 
-# control-plane local Go/Kubebuilder artifacts
-/control-plane/bin/
-/control-plane/dist/
-/control-plane/Dockerfile.cross
-/control-plane/*.test
-/control-plane/*.out
-/control-plane/go.work
-/control-plane/*.kubeconfig
