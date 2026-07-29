@@ -1,9 +1,0 @@
-resources:
-# Controller manager service account and runtime permissions.
-- service_account.yaml
-- role.yaml
-- role_binding.yaml
-
-# Leader election is enabled by the manager deployment.
-- leader_election_role.yaml
-- leader_election_role_binding.yaml
