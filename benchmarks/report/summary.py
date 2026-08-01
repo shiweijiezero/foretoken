@@ -34,7 +34,7 @@ def _pct_row(name: str, stats: dict[str, Any] | None, unit: str = "s") -> str:
 
 
 def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
-    """Log the single-run benchmark banner: config, success rate, latency, throughput."""
+    """Log the benchmark banner: config, success rate, latency, throughput."""
     resolved = config.get("resolved") or {}
     parallel = metrics.get("parallel", resolved.get("parallel"))
 
