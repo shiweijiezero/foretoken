@@ -37,8 +37,7 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
     parser = argparse.ArgumentParser(
         prog="foretoken",
         description=(
-            "LLM inference orchestration for SLO/SLA targets "
-            "and heterogeneous accelerators"
+            "LLM inference tool"
         ),
     )
     subparsers = parser.add_subparsers(dest="command", required=True)

@@ -2,20 +2,20 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""Select single vs multi runner."""
+"""Select which runner to use for a benchmark."""
 
 from __future__ import annotations
 
 from benchmarks.config import BenchConfig
 from benchmarks.runner.base import Runner
-from benchmarks.runner.single import SingleRunner
+from benchmarks.runner.run_one_benchmark import RunOneBenchmark
 
 
 def select_runner(config: BenchConfig) -> Runner:
     """Choose runner from config.
 
-    - ``load.is_sweep`` → multi (not implemented in this phase)
-    - else → single-point load test
+    - ``load.is_sweep`` selects multi (not implemented in this phase)
+    - otherwise selects ``RunOneBenchmark`` for a single-point load test
     """
     config.validate()
     if config.param_sweep.enabled:
@@ -28,4 +28,4 @@ def select_runner(config: BenchConfig) -> Runner:
             "Load sweep (multi parallel/number/rate) is not implemented "
             "yet; pass a single --parallel / --number / --rate value."
         )
-    return SingleRunner(config)
+    return RunOneBenchmark(config)

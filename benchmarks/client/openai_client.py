@@ -2,44 +2,26 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""OpenAI-compatible chat client with optional streaming (TTFT)."""
+"""OpenAI-compatible chat client."""
 
 from __future__ import annotations
 
-import json
 import time
 from typing import Any, Optional
 
-import aiohttp
+import httpx
+from openai import APIStatusError, AsyncOpenAI
 
 from benchmarks.metrics.aggregator import compute_tpot
 
 
-def _result(
-    *,
-    success: bool,
-    status_code: Optional[int],
-    latency: float,
-    ttft: Optional[float] = None,
-    tpot: Optional[float] = None,
-    input_tokens: int = 0,
-    output_tokens: int = 0,
-    error: Optional[str] = None,
-) -> dict[str, Any]:
-    return {
-        "success": success,
-        "status_code": status_code,
-        "latency": latency,
-        "ttft": ttft,
-        "tpot": tpot,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "error": error,
-    }
+def _base_url(url: str) -> str:
+    u = url.rstrip("/")
+    return u.removesuffix("/chat/completions") or u
 
 
 class OpenAICompatClient:
-    """OpenAI-compatible chat client with optional streaming (TTFT)."""
+    """OpenAI-compatible chat client."""
 
     def __init__(
         self,
@@ -48,27 +30,24 @@ class OpenAICompatClient:
         timeout: int = 300,
         api_key: str = "",
     ):
-        self.url = url
         self.model = model
-        self.api_key = api_key
-        self.timeout = aiohttp.ClientTimeout(total=timeout)
-        self.session: Optional[aiohttp.ClientSession] = None
+        self.client = AsyncOpenAI(
+            base_url=_base_url(url),
+            api_key=api_key or "EMPTY",
+            max_retries=0,
+            http_client=httpx.AsyncClient(
+                timeout=timeout,
+                limits=httpx.Limits(
+                    max_connections=10_000, max_keepalive_connections=10_000
+                ),
+            ),
+        )
 
     async def start(self) -> None:
-        if self.session is None:
-            headers = {}
-            if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
-            self.session = aiohttp.ClientSession(
-                connector=aiohttp.TCPConnector(limit=0, ttl_dns_cache=300),
-                timeout=self.timeout,
-                headers=headers,
-            )
+        """No-op; client is ready after ``__init__`` (kept for runner API)."""
 
     async def close(self) -> None:
-        if self.session:
-            await self.session.close()
-            self.session = None
+        await self.client.close()
 
     async def generate(
         self,
@@ -79,139 +58,70 @@ class OpenAICompatClient:
         temperature: float = 0.0,
         stream: bool = True,
     ) -> dict[str, Any]:
-        if self.session is None:
-            await self.start()
+        if messages is None:
+            if prompt is None:
+                raise ValueError("Either prompt or messages must be provided")
+            messages = [{"role": "user", "content": prompt}]
 
-        chat_messages = self._build_messages(prompt, messages)
-        payload: dict[str, Any] = {
+        kwargs: dict[str, Any] = {
             "model": self.model,
-            "messages": chat_messages,
+            "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": stream,
         }
         if tools:
-            payload["tools"] = tools
+            kwargs["tools"] = tools
         if stream:
-            payload["stream_options"] = {"include_usage": True}
-            return await self._generate_stream(payload)
-        return await self._generate_non_stream(payload)
+            kwargs["stream_options"] = {"include_usage": True}
 
-    def _build_messages(
-        self,
-        prompt: Optional[str],
-        messages: Optional[list[dict[str, Any]]],
-    ) -> list[dict[str, Any]]:
-        if messages is not None:
-            return messages
-        if prompt is not None:
-            return [{"role": "user", "content": prompt}]
-        raise ValueError("Either prompt or messages must be provided")
-
-    async def _generate_non_stream(self, payload: dict[str, Any]) -> dict[str, Any]:
-        start_time = time.perf_counter()
-        try:
-            assert self.session is not None
-            async with self.session.post(self.url, json=payload) as response:
-                data = await response.json()
-                status = response.status
-
-            latency = time.perf_counter() - start_time
-            usage = data.get("usage", {}) if isinstance(data, dict) else {}
-            in_tok = int(usage.get("prompt_tokens", 0) or 0)
-            out_tok = int(usage.get("completion_tokens", 0) or 0)
-            ok = status < 400
-            return _result(
-                success=ok,
-                status_code=status,
-                latency=latency,
-                input_tokens=in_tok,
-                output_tokens=out_tok,
-                error=None if ok else str(data),
-            )
-        except Exception as e:
-            return _result(
-                success=False,
-                status_code=None,
-                latency=time.perf_counter() - start_time,
-                error=str(e),
-            )
-
-    async def _generate_stream(self, payload: dict[str, Any]) -> dict[str, Any]:
-        start_time = time.perf_counter()
+        t0 = time.perf_counter()
         ttft: Optional[float] = None
-        output_tokens = 0
-        input_tokens = 0
-        content_tokens = 0
-        status_code: Optional[int] = None
-
+        in_tok = out_tok = n_content = 0
+        status: Optional[int] = None
         try:
-            assert self.session is not None
-            async with self.session.post(self.url, json=payload) as response:
-                status_code = response.status
-                if status_code >= 400:
-                    body = await response.text()
-                    return _result(
-                        success=False,
-                        status_code=status_code,
-                        latency=time.perf_counter() - start_time,
-                        error=body[:500],
-                    )
-
-                async for raw in response.content:
-                    line = raw.decode("utf-8", errors="ignore").strip()
-                    if not line.startswith("data:"):
+            resp = await self.client.chat.completions.create(**kwargs)
+            status = 200
+            if stream:
+                async for chunk in resp:
+                    if chunk.usage:
+                        in_tok = int(chunk.usage.prompt_tokens or in_tok)
+                        out_tok = int(chunk.usage.completion_tokens or out_tok)
+                    if not chunk.choices:
                         continue
-                    data_str = line[5:].strip()
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
+                    delta = chunk.choices[0].delta
+                    if delta.content or delta.tool_calls:
+                        ttft = ttft if ttft is not None else time.perf_counter() - t0
+                        if delta.content:
+                            n_content += 1
+            elif resp.usage:
+                in_tok = int(resp.usage.prompt_tokens or 0)
+                out_tok = int(resp.usage.completion_tokens or 0)
 
-                    usage = chunk.get("usage")
-                    if usage:
-                        input_tokens = int(
-                            usage.get("prompt_tokens", input_tokens) or input_tokens
-                        )
-                        output_tokens = int(
-                            usage.get("completion_tokens", output_tokens)
-                            or output_tokens
-                        )
-
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    content = delta.get("content")
-                    if content or delta.get("tool_calls"):
-                        if ttft is None:
-                            ttft = time.perf_counter() - start_time
-                        if content:
-                            content_tokens += 1
-
-            latency = time.perf_counter() - start_time
-            if output_tokens <= 0:
-                output_tokens = content_tokens
-            return _result(
-                success=True,
-                status_code=status_code,
-                latency=latency,
-                ttft=ttft,
-                tpot=compute_tpot(latency, ttft, output_tokens),
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-            )
+            latency = time.perf_counter() - t0
+            out_tok = out_tok or n_content
+            return {
+                "success": True,
+                "status_code": status,
+                "latency": latency,
+                "ttft": ttft,
+                "tpot": compute_tpot(latency, ttft, out_tok),
+                "input_tokens": in_tok,
+                "output_tokens": out_tok,
+                "error": None,
+            }
         except Exception as e:
-            latency = time.perf_counter() - start_time
-            return _result(
-                success=False,
-                status_code=status_code,
-                latency=latency,
-                ttft=ttft,
-                tpot=compute_tpot(latency, ttft, output_tokens),
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                error=str(e),
-            )
+            latency = time.perf_counter() - t0
+            out_tok = out_tok or n_content
+            return {
+                "success": False,
+                "status_code": (
+                    e.status_code if isinstance(e, APIStatusError) else status
+                ),
+                "latency": latency,
+                "ttft": ttft,
+                "tpot": compute_tpot(latency, ttft, out_tok),
+                "input_tokens": in_tok,
+                "output_tokens": out_tok,
+                "error": str(e)[:500],
+            }

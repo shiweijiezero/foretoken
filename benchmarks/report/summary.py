@@ -2,14 +2,18 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""Print a single-run metrics summary to stdout."""
+"""Log a metrics summary."""
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _fmt(value: Any, digits: int = 4) -> str:
+    """Format a metric value for display; None becomes an em dash, otherwise a fixed-point float."""
     if value is None:
         return "—"
     try:
@@ -19,6 +23,7 @@ def _fmt(value: Any, digits: int = 4) -> str:
 
 
 def _pct_row(name: str, stats: dict[str, Any] | None, unit: str = "s") -> str:
+    """Build one percentile line: mean / p50 / p95 / p99 for a named metric."""
     stats = stats or {}
     return (
         f"  {name:<12} mean={_fmt(stats.get('mean'))}{unit}  "
@@ -28,7 +33,8 @@ def _pct_row(name: str, stats: dict[str, Any] | None, unit: str = "s") -> str:
     )
 
 
-def print_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
+def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
+    """Log the single-run benchmark banner: config, success rate, latency, throughput."""
     resolved = config.get("resolved") or {}
     parallel = metrics.get("parallel", resolved.get("parallel"))
 
@@ -41,25 +47,29 @@ def print_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
     rate = resolved.get("rate", config.get("rate"))
     throughput = metrics.get("throughput") or {}
 
-    print()
-    print("======== Foretoken Benchmark Result ========")
-    print(f"  Model      : {config.get('model', '')}")
-    print(f"  Requests   : {number}")
-    print(f"  Parallel   : {parallel_s}")
+    lines = [
+        "======== Foretoken Benchmark Result ========",
+        f"  Model      : {config.get('model', '')}",
+        f"  Requests   : {number}",
+        f"  Parallel   : {parallel_s}",
+    ]
     if config.get("open_loop"):
-        print("  Open Loop  : True")
+        lines.append("  Open Loop  : True")
     if rate is not None and float(rate) > 0:
-        print(f"  Rate       : {rate} req/s")
-    print(
-        f"  Success    : {metrics.get('success_num', 0)}/"
-        f"{metrics.get('request_num', 0)} "
-        f"({float(metrics.get('success_rate') or 0.0) * 100:.2f}%)"
+        lines.append(f"  Rate       : {rate} req/s")
+    lines.extend(
+        [
+            f"  Success    : {metrics.get('success_num', 0)}/"
+            f"{metrics.get('request_num', 0)} "
+            f"({float(metrics.get('success_rate') or 0.0) * 100:.2f}%)",
+            _pct_row("Latency", metrics.get("latency")),
+            _pct_row("TTFT", metrics.get("ttft")),
+            _pct_row("TPOT", metrics.get("tpot")),
+            f"  Request/s  : {_fmt(throughput.get('request/s'))}",
+            f"  Token/s    : {_fmt(throughput.get('token/s'))}",
+            f"  Tok/s/user : {_fmt(throughput.get('token/s/user'))}",
+            f"  Wall time  : {_fmt(metrics.get('benchmark_time'))}s",
+            "============================================",
+        ]
     )
-    print(_pct_row("Latency", metrics.get("latency")))
-    print(_pct_row("TTFT", metrics.get("ttft")))
-    print(_pct_row("TPOT", metrics.get("tpot")))
-    print(f"  Request/s  : {_fmt(throughput.get('request/s'))}")
-    print(f"  Token/s    : {_fmt(throughput.get('token/s'))}")
-    print(f"  Tok/s/user : {_fmt(throughput.get('token/s/user'))}")
-    print(f"  Wall time  : {_fmt(metrics.get('benchmark_time'))}s")
-    print("============================================")
+    logger.info("\n%s", "\n".join(lines))
