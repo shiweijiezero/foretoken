@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Foretoken frontend service configuration.
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: FrontendService
+metadata:
+  name: quickstart-frontend # Kubernetes name of this frontend service.
+spec:
+  replicas: 2 # Increase or decrease to scale frontend capacity.
+  resources: # Resources allocated to each frontend replica.
+    requests:
+      cpu: "2"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  timeouts:
+    request: 10m # Maximum duration of a client request.
+    streamIdle: 5m # Maximum time a stream may produce no response chunks.
+  hostname: foretoken.example.com # Hostname for the frontend service.

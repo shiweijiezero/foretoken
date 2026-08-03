@@ -45,11 +45,11 @@ helm upgrade --install foretoken \
 
 ### 2. Deploy a model service
 
-`serving_demo.yaml` declares the traffic entrypoint and model service configuration. The Operator creates and manages the underlying resources.
+`examples/quickstart/kustomization.yaml` is the deployment entrypoint. It organizes the frontend and model services, while the Operator creates and manages the underlying resources.
 
 ```bash
 FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_CONFIG=deploy/examples/quickstart/serving_demo.yaml
+FORETOKEN_SERVING_DIR=examples/quickstart
 
 # Create the namespace for the model service; keep it unchanged if it exists.
 kubectl create namespace "${FORETOKEN_NAMESPACE}" \
@@ -58,20 +58,21 @@ kubectl create namespace "${FORETOKEN_NAMESPACE}" \
 # Apply the model service configuration; the Operator creates and starts its workloads.
 kubectl apply --server-side \
   --namespace "${FORETOKEN_NAMESPACE}" \
-  -f "${FORETOKEN_SERVING_CONFIG}"
+  -k "${FORETOKEN_SERVING_DIR}"
 ```
 
 ### 3. Wait for serving to become ready
 
 ```bash
 FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_CONFIG=deploy/examples/quickstart/serving_demo.yaml
+FORETOKEN_SERVING_DIR=examples/quickstart
 
-# Wait until the model service and traffic entrypoint in the configuration are ready.
-kubectl wait --for=condition=Ready \
-  --namespace "${FORETOKEN_NAMESPACE}" \
-  --timeout=10m \
-  -f "${FORETOKEN_SERVING_CONFIG}"
+# Wait until the frontend and model services in the Kustomize entrypoint are ready.
+kubectl kustomize "${FORETOKEN_SERVING_DIR}" |
+  kubectl wait --for=condition=Ready \
+    --namespace "${FORETOKEN_NAMESPACE}" \
+    --timeout=15m \
+    -f -
 ```
 
 ### 4. Send a generation request through the Gateway
@@ -80,7 +81,7 @@ kubectl wait --for=condition=Ready \
 curl --fail-with-body --no-buffer \
   https://foretoken.example.com/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"qwen3","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
 Users submit the serving configuration. The Operator manages the underlying resources, and clients access the model service through the Gateway.
@@ -91,11 +92,11 @@ Delete the serving configuration so the Operator can stop the service and clean 
 
 ```bash
 FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_CONFIG=deploy/examples/quickstart/serving_demo.yaml
+FORETOKEN_SERVING_DIR=examples/quickstart
 
 kubectl delete --wait=true --timeout=10m \
   --namespace "${FORETOKEN_NAMESPACE}" \
-  -f "${FORETOKEN_SERVING_CONFIG}"
+  -k "${FORETOKEN_SERVING_DIR}"
 ```
 
 After the serving resources are gone, uninstall Foretoken:
