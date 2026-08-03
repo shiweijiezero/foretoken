@@ -1,5 +1,6 @@
 infra/
 .idea/
+.vscode/
 
 # Python
 __pycache__/
@@ -8,8 +9,6 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 .venv/
-build/
-dist/
 
 # Local environment
 .env.local
