@@ -13,7 +13,7 @@ from typing import Any, Iterator
 from benchmarks.config import BenchConfig, DatasetConfig
 
 
-def iter_jsonl(path: Path | str) -> Iterator[tuple[int, Any]]:
+def load_jsonl(path: Path | str) -> Iterator[tuple[int, Any]]:
     """Yield ``(line_no, parsed_object)`` for non-empty JSONL lines."""
     p = Path(path)
     if not p.is_file():
@@ -77,7 +77,7 @@ def load_requests(config: BenchConfig) -> list[dict[str, Any]]:
     p = Path(path)
     offset = max(int(ds.dataset_offset), 0)
     requests: list[dict[str, Any]] = []
-    for line_no, obj in iter_jsonl(p):
+    for line_no, obj in load_jsonl(p):
         if line_no <= offset:
             continue
         requests.append(_normalize(obj, p, line_no))

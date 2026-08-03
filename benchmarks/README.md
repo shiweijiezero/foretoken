@@ -30,3 +30,27 @@ If you are only poking the API by hand, you usually do not need the full evaluat
 - Readable summary results in the console
 - Locally saved configs, raw results, and metrics for later review
 - Optional Weights & Biases (W&B) experiment logs and charts for cross-run comparison and config selection
+
+## Examples
+
+Fixed prompt:
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --prompt "hello" \
+  --parallel 2 \
+  --number 200
+```
+
+Dataset file:
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset-path /home/wshiah/code/zhuting/foretoken/conversation.jsonl \
+  --parallel 2 \
+  --number 200
+```

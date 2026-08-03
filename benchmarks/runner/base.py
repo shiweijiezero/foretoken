@@ -15,7 +15,10 @@ from typing import Any, Optional
 
 from tqdm.asyncio import tqdm as tqdm_asyncio
 
-from benchmarks.client.openai_client import OpenAICompatClient
+from benchmarks.client.openai_client import (
+    OpenAICompatClient,
+    derive_max_connections,
+)
 from benchmarks.config import BenchConfig
 from benchmarks.metrics.aggregator import (
     MetricsAggregator,
@@ -38,10 +41,19 @@ class Runner(ABC):
         """Execute the benchmark and return a result dict."""
 
     def make_client(self) -> OpenAICompatClient:
-        """Build an OpenAI-compatible client from ``config.target``."""
+        """Build an OpenAI-compatible client from ``config.target`` / load."""
         t = self.config.target
+        load = self.config.load
         return OpenAICompatClient(
-            t.url, t.model, timeout=t.timeout, api_key=t.api_key
+            t.url,
+            t.model,
+            timeout=t.timeout,
+            api_key=t.api_key,
+            max_connections=derive_max_connections(
+                parallel=load.primary_parallel,
+                number=load.primary_number,
+                open_loop=load.open_loop,
+            ),
         )
 
     def make_writer(self) -> ResultWriter:
@@ -93,7 +105,6 @@ class Runner(ABC):
         gen = self.config.generation
         max_tokens = gen.max_tokens
         temperature = gen.temperature
-        stream = gen.stream
 
         await client.start()
         n = len(requests)
@@ -109,13 +120,12 @@ class Runner(ABC):
             if sem is not None:
                 await sem.acquire()
             try:
-                result = await client.generate(
+                result = await client.generate_stream(
                     prompt=req.get("prompt"),
                     messages=req.get("messages"),
                     tools=req.get("tools"),
                     max_tokens=max_tokens,
                     temperature=temperature,
-                    stream=stream,
                 )
                 results[i] = result
             finally:

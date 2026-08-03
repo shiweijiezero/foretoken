@@ -30,3 +30,27 @@
 - 控制台可读的汇总结果
 - 本地保存的配置、原始结果和指标，方便事后复查
 - 可选的 Weights & Biases（W&B）实验记录与图表，方便跨 run 对比和选配置
+
+## 示例
+
+固定 prompt：
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --prompt "hello" \
+  --parallel 2 \
+  --number 200
+```
+
+数据集文件：
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset-path /home/wshiah/code/zhuting/foretoken/conversation.jsonl \
+  --parallel 2 \
+  --number 200
+```

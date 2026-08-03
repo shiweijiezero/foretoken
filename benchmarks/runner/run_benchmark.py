@@ -12,7 +12,7 @@ from benchmarks.runner.base import Runner
 from benchmarks.workload.loader import load_requests
 
 
-class RunOneBenchmark(Runner):
+class RunBenchmark(Runner):
     """Run one closed-loop or open-loop load point.
 
     Semantics (EvalScope-aligned):
@@ -25,7 +25,7 @@ class RunOneBenchmark(Runner):
         load = self.primary_load()
         requests = load_requests(self.config)
         writer = self.make_writer()
-        run_config = self.build_run_config("run_one_benchmark", load)
+        run_config = self.build_run_config("run_benchmark", load)
 
         raw = await self.dispatch(
             self.make_client(),
@@ -43,7 +43,7 @@ class RunOneBenchmark(Runner):
         self.save_results(writer, run_config, raw, metrics)
 
         return {
-            "mode": "run_one_benchmark",
+            "mode": "run_benchmark",
             "metrics": metrics,
             "output_dir": writer.output_dir,
         }
