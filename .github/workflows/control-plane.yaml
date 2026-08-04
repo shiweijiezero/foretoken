@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Verifies the control plane, generated files, image, and Helm lifecycle.
+
+name: Control plane
+
+on:
+  pull_request:
+    paths:
+      - control-plane/**
+      - deploy/charts/foretoken/**
+      - .dockerignore
+      - LICENSE
+      - .github/workflows/control-plane.yaml
+  push:
+    branches:
+      - main
+    paths:
+      - control-plane/**
+      - deploy/charts/foretoken/**
+      - .dockerignore
+      - LICENSE
+      - .github/workflows/control-plane.yaml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: control-plane/go.mod
+          cache-dependency-path: control-plane/go.sum
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.3
+      - name: Verify control plane
+        run: make -C control-plane verify
+      - name: Validate operator image
+        run: docker build -f control-plane/Dockerfile -t foretoken-control-plane:test .
+      - name: Create test cluster
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          version: v0.32.0
+          cluster_name: foretoken
+      - name: Validate Helm chart
+        run: |
+          helm lint deploy/charts/foretoken --kube-version 1.36.3
+          helm template foretoken deploy/charts/foretoken --kube-version 1.36.3 > /tmp/foretoken.yaml
+          grep -q '^kind: Deployment' /tmp/foretoken.yaml
+          grep -q '^kind: ClusterRole' /tmp/foretoken.yaml
+          ! grep -q '^kind: CustomResourceDefinition' /tmp/foretoken.yaml
+      - name: Validate operator lifecycle
+        run: |
+          kind load docker-image foretoken-control-plane:test --name foretoken
+          helm upgrade --install foretoken deploy/charts/foretoken \
+            --namespace foretoken-platform \
+            --create-namespace \
+            --set image.repository=foretoken-control-plane \
+            --set image.tag=test \
+            --set image.pullPolicy=Never \
+            --wait \
+            --timeout=3m
+          kubectl wait --for=condition=Established \
+            crd/frontendservices.inference.foretoken.io \
+            crd/modelservices.inference.foretoken.io \
+            --timeout=1m
+          helm upgrade foretoken deploy/charts/foretoken \
+            --namespace foretoken-platform \
+            --set image.repository=foretoken-control-plane \
+            --set image.tag=test \
+            --set image.pullPolicy=Never \
+            --set resources.requests.cpu=21m \
+            --wait \
+            --timeout=3m
+          helm uninstall foretoken --namespace foretoken-platform --wait
+          kubectl get crd/frontendservices.inference.foretoken.io
+          kubectl get crd/modelservices.inference.foretoken.io
+          ! kubectl get clusterrole/foretoken-platform-foretoken-control-plane
+      - name: Check generated files
+        run: git diff --exit-code

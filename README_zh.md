@@ -103,6 +103,14 @@ helm uninstall foretoken \
   --wait --timeout 5m
 ```
 
+卸载 control plane 时会保留 Foretoken CRD 和自定义资源。只有在清理全部 Foretoken 资源后，才应显式删除 CRD：
+
+```bash
+kubectl delete crd \
+  frontendservices.inference.foretoken.io \
+  modelservices.inference.foretoken.io
+```
+
 ## 从源码安装
 
 使用源码目录中的本地 Chart：

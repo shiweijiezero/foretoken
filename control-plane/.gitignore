@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Excludes local control-plane build and coverage artifacts from Git.
+
+/bin/
+/cover.out

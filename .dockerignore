@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Restricts the Docker build context to the control-plane sources and license.
+
+**
+!LICENSE
+!control-plane/
+!control-plane/**
+control-plane/bin/

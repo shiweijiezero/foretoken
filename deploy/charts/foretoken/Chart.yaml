@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Declares the Helm chart that deploys the Foretoken control plane.
+
+apiVersion: v2
+name: foretoken
+description: Kubernetes control plane for Foretoken.
+type: application
+kubeVersion: ">=1.29.0-0"
+version: 0.0.1
+appVersion: "0.0.1"

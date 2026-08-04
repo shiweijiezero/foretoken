@@ -1,5 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Configures repository-wide pre-commit validation hooks.
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -9,6 +11,7 @@ repos:
       - id: end-of-file-fixer
       - id: check-yaml
         args: [--allow-multiple-documents]
+        exclude: ^deploy/charts/.*/templates/
       - id: check-json
       - id: check-toml
       - id: check-merge-conflict

@@ -107,6 +107,14 @@ helm uninstall foretoken \
   --wait --timeout 5m
 ```
 
+Uninstalling the control plane preserves Foretoken CRDs and custom resources. Delete the CRDs explicitly only after all Foretoken resources have been removed:
+
+```bash
+kubectl delete crd \
+  frontendservices.inference.foretoken.io \
+  modelservices.inference.foretoken.io
+```
+
 ## Install from Source
 
 Use the local Chart from a source checkout:

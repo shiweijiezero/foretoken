@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Deploys the control-plane manager and initializes its CRDs.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "foretoken.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "foretoken.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        inference.foretoken.io/chart-version: {{ .Chart.Version | quote }}
+      labels:
+        {{- include "foretoken.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "foretoken.fullname" . }}
+      automountServiceAccountToken: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      # Establish the APIs before controller-runtime starts discovery and caches.
+      initContainers:
+        - name: crd-apply
+          image: {{ include "foretoken.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /crd-apply
+          args:
+            - --field-manager={{ include "foretoken.clusterName" . }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: manager
+          image: {{ include "foretoken.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command:
+            - /manager
+          args:
+            - --leader-elect=true
+            - --metrics-bind-address=0
+            - --health-probe-bind-address=:8081
+          ports:
+            - name: healthz
+              containerPort: 8081
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: healthz
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: healthz
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- with .Values.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      terminationGracePeriodSeconds: 10

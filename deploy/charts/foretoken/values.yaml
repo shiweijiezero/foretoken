@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Provides default settings for the Foretoken control-plane chart.
+
+image:
+  repository: ghcr.io/shiweijiezero/foretoken/control-plane
+  tag: "" # Defaults to Chart.appVersion.
+  digest: "" # Overrides tag when an immutable digest is provided.
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Resource sizing is workload- and cluster-dependent; measure before setting it.
+resources: {}
+# resources:
+#   requests:
+#     cpu: 20m
+#     memory: 64Mi
+#   limits:
+#     cpu: 200m
+#     memory: 256Mi
