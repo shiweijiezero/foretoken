@@ -281,10 +281,10 @@ spec:
                   x-kubernetes-validations:
                   - message: nodes * resources.requests.gpu.count must equal the compiled
                       worker rank count
-                    rule: 'self.nodes * self.resources.requests.gpu.count == (has(self.parallelism.ep)
-                      ? self.parallelism.pp * self.parallelism.ep.size : self.parallelism.pp
-                      * self.parallelism.tp * self.parallelism.pcp * (has(self.parallelism.dp)
-                      ? self.parallelism.dp : 1))'
+                    rule: '(has(self.nodes) ? self.nodes : 1) * self.resources.requests.gpu.count
+                      == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size
+                      : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp
+                      * (has(self.parallelism.dp) ? self.parallelism.dp : 1))'
                 maxItems: 32
                 minItems: 1
                 type: array

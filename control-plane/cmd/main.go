@@ -18,6 +18,7 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/controllers"
 )
 
 func main() {
@@ -49,6 +50,12 @@ func main() {
 	})
 	if err != nil {
 		ctrl.Log.Error(err, "unable to create manager")
+		os.Exit(1)
+	}
+
+	// Controllers are registered explicitly so each resource keeps one lifecycle owner.
+	if err := (&controllers.ModelServiceReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+		ctrl.Log.Error(err, "unable to register ModelService controller")
 		os.Exit(1)
 	}
 

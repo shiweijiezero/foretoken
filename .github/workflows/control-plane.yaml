@@ -72,6 +72,16 @@ jobs:
             crd/modelpools.inference.foretoken.io \
             crd/modelgroups.inference.foretoken.io \
             --timeout=1m
+          kubectl create namespace foretoken-demo
+          kubectl apply --server-side --namespace foretoken-demo -k examples/quickstart
+          kubectl wait --for=condition=PoolsMaterialized \
+            modelservice/quickstart-qwen3-0.6b \
+            --namespace foretoken-demo \
+            --timeout=1m
+          kubectl get modelpool/quickstart-qwen3-0.6b-default --namespace foretoken-demo
+          test "$(kubectl get modelservice/quickstart-qwen3-0.6b \
+            --namespace foretoken-demo \
+            -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" = "False"
           helm upgrade foretoken deploy/charts/foretoken \
             --namespace foretoken-platform \
             --set image.repository=foretoken-control-plane \

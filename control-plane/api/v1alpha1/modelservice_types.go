@@ -67,7 +67,7 @@ type Parallelism struct {
 }
 
 // ModelPoolTemplate defines one user-owned homogeneous execution Pool.
-// +kubebuilder:validation:XValidation:rule="self.nodes * self.resources.requests.gpu.count == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * (has(self.parallelism.dp) ? self.parallelism.dp : 1))",message="nodes * resources.requests.gpu.count must equal the compiled worker rank count"
+// +kubebuilder:validation:XValidation:rule="(has(self.nodes) ? self.nodes : 1) * self.resources.requests.gpu.count == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * (has(self.parallelism.dp) ? self.parallelism.dp : 1))",message="nodes * resources.requests.gpu.count must equal the compiled worker rank count"
 type ModelPoolTemplate struct {
 	// Name is the stable identity of this Pool within one ModelService.
 	// +kubebuilder:validation:MinLength=1
@@ -83,13 +83,13 @@ type ModelPoolTemplate struct {
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=0
-	Replicas int32 `json:"replicas,omitempty"`
+	Replicas *int32 `json:"replicas,omitempty"`
 
 	// Nodes is the number of physical Kubernetes Nodes used by each ModelGroup.
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=1
-	Nodes int32 `json:"nodes,omitempty"`
+	Nodes *int32 `json:"nodes,omitempty"`
 
 	// +optional
 	// +kubebuilder:validation:MinLength=1

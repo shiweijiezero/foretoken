@@ -10,32 +10,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// CompiledParallelism defines the resolved execution topology of one ModelGroup.
-// Unlike user input, DP is always explicit and may coexist with EP as its derived value.
-// +kubebuilder:validation:XValidation:rule="!has(self.ep) || self.ep.size % (self.tp * self.pcp) == 0",message="parallelism.ep.size must be divisible by parallelism.tp * parallelism.pcp"
-// +kubebuilder:validation:XValidation:rule="!has(self.ep) || self.dp == self.ep.size / (self.tp * self.pcp)",message="parallelism.dp must equal the value derived from parallelism.ep.size"
-// +kubebuilder:validation:XValidation:rule="self.pcp == 1 || self.dp == 1",message="parallelism.pcp greater than 1 is incompatible with parallelism.dp greater than 1"
-// +kubebuilder:validation:XValidation:rule="self.pcp == 1 ? self.tp % self.dcp == 0 : self.dcp == 1 || self.dcp == self.pcp || self.dcp == self.tp * self.pcp",message="parallelism.dcp is incompatible with parallelism.tp and parallelism.pcp"
-type CompiledParallelism struct {
-	// +kubebuilder:validation:Minimum=1
-	TP int32 `json:"tp"`
-
-	// +kubebuilder:validation:Minimum=1
-	PP int32 `json:"pp"`
-
-	// +kubebuilder:validation:Minimum=1
-	DP int32 `json:"dp"`
-
-	// +kubebuilder:validation:Minimum=1
-	PCP int32 `json:"pcp"`
-
-	// +kubebuilder:validation:Minimum=1
-	DCP int32 `json:"dcp"`
-
-	// +optional
-	EP *ExpertParallelism `json:"ep,omitempty"`
-}
-
 // ModelGroupAccelerator defines accelerator capacity for each runtime member Pod.
 type ModelGroupAccelerator struct {
 	// Type is the resolved platform accelerator type.
@@ -56,10 +30,7 @@ type ModelGroupAccelerator struct {
 type ModelGroupSpec struct {
 	ModelPoolRef LocalObjectReference `json:"modelPoolRef"`
 
-	// PoolConfigRevision identifies the resolved Pool configuration.
-	PoolConfigRevision RevisionDigest `json:"poolConfigRevision"`
-
-	// Ordinal is unique within one Pool configuration revision.
+	// Ordinal is unique within its ModelPool.
 	// +kubebuilder:validation:Minimum=0
 	Ordinal int32 `json:"ordinal"`
 
@@ -102,9 +73,6 @@ type ModelGroupStatus struct {
 	TotalMembers int32 `json:"totalMembers,omitempty"`
 
 	// +optional
-	ObservedConfigRevision RevisionDigest `json:"observedConfigRevision,omitempty"`
-
-	// +optional
 	// +listType=map
 	// +listMapKey=type
 	// +kubebuilder:validation:MaxItems=8
@@ -115,7 +83,6 @@ type ModelGroupStatus struct {
 // +kubebuilder:resource:scope=Namespaced
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Role",type=string,JSONPath=".spec.role"
-// +kubebuilder:printcolumn:name="Revision",type=string,JSONPath=".spec.poolConfigRevision"
 // +kubebuilder:printcolumn:name="Members",type=integer,JSONPath=".spec.memberCount"
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=".status.readyMembers"
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=".status.phase"

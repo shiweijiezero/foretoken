@@ -22,9 +22,6 @@ spec:
     - jsonPath: .spec.role
       name: Role
       type: string
-    - jsonPath: .spec.poolConfigRevision
-      name: Revision
-      type: string
     - jsonPath: .spec.memberCount
       name: Members
       type: integer
@@ -116,14 +113,14 @@ spec:
                 minimum: 1
                 type: integer
               ordinal:
-                description: Ordinal is unique within one Pool configuration revision.
+                description: Ordinal is unique within its ModelPool.
                 format: int32
                 minimum: 0
                 type: integer
               parallelism:
                 description: |-
-                  CompiledParallelism defines the resolved execution topology of one ModelGroup.
-                  Unlike user input, DP is always explicit and may coexist with EP as its derived value.
+                  CompiledParallelism defines an explicit execution topology compiled from user intent.
+                  Unlike user input, DP is always present and may coexist with EP as its derived value.
                 properties:
                   dcp:
                     format: int32
@@ -183,10 +180,6 @@ spec:
                     parallelism.pcp
                   rule: 'self.pcp == 1 ? self.tp % self.dcp == 0 : self.dcp == 1 ||
                     self.dcp == self.pcp || self.dcp == self.tp * self.pcp'
-              poolConfigRevision:
-                description: PoolConfigRevision identifies the resolved Pool configuration.
-                pattern: ^sha256:[a-f0-9]{64}$
-                type: string
               role:
                 description: ModelRole identifies a ModelPool's role in the serving
                   path.
@@ -202,7 +195,6 @@ spec:
             - nodeCount
             - ordinal
             - parallelism
-            - poolConfigRevision
             - role
             type: object
             x-kubernetes-validations:
@@ -276,11 +268,6 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
-              observedConfigRevision:
-                description: RevisionDigest identifies immutable compiled content
-                  by SHA-256 digest.
-                pattern: ^sha256:[a-f0-9]{64}$
-                type: string
               phase:
                 description: ModelGroupPhase summarizes the Group lifecycle.
                 enum:

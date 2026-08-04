@@ -22,9 +22,31 @@ type Duration string
 // +kubebuilder:validation:Pattern="^--"
 type BackendArg string
 
-// RevisionDigest identifies immutable compiled content by SHA-256 digest.
-// +kubebuilder:validation:Pattern="^sha256:[a-f0-9]{64}$"
-type RevisionDigest string
+// CompiledParallelism defines an explicit execution topology compiled from user intent.
+// Unlike user input, DP is always present and may coexist with EP as its derived value.
+// +kubebuilder:validation:XValidation:rule="!has(self.ep) || self.ep.size % (self.tp * self.pcp) == 0",message="parallelism.ep.size must be divisible by parallelism.tp * parallelism.pcp"
+// +kubebuilder:validation:XValidation:rule="!has(self.ep) || self.dp == self.ep.size / (self.tp * self.pcp)",message="parallelism.dp must equal the value derived from parallelism.ep.size"
+// +kubebuilder:validation:XValidation:rule="self.pcp == 1 || self.dp == 1",message="parallelism.pcp greater than 1 is incompatible with parallelism.dp greater than 1"
+// +kubebuilder:validation:XValidation:rule="self.pcp == 1 ? self.tp % self.dcp == 0 : self.dcp == 1 || self.dcp == self.pcp || self.dcp == self.tp * self.pcp",message="parallelism.dcp is incompatible with parallelism.tp and parallelism.pcp"
+type CompiledParallelism struct {
+	// +kubebuilder:validation:Minimum=1
+	TP int32 `json:"tp"`
+
+	// +kubebuilder:validation:Minimum=1
+	PP int32 `json:"pp"`
+
+	// +kubebuilder:validation:Minimum=1
+	DP int32 `json:"dp"`
+
+	// +kubebuilder:validation:Minimum=1
+	PCP int32 `json:"pcp"`
+
+	// +kubebuilder:validation:Minimum=1
+	DCP int32 `json:"dcp"`
+
+	// +optional
+	EP *ExpertParallelism `json:"ep,omitempty"`
+}
 
 // ComputeResourceRequests defines the required CPU and memory for one Pod.
 type ComputeResourceRequests struct {
