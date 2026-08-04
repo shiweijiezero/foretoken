@@ -66,7 +66,46 @@ type Parallelism struct {
 	EP *ExpertParallelism `json:"ep,omitempty"`
 }
 
+// ModelPoolTemplate defines one user-owned homogeneous execution Pool.
+// +kubebuilder:validation:XValidation:rule="self.nodes * self.resources.requests.gpu.count == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * (has(self.parallelism.dp) ? self.parallelism.dp : 1))",message="nodes * resources.requests.gpu.count must equal the compiled worker rank count"
+type ModelPoolTemplate struct {
+	// Name is the stable identity of this Pool within one ModelService.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+	Name string `json:"name"`
+
+	// +optional
+	// +kubebuilder:default=aggregate
+	Role ModelRole `json:"role,omitempty"`
+
+	// Replicas is the number of complete ModelGroups in this Pool.
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
+	Replicas int32 `json:"replicas,omitempty"`
+
+	// Nodes is the number of physical Kubernetes Nodes used by each ModelGroup.
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
+	Nodes int32 `json:"nodes,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
+	Network string `json:"network,omitempty"`
+
+	Resources   ModelResources `json:"resources"`
+	Parallelism Parallelism    `json:"parallelism"`
+}
+
 // ModelServiceSpec defines the desired state of a model service.
+// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !(has(self.replicas) || has(self.nodes) || has(self.resources) || has(self.parallelism))",message="spec.modelPools is mutually exclusive with top-level replicas, nodes, resources, and parallelism"
+// +kubebuilder:validation:XValidation:rule="has(self.modelPools) || (has(self.resources) && has(self.parallelism))",message="top-level resources and parallelism are required when spec.modelPools is omitted"
+// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, pool.name != 'default')",message="modelPools name default is reserved for the Quick Start shorthand"
+// +kubebuilder:validation:XValidation:rule="has(self.modelPools) || (has(self.resources) && has(self.parallelism) && (has(self.nodes) ? self.nodes : 1) * self.resources.requests.gpu.count == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * (has(self.parallelism.dp) ? self.parallelism.dp : 1)))",message="nodes * resources.requests.gpu.count must equal the compiled worker rank count"
 type ModelServiceSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
@@ -75,21 +114,33 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`
 
+	// Replicas is the number of complete ModelGroups in the default Pool; the compiler defaults it to 1.
 	// +optional
-	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=0
-	Replicas int32 `json:"replicas,omitempty"`
+	Replicas *int32 `json:"replicas,omitempty"`
+
+	// Nodes is the number of physical Kubernetes Nodes used by each ModelGroup; the compiler defaults it to 1.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	Nodes *int32 `json:"nodes,omitempty"`
 
 	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=1
-	Nodes int32 `json:"nodes,omitempty"`
+	Resources *ModelResources `json:"resources,omitempty"`
 
-	Resources   ModelResources `json:"resources"`
-	Timeouts    ModelTimeouts  `json:"timeouts"`
-	Parallelism Parallelism    `json:"parallelism"`
+	Timeouts ModelTimeouts `json:"timeouts"`
 
-	// ExtraArgs are backend CLI flags applied after the convenience fields above.
+	// +optional
+	Parallelism *Parallelism `json:"parallelism,omitempty"`
+
+	// ModelPools defines up to 32 advanced execution Pools instead of the top-level shorthand.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=32
+	ModelPools []ModelPoolTemplate `json:"modelPools,omitempty"`
+
+	// ExtraArgs are backend CLI flags shared by every compiled Pool.
 	// +optional
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=256
@@ -105,6 +156,7 @@ type ModelServiceStatus struct {
 	// +optional
 	// +listType=map
 	// +listMapKey=type
+	// +kubebuilder:validation:MaxItems=8
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 

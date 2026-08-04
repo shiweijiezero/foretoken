@@ -8,3 +8,5 @@ kind: Kustomization
 resources:
   - bases/inference.foretoken.io_frontendservices.yaml
   - bases/inference.foretoken.io_modelservices.yaml
+  - bases/inference.foretoken.io_modelpools.yaml
+  - bases/inference.foretoken.io_modelgroups.yaml

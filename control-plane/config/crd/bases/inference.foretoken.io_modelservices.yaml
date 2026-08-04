@@ -61,8 +61,8 @@ spec:
                 - vllm
                 type: string
               extraArgs:
-                description: ExtraArgs are backend CLI flags applied after the convenience
-                  fields above.
+                description: ExtraArgs are backend CLI flags shared by every compiled
+                  Pool.
                 items:
                   description: BackendArg is one backend command-line flag.
                   maxLength: 4096
@@ -76,8 +76,224 @@ spec:
                 maxLength: 1024
                 minLength: 1
                 type: string
+              modelPools:
+                description: ModelPools defines up to 32 advanced execution Pools
+                  instead of the top-level shorthand.
+                items:
+                  description: ModelPoolTemplate defines one user-owned homogeneous
+                    execution Pool.
+                  properties:
+                    name:
+                      description: Name is the stable identity of this Pool within
+                        one ModelService.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    network:
+                      maxLength: 128
+                      minLength: 1
+                      pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                      type: string
+                    nodes:
+                      default: 1
+                      description: Nodes is the number of physical Kubernetes Nodes
+                        used by each ModelGroup.
+                      format: int32
+                      minimum: 1
+                      type: integer
+                    parallelism:
+                      description: Parallelism defines the execution topology of one
+                        ModelGroup.
+                      properties:
+                        dcp:
+                          default: 1
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        dp:
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        ep:
+                          description: ExpertParallelism defines expert-parallel execution
+                            for one ModelGroup.
+                          properties:
+                            backend:
+                              maxLength: 128
+                              minLength: 1
+                              type: string
+                            eplb:
+                              default: false
+                              type: boolean
+                            size:
+                              format: int32
+                              minimum: 1
+                              type: integer
+                          required:
+                          - size
+                          type: object
+                        pcp:
+                          default: 1
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        pp:
+                          default: 1
+                          format: int32
+                          minimum: 1
+                          type: integer
+                        tp:
+                          default: 1
+                          format: int32
+                          minimum: 1
+                          type: integer
+                      type: object
+                      x-kubernetes-validations:
+                      - message: parallelism.dp and parallelism.ep are mutually exclusive
+                        rule: '!has(self.dp) || !has(self.ep)'
+                      - message: parallelism.ep.size must be divisible by parallelism.tp
+                          * parallelism.pcp
+                        rule: '!has(self.ep) || self.ep.size % (self.tp * self.pcp)
+                          == 0'
+                      - message: parallelism.pcp greater than 1 is incompatible with
+                          parallelism.dp greater than 1
+                        rule: self.pcp == 1 || !has(self.dp) || self.dp == 1
+                      - message: parallelism.ep.size must equal parallelism.tp * parallelism.pcp
+                          when parallelism.pcp is greater than 1
+                        rule: self.pcp == 1 || !has(self.ep) || self.ep.size == self.tp
+                          * self.pcp
+                      - message: parallelism.dcp is incompatible with parallelism.tp
+                          and parallelism.pcp
+                        rule: 'self.pcp == 1 ? self.tp % self.dcp == 0 : self.dcp
+                          == 1 || self.dcp == self.pcp || self.dcp == self.tp * self.pcp'
+                    replicas:
+                      default: 1
+                      description: Replicas is the number of complete ModelGroups
+                        in this Pool.
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    resources:
+                      description: ModelResources defines resources for one runtime
+                        member Pod.
+                      properties:
+                        limits:
+                          description: ComputeResourceLimits defines optional CPU
+                            and memory limits for one Pod.
+                          properties:
+                            cpu:
+                              description: CPU is the maximum Kubernetes CPU quantity.
+                              maxLength: 64
+                              minLength: 1
+                              type: string
+                              x-kubernetes-validations:
+                              - message: must be a valid non-negative Kubernetes resource
+                                  quantity
+                                rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                                  >= 0
+                            memory:
+                              description: Memory is the maximum Kubernetes memory
+                                quantity.
+                              maxLength: 64
+                              minLength: 1
+                              type: string
+                              x-kubernetes-validations:
+                              - message: must be a valid non-negative Kubernetes resource
+                                  quantity
+                                rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                                  >= 0
+                          type: object
+                        requests:
+                          description: ModelResourceRequests defines resources requested
+                            by one runtime member Pod.
+                          properties:
+                            cpu:
+                              description: CPU is the requested Kubernetes CPU quantity.
+                              maxLength: 64
+                              minLength: 1
+                              type: string
+                              x-kubernetes-validations:
+                              - message: must be a valid non-negative Kubernetes resource
+                                  quantity
+                                rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                                  >= 0
+                            gpu:
+                              description: GPURequest defines the logical GPU request
+                                for one runtime member Pod.
+                              properties:
+                                count:
+                                  default: 1
+                                  description: Count is the number of GPUs requested
+                                    by one runtime member Pod.
+                                  format: int32
+                                  minimum: 1
+                                  type: integer
+                                type:
+                                  default: auto
+                                  description: Type is a platform-registered GPU type
+                                    or auto.
+                                  maxLength: 128
+                                  minLength: 1
+                                  pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                                  type: string
+                              type: object
+                            memory:
+                              description: Memory is the requested Kubernetes memory
+                                quantity.
+                              maxLength: 64
+                              minLength: 1
+                              type: string
+                              x-kubernetes-validations:
+                              - message: must be a valid non-negative Kubernetes resource
+                                  quantity
+                                rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                                  >= 0
+                          required:
+                          - cpu
+                          - gpu
+                          - memory
+                          type: object
+                      required:
+                      - requests
+                      type: object
+                      x-kubernetes-validations:
+                      - message: resources.requests.cpu must not exceed resources.limits.cpu
+                        rule: '!has(self.limits) || !has(self.limits.cpu) || quantity(self.requests.cpu).compareTo(quantity(self.limits.cpu))
+                          <= 0'
+                      - message: resources.requests.memory must not exceed resources.limits.memory
+                        rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
+                          <= 0'
+                    role:
+                      default: aggregate
+                      description: ModelRole identifies a ModelPool's role in the
+                        serving path.
+                      enum:
+                      - aggregate
+                      - prefill
+                      - decode
+                      type: string
+                  required:
+                  - name
+                  - parallelism
+                  - resources
+                  type: object
+                  x-kubernetes-validations:
+                  - message: nodes * resources.requests.gpu.count must equal the compiled
+                      worker rank count
+                    rule: 'self.nodes * self.resources.requests.gpu.count == (has(self.parallelism.ep)
+                      ? self.parallelism.pp * self.parallelism.ep.size : self.parallelism.pp
+                      * self.parallelism.tp * self.parallelism.pcp * (has(self.parallelism.dp)
+                      ? self.parallelism.dp : 1))'
+                maxItems: 32
+                minItems: 1
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               nodes:
-                default: 1
+                description: Nodes is the number of physical Kubernetes Nodes used
+                  by each ModelGroup; the compiler defaults it to 1.
                 format: int32
                 minimum: 1
                 type: integer
@@ -145,7 +361,8 @@ spec:
                   rule: 'self.pcp == 1 ? self.tp % self.dcp == 0 : self.dcp == 1 ||
                     self.dcp == self.pcp || self.dcp == self.tp * self.pcp'
               replicas:
-                default: 1
+                description: Replicas is the number of complete ModelGroups in the
+                  default Pool; the compiler defaults it to 1.
                 format: int32
                 minimum: 0
                 type: integer
@@ -159,6 +376,7 @@ spec:
                     properties:
                       cpu:
                         description: CPU is the maximum Kubernetes CPU quantity.
+                        maxLength: 64
                         minLength: 1
                         type: string
                         x-kubernetes-validations:
@@ -168,6 +386,7 @@ spec:
                             >= 0
                       memory:
                         description: Memory is the maximum Kubernetes memory quantity.
+                        maxLength: 64
                         minLength: 1
                         type: string
                         x-kubernetes-validations:
@@ -182,6 +401,7 @@ spec:
                     properties:
                       cpu:
                         description: CPU is the requested Kubernetes CPU quantity.
+                        maxLength: 64
                         minLength: 1
                         type: string
                         x-kubernetes-validations:
@@ -211,6 +431,7 @@ spec:
                         type: object
                       memory:
                         description: Memory is the requested Kubernetes memory quantity.
+                        maxLength: 64
                         minLength: 1
                         type: string
                         x-kubernetes-validations:
@@ -253,10 +474,26 @@ spec:
             required:
             - backend
             - model
-            - parallelism
-            - resources
             - timeouts
             type: object
+            x-kubernetes-validations:
+            - message: spec.modelPools is mutually exclusive with top-level replicas,
+                nodes, resources, and parallelism
+              rule: '!has(self.modelPools) || !(has(self.replicas) || has(self.nodes)
+                || has(self.resources) || has(self.parallelism))'
+            - message: top-level resources and parallelism are required when spec.modelPools
+                is omitted
+              rule: has(self.modelPools) || (has(self.resources) && has(self.parallelism))
+            - message: modelPools name default is reserved for the Quick Start shorthand
+              rule: '!has(self.modelPools) || self.modelPools.all(pool, pool.name
+                != ''default'')'
+            - message: nodes * resources.requests.gpu.count must equal the compiled
+                worker rank count
+              rule: 'has(self.modelPools) || (has(self.resources) && has(self.parallelism)
+                && (has(self.nodes) ? self.nodes : 1) * self.resources.requests.gpu.count
+                == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size
+                : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp
+                * (has(self.parallelism.dp) ? self.parallelism.dp : 1)))'
           status:
             description: ModelServiceStatus defines the observed state of a model
               service.
@@ -316,6 +553,7 @@ spec:
                   - status
                   - type
                   type: object
+                maxItems: 8
                 type: array
                 x-kubernetes-list-map-keys:
                 - type

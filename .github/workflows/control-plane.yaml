@@ -69,6 +69,8 @@ jobs:
           kubectl wait --for=condition=Established \
             crd/frontendservices.inference.foretoken.io \
             crd/modelservices.inference.foretoken.io \
+            crd/modelpools.inference.foretoken.io \
+            crd/modelgroups.inference.foretoken.io \
             --timeout=1m
           helm upgrade foretoken deploy/charts/foretoken \
             --namespace foretoken-platform \
@@ -81,6 +83,8 @@ jobs:
           helm uninstall foretoken --namespace foretoken-platform --wait
           kubectl get crd/frontendservices.inference.foretoken.io
           kubectl get crd/modelservices.inference.foretoken.io
+          kubectl get crd/modelpools.inference.foretoken.io
+          kubectl get crd/modelgroups.inference.foretoken.io
           ! kubectl get clusterrole/foretoken-platform-foretoken-control-plane
       - name: Check generated files
         run: git diff --exit-code

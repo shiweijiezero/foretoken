@@ -41,6 +41,7 @@ type FrontendServiceStatus struct {
 	// +optional
 	// +listType=map
 	// +listMapKey=type
+	// +kubebuilder:validation:MaxItems=8
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 

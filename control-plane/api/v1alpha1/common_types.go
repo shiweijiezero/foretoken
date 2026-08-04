@@ -7,6 +7,7 @@ package v1alpha1
 
 // ResourceQuantity is a non-negative Kubernetes resource quantity.
 // +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=64
 // +kubebuilder:validation:XValidation:rule="isQuantity(self) && quantity(self).compareTo(quantity('0')) >= 0",message="must be a valid non-negative Kubernetes resource quantity"
 type ResourceQuantity string
 
@@ -20,6 +21,10 @@ type Duration string
 // +kubebuilder:validation:MaxLength=4096
 // +kubebuilder:validation:Pattern="^--"
 type BackendArg string
+
+// RevisionDigest identifies immutable compiled content by SHA-256 digest.
+// +kubebuilder:validation:Pattern="^sha256:[a-f0-9]{64}$"
+type RevisionDigest string
 
 // ComputeResourceRequests defines the required CPU and memory for one Pod.
 type ComputeResourceRequests struct {

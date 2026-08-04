@@ -17,6 +17,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
+	"strings"
 	"syscall"
 	"time"
 
@@ -160,7 +162,25 @@ func loadCRDs(directory string) ([]*apiextensionsv1.CustomResourceDefinition, er
 	if len(crds) == 0 {
 		return nil, fmt.Errorf("no CRD manifests found in %q", directory)
 	}
+
+	// Apply parent APIs before their controller-owned Pool and Group descendants.
+	sort.SliceStable(crds, func(i, j int) bool {
+		return crdHierarchyLevel(crds[i]) < crdHierarchyLevel(crds[j])
+	})
 	return crds, nil
+}
+
+func crdHierarchyLevel(crd *apiextensionsv1.CustomResourceDefinition) int {
+	switch plural := crd.Spec.Names.Plural; {
+	case strings.HasSuffix(plural, "services"):
+		return 0
+	case strings.HasSuffix(plural, "pools"):
+		return 1
+	case strings.HasSuffix(plural, "groups"):
+		return 2
+	default:
+		return 3
+	}
 }
 
 // applyCRD updates desired fields and blocks until the API becomes usable.

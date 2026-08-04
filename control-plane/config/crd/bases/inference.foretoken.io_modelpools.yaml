@@ -8,25 +8,28 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.21.0
-  name: frontendservices.inference.foretoken.io
+  name: modelpools.inference.foretoken.io
 spec:
   group: inference.foretoken.io
   names:
-    kind: FrontendService
-    listKind: FrontendServiceList
-    plural: frontendservices
-    singular: frontendservice
+    kind: ModelPool
+    listKind: ModelPoolList
+    plural: modelpools
+    singular: modelpool
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.hostname
-      name: Hostname
+    - jsonPath: .spec.role
+      name: Role
       type: string
-    - jsonPath: .spec.replicas
-      name: Replicas
+    - jsonPath: .spec.desiredGroups
+      name: Desired
       type: integer
     - jsonPath: .status.conditions[?(@.type=='Ready')].status
       name: Ready
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -34,7 +37,8 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: FrontendService is the user-owned frontend serving API.
+        description: ModelPool is a read-only execution fleet materialized from ModelService
+          intent.
         properties:
           apiVersion:
             description: |-
@@ -54,111 +58,58 @@ spec:
           metadata:
             type: object
           spec:
-            description: FrontendServiceSpec defines the desired state of a frontend
-              service.
+            description: ModelPoolSpec is the controller-owned desired state compiled
+              from ModelService.
             properties:
-              hostname:
-                maxLength: 253
-                minLength: 1
-                pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$
+              configRevision:
+                description: ConfigRevision is the immutable digest of the resolved
+                  Pool configuration.
+                pattern: ^sha256:[a-f0-9]{64}$
                 type: string
-              replicas:
-                default: 1
+              desiredGroups:
+                description: DesiredGroups is the number of complete ModelGroups requested
+                  for this Pool.
                 format: int32
                 minimum: 0
                 type: integer
-              resources:
-                description: FrontendResources defines resources for one frontend
-                  replica Pod.
+              modelServiceRef:
+                description: LocalObjectReference identifies an object in the same
+                  namespace by stable UID.
                 properties:
-                  limits:
-                    description: ComputeResourceLimits defines optional CPU and memory
-                      limits for one Pod.
-                    properties:
-                      cpu:
-                        description: CPU is the maximum Kubernetes CPU quantity.
-                        maxLength: 64
-                        minLength: 1
-                        type: string
-                        x-kubernetes-validations:
-                        - message: must be a valid non-negative Kubernetes resource
-                            quantity
-                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
-                            >= 0
-                      memory:
-                        description: Memory is the maximum Kubernetes memory quantity.
-                        maxLength: 64
-                        minLength: 1
-                        type: string
-                        x-kubernetes-validations:
-                        - message: must be a valid non-negative Kubernetes resource
-                            quantity
-                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
-                            >= 0
-                    type: object
-                  requests:
-                    description: ComputeResourceRequests defines the required CPU
-                      and memory for one Pod.
-                    properties:
-                      cpu:
-                        description: CPU is the requested Kubernetes CPU quantity.
-                        maxLength: 64
-                        minLength: 1
-                        type: string
-                        x-kubernetes-validations:
-                        - message: must be a valid non-negative Kubernetes resource
-                            quantity
-                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
-                            >= 0
-                      memory:
-                        description: Memory is the requested Kubernetes memory quantity.
-                        maxLength: 64
-                        minLength: 1
-                        type: string
-                        x-kubernetes-validations:
-                        - message: must be a valid non-negative Kubernetes resource
-                            quantity
-                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
-                            >= 0
-                    required:
-                    - cpu
-                    - memory
-                    type: object
-                required:
-                - requests
-                type: object
-                x-kubernetes-validations:
-                - message: resources.requests.cpu must not exceed resources.limits.cpu
-                  rule: '!has(self.limits) || !has(self.limits.cpu) || quantity(self.requests.cpu).compareTo(quantity(self.limits.cpu))
-                    <= 0'
-                - message: resources.requests.memory must not exceed resources.limits.memory
-                  rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
-                    <= 0'
-              timeouts:
-                description: FrontendTimeouts defines client-facing request budgets.
-                properties:
-                  request:
-                    description: Duration is a Go-style duration.
-                    minLength: 2
-                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                  name:
+                    minLength: 1
                     type: string
-                  streamIdle:
-                    description: Duration is a Go-style duration.
-                    minLength: 2
-                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                  uid:
+                    minLength: 1
                     type: string
                 required:
-                - request
-                - streamIdle
+                - name
+                - uid
                 type: object
+              poolName:
+                description: PoolName is the stable identity of the source ModelService
+                  modelPools entry.
+                maxLength: 63
+                minLength: 1
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+              role:
+                description: ModelRole identifies a ModelPool's role in the serving
+                  path.
+                enum:
+                - aggregate
+                - prefill
+                - decode
+                type: string
             required:
-            - hostname
-            - resources
-            - timeouts
+            - configRevision
+            - desiredGroups
+            - modelServiceRef
+            - poolName
+            - role
             type: object
           status:
-            description: FrontendServiceStatus defines the observed state of a frontend
-              service.
+            description: ModelPoolStatus defines the observed state of a ModelPool.
             properties:
               conditions:
                 items:
@@ -224,6 +175,15 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
+              phase:
+                description: ModelPoolPhase summarizes the Pool lifecycle.
+                enum:
+                - Pending
+                - Progressing
+                - Ready
+                - Degraded
+                - Terminating
+                type: string
             type: object
         required:
         - spec

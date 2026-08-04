@@ -112,7 +112,9 @@ Uninstalling the control plane preserves Foretoken CRDs and custom resources. De
 ```bash
 kubectl delete crd \
   frontendservices.inference.foretoken.io \
-  modelservices.inference.foretoken.io
+  modelservices.inference.foretoken.io \
+  modelpools.inference.foretoken.io \
+  modelgroups.inference.foretoken.io
 ```
 
 ## Install from Source

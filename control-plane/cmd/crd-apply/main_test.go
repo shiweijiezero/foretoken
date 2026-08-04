@@ -25,12 +25,21 @@ func TestLoadGeneratedCRDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(crds) != 2 {
-		t.Fatalf("loaded %d CRDs, want 2", len(crds))
+	want := []string{
+		"frontendservices.inference.foretoken.io",
+		"modelservices.inference.foretoken.io",
+		"modelpools.inference.foretoken.io",
+		"modelgroups.inference.foretoken.io",
 	}
-	for _, crd := range crds {
-		if crd.Name == "" || len(crd.Spec.Versions) == 0 {
-			t.Fatalf("loaded incomplete CRD: %#v", crd)
+	if len(crds) != len(want) {
+		t.Fatalf("loaded %d CRDs, want %d", len(crds), len(want))
+	}
+	for index, crd := range crds {
+		if crd.Name != want[index] {
+			t.Fatalf("CRD %d = %q, want %q", index, crd.Name, want[index])
+		}
+		if len(crd.Spec.Versions) == 0 {
+			t.Fatalf("loaded CRD %q without versions", crd.Name)
 		}
 	}
 }
@@ -53,6 +62,63 @@ func moduleRoot(t *testing.T) string {
 			t.Fatal("locate module root")
 		}
 	}
+}
+
+func TestGeneratedCRDContracts(t *testing.T) {
+	crds, err := loadCRDs(filepath.Join(moduleRoot(t), "config", "crd", "bases"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := make(map[string]*apiextensionsv1.CustomResourceDefinition, len(crds))
+	for _, crd := range crds {
+		byName[crd.Name] = crd
+	}
+
+	modelServiceSpec := crdSpecSchema(t, byName["modelservices.inference.foretoken.io"])
+	modelPools := schemaProperty(t, modelServiceSpec, "modelPools")
+	if modelPools.XListType == nil || *modelPools.XListType != "map" {
+		t.Fatalf("modelPools list type = %v, want map", modelPools.XListType)
+	}
+	if len(modelPools.XListMapKeys) != 1 || modelPools.XListMapKeys[0] != "name" {
+		t.Fatalf("modelPools map keys = %v, want [name]", modelPools.XListMapKeys)
+	}
+
+	modelGroupSpec := crdSpecSchema(t, byName["modelgroups.inference.foretoken.io"])
+	if !hasValidationRule(modelGroupSpec, "self == oldSelf") {
+		t.Fatal("ModelGroup spec does not enforce immutability")
+	}
+	if !hasValidationRule(modelGroupSpec, "self.memberCount == self.nodeCount") {
+		t.Fatal("ModelGroup spec does not enforce one member per node")
+	}
+	if !hasValidationRule(modelGroupSpec, "self.nodeCount * self.accelerator.countPerMember == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp") {
+		t.Fatal("ModelGroup spec does not enforce compiled rank capacity")
+	}
+}
+
+func crdSpecSchema(t *testing.T, crd *apiextensionsv1.CustomResourceDefinition) *apiextensionsv1.JSONSchemaProps {
+	t.Helper()
+	if crd == nil || len(crd.Spec.Versions) != 1 || crd.Spec.Versions[0].Schema == nil || crd.Spec.Versions[0].Schema.OpenAPIV3Schema == nil {
+		t.Fatalf("CRD has no single structural schema: %#v", crd)
+	}
+	return schemaProperty(t, crd.Spec.Versions[0].Schema.OpenAPIV3Schema, "spec")
+}
+
+func schemaProperty(t *testing.T, schema *apiextensionsv1.JSONSchemaProps, name string) *apiextensionsv1.JSONSchemaProps {
+	t.Helper()
+	property, ok := schema.Properties[name]
+	if !ok {
+		t.Fatalf("schema property %q is missing", name)
+	}
+	return &property
+}
+
+func hasValidationRule(schema *apiextensionsv1.JSONSchemaProps, rule string) bool {
+	for _, validation := range schema.XValidations {
+		if validation.Rule == rule {
+			return true
+		}
+	}
+	return false
 }
 
 func TestEstablishedRejectsInvalidNames(t *testing.T) {

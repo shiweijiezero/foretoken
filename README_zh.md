@@ -108,7 +108,9 @@ helm uninstall foretoken \
 ```bash
 kubectl delete crd \
   frontendservices.inference.foretoken.io \
-  modelservices.inference.foretoken.io
+  modelservices.inference.foretoken.io \
+  modelpools.inference.foretoken.io \
+  modelgroups.inference.foretoken.io
 ```
 
 ## 从源码安装
