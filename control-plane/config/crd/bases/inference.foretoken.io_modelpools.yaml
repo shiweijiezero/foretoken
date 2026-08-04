@@ -90,7 +90,7 @@ spec:
                 type: string
               template:
                 description: |-
-                  NormalizedPoolTemplate is the normalized, non-sensitive contract produced from ModelService intent.
+                  NormalizedPoolTemplate is the normalized contract produced from ModelService intent.
                   Platform runtime and accelerator resolution may further constrain it before Groups are created.
                 properties:
                   backend:
