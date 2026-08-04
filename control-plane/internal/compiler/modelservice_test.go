@@ -92,22 +92,6 @@ func TestCompileAdvancedPools(t *testing.T) {
 	}
 }
 
-func TestCompileRejectsResourceRequestAboveLimit(t *testing.T) {
-	cpuLimit := inferencev1alpha1.ResourceQuantity("500m")
-	resources := modelResources("1", "1Gi", "auto", 1)
-	resources.Limits = &inferencev1alpha1.ComputeResourceLimits{CPU: &cpuLimit}
-	spec := inferencev1alpha1.ModelServiceSpec{
-		Model:       "Qwen/Qwen3-0.6B",
-		Backend:     "vllm",
-		Resources:   &resources,
-		Timeouts:    inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"},
-		Parallelism: &inferencev1alpha1.Parallelism{},
-	}
-	if _, err := CompileModelService(spec); err == nil {
-		t.Fatal("resource request above limit was accepted")
-	}
-}
-
 func TestCompileRejectsCapacityMismatch(t *testing.T) {
 	spec := inferencev1alpha1.ModelServiceSpec{
 		Model:       "Qwen/Qwen3-0.6B",

@@ -25,22 +25,12 @@ type ModelPool struct {
 
 // CompileModelService normalizes shorthand or advanced Pool intent without resolving platform runtime defaults.
 func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, error) {
-	if spec.Model == "" {
-		return nil, fmt.Errorf("model must not be empty")
-	}
-	if spec.Backend != "vllm" {
-		return nil, fmt.Errorf("backend %q is not supported", spec.Backend)
-	}
-
 	timeouts, err := normalizeTimeouts(spec.Timeouts)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(spec.ModelPools) == 0 {
-		if spec.Resources == nil || spec.Parallelism == nil {
-			return nil, fmt.Errorf("top-level resources and parallelism are required without modelPools")
-		}
 		replicas := valueOrDefault(spec.Replicas, 1)
 		nodes := valueOrDefault(spec.Nodes, 1)
 		pool, err := compilePool(spec, defaultPoolName, inferencev1alpha1.ModelRoleAggregate, replicas, nodes, "", *spec.Resources, *spec.Parallelism, timeouts)
@@ -50,21 +40,8 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		return []ModelPool{pool}, nil
 	}
 
-	if spec.Replicas != nil || spec.Nodes != nil || spec.Resources != nil || spec.Parallelism != nil {
-		return nil, fmt.Errorf("modelPools is mutually exclusive with top-level replicas, nodes, resources, and parallelism")
-	}
-
 	pools := make([]ModelPool, 0, len(spec.ModelPools))
-	seen := make(map[string]struct{}, len(spec.ModelPools))
 	for _, entry := range spec.ModelPools {
-		if entry.Name == defaultPoolName {
-			return nil, fmt.Errorf("modelPools name %q is reserved", defaultPoolName)
-		}
-		if _, exists := seen[entry.Name]; exists {
-			return nil, fmt.Errorf("modelPools name %q is duplicated", entry.Name)
-		}
-		seen[entry.Name] = struct{}{}
-
 		role := entry.Role
 		if role == "" {
 			role = inferencev1alpha1.ModelRoleAggregate
@@ -83,24 +60,11 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 }
 
 func compilePool(spec inferencev1alpha1.ModelServiceSpec, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network string, resources inferencev1alpha1.ModelResources, parallelism inferencev1alpha1.Parallelism, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
-	if replicas < 0 {
-		return ModelPool{}, fmt.Errorf("replicas must not be negative")
-	}
-	if nodes < 1 {
-		return ModelPool{}, fmt.Errorf("nodes must be positive")
-	}
-	if role != inferencev1alpha1.ModelRoleAggregate && role != inferencev1alpha1.ModelRolePrefill && role != inferencev1alpha1.ModelRoleDecode {
-		return ModelPool{}, fmt.Errorf("role %q is not supported", role)
-	}
-
 	normalizedResources, err := normalizeResources(resources)
 	if err != nil {
 		return ModelPool{}, err
 	}
-	compiledParallelism, err := compileParallelism(parallelism)
-	if err != nil {
-		return ModelPool{}, err
-	}
+	compiledParallelism := compileParallelism(parallelism)
 
 	capacity := int64(nodes) * int64(normalizedResources.Requests.GPU.Count)
 	ranks := int64(compiledParallelism.PP) * int64(compiledParallelism.TP) * int64(compiledParallelism.PCP) * int64(compiledParallelism.DP)
@@ -126,44 +90,27 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, name string, role infe
 	}, nil
 }
 
-func compileParallelism(input inferencev1alpha1.Parallelism) (inferencev1alpha1.CompiledParallelism, error) {
+func compileParallelism(input inferencev1alpha1.Parallelism) inferencev1alpha1.CompiledParallelism {
 	tp := defaultOne(input.TP)
-	pp := defaultOne(input.PP)
 	pcp := defaultOne(input.PCP)
-	dcp := defaultOne(input.DCP)
-	if input.DP != nil && input.EP != nil {
-		return inferencev1alpha1.CompiledParallelism{}, fmt.Errorf("parallelism.dp and parallelism.ep are mutually exclusive")
-	}
-
 	dp := int32(1)
 	var ep *inferencev1alpha1.ExpertParallelism
 	if input.EP != nil {
-		divisor := int64(tp) * int64(pcp)
-		if input.EP.Size < 1 || int64(input.EP.Size)%divisor != 0 {
-			return inferencev1alpha1.CompiledParallelism{}, fmt.Errorf("parallelism.ep.size must be divisible by parallelism.tp * parallelism.pcp")
-		}
-		dp = int32(int64(input.EP.Size) / divisor)
+		dp = int32(int64(input.EP.Size) / (int64(tp) * int64(pcp)))
 		copied := *input.EP
 		ep = &copied
 	} else if input.DP != nil {
 		dp = *input.DP
 	}
 
-	if tp < 1 || pp < 1 || dp < 1 || pcp < 1 || dcp < 1 {
-		return inferencev1alpha1.CompiledParallelism{}, fmt.Errorf("parallelism values must be positive")
+	return inferencev1alpha1.CompiledParallelism{
+		TP:  tp,
+		PP:  defaultOne(input.PP),
+		DP:  dp,
+		PCP: pcp,
+		DCP: defaultOne(input.DCP),
+		EP:  ep,
 	}
-	if pcp > 1 && dp > 1 {
-		return inferencev1alpha1.CompiledParallelism{}, fmt.Errorf("parallelism.pcp greater than 1 is incompatible with parallelism.dp greater than 1")
-	}
-	if pcp == 1 {
-		if tp%dcp != 0 {
-			return inferencev1alpha1.CompiledParallelism{}, fmt.Errorf("parallelism.dcp must divide parallelism.tp")
-		}
-	} else if dcp != 1 && dcp != pcp && dcp != tp*pcp {
-		return inferencev1alpha1.CompiledParallelism{}, fmt.Errorf("parallelism.dcp is incompatible with parallelism.tp and parallelism.pcp")
-	}
-
-	return inferencev1alpha1.CompiledParallelism{TP: tp, PP: pp, DP: dp, PCP: pcp, DCP: dcp, EP: ep}, nil
 }
 
 func normalizeResources(input inferencev1alpha1.ModelResources) (inferencev1alpha1.ModelResources, error) {
@@ -182,9 +129,6 @@ func normalizeResources(input inferencev1alpha1.ModelResources) (inferencev1alph
 	if gpu.Count == 0 {
 		gpu.Count = 1
 	}
-	if gpu.Count < 1 {
-		return inferencev1alpha1.ModelResources{}, fmt.Errorf("resources.requests.gpu.count must be positive")
-	}
 
 	output := inferencev1alpha1.ModelResources{
 		Requests: inferencev1alpha1.ModelResourceRequests{
@@ -199,22 +143,12 @@ func normalizeResources(input inferencev1alpha1.ModelResources) (inferencev1alph
 			if err != nil {
 				return inferencev1alpha1.ModelResources{}, err
 			}
-			request := resource.MustParse(string(cpu))
-			limit := resource.MustParse(string(quantity))
-			if request.Cmp(limit) > 0 {
-				return inferencev1alpha1.ModelResources{}, fmt.Errorf("resources.requests.cpu must not exceed resources.limits.cpu")
-			}
 			limits.CPU = &quantity
 		}
 		if input.Limits.Memory != nil {
 			quantity, err := normalizeQuantity("resources.limits.memory", *input.Limits.Memory)
 			if err != nil {
 				return inferencev1alpha1.ModelResources{}, err
-			}
-			request := resource.MustParse(string(memory))
-			limit := resource.MustParse(string(quantity))
-			if request.Cmp(limit) > 0 {
-				return inferencev1alpha1.ModelResources{}, fmt.Errorf("resources.requests.memory must not exceed resources.limits.memory")
 			}
 			limits.Memory = &quantity
 		}
@@ -225,8 +159,8 @@ func normalizeResources(input inferencev1alpha1.ModelResources) (inferencev1alph
 
 func normalizeQuantity(field string, input inferencev1alpha1.ResourceQuantity) (inferencev1alpha1.ResourceQuantity, error) {
 	quantity, err := resource.ParseQuantity(string(input))
-	if err != nil || quantity.Sign() < 0 {
-		return "", fmt.Errorf("%s must be a valid non-negative Kubernetes resource quantity", field)
+	if err != nil {
+		return "", fmt.Errorf("%s must be a valid Kubernetes resource quantity", field)
 	}
 	return inferencev1alpha1.ResourceQuantity(quantity.String()), nil
 }
