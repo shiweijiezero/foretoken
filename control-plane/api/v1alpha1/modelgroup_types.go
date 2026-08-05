@@ -56,8 +56,18 @@ type ModelGroupSpec struct {
 }
 
 // ModelGroupPhase summarizes the Group lifecycle.
+// +enum
 // +kubebuilder:validation:Enum=Pending;Provisioning;Ready;Draining;Failed;Terminating
 type ModelGroupPhase string
+
+const (
+	ModelGroupPhasePending      ModelGroupPhase = "Pending"
+	ModelGroupPhaseProvisioning ModelGroupPhase = "Provisioning"
+	ModelGroupPhaseReady        ModelGroupPhase = "Ready"
+	ModelGroupPhaseDraining     ModelGroupPhase = "Draining"
+	ModelGroupPhaseFailed       ModelGroupPhase = "Failed"
+	ModelGroupPhaseTerminating  ModelGroupPhase = "Terminating"
+)
 
 // ModelGroupStatus defines the observed state of a ModelGroup.
 type ModelGroupStatus struct {

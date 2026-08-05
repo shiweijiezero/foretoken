@@ -151,6 +151,9 @@ spec:
                 - request
                 - streamIdle
                 type: object
+                x-kubernetes-validations:
+                - message: timeouts.streamIdle must not exceed timeouts.request
+                  rule: duration(self.streamIdle) <= duration(self.request)
             required:
             - hostname
             - resources

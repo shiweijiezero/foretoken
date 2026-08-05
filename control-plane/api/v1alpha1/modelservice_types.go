@@ -66,7 +66,9 @@ type Parallelism struct {
 	EP *ExpertParallelism `json:"ep,omitempty"`
 }
 
-// ModelPoolTemplate defines one user-owned homogeneous execution Pool.
+// ModelPoolTemplate defines one user-owned execution Pool: a homogeneous set
+// of ModelGroups sharing the same role, network, resources, and parallelism.
+// The controller instantiates it as a ModelPool owned by the ModelService.
 // +kubebuilder:validation:XValidation:rule="(has(self.nodes) ? self.nodes : 1) * self.resources.requests.gpu.count == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * (has(self.parallelism.dp) ? self.parallelism.dp : 1))",message="nodes * resources.requests.gpu.count must equal the compiled worker rank count"
 type ModelPoolTemplate struct {
 	// Name is the stable identity of this Pool within one ModelService.
