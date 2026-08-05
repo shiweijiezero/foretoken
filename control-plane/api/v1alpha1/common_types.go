@@ -11,9 +11,10 @@ package v1alpha1
 // +kubebuilder:validation:XValidation:rule="isQuantity(self) && quantity(self).compareTo(quantity('0')) >= 0",message="must be a valid non-negative Kubernetes resource quantity"
 type ResourceQuantity string
 
-// Duration is a Go-style duration.
+// Duration is a positive Go-style duration.
 // +kubebuilder:validation:MinLength=2
 // +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+// +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="must be a positive duration"
 type Duration string
 
 // BackendArg is one backend command-line flag.
