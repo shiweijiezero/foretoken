@@ -138,19 +138,28 @@ spec:
                 description: FrontendTimeouts defines client-facing request budgets.
                 properties:
                   request:
-                    description: Duration is a Go-style duration.
+                    description: Duration is a positive Go-style duration.
                     minLength: 2
                     pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
                   streamIdle:
-                    description: Duration is a Go-style duration.
+                    description: Duration is a positive Go-style duration.
                     minLength: 2
                     pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
                 required:
                 - request
                 - streamIdle
                 type: object
+                x-kubernetes-validations:
+                - message: timeouts.streamIdle must not exceed timeouts.request
+                  rule: duration(self.streamIdle) <= duration(self.request)
             required:
             - hostname
             - resources

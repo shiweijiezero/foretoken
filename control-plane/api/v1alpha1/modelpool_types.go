@@ -20,6 +20,7 @@ type LocalObjectReference struct {
 }
 
 // ModelRole identifies a ModelPool's role in the serving path.
+// +enum
 // +kubebuilder:validation:Enum=aggregate;prefill;decode
 type ModelRole string
 
@@ -86,8 +87,17 @@ type ModelPoolSpec struct {
 }
 
 // ModelPoolPhase summarizes the Pool lifecycle.
+// +enum
 // +kubebuilder:validation:Enum=Pending;Progressing;Ready;Degraded;Terminating
 type ModelPoolPhase string
+
+const (
+	ModelPoolPhasePending     ModelPoolPhase = "Pending"
+	ModelPoolPhaseProgressing ModelPoolPhase = "Progressing"
+	ModelPoolPhaseReady       ModelPoolPhase = "Ready"
+	ModelPoolPhaseDegraded    ModelPoolPhase = "Degraded"
+	ModelPoolPhaseTerminating ModelPoolPhase = "Terminating"
+)
 
 // ModelPoolStatus defines the observed state of a ModelPool.
 type ModelPoolStatus struct {

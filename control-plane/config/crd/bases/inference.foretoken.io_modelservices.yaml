@@ -80,8 +80,10 @@ spec:
                 description: ModelPools defines up to 32 advanced execution Pools
                   instead of the top-level shorthand.
                 items:
-                  description: ModelPoolTemplate defines one user-owned homogeneous
-                    execution Pool.
+                  description: |-
+                    ModelPoolTemplate defines one user-owned execution Pool: a homogeneous set
+                    of ModelGroups sharing the same role, network, resources, and parallelism.
+                    The controller instantiates it as a ModelPool owned by the ModelService.
                   properties:
                     name:
                       description: Name is the stable identity of this Pool within
@@ -458,15 +460,21 @@ spec:
                 description: ModelTimeouts defines ModelService lifecycle budgets.
                 properties:
                   drain:
-                    description: Duration is a Go-style duration.
+                    description: Duration is a positive Go-style duration.
                     minLength: 2
                     pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
                   startup:
-                    description: Duration is a Go-style duration.
+                    description: Duration is a positive Go-style duration.
                     minLength: 2
                     pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
                 required:
                 - drain
                 - startup

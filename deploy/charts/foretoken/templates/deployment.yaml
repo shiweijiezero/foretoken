@@ -41,8 +41,6 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command:
             - /crd-apply
-          args:
-            - --field-manager={{ include "foretoken.clusterName" . }}
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

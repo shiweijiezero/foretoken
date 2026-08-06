@@ -11,6 +11,7 @@ import (
 )
 
 // FrontendTimeouts defines client-facing request budgets.
+// +kubebuilder:validation:XValidation:rule="duration(self.streamIdle) <= duration(self.request)",message="timeouts.streamIdle must not exceed timeouts.request"
 type FrontendTimeouts struct {
 	Request    Duration `json:"request"`
 	StreamIdle Duration `json:"streamIdle"`
@@ -21,7 +22,7 @@ type FrontendServiceSpec struct {
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=0
-	Replicas int32 `json:"replicas,omitempty"`
+	Replicas *int32 `json:"replicas,omitempty"`
 
 	Resources FrontendResources `json:"resources"`
 	Timeouts  FrontendTimeouts  `json:"timeouts"`
