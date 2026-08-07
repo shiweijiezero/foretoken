@@ -54,7 +54,9 @@ jobs:
           helm template foretoken deploy/charts/foretoken --kube-version 1.36.3 > /tmp/foretoken.yaml
           grep -q '^kind: Deployment' /tmp/foretoken.yaml
           grep -q '^kind: ClusterRole' /tmp/foretoken.yaml
-          ! grep -q '^kind: CustomResourceDefinition' /tmp/foretoken.yaml
+          if grep -q '^kind: CustomResourceDefinition' /tmp/foretoken.yaml; then
+            exit 1
+          fi
           helm template foretoken deploy/charts/foretoken \
             --kube-version 1.36.3 \
             --set frontend.enabled=true \

@@ -13,7 +13,7 @@ source_dir="$root/reference/upstream/vllm"
 
 lock_value() {
     local key=$1
-    rg -N "^${key} = " "$lock" | cut -d '"' -f 2
+    grep -E "^${key} = " "$lock" | cut -d '"' -f 2
 }
 
 repository=$(lock_value repository)
