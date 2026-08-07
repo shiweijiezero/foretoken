@@ -7,6 +7,7 @@ package controllers
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"reflect"
@@ -269,8 +270,15 @@ func modelGroupReady(group *inferencev1alpha1.ModelGroup) bool {
 
 func setGroupName(group *inferencev1alpha1.ModelGroup, poolName, revision string, ordinal int32) {
 	suffix := fmt.Sprintf("-%s-%d", revision, ordinal)
-	prefix := poolName
-	if len(prefix)+len(suffix) > 63 {
+	prefix := strings.ReplaceAll(poolName, ".", "-")
+	if prefix != poolName {
+		hash := fmt.Sprintf("-%x", sha256.Sum256([]byte(poolName)))[:9]
+		maxPrefix := 63 - len(suffix) - len(hash)
+		if len(prefix) > maxPrefix {
+			prefix = strings.TrimRight(prefix[:maxPrefix], "-")
+		}
+		prefix += hash
+	} else if len(prefix)+len(suffix) > 63 {
 		prefix = strings.TrimRight(prefix[:63-len(suffix)], "-")
 	}
 	group.Name = prefix + suffix

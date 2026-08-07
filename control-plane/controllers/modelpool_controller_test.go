@@ -181,6 +181,14 @@ func TestModelGroupNamePreservesRevisionAndOrdinal(t *testing.T) {
 	if len(group.Name) > 63 || !strings.HasSuffix(group.Name, "-r-example-12") {
 		t.Fatalf("ModelGroup name = %q", group.Name)
 	}
+
+	dotted := new(inferencev1alpha1.ModelGroup)
+	dashed := new(inferencev1alpha1.ModelGroup)
+	setGroupName(dotted, "model.example-default", "r-example", 0)
+	setGroupName(dashed, "model-example-default", "r-example", 0)
+	if strings.Contains(dotted.Name, ".") || dotted.Name == dashed.Name {
+		t.Fatalf("DNS-label-safe ModelGroup names = dotted %q, dashed %q", dotted.Name, dashed.Name)
+	}
 }
 
 func TestModelPoolDoesNotAdoptConflictingGroup(t *testing.T) {
