@@ -57,6 +57,49 @@ spec:
             - --leader-elect=true
             - --metrics-bind-address=0
             - --health-probe-bind-address=:8081
+            {{- if .Values.frontend.enabled }}
+            - --frontend-enabled=true
+            - {{ printf "--frontend-image=%s" .Values.frontend.image | quote }}
+            - {{ printf "--frontend-port=%d" (int .Values.frontend.port) | quote }}
+            - {{ printf "--frontend-gateway-name=%s" .Values.frontend.gateway.name | quote }}
+            - {{ printf "--frontend-gateway-namespace=%s" .Values.frontend.gateway.namespace | quote }}
+            - {{ printf "--frontend-gateway-section-name=%s" .Values.frontend.gateway.sectionName | quote }}
+            {{- end }}
+            {{- with .Values.runtime.vllm.image }}
+            - {{ printf "--vllm-image=%s" . | quote }}
+            - {{ printf "--vllm-model-server-port=%d" (int $.Values.runtime.vllm.modelServerPort) | quote }}
+            - {{ printf "--vllm-accelerator-type=%s" $.Values.runtime.vllm.accelerator.type | quote }}
+            - {{ printf "--vllm-device-resource-name=%s" $.Values.runtime.vllm.accelerator.resourceName | quote }}
+            - {{ printf "--vllm-node-selector-key=%s" $.Values.runtime.vllm.accelerator.nodeSelector.key | quote }}
+            - {{ printf "--vllm-node-selector-value=%s" $.Values.runtime.vllm.accelerator.nodeSelector.value | quote }}
+            {{- if $.Values.runtime.vllm.ec.profileName }}
+            - {{ printf "--vllm-ec-profile-name=%s" $.Values.runtime.vllm.ec.profileName | quote }}
+            - {{ printf "--vllm-ec-profile-revision=%s" $.Values.runtime.vllm.ec.profileRevision | quote }}
+            - {{ printf "--vllm-ec-connector=%s" $.Values.runtime.vllm.ec.connector | quote }}
+            - {{ printf "--vllm-ec-runtime-fingerprint=%s" $.Values.runtime.vllm.ec.runtimeFingerprint | quote }}
+            - {{ printf "--vllm-ec-shared-storage-claim=%s" $.Values.runtime.vllm.ec.sharedStorageClaim | quote }}
+            - {{ printf "--vllm-ec-shared-storage-path=%s" $.Values.runtime.vllm.ec.sharedStoragePath | quote }}
+            {{- end }}
+            {{- if $.Values.runtime.vllm.pd.profileName }}
+            - {{ printf "--vllm-pd-profile-name=%s" $.Values.runtime.vllm.pd.profileName | quote }}
+            - {{ printf "--vllm-pd-profile-revision=%s" $.Values.runtime.vllm.pd.profileRevision | quote }}
+            - {{ printf "--vllm-pd-protocol=%s" $.Values.runtime.vllm.pd.protocol | quote }}
+            - {{ printf "--vllm-pd-bootstrap-port=%d" (int $.Values.runtime.vllm.pd.bootstrapPort) | quote }}
+            - {{ printf "--vllm-pd-abort-request-timeout-seconds=%d" (int $.Values.runtime.vllm.pd.abortRequestTimeoutSeconds) | quote }}
+            {{- end }}
+            {{- if $.Values.runtime.vllm.mooncakeStore.profileName }}
+            - {{ printf "--vllm-mooncake-store-profile-name=%s" $.Values.runtime.vllm.mooncakeStore.profileName | quote }}
+            - {{ printf "--vllm-mooncake-store-profile-revision=%s" $.Values.runtime.vllm.mooncakeStore.profileRevision | quote }}
+            - {{ printf "--vllm-mooncake-store-config-map-name=%s" $.Values.runtime.vllm.mooncakeStore.configMapName | quote }}
+            - {{ printf "--vllm-mooncake-store-config-map-key=%s" $.Values.runtime.vllm.mooncakeStore.configMapKey | quote }}
+            - {{ printf "--vllm-mooncake-store-python-hash-seed=%s" $.Values.runtime.vllm.mooncakeStore.pythonHashSeed | quote }}
+            {{- end }}
+            {{- end }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - name: healthz
               containerPort: 8081

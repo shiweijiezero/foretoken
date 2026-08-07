@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Verifies the Rust frontend and Group-local model-server without models or GPUs.
+
+name: Data plane
+
+on:
+  pull_request:
+    paths:
+      - data-plane/**
+      - third_party/vllm-rust/**
+      - scripts/bootstrap-vllm-rust.sh
+      - rust-toolchain.toml
+      - .github/workflows/data-plane.yaml
+  push:
+    branches:
+      - main
+    paths:
+      - data-plane/**
+      - third_party/vllm-rust/**
+      - scripts/bootstrap-vllm-rust.sh
+      - rust-toolchain.toml
+      - .github/workflows/data-plane.yaml
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Materialize pinned vLLM Rust source
+        run: ./scripts/bootstrap-vllm-rust.sh
+      - name: Verify frontend
+        working-directory: data-plane/frontend
+        run: |
+          cargo fmt --all -- --check
+          cargo check --workspace --locked
+          cargo test --workspace --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Build frontend image
+        run: docker build -f data-plane/frontend/Dockerfile -t foretoken-frontend:test .
+
+  model-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Materialize pinned vLLM Rust source
+        run: ./scripts/bootstrap-vllm-rust.sh
+      - name: Verify model server
+        working-directory: data-plane/model-server
+        run: |
+          cargo fmt --all -- --check
+          cargo check --locked
+          cargo test --locked
+          cargo clippy --all-targets --locked -- -D warnings
+      # No public image is verified for pinned vLLM commit 5b14019576475224d86044b262e28a04a85d4086.
+      # CI validates Rust only; Kubernetes/GPU profiles validate supplied runtime artifacts.

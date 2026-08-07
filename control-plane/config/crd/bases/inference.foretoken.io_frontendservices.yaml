@@ -134,21 +134,32 @@ spec:
                 - message: resources.requests.memory must not exceed resources.limits.memory
                   rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                     <= 0'
+              routerAlgorithm:
+                default: kv_aware
+                enum:
+                - kv_aware
+                - least_loaded
+                - round_robin
+                type: string
               timeouts:
                 description: FrontendTimeouts defines client-facing request budgets.
                 properties:
                   request:
+                    allOf:
+                    - pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    - pattern: ^([0-9]+(s|m|h))+$
                     description: Duration is a positive Go-style duration.
                     minLength: 2
-                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
                     x-kubernetes-validations:
                     - message: must be a positive duration
                       rule: duration(self) > duration('0s')
                   streamIdle:
+                    allOf:
+                    - pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    - pattern: ^([0-9]+(s|m|h))+$
                     description: Duration is a positive Go-style duration.
                     minLength: 2
-                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
                     x-kubernetes-validations:
                     - message: must be a positive duration
@@ -230,6 +241,12 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               observedGeneration:
+                format: int64
+                minimum: 0
+                type: integer
+              servingSnapshotVersion:
+                description: Last successfully persisted serving snapshot version.
+                  It survives ConfigMap recreation.
                 format: int64
                 minimum: 0
                 type: integer

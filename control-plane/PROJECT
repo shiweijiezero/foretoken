@@ -30,6 +30,30 @@ resources:
       namespaced: true
     domain: foretoken.io
     group: inference
+    kind: KVService
+    path: github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1
+    version: v1alpha1
+  - api:
+      crdVersion: v1
+      namespaced: true
+    domain: foretoken.io
+    group: inference
+    kind: KVPool
+    path: github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1
+    version: v1alpha1
+  - api:
+      crdVersion: v1
+      namespaced: true
+    domain: foretoken.io
+    group: inference
+    kind: KVGroup
+    path: github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1
+    version: v1alpha1
+  - api:
+      crdVersion: v1
+      namespaced: true
+    domain: foretoken.io
+    group: inference
     kind: ModelPool
     path: github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1
     version: v1alpha1

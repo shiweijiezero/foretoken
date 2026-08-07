@@ -13,9 +13,20 @@ import (
 // FrontendTimeouts defines client-facing request budgets.
 // +kubebuilder:validation:XValidation:rule="duration(self.streamIdle) <= duration(self.request)",message="timeouts.streamIdle must not exceed timeouts.request"
 type FrontendTimeouts struct {
-	Request    Duration `json:"request"`
+	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
+	Request Duration `json:"request"`
+
+	// +kubebuilder:validation:Pattern="^([0-9]+(s|m|h))+$"
 	StreamIdle Duration `json:"streamIdle"`
 }
+
+type RouterAlgorithm string
+
+const (
+	RouterAlgorithmKVAware     RouterAlgorithm = "kv_aware"
+	RouterAlgorithmLeastLoaded RouterAlgorithm = "least_loaded"
+	RouterAlgorithmRoundRobin  RouterAlgorithm = "round_robin"
+)
 
 // FrontendServiceSpec defines the desired state of a frontend service.
 type FrontendServiceSpec struct {
@@ -26,6 +37,11 @@ type FrontendServiceSpec struct {
 
 	Resources FrontendResources `json:"resources"`
 	Timeouts  FrontendTimeouts  `json:"timeouts"`
+
+	// +optional
+	// +kubebuilder:default=kv_aware
+	// +kubebuilder:validation:Enum=kv_aware;least_loaded;round_robin
+	RouterAlgorithm RouterAlgorithm `json:"routerAlgorithm,omitempty"`
 
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
@@ -38,6 +54,11 @@ type FrontendServiceStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+
+	// Last successfully persisted serving snapshot version. It survives ConfigMap recreation.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	ServingSnapshotVersion uint64 `json:"servingSnapshotVersion,omitempty"`
 
 	// +optional
 	// +listType=map

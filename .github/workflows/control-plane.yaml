@@ -55,7 +55,18 @@ jobs:
           grep -q '^kind: Deployment' /tmp/foretoken.yaml
           grep -q '^kind: ClusterRole' /tmp/foretoken.yaml
           ! grep -q '^kind: CustomResourceDefinition' /tmp/foretoken.yaml
-      - name: Validate operator lifecycle
+          helm template foretoken deploy/charts/foretoken \
+            --kube-version 1.36.3 \
+            --set frontend.enabled=true \
+            --set frontend.image=foretoken-frontend:test \
+            --set frontend.gateway.name=foretoken-gateway \
+            --set frontend.gateway.namespace=foretoken-platform \
+            --set frontend.gateway.sectionName=https > /tmp/foretoken-frontend.yaml
+          grep -q -- '--frontend-enabled=true' /tmp/foretoken-frontend.yaml
+          grep -q -- '--frontend-image=foretoken-frontend:test' /tmp/foretoken-frontend.yaml
+          grep -q 'frontendservices/status' /tmp/foretoken-frontend.yaml
+          grep -q 'httproutes' /tmp/foretoken-frontend.yaml
+      - name: Validate operator materialization lifecycle
         run: |
           kind load docker-image foretoken-control-plane:test --name foretoken
           helm upgrade --install foretoken deploy/charts/foretoken \
@@ -64,6 +75,11 @@ jobs:
             --set image.repository=foretoken-control-plane \
             --set image.tag=test \
             --set image.pullPolicy=Never \
+            --set-string runtime.vllm.image=vllm:test \
+            --set runtime.vllm.accelerator.type=nvidia-h100-80gb \
+            --set runtime.vllm.accelerator.resourceName=nvidia.com/gpu \
+            --set runtime.vllm.accelerator.nodeSelector.key=nvidia.com/gpu.product \
+            --set runtime.vllm.accelerator.nodeSelector.value=NVIDIA-H100-80GB-HBM3 \
             --wait \
             --timeout=3m
           kubectl wait --for=condition=Established \
@@ -71,7 +87,14 @@ jobs:
             crd/modelservices.inference.foretoken.io \
             crd/modelpools.inference.foretoken.io \
             crd/modelgroups.inference.foretoken.io \
+            crd/kvservices.inference.foretoken.io \
+            crd/kvpools.inference.foretoken.io \
+            crd/kvgroups.inference.foretoken.io \
             --timeout=1m
+          CONTROLLER_IDENTITY="system:serviceaccount:foretoken-platform:foretoken-control-plane"
+          test "$(kubectl auth can-i patch modelgroups.inference.foretoken.io --as="${CONTROLLER_IDENTITY}")" = "yes"
+          test "$(kubectl auth can-i patch networkpolicies.networking.k8s.io --as="${CONTROLLER_IDENTITY}")" = "yes"
+          test "$(kubectl auth can-i list frontendservices.inference.foretoken.io --as="${CONTROLLER_IDENTITY}")" = "yes"
           kubectl create namespace foretoken-demo
           kubectl apply --server-side --namespace foretoken-demo -k examples/quickstart
           kubectl wait --for=condition=PoolsMaterialized \
@@ -79,9 +102,80 @@ jobs:
             --namespace foretoken-demo \
             --timeout=1m
           kubectl get modelpool/quickstart-qwen3-0.6b-default --namespace foretoken-demo
+          kubectl wait --for=condition=GroupsMaterialized \
+            modelpool/quickstart-qwen3-0.6b-default \
+            --namespace foretoken-demo \
+            --timeout=1m
+          test "$(kubectl get modelgroups \
+            --namespace foretoken-demo \
+            --output=jsonpath='{range .items[*]}x{end}')" = "x"
+          GROUP_NAME="$(kubectl get modelgroups \
+            --namespace foretoken-demo \
+            --output=jsonpath='{.items[0].metadata.name}')"
+          kubectl wait --for=condition=WorkloadMaterialized \
+            "modelgroup/${GROUP_NAME}" \
+            --namespace foretoken-demo \
+            --timeout=1m
+          kubectl get "deployment/${GROUP_NAME}" --namespace foretoken-demo
+          kubectl get "service/${GROUP_NAME}" --namespace foretoken-demo
+          kubectl get "networkpolicy/${GROUP_NAME}" --namespace foretoken-demo
+          test "$(kubectl get "modelgroup/${GROUP_NAME}" \
+            --namespace foretoken-demo \
+            --output=jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" = "False"
           test "$(kubectl get modelservice/quickstart-qwen3-0.6b \
             --namespace foretoken-demo \
             -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}')" = "False"
+          cat <<'EOF' | kubectl apply --namespace foretoken-demo -f -
+          apiVersion: inference.foretoken.io/v1alpha1
+          kind: KVService
+          metadata:
+            name: ci-kv
+          spec:
+            backend: mooncakeStandaloneStore
+            master:
+              image: mooncake-master:test
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+            storagePools:
+              - name: default
+                replicas: 1
+                client:
+                  image: mooncake-client:test
+                  protocol: rdma
+                  resources:
+                    requests:
+                      cpu: 100m
+                      memory: 256Mi
+                  rdmaResourceName: rdma/ib
+                  memoryCapacity: "134217728"
+                  disk:
+                    size: 1Gi
+            timeouts:
+              startup: 10m
+              drain: 2m
+            requester:
+              localBufferSize: "134217728"
+          EOF
+          kubectl wait --for=jsonpath='{.status.observedGeneration}'=1 \
+            kvservice/ci-kv --namespace foretoken-demo --timeout=1m
+          KVPOOL_NAME="$(kubectl get kvpools --namespace foretoken-demo \
+            --output=jsonpath='{.items[0].metadata.name}')"
+          kubectl wait --for=condition=GroupsMaterialized \
+            "kvpool/${KVPOOL_NAME}" --namespace foretoken-demo --timeout=1m
+          KVGROUP_NAME="$(kubectl get kvgroups --namespace foretoken-demo \
+            --output=jsonpath='{.items[0].metadata.name}')"
+          kubectl wait --for=jsonpath='{.status.observedGeneration}'=1 \
+            "kvgroup/${KVGROUP_NAME}" --namespace foretoken-demo --timeout=1m
+          kubectl get deployment,service,configmap \
+            --namespace foretoken-demo \
+            --selector=inference.foretoken.io/component=mooncake-master
+          kubectl get deployment,service,networkpolicy,persistentvolumeclaim \
+            --namespace foretoken-demo \
+            --selector=inference.foretoken.io/kv-group
+          kubectl delete kvservice/ci-kv --namespace foretoken-demo \
+            --wait --timeout=1m
           helm upgrade foretoken deploy/charts/foretoken \
             --namespace foretoken-platform \
             --set image.repository=foretoken-control-plane \
@@ -95,6 +189,9 @@ jobs:
           kubectl get crd/modelservices.inference.foretoken.io
           kubectl get crd/modelpools.inference.foretoken.io
           kubectl get crd/modelgroups.inference.foretoken.io
+          kubectl get crd/kvservices.inference.foretoken.io
+          kubectl get crd/kvpools.inference.foretoken.io
+          kubectl get crd/kvgroups.inference.foretoken.io
           ! kubectl get clusterrole/foretoken-platform-foretoken-control-plane
       - name: Check generated files
         run: git diff --exit-code

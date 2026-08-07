@@ -21,23 +21,66 @@ type LocalObjectReference struct {
 
 // ModelRole identifies a ModelPool's role in the serving path.
 // +enum
-// +kubebuilder:validation:Enum=aggregate;prefill;decode
+// +kubebuilder:validation:Enum=aggregate;encoder;prefill;decode
 type ModelRole string
 
 const (
 	ModelRoleAggregate ModelRole = "aggregate"
+	ModelRoleEncoder   ModelRole = "encoder"
 	ModelRolePrefill   ModelRole = "prefill"
 	ModelRoleDecode    ModelRole = "decode"
 )
+
+// ManagedMooncakeStoreBinding pins a Ready Foretoken-owned KVService against ABA.
+type ManagedMooncakeStoreBinding struct {
+	Name            string `json:"name"`
+	UID             string `json:"uid"`
+	BindingRevision string `json:"bindingRevision"`
+	ConfigMapName   string `json:"configMapName"`
+	ConfigMapKey    string `json:"configMapKey"`
+	// RequesterBufferBytes is per-rank private Store memory included in the
+	// ModelGroup container memory budget; no hidden overhead is added.
+	RequesterBufferBytes int64 `json:"requesterBufferBytes"`
+}
+
+// NormalizedMooncakeStore is either an external profile or a pinned managed binding.
+// +kubebuilder:validation:XValidation:rule="has(self.profile) != has(self.managedBinding)",message="exactly one Store source is required"
+type NormalizedMooncakeStore struct {
+	Profile        string                       `json:"profile,omitempty"`
+	ManagedBinding *ManagedMooncakeStoreBinding `json:"managedBinding,omitempty"`
+}
+
+// NormalizedKVCache is the controller-owned cache contract attached to ModelPool.
+// +kubebuilder:validation:XValidation:rule="(has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload) && has(self.mooncakeStore))",message="kvCache must select exactly one backend"
+type NormalizedKVCache struct {
+	Offload       *KVOffload               `json:"offload,omitempty"`
+	MooncakeStore *NormalizedMooncakeStore `json:"mooncakeStore,omitempty"`
+}
 
 // NormalizedPoolTemplate is the normalized contract produced from ModelService intent.
 // Platform runtime and accelerator resolution may further constrain it before Groups are created.
 // +kubebuilder:validation:XValidation:rule="self.memberCount == self.nodeCount",message="memberCount must equal nodeCount in v1alpha1"
 // +kubebuilder:validation:XValidation:rule="self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp",message="accelerator capacity must equal the compiled worker rank count"
+// +kubebuilder:validation:XValidation:rule="!(self.role == 'prefill' || self.role == 'decode') || size(self.features.multimodal) == 0",message="P/D ModelPools do not support multimodal features"
 type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Model string `json:"model"`
+
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	ModelRevision string `json:"modelRevision,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Tokenizer string `json:"tokenizer,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	TokenizerRevision string `json:"tokenizerRevision,omitempty"`
 
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`
@@ -54,6 +97,11 @@ type NormalizedPoolTemplate struct {
 
 	Parallelism CompiledParallelism `json:"parallelism"`
 
+	// MaxInputTokens is the immutable prompt admission limit for this Pool.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
+
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=128
@@ -61,6 +109,17 @@ type NormalizedPoolTemplate struct {
 	Network string `json:"network,omitempty"`
 
 	Timeouts ModelTimeouts `json:"timeouts"`
+
+	// KVCache is immutable resolved cache-placement intent.
+	// +optional
+	KVCache *NormalizedKVCache `json:"kvCache,omitempty"`
+
+	// Features is the normalized explicit capability contract for this Pool.
+	Features ModelFeatures `json:"features"`
+
+	// ECProfile is the controller-owned platform EC profile selected for encoder and prefill Pools.
+	// +optional
+	ECProfile string `json:"ecProfile,omitempty"`
 
 	// ExtraArgs are backend flags that the concrete adapter must validate before Group creation.
 	// +optional
@@ -86,27 +145,15 @@ type ModelPoolSpec struct {
 	Template NormalizedPoolTemplate `json:"template"`
 }
 
-// ModelPoolPhase summarizes the Pool lifecycle.
-// +enum
-// +kubebuilder:validation:Enum=Pending;Progressing;Ready;Degraded;Terminating
-type ModelPoolPhase string
-
-const (
-	ModelPoolPhasePending     ModelPoolPhase = "Pending"
-	ModelPoolPhaseProgressing ModelPoolPhase = "Progressing"
-	ModelPoolPhaseReady       ModelPoolPhase = "Ready"
-	ModelPoolPhaseDegraded    ModelPoolPhase = "Degraded"
-	ModelPoolPhaseTerminating ModelPoolPhase = "Terminating"
-)
-
 // ModelPoolStatus defines the observed state of a ModelPool.
 type ModelPoolStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
+	// ActiveRevision is the immutable Group revision currently admitted to routing.
 	// +optional
-	Phase ModelPoolPhase `json:"phase,omitempty"`
+	ActiveRevision string `json:"activeRevision,omitempty"`
 
 	// +optional
 	// +listType=map
@@ -121,7 +168,6 @@ type ModelPoolStatus struct {
 // +kubebuilder:printcolumn:name="Role",type=string,JSONPath=".spec.template.role"
 // +kubebuilder:printcolumn:name="Desired",type=integer,JSONPath=".spec.desiredGroups"
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=".status.conditions[?(@.type=='Ready')].status"
-// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 
 // ModelPool is a read-only execution fleet materialized from ModelService intent.

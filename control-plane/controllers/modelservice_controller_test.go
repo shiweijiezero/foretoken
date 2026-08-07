@@ -64,6 +64,61 @@ func TestModelServiceReconcileMaterializesPool(t *testing.T) {
 	}
 }
 
+func TestModelServiceBecomesReadyWhenAllServingPoolsAreReady(t *testing.T) {
+	ctx := context.Background()
+	service := testModelService("demo", 3)
+	reconciler, kubeClient := testReconciler(t, service)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(service)}
+	reconcileTwice(t, ctx, reconciler, request)
+
+	pool := new(inferencev1alpha1.ModelPool)
+	poolKey := types.NamespacedName{Namespace: service.Namespace, Name: "demo-default"}
+	if err := kubeClient.Get(ctx, poolKey, pool); err != nil {
+		t.Fatal(err)
+	}
+	pool.Status.ObservedGeneration = pool.Generation
+	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{
+		Type:               conditionReady,
+		Status:             metav1.ConditionTrue,
+		Reason:             "Ready",
+		Message:            "Ready",
+		ObservedGeneration: pool.Generation,
+	})
+	if err := kubeClient.Status().Update(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+
+	current := new(inferencev1alpha1.ModelService)
+	if err := kubeClient.Get(ctx, request.NamespacedName, current); err != nil {
+		t.Fatal(err)
+	}
+	condition := meta.FindStatusCondition(current.Status.Conditions, conditionReady)
+	if condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != "Ready" || condition.ObservedGeneration != current.Generation {
+		t.Fatalf("Ready condition = %#v", condition)
+	}
+}
+
+func TestModelServiceScaledToZeroIsNotServingReady(t *testing.T) {
+	ctx := context.Background()
+	service := testModelService("demo", 3)
+	service.Spec.Replicas = ptr(int32(0))
+	reconciler, kubeClient := testReconciler(t, service)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(service)}
+	reconcileTwice(t, ctx, reconciler, request)
+
+	current := new(inferencev1alpha1.ModelService)
+	if err := kubeClient.Get(ctx, request.NamespacedName, current); err != nil {
+		t.Fatal(err)
+	}
+	condition := meta.FindStatusCondition(current.Status.Conditions, conditionReady)
+	if condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "ScaledToZero" {
+		t.Fatalf("Ready condition = %#v", condition)
+	}
+}
+
 func TestModelServiceScalePreservesTemplate(t *testing.T) {
 	ctx := context.Background()
 	service := testModelService("demo", 3)
@@ -207,7 +262,7 @@ func testReconciler(t *testing.T, objects ...client.Object) (*ModelServiceReconc
 	}
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&inferencev1alpha1.ModelService{}).
+		WithStatusSubresource(&inferencev1alpha1.ModelService{}, &inferencev1alpha1.ModelPool{}).
 		WithObjects(objects...).
 		Build()
 	return &ModelServiceReconciler{Client: kubeClient}, kubeClient

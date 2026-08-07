@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+[package]
+name = "foretoken-backend-registry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+foretoken-kv-indexer = { path = "../kv-indexer" }
+foretoken-llm-facade = { path = "../llm-facade" }
+foretoken-model-protocol = { path = "../../../model-protocol" }
+foretoken-router = { path = "../router" }
+futures.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+vllm-engine-core-client.workspace = true
+
+[dev-dependencies]
+axum.workspace = true

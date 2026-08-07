@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+[package]
+name = "foretoken-text"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+foretoken-chat = { path = "../chat" }
+foretoken-tokenizer = { path = "../tokenizer" }
+hf-hub.workspace = true
+thiserror.workspace = true
+vllm-engine-core-client.workspace = true
+vllm-text.workspace = true

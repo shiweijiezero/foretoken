@@ -66,10 +66,56 @@ type Parallelism struct {
 	EP *ExpertParallelism `json:"ep,omitempty"`
 }
 
+// KVCache defines typed KV-cache placement intent for one execution Pool.
+// +kubebuilder:validation:XValidation:rule="!(has(self.offload) && has(self.mooncakeStore))",message="kvCache.offload and kvCache.mooncakeStore are mutually exclusive"
+type KVCache struct {
+	// +optional
+	Offload *KVOffload `json:"offload,omitempty"`
+
+	// +optional
+	MooncakeStore *MooncakeStore `json:"mooncakeStore,omitempty"`
+}
+
+// KVOffload defines local CPU and optionally filesystem-backed KV offload.
+type KVOffload struct {
+	// CPUCacheSize is the CPU tier capacity available to vLLM.
+	// +kubebuilder:validation:MinLength=1
+	CPUCacheSize ResourceQuantity `json:"cpuCacheSize"`
+
+	// +optional
+	Filesystem bool `json:"filesystem,omitempty"`
+}
+
+// KVServiceReference identifies a same-namespace KVService by user-facing name only.
+type KVServiceReference struct {
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+}
+
+// MooncakeStore selects either an external platform profile or a Foretoken-owned KVService.
+// +kubebuilder:validation:XValidation:rule="has(self.profile) != has(self.kvServiceRef)",message="exactly one of profile or kvServiceRef is required"
+type MooncakeStore struct {
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Profile string `json:"profile,omitempty"`
+	// +optional
+	KVServiceRef *KVServiceReference `json:"kvServiceRef,omitempty"`
+}
+
+// ECProfileReference selects a platform-maintained encoder/prefill transfer profile.
+// It deliberately contains no connector options or module paths.
+type ECProfileReference struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Profile string `json:"profile"`
+}
+
 // ModelPoolTemplate defines one user-owned execution Pool: a homogeneous set
 // of ModelGroups sharing the same role, network, resources, and parallelism.
 // The controller instantiates it as a ModelPool owned by the ModelService.
 // +kubebuilder:validation:XValidation:rule="(has(self.nodes) ? self.nodes : 1) * self.resources.requests.gpu.count == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * (has(self.parallelism.dp) ? self.parallelism.dp : 1))",message="nodes * resources.requests.gpu.count must equal the compiled worker rank count"
+// +kubebuilder:validation:XValidation:rule="!(self.role == 'prefill' || self.role == 'decode') || !has(self.features) || !has(self.features.multimodal) || size(self.features.multimodal) == 0",message="P/D ModelPools do not support multimodal features"
 type ModelPoolTemplate struct {
 	// Name is the stable identity of this Pool within one ModelService.
 	// +kubebuilder:validation:MinLength=1
@@ -101,17 +147,49 @@ type ModelPoolTemplate struct {
 
 	Resources   ModelResources `json:"resources"`
 	Parallelism Parallelism    `json:"parallelism"`
+
+	// MaxInputTokens is the prompt admission limit for requests routed to this Pool.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
+
+	// +optional
+	KVCache *KVCache `json:"kvCache,omitempty"`
+
+	// Features declares explicit opt-in capabilities for this Pool.
+	// +optional
+	Features *ModelFeatures `json:"features,omitempty"`
 }
 
 // ModelServiceSpec defines the desired state of a model service.
-// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !(has(self.replicas) || has(self.nodes) || has(self.resources) || has(self.parallelism))",message="spec.modelPools is mutually exclusive with top-level replicas, nodes, resources, and parallelism"
+// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !(has(self.replicas) || has(self.nodes) || has(self.resources) || has(self.parallelism) || has(self.maxInputTokens) || has(self.kvCache) || has(self.features))",message="spec.modelPools is mutually exclusive with top-level replicas, nodes, resources, parallelism, maxInputTokens, kvCache, and features"
 // +kubebuilder:validation:XValidation:rule="has(self.modelPools) || (has(self.resources) && has(self.parallelism))",message="top-level resources and parallelism are required when spec.modelPools is omitted"
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, pool.name != 'default')",message="modelPools name default is reserved for the Quick Start shorthand"
 // +kubebuilder:validation:XValidation:rule="has(self.modelPools) || (has(self.resources) && has(self.parallelism) && (has(self.nodes) ? self.nodes : 1) * self.resources.requests.gpu.count == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * (has(self.parallelism.dp) ? self.parallelism.dp : 1)))",message="nodes * resources.requests.gpu.count must equal the compiled worker rank count"
+// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, !has(pool.role) || pool.role == 'aggregate') || (self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'prefill' || pool.role == 'decode'))) || (has(self.ecProfile) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'encoder' || pool.role == 'prefill' || pool.role == 'decode')))",message="modelPools must be aggregate-only, complete P/D, or complete E/P/D without aggregate pools"
+// +kubebuilder:validation:XValidation:rule="!has(self.ecProfile) || (has(self.modelPools) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'encoder' || pool.role == 'prefill' || pool.role == 'decode')))",message="ecProfile requires complete E/P/D modelPools"
 type ModelServiceSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Model string `json:"model"`
+
+	// ModelRevision pins the model artifact when the platform does not resolve it from a catalog.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	ModelRevision string `json:"modelRevision,omitempty"`
+
+	// Tokenizer defaults to model when omitted.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Tokenizer string `json:"tokenizer,omitempty"`
+
+	// TokenizerRevision defaults to modelRevision when omitted.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	TokenizerRevision string `json:"tokenizerRevision,omitempty"`
 
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`
@@ -133,6 +211,23 @@ type ModelServiceSpec struct {
 
 	// +optional
 	Parallelism *Parallelism `json:"parallelism,omitempty"`
+
+	// MaxInputTokens is the prompt admission limit for requests routed to the default Pool.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
+
+	// KVCache is the typed cache-placement intent for the Quick Start shorthand.
+	// +optional
+	KVCache *KVCache `json:"kvCache,omitempty"`
+
+	// Features declares explicit opt-in capabilities for the default Pool.
+	// +optional
+	Features *ModelFeatures `json:"features,omitempty"`
+
+	// ECProfile selects the platform-maintained EC runtime for a complete E/P/D topology.
+	// +optional
+	ECProfile *ECProfileReference `json:"ecProfile,omitempty"`
 
 	// ModelPools defines up to 32 advanced execution Pools instead of the top-level shorthand.
 	// +optional

@@ -60,18 +60,123 @@ spec:
                 enum:
                 - vllm
                 type: string
+              ecProfile:
+                description: ECProfile selects the platform-maintained EC runtime
+                  for a complete E/P/D topology.
+                properties:
+                  profile:
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                required:
+                - profile
+                type: object
               extraArgs:
                 description: ExtraArgs are backend CLI flags shared by every compiled
                   Pool.
                 items:
-                  description: BackendArg is one backend command-line flag.
+                  description: |-
+                    BackendArg is one canonical backend long flag. The vLLM compiler enforces its
+                    small allowlist and whether a value is required; this schema rejects spacing,
+                    aliases, and positional arguments before reconciliation.
                   maxLength: 4096
-                  minLength: 2
-                  pattern: ^--
+                  minLength: 3
+                  pattern: ^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$
                   type: string
                 maxItems: 256
                 type: array
                 x-kubernetes-list-type: atomic
+              features:
+                description: Features declares explicit opt-in capabilities for the
+                  default Pool.
+                properties:
+                  multimodal:
+                    items:
+                      description: MultimodalModality identifies one non-text input
+                        modality supported by a model.
+                      enum:
+                      - image
+                      - video
+                      - audio
+                      type: string
+                    maxItems: 3
+                    type: array
+                    x-kubernetes-list-type: set
+                  reasoning:
+                    type: boolean
+                  structuredOutputs:
+                    items:
+                      description: StructuredOutputFormat identifies a structured
+                        response format supported by a model.
+                      enum:
+                      - jsonObject
+                      - jsonSchema
+                      type: string
+                    maxItems: 2
+                    type: array
+                    x-kubernetes-list-type: set
+                  tools:
+                    type: boolean
+                type: object
+              kvCache:
+                description: KVCache is the typed cache-placement intent for the Quick
+                  Start shorthand.
+                properties:
+                  mooncakeStore:
+                    description: MooncakeStore selects either an external platform
+                      profile or a Foretoken-owned KVService.
+                    properties:
+                      kvServiceRef:
+                        description: KVServiceReference identifies a same-namespace
+                          KVService by user-facing name only.
+                        properties:
+                          name:
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      profile:
+                        maxLength: 256
+                        minLength: 1
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: exactly one of profile or kvServiceRef is required
+                      rule: has(self.profile) != has(self.kvServiceRef)
+                  offload:
+                    description: KVOffload defines local CPU and optionally filesystem-backed
+                      KV offload.
+                    properties:
+                      cpuCacheSize:
+                        allOf:
+                        - minLength: 1
+                        - minLength: 1
+                        description: CPUCacheSize is the CPU tier capacity available
+                          to vLLM.
+                        maxLength: 64
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a valid non-negative Kubernetes resource
+                            quantity
+                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                            >= 0
+                      filesystem:
+                        type: boolean
+                    required:
+                    - cpuCacheSize
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: kvCache.offload and kvCache.mooncakeStore are mutually
+                    exclusive
+                  rule: '!(has(self.offload) && has(self.mooncakeStore))'
+              maxInputTokens:
+                description: MaxInputTokens is the prompt admission limit for requests
+                  routed to the default Pool.
+                format: int32
+                minimum: 1
+                type: integer
               model:
                 maxLength: 1024
                 minLength: 1
@@ -85,6 +190,97 @@ spec:
                     of ModelGroups sharing the same role, network, resources, and parallelism.
                     The controller instantiates it as a ModelPool owned by the ModelService.
                   properties:
+                    features:
+                      description: Features declares explicit opt-in capabilities
+                        for this Pool.
+                      properties:
+                        multimodal:
+                          items:
+                            description: MultimodalModality identifies one non-text
+                              input modality supported by a model.
+                            enum:
+                            - image
+                            - video
+                            - audio
+                            type: string
+                          maxItems: 3
+                          type: array
+                          x-kubernetes-list-type: set
+                        reasoning:
+                          type: boolean
+                        structuredOutputs:
+                          items:
+                            description: StructuredOutputFormat identifies a structured
+                              response format supported by a model.
+                            enum:
+                            - jsonObject
+                            - jsonSchema
+                            type: string
+                          maxItems: 2
+                          type: array
+                          x-kubernetes-list-type: set
+                        tools:
+                          type: boolean
+                      type: object
+                    kvCache:
+                      description: KVCache defines typed KV-cache placement intent
+                        for one execution Pool.
+                      properties:
+                        mooncakeStore:
+                          description: MooncakeStore selects either an external platform
+                            profile or a Foretoken-owned KVService.
+                          properties:
+                            kvServiceRef:
+                              description: KVServiceReference identifies a same-namespace
+                                KVService by user-facing name only.
+                              properties:
+                                name:
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            profile:
+                              maxLength: 256
+                              minLength: 1
+                              type: string
+                          type: object
+                          x-kubernetes-validations:
+                          - message: exactly one of profile or kvServiceRef is required
+                            rule: has(self.profile) != has(self.kvServiceRef)
+                        offload:
+                          description: KVOffload defines local CPU and optionally
+                            filesystem-backed KV offload.
+                          properties:
+                            cpuCacheSize:
+                              allOf:
+                              - minLength: 1
+                              - minLength: 1
+                              description: CPUCacheSize is the CPU tier capacity available
+                                to vLLM.
+                              maxLength: 64
+                              type: string
+                              x-kubernetes-validations:
+                              - message: must be a valid non-negative Kubernetes resource
+                                  quantity
+                                rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                                  >= 0
+                            filesystem:
+                              type: boolean
+                          required:
+                          - cpuCacheSize
+                          type: object
+                      type: object
+                      x-kubernetes-validations:
+                      - message: kvCache.offload and kvCache.mooncakeStore are mutually
+                          exclusive
+                        rule: '!(has(self.offload) && has(self.mooncakeStore))'
+                    maxInputTokens:
+                      description: MaxInputTokens is the prompt admission limit for
+                        requests routed to this Pool.
+                      format: int32
+                      minimum: 1
+                      type: integer
                     name:
                       description: Name is the stable identity of this Pool within
                         one ModelService.
@@ -272,6 +468,7 @@ spec:
                         serving path.
                       enum:
                       - aggregate
+                      - encoder
                       - prefill
                       - decode
                       type: string
@@ -287,12 +484,22 @@ spec:
                       == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size
                       : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp
                       * (has(self.parallelism.dp) ? self.parallelism.dp : 1))'
+                  - message: P/D ModelPools do not support multimodal features
+                    rule: '!(self.role == ''prefill'' || self.role == ''decode'')
+                      || !has(self.features) || !has(self.features.multimodal) ||
+                      size(self.features.multimodal) == 0'
                 maxItems: 32
                 minItems: 1
                 type: array
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              modelRevision:
+                description: ModelRevision pins the model artifact when the platform
+                  does not resolve it from a catalog.
+                maxLength: 256
+                minLength: 1
+                type: string
               nodes:
                 description: Nodes is the number of physical Kubernetes Nodes used
                   by each ModelGroup; the compiler defaults it to 1.
@@ -479,6 +686,16 @@ spec:
                 - drain
                 - startup
                 type: object
+              tokenizer:
+                description: Tokenizer defaults to model when omitted.
+                maxLength: 1024
+                minLength: 1
+                type: string
+              tokenizerRevision:
+                description: TokenizerRevision defaults to modelRevision when omitted.
+                maxLength: 256
+                minLength: 1
+                type: string
             required:
             - backend
             - model
@@ -486,9 +703,10 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: spec.modelPools is mutually exclusive with top-level replicas,
-                nodes, resources, and parallelism
+                nodes, resources, parallelism, maxInputTokens, kvCache, and features
               rule: '!has(self.modelPools) || !(has(self.replicas) || has(self.nodes)
-                || has(self.resources) || has(self.parallelism))'
+                || has(self.resources) || has(self.parallelism) || has(self.maxInputTokens)
+                || has(self.kvCache) || has(self.features))'
             - message: top-level resources and parallelism are required when spec.modelPools
                 is omitted
               rule: has(self.modelPools) || (has(self.resources) && has(self.parallelism))
@@ -502,6 +720,25 @@ spec:
                 == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size
                 : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp
                 * (has(self.parallelism.dp) ? self.parallelism.dp : 1)))'
+            - message: modelPools must be aggregate-only, complete P/D, or complete
+                E/P/D without aggregate pools
+              rule: '!has(self.modelPools) || self.modelPools.all(pool, !has(pool.role)
+                || pool.role == ''aggregate'') || (self.modelPools.exists(pool, has(pool.role)
+                && pool.role == ''prefill'') && self.modelPools.exists(pool, has(pool.role)
+                && pool.role == ''decode'') && self.modelPools.all(pool, has(pool.role)
+                && (pool.role == ''prefill'' || pool.role == ''decode''))) || (has(self.ecProfile)
+                && self.modelPools.exists(pool, has(pool.role) && pool.role == ''encoder'')
+                && self.modelPools.exists(pool, has(pool.role) && pool.role == ''prefill'')
+                && self.modelPools.exists(pool, has(pool.role) && pool.role == ''decode'')
+                && self.modelPools.all(pool, has(pool.role) && (pool.role == ''encoder''
+                || pool.role == ''prefill'' || pool.role == ''decode'')))'
+            - message: ecProfile requires complete E/P/D modelPools
+              rule: '!has(self.ecProfile) || (has(self.modelPools) && self.modelPools.exists(pool,
+                has(pool.role) && pool.role == ''encoder'') && self.modelPools.exists(pool,
+                has(pool.role) && pool.role == ''prefill'') && self.modelPools.exists(pool,
+                has(pool.role) && pool.role == ''decode'') && self.modelPools.all(pool,
+                has(pool.role) && (pool.role == ''encoder'' || pool.role == ''prefill''
+                || pool.role == ''decode'')))'
           status:
             description: ModelServiceStatus defines the observed state of a model
               service.

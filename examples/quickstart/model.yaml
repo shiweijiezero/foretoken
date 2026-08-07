@@ -6,9 +6,10 @@
 apiVersion: inference.foretoken.io/v1alpha1
 kind: ModelService
 metadata:
-  name: quickstart-qwen3-0.6b # Kubernetes name and default API model alias.
+  name: quickstart-qwen3-0.6b # Kubernetes name of this model service.
 spec:
   model: Qwen/Qwen3-0.6B # Model artifact to serve, such as a Hugging Face repository or supported URI.
+  modelRevision: c1899de289a04d12100db370d81485cdf75e47ca # Pinned model artifact revision.
   backend: vllm # Inference backend selected for this model service.
   # Every ModelGroup uses the same parallelism and per-Pod resource settings below.
   # ModelPool

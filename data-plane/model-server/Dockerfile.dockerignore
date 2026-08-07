@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# This Dockerfile-specific ignore file overrides the repository-root
+# .dockerignore when building with `docker build -f data-plane/model-server/Dockerfile .`.
+# Keep the root context small while retaining the vLLM Rust path dependencies.
+**
+!data-plane/
+!data-plane/model-protocol/
+!data-plane/model-protocol/**
+!data-plane/model-server/
+!data-plane/model-server/**
+!reference/
+!reference/upstream/
+!reference/upstream/vllm/
+!reference/upstream/vllm/rust/
+!reference/upstream/vllm/rust/**
+
+# Never send local build products to the builder.
+data-plane/model-server/target/
+data-plane/model-server/.venv/
+data-plane/model-server/**/__pycache__/
+data-plane/model-server/**/*.py[cod]
+reference/upstream/vllm/rust/target/

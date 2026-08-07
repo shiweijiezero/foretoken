@@ -17,11 +17,54 @@ type ResourceQuantity string
 // +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="must be a positive duration"
 type Duration string
 
-// BackendArg is one backend command-line flag.
-// +kubebuilder:validation:MinLength=2
+// BackendArg is one canonical backend long flag. The vLLM compiler enforces its
+// small allowlist and whether a value is required; this schema rejects spacing,
+// aliases, and positional arguments before reconciliation.
+// +kubebuilder:validation:MinLength=3
 // +kubebuilder:validation:MaxLength=4096
-// +kubebuilder:validation:Pattern="^--"
+// +kubebuilder:validation:Pattern="^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$"
 type BackendArg string
+
+// StructuredOutputFormat identifies a structured response format supported by a model.
+// +enum
+// +kubebuilder:validation:Enum=jsonObject;jsonSchema
+type StructuredOutputFormat string
+
+const (
+	StructuredOutputFormatJSONObject StructuredOutputFormat = "jsonObject"
+	StructuredOutputFormatJSONSchema StructuredOutputFormat = "jsonSchema"
+)
+
+// MultimodalModality identifies one non-text input modality supported by a model.
+// +enum
+// +kubebuilder:validation:Enum=image;video;audio
+type MultimodalModality string
+
+const (
+	MultimodalModalityImage MultimodalModality = "image"
+	MultimodalModalityVideo MultimodalModality = "video"
+	MultimodalModalityAudio MultimodalModality = "audio"
+)
+
+// ModelFeatures declares opt-in model capabilities. Chat and text are always
+// available and therefore intentionally are not configurable here.
+type ModelFeatures struct {
+	// +optional
+	Tools bool `json:"tools,omitempty"`
+
+	// +optional
+	Reasoning bool `json:"reasoning,omitempty"`
+
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=2
+	StructuredOutputs []StructuredOutputFormat `json:"structuredOutputs,omitempty"`
+
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=3
+	Multimodal []MultimodalModality `json:"multimodal,omitempty"`
+}
 
 // CompiledParallelism defines an explicit execution topology compiled from user intent.
 // Unlike user input, DP is always present and may coexist with EP as its derived value.

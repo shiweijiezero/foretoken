@@ -31,9 +31,135 @@ rules:
       - customresourcedefinitions
     resourceNames:
       - frontendservices.inference.foretoken.io
+      - kvservices.inference.foretoken.io
+      - kvpools.inference.foretoken.io
+      - kvgroups.inference.foretoken.io
       - modelservices.inference.foretoken.io
       - modelpools.inference.foretoken.io
       - modelgroups.inference.foretoken.io
+    verbs:
+      - get
+      - patch
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - frontendservices
+    verbs:
+      - get
+      - list
+      - watch
+  {{- if .Values.frontend.enabled }}
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - frontendservices/status
+    verbs:
+      - get
+      - patch
+  - apiGroups:
+      - gateway.networking.k8s.io
+    resources:
+      - httproutes
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - delete
+  {{- end }}
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  # Kubernetes cannot name-restrict create; reconciliation creates only foretoken-kv-indexer.
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - create
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    resourceNames:
+      - foretoken-kv-indexer
+    verbs:
+      - get
+      - update
+      - patch
+  - apiGroups:
+      - ""
+    resources:
+      - persistentvolumeclaims
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - kvservices
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - kvservices/status
+    verbs:
+      - get
+      - patch
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - kvpools
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - kvpools/status
+    verbs:
+      - get
+      - patch
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - kvgroups
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - kvgroups/status
     verbs:
       - get
       - patch
@@ -63,6 +189,76 @@ rules:
       - watch
       - create
       - update
+      - patch
+      - delete
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - modelpools/status
+    verbs:
+      - get
+      - patch
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - modelgroups
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - delete
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - modelgroups/status
+    verbs:
+      - get
+      - patch
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - networkpolicies
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
       - delete
 ---
 apiVersion: rbac.authorization.k8s.io/v1

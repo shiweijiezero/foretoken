@@ -27,19 +27,26 @@ func TestLoadGeneratedCRDs(t *testing.T) {
 	}
 	want := []string{
 		"frontendservices.inference.foretoken.io",
-		"modelservices.inference.foretoken.io",
-		"modelpools.inference.foretoken.io",
+		"kvservices.inference.foretoken.io",
+		"kvpools.inference.foretoken.io",
+		"kvgroups.inference.foretoken.io",
 		"modelgroups.inference.foretoken.io",
+		"modelpools.inference.foretoken.io",
+		"modelservices.inference.foretoken.io",
 	}
 	if len(crds) != len(want) {
 		t.Fatalf("loaded %d CRDs, want %d", len(crds), len(want))
 	}
-	for index, crd := range crds {
-		if crd.Name != want[index] {
-			t.Fatalf("CRD %d = %q, want %q", index, crd.Name, want[index])
-		}
+	loaded := make(map[string]struct{}, len(crds))
+	for _, crd := range crds {
+		loaded[crd.Name] = struct{}{}
 		if len(crd.Spec.Versions) == 0 {
 			t.Fatalf("loaded CRD %q without versions", crd.Name)
+		}
+	}
+	for _, name := range want {
+		if _, ok := loaded[name]; !ok {
+			t.Fatalf("CRD %q was not loaded", name)
 		}
 	}
 }
@@ -83,6 +90,23 @@ func TestGeneratedCRDContracts(t *testing.T) {
 		t.Fatalf("modelPools map keys = %v, want [name]", modelPools.XListMapKeys)
 	}
 
+	kvServiceSpec := crdSpecSchema(t, byName["kvservices.inference.foretoken.io"])
+	storagePools := schemaProperty(t, kvServiceSpec, "storagePools")
+	if storagePools.XListType == nil || *storagePools.XListType != "map" || len(storagePools.XListMapKeys) != 1 || storagePools.XListMapKeys[0] != "name" {
+		t.Fatalf("storagePools structural list contract = %#v", storagePools)
+	}
+	kvPoolSpec := crdSpecSchema(t, byName["kvpools.inference.foretoken.io"])
+	if !hasValidationRule(kvPoolSpec, "self.kvServiceRef == oldSelf.kvServiceRef && self.poolName == oldSelf.poolName && self.revision == oldSelf.revision && self.template == oldSelf.template") {
+		t.Fatal("KVPool does not limit mutability to desiredGroups")
+	}
+	clientTemplate := schemaProperty(t, storagePools.Items.Schema, "client")
+	if !hasValidationRule(clientTemplate, "quantity(self.memoryCapacity).compareTo(quantity(self.resources.requests.memory)) < 0") {
+		t.Fatal("KV client memory capacity does not reject an equal memory request")
+	}
+	if !hasValidationRule(clientTemplate, "!has(self.resources.limits) || !has(self.resources.limits.memory) || quantity(self.memoryCapacity).compareTo(quantity(self.resources.limits.memory)) < 0") {
+		t.Fatal("KV client memory capacity does not reject an equal memory limit")
+	}
+
 	modelGroupSpec := crdSpecSchema(t, byName["modelgroups.inference.foretoken.io"])
 	if !hasValidationRule(modelGroupSpec, "self == oldSelf") {
 		t.Fatal("ModelGroup spec does not enforce immutability")
@@ -90,7 +114,7 @@ func TestGeneratedCRDContracts(t *testing.T) {
 	if !hasValidationRule(modelGroupSpec, "self.memberCount == self.nodeCount") {
 		t.Fatal("ModelGroup spec does not enforce one member per node")
 	}
-	if !hasValidationRule(modelGroupSpec, "self.nodeCount * self.accelerator.countPerMember == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp") {
+	if !hasValidationRule(modelGroupSpec, "self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp") {
 		t.Fatal("ModelGroup spec does not enforce compiled rank capacity")
 	}
 }

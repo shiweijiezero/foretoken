@@ -10,31 +10,204 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// ModelGroupAccelerator defines accelerator capacity for each runtime member Pod.
+// ModelGroupAccelerator defines the resolved Kubernetes accelerator placement.
 type ModelGroupAccelerator struct {
-	// Type is the resolved platform accelerator type.
+	// DeviceResourceName is the Kubernetes extended resource requested by each member Pod.
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	// +kubebuilder:validation:Pattern="^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
-	Type string `json:"type"`
+	// +kubebuilder:validation:MaxLength=253
+	DeviceResourceName string `json:"deviceResourceName"`
 
-	// CountPerMember is the number of accelerators assigned to one member Pod.
+	// NodeSelector constrains members to the resolved accelerator profile.
+	// +kubebuilder:validation:MinProperties=1
+	// +kubebuilder:validation:MaxProperties=16
+	NodeSelector map[string]string `json:"nodeSelector"`
+}
+
+// ModelGroupArtifacts identifies immutable model and tokenizer inputs.
+type ModelGroupArtifacts struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Model string `json:"model"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	ModelRevision string `json:"modelRevision"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Tokenizer string `json:"tokenizer"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	TokenizerRevision string `json:"tokenizerRevision"`
+}
+
+// ModelGroupPDRuntimeConfig defines the resolved P/D transport runtime.
+type ModelGroupPDRuntimeConfig struct {
+	// ProfileName and ProfileRevision are opaque platform-owned identifiers.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	ProfileName string `json:"profileName"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	ProfileRevision string `json:"profileRevision"`
+
+	// +kubebuilder:validation:Enum=MooncakeConnector
+	Connector string `json:"connector"`
+
+	// +kubebuilder:validation:Enum=rdma
+	Protocol string `json:"protocol"`
+
 	// +kubebuilder:validation:Minimum=1
-	CountPerMember int32 `json:"countPerMember"`
+	// +kubebuilder:validation:Maximum=65535
+	BootstrapPort int32 `json:"bootstrapPort"`
+
+	// +kubebuilder:validation:Minimum=1
+	AbortRequestTimeoutSeconds int32 `json:"abortRequestTimeoutSeconds"`
+}
+
+// ECTransferRole is the fixed role assigned to a controller-owned EC runtime.
+// +enum
+// +kubebuilder:validation:Enum=producer;consumer
+type ECTransferRole string
+
+const (
+	ECTransferRoleProducer ECTransferRole = "producer"
+	ECTransferRoleConsumer ECTransferRole = "consumer"
+)
+
+// ModelGroupECRuntimeConfig is the immutable encoder/prefill transfer contract.
+// The controller resolves every value from a platform profile; users cannot supply
+// connector options, module paths, or peer endpoints.
+type ModelGroupECRuntimeConfig struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	ProfileName string `json:"profileName"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	ProfileRevision string `json:"profileRevision"`
+
+	// +kubebuilder:validation:Enum=ECExampleConnector
+	Connector string `json:"connector"`
+
+	Role ECTransferRole `json:"role"`
+
+	// RuntimeFingerprint pins the verified connector runtime implementation.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	RuntimeFingerprint string `json:"runtimeFingerprint"`
+
+	// SharedStorageClaim is the platform-owned ReadWriteMany PVC used by the
+	// pinned vLLM ECExampleConnector.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	SharedStorageClaim string `json:"sharedStorageClaim"`
+
+	// SharedStoragePath is the fixed in-container connector path.
+	// +kubebuilder:validation:Pattern=`^/[^[:space:]]*$`
+	// +kubebuilder:validation:MaxLength=256
+	SharedStoragePath string `json:"sharedStoragePath"`
+}
+
+// ModelGroupKVOffloadRuntime defines resolved local KV offload settings.
+type ModelGroupKVOffloadRuntime struct {
+	// +kubebuilder:validation:Minimum=1
+	CPUBytes int64 `json:"cpuBytes"`
+
+	// +optional
+	Filesystem bool `json:"filesystem,omitempty"`
+}
+
+// ModelGroupMooncakeStoreRuntime defines the resolved external Store contract.
+type ModelGroupMooncakeStoreRuntime struct {
+	// +kubebuilder:validation:MinLength=1
+	ProfileName string `json:"profileName"`
+	// +optional
+	KVServiceUID string `json:"kvServiceUid,omitempty"`
+	// RequesterBufferBytes is per-rank private Store memory included in the
+	// container memory budget, not additional runtime overhead.
+	// +optional
+	RequesterBufferBytes int64 `json:"requesterBufferBytes,omitempty"`
+	// +kubebuilder:validation:MinLength=1
+	ProfileRevision string `json:"profileRevision"`
+	// +kubebuilder:validation:MinLength=1
+	ConfigMapName string `json:"configMapName"`
+	// +kubebuilder:validation:MinLength=1
+	ConfigMapKey string `json:"configMapKey"`
+	// +kubebuilder:validation:MinLength=1
+	PythonHashSeed string `json:"pythonHashSeed"`
+}
+
+// ModelGroupKVRuntimeConfig is the immutable resolved KV runtime contract.
+// +kubebuilder:validation:XValidation:rule="(has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload) && has(self.mooncakeStore))",message="kvRuntime must select exactly one KV backend"
+type ModelGroupKVRuntimeConfig struct {
+	// +optional
+	Offload *ModelGroupKVOffloadRuntime `json:"offload,omitempty"`
+	// +optional
+	MooncakeStore *ModelGroupMooncakeStoreRuntime `json:"mooncakeStore,omitempty"`
+}
+
+// ModelGroupRuntime defines the resolved backend runtime.
+type ModelGroupRuntime struct {
+	// +kubebuilder:validation:Enum=vllm
+	Backend string `json:"backend"`
+
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=2048
+	Image string `json:"image"`
+
+	// Port is the internal Foretoken model-server transport port.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port"`
+
+	// Args contains backend-owned flags not represented by the typed Group contract.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=256
+	Args []BackendArg `json:"args,omitempty"`
 }
 
 // ModelGroupSpec is an immutable execution contract compiled by the Pool controller.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ModelGroup spec is immutable"
 // +kubebuilder:validation:XValidation:rule="self.memberCount == self.nodeCount",message="memberCount must equal nodeCount in v1alpha1"
-// +kubebuilder:validation:XValidation:rule="self.nodeCount * self.accelerator.countPerMember == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp",message="accelerator capacity must equal the compiled worker rank count"
+// +kubebuilder:validation:XValidation:rule="self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp",message="accelerator capacity must equal the compiled worker rank count"
+// +kubebuilder:validation:XValidation:rule="self.role == 'aggregate' ? !has(self.pdRuntime) && !has(self.ecRuntime) : self.role == 'encoder' ? !has(self.pdRuntime) && has(self.ecRuntime) && self.ecRuntime.role == 'producer' : self.role == 'prefill' ? has(self.pdRuntime) && (!has(self.ecRuntime) || self.ecRuntime.role == 'consumer') : self.role == 'decode' ? has(self.pdRuntime) && !has(self.ecRuntime) : false",message="aggregate, encoder, prefill, and decode ModelGroups require their fixed runtime contracts"
+// +kubebuilder:validation:XValidation:rule="!(self.role == 'prefill' || self.role == 'decode') || size(self.features.multimodal) == 0",message="P/D ModelGroups do not support multimodal features"
 type ModelGroupSpec struct {
 	ModelPoolRef LocalObjectReference `json:"modelPoolRef"`
 
-	// Ordinal is unique within its ModelPool.
+	// Revision identifies one resolved Pool execution contract.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+	Revision string `json:"revision"`
+
+	// Ordinal is unique within one Pool revision.
 	// +kubebuilder:validation:Minimum=0
 	Ordinal int32 `json:"ordinal"`
 
 	Role ModelRole `json:"role"`
+
+	Artifacts ModelGroupArtifacts `json:"artifacts"`
+	Runtime   ModelGroupRuntime   `json:"runtime"`
+
+	// PDRuntime is the controller-owned P/D transport contract.
+	// +optional
+	PDRuntime *ModelGroupPDRuntimeConfig `json:"pdRuntime,omitempty"`
+
+	// ECRuntime is the controller-owned resolved encoder/prefill transfer contract.
+	// +optional
+	ECRuntime *ModelGroupECRuntimeConfig `json:"ecRuntime,omitempty"`
+
+	// KVRuntime is the controller-owned resolved KV cache contract.
+	// +optional
+	KVRuntime *ModelGroupKVRuntimeConfig `json:"kvRuntime,omitempty"`
+
+	Resources ModelResources `json:"resources"`
+	Timeouts  ModelTimeouts  `json:"timeouts"`
 
 	// NodeCount is the number of physical Kubernetes Nodes used by this Group.
 	// +kubebuilder:validation:Minimum=1
@@ -45,6 +218,14 @@ type ModelGroupSpec struct {
 	MemberCount int32 `json:"memberCount"`
 
 	Parallelism CompiledParallelism `json:"parallelism"`
+
+	// MaxInputTokens is the prompt admission limit advertised to routing clients.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
+
+	// Features is the immutable capability contract advertised to routing clients.
+	Features ModelFeatures `json:"features"`
 
 	Accelerator ModelGroupAccelerator `json:"accelerator"`
 
@@ -74,6 +255,10 @@ type ModelGroupStatus struct {
 	// +optional
 	Phase ModelGroupPhase `json:"phase,omitempty"`
 
+	// DrainStartedAt fixes the bounded deletion deadline across controller retries.
+	// +optional
+	DrainStartedAt *metav1.Time `json:"drainStartedAt,omitempty"`
+
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ReadyMembers int32 `json:"readyMembers,omitempty"`
@@ -93,6 +278,7 @@ type ModelGroupStatus struct {
 // +kubebuilder:resource:scope=Namespaced
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Role",type=string,JSONPath=".spec.role"
+// +kubebuilder:printcolumn:name="Revision",type=string,JSONPath=".spec.revision"
 // +kubebuilder:printcolumn:name="Members",type=integer,JSONPath=".spec.memberCount"
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=".status.readyMembers"
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=".status.phase"

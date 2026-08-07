@@ -11,6 +11,50 @@ image:
 
 imagePullSecrets: []
 
+# Frontend execution requires Gateway API v1 HTTPRoute CRDs and a platform-managed Gateway.
+frontend:
+  enabled: false
+  image: ""
+  port: 8080
+  gateway:
+    name: ""
+    namespace: ""
+    sectionName: ""
+
+# The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
+runtime:
+  vllm:
+    image: ""
+    modelServerPort: 9000
+    accelerator:
+      type: ""
+      resourceName: ""
+      nodeSelector:
+        key: ""
+        value: ""
+    # Set every field to enable pinned vLLM's ECExampleConnector over an existing RWX PVC.
+    ec:
+      profileName: ""
+      profileRevision: ""
+      connector: "ECExampleConnector"
+      runtimeFingerprint: ""
+      sharedStorageClaim: ""
+      sharedStoragePath: "/var/lib/foretoken/ec"
+    # Set every field to enable the platform-owned Mooncake P/D profile.
+    pd:
+      profileName: ""
+      profileRevision: ""
+      protocol: ""
+      bootstrapPort: 0
+      abortRequestTimeoutSeconds: 0
+    # Set every field to enable the platform-owned external Mooncake Store profile.
+    mooncakeStore:
+      profileName: ""
+      profileRevision: ""
+      configMapName: ""
+      configMapKey: ""
+      pythonHashSeed: ""
+
 # Resource sizing is workload- and cluster-dependent; measure before setting it.
 resources: {}
 # resources:

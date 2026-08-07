@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Build from the repository root so Cargo can resolve reference/upstream/vllm/rust.
+
+ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye
+ARG RUNTIME_IMAGE=docker.io/library/debian:bullseye-slim
+
+FROM ${RUST_BUILDER_IMAGE} AS builder
+
+WORKDIR /workspace
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends build-essential perl pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY reference/upstream/vllm/rust/ ./reference/upstream/vllm/rust/
+COPY data-plane/model-protocol/ ./data-plane/model-protocol/
+COPY data-plane/frontend/ ./data-plane/frontend/
+
+RUN cargo build --locked --release \
+    --manifest-path data-plane/frontend/Cargo.toml \
+    --package foretoken-frontend
+
+FROM ${RUNTIME_IMAGE}
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates ffmpeg \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 65532 --create-home foretoken \
+    && mkdir -p /var/cache/foretoken \
+    && chown -R 65532:65532 /var/cache/foretoken
+
+COPY --from=builder /workspace/data-plane/frontend/target/release/foretoken-frontend /usr/local/bin/foretoken-frontend
+
+ENV HF_HOME=/var/cache/foretoken/huggingface
+
+USER 65532:65532
+ENTRYPOINT ["foretoken-frontend"]

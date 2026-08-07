@@ -28,9 +28,6 @@ spec:
     - jsonPath: .status.conditions[?(@.type=='Ready')].status
       name: Ready
       type: string
-    - jsonPath: .status.phase
-      name: Phase
-      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -97,24 +94,141 @@ spec:
                     enum:
                     - vllm
                     type: string
+                  ecProfile:
+                    description: ECProfile is the controller-owned platform EC profile
+                      selected for encoder and prefill Pools.
+                    type: string
                   extraArgs:
                     description: ExtraArgs are backend flags that the concrete adapter
                       must validate before Group creation.
                     items:
-                      description: BackendArg is one backend command-line flag.
+                      description: |-
+                        BackendArg is one canonical backend long flag. The vLLM compiler enforces its
+                        small allowlist and whether a value is required; this schema rejects spacing,
+                        aliases, and positional arguments before reconciliation.
                       maxLength: 4096
-                      minLength: 2
-                      pattern: ^--
+                      minLength: 3
+                      pattern: ^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$
                       type: string
                     maxItems: 256
                     type: array
                     x-kubernetes-list-type: atomic
+                  features:
+                    description: Features is the normalized explicit capability contract
+                      for this Pool.
+                    properties:
+                      multimodal:
+                        items:
+                          description: MultimodalModality identifies one non-text
+                            input modality supported by a model.
+                          enum:
+                          - image
+                          - video
+                          - audio
+                          type: string
+                        maxItems: 3
+                        type: array
+                        x-kubernetes-list-type: set
+                      reasoning:
+                        type: boolean
+                      structuredOutputs:
+                        items:
+                          description: StructuredOutputFormat identifies a structured
+                            response format supported by a model.
+                          enum:
+                          - jsonObject
+                          - jsonSchema
+                          type: string
+                        maxItems: 2
+                        type: array
+                        x-kubernetes-list-type: set
+                      tools:
+                        type: boolean
+                    type: object
+                  kvCache:
+                    description: KVCache is immutable resolved cache-placement intent.
+                    properties:
+                      mooncakeStore:
+                        description: NormalizedMooncakeStore is either an external
+                          profile or a pinned managed binding.
+                        properties:
+                          managedBinding:
+                            description: ManagedMooncakeStoreBinding pins a Ready
+                              Foretoken-owned KVService against ABA.
+                            properties:
+                              bindingRevision:
+                                type: string
+                              configMapKey:
+                                type: string
+                              configMapName:
+                                type: string
+                              name:
+                                type: string
+                              requesterBufferBytes:
+                                description: |-
+                                  RequesterBufferBytes is per-rank private Store memory included in the
+                                  ModelGroup container memory budget; no hidden overhead is added.
+                                format: int64
+                                type: integer
+                              uid:
+                                type: string
+                            required:
+                            - bindingRevision
+                            - configMapKey
+                            - configMapName
+                            - name
+                            - requesterBufferBytes
+                            - uid
+                            type: object
+                          profile:
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one Store source is required
+                          rule: has(self.profile) != has(self.managedBinding)
+                      offload:
+                        description: KVOffload defines local CPU and optionally filesystem-backed
+                          KV offload.
+                        properties:
+                          cpuCacheSize:
+                            allOf:
+                            - minLength: 1
+                            - minLength: 1
+                            description: CPUCacheSize is the CPU tier capacity available
+                              to vLLM.
+                            maxLength: 64
+                            type: string
+                            x-kubernetes-validations:
+                            - message: must be a valid non-negative Kubernetes resource
+                                quantity
+                              rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                                >= 0
+                          filesystem:
+                            type: boolean
+                        required:
+                        - cpuCacheSize
+                        type: object
+                    type: object
+                    x-kubernetes-validations:
+                    - message: kvCache must select exactly one backend
+                      rule: (has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload)
+                        && has(self.mooncakeStore))
+                  maxInputTokens:
+                    description: MaxInputTokens is the immutable prompt admission
+                      limit for this Pool.
+                    format: int32
+                    minimum: 1
+                    type: integer
                   memberCount:
                     format: int32
                     minimum: 1
                     type: integer
                   model:
                     maxLength: 1024
+                    minLength: 1
+                    type: string
+                  modelRevision:
+                    maxLength: 256
                     minLength: 1
                     type: string
                   network:
@@ -285,6 +399,7 @@ spec:
                       path.
                     enum:
                     - aggregate
+                    - encoder
                     - prefill
                     - decode
                     type: string
@@ -311,8 +426,17 @@ spec:
                     - drain
                     - startup
                     type: object
+                  tokenizer:
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  tokenizerRevision:
+                    maxLength: 256
+                    minLength: 1
+                    type: string
                 required:
                 - backend
+                - features
                 - memberCount
                 - model
                 - nodeCount
@@ -328,6 +452,9 @@ spec:
                     count
                   rule: self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp
                     * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp
+                - message: P/D ModelPools do not support multimodal features
+                  rule: '!(self.role == ''prefill'' || self.role == ''decode'') ||
+                    size(self.features.multimodal) == 0'
             required:
             - desiredGroups
             - modelServiceRef
@@ -337,6 +464,10 @@ spec:
           status:
             description: ModelPoolStatus defines the observed state of a ModelPool.
             properties:
+              activeRevision:
+                description: ActiveRevision is the immutable Group revision currently
+                  admitted to routing.
+                type: string
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
@@ -401,15 +532,6 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
-              phase:
-                description: ModelPoolPhase summarizes the Pool lifecycle.
-                enum:
-                - Pending
-                - Progressing
-                - Ready
-                - Degraded
-                - Terminating
-                type: string
             type: object
         required:
         - spec
