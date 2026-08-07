@@ -99,7 +99,7 @@ impl Stream for AbortableStream {
     }
 }
 
-/// Aborts backend work when its canonical stream is dropped before a terminal output.
+/// Aborts backend work when its output stream is dropped before a terminal output.
 pub fn abort_on_drop(
     facade: Arc<dyn LlmFacade>,
     request_id: String,

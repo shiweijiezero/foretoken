@@ -78,7 +78,7 @@ func TestBuildLaunchPlanKVVariants(t *testing.T) {
 			if plan.KV.Kind != tc.kind || plan.KV.Role != tc.role || !plan.KV.Events {
 				t.Fatalf("kv = %#v", plan.KV)
 			}
-			json, err := plan.CanonicalJSON()
+			json, err := plan.JSON()
 			if err != nil || !strings.Contains(json, `"version":1`) || !strings.Contains(json, `"kind":"`+tc.kind+`"`) {
 				t.Fatalf("json = %q, %v", json, err)
 			}

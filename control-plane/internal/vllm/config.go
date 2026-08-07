@@ -160,8 +160,8 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	return LaunchPlanV1{Version: 1, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, ExtraArgs: extra}, nil
 }
 
-// CanonicalJSON is deterministic because LaunchPlanV1 uses only ordered structs and slices.
-func (plan LaunchPlanV1) CanonicalJSON() (string, error) {
+// JSON returns deterministic output because LaunchPlanV1 uses only ordered structs and slices.
+func (plan LaunchPlanV1) JSON() (string, error) {
 	bytes, err := json.Marshal(plan)
 	return string(bytes), err
 }

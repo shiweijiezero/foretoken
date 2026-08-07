@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Owns immutable model runtimes and canonical request dispatch.
+//! Owns immutable model runtimes and request dispatch.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -376,7 +376,7 @@ impl RuntimeGeneration {
             .map_err(GenerationError::from)?;
         let backend_stream =
             abort_on_drop(facade, generate_request.request_id.clone(), backend_stream);
-        // Reservation and backend cancellation share the canonical stream lifetime.
+        // Reservation and backend cancellation share the output stream lifetime.
         let stream: TokenStream = Box::pin(async_stream::stream! {
             let _reservation = reservation;
             let mut backend_stream = Box::pin(backend_stream);

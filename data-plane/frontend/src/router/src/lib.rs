@@ -37,7 +37,7 @@ impl BackendId {
     }
 }
 
-/// Complete, read-only routing view over one canonical vLLM request.
+/// Complete, read-only routing view over one vLLM request.
 ///
 /// Model identity and northbound capabilities remain outside `GenerateRequest` because one
 /// vLLM engine normally binds them at startup. Execution fields stay borrowed from the original

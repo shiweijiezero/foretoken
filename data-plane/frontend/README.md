@@ -26,26 +26,26 @@ ModelService / ModelPool / ModelGroup
 ```
 
 Each request loads one immutable active generation. vLLM owns request preparation
-and output processing; Foretoken routes the canonical generation request without
+and output processing; Foretoken routes the generation request without
 introducing a second text-generation path.
 
 ```text
 OpenAI HTTP request
   → select pinned model runtime
-  → vLLM text/chat processor → canonical vllm_llm::GenerateRequest
+  → vLLM text/chat processor → vllm_llm::GenerateRequest
   → PolicyRouter: capability/health/capacity filter → KV/load ranking
   → BackendRegistry resolves aggregate backend or same-domain P/D pair
   → LlmFacade → GenerateInput JSON
   → Group-local model-server → vLLM Llm / EngineCore
   → TokenEvent<TokenOutput> NDJSON
-  → LlmFacade reconstructs canonical vllm_llm::GenerateOutput stream
+  → LlmFacade reconstructs the vllm_llm::GenerateOutput stream
   → vLLM text/chat output processor
   → SSE chunks or one collected HTTP response
 ```
 
 Aggregate requests use one backend. P/D requests reserve a prefill and decode
 component atomically, fully consume prefill, then expose only the decode stream to
-the caller. Dropping the canonical stream releases the reservation and aborts
+the caller. Dropping the output stream releases the reservation and aborts
 unfinished backend work.
 
 ## Crate ownership and composition

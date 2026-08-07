@@ -1121,7 +1121,7 @@ async fn chat_response_uses_vllms_structured_output_processor() {
 }
 
 #[tokio::test]
-async fn stream_idle_timeout_terminates_a_silent_canonical_stream() {
+async fn stream_idle_timeout_terminates_a_silent_output_stream() {
     use futures::StreamExt as _;
 
     let silent =

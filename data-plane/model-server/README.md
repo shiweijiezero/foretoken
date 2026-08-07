@@ -23,7 +23,7 @@ engine remains the sole renderer of positional model, `--headless`, loopback
 handshake host/port, and data-parallel wiring; the launch renderer supplies
 revision/tokenizer/topology/KV/one shutdown timeout/extra arguments.
 
-`extraArgs` are canonical single-token long options only. The allowlist is
+Each `extraArgs` entry is one long-form option. The allowlist is
 `--max-model-len`, `--dtype`, `--quantization`, `--gpu-memory-utilization`,
 `--max-num-seqs`, `--max-num-batched-tokens`, `--enforce-eager`, and
 `--disable-log-stats`. Typed artifacts, topology, expert, KV, lifecycle,

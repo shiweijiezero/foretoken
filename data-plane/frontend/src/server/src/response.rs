@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Adapts the canonical decoded stream into streaming and collected HTTP responses.
+//! Adapts the decoded output stream into streaming and collected HTTP responses.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -371,9 +371,9 @@ fn chat_logprobs(token_ids: &[u32], logprobs: Option<DecodedLogprobs>) -> Option
 
 fn decoded(generated: Generated) -> impl foretoken_text::TextOutputStream {
     let request_id = generated.routed.routed_request.request.request_id.clone();
-    let mut canonical = generated.routed.stream;
+    let mut stream = generated.routed.stream;
     let raw = async_stream::stream! {
-        while let Some(item) = canonical.next().await {
+        while let Some(item) = stream.next().await {
             match item {
                 Ok(output) => yield Ok(output),
                 Err(_) => break,
@@ -400,7 +400,7 @@ pub(crate) fn idle_timed(
                 Ok(Some(event)) => yield event,
                 Ok(None) => break,
                 Err(_) => {
-                    // Dropping the canonical stream after this item aborts the backend request.
+                    // Dropping the output stream after this item aborts the backend request.
                     yield Err(foretoken_text::Error::StreamClosedBeforeTerminalOutput {
                         request_id: "idle-timeout".into(),
                     });

@@ -279,7 +279,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment,
 	if err != nil {
 		return nil, fmt.Errorf("build vLLM launch plan: %w", err)
 	}
-	launchJSON, err := launchPlan.CanonicalJSON()
+	launchJSON, err := launchPlan.JSON()
 	if err != nil {
 		return nil, fmt.Errorf("marshal vLLM launch plan: %w", err)
 	}

@@ -1141,7 +1141,7 @@ fn multimodal_capabilities(messages: &[OpenAiMessage]) -> BTreeSet<String> {
     capabilities
 }
 
-/// Returns renderer format and the canonical grammar constraint to lower.
+/// Returns the renderer format and grammar constraint to lower.
 fn response_format(
     format: Option<OpenAiResponseFormat>,
 ) -> Result<LoweredResponseFormat, GenerationError> {
@@ -1154,7 +1154,7 @@ fn response_format(
             Some(STRUCTURED_OUTPUT_JSON_OBJECT_CAPABILITY),
         )),
         Some(OpenAiResponseFormat::JsonSchema { json_schema }) => {
-            // The pinned vLLM canonical type accepts a JSON value. Restrict the public shape to
+            // The pinned vLLM type accepts a JSON value. Restrict the public shape to
             // OpenAI's named schema envelope and require an object before lowering it.
             if json_schema.name.is_empty() || !json_schema.schema.is_object() {
                 return Err(GenerationError::InvalidRequest);

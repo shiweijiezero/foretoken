@@ -99,7 +99,7 @@ pub struct AbortInput {
     pub request_ids: Vec<String>,
 }
 
-/// Canonical fields preserved from one vLLM output update.
+/// Fields preserved from one vLLM output update.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TokenOutput {
     pub request_id: String,

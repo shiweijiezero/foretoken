@@ -17,9 +17,9 @@ type ResourceQuantity string
 // +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="must be a positive duration"
 type Duration string
 
-// BackendArg is one canonical backend long flag. The vLLM compiler enforces its
-// small allowlist and whether a value is required; this schema rejects spacing,
-// aliases, and positional arguments before reconciliation.
+// BackendArg is one long-form CLI argument passed to the inference backend.
+// The vLLM compiler checks the allowed arguments and whether they require values;
+// this schema rejects spaces, aliases, and positional arguments.
 // +kubebuilder:validation:MinLength=3
 // +kubebuilder:validation:MaxLength=4096
 // +kubebuilder:validation:Pattern="^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$"

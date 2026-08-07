@@ -103,9 +103,9 @@ spec:
                       must validate before Group creation.
                     items:
                       description: |-
-                        BackendArg is one canonical backend long flag. The vLLM compiler enforces its
-                        small allowlist and whether a value is required; this schema rejects spacing,
-                        aliases, and positional arguments before reconciliation.
+                        BackendArg is one long-form CLI argument passed to the inference backend.
+                        The vLLM compiler checks the allowed arguments and whether they require values;
+                        this schema rejects spaces, aliases, and positional arguments.
                       maxLength: 4096
                       minLength: 3
                       pattern: ^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$

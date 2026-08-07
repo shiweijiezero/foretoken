@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Thin OpenAI-compatible HTTP adapters over Foretoken's canonical vLLM stream.
+//! Thin OpenAI-compatible HTTP adapters over Foretoken's vLLM output stream.
 
 mod http;
 mod response;
