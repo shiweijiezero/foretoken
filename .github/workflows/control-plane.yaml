@@ -160,7 +160,7 @@ jobs:
                   rdmaResourceName: rdma/ib
                   memoryCapacity: "134217728"
                   disk:
-                    size: 1Gi
+                    size: "1073741824"
             timeouts:
               startup: 10m
               drain: 2m
