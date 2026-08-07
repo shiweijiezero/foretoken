@@ -81,12 +81,9 @@ spec:
                         description: |-
                           ByteQuantity is a positive, exact integer number of bytes. It deliberately
                           does not accept Kubernetes unit suffixes so cache capacities are unambiguous.
+                        maxLength: 19
                         pattern: ^[1-9][0-9]*$
                         type: string
-                        x-kubernetes-validations:
-                        - message: must be a positive exact integer byte quantity
-                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
-                            > 0
                       storageClassName:
                         type: string
                     required:
@@ -99,12 +96,9 @@ spec:
                     description: |-
                       ByteQuantity is a positive, exact integer number of bytes. It deliberately
                       does not accept Kubernetes unit suffixes so cache capacities are unambiguous.
+                    maxLength: 19
                     pattern: ^[1-9][0-9]*$
                     type: string
-                    x-kubernetes-validations:
-                    - message: must be a positive exact integer byte quantity
-                      rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
-                        > 0
                   nodeSelector:
                     additionalProperties:
                       type: string
@@ -350,22 +344,16 @@ spec:
                 description: |-
                   ByteQuantity is a positive, exact integer number of bytes. It deliberately
                   does not accept Kubernetes unit suffixes so cache capacities are unambiguous.
+                maxLength: 19
                 pattern: ^[1-9][0-9]*$
                 type: string
-                x-kubernetes-validations:
-                - message: must be a positive exact integer byte quantity
-                  rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
-                    > 0
               requestedMemoryCapacityBytes:
                 description: |-
                   ByteQuantity is a positive, exact integer number of bytes. It deliberately
                   does not accept Kubernetes unit suffixes so cache capacities are unambiguous.
+                maxLength: 19
                 pattern: ^[1-9][0-9]*$
                 type: string
-                x-kubernetes-validations:
-                - message: must be a positive exact integer byte quantity
-                  rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
-                    > 0
             type: object
         required:
         - spec

@@ -13,7 +13,7 @@ import (
 // ByteQuantity is a positive, exact integer number of bytes. It deliberately
 // does not accept Kubernetes unit suffixes so cache capacities are unambiguous.
 // +kubebuilder:validation:Pattern="^[1-9][0-9]*$"
-// +kubebuilder:validation:XValidation:rule="isQuantity(self) && quantity(self).compareTo(quantity('0')) > 0",message="must be a positive exact integer byte quantity"
+// +kubebuilder:validation:MaxLength=19
 type ByteQuantity string
 
 // KVResources defines CPU and memory for a Mooncake component.
@@ -136,9 +136,7 @@ type KVTimeouts struct {
 // KVRequesterSpec configures ModelGroup Store requester configuration.
 type KVRequesterSpec struct {
 	// LocalBufferSize is an exact positive integer number of bytes.
-	// +kubebuilder:validation:Pattern="^[1-9][0-9]*$"
-	// +kubebuilder:validation:XValidation:rule="isQuantity(self) && quantity(self).compareTo(quantity('0')) > 0",message="must be a positive exact integer byte quantity"
-	LocalBufferSize ResourceQuantity `json:"localBufferSize"`
+	LocalBufferSize ByteQuantity `json:"localBufferSize"`
 }
 
 // KVServiceBinding is the immutable current requester contract consumed by ModelPools.

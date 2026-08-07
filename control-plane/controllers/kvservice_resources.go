@@ -177,13 +177,9 @@ func desiredKVRequesterConfig(service *inferencev1alpha1.KVService, masterServic
 	return &corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: service.Namespace, Labels: map[string]string{kvServiceLabel: kvLabelValue(service.Name), "inference.foretoken.io/component": "mooncake-requester"}}, Data: map[string]string{requesterConfigKey: string(payload)}}, nil
 }
 
-func exactPositiveBytes(value inferencev1alpha1.ResourceQuantity) (int64, error) {
-	quantity, err := resource.ParseQuantity(string(value))
-	if err != nil {
-		return 0, err
-	}
-	bytes, exact := quantity.AsInt64()
-	if !exact || bytes < 1 {
+func exactPositiveBytes(value inferencev1alpha1.ByteQuantity) (int64, error) {
+	bytes, err := strconv.ParseInt(string(value), 10, 64)
+	if err != nil || bytes < 1 {
 		return 0, fmt.Errorf("must be a positive exact integer byte quantity")
 	}
 	return bytes, nil
