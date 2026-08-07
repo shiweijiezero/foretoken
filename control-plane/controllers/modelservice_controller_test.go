@@ -64,6 +64,35 @@ func TestModelServiceReconcileMaterializesPool(t *testing.T) {
 	}
 }
 
+func TestModelServiceReadyRequiresEveryPool(t *testing.T) {
+	ctx := context.Background()
+	service := testModelService("demo", 3)
+	resources := *service.Spec.Resources
+	parallelism := *service.Spec.Parallelism
+	service.Spec.Replicas = nil
+	service.Spec.Resources = nil
+	service.Spec.Parallelism = nil
+	service.Spec.ModelPools = []inferencev1alpha1.ModelPoolTemplate{
+		{Name: "prefill", Resources: resources, Parallelism: parallelism},
+		{Name: "decode", Resources: resources, Parallelism: parallelism},
+	}
+	reconciler, kubeClient := testReconciler(t, service)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(service)}
+	reconcileTwice(t, ctx, reconciler, request)
+
+	setModelPoolReady(t, ctx, kubeClient, types.NamespacedName{Namespace: service.Namespace, Name: "demo-prefill"})
+	if _, err := reconciler.Reconcile(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	assertModelServiceReady(t, ctx, kubeClient, request, metav1.ConditionFalse)
+
+	setModelPoolReady(t, ctx, kubeClient, types.NamespacedName{Namespace: service.Namespace, Name: "demo-decode"})
+	if _, err := reconciler.Reconcile(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	assertModelServiceReady(t, ctx, kubeClient, request, metav1.ConditionTrue)
+}
+
 func TestModelServiceScalePreservesTemplate(t *testing.T) {
 	ctx := context.Background()
 	service := testModelService("demo", 3)
@@ -207,7 +236,7 @@ func testReconciler(t *testing.T, objects ...client.Object) (*ModelServiceReconc
 	}
 	kubeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&inferencev1alpha1.ModelService{}).
+		WithStatusSubresource(&inferencev1alpha1.ModelService{}, &inferencev1alpha1.ModelPool{}).
 		WithObjects(objects...).
 		Build()
 	return &ModelServiceReconciler{Client: kubeClient}, kubeClient
@@ -227,6 +256,29 @@ func testModelService(name string, generation int64) *inferencev1alpha1.ModelSer
 			Timeouts:    inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"},
 			Parallelism: &inferencev1alpha1.Parallelism{TP: 1, PP: 1, PCP: 1, DCP: 1},
 		},
+	}
+}
+
+func setModelPoolReady(t *testing.T, ctx context.Context, kubeClient client.Client, key types.NamespacedName) {
+	t.Helper()
+	pool := new(inferencev1alpha1.ModelPool)
+	if err := kubeClient.Get(ctx, key, pool); err != nil {
+		t.Fatal(err)
+	}
+	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionPoolReady, Status: metav1.ConditionTrue, Reason: "RevisionReady", Message: "Every desired ordinal in the active revision is ready"})
+	if err := kubeClient.Status().Update(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertModelServiceReady(t *testing.T, ctx context.Context, kubeClient client.Client, request ctrl.Request, want metav1.ConditionStatus) {
+	t.Helper()
+	service := new(inferencev1alpha1.ModelService)
+	if err := kubeClient.Get(ctx, request.NamespacedName, service); err != nil {
+		t.Fatal(err)
+	}
+	if condition := meta.FindStatusCondition(service.Status.Conditions, conditionReady); condition == nil || condition.Status != want {
+		t.Fatalf("Ready condition = %#v, want %s", condition, want)
 	}
 }
 
