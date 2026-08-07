@@ -10,11 +10,13 @@ import (
 	"flag"
 	"os"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/discovery"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -151,7 +153,11 @@ func main() {
 	}
 
 	manager, err := ctrl.NewManager(restConfig, ctrl.Options{
-		Scheme:                 scheme,
+		Scheme: scheme,
+		Client: client.Options{Cache: &client.CacheOptions{
+			// The shared credential is read by its fixed name; avoid a cluster-wide Secret informer.
+			DisableFor: []client.Object{&corev1.Secret{}},
+		}},
 		Metrics:                metricsserver.Options{BindAddress: metricsAddress},
 		HealthProbeBindAddress: probeAddress,
 		LeaderElection:         leaderElection,
