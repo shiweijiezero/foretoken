@@ -70,6 +70,13 @@ jobs:
           grep -q 'httproutes' /tmp/foretoken-frontend.yaml
       - name: Validate operator materialization lifecycle
         run: |
+          diagnostics() {
+            kubectl get pods --all-namespaces --output=wide || true
+            kubectl describe deployment/foretoken-control-plane --namespace foretoken-platform || true
+            kubectl logs deployment/foretoken-control-plane --namespace foretoken-platform --container=crd-apply || true
+            kubectl logs deployment/foretoken-control-plane --namespace foretoken-platform --container=manager || true
+          }
+          trap diagnostics ERR
           kind load docker-image foretoken-control-plane:test --name foretoken
           helm upgrade --install foretoken deploy/charts/foretoken \
             --namespace foretoken-platform \
