@@ -11,7 +11,7 @@ FROM ${RUST_BUILDER_IMAGE} AS builder
 WORKDIR /workspace
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential perl pkg-config \
+    && apt-get install -y --no-install-recommends build-essential libssl-dev perl pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 COPY reference/upstream/vllm/rust/ ./reference/upstream/vllm/rust/
@@ -25,7 +25,7 @@ RUN cargo build --locked --release \
 FROM ${RUNTIME_IMAGE}
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates ffmpeg \
+    && apt-get install -y --no-install-recommends ca-certificates ffmpeg libssl1.1 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 65532 --create-home foretoken \
     && mkdir -p /var/cache/foretoken \
