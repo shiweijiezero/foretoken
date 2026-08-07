@@ -10,13 +10,20 @@ All participants are expected to follow the [Foretoken Community Code of Conduct
 
 - State the problem before writing the solution.
 - Keep each PR focused on one type of change. Do not mix refactoring, features, dependency upgrades, and formatting. Aim to keep a PR under 1,000 lines of code.
-- Test functionality thoroughly. Do not stop at proving that the code compiles, the process starts, or an object can be created.
+- Test functionality thoroughly. Cover critical functionality and boundaries, but do not write excessive test modules. Do not stop at proving that the code compiles, the process starts, or an object can be created.
 - Experimental features must be disabled by default and provide explicit activation and failure boundaries.
 - Contributors are responsible for reviewing all submitted code, including AI-assisted code, and must be able to explain its design and implementation.
 - Stable contracts must not break silently. Incompatible changes require versioning, a deprecation period, and a migration path.
 - Every file must begin with an open-source license notice and a concise description of its purpose.
 - PRs must pass CI and formatting checks.
 - Every PR must be reviewed by at least one maintainer other than its author.
+- Avoid excessive defensive programming and design. Prioritize progress on the main implementation path.
+- Keep implementations minimal. Add functionality with the least invasive approach and the smallest maintainable diff.
+- Write comments for open-source readers to explain modules, not modification history or prior conversations.
+- Add concise comments for substantial code blocks and document non-obvious algorithms and data structures. Reduce comments when the code is self-explanatory.
+- Reuse mature libraries and tools whenever possible instead of rebuilding existing capabilities. This reduces maintenance cost and improves quality.
+- Align with community and industry standards and interfaces, while keeping concepts decoupled from concrete implementations.
+- Compare relevant frameworks and tools, evaluate the trade-offs of their designs, and make a considered choice.
 
 ## Before Writing Code
 
@@ -83,7 +90,9 @@ Keep the PR reviewable:
 
 AI-assisted contributions must meet the same standards. Do not send secrets, private code, server configuration, or unpublished data to external models. Verify code provenance and licensing, and never claim to have run commands, tests, or hardware validation that did not occur. Generated explanations are not a substitute for understanding the code.
 
-Experimental capabilities must remain disabled by default. Before merge, a PR needs approval from at least one maintainer other than the author and must pass the required checks relevant to the change.
+Experimental capabilities must remain disabled by default.
+
+Before merge, a PR needs approval from at least one maintainer other than the author and must pass the required checks relevant to the change.
 
 ## Branches and Commit Messages
 
