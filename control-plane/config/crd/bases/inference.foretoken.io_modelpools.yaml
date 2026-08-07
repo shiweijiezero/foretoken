@@ -337,6 +337,11 @@ spec:
           status:
             description: ModelPoolStatus defines the observed state of a ModelPool.
             properties:
+              activeRevision:
+                description: ActiveRevision is the Group revision currently admitted
+                  to routing.
+                maxLength: 63
+                type: string
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

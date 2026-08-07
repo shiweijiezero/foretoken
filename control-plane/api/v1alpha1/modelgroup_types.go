@@ -30,7 +30,13 @@ type ModelGroupAccelerator struct {
 type ModelGroupSpec struct {
 	ModelPoolRef LocalObjectReference `json:"modelPoolRef"`
 
-	// Ordinal is unique within its ModelPool.
+	// Revision identifies the immutable Pool template revision this Group realizes.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+	Revision string `json:"revision"`
+
+	// Ordinal is unique within one Pool revision.
 	// +kubebuilder:validation:Minimum=0
 	Ordinal int32 `json:"ordinal"`
 

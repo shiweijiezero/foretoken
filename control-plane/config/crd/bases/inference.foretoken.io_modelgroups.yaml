@@ -113,7 +113,7 @@ spec:
                 minimum: 1
                 type: integer
               ordinal:
-                description: Ordinal is unique within its ModelPool.
+                description: Ordinal is unique within one Pool revision.
                 format: int32
                 minimum: 0
                 type: integer
@@ -180,6 +180,13 @@ spec:
                     parallelism.pcp
                   rule: 'self.pcp == 1 ? self.tp % self.dcp == 0 : self.dcp == 1 ||
                     self.dcp == self.pcp || self.dcp == self.tp * self.pcp'
+              revision:
+                description: Revision identifies the immutable Pool template revision
+                  this Group realizes.
+                maxLength: 63
+                minLength: 1
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
               role:
                 description: ModelRole identifies a ModelPool's role in the serving
                   path.
@@ -195,6 +202,7 @@ spec:
             - nodeCount
             - ordinal
             - parallelism
+            - revision
             - role
             type: object
             x-kubernetes-validations:

@@ -108,6 +108,11 @@ type ModelPoolStatus struct {
 	// +optional
 	Phase ModelPoolPhase `json:"phase,omitempty"`
 
+	// ActiveRevision is the Group revision currently admitted to routing.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	ActiveRevision string `json:"activeRevision,omitempty"`
+
 	// +optional
 	// +listType=map
 	// +listMapKey=type

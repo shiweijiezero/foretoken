@@ -64,6 +64,24 @@ rules:
       - create
       - update
       - delete
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - modelpools/status
+    verbs:
+      - get
+      - patch
+      - update
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - modelgroups
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

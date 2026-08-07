@@ -58,6 +58,10 @@ func main() {
 		ctrl.Log.Error(err, "unable to register ModelService controller")
 		os.Exit(1)
 	}
+	if err := (&controllers.ModelPoolReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+		ctrl.Log.Error(err, "unable to register ModelPool controller")
+		os.Exit(1)
+	}
 
 	// These endpoints are consumed by the liveness and readiness probes in the Helm chart.
 	if err := manager.AddHealthzCheck("healthz", healthz.Ping); err != nil {
