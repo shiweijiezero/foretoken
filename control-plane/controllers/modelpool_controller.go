@@ -238,15 +238,16 @@ func modelGroupSpec(pool *inferencev1alpha1.ModelPool, revision string, ordinal 
 		ModelPoolRef: inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
 		Revision:     revision,
 		Ordinal:      ordinal,
+		Model:        template.Model,
+		Backend:      template.Backend,
 		Role:         template.Role,
 		NodeCount:    template.NodeCount,
 		MemberCount:  template.MemberCount,
+		Resources:    template.Resources,
 		Parallelism:  template.Parallelism,
-		Accelerator: inferencev1alpha1.ModelGroupAccelerator{
-			Type:           template.Resources.Requests.GPU.Type,
-			CountPerMember: template.Resources.Requests.GPU.Count,
-		},
-		Network: template.Network,
+		Timeouts:     template.Timeouts,
+		ExtraArgs:    template.ExtraArgs,
+		Network:      template.Network,
 	}
 }
 

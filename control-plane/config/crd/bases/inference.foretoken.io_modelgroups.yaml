@@ -61,32 +61,33 @@ spec:
             description: ModelGroupSpec is an immutable execution contract compiled
               by the Pool controller.
             properties:
-              accelerator:
-                description: ModelGroupAccelerator defines accelerator capacity for
-                  each runtime member Pod.
-                properties:
-                  countPerMember:
-                    description: CountPerMember is the number of accelerators assigned
-                      to one member Pod.
-                    format: int32
-                    minimum: 1
-                    type: integer
-                  type:
-                    description: Type is the resolved platform accelerator type.
-                    maxLength: 128
-                    minLength: 1
-                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
-                    type: string
-                required:
-                - countPerMember
-                - type
-                type: object
+              backend:
+                enum:
+                - vllm
+                type: string
+              extraArgs:
+                description: ExtraArgs are the immutable backend flags for this Group.
+                items:
+                  description: BackendArg is one backend command-line flag.
+                  maxLength: 4096
+                  minLength: 2
+                  pattern: ^--
+                  type: string
+                maxItems: 256
+                type: array
+                x-kubernetes-list-type: atomic
               memberCount:
                 description: MemberCount is the number of runtime member Pods in this
                   Group.
                 format: int32
                 minimum: 1
                 type: integer
+              model:
+                description: Model and Backend are the immutable runtime invocation
+                  intent for this Group.
+                maxLength: 1024
+                minLength: 1
+                type: string
               modelPoolRef:
                 description: LocalObjectReference identifies an object in the same
                   namespace by stable UID.
@@ -180,6 +181,94 @@ spec:
                     parallelism.pcp
                   rule: 'self.pcp == 1 ? self.tp % self.dcp == 0 : self.dcp == 1 ||
                     self.dcp == self.pcp || self.dcp == self.tp * self.pcp'
+              resources:
+                description: ModelResources defines resources for one runtime member
+                  Pod.
+                properties:
+                  limits:
+                    description: ComputeResourceLimits defines optional CPU and memory
+                      limits for one Pod.
+                    properties:
+                      cpu:
+                        description: CPU is the maximum Kubernetes CPU quantity.
+                        maxLength: 64
+                        minLength: 1
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a valid non-negative Kubernetes resource
+                            quantity
+                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                            >= 0
+                      memory:
+                        description: Memory is the maximum Kubernetes memory quantity.
+                        maxLength: 64
+                        minLength: 1
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a valid non-negative Kubernetes resource
+                            quantity
+                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                            >= 0
+                    type: object
+                  requests:
+                    description: ModelResourceRequests defines resources requested
+                      by one runtime member Pod.
+                    properties:
+                      cpu:
+                        description: CPU is the requested Kubernetes CPU quantity.
+                        maxLength: 64
+                        minLength: 1
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a valid non-negative Kubernetes resource
+                            quantity
+                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                            >= 0
+                      gpu:
+                        description: GPURequest defines the logical GPU request for
+                          one runtime member Pod.
+                        properties:
+                          count:
+                            default: 1
+                            description: Count is the number of GPUs requested by
+                              one runtime member Pod.
+                            format: int32
+                            minimum: 1
+                            type: integer
+                          type:
+                            default: auto
+                            description: Type is a platform-registered GPU type or
+                              auto.
+                            maxLength: 128
+                            minLength: 1
+                            pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                            type: string
+                        type: object
+                      memory:
+                        description: Memory is the requested Kubernetes memory quantity.
+                        maxLength: 64
+                        minLength: 1
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a valid non-negative Kubernetes resource
+                            quantity
+                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                            >= 0
+                    required:
+                    - cpu
+                    - gpu
+                    - memory
+                    type: object
+                required:
+                - requests
+                type: object
+                x-kubernetes-validations:
+                - message: resources.requests.cpu must not exceed resources.limits.cpu
+                  rule: '!has(self.limits) || !has(self.limits.cpu) || quantity(self.requests.cpu).compareTo(quantity(self.limits.cpu))
+                    <= 0'
+                - message: resources.requests.memory must not exceed resources.limits.memory
+                  rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
+                    <= 0'
               revision:
                 description: Revision identifies the immutable Pool template revision
                   this Group realizes.
@@ -195,15 +284,41 @@ spec:
                 - prefill
                 - decode
                 type: string
+              timeouts:
+                description: ModelTimeouts defines ModelService lifecycle budgets.
+                properties:
+                  drain:
+                    description: Duration is a positive Go-style duration.
+                    minLength: 2
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
+                  startup:
+                    description: Duration is a positive Go-style duration.
+                    minLength: 2
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
+                required:
+                - drain
+                - startup
+                type: object
             required:
-            - accelerator
+            - backend
             - memberCount
+            - model
             - modelPoolRef
             - nodeCount
             - ordinal
             - parallelism
+            - resources
             - revision
             - role
+            - timeouts
             type: object
             x-kubernetes-validations:
             - message: ModelGroup spec is immutable
@@ -211,7 +326,7 @@ spec:
             - message: memberCount must equal nodeCount in v1alpha1
               rule: self.memberCount == self.nodeCount
             - message: accelerator capacity must equal the compiled worker rank count
-              rule: self.nodeCount * self.accelerator.countPerMember == self.parallelism.pp
+              rule: self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp
                 * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp
           status:
             description: ModelGroupStatus defines the observed state of a ModelGroup.

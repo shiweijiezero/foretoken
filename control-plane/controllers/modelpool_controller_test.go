@@ -7,6 +7,7 @@ package controllers
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -56,6 +57,51 @@ func TestModelPoolReconcileRequiresEveryOrdinalBeforeReady(t *testing.T) {
 	assertPoolCondition(t, current, conditionCapacityReady, metav1.ConditionTrue)
 	assertPoolCondition(t, current, conditionRolloutPending, metav1.ConditionFalse)
 	assertPoolCondition(t, current, conditionPoolReady, metav1.ConditionTrue)
+}
+
+func TestModelPoolProjectsExecutionIntentIntoGroups(t *testing.T) {
+	ctx := context.Background()
+	pool := testModelPool(1)
+	pool.Spec.Template.Resources.Limits = &inferencev1alpha1.ComputeResourceLimits{CPU: resourceQuantityPtr("2"), Memory: resourceQuantityPtr("2Gi")}
+	pool.Spec.Template.ExtraArgs = []inferencev1alpha1.BackendArg{"--max-model-len=4096"}
+	reconciler, kubeClient := testPoolReconciler(t, pool)
+
+	reconcilePool(t, ctx, reconciler, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(pool)})
+	groups := listPoolGroups(t, ctx, kubeClient, pool.Namespace)
+	if len(groups) != 1 {
+		t.Fatalf("Groups = %#v, want one Group", groups)
+	}
+	group := groups[0]
+	if group.Spec.Model != pool.Spec.Template.Model || group.Spec.Backend != pool.Spec.Template.Backend {
+		t.Fatalf("model intent = (%q, %q), want (%q, %q)", group.Spec.Model, group.Spec.Backend, pool.Spec.Template.Model, pool.Spec.Template.Backend)
+	}
+	if !reflect.DeepEqual(group.Spec.Resources, pool.Spec.Template.Resources) ||
+		group.Spec.Timeouts != pool.Spec.Template.Timeouts ||
+		!reflect.DeepEqual(group.Spec.ExtraArgs, pool.Spec.Template.ExtraArgs) {
+		t.Fatalf("execution fields were not fully projected: %#v", group.Spec)
+	}
+}
+
+func TestModelPoolExecutionTemplateChangesRequireNewRevision(t *testing.T) {
+	pool := testModelPool(1)
+	pool.Status.ActiveRevision = "revision-1"
+	group := inferencev1alpha1.ModelGroup{Spec: modelGroupSpec(pool, pool.Status.ActiveRevision, 0)}
+	changes := []func(*inferencev1alpha1.ModelPool){
+		func(pool *inferencev1alpha1.ModelPool) { pool.Spec.Template.Model = "Qwen/Qwen3-1.7B" },
+		func(pool *inferencev1alpha1.ModelPool) { pool.Spec.Template.Resources.Requests.CPU = "2" },
+		func(pool *inferencev1alpha1.ModelPool) { pool.Spec.Template.Timeouts.Drain = "3m" },
+		func(pool *inferencev1alpha1.ModelPool) {
+			pool.Spec.Template.ExtraArgs = []inferencev1alpha1.BackendArg{"--max-model-len=4096"}
+		},
+	}
+	for index, change := range changes {
+		updated := pool.DeepCopy()
+		updated.Generation = 2
+		change(updated)
+		if revision := (&ModelPoolReconciler{}).targetRevision(updated, []inferencev1alpha1.ModelGroup{group}); revision == pool.Status.ActiveRevision {
+			t.Fatalf("template change %d retained active revision", index)
+		}
+	}
 }
 
 func TestModelPoolScaleUpAndDownPreservesActiveRevision(t *testing.T) {
@@ -121,6 +167,10 @@ func TestModelPoolCutoverPublishesRevisionBeforeRetiringOldGroups(t *testing.T) 
 	current := getPool(t, ctx, kubeClient, pool)
 	oldRevision := current.Status.ActiveRevision
 
+	current.Spec.Template.Model = "Qwen/Qwen3-1.7B"
+	current.Spec.Template.Resources.Requests.CPU = "2"
+	current.Spec.Template.Timeouts.Drain = "3m"
+	current.Spec.Template.ExtraArgs = []inferencev1alpha1.BackendArg{"--max-model-len=4096"}
 	current.Spec.Template.Network = "next-network"
 	current.Generation = 2
 	if err := kubeClient.Update(ctx, current); err != nil {
@@ -137,7 +187,10 @@ func TestModelPoolCutoverPublishesRevisionBeforeRetiringOldGroups(t *testing.T) 
 			target = &groups[index]
 		}
 	}
-	if target == nil || target.Spec.Network != "next-network" {
+	if target == nil || target.Spec.Model != "Qwen/Qwen3-1.7B" ||
+		target.Spec.Resources.Requests.CPU != "2" || target.Spec.Timeouts.Drain != "3m" ||
+		!reflect.DeepEqual(target.Spec.ExtraArgs, []inferencev1alpha1.BackendArg{"--max-model-len=4096"}) ||
+		target.Spec.Network != "next-network" {
 		t.Fatalf("target Group = %#v", target)
 	}
 	current = getPool(t, ctx, kubeClient, pool)
@@ -185,6 +238,11 @@ func testPoolReconciler(t *testing.T, objects ...client.Object) (*ModelPoolRecon
 		WithObjects(objects...).
 		Build()
 	return &ModelPoolReconciler{Client: kubeClient}, kubeClient
+}
+
+func resourceQuantityPtr(value string) *inferencev1alpha1.ResourceQuantity {
+	quantity := inferencev1alpha1.ResourceQuantity(value)
+	return &quantity
 }
 
 func testModelPool(desired int32) *inferencev1alpha1.ModelPool {

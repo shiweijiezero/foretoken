@@ -10,23 +10,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// ModelGroupAccelerator defines accelerator capacity for each runtime member Pod.
-type ModelGroupAccelerator struct {
-	// Type is the resolved platform accelerator type.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	// +kubebuilder:validation:Pattern="^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
-	Type string `json:"type"`
-
-	// CountPerMember is the number of accelerators assigned to one member Pod.
-	// +kubebuilder:validation:Minimum=1
-	CountPerMember int32 `json:"countPerMember"`
-}
-
 // ModelGroupSpec is an immutable execution contract compiled by the Pool controller.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ModelGroup spec is immutable"
 // +kubebuilder:validation:XValidation:rule="self.memberCount == self.nodeCount",message="memberCount must equal nodeCount in v1alpha1"
-// +kubebuilder:validation:XValidation:rule="self.nodeCount * self.accelerator.countPerMember == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp",message="accelerator capacity must equal the compiled worker rank count"
+// +kubebuilder:validation:XValidation:rule="self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp",message="accelerator capacity must equal the compiled worker rank count"
 type ModelGroupSpec struct {
 	ModelPoolRef LocalObjectReference `json:"modelPoolRef"`
 
@@ -40,6 +27,14 @@ type ModelGroupSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	Ordinal int32 `json:"ordinal"`
 
+	// Model and Backend are the immutable runtime invocation intent for this Group.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Model string `json:"model"`
+
+	// +kubebuilder:validation:Enum=vllm
+	Backend string `json:"backend"`
+
 	Role ModelRole `json:"role"`
 
 	// NodeCount is the number of physical Kubernetes Nodes used by this Group.
@@ -50,9 +45,15 @@ type ModelGroupSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	MemberCount int32 `json:"memberCount"`
 
+	Resources   ModelResources      `json:"resources"`
 	Parallelism CompiledParallelism `json:"parallelism"`
+	Timeouts    ModelTimeouts       `json:"timeouts"`
 
-	Accelerator ModelGroupAccelerator `json:"accelerator"`
+	// ExtraArgs are the immutable backend flags for this Group.
+	// +optional
+	// +listType=atomic
+	// +kubebuilder:validation:MaxItems=256
+	ExtraArgs []BackendArg `json:"extraArgs,omitempty"`
 
 	// +optional
 	// +kubebuilder:validation:MinLength=1
