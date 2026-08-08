@@ -37,20 +37,25 @@ func TestModelPoolReconcileRequiresEveryOrdinalBeforeReady(t *testing.T) {
 	setGroupReady(t, ctx, kubeClient, &groups[0])
 	reconcilePool(t, ctx, reconciler, request)
 	current := getPool(t, ctx, kubeClient, pool)
-	if current.Status.ActiveRevision != "" || current.Status.Phase != inferencev1alpha1.ModelPoolPhaseProgressing {
-		t.Fatalf("partially ready Pool status = %#v", current.Status)
+	if current.Status.ActiveRevision != "" {
+		t.Fatalf("partially ready active revision = %q, want empty", current.Status.ActiveRevision)
 	}
+	assertPoolCondition(t, current, conditionGroupsMaterialized, metav1.ConditionTrue)
+	assertPoolCondition(t, current, conditionCapacityReady, metav1.ConditionFalse)
+	assertPoolCondition(t, current, conditionRolloutPending, metav1.ConditionTrue)
+	assertPoolCondition(t, current, conditionPoolReady, metav1.ConditionFalse)
 
 	groups = listPoolGroups(t, ctx, kubeClient, pool.Namespace)
 	setGroupReady(t, ctx, kubeClient, &groups[1])
 	reconcilePool(t, ctx, reconciler, request)
 	current = getPool(t, ctx, kubeClient, pool)
-	if current.Status.ActiveRevision != groups[0].Spec.Revision || current.Status.Phase != inferencev1alpha1.ModelPoolPhaseReady {
-		t.Fatalf("ready Pool status = %#v", current.Status)
+	if current.Status.ActiveRevision != groups[0].Spec.Revision {
+		t.Fatalf("ready active revision = %q, want %q", current.Status.ActiveRevision, groups[0].Spec.Revision)
 	}
-	if condition := meta.FindStatusCondition(current.Status.Conditions, conditionPoolReady); condition == nil || condition.Status != metav1.ConditionTrue {
-		t.Fatalf("Ready condition = %#v", condition)
-	}
+	assertPoolCondition(t, current, conditionGroupsMaterialized, metav1.ConditionTrue)
+	assertPoolCondition(t, current, conditionCapacityReady, metav1.ConditionTrue)
+	assertPoolCondition(t, current, conditionRolloutPending, metav1.ConditionFalse)
+	assertPoolCondition(t, current, conditionPoolReady, metav1.ConditionTrue)
 }
 
 func TestModelPoolScaleUpAndDownPreservesActiveRevision(t *testing.T) {
@@ -72,12 +77,21 @@ func TestModelPoolScaleUpAndDownPreservesActiveRevision(t *testing.T) {
 	if len(groups) != 2 || groups[1].Spec.Revision != activeRevision || groups[1].Spec.Ordinal != 1 {
 		t.Fatalf("scale up Groups = %#v", groups)
 	}
+	current = getPool(t, ctx, kubeClient, pool)
+	if current.Status.ActiveRevision != activeRevision {
+		t.Fatalf("scale up active revision = %q, want %q", current.Status.ActiveRevision, activeRevision)
+	}
+	assertPoolCondition(t, current, conditionGroupsMaterialized, metav1.ConditionTrue)
+	assertPoolCondition(t, current, conditionCapacityReady, metav1.ConditionFalse)
+	assertPoolCondition(t, current, conditionRolloutPending, metav1.ConditionTrue)
+	assertPoolCondition(t, current, conditionPoolReady, metav1.ConditionTrue)
+
 	setGroupReady(t, ctx, kubeClient, &groups[1])
 	reconcilePool(t, ctx, reconciler, request)
 	current = getPool(t, ctx, kubeClient, pool)
-	if current.Status.ActiveRevision != activeRevision || current.Status.Phase != inferencev1alpha1.ModelPoolPhaseReady {
-		t.Fatalf("scale up status = %#v", current.Status)
-	}
+	assertPoolCondition(t, current, conditionCapacityReady, metav1.ConditionTrue)
+	assertPoolCondition(t, current, conditionRolloutPending, metav1.ConditionFalse)
+	assertPoolCondition(t, current, conditionPoolReady, metav1.ConditionTrue)
 
 	current.Spec.DesiredGroups = 1
 	current.Generation = 3
@@ -90,9 +104,12 @@ func TestModelPoolScaleUpAndDownPreservesActiveRevision(t *testing.T) {
 		t.Fatalf("scale down Groups = %#v", groups)
 	}
 	current = getPool(t, ctx, kubeClient, pool)
-	if current.Status.ActiveRevision != activeRevision || current.Status.Phase != inferencev1alpha1.ModelPoolPhaseReady {
-		t.Fatalf("scale down status = %#v", current.Status)
+	if current.Status.ActiveRevision != activeRevision {
+		t.Fatalf("scale down active revision = %q, want %q", current.Status.ActiveRevision, activeRevision)
 	}
+	assertPoolCondition(t, current, conditionCapacityReady, metav1.ConditionTrue)
+	assertPoolCondition(t, current, conditionRolloutPending, metav1.ConditionFalse)
+	assertPoolCondition(t, current, conditionPoolReady, metav1.ConditionTrue)
 }
 
 func TestModelPoolCutoverPublishesRevisionBeforeRetiringOldGroups(t *testing.T) {
@@ -124,9 +141,13 @@ func TestModelPoolCutoverPublishesRevisionBeforeRetiringOldGroups(t *testing.T) 
 		t.Fatalf("target Group = %#v", target)
 	}
 	current = getPool(t, ctx, kubeClient, pool)
-	if current.Status.ActiveRevision != oldRevision || current.Status.Phase != inferencev1alpha1.ModelPoolPhaseProgressing {
-		t.Fatalf("status before target ready = %#v", current.Status)
+	if current.Status.ActiveRevision != oldRevision {
+		t.Fatalf("active revision before target ready = %q, want %q", current.Status.ActiveRevision, oldRevision)
 	}
+	assertPoolCondition(t, current, conditionGroupsMaterialized, metav1.ConditionTrue)
+	assertPoolCondition(t, current, conditionCapacityReady, metav1.ConditionFalse)
+	assertPoolCondition(t, current, conditionRolloutPending, metav1.ConditionTrue)
+	assertPoolCondition(t, current, conditionPoolReady, metav1.ConditionTrue)
 
 	setGroupReady(t, ctx, kubeClient, target)
 	reconcilePool(t, ctx, reconciler, request)
@@ -134,6 +155,9 @@ func TestModelPoolCutoverPublishesRevisionBeforeRetiringOldGroups(t *testing.T) 
 	if current.Status.ActiveRevision != target.Spec.Revision {
 		t.Fatalf("active revision after target readiness = %q, want %q", current.Status.ActiveRevision, target.Spec.Revision)
 	}
+	assertPoolCondition(t, current, conditionCapacityReady, metav1.ConditionTrue)
+	assertPoolCondition(t, current, conditionRolloutPending, metav1.ConditionTrue)
+	assertPoolCondition(t, current, conditionPoolReady, metav1.ConditionTrue)
 	if groups = listPoolGroups(t, ctx, kubeClient, pool.Namespace); len(groups) != 2 {
 		t.Fatalf("old Group was retired during publication: %#v", groups)
 	}
@@ -143,6 +167,10 @@ func TestModelPoolCutoverPublishesRevisionBeforeRetiringOldGroups(t *testing.T) 
 	if len(groups) != 1 || groups[0].Spec.Revision != target.Spec.Revision {
 		t.Fatalf("Groups after old revision retirement = %#v", groups)
 	}
+	current = getPool(t, ctx, kubeClient, pool)
+	assertPoolCondition(t, current, conditionCapacityReady, metav1.ConditionTrue)
+	assertPoolCondition(t, current, conditionRolloutPending, metav1.ConditionFalse)
+	assertPoolCondition(t, current, conditionPoolReady, metav1.ConditionTrue)
 }
 
 func testPoolReconciler(t *testing.T, objects ...client.Object) (*ModelPoolReconciler, client.Client) {
@@ -208,6 +236,14 @@ func getPool(t *testing.T, ctx context.Context, kubeClient client.Client, pool *
 		t.Fatal(err)
 	}
 	return current
+}
+
+func assertPoolCondition(t *testing.T, pool *inferencev1alpha1.ModelPool, conditionType string, want metav1.ConditionStatus) {
+	t.Helper()
+	condition := meta.FindStatusCondition(pool.Status.Conditions, conditionType)
+	if condition == nil || condition.Status != want {
+		t.Fatalf("%s condition = %#v, want %s", conditionType, condition, want)
+	}
 }
 
 func listPoolGroups(t *testing.T, ctx context.Context, kubeClient client.Client, namespace string) []inferencev1alpha1.ModelGroup {
