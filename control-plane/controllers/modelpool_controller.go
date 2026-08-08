@@ -83,6 +83,7 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 	return ctrl.Result{}, reconciler.updateStatus(ctx, pool, activeRevision, targetRevision, targetReady, activeReady)
 }
 
+// targetRevision keeps the active revision while its Group specs still match the Pool.
 func (reconciler *ModelPoolReconciler) targetRevision(pool *inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup) string {
 	active := pool.Status.ActiveRevision
 	if active != "" {
@@ -96,6 +97,7 @@ func (reconciler *ModelPoolReconciler) targetRevision(pool *inferencev1alpha1.Mo
 	return fmt.Sprintf("revision-%d", pool.Generation)
 }
 
+// reconcileGroups creates missing target ordinals and removes ordinals above desired capacity.
 func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, revision string) error {
 	current := make(map[int32]*inferencev1alpha1.ModelGroup, len(groups))
 	for index := range groups {
@@ -139,6 +141,7 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 	return nil
 }
 
+// deleteSupersededGroups retires old revisions only after the target revision is active.
 func (reconciler *ModelPoolReconciler) deleteSupersededGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, activeRevision string) error {
 	for index := range groups {
 		group := &groups[index]
@@ -152,6 +155,7 @@ func (reconciler *ModelPoolReconciler) deleteSupersededGroups(ctx context.Contex
 	return nil
 }
 
+// ownedGroups accepts Groups only when their stable reference and owner reference agree.
 func (reconciler *ModelPoolReconciler) ownedGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool) ([]inferencev1alpha1.ModelGroup, error) {
 	var list inferencev1alpha1.ModelGroupList
 	if err := reconciler.List(ctx, &list, client.InNamespace(pool.Namespace)); err != nil {
@@ -172,6 +176,7 @@ func (reconciler *ModelPoolReconciler) ownedGroups(ctx context.Context, pool *in
 	return owned, nil
 }
 
+// updateStatus publishes the active revision and the target and serving readiness conditions.
 func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *inferencev1alpha1.ModelPool, activeRevision, targetRevision string, targetReady, activeReady bool) error {
 	base := pool.DeepCopy()
 	pool.Status.ObservedGeneration = pool.Generation
@@ -204,6 +209,7 @@ func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *i
 	return nil
 }
 
+// modelGroupName preserves the revision and ordinal suffix within the DNS label limit.
 func modelGroupName(poolName, revision string, ordinal int32) string {
 	suffix := fmt.Sprintf("-%s-%d", revision, ordinal)
 	if len(poolName)+len(suffix) <= 63 {
@@ -212,6 +218,7 @@ func modelGroupName(poolName, revision string, ordinal int32) string {
 	return poolName[:63-len(suffix)] + suffix
 }
 
+// modelGroupSpec projects the normalized Pool template into one immutable Group contract.
 func modelGroupSpec(pool *inferencev1alpha1.ModelPool, revision string, ordinal int32) inferencev1alpha1.ModelGroupSpec {
 	template := pool.Spec.Template
 	return inferencev1alpha1.ModelGroupSpec{
@@ -230,6 +237,7 @@ func modelGroupSpec(pool *inferencev1alpha1.ModelPool, revision string, ordinal 
 	}
 }
 
+// groupMatchesPool checks whether an immutable Group still realizes the current Pool template.
 func groupMatchesPool(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, revision string) bool {
 	desired := modelGroupSpec(pool, revision, group.Spec.Ordinal)
 	return reflect.DeepEqual(group.Spec, desired)
