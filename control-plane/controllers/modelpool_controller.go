@@ -21,6 +21,8 @@ import (
 
 const (
 	conditionGroupsMaterialized = "GroupsMaterialized"
+	conditionCapacityReady      = "CapacityReady"
+	conditionRolloutPending     = "RolloutPending"
 	conditionPoolReady          = "Ready"
 )
 
@@ -62,12 +64,13 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	targetReady := revisionReady(groups, targetRevision, pool.Spec.DesiredGroups)
+	targetMaterialized := revisionMaterialized(groups, targetRevision, pool.Spec.DesiredGroups)
+	targetCapacityReady := revisionReady(groups, targetRevision, pool.Spec.DesiredGroups)
 	activeRevision := pool.Status.ActiveRevision
 
 	// Cutover is deliberately a separate reconciliation step: this status write publishes
 	// the ready target before the next pass deletes previously active Groups.
-	if activeRevision != targetRevision && targetReady {
+	if activeRevision != targetRevision && targetCapacityReady {
 		activeRevision = targetRevision
 	} else if activeRevision == targetRevision {
 		if err := reconciler.deleteSupersededGroups(ctx, pool, groups, targetRevision); err != nil {
@@ -79,8 +82,9 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	activeReady := revisionReady(groups, activeRevision, pool.Spec.DesiredGroups)
-	return ctrl.Result{}, reconciler.updateStatus(ctx, pool, activeRevision, targetRevision, targetReady, activeReady)
+	activeReady := revisionHasReadyGroup(groups, activeRevision)
+	rolloutPending := !targetCapacityReady || activeRevision != targetRevision || hasSupersededGroups(groups, activeRevision, pool.Spec.DesiredGroups)
+	return ctrl.Result{}, reconciler.updateStatus(ctx, pool, activeRevision, targetRevision, targetMaterialized, targetCapacityReady, rolloutPending, activeReady)
 }
 
 // targetRevision keeps the active revision while its Group specs still match the Pool.
@@ -176,21 +180,30 @@ func (reconciler *ModelPoolReconciler) ownedGroups(ctx context.Context, pool *in
 	return owned, nil
 }
 
-// updateStatus publishes the active revision and the target and serving readiness conditions.
-func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *inferencev1alpha1.ModelPool, activeRevision, targetRevision string, targetReady, activeReady bool) error {
+// updateStatus publishes target capacity, rollout progress, and serving readiness.
+func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *inferencev1alpha1.ModelPool, activeRevision, targetRevision string, targetMaterialized, targetCapacityReady, rolloutPending, activeReady bool) error {
 	base := pool.DeepCopy()
 	pool.Status.ObservedGeneration = pool.Generation
 	pool.Status.ActiveRevision = activeRevision
-	phase := inferencev1alpha1.ModelPoolPhaseProgressing
-	if activeReady && activeRevision == targetRevision {
-		phase = inferencev1alpha1.ModelPoolPhaseReady
-	}
-	pool.Status.Phase = phase
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{
 		Type:               conditionGroupsMaterialized,
-		Status:             boolCondition(targetReady),
-		Reason:             materializedReason(targetReady),
-		Message:            materializedMessage(targetReady),
+		Status:             boolCondition(targetMaterialized),
+		Reason:             materializedReason(targetMaterialized),
+		Message:            materializedMessage(targetMaterialized),
+		ObservedGeneration: pool.Generation,
+	})
+	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{
+		Type:               conditionCapacityReady,
+		Status:             boolCondition(targetCapacityReady),
+		Reason:             capacityReadyReason(targetCapacityReady),
+		Message:            capacityReadyMessage(targetCapacityReady),
+		ObservedGeneration: pool.Generation,
+	})
+	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{
+		Type:               conditionRolloutPending,
+		Status:             boolCondition(rolloutPending),
+		Reason:             rolloutPendingReason(rolloutPending),
+		Message:            rolloutPendingMessage(rolloutPending),
 		ObservedGeneration: pool.Generation,
 	})
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{
@@ -243,29 +256,62 @@ func groupMatchesPool(group *inferencev1alpha1.ModelGroup, pool *inferencev1alph
 	return reflect.DeepEqual(group.Spec, desired)
 }
 
-// revisionReady requires every desired ordinal for a revision to be fully ready.
-func revisionReady(groups []inferencev1alpha1.ModelGroup, revision string, desired int32) bool {
+// revisionMaterialized requires every desired ordinal for a revision to exist.
+func revisionMaterialized(groups []inferencev1alpha1.ModelGroup, revision string, desired int32) bool {
 	if revision == "" {
 		return desired == 0
 	}
-	byOrdinal := make(map[int32]*inferencev1alpha1.ModelGroup, desired)
+	byOrdinal := make(map[int32]struct{}, desired)
 	for index := range groups {
 		group := &groups[index]
-		if group.Spec.Revision != revision || group.Spec.Ordinal >= desired {
-			continue
+		if group.Spec.Revision == revision && group.Spec.Ordinal < desired {
+			byOrdinal[group.Spec.Ordinal] = struct{}{}
 		}
-		if byOrdinal[group.Spec.Ordinal] != nil {
-			return false
-		}
-		byOrdinal[group.Spec.Ordinal] = group
 	}
-	for ordinal := int32(0); ordinal < desired; ordinal++ {
-		group := byOrdinal[ordinal]
-		if group == nil || group.Status.Phase != inferencev1alpha1.ModelGroupPhaseReady || group.Status.ReadyMembers != group.Spec.MemberCount || group.Status.TotalMembers != group.Spec.MemberCount {
+	return int32(len(byOrdinal)) == desired
+}
+
+// revisionReady requires every desired ordinal for a revision to be fully ready.
+func revisionReady(groups []inferencev1alpha1.ModelGroup, revision string, desired int32) bool {
+	if !revisionMaterialized(groups, revision, desired) {
+		return false
+	}
+	for index := range groups {
+		group := &groups[index]
+		if group.Spec.Revision == revision && group.Spec.Ordinal < desired && !groupReady(group) {
 			return false
 		}
 	}
 	return true
+}
+
+// revisionHasReadyGroup keeps an active revision admitted while its replacement rolls out.
+func revisionHasReadyGroup(groups []inferencev1alpha1.ModelGroup, revision string) bool {
+	for index := range groups {
+		group := &groups[index]
+		if group.Spec.Revision == revision && groupReady(group) {
+			return true
+		}
+	}
+	return false
+}
+
+// groupReady requires every declared member to report ready.
+func groupReady(group *inferencev1alpha1.ModelGroup) bool {
+	return group.Status.Phase == inferencev1alpha1.ModelGroupPhaseReady &&
+		group.Status.ReadyMembers == group.Spec.MemberCount &&
+		group.Status.TotalMembers == group.Spec.MemberCount
+}
+
+// hasSupersededGroups reports whether old revisions or excess ordinals still need cleanup.
+func hasSupersededGroups(groups []inferencev1alpha1.ModelGroup, activeRevision string, desired int32) bool {
+	for index := range groups {
+		group := &groups[index]
+		if group.Spec.Revision != activeRevision || group.Spec.Ordinal >= desired {
+			return true
+		}
+	}
+	return false
 }
 
 func boolCondition(value bool) metav1.ConditionStatus {
@@ -275,18 +321,46 @@ func boolCondition(value bool) metav1.ConditionStatus {
 	return metav1.ConditionFalse
 }
 
-func materializedReason(ready bool) string {
-	if ready {
-		return "TargetRevisionReady"
+func materializedReason(materialized bool) string {
+	if materialized {
+		return "TargetRevisionMaterialized"
 	}
 	return "TargetRevisionPending"
 }
 
-func materializedMessage(ready bool) string {
+func materializedMessage(materialized bool) string {
+	if materialized {
+		return "Every desired ordinal in the target revision exists"
+	}
+	return "Waiting for every desired ordinal in the target revision to exist"
+}
+
+func capacityReadyReason(ready bool) string {
+	if ready {
+		return "TargetCapacityReady"
+	}
+	return "TargetCapacityPending"
+}
+
+func capacityReadyMessage(ready bool) string {
 	if ready {
 		return "Every desired ordinal in the target revision is ready"
 	}
 	return "Waiting for every desired ordinal in the target revision to become ready"
+}
+
+func rolloutPendingReason(pending bool) string {
+	if pending {
+		return "RolloutInProgress"
+	}
+	return "RolloutComplete"
+}
+
+func rolloutPendingMessage(pending bool) string {
+	if pending {
+		return "Waiting for target capacity, active revision cutover, or superseded Group cleanup"
+	}
+	return "Target capacity is active and no superseded Groups remain"
 }
 
 func readyReason(ready bool, activeRevision, targetRevision string) string {

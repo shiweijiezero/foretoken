@@ -41,7 +41,7 @@ func (reconciler *ModelServiceReconciler) SetupWithManager(manager ctrl.Manager)
 		Complete(reconciler)
 }
 
-// Reconcile materializes stable ModelPools but does not claim serving readiness.
+// Reconcile materializes stable ModelPools and summarizes their readiness.
 func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	service := new(inferencev1alpha1.ModelService)
 	if err := reconciler.Get(ctx, request.NamespacedName, service); err != nil {
@@ -62,14 +62,18 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 
 	compiledPools, err := compiler.CompileModelService(service.Spec)
 	if err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, service, metav1.ConditionFalse, "InvalidIntent", err.Error(), metav1.ConditionFalse, "CompilationFailed", "ModelService intent was not compiled")
+		return ctrl.Result{}, reconciler.updateStatus(ctx, service, metav1.ConditionFalse, "InvalidIntent", err.Error(), metav1.ConditionFalse, "CompilationFailed", "ModelService intent was not compiled", metav1.ConditionFalse)
 	}
 
 	if err := reconciler.reconcilePools(ctx, service, compiledPools); err != nil {
-		statusErr := reconciler.updateStatus(ctx, service, metav1.ConditionTrue, "Compiled", "ModelService intent was compiled", metav1.ConditionFalse, "ApplyFailed", "ModelPools were not fully materialized")
+		statusErr := reconciler.updateStatus(ctx, service, metav1.ConditionTrue, "Compiled", "ModelService intent was compiled", metav1.ConditionFalse, "ApplyFailed", "ModelPools were not fully materialized", metav1.ConditionFalse)
 		return ctrl.Result{}, errors.Join(err, statusErr)
 	}
-	if err := reconciler.updateStatus(ctx, service, metav1.ConditionTrue, "Compiled", "ModelService intent was compiled", metav1.ConditionTrue, "Applied", "All ModelPools were materialized"); err != nil {
+	pools, err := reconciler.ownedPools(ctx, service)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if err := reconciler.updateStatus(ctx, service, metav1.ConditionTrue, "Compiled", "ModelService intent was compiled", metav1.ConditionTrue, "Applied", "All ModelPools were materialized", boolCondition(modelPoolsReady(pools, len(compiledPools)))); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
@@ -187,12 +191,12 @@ func (reconciler *ModelServiceReconciler) ownedPools(ctx context.Context, servic
 	return owned, nil
 }
 
-func (reconciler *ModelServiceReconciler) updateStatus(ctx context.Context, service *inferencev1alpha1.ModelService, compiledStatus metav1.ConditionStatus, compiledReason, compiledMessage string, poolsStatus metav1.ConditionStatus, poolsReason, poolsMessage string) error {
+func (reconciler *ModelServiceReconciler) updateStatus(ctx context.Context, service *inferencev1alpha1.ModelService, compiledStatus metav1.ConditionStatus, compiledReason, compiledMessage string, poolsStatus metav1.ConditionStatus, poolsReason, poolsMessage string, readyStatus metav1.ConditionStatus) error {
 	base := service.DeepCopy()
 	service.Status.ObservedGeneration = service.Generation
 	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionIntentCompiled, Status: compiledStatus, Reason: compiledReason, Message: compiledMessage, ObservedGeneration: service.Generation})
 	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionPoolsMaterialized, Status: poolsStatus, Reason: poolsReason, Message: poolsMessage, ObservedGeneration: service.Generation})
-	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionReady, Status: metav1.ConditionFalse, Reason: "NoRoutableGroups", Message: "No ModelGroup has established serving readiness", ObservedGeneration: service.Generation})
+	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionReady, Status: readyStatus, Reason: modelServiceReadyReason(readyStatus), Message: modelServiceReadyMessage(readyStatus), ObservedGeneration: service.Generation})
 	if reflect.DeepEqual(base.Status, service.Status) {
 		return nil
 	}
@@ -200,4 +204,31 @@ func (reconciler *ModelServiceReconciler) updateStatus(ctx context.Context, serv
 		return fmt.Errorf("update ModelService status: %w", err)
 	}
 	return nil
+}
+
+func modelPoolsReady(pools []inferencev1alpha1.ModelPool, expected int) bool {
+	if len(pools) != expected {
+		return false
+	}
+	for index := range pools {
+		condition := meta.FindStatusCondition(pools[index].Status.Conditions, conditionPoolReady)
+		if condition == nil || condition.Status != metav1.ConditionTrue {
+			return false
+		}
+	}
+	return true
+}
+
+func modelServiceReadyReason(status metav1.ConditionStatus) string {
+	if status == metav1.ConditionTrue {
+		return "PoolsReady"
+	}
+	return "PoolsPending"
+}
+
+func modelServiceReadyMessage(status metav1.ConditionStatus) string {
+	if status == metav1.ConditionTrue {
+		return "Every ModelPool is ready"
+	}
+	return "Waiting for every ModelPool to become ready"
 }

@@ -28,9 +28,6 @@ spec:
     - jsonPath: .status.conditions[?(@.type=='Ready')].status
       name: Ready
       type: string
-    - jsonPath: .status.phase
-      name: Phase
-      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -406,15 +403,6 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
-              phase:
-                description: ModelPoolPhase summarizes the Pool lifecycle.
-                enum:
-                - Pending
-                - Progressing
-                - Ready
-                - Degraded
-                - Terminating
-                type: string
             type: object
         required:
         - spec
