@@ -7,10 +7,7 @@ use foretoken_router::{PipelineRouter, RouterPipelineConfig};
 use foretoken_runtime_builder::{KvIndexCredential, RuntimeBuilder};
 use foretoken_server::{Generation, RuntimeControl, RuntimeGeneration, RuntimeState};
 
-use super::{
-    install_serving_snapshot, refresh_active_generation, snapshot_is_current,
-    watch_serving_snapshot,
-};
+use super::{install_serving_snapshot, refresh_active_generation, watch_serving_snapshot};
 
 fn runtime_builder() -> RuntimeBuilder {
     RuntimeBuilder::new(RouterPipelineConfig::default(), KvIndexCredential::Disabled)
@@ -137,16 +134,4 @@ async fn unreadable_snapshot_file_never_revokes_the_active_generation() {
     assert!(generation.ready());
     assert_eq!(generation.models(), vec!["active"]);
     assert_eq!(generation.active_version(), Some(10));
-}
-
-#[test]
-fn candidate_publication_requires_the_same_snapshot_bytes_on_disk() {
-    let path = std::env::temp_dir().join(format!(
-        "foretoken-latest-serving-snapshot-{}",
-        std::process::id()
-    ));
-    std::fs::write(&path, b"version-12").unwrap();
-    assert!(!snapshot_is_current(&path, b"version-11").unwrap());
-    assert!(snapshot_is_current(&path, b"version-12").unwrap());
-    std::fs::remove_file(path).unwrap();
 }

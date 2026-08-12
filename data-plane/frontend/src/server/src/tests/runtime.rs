@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -8,9 +9,14 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt;
 
-use crate::{Generation, RuntimeControl, RuntimeGeneration, RuntimeState, router};
+use crate::{
+    Generation, GenerationError, GenerationRequest, RuntimeControl, RuntimeGeneration,
+    RuntimeState, router,
+};
 use foretoken_backend_registry::BackendRegistry;
-use foretoken_router::PipelineRouter;
+use foretoken_chat::ParserSelection;
+use foretoken_router::{PipelineRouter, RouteTargetSet, ScalingTarget, ScalingTargetKind};
+use foretoken_text::{Prompt, SamplingParams, TextDecodeOptions};
 
 use super::support::{RecordingGeneration, generation_state, test_runtime};
 
@@ -95,6 +101,64 @@ fn runtime_generation_publishes_atomically_and_rejects_stale_versions() {
     assert!(!generation.ready());
     assert_eq!(generation.models(), vec!["next"]);
     assert_eq!(generation.active_version(), Some(3));
+}
+
+#[tokio::test]
+async fn logical_only_runtime_returns_unavailable_without_queueing() {
+    let registry = Arc::new(
+        BackendRegistry::from_json(
+            br#"{"version":1,"models":[{"service_uid":"service","model":"model","revision":"r1","tokenizer":"model","tokenizer_revision":"r1","targets":[{"service_uid":"service","name":"default","uid":"pool","kind":"Pool"}]}],"groups":[]}"#,
+        )
+        .unwrap(),
+    );
+    let target = ScalingTarget {
+        service_uid: "service".into(),
+        name: "default".into(),
+        uid: "pool".into(),
+        kind: ScalingTargetKind::Pool,
+    };
+    let state = RuntimeState::new(
+        BTreeMap::new(),
+        Arc::new(PipelineRouter::new(registry.clone())),
+        registry,
+    )
+    .with_logical_targets(BTreeMap::from([(
+        "model".into(),
+        RouteTargetSet::new(vec![target.clone()]),
+    )]));
+    let generation = Arc::new(RuntimeGeneration::new());
+    assert!(generation.replace_state(
+        1,
+        Arc::new(state),
+        Arc::new(StaticRuntimeControl {
+            ready: true,
+            models: vec!["model".into()],
+        }),
+    ));
+    let request = GenerationRequest {
+        model: "model".into(),
+        request_id: "cold-start".into(),
+        revision: None,
+        prompt: Prompt::Text("hello".into()),
+        sampling_params: SamplingParams::default(),
+        decode_options: TextDecodeOptions::default(),
+        intermediate: false,
+        priority: 0,
+        cache_salt: None,
+        arrival_time: None,
+        tool_call_parser: ParserSelection::None,
+        reasoning_parser: ParserSelection::None,
+    };
+    assert!(matches!(
+        generation.generate(request).await,
+        Err(GenerationError::Unavailable)
+    ));
+    assert!(
+        foretoken_metrics::autoscaling_telemetry()
+            .targets
+            .iter()
+            .all(|value| value.target.target_id != target.uid || value.queued_requests == 0)
+    );
 }
 
 #[tokio::test]

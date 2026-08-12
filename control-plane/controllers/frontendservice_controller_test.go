@@ -394,9 +394,9 @@ func TestFrontendServicePublishesAtomicEPDTriplets(t *testing.T) {
 	encoder.Name, encoder.UID = "encoder-group", "encoder-group-uid"
 	encoder.Spec.ModelPoolRef = inferencev1alpha1.LocalObjectReference{Name: encoderPool.Name, UID: string(encoderPool.UID)}
 	encoder.Spec.Role, encoder.Spec.PDRuntime = inferencev1alpha1.ModelRoleEncoder, nil
-	encoder.Spec.ECRuntime = &inferencev1alpha1.ModelGroupECRuntimeConfig{ProfileName: "verified-ec", ProfileRevision: "r2", Connector: "ECExampleConnector", Role: inferencev1alpha1.ECTransferRoleProducer, RuntimeFingerprint: "pinned", SharedStorageClaim: "ec-rwx", SharedStoragePath: "/var/lib/foretoken/ec"}
+	encoder.Spec.ECRuntime = &inferencev1alpha1.ModelGroupECRuntimeConfig{ProfileName: "verified-ec", ProfileRevision: "r2", Connector: "ECExampleConnector", Role: inferencev1alpha1.ECTransferRoleProducer, SharedStorageClaim: "ec-rwx", SharedStoragePath: "/var/lib/foretoken/ec"}
 	encoder.OwnerReferences[0].Name, encoder.OwnerReferences[0].UID = encoderPool.Name, encoderPool.UID
-	prefill.Spec.ECRuntime = &inferencev1alpha1.ModelGroupECRuntimeConfig{ProfileName: "verified-ec", ProfileRevision: "r2", Connector: "ECExampleConnector", Role: inferencev1alpha1.ECTransferRoleConsumer, RuntimeFingerprint: "pinned", SharedStorageClaim: "ec-rwx", SharedStoragePath: "/var/lib/foretoken/ec"}
+	prefill.Spec.ECRuntime = &inferencev1alpha1.ModelGroupECRuntimeConfig{ProfileName: "verified-ec", ProfileRevision: "r2", Connector: "ECExampleConnector", Role: inferencev1alpha1.ECTransferRoleConsumer, SharedStorageClaim: "ec-rwx", SharedStoragePath: "/var/lib/foretoken/ec"}
 
 	reconciler, kubeClient := testFrontendReconciler(t, frontend, service, encoderPool, encoder, prefillPool, prefill, decodePool, decode)
 	if installed, err := reconciler.reconcileServingSnapshot(ctx, frontend); err != nil || !installed {

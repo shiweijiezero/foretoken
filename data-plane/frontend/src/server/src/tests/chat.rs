@@ -138,17 +138,22 @@ async fn chat_response_uses_vllms_structured_output_processor() {
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
-    let body = std::str::from_utf8(&body).unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&body).unwrap();
 
-    assert!(body.contains(r#""id":"chatcmpl-test""#));
-    assert!(body.contains(r#""model":"test""#));
-    assert!(body.contains(r#""created":"#));
-    assert!(body.contains(r#""reasoning":null"#));
-    assert!(!body.contains(r#""tool_calls":[]"#));
-    assert!(body.contains(r#""prompt_tokens":1"#));
-    assert!(body.contains(r#""completion_tokens":2"#));
-    assert!(body.contains(r#""logprobs":{"content":[{"token":"h","logprob":-0.1"#));
-    assert!(!body.contains(r#""token_ids"#));
+    assert_eq!(body["id"], "chatcmpl-test");
+    assert_eq!(body["model"], "test");
+    assert!(body["created"].as_u64().is_some());
+    let message = &body["choices"][0]["message"];
+    assert!(message["reasoning"].is_null());
+    assert!(message.get("tool_calls").is_none());
+    assert_eq!(body["usage"]["prompt_tokens"], 1);
+    assert_eq!(body["usage"]["completion_tokens"], 2);
+    assert_eq!(body["choices"][0]["logprobs"]["content"][0]["token"], "h");
+    assert_eq!(
+        body["choices"][0]["logprobs"]["content"][0]["logprob"],
+        -0.1
+    );
+    assert!(body.get("token_ids").is_none());
 }
 
 #[tokio::test]

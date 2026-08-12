@@ -154,8 +154,6 @@ pub struct EcTransferPlan {
     connector: String,
     #[serde(default)]
     role: Option<EcRole>,
-    #[serde(default, rename = "runtimeFingerprint")]
-    runtime_fingerprint: String,
     #[serde(default, rename = "sharedStoragePath")]
     shared_storage_path: String,
 }
@@ -182,7 +180,6 @@ impl EcTransferPlan {
             if self.profile_name.is_empty()
                 && self.profile_revision.is_empty()
                 && self.role.is_none()
-                && self.runtime_fingerprint.is_empty()
                 && self.shared_storage_path.is_empty()
             {
                 return Ok(());
@@ -193,7 +190,6 @@ impl EcTransferPlan {
             || self.profile_name.is_empty()
             || self.profile_revision.is_empty()
             || self.role.is_none()
-            || self.runtime_fingerprint.is_empty()
             || !self.shared_storage_path.starts_with('/')
             || self.shared_storage_path.contains(char::is_whitespace)
         {
@@ -222,7 +218,6 @@ impl EcTransferPlan {
             role: self.role?.as_str().into(),
             profile: self.profile_name.clone(),
             connector: self.connector.clone(),
-            fingerprint: self.runtime_fingerprint.clone(),
         })
     }
 }

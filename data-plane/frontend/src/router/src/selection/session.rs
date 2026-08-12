@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Request-local routing session contract and selection errors.
+//! Request-local routing session behavior and selection errors.
 
 use thiserror::Error;
 

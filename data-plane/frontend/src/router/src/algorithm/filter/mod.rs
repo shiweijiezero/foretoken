@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Candidate-list filtering contract and built-in filters.
+//! Candidate-list filtering and built-in filters.
 
 mod allow_all_filter;
 

@@ -53,22 +53,11 @@ pub(crate) async fn watch_serving_snapshot(
                     continue;
                 }
                 match builder.build(snapshot).await {
-                    Ok(prepared) => match snapshot_is_current(&path, &bytes) {
-                        Ok(true) => {
-                            if prepared.publish(&generation) {
-                                installed_serving_snapshot = Some(bytes);
-                            }
+                    Ok(prepared) => {
+                        if prepared.publish(&generation) {
+                            installed_serving_snapshot = Some(bytes);
                         }
-                        Ok(_) => tracing::info!(
-                            candidate_version,
-                            "discarding serving snapshot candidate superseded during preparation"
-                        ),
-                        Err(error) => tracing::error!(
-                            path = %path.display(),
-                            %error,
-                            "serving snapshot became unreadable before publication"
-                        ),
-                    },
+                    }
                     Err(error) => {
                         tracing::warn!(%error, "could not prepare serving snapshot candidate")
                     }
@@ -83,10 +72,6 @@ pub(crate) async fn watch_serving_snapshot(
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-}
-
-fn snapshot_is_current(path: &std::path::Path, expected: &[u8]) -> std::io::Result<bool> {
-    std::fs::read(path).map(|current| current == expected)
 }
 
 #[cfg(test)]

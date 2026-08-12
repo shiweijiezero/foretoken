@@ -225,12 +225,12 @@ func TestResolveModelPoolExternalProfileSkipsManagedBufferBudget(t *testing.T) {
 func TestResolveModelPoolMaterializesECProducerAndConsumer(t *testing.T) {
 	profile := resolverProfile()
 	profile.MooncakePD = &MooncakePDProfile{Name: "pd", Revision: "r1", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30, RDMADeviceName: "mlx5_1", RDMAResourceName: "rdma/hca_shared_devices_a", RDMAResourceCount: 1}
-	profile.EC = &ECProfile{Name: "verified-ec", Revision: "r2", Connector: "ECExampleConnector", RuntimeFingerprint: "vllm-pinned-ec-r2", SharedStorageClaim: "ec-rwx", SharedStoragePath: "/var/lib/foretoken/ec"}
+	profile.EC = &ECProfile{Name: "verified-ec", Revision: "r2", Connector: "ECExampleConnector", SharedStorageClaim: "ec-rwx", SharedStoragePath: "/var/lib/foretoken/ec"}
 	for role, want := range map[inferencev1alpha1.ModelRole]inferencev1alpha1.ECTransferRole{inferencev1alpha1.ModelRoleEncoder: inferencev1alpha1.ECTransferRoleProducer, inferencev1alpha1.ModelRolePrefill: inferencev1alpha1.ECTransferRoleConsumer} {
 		template := resolverTemplate()
 		template.Role, template.ECProfile = role, "verified-ec"
 		resolved, err := ResolveModelPool(template, profile)
-		if err != nil || resolved.ECRuntime == nil || resolved.ECRuntime.Role != want || resolved.ECRuntime.RuntimeFingerprint != "vllm-pinned-ec-r2" {
+		if err != nil || resolved.ECRuntime == nil || resolved.ECRuntime.Role != want {
 			t.Fatalf("%s EC runtime = %#v, err = %v", role, resolved.ECRuntime, err)
 		}
 		if role == inferencev1alpha1.ModelRoleEncoder && resolved.PDRuntime != nil {

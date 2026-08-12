@@ -73,8 +73,6 @@ pub struct SnapshotEpdComponent {
     #[serde(default)]
     pub ec_connector: String,
     #[serde(default)]
-    pub ec_runtime_fingerprint: String,
-    #[serde(default)]
     pub capabilities: BTreeSet<String>,
     #[serde(default)]
     pub max_input_tokens: Option<usize>,

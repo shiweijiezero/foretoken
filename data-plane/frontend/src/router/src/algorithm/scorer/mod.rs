@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Candidate scoring contract and built-in scorers.
+//! Candidate scoring and built-in scorers.
 
 mod kv_least_loaded_scorer;
 mod least_loaded_scorer;

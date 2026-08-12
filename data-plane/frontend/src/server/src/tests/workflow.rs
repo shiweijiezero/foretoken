@@ -166,7 +166,7 @@ async fn bootstrap_endpoint() -> (String, tokio::task::JoinHandle<()>) {
 }
 
 #[tokio::test]
-async fn workflow_contract_orders_epd_tracks_admission_and_aborts_every_child_on_decode_failure() {
+async fn workflow_orders_epd_tracks_admission_and_aborts_every_child_on_decode_failure() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let aborts = Arc::new(Mutex::new(Vec::new()));
     let (bootstrap, bootstrap_task) = bootstrap_endpoint().await;

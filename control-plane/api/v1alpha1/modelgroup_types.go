@@ -106,11 +106,6 @@ type ModelGroupECRuntimeConfig struct {
 
 	Role ECTransferRole `json:"role"`
 
-	// RuntimeFingerprint pins the verified connector runtime implementation.
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=256
-	RuntimeFingerprint string `json:"runtimeFingerprint"`
-
 	// SharedStorageClaim is the platform-owned ReadWriteMany PVC used by the
 	// the local vLLM build source ECExampleConnector.
 	// +kubebuilder:validation:MinLength=1

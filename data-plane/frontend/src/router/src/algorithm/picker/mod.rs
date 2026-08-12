@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Scored-candidate selection contract and built-in pickers.
+//! Scored-candidate selection and built-in pickers.
 
 mod max_picker;
 mod round_robin_picker;

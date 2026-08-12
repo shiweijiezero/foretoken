@@ -44,7 +44,6 @@ type ECProfile struct {
 	Name               string
 	Revision           string
 	Connector          string
-	RuntimeFingerprint string
 	SharedStorageClaim string
 	SharedStoragePath  string
 }
@@ -229,7 +228,7 @@ func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, paralle
 	if template.NodeCount != 1 || template.MemberCount != 1 || parallelism.TP != 1 || parallelism.PP != 1 || parallelism.DP != 1 || parallelism.PCP != 1 || parallelism.DCP != 1 || parallelism.EP != nil {
 		return nil, fmt.Errorf("E/P/D requires a single member/node and TP=PP=DP=PCP=DCP=1 without expert parallelism")
 	}
-	if profile == nil || profile.Name == "" || profile.Revision == "" || profile.Connector != "ECExampleConnector" || profile.RuntimeFingerprint == "" || profile.SharedStorageClaim == "" || profile.SharedStoragePath == "" {
+	if profile == nil || profile.Name == "" || profile.Revision == "" || profile.Connector != "ECExampleConnector" || profile.SharedStorageClaim == "" || profile.SharedStoragePath == "" {
 		return nil, fmt.Errorf("EC runtime profile is incomplete")
 	}
 	if template.ECProfile != profile.Name {
@@ -242,7 +241,6 @@ func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, paralle
 	return &inferencev1alpha1.ModelGroupECRuntimeConfig{
 		ProfileName: profile.Name, ProfileRevision: profile.Revision,
 		Connector: profile.Connector, Role: role,
-		RuntimeFingerprint: profile.RuntimeFingerprint,
 		SharedStorageClaim: profile.SharedStorageClaim,
 		SharedStoragePath:  profile.SharedStoragePath,
 	}, nil

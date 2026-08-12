@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Picker output contract tests.
+//! Picker output behavior tests.
 
 use std::sync::Arc;
 

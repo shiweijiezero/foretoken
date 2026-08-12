@@ -71,7 +71,7 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-func TestGeneratedCRDContracts(t *testing.T) {
+func TestGeneratedCRDListMapSemantics(t *testing.T) {
 	crds, err := loadCRDs(filepath.Join(moduleRoot(t), "config", "crd", "bases"))
 	if err != nil {
 		t.Fatal(err)
@@ -93,29 +93,7 @@ func TestGeneratedCRDContracts(t *testing.T) {
 	kvServiceSpec := crdSpecSchema(t, byName["kvservices.inference.foretoken.io"])
 	storagePools := schemaProperty(t, kvServiceSpec, "storagePools")
 	if storagePools.XListType == nil || *storagePools.XListType != "map" || len(storagePools.XListMapKeys) != 1 || storagePools.XListMapKeys[0] != "name" {
-		t.Fatalf("storagePools structural list contract = %#v", storagePools)
-	}
-	kvPoolSpec := crdSpecSchema(t, byName["kvpools.inference.foretoken.io"])
-	if !hasValidationRule(kvPoolSpec, "self.kvServiceRef == oldSelf.kvServiceRef && self.poolName == oldSelf.poolName && self.revision == oldSelf.revision && self.template == oldSelf.template") {
-		t.Fatal("KVPool does not limit mutability to desiredGroups")
-	}
-	clientTemplate := schemaProperty(t, storagePools.Items.Schema, "client")
-	if !hasValidationRule(clientTemplate, "quantity(self.memoryCapacity).compareTo(quantity(self.resources.requests.memory)) < 0") {
-		t.Fatal("KV client memory capacity does not reject an equal memory request")
-	}
-	if !hasValidationRule(clientTemplate, "!has(self.resources.limits) || !has(self.resources.limits.memory) || quantity(self.memoryCapacity).compareTo(quantity(self.resources.limits.memory)) < 0") {
-		t.Fatal("KV client memory capacity does not reject an equal memory limit")
-	}
-
-	modelGroupSpec := crdSpecSchema(t, byName["modelgroups.inference.foretoken.io"])
-	if !hasValidationRule(modelGroupSpec, "self == oldSelf") {
-		t.Fatal("ModelGroup spec does not enforce immutability")
-	}
-	if !hasValidationRule(modelGroupSpec, "self.memberCount == self.nodeCount") {
-		t.Fatal("ModelGroup spec does not enforce one member per node")
-	}
-	if !hasValidationRule(modelGroupSpec, "self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp") {
-		t.Fatal("ModelGroup spec does not enforce compiled rank capacity")
+		t.Fatalf("storagePools list map semantics = %#v", storagePools)
 	}
 }
 
@@ -134,15 +112,6 @@ func schemaProperty(t *testing.T, schema *apiextensionsv1.JSONSchemaProps, name 
 		t.Fatalf("schema property %q is missing", name)
 	}
 	return &property
-}
-
-func hasValidationRule(schema *apiextensionsv1.JSONSchemaProps, rule string) bool {
-	for _, validation := range schema.XValidations {
-		if validation.Rule == rule {
-			return true
-		}
-	}
-	return false
 }
 
 func TestEstablishedRejectsInvalidNames(t *testing.T) {

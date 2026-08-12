@@ -76,7 +76,6 @@ spec:
             - {{ printf "--vllm-ec-profile-name=%s" $.Values.runtime.vllm.ec.profileName | quote }}
             - {{ printf "--vllm-ec-profile-revision=%s" $.Values.runtime.vllm.ec.profileRevision | quote }}
             - {{ printf "--vllm-ec-connector=%s" $.Values.runtime.vllm.ec.connector | quote }}
-            - {{ printf "--vllm-ec-runtime-fingerprint=%s" $.Values.runtime.vllm.ec.runtimeFingerprint | quote }}
             - {{ printf "--vllm-ec-shared-storage-claim=%s" $.Values.runtime.vllm.ec.sharedStorageClaim | quote }}
             - {{ printf "--vllm-ec-shared-storage-path=%s" $.Values.runtime.vllm.ec.sharedStoragePath | quote }}
             {{- end }}

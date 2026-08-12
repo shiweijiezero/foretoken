@@ -36,7 +36,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: vllm-project/vllm
-          ref: 5b14019576475224d86044b262e28a04a85d4086
           path: .vllm-source
       - name: Select local vLLM build source
         run: FORETOKEN_VLLM_SOURCE="$GITHUB_WORKSPACE/.vllm-source" ./scripts/select-vllm-source.sh
@@ -59,7 +58,6 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: vllm-project/vllm
-          ref: 5b14019576475224d86044b262e28a04a85d4086
           path: .vllm-source
       - name: Select local vLLM build source
         run: FORETOKEN_VLLM_SOURCE="$GITHUB_WORKSPACE/.vllm-source" ./scripts/select-vllm-source.sh

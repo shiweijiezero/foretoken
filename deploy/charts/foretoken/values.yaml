@@ -37,7 +37,6 @@ runtime:
       profileName: ""
       profileRevision: ""
       connector: "ECExampleConnector"
-      runtimeFingerprint: ""
       sharedStorageClaim: ""
       sharedStoragePath: "/var/lib/foretoken/ec"
     # Set every field to enable the platform-owned Mooncake P/D profile.

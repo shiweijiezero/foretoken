@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Public route binding, status, and source cursor contracts.
+//! Public route binding, status, and source cursor behavior.
 
 use std::{
     collections::{BTreeMap, BTreeSet},

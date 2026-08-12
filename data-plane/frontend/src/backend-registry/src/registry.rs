@@ -9,9 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver};
-use foretoken_model_protocol::{
-    RuntimeEcTransferMetadata, RuntimeMetadataResponse, TelemetryResponse, VLLM_SOURCE_REVISION,
-};
+use foretoken_model_protocol::{RuntimeMetadataResponse, TelemetryResponse};
 use vllm_engine_core_client::protocol::dtype::ModelDtype;
 
 use foretoken_model_protocol::{ModelServerRole, RouteStage};
@@ -59,30 +57,20 @@ pub struct BackendRegistry {
     metadata: Mutex<BTreeMap<RouteTargetId, RuntimeMetadataResponse>>,
     health_client: reqwest::Client,
 }
-#[derive(Debug, Clone)]
-pub(crate) struct RuntimeExpectation {
-    pub model: String,
-    pub revision: String,
-    pub ec_transfer: Option<RuntimeEcTransferMetadata>,
-}
 pub(crate) enum Component {
     Aggregate {
         endpoint: String,
         facade: Arc<HttpFacade>,
-        expected: RuntimeExpectation,
     },
     Encoder {
         endpoint: String,
-        expected: RuntimeExpectation,
     },
     Prefill {
         endpoint: String,
         bootstrap: String,
-        expected: RuntimeExpectation,
     },
     Decode {
         endpoint: String,
-        expected: RuntimeExpectation,
     },
 }
 
@@ -93,15 +81,6 @@ impl Component {
             | Self::Encoder { endpoint, .. }
             | Self::Prefill { endpoint, .. }
             | Self::Decode { endpoint, .. } => endpoint,
-        }
-    }
-
-    fn expected(&self) -> &RuntimeExpectation {
-        match self {
-            Self::Aggregate { expected, .. }
-            | Self::Encoder { expected, .. }
-            | Self::Prefill { expected, .. }
-            | Self::Decode { expected, .. } => expected,
         }
     }
 
@@ -244,15 +223,7 @@ impl BackendRegistry {
                 None => true,
             };
             let stats = telemetry(&self.health_client, c.endpoint()).await;
-            let metadata_valid = metadata
-                .as_ref()
-                .is_some_and(|value| metadata_matches(c.expected(), value));
-            (
-                id.clone(),
-                ready && bootstrap && metadata_valid,
-                metadata,
-                stats,
-            )
+            (id.clone(), ready && bootstrap, metadata, stats)
         });
         let results = futures::future::join_all(probes).await;
         let mut next_loads = BTreeMap::new();
@@ -369,15 +340,6 @@ impl RouteTargetStatsReader for BackendRegistry {
 
 fn requires_runtime_observation(capability: &str) -> bool {
     matches!(capability, "lora")
-}
-
-fn metadata_matches(expected: &RuntimeExpectation, metadata: &RuntimeMetadataResponse) -> bool {
-    metadata.version == 1
-        && metadata.model.model == expected.model
-        && metadata.model.revision == expected.revision
-        && metadata.ec_transfer == expected.ec_transfer
-        && metadata.vllm_source_revision == VLLM_SOURCE_REVISION
-        && metadata.effective_max_model_len > 0
 }
 
 async fn metadata(client: &reqwest::Client, endpoint: &str) -> Option<RuntimeMetadataResponse> {

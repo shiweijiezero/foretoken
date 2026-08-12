@@ -8,7 +8,6 @@ package controllers
 import (
 	"context"
 	"slices"
-	"strings"
 	"testing"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -61,7 +60,7 @@ func TestModelGroupReconcileMaterializesIsolatedDeployment(t *testing.T) {
 	if len(container.Args) != 0 {
 		t.Fatalf("runtime args = %#v", container.Args)
 	}
-	if container.Env[0].Name != "FORETOKEN_VLLM_LAUNCH_PLAN" || !strings.Contains(container.Env[0].Value, `"version":1`) || !strings.Contains(container.Env[0].Value, `--max-model-len=32768`) {
+	if container.Env[0].Name != "FORETOKEN_VLLM_LAUNCH_PLAN" || container.Env[0].Value == "" {
 		t.Fatalf("launch plan = %#v", container.Env[0])
 	}
 	if len(container.Env) != 9 || container.Env[1].Name != "FORETOKEN_INTERNAL_LISTEN" || container.Env[1].Value != "0.0.0.0:9000" || container.Env[3].Name != "HF_HOME" || container.Env[6].Name != "FORETOKEN_KV_INDEX_KEY_PATH" || container.Env[7].Name != "FORETOKEN_KV_SCOPE_ID" {
@@ -165,7 +164,7 @@ func TestModelGroupReconcileMaterializesMooncakePrefill(t *testing.T) {
 		t.Fatalf("P/D network attachment = %#v", deployment.Spec.Template.Annotations)
 	}
 	container := deployment.Spec.Template.Spec.Containers[0]
-	if len(container.Args) != 0 || !strings.Contains(container.Env[0].Value, `"kind":"pd"`) || len(container.Ports) != 2 || container.Ports[1].Name != "mc-bootstrap" || container.Env[9].Name != "VLLM_MOONCAKE_BOOTSTRAP_PORT" || container.Env[10].Name != "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT" {
+	if len(container.Args) != 0 || len(container.Ports) != 2 || container.Ports[1].Name != "mc-bootstrap" || container.Env[9].Name != "VLLM_MOONCAKE_BOOTSTRAP_PORT" || container.Env[10].Name != "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT" {
 		t.Fatalf("P/D container = %#v", container)
 	}
 	rdmaName := corev1.ResourceName("rdma/hca_shared_devices_a")

@@ -119,7 +119,6 @@ type servingSnapshotEPDComponent struct {
 	ECProfileRevision        string   `json:"ec_profile_revision,omitempty"`
 	ECConnector              string   `json:"ec_connector,omitempty"`
 	ECRole                   string   `json:"ec_role,omitempty"`
-	ECRuntimeFingerprint     string   `json:"ec_runtime_fingerprint,omitempty"`
 	Capabilities             []string `json:"capabilities"`
 	Endpoint                 string   `json:"endpoint"`
 	PrefillBootstrapEndpoint string   `json:"prefill_bootstrap_endpoint,omitempty"`
@@ -496,7 +495,7 @@ func compatibleEPDGroups(encoder, prefill, decode *inferencev1alpha1.ModelGroup)
 }
 
 func matchingECRuntime(left, right *inferencev1alpha1.ModelGroupECRuntimeConfig) bool {
-	return left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision && left.Connector == right.Connector && left.RuntimeFingerprint == right.RuntimeFingerprint && left.SharedStorageClaim == right.SharedStorageClaim && left.SharedStoragePath == right.SharedStoragePath
+	return left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision && left.Connector == right.Connector && left.SharedStorageClaim == right.SharedStorageClaim && left.SharedStoragePath == right.SharedStoragePath
 }
 
 func routingEPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, domainID string) servingSnapshotEPDComponent {
@@ -512,7 +511,6 @@ func routingEPDComponent(service *inferencev1alpha1.ModelService, group *inferen
 	if ec := group.Spec.ECRuntime; ec != nil {
 		component.ECProfileName, component.ECProfileRevision = ec.ProfileName, ec.ProfileRevision
 		component.ECConnector, component.ECRole = ec.Connector, string(ec.Role)
-		component.ECRuntimeFingerprint = ec.RuntimeFingerprint
 	}
 	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
 		component.PrefillBootstrapEndpoint = modelGroupEndpoint(group, group.Spec.PDRuntime.BootstrapPort)
@@ -713,7 +711,7 @@ func compareRoutingPDDomains(left, right servingSnapshotPDDomain) int {
 }
 
 func equalRoutingEPDComponent(left, right servingSnapshotEPDComponent) bool {
-	return left.RouteTargetID == right.RouteTargetID && left.ServiceUID == right.ServiceUID && left.PoolUID == right.PoolUID && left.PoolName == right.PoolName && left.Role == right.Role && left.DomainID == right.DomainID && left.Model == right.Model && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && equalOptionalInt32(left.MaxInputTokens, right.MaxInputTokens) && left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision && left.Connector == right.Connector && left.Protocol == right.Protocol && left.ECProfileName == right.ECProfileName && left.ECProfileRevision == right.ECProfileRevision && left.ECConnector == right.ECConnector && left.ECRole == right.ECRole && left.ECRuntimeFingerprint == right.ECRuntimeFingerprint && slices.Equal(left.Capabilities, right.Capabilities) && left.Endpoint == right.Endpoint && left.PrefillBootstrapEndpoint == right.PrefillBootstrapEndpoint && left.KVScopeID == right.KVScopeID
+	return left.RouteTargetID == right.RouteTargetID && left.ServiceUID == right.ServiceUID && left.PoolUID == right.PoolUID && left.PoolName == right.PoolName && left.Role == right.Role && left.DomainID == right.DomainID && left.Model == right.Model && left.Revision == right.Revision && left.Tokenizer == right.Tokenizer && left.TokenizerRevision == right.TokenizerRevision && equalOptionalInt32(left.MaxInputTokens, right.MaxInputTokens) && left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision && left.Connector == right.Connector && left.Protocol == right.Protocol && left.ECProfileName == right.ECProfileName && left.ECProfileRevision == right.ECProfileRevision && left.ECConnector == right.ECConnector && left.ECRole == right.ECRole && slices.Equal(left.Capabilities, right.Capabilities) && left.Endpoint == right.Endpoint && left.PrefillBootstrapEndpoint == right.PrefillBootstrapEndpoint && left.KVScopeID == right.KVScopeID
 }
 func equalRoutingEPDDomain(left, right servingSnapshotEPDDomain) bool {
 	return left.DomainID == right.DomainID && left.EncoderRouteTargetID == right.EncoderRouteTargetID && left.PrefillRouteTargetID == right.PrefillRouteTargetID && left.DecodeRouteTargetID == right.DecodeRouteTargetID

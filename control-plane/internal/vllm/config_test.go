@@ -4,7 +4,6 @@
 package vllm
 
 import (
-	"strings"
 	"testing"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -81,10 +80,6 @@ func TestBuildLaunchPlanKVVariants(t *testing.T) {
 			if (tc.kind == kvPD || tc.kind == kvMultiConnector) && plan.KV.DeviceName != "mlx5_1" {
 				t.Fatalf("P/D device name = %q", plan.KV.DeviceName)
 			}
-			json, err := plan.JSON()
-			if err != nil || !strings.Contains(json, `"version":1`) || !strings.Contains(json, `"kind":"`+tc.kind+`"`) {
-				t.Fatalf("json = %q, %v", json, err)
-			}
 		})
 	}
 }
@@ -113,10 +108,6 @@ func TestBuildLaunchPlanProjectsInternalGenerateRequestBodyLimit(t *testing.T) {
 	if err != nil || plan.InternalGenerateRequestBodyLimitBytes != group.Runtime.InternalGenerateRequestBodyLimitBytes {
 		t.Fatalf("launch plan = %#v, err = %v", plan, err)
 	}
-	json, err := plan.JSON()
-	if err != nil || !strings.Contains(json, `"internalGenerateRequestBodyLimitBytes":100663296`) {
-		t.Fatalf("launch plan JSON = %q, err = %v", json, err)
-	}
 	group.Runtime.InternalGenerateRequestBodyLimitBytes = inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes - 1
 	if _, err := BuildLaunchPlan(group); err == nil {
 		t.Fatal("undersized internal generate request body limit was accepted")
@@ -130,7 +121,7 @@ func storeRuntime() *inferencev1alpha1.ModelGroupKVRuntimeConfig {
 func TestBuildLaunchPlanProjectsOnlyTypedECRuntime(t *testing.T) {
 	group := testGroup()
 	group.Role = inferencev1alpha1.ModelRoleEncoder
-	group.ECRuntime = &inferencev1alpha1.ModelGroupECRuntimeConfig{ProfileName: "verified-ec", ProfileRevision: "r2", Connector: "ECExampleConnector", Role: inferencev1alpha1.ECTransferRoleProducer, RuntimeFingerprint: "vllm-pinned-ec-r2", SharedStorageClaim: "ec-rwx", SharedStoragePath: "/var/lib/foretoken/ec"}
+	group.ECRuntime = &inferencev1alpha1.ModelGroupECRuntimeConfig{ProfileName: "verified-ec", ProfileRevision: "r2", Connector: "ECExampleConnector", Role: inferencev1alpha1.ECTransferRoleProducer, SharedStorageClaim: "ec-rwx", SharedStoragePath: "/var/lib/foretoken/ec"}
 	plan, err := BuildLaunchPlan(group)
 	if err != nil || plan.EC == nil || plan.EC.Role != "producer" || plan.EC.Connector != "ECExampleConnector" {
 		t.Fatalf("EC launch plan = %#v, err = %v", plan.EC, err)

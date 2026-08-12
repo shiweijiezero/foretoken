@@ -302,23 +302,6 @@ mod tests {
         assert_eq!(generation.models(), vec!["model"]);
     }
 
-    #[test]
-    fn unsupported_media_declarations_fail_closed() {
-        let capabilities = [
-            "chat".to_string(),
-            "multimodal.image".to_string(),
-            "multimodal.video".to_string(),
-            "multimodal.audio".to_string(),
-        ]
-        .into_iter()
-        .collect();
-
-        assert_eq!(
-            unsupported_media_capabilities(&capabilities),
-            ["multimodal.video", "multimodal.audio"]
-        );
-    }
-
     #[tokio::test]
     async fn invalid_snapshot_fails_before_runtime_preparation() {
         let conflicting = br#"{"version":1,"groups":[

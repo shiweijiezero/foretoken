@@ -7,7 +7,6 @@ use axum::http::{Request, StatusCode};
 use bytes::Bytes;
 use foretoken_model_protocol::{
     CumulativeHistogram, CumulativeHistogramBucket, RuntimeMetadataResponse, RuntimeModelIdentity,
-    VLLM_SOURCE_REVISION,
 };
 use futures::stream;
 use http_body_util::BodyExt;
@@ -82,7 +81,6 @@ fn metadata() -> RuntimeMetadataResponse {
         },
         model_dtype: ModelDtype::BFloat16,
         effective_max_model_len: 32_768,
-        vllm_source_revision: VLLM_SOURCE_REVISION.into(),
         vllm_version: "0.0.0".into(),
         ec_transfer: None,
         capabilities: Default::default(),
@@ -383,7 +381,7 @@ async fn metadata_exposes_observed_enginecore_values_without_feature_claims() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response.into_body().collect().await.unwrap().to_bytes(),
-        r#"{"version":1,"model":{"model":"model","revision":"r1"},"model_dtype":"bfloat16","effective_max_model_len":32768,"vllm_source_revision":"5b14019576475224d86044b262e28a04a85d4086","vllm_version":"0.0.0","ec_transfer":null,"capabilities":[]}"#,
+        r#"{"version":1,"model":{"model":"model","revision":"r1"},"model_dtype":"bfloat16","effective_max_model_len":32768,"vllm_version":"0.0.0","ec_transfer":null,"capabilities":[]}"#,
     );
 }
 

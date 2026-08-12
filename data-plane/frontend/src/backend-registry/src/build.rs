@@ -6,14 +6,12 @@
 use foretoken_kv_indexer::{KvEventSourceConfig, KvRouteBinding, KvRuntimeConfig};
 use foretoken_llm_facade::HttpFacade;
 use foretoken_model_protocol::ModelServerRole;
-use foretoken_model_protocol::{
-    KvCacheLocality, KvPlacement, KvStorageTier, RuntimeEcTransferMetadata,
-};
+use foretoken_model_protocol::{KvCacheLocality, KvPlacement, KvStorageTier};
 use foretoken_router::{RouteTarget, RouteTargetId, ScalingTarget, ScalingTargetKind};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::registry::{Component, RouteTable, RuntimeExpectation};
+use crate::registry::{Component, RouteTable};
 use crate::snapshot::{ServingSnapshot, SnapshotError};
 
 pub(crate) fn kv_runtime_config(
@@ -147,11 +145,6 @@ pub(crate) fn build(
                 Component::Aggregate {
                     endpoint: group.endpoint,
                     facade,
-                    expected: RuntimeExpectation {
-                        model: group.model.clone(),
-                        revision: group.revision.clone(),
-                        ec_transfer: None,
-                    },
                 },
             )
             .is_some()
@@ -225,11 +218,6 @@ pub(crate) fn build(
         }) {
             return Err(SnapshotError::InvalidPdDomain(component.domain_id));
         }
-        let expected = RuntimeExpectation {
-            model: component.model.clone(),
-            revision: component.revision.clone(),
-            ec_transfer: None,
-        };
         let route = RouteTarget {
             route_target_id: component.route_target_id.clone(),
             target: pool_target(
@@ -252,11 +240,9 @@ pub(crate) fn build(
                 bootstrap: component
                     .prefill_bootstrap_endpoint
                     .expect("validated prefill bootstrap endpoint"),
-                expected,
             },
             ModelServerRole::Decode => Component::Decode {
                 endpoint: component.endpoint,
-                expected,
             },
             ModelServerRole::Aggregate | ModelServerRole::Encoder => {
                 return Err(SnapshotError::InvalidPdDomain(
@@ -366,40 +352,14 @@ pub(crate) fn build(
             || encoder.ec_connector != "ECExampleConnector"
             || prefill.ec_connector != "ECExampleConnector"
             || encoder.ec_connector != prefill.ec_connector
-            || encoder.ec_runtime_fingerprint.is_empty()
-            || prefill.ec_runtime_fingerprint.is_empty()
-            || encoder.ec_runtime_fingerprint != prefill.ec_runtime_fingerprint
             || !decode.ec_profile_name.is_empty()
             || !decode.ec_profile_revision.is_empty()
             || !decode.ec_connector.is_empty()
-            || !decode.ec_runtime_fingerprint.is_empty()
         {
             return Err(SnapshotError::InvalidEpdDomain(domain.domain_id.clone()));
         }
     }
     for component in snapshot.epd_components {
-        let expected = RuntimeExpectation {
-            model: component.model.clone(),
-            revision: component.revision.clone(),
-            ec_transfer: match component.role {
-                ModelServerRole::Encoder => Some(RuntimeEcTransferMetadata {
-                    role: "ec_producer".into(),
-                    profile: component.ec_profile_name.clone(),
-                    connector: component.ec_connector.clone(),
-                    fingerprint: component.ec_runtime_fingerprint.clone(),
-                }),
-                ModelServerRole::Prefill => Some(RuntimeEcTransferMetadata {
-                    role: "ec_consumer".into(),
-                    profile: component.ec_profile_name.clone(),
-                    connector: component.ec_connector.clone(),
-                    fingerprint: component.ec_runtime_fingerprint.clone(),
-                }),
-                ModelServerRole::Decode => None,
-                ModelServerRole::Aggregate => {
-                    unreachable!("aggregate E/P/D component was rejected")
-                }
-            },
-        };
         let route = RouteTarget {
             route_target_id: component.route_target_id.clone(),
             target: epd_target(component.service_uid.clone()),
@@ -415,18 +375,15 @@ pub(crate) fn build(
         let component = match route.role {
             ModelServerRole::Encoder => Component::Encoder {
                 endpoint: component.endpoint,
-                expected,
             },
             ModelServerRole::Prefill => Component::Prefill {
                 endpoint: component.endpoint,
                 bootstrap: component.prefill_bootstrap_endpoint.ok_or_else(|| {
                     SnapshotError::IncompleteEpdComponent(route.route_target_id.clone())
                 })?,
-                expected,
             },
             ModelServerRole::Decode => Component::Decode {
                 endpoint: component.endpoint,
-                expected,
             },
             ModelServerRole::Aggregate => unreachable!("aggregate E/P/D component was rejected"),
         };

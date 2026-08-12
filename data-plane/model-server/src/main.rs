@@ -7,9 +7,7 @@ use std::future::IntoFuture;
 use std::sync::Arc;
 use std::time::Instant;
 
-use foretoken_model_protocol::{
-    RuntimeMetadataResponse, RuntimeModelIdentity, VLLM_SOURCE_REVISION,
-};
+use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity};
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
 use foretoken_model_server::config::RuntimeConfig;
@@ -95,7 +93,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         model_dtype: client.model_dtype(),
         effective_max_model_len: client.max_model_len(),
-        vllm_source_revision: VLLM_SOURCE_REVISION.into(),
         vllm_version: client.vllm_version().into(),
         ec_transfer: config.launch.ec.runtime_metadata(),
         capabilities: if config.launch.ec.enabled() {

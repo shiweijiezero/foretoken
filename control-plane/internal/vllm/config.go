@@ -73,12 +73,11 @@ type LaunchKVPlan struct {
 // LaunchECPlan is the sole typed source for --ec-transfer-config. It exposes no
 // arbitrary connector arguments, module paths, or peer address fields.
 type LaunchECPlan struct {
-	ProfileName        string `json:"profileName"`
-	ProfileRevision    string `json:"profileRevision"`
-	Connector          string `json:"connector"`
-	Role               string `json:"role"`
-	RuntimeFingerprint string `json:"runtimeFingerprint"`
-	SharedStoragePath  string `json:"sharedStoragePath"`
+	ProfileName       string `json:"profileName"`
+	ProfileRevision   string `json:"profileRevision"`
+	Connector         string `json:"connector"`
+	Role              string `json:"role"`
+	SharedStoragePath string `json:"sharedStoragePath"`
 }
 
 type LaunchLifecycle struct {
@@ -214,7 +213,7 @@ func buildECPlan(group inferencev1alpha1.ModelGroupSpec) (*LaunchECPlan, error) 
 		return nil, nil
 	}
 	ec := group.ECRuntime
-	if ec.ProfileName == "" || ec.ProfileRevision == "" || ec.Connector != "ECExampleConnector" || ec.RuntimeFingerprint == "" || ec.SharedStorageClaim == "" || ec.SharedStoragePath == "" {
+	if ec.ProfileName == "" || ec.ProfileRevision == "" || ec.Connector != "ECExampleConnector" || ec.SharedStorageClaim == "" || ec.SharedStoragePath == "" {
 		return nil, fmt.Errorf("vLLM EC runtime config is incomplete")
 	}
 	if group.Role == inferencev1alpha1.ModelRoleEncoder && ec.Role != inferencev1alpha1.ECTransferRoleProducer {
@@ -229,8 +228,7 @@ func buildECPlan(group inferencev1alpha1.ModelGroupSpec) (*LaunchECPlan, error) 
 	return &LaunchECPlan{
 		ProfileName: ec.ProfileName, ProfileRevision: ec.ProfileRevision,
 		Connector: ec.Connector, Role: string(ec.Role),
-		RuntimeFingerprint: ec.RuntimeFingerprint,
-		SharedStoragePath:  ec.SharedStoragePath,
+		SharedStoragePath: ec.SharedStoragePath,
 	}, nil
 }
 

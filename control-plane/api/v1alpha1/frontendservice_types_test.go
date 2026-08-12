@@ -5,7 +5,6 @@ package v1alpha1
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -17,7 +16,12 @@ func TestFrontendServiceReplicasPreservesExplicitZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(encoded), `"replicas":0`) {
-		t.Fatalf("serialized FrontendService omitted explicit zero replicas: %s", encoded)
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	spec := decoded["spec"].(map[string]any)
+	if replicas, exists := spec["replicas"]; !exists || replicas != float64(0) {
+		t.Fatalf("serialized FrontendService replicas = %#v", replicas)
 	}
 }

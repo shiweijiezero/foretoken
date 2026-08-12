@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Build from the repository root. The runtime artifact must contain python3 and
-# vllm.entrypoints.cli.main built from vLLM commit 5b14019576475224d86044b262e28a04a85d4086.
+# vllm.entrypoints.cli.main.
 
 ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye
 ARG VLLM_RUNTIME_IMAGE

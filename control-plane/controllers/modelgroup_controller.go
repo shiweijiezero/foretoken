@@ -220,7 +220,7 @@ func validateGroupProfile(group *inferencev1alpha1.ModelGroup) error {
 }
 
 func completeECRuntime(runtime *inferencev1alpha1.ModelGroupECRuntimeConfig, role inferencev1alpha1.ECTransferRole) bool {
-	return runtime != nil && runtime.ProfileName != "" && runtime.ProfileRevision != "" && runtime.Connector == "ECExampleConnector" && runtime.Role == role && runtime.RuntimeFingerprint != "" && runtime.SharedStorageClaim != "" && runtime.SharedStoragePath != ""
+	return runtime != nil && runtime.ProfileName != "" && runtime.ProfileRevision != "" && runtime.Connector == "ECExampleConnector" && runtime.Role == role && runtime.SharedStorageClaim != "" && runtime.SharedStoragePath != ""
 }
 
 func validateEPDParallelism(parallelism inferencev1alpha1.CompiledParallelism) error {

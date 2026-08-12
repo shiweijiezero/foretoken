@@ -67,7 +67,7 @@ ceiling plus five seconds for vLLM's upstream minimum engine shutdown window.
 
 ## Kubernetes runtime artifact
 
-Build the Dockerfile from the repository root and pass a digest-qualified `VLLM_RUNTIME_IMAGE`. The artifact must contain `python3` and `vllm.entrypoints.cli.main`, and its source revision must match the local vLLM build source used for the Foretoken model-server build.
+Build the Dockerfile from the repository root and pass `VLLM_RUNTIME_IMAGE`. The artifact must contain `python3` and `vllm.entrypoints.cli.main`.
 
 ## Development build
 
@@ -77,7 +77,7 @@ Use a local vLLM Git checkout as the build source:
 FORETOKEN_VLLM_SOURCE=/path/to/vllm make build-model-server
 FORETOKEN_VLLM_SOURCE=/path/to/vllm make verify-model-server
 FORETOKEN_VLLM_SOURCE=/path/to/vllm \
-  VLLM_RUNTIME_IMAGE=<repository>@sha256:<digest> \
+  VLLM_RUNTIME_IMAGE=<repository>:<tag> \
   make image-model-server
 ```
 

@@ -64,9 +64,9 @@ fn renders_owned_arguments_once() {
 }
 
 #[test]
-fn ec_plan_renders_one_owned_config_and_reports_a_role_independent_fingerprint() {
-    let producer = LaunchPlanV1::parse(r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"producer","runtimeFingerprint":"pinned-r1","sharedStoragePath":"/var/lib/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
-    let consumer = LaunchPlanV1::parse(r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"consumer","runtimeFingerprint":"pinned-r1","sharedStoragePath":"/var/lib/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
+fn ec_plan_renders_one_owned_config_for_each_role() {
+    let producer = LaunchPlanV1::parse(r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"producer","sharedStoragePath":"/var/lib/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
+    let consumer = LaunchPlanV1::parse(r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"consumer","sharedStoragePath":"/var/lib/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
 
     let args = producer.render_vllm_args().unwrap();
     let rendered: Vec<_> = args
@@ -74,7 +74,9 @@ fn ec_plan_renders_one_owned_config_and_reports_a_role_independent_fingerprint()
         .filter(|arg| arg.starts_with("--ec-transfer-config="))
         .collect();
     assert_eq!(rendered.len(), 1, "{args:?}");
-    assert!(rendered[0].contains("\"ec_role\":\"ec_producer\""));
+    let config: serde_json::Value =
+        serde_json::from_str(rendered[0].strip_prefix("--ec-transfer-config=").unwrap()).unwrap();
+    assert_eq!(config["ec_role"], "ec_producer");
     assert!(args.iter().any(|arg| arg == "--no-enable-prefix-caching"));
     assert!(
         !consumer
@@ -84,15 +86,15 @@ fn ec_plan_renders_one_owned_config_and_reports_a_role_independent_fingerprint()
             .any(|arg| arg == "--no-enable-prefix-caching")
     );
     assert_eq!(
-        producer.ec.runtime_metadata().unwrap().fingerprint,
-        consumer.ec.runtime_metadata().unwrap().fingerprint
+        producer.ec.runtime_metadata().unwrap().profile,
+        consumer.ec.runtime_metadata().unwrap().profile
     );
     assert_eq!(producer.ec.runtime_metadata().unwrap().role, "ec_producer");
 }
 
 #[test]
 fn rejects_invalid_ec_pairing_and_ec_extra_arg_bypass() {
-    let invalid = r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"profile","profileRevision":"r1","connector":"arbitrary","role":"producer","runtimeFingerprint":"fp","sharedStoragePath":"relative"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#;
+    let invalid = r#"{"version":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"profile","profileRevision":"r1","connector":"arbitrary","role":"producer","sharedStoragePath":"relative"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#;
     assert!(LaunchPlanV1::parse(invalid).is_err());
 
     let mut bypass = plan();

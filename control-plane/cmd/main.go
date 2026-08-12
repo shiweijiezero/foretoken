@@ -46,7 +46,6 @@ func main() {
 	var vllmECProfileName string
 	var vllmECProfileRevision string
 	var vllmECConnector string
-	var vllmECRuntimeFingerprint string
 	var vllmECSharedStorageClaim string
 	var vllmECSharedStoragePath string
 	var vllmPDProfileName string
@@ -82,7 +81,6 @@ func main() {
 	flag.StringVar(&vllmECProfileName, "vllm-ec-profile-name", "", "Platform-owned EC profile name; empty disables E/P/D.")
 	flag.StringVar(&vllmECProfileRevision, "vllm-ec-profile-revision", "", "Platform-owned EC profile revision.")
 	flag.StringVar(&vllmECConnector, "vllm-ec-connector", "", "Fixed pinned-vLLM EC connector identity.")
-	flag.StringVar(&vllmECRuntimeFingerprint, "vllm-ec-runtime-fingerprint", "", "Verified EC connector runtime fingerprint.")
 	flag.StringVar(&vllmECSharedStorageClaim, "vllm-ec-shared-storage-claim", "", "ReadWriteMany PVC used by the pinned EC connector.")
 	flag.StringVar(&vllmECSharedStoragePath, "vllm-ec-shared-storage-path", "/var/lib/foretoken/ec", "In-container shared EC storage path.")
 	flag.StringVar(&vllmPDProfileName, "vllm-pd-profile-name", "", "Opaque platform-owned Mooncake P/D profile name; empty disables P/D.")
@@ -109,7 +107,7 @@ func main() {
 	if vllmECProfileName != "" {
 		ec = &resolver.ECProfile{
 			Name: vllmECProfileName, Revision: vllmECProfileRevision,
-			Connector: vllmECConnector, RuntimeFingerprint: vllmECRuntimeFingerprint,
+			Connector:          vllmECConnector,
 			SharedStorageClaim: vllmECSharedStorageClaim,
 			SharedStoragePath:  vllmECSharedStoragePath,
 		}

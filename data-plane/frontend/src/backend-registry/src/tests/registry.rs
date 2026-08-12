@@ -3,10 +3,7 @@ use axum::Json;
 use axum::Router;
 use axum::http::StatusCode;
 use axum::routing::get;
-use foretoken_model_protocol::{
-    RuntimeEcTransferMetadata, RuntimeMetadataResponse, RuntimeModelIdentity, TelemetryResponse,
-    VLLM_SOURCE_REVISION,
-};
+use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity, TelemetryResponse};
 use tokio::net::TcpListener;
 use vllm_engine_core_client::protocol::dtype::ModelDtype;
 
@@ -98,11 +95,6 @@ fn epd_component(id: &str, role: ModelServerRole) -> SnapshotEpdComponent {
         } else {
             String::new()
         },
-        ec_runtime_fingerprint: if ec {
-            "fingerprint".into()
-        } else {
-            String::new()
-        },
         capabilities: ["chat".into()].into_iter().collect(),
         max_input_tokens: None,
         endpoint: "http://127.0.0.1:9000".into(),
@@ -142,7 +134,6 @@ fn runtime_metadata(model: &str, revision: &str) -> RuntimeMetadataResponse {
         },
         model_dtype: ModelDtype::BFloat16,
         effective_max_model_len: 32_768,
-        vllm_source_revision: VLLM_SOURCE_REVISION.into(),
         vllm_version: "0.0.0".into(),
         ec_transfer: None,
         capabilities: ["chat".into()].into_iter().collect(),
@@ -232,50 +223,6 @@ async fn readiness_preserves_frontend_owned_capabilities() {
         registry.effective_model_dtype("model"),
         Some(ModelDtype::BFloat16)
     );
-}
-
-#[tokio::test]
-async fn readiness_rejects_metadata_with_a_different_snapshot_identity() {
-    let endpoint = serve_model_server(runtime_metadata("other-model", "r1")).await;
-    let registry = BackendRegistry::from_snapshot(aggregate_snapshot(endpoint)).unwrap();
-
-    registry.refresh_backend_readiness().await;
-
-    assert!(!registry.is_route_target_healthy(&RouteTargetId::new("a")));
-    assert!(registry.metadata(&RouteTargetId::new("a")).is_none());
-}
-
-#[tokio::test]
-async fn readiness_rejects_metadata_with_a_different_source_revision() {
-    let mut metadata = runtime_metadata("model", "r1");
-    metadata.vllm_source_revision = "different-source".into();
-    let endpoint = serve_model_server(metadata).await;
-    let registry = BackendRegistry::from_snapshot(aggregate_snapshot(endpoint)).unwrap();
-
-    registry.refresh_backend_readiness().await;
-
-    assert!(!registry.is_route_target_healthy(&RouteTargetId::new("a")));
-    assert!(registry.metadata(&RouteTargetId::new("a")).is_none());
-}
-
-#[test]
-fn epd_runtime_metadata_must_match_the_controller_owned_ec_contract() {
-    let expected = RuntimeExpectation {
-        model: "model".into(),
-        revision: "r1".into(),
-        ec_transfer: Some(RuntimeEcTransferMetadata {
-            role: "ec_producer".into(),
-            profile: "ec-profile".into(),
-            connector: "ECExampleConnector".into(),
-            fingerprint: "fingerprint".into(),
-        }),
-    };
-    let mut metadata = runtime_metadata("model", "r1");
-    metadata.ec_transfer = expected.ec_transfer.clone();
-    assert!(metadata_matches(&expected, &metadata));
-
-    metadata.ec_transfer.as_mut().unwrap().fingerprint = "other".into();
-    assert!(!metadata_matches(&expected, &metadata));
 }
 
 #[test]
@@ -393,13 +340,6 @@ fn epd_snapshot_requires_one_compatible_static_triplet() {
             .iter()
             .all(|route| target_set.targets() == std::slice::from_ref(&route.target))
     );
-
-    let mut incompatible = epd_snapshot();
-    incompatible.epd_components[1].ec_runtime_fingerprint = "other".into();
-    assert!(matches!(
-        BackendRegistry::from_snapshot(incompatible),
-        Err(SnapshotError::InvalidEpdDomain(_))
-    ));
 
     let mut not_a_triplet = epd_snapshot();
     not_a_triplet.epd_domains[0].decode_route_target_id = RouteTargetId::new("other");

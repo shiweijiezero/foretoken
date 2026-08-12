@@ -84,7 +84,7 @@ async fn completion_responses_share_typed_metadata_and_separate_the_terminal_chu
     use vllm_llm::FinishReason;
 
     let response = text_stream(
-        generated_text("cmpl-contract", "served-model", FinishReason::Length),
+        generated_text("cmpl-test", "served-model", FinishReason::Length),
         std::time::Duration::from_secs(1),
     );
     let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -100,7 +100,7 @@ async fn completion_responses_share_typed_metadata_and_separate_the_terminal_chu
 
     assert_eq!(chunks.len(), 2);
     for chunk in &chunks {
-        assert_eq!(chunk["id"], "cmpl-contract");
+        assert_eq!(chunk["id"], "cmpl-test");
         assert_eq!(chunk["model"], "served-model");
         assert_eq!(chunk["object"], "text_completion");
         assert!(chunk["created"].as_u64().unwrap() > 0);

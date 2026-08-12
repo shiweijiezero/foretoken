@@ -135,12 +135,6 @@ spec:
                     - producer
                     - consumer
                     type: string
-                  runtimeFingerprint:
-                    description: RuntimeFingerprint pins the verified connector runtime
-                      implementation.
-                    maxLength: 256
-                    minLength: 1
-                    type: string
                   sharedStorageClaim:
                     description: |-
                       SharedStorageClaim is the platform-owned ReadWriteMany PVC used by the
@@ -159,7 +153,6 @@ spec:
                 - profileName
                 - profileRevision
                 - role
-                - runtimeFingerprint
                 - sharedStorageClaim
                 - sharedStoragePath
                 type: object
