@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 //! Defines the controller-projected component/domain routing snapshot contract.
-use foretoken_router::{BackendId, BackendRole};
+use foretoken_model_protocol::ModelServerRole;
+use foretoken_router::{RouteTargetId, RouteTargetSet, ScalingTarget, ScalingTargetKind};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
@@ -10,6 +11,8 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServingSnapshot {
     pub version: u64,
+    #[serde(default)]
+    pub models: Vec<SnapshotModel>,
     pub groups: Vec<SnapshotGroup>,
     #[serde(default)]
     pub pd_components: Vec<SnapshotPdComponent>,
@@ -21,9 +24,35 @@ pub struct ServingSnapshot {
     pub epd_domains: Vec<SnapshotEpdDomain>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotModel {
+    pub service_uid: String,
+    pub model: String,
+    pub revision: String,
+    pub tokenizer: String,
+    pub tokenizer_revision: String,
+    #[serde(default)]
+    pub capabilities: BTreeSet<String>,
+    #[serde(default)]
+    pub max_input_tokens: Option<usize>,
+    pub targets: Vec<ScalingTarget>,
+}
+
+impl SnapshotModel {
+    pub fn target_set(&self) -> RouteTargetSet {
+        RouteTargetSet::new(self.targets.clone())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotEpdComponent {
-    pub backend_id: BackendId,
-    pub role: BackendRole,
+    #[serde(default)]
+    pub service_uid: String,
+    #[serde(default)]
+    pub pool_uid: String,
+    #[serde(default)]
+    pub pool_name: String,
+    pub route_target_id: RouteTargetId,
+    pub role: ModelServerRole,
     pub domain_id: String,
     pub model: String,
     pub revision: String,
@@ -54,18 +83,25 @@ pub struct SnapshotEpdComponent {
     pub prefill_bootstrap_endpoint: Option<String>,
     #[serde(default)]
     pub kv_scope_id: String,
+    pub data_parallel_size: u32,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotEpdDomain {
     pub domain_id: String,
-    pub encoder_backend_id: BackendId,
-    pub prefill_backend_id: BackendId,
-    pub decode_backend_id: BackendId,
+    pub encoder_route_target_id: RouteTargetId,
+    pub prefill_route_target_id: RouteTargetId,
+    pub decode_route_target_id: RouteTargetId,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotPdComponent {
-    pub backend_id: BackendId,
-    pub role: BackendRole,
+    #[serde(default)]
+    pub service_uid: String,
+    #[serde(default)]
+    pub pool_uid: String,
+    #[serde(default)]
+    pub pool_name: String,
+    pub route_target_id: RouteTargetId,
+    pub role: ModelServerRole,
     pub domain_id: String,
     pub model: String,
     pub revision: String,
@@ -84,16 +120,23 @@ pub struct SnapshotPdComponent {
     pub prefill_bootstrap_endpoint: Option<String>,
     #[serde(default)]
     pub kv_scope_id: String,
+    pub data_parallel_size: u32,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotPdDomain {
     pub domain_id: String,
-    pub prefill_backend_ids: Vec<BackendId>,
-    pub decode_backend_ids: Vec<BackendId>,
+    pub prefill_route_target_ids: Vec<RouteTargetId>,
+    pub decode_route_target_ids: Vec<RouteTargetId>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotGroup {
-    pub backend_id: BackendId,
+    #[serde(default)]
+    pub service_uid: String,
+    #[serde(default)]
+    pub pool_uid: String,
+    #[serde(default)]
+    pub pool_name: String,
+    pub route_target_id: RouteTargetId,
     pub model: String,
     pub revision: String,
     pub tokenizer: String,
@@ -105,6 +148,7 @@ pub struct SnapshotGroup {
     pub endpoint: String,
     #[serde(default)]
     pub kv_scope_id: String,
+    pub data_parallel_size: u32,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelIdentity {
@@ -114,12 +158,91 @@ pub struct ModelIdentity {
     pub capabilities: BTreeSet<String>,
 }
 impl ServingSnapshot {
+    pub fn logical_target_sets(
+        &self,
+    ) -> Result<BTreeMap<String, Vec<RouteTargetSet>>, SnapshotError> {
+        let mut targets = BTreeMap::<String, Vec<RouteTargetSet>>::new();
+        for model in &self.models {
+            if model.service_uid.is_empty()
+                || model.model.is_empty()
+                || model.targets.is_empty()
+                || model.targets.iter().any(|target| {
+                    target.service_uid != model.service_uid
+                        || target.name.is_empty()
+                        || target.uid.is_empty()
+                })
+            {
+                return Err(SnapshotError::IncompleteScalingModel(model.model.clone()));
+            }
+            targets
+                .entry(model.model.clone())
+                .or_default()
+                .push(model.target_set());
+        }
+        if targets.is_empty() {
+            for group in &self.groups {
+                targets
+                    .entry(group.model.clone())
+                    .or_default()
+                    .push(RouteTargetSet::new(vec![ScalingTarget {
+                        service_uid: group.service_uid.clone(),
+                        name: group.pool_name.clone(),
+                        uid: group.pool_uid.clone(),
+                        kind: ScalingTargetKind::Pool,
+                    }]));
+            }
+            let mut pd_targets = BTreeMap::<(String, String), Vec<ScalingTarget>>::new();
+            for component in &self.pd_components {
+                pd_targets
+                    .entry((component.model.clone(), component.service_uid.clone()))
+                    .or_default()
+                    .push(ScalingTarget {
+                        service_uid: component.service_uid.clone(),
+                        name: component.pool_name.clone(),
+                        uid: component.pool_uid.clone(),
+                        kind: ScalingTargetKind::Pool,
+                    });
+            }
+            for ((model, _), values) in pd_targets {
+                targets
+                    .entry(model)
+                    .or_default()
+                    .push(RouteTargetSet::new(values));
+            }
+            for component in &self.epd_components {
+                targets
+                    .entry(component.model.clone())
+                    .or_default()
+                    .push(RouteTargetSet::new(vec![ScalingTarget {
+                        service_uid: component.service_uid.clone(),
+                        name: "epd".into(),
+                        uid: component.service_uid.clone(),
+                        kind: ScalingTargetKind::EPDDomain,
+                    }]));
+            }
+        }
+        for values in targets.values_mut() {
+            values.sort_by(|left, right| left.targets().cmp(right.targets()));
+            values.dedup();
+        }
+        Ok(targets)
+    }
+
     pub fn model_identities(&self) -> Result<BTreeMap<String, ModelIdentity>, SnapshotError> {
         let mut identities = BTreeMap::new();
         for (model, revision, tokenizer, tokenizer_revision, capabilities) in self
-            .groups
+            .models
             .iter()
-            .map(|g| {
+            .map(|model| {
+                (
+                    &model.model,
+                    &model.revision,
+                    &model.tokenizer,
+                    &model.tokenizer_revision,
+                    &model.capabilities,
+                )
+            })
+            .chain(self.groups.iter().map(|g| {
                 (
                     &g.model,
                     &g.revision,
@@ -127,7 +250,7 @@ impl ServingSnapshot {
                     &g.tokenizer_revision,
                     &g.capabilities,
                 )
-            })
+            }))
             .chain(self.pd_components.iter().map(|c| {
                 (
                     &c.model,
@@ -187,14 +310,16 @@ pub enum SnapshotError {
     EmptyGroups,
     #[error("routing snapshot has an incomplete model or tokenizer identity")]
     IncompleteModelIdentity,
+    #[error("routing snapshot has an incomplete logical scaling model {0:?}")]
+    IncompleteScalingModel(String),
     #[error("routing snapshot has incomplete group {0:?}")]
-    IncompleteGroup(BackendId),
+    IncompleteGroup(RouteTargetId),
     #[error("routing snapshot repeats backend {0:?}")]
-    DuplicateBackend(BackendId),
+    DuplicateRouteTarget(RouteTargetId),
     #[error("routing snapshot has incomplete P/D component {0:?}")]
-    IncompletePdComponent(BackendId),
+    IncompletePdComponent(RouteTargetId),
     #[error("routing snapshot P/D component {0:?} must use MooncakeConnector over rdma")]
-    UnsupportedPdTransport(BackendId),
+    UnsupportedPdTransport(RouteTargetId),
     #[error("routing snapshot domain {0:?} is incomplete or crosses a ModelService boundary")]
     InvalidPdDomain(String),
     #[error("routing snapshot model {0:?} cannot mix aggregate and P/D routes")]
@@ -206,9 +331,9 @@ pub enum SnapshotError {
     #[error("routing snapshot component {0:?} has conflicting KV index endpoint or scope")]
     ConflictingKvEventSource(String),
     #[error("routing snapshot has incomplete E/P/D component {0:?}")]
-    IncompleteEpdComponent(BackendId),
+    IncompleteEpdComponent(RouteTargetId),
     #[error("routing snapshot E/P/D component {0:?} has an invalid EC or KV transfer contract")]
-    InvalidEpdTransferContract(BackendId),
+    InvalidEpdTransferContract(RouteTargetId),
     #[error(
         "routing snapshot E/P/D domain {0:?} is incomplete, inconsistent, or not a static triplet"
     )]

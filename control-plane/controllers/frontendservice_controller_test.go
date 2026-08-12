@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Tests FrontendService convergence, ownership protection, and route conditions.
 
 package controllers
@@ -60,7 +60,16 @@ func TestFrontendServiceReconcileConvergesDeploymentDrift(t *testing.T) {
 		t.Fatalf("frontend Pod security context = %#v", podSpec.SecurityContext)
 	}
 	container := podSpec.Containers[0]
-	if len(container.VolumeMounts) != 3 || container.VolumeMounts[1].MountPath != "/var/cache/foretoken" || container.VolumeMounts[2].MountPath != "/etc/foretoken/kv-indexer" || len(container.Env) != 6 || container.Env[2].Name != "HF_HOME" || container.Env[3].Value != "300" || container.Env[4].Name != "FORETOKEN_KV_INDEX_KEY_PATH" || container.Env[5].Name != "FORETOKEN_ROUTER_ALGORITHM" || container.Env[5].Value != "kv_aware" {
+	env := make(map[string]string, len(container.Env))
+	for _, variable := range container.Env {
+		env[variable.Name] = variable.Value
+	}
+	mounts := make(map[string]bool, len(container.VolumeMounts))
+	for _, mount := range container.VolumeMounts {
+		mounts[mount.MountPath] = true
+	}
+	_, hasKVKey := env["FORETOKEN_KV_INDEX_KEY_PATH"]
+	if !mounts["/var/cache/foretoken"] || !mounts["/etc/foretoken/kv-indexer"] || env["HF_HOME"] != "/var/cache/foretoken/huggingface" || env["FORETOKEN_STREAM_IDLE_SECONDS"] != "300" || !hasKVKey || env["FORETOKEN_ROUTER_FILTER"] != "allow_all" || env["FORETOKEN_ROUTER_SCORER"] != "kv_least_loaded" || env["FORETOKEN_ROUTER_PICKER"] != "round_robin" {
 		t.Fatalf("frontend tokenizer cache contract = env %#v mounts %#v", container.Env, container.VolumeMounts)
 	}
 
@@ -79,12 +88,57 @@ func TestFrontendServiceReconcileConvergesDeploymentDrift(t *testing.T) {
 	if len(backendRefs) != 1 || string(backendRefs[0].Name) != frontend.Name {
 		t.Fatalf("HTTPRoute backend = %#v", backendRefs)
 	}
+	matches := route.Spec.Rules[0].Matches
+	if len(matches) != 3 || *matches[0].Path.Value != "/v1" || *matches[1].Path.Value != "/tokenize" || *matches[2].Path.Value != "/detokenize" {
+		t.Fatalf("HTTPRoute public paths = %#v", matches)
+	}
 	current := new(inferencev1alpha1.FrontendService)
 	if err := kubeClient.Get(ctx, request.NamespacedName, current); err != nil {
 		t.Fatal(err)
 	}
 	if ready := meta.FindStatusCondition(current.Status.Conditions, conditionReady); ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != "WorkloadUnavailable" {
 		t.Fatalf("Ready condition = %#v", ready)
+	}
+}
+
+func TestServingSnapshotPublishesLogicalScalingTargetAtZeroGroups(t *testing.T) {
+	ctx := context.Background()
+	frontend := testFrontendService("scale-zero")
+	service := testModelService("model", 1)
+	service.Spec.Autoscaling = &inferencev1alpha1.ModelAutoscalingConfig{
+		Algorithm: inferencev1alpha1.AutoscalingAlgorithmQueue,
+		MinGroups: ptr(int32(0)),
+		MaxGroups: ptr(int32(2)),
+	}
+	service.Status.ObservedGeneration = service.Generation
+	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionIntentCompiled, Status: metav1.ConditionTrue, ObservedGeneration: service.Generation})
+	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionPoolsMaterialized, Status: metav1.ConditionTrue, ObservedGeneration: service.Generation})
+	pool := readyPool(service, "default", inferencev1alpha1.ModelRoleAggregate, 0, "r1")
+	pool.Spec.Template.Model = service.Spec.Model
+	pool.Spec.Template.ModelRevision = "r1"
+	pool.Spec.Template.Tokenizer = service.Spec.Model
+	pool.Spec.Template.TokenizerRevision = "r1"
+	pool.Spec.Template.Features = inferencev1alpha1.ModelFeatures{}
+	reconciler, kubeClient := testFrontendReconciler(t, frontend, service, pool)
+
+	installed, err := reconciler.reconcileServingSnapshot(ctx, frontend)
+	if err != nil || !installed {
+		t.Fatalf("reconcileServingSnapshot() = %v, %v", installed, err)
+	}
+	config := new(corev1.ConfigMap)
+	if err := kubeClient.Get(ctx, client.ObjectKey{Namespace: frontend.Namespace, Name: frontendServingConfigMapName(frontend)}, config); err != nil {
+		t.Fatal(err)
+	}
+	var snapshot servingSnapshot
+	if err := json.Unmarshal([]byte(config.Data[servingSnapshotKey]), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Groups) != 0 || len(snapshot.Models) != 1 || len(snapshot.Models[0].Targets) != 1 {
+		t.Fatalf("logical zero snapshot = %#v", snapshot)
+	}
+	target := snapshot.Models[0].Targets[0]
+	if target.Kind != "Pool" || target.UID != string(pool.UID) || target.ServiceUID != string(service.UID) {
+		t.Fatalf("logical scaling target = %#v", target)
 	}
 }
 
@@ -126,16 +180,23 @@ func TestFrontendServiceReplicasDefaultsAndPreservesZero(t *testing.T) {
 	}
 }
 
-func TestFrontendServiceProjectsSelectedRouterAlgorithm(t *testing.T) {
+func TestFrontendServiceProjectsSelectedRouterPipeline(t *testing.T) {
 	frontend := testFrontendService("chat")
-	frontend.Spec.RouterAlgorithm = inferencev1alpha1.RouterAlgorithmLeastLoaded
+	frontend.Spec.RouterPipeline = inferencev1alpha1.RouterPipeline{
+		Filter: inferencev1alpha1.RouterFilterAllowAll,
+		Scorer: inferencev1alpha1.RouterScorerUniform,
+		Picker: inferencev1alpha1.RouterPickerMax,
+	}
 	deployment, _, _, err := frontendDesiredResources(frontend, FrontendRuntimeProfile{Image: "registry.example/frontend:v1", Port: 8080, Gateway: GatewayParent{Name: "public"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	env := deployment.Spec.Template.Spec.Containers[0].Env
-	if got := env[len(env)-1]; got.Name != "FORETOKEN_ROUTER_ALGORITHM" || got.Value != "least_loaded" {
-		t.Fatalf("router algorithm env = %#v", got)
+	env := map[string]string{}
+	for _, variable := range deployment.Spec.Template.Spec.Containers[0].Env {
+		env[variable.Name] = variable.Value
+	}
+	if env["FORETOKEN_ROUTER_FILTER"] != "allow_all" || env["FORETOKEN_ROUTER_SCORER"] != "uniform" || env["FORETOKEN_ROUTER_PICKER"] != "max" {
+		t.Fatalf("router pipeline stage env = %#v", env)
 	}
 }
 
@@ -165,7 +226,7 @@ func TestFrontendServicePublishesVersionedServingSnapshot(t *testing.T) {
 	if err := json.Unmarshal([]byte(configMap.Data[servingSnapshotKey]), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Version != 1 || len(snapshot.Groups) != 2 || snapshot.Groups[0].BackendID != string(first.UID) || snapshot.Groups[1].BackendID != string(second.UID) || snapshot.Groups[0].Endpoint != "http://group-a.default.svc:9000" || snapshot.Groups[1].Endpoint != "http://group-b.default.svc:9000" || !slices.Equal(snapshot.Groups[0].Capabilities, []string{"chat", "text"}) || !slices.Equal(snapshot.Groups[1].Capabilities, []string{"chat", "text"}) || snapshot.Groups[0].MaxInputTokens == nil || *snapshot.Groups[0].MaxInputTokens != 16384 || snapshot.Groups[1].MaxInputTokens == nil || *snapshot.Groups[1].MaxInputTokens != 8192 {
+	if snapshot.Version != 1 || len(snapshot.Groups) != 2 || snapshot.Groups[0].RouteTargetID != string(first.UID) || snapshot.Groups[1].RouteTargetID != string(second.UID) || snapshot.Groups[0].Endpoint != "http://group-a.default.svc:9000" || snapshot.Groups[1].Endpoint != "http://group-b.default.svc:9000" || !slices.Equal(snapshot.Groups[0].Capabilities, []string{"chat", "text"}) || !slices.Equal(snapshot.Groups[1].Capabilities, []string{"chat", "text"}) || snapshot.Groups[0].MaxInputTokens == nil || *snapshot.Groups[0].MaxInputTokens != 16384 || snapshot.Groups[1].MaxInputTokens == nil || *snapshot.Groups[1].MaxInputTokens != 8192 {
 		t.Fatalf("routing snapshot = %#v", snapshot)
 	}
 
@@ -224,7 +285,7 @@ func TestServingSnapshotProjectsTypedFeatures(t *testing.T) {
 	ctx := context.Background()
 	frontend := testFrontendService("chat")
 	service, pool, group := testRoutableModelGroup("model", "group")
-	group.Spec.Features = inferencev1alpha1.ModelFeatures{Tools: true, Reasoning: true, StructuredOutputs: []inferencev1alpha1.StructuredOutputFormat{inferencev1alpha1.StructuredOutputFormatJSONSchema, inferencev1alpha1.StructuredOutputFormatJSONObject}, Multimodal: []inferencev1alpha1.MultimodalModality{inferencev1alpha1.MultimodalModalityVideo, inferencev1alpha1.MultimodalModalityImage}}
+	group.Spec.Features = inferencev1alpha1.ModelFeatures{Tools: true, Reasoning: true, StructuredOutputs: []inferencev1alpha1.StructuredOutputFormat{inferencev1alpha1.StructuredOutputFormatJSONSchema, inferencev1alpha1.StructuredOutputFormatJSONObject}, Multimodal: []inferencev1alpha1.MultimodalModality{inferencev1alpha1.MultimodalModalityImage}}
 	setModelGroupReady(group)
 	reconciler, kubeClient := testFrontendReconciler(t, frontend, service, pool, group)
 	if installed, err := reconciler.reconcileServingSnapshot(ctx, frontend); err != nil || !installed {
@@ -238,7 +299,7 @@ func TestServingSnapshotProjectsTypedFeatures(t *testing.T) {
 	if err := json.Unmarshal([]byte(configMap.Data[servingSnapshotKey]), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"chat", "text", "multimodal", "multimodal.image", "multimodal.video", "reasoning", "structured_output.json_object", "structured_output.json_schema", "tool_calling"}
+	want := []string{"chat", "text", "multimodal", "multimodal.image", "reasoning", "structured_output.json_object", "structured_output.json_schema", "tool_calling"}
 	if len(snapshot.Groups) != 1 || !slices.Equal(snapshot.Groups[0].Capabilities, want) {
 		t.Fatalf("routing capabilities = %#v, want %#v", snapshot.Groups, want)
 	}
@@ -252,14 +313,14 @@ func TestRoutingCapabilitiesDefaultToChatAndText(t *testing.T) {
 
 func TestServingSnapshotEqualityIncludesMaxInputTokens(t *testing.T) {
 	limit := int32(16384)
-	group := servingSnapshotGroup{BackendID: "group", MaxInputTokens: &limit}
+	group := servingSnapshotGroup{RouteTargetID: "group", MaxInputTokens: &limit}
 	changedGroup := group
 	changedGroup.MaxInputTokens = ptr(int32(8192))
 	if equalRoutingGroup(group, changedGroup) {
 		t.Fatal("aggregate routing equality ignored maxInputTokens")
 	}
 
-	component := servingSnapshotPDComponent{BackendID: "component", MaxInputTokens: &limit}
+	component := servingSnapshotPDComponent{RouteTargetID: "component", MaxInputTokens: &limit}
 	changedComponent := component
 	changedComponent.MaxInputTokens = ptr(int32(8192))
 	if equalRoutingPDComponent(component, changedComponent) {
@@ -282,7 +343,7 @@ func TestFrontendRoutingUsesOnlyThePoolActiveRevision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(groups) != 1 || groups[0].BackendID != string(active.UID) {
+	if len(groups) != 1 || groups[0].RouteTargetID != string(active.UID) {
 		t.Fatalf("projected groups = %#v, want only active revision", groups)
 	}
 }
@@ -307,11 +368,11 @@ func TestFrontendServicePublishesPDLinksWithoutAggregateGroups(t *testing.T) {
 	if snapshot.Version != 1 || len(snapshot.Groups) != 0 || len(snapshot.PDComponents) != 2 || len(snapshot.PDDomains) != 1 {
 		t.Fatalf("routing snapshot = %#v", snapshot)
 	}
-	if snapshot.PDDomains[0].DomainID != "pd:pd-model-uid" || len(snapshot.PDDomains[0].PrefillBackendIDs) != 1 || len(snapshot.PDDomains[0].DecodeBackendIDs) != 1 {
+	if snapshot.PDDomains[0].DomainID != "pd:pd-model-uid" || len(snapshot.PDDomains[0].PrefillRouteTargetIDs) != 1 || len(snapshot.PDDomains[0].DecodeRouteTargetIDs) != 1 {
 		t.Fatalf("P/D domain = %#v", snapshot.PDDomains[0])
 	}
 	component := snapshot.PDComponents[0]
-	if component.BackendID != "decode-group-uid" && component.BackendID != "prefill-group-uid" {
+	if component.RouteTargetID != "decode-group-uid" && component.RouteTargetID != "prefill-group-uid" {
 		t.Fatalf("P/D components = %#v", snapshot.PDComponents)
 	}
 	if component.MaxInputTokens == nil || *component.MaxInputTokens != 16384 {
@@ -353,7 +414,7 @@ func TestFrontendServicePublishesAtomicEPDTriplets(t *testing.T) {
 		t.Fatalf("routing snapshot = %#v", snapshot)
 	}
 	domain := snapshot.EPDDomains[0]
-	if domain.EncoderBackendID != "encoder-group-uid" || domain.PrefillBackendID != "prefill-group-uid" || domain.DecodeBackendID != "decode-group-uid" {
+	if domain.EncoderRouteTargetID != "encoder-group-uid" || domain.PrefillRouteTargetID != "prefill-group-uid" || domain.DecodeRouteTargetID != "decode-group-uid" {
 		t.Fatalf("EPD domain = %#v", domain)
 	}
 }
@@ -425,7 +486,7 @@ func TestFrontendServiceRoutingProjectionPreservesAggregateRoutesWhenPDServiceIs
 	if err := json.Unmarshal([]byte(configMap.Data[servingSnapshotKey]), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Groups) != 1 || snapshot.Groups[0].BackendID != string(aggregate.UID) || len(snapshot.PDComponents) != 0 {
+	if len(snapshot.Groups) != 1 || snapshot.Groups[0].RouteTargetID != string(aggregate.UID) || len(snapshot.PDComponents) != 0 {
 		t.Fatalf("isolated routing snapshot = %#v", snapshot)
 	}
 }
@@ -481,7 +542,7 @@ func TestFrontendServiceRoutingProjectionSkipsNonReadyAndInvalidOwnership(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(groups) != 1 || groups[0].BackendID != string(group.UID) {
+	if len(groups) != 1 || groups[0].RouteTargetID != string(group.UID) {
 		t.Fatalf("projected groups = %#v, want only the valid ready ownership chain", groups)
 	}
 }
@@ -643,7 +704,7 @@ func testRoutablePDGroups() (*inferencev1alpha1.ModelService, *inferencev1alpha1
 	service.Spec.ModelPools = []inferencev1alpha1.ModelPoolTemplate{{Name: "prefill", Role: inferencev1alpha1.ModelRolePrefill}, {Name: "decode", Role: inferencev1alpha1.ModelRoleDecode}}
 	prefillPool.Spec.Template.Role = inferencev1alpha1.ModelRolePrefill
 	prefill.Spec.Role = inferencev1alpha1.ModelRolePrefill
-	prefill.Spec.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{ProfileName: "h100-rdma", ProfileRevision: "profile-r1", Connector: "MooncakeConnector", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30}
+	prefill.Spec.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{ProfileName: "h100-rdma", ProfileRevision: "profile-r1", Connector: "MooncakeConnector", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30, RDMADeviceName: "mlx5_1", RDMAResourceName: "rdma/hca_shared_devices_a", RDMAResourceCount: 1}
 	prefill.Spec.MaxInputTokens = ptr(int32(16384))
 	setModelGroupReady(prefill)
 

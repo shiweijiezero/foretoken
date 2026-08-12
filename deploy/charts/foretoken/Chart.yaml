@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Declares the Helm chart that deploys the Foretoken control plane.
 
 apiVersion: v2

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Defines a generated Kubernetes API manifest for Foretoken custom resources.
 ---
 apiVersion: apiextensions.k8s.io/v1
@@ -134,13 +134,29 @@ spec:
                 - message: resources.requests.memory must not exceed resources.limits.memory
                   rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                     <= 0'
-              routerAlgorithm:
-                default: kv_aware
-                enum:
-                - kv_aware
-                - least_loaded
-                - round_robin
-                type: string
+              routerPipeline:
+                description: RouterPipeline selects each independently composable
+                  routing algorithm stage.
+                properties:
+                  filter:
+                    default: allow_all
+                    enum:
+                    - allow_all
+                    type: string
+                  picker:
+                    default: round_robin
+                    enum:
+                    - max
+                    - round_robin
+                    type: string
+                  scorer:
+                    default: kv_least_loaded
+                    enum:
+                    - uniform
+                    - least_loaded
+                    - kv_least_loaded
+                    type: string
+                type: object
               timeouts:
                 description: FrontendTimeouts defines client-facing request budgets.
                 properties:

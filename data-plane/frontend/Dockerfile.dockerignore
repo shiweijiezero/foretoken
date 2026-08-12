@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # This Dockerfile-specific ignore file applies when building from the repository
 # root with `docker build -f data-plane/frontend/Dockerfile .`.
 **
@@ -9,12 +9,12 @@
 !data-plane/frontend/**
 !data-plane/model-protocol/
 !data-plane/model-protocol/**
-!reference/
-!reference/upstream/
-!reference/upstream/vllm/
-!reference/upstream/vllm/rust/
-!reference/upstream/vllm/rust/**
+!third_party/
+!third_party/vllm-rust/
+!third_party/vllm-rust/source/
+!third_party/vllm-rust/source/rust/
+!third_party/vllm-rust/source/rust/**
 
 # Never upload local build artifacts.
 data-plane/frontend/target/
-reference/upstream/vllm/rust/target/
+third_party/vllm-rust/source/rust/target/

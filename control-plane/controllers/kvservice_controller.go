@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Reconciles KVService into its Master infrastructure and controller-owned KVPools.
 
 package controllers

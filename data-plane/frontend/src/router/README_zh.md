@@ -1,120 +1,39 @@
-<!--
-SPDX-License-Identifier: Apache-2.0
-SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
--->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# Foretoken Router
+# Router
 
-[English](README.md)
+Router 为每个执行阶段选择一个可路由的 ModelGroup 和精确 DP rank。
 
-`foretoken-router` 为每个请求选择后端执行计划。核心 Router 负责检查正确性和容量。路由算法只负责过滤或排序合法计划。
+Filter–Scorer–Picker 是候选列表级接口：
 
-## 路由流程
+- **Filter** 接收兼容且健康的候选快照。它可以移除候选，但不能新增或修改候选。
+- **Scorer** 为每个保留候选返回一个 `ScoredCandidate`。内置 KV 评分比较 prompt 命中长度、存储层级、locality 和负载。
+- **Picker** 从评分列表中原样返回一个候选。Router 随后输出 `RouteDecision`，其中包含 ModelGroup RouteTarget、执行角色、模型 revision 和精确 DP rank。
 
-`PolicyRouter::select` 会：
+`data_parallel_size: 1` 的 RouteTarget 只产生 rank `0` 候选，最终决策仍显式返回 `data_parallel_rank: 0`。更大的 RouteTarget 会为每个 rank 产生一个候选。
 
-1. 根据 model、revision、输入长度、健康状态和 capabilities 过滤后端；
-2. 构造合法的 `Aggregate`、`Prefill + Decode` 或
-   `Encoder + Prefill + Decode` 计划；
-3. 移除没有可用容量的计划；
-4. 应用 filter、scorer 和 picker；
-5. 为最终计划预留容量。
+## 示例
 
-算法可以读取：
+```text
+ModelGroups：
+  llama3-serve-r-2gosa7pa2jpf2-0  UID 2f48f8e1-7f89-4eb8-bf31-e6d482504f66
+  llama3-serve-r-2gosa7pa2jpf2-1  UID 8c88ee9a-c10f-41fd-98ef-a09d256b5213
 
-- 请求的 model、revision、capabilities 和 token 信息；
-- 计划的拓扑；
-- 后端的 ID、role、domain 和当前负载；
-- 后端是否支持 KV 前缀局部性评分。
+候选：
+  2f48f8e1-7f89-4eb8-bf31-e6d482504f66 / rank 0  KV 命中：  0 tokens
+  2f48f8e1-7f89-4eb8-bf31-e6d482504f66 / rank 1  KV 命中：512 tokens
+  8c88ee9a-c10f-41fd-98ef-a09d256b5213 / rank 0  KV 命中：256 tokens
 
-拓扑检查、健康检查、准入和容量预留仍由核心 Router 负责。
+Filter：保留三个健康且兼容的候选
+Scorer：第一个 Group/rank 0 → 0，第一个 Group/rank 1 → 512，第二个 Group/rank 0 → 256
+Picker：选择第一个 Group 的 rank 1
 
-## 内置算法
-
-通过 `FORETOKEN_ROUTER_ALGORITHM` 选择：
-
-| 配置值 | 行为 |
-| --- | --- |
-| `kv_aware` | 依次偏好拓扑、KV 前缀局部性和较低负载。默认算法。 |
-| `least_loaded` | 依次偏好拓扑和较低负载。 |
-| `round_robin` | 优先考虑拓扑，并在完全同分时轮转。 |
-
-`RouteScore` 按字段顺序比较。分数越大，优先级越高。
-
-## 添加内置算法
-
-如果用户需要通过 `FORETOKEN_ROUTER_ALGORITHM` 选择算法，请按以下步骤添加：
-
-1. 在 `src/builtins/algorithm.rs` 的 `RouterAlgorithm` 中增加 variant。
-2. 在 `as_str`、`FromStr` 和 `RouterAlgorithm::ALL` 中加入它的 `snake_case` 名称。
-3. 将具体实现放入 `src/builtins/filter`、`scorer` 或 `picker`。
-4. 在 `RouterAlgorithm::policy` 中组装策略。
-5. 在 `src/tests/` 中添加测试。
-6. 同时更新中英文 README。
-
-Scorer 示例：
-
-```rust
-struct MyScorer;
-
-impl RouteScorer for MyScorer {
-    fn score(
-        &self,
-        option: &RouteOptionCandidate,
-        _context: RouteContext<'_>,
-    ) -> RouteScore {
-        RouteScore {
-            topology: topology_score(option.kind),
-            locality: 0,
-            load: -total_load(option),
-        }
-    }
-}
+RouteDecision：
+  route_target_id: 2f48f8e1-7f89-4eb8-bf31-e6d482504f66
+  data_parallel_rank: 1
 ```
 
-评分逻辑应简单、稳定、快速。处理 telemetry 数值时，应使用饱和运算和受检查的整数转换。
+ModelGroup 名称遵循 `<pool-name>-<revision>-<ordinal>`。Router 使用 Kubernetes ModelGroup UID 作为路由身份，而不是使用 `metadata.name`；Deployment、Service 和 Service DNS endpoint 使用 ModelGroup 名称。
 
-## 组合自定义策略
-
-如果算法不需要内置配置名称，可以使用 `PolicyRouter::with_policy`：
-
-```rust
-let policy = RouterPolicy::new(
-    Arc::new(MyFilter),
-    Arc::new(MyScorer),
-    Arc::new(MyPicker),
-);
-let router = PolicyRouter::with_policy(inventory, policy);
-```
-
-请选择职责最小的扩展点：
-
-- `RouteFilter`：拒绝某个原本合法的计划；
-- `RouteScorer`：为每个计划评分；
-- `RoutePicker`：排列计划并处理同分情况。
-
-Picker 不能删除计划。核心 Router 会补回 picker 遗漏的计划。如果必须拒绝某个计划，请使用 filter。
-
-KV locality 只是软提示。KV 数据缺失时应返回中性分数，不能拒绝合法计划。
-
-## 核心职责
-
-算法不能接管以下职责：
-
-- model、revision、capability、readiness 和输入长度检查；
-- 拓扑构造；
-- 容量检查和预留；
-- 修改请求；
-- 执行计划。
-
-`Router` trait 被设计为 sealed，确保所有算法使用相同的正确性和容量规则。
-
-## 测试
-
-在仓库根目录运行：
-
-```bash
-./scripts/bootstrap-vllm-rust.sh
-cargo fmt --manifest-path data-plane/frontend/Cargo.toml --all -- --check
-cargo test --manifest-path data-plane/frontend/Cargo.toml -p foretoken-router --locked
-```
+Aggregate 和 Prefill 的内置 KV 评分按以下顺序做字典序比较：完整 prompt prefix 命中长度、`Device > HostPinned > Disk > External`、`Local > Remote`，最后比较负载。Decode 的 prefix、tier 和 locality 分数为零。Unavailable KV facts 不会被当作确认 miss。

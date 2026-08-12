@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Aggregates the generated Foretoken CRDs for Kustomize.
 
 apiVersion: kustomize.config.k8s.io/v1beta1

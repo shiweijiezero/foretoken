@@ -14,10 +14,39 @@ use vllm_engine_core_client::protocol::request::ReasoningParserKwargs;
 use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
 use vllm_llm::{FinishReason, GenerateOutput, GeneratePromptInfo, GenerateRequest};
 
-/// Request accepted by one group-local model-server after frontend preparation.
+/// Execution responsibility of one routable ModelGroup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelServerRole {
+    #[default]
+    Aggregate,
+    Encoder,
+    Prefill,
+    Decode,
+}
+
+/// Model-server wire execution stage selected for a routed request.
+///
+/// This is distinct from Router's session stage and route target execution role; it is the typed value
+/// consumed by the model-server HTTP contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteStage {
+    #[default]
+    Aggregate,
+    Encoder,
+    Prefill,
+    Decode,
+}
+
+/// Request accepted by the single model-server ingress owned by one routable ModelGroup.
+/// Its Pod placement is a runtime detail and does not create another routing identity.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GenerateInput {
+    /// Model-server execution stage selected by the router, not Router's session stage.
+    #[serde(default)]
+    pub stage: RouteStage,
     pub request_id: String,
     pub prompt_token_ids: Vec<u32>,
     pub sampling_params: EngineCoreSamplingParams,
@@ -38,10 +67,10 @@ pub struct GenerateInput {
     #[serde(default)]
     pub lora_request: Option<LoraRequest>,
 }
-
 impl From<GenerateRequest> for GenerateInput {
     fn from(request: GenerateRequest) -> Self {
         Self {
+            stage: RouteStage::Aggregate,
             request_id: request.request_id,
             prompt_token_ids: request.prompt_token_ids,
             sampling_params: request.sampling_params,
@@ -56,13 +85,14 @@ impl From<GenerateRequest> for GenerateInput {
         }
     }
 }
-
 impl GenerateInput {
+    /// Set the model-server stage after route selection.
+    pub fn with_stage(mut self, stage: RouteStage) -> Self {
+        self.stage = stage;
+        self
+    }
+
     /// Attach the connector-owned EC descriptor to a trusted prefill request.
-    ///
-    /// The descriptor remains opaque to Foretoken and is passed to vLLM through
-    /// `SamplingParams.extra_args`, which is the upstream EC transfer boundary.
-    /// A caller may not replace an existing descriptor.
     pub fn inject_ec_transfer_params(&mut self, params: serde_json::Value) -> Result<(), String> {
         let extra_args = self.sampling_params.extra_args.get_or_insert_default();
         if extra_args.contains_key("ec_transfer_params") {
@@ -72,7 +102,6 @@ impl GenerateInput {
         Ok(())
     }
 }
-
 impl From<GenerateInput> for GenerateRequest {
     fn from(request: GenerateInput) -> Self {
         Self {
@@ -112,7 +141,6 @@ pub struct TokenOutput {
     pub kv_transfer_params: Option<serde_json::Value>,
     pub ec_transfer_params: Option<serde_json::Value>,
 }
-
 impl From<GenerateOutput> for TokenOutput {
     fn from(output: GenerateOutput) -> Self {
         let (prompt_token_ids, prompt_logprobs) = match output.prompt_info {
@@ -135,7 +163,6 @@ impl From<GenerateOutput> for TokenOutput {
         }
     }
 }
-
 impl From<TokenOutput> for GenerateOutput {
     fn from(output: TokenOutput) -> Self {
         Self {
@@ -157,24 +184,16 @@ impl From<TokenOutput> for GenerateOutput {
 }
 
 /// The vLLM source revision compiled into Foretoken model-server images.
-///
-/// This pin matches the runtime image contract; it is distinct from the Python
-/// package version reported by an EngineCore ready response.
-pub const VLLM_PINNED_REVISION: &str = "5b14019576475224d86044b262e28a04a85d4086";
-
-/// Model identity reported by a running model-server.
+pub const VLLM_SOURCE_REVISION: &str = env!(
+    "FORETOKEN_VLLM_SOURCE_REVISION",
+    "build through the repository entrypoints with a local vLLM build source",
+);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeModelIdentity {
     pub model: String,
     pub revision: String,
 }
-
-/// Controller-owned EC transfer settings observed by one model-server.
-///
-/// `fingerprint` identifies the transfer-compatible connector profile. It does
-/// not include the producer/consumer role, which necessarily differs across an
-/// encoder-prefill pair.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeEcTransferMetadata {
@@ -183,11 +202,6 @@ pub struct RuntimeEcTransferMetadata {
     pub connector: String,
     pub fingerprint: String,
 }
-
-/// Versioned, observed model-server runtime metadata.
-///
-/// Capabilities are deliberately limited to facts the model-server can observe.
-/// An empty set does not imply support for optional model features.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeMetadataResponse {
@@ -195,69 +209,152 @@ pub struct RuntimeMetadataResponse {
     pub model: RuntimeModelIdentity,
     pub model_dtype: ModelDtype,
     pub effective_max_model_len: u32,
-    pub vllm_pinned_revision: String,
+    pub vllm_source_revision: String,
     pub vllm_version: String,
     pub ec_transfer: Option<RuntimeEcTransferMetadata>,
     #[serde(default)]
     pub capabilities: std::collections::BTreeSet<String>,
 }
-
-/// Versioned capacity snapshot for trusted frontend routing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CumulativeHistogramBucket {
+    pub le_seconds: f64,
+    pub count: u64,
+}
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CumulativeHistogram {
+    pub count: u64,
+    pub sum_seconds: f64,
+    pub buckets: Vec<CumulativeHistogramBucket>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TelemetryResponse {
     pub version: u8,
+    pub collected_at_unix_ms: u64,
     pub accepting: bool,
     pub running_requests: u64,
     pub max_concurrent_requests: u64,
+    pub scheduler_running_requests: Option<u64>,
+    pub scheduler_waiting_requests: Option<u64>,
+    pub kv_cache_usage: Option<f64>,
+    pub prompt_tokens_total: Option<u64>,
+    pub generation_tokens_total: Option<u64>,
+    pub ttft_seconds: CumulativeHistogram,
+    pub tpot_seconds: CumulativeHistogram,
+    pub e2e_seconds: CumulativeHistogram,
 }
 
-/// Cursor parameters for the versioned KV delta endpoint.
+/// Cursor parameters for one source-local, zero-based delta stream. `None` means no event
+/// has been consumed; an empty page never advances `after`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KvDeltaQuery {
+    pub dp_rank: u32,
     pub epoch: Option<String>,
     pub after: Option<u64>,
     pub limit: Option<usize>,
 }
 
-/// KV-cache partition identity used by opaque delta events.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Hash representation. `NormalizedKeyedBlake3V1` is Foretoken's request-side contract; it is
+/// deliberately not a claim that vLLM's opaque/raw hash has the same bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KvHashFormat {
+    NormalizedKeyedBlake3V1,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct KvBlockHash(pub String);
+
+/// Physical storage and its locality relative to the event source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KvStorageTier {
+    Device,
+    HostPinned,
+    Disk,
+    External,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KvCacheLocality {
+    /// Adapter could not establish locality; consumers must treat it as unavailable.
+    Unspecified,
+    Local,
+    Remote,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KvPlacement {
+    pub tier: KvStorageTier,
+    pub locality: KvCacheLocality,
+}
+
+/// Complete semantic namespace for request-side normalized hashes. A missing request discriminator
+/// (LoRA, multimodal input, cache salt, or unknown extra cache key) is unsupported, never a miss.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KvPartition {
+    pub model_revision: String,
     pub scope_id: String,
-    pub block_size: u32,
+    pub hash_format: KvHashFormat,
+    pub hash_block_size: u32,
     pub group_idx: Option<u32>,
     pub spec_kind: String,
+    pub sliding_window: Option<u32>,
 }
 
-/// One KV mutation carried in a delta response.
+/// A normalized block produced by the model-server adapter from an authoritative vLLM parent
+/// chain. `block_index` is never inferred by index arrival order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KvStoredBlock {
+    pub partition: KvPartition,
+    pub block_index: u64,
+    pub parent_hash: KvBlockHash,
+    pub block_hash: KvBlockHash,
+}
+
+/// vLLM lifecycle normalization. Store carries adapter-normalized ancestry and placement; Remove is
+/// hash-only for block identity but retains vLLM's placement and group selector. Clear has no
+/// selector, matching vLLM's asymmetric lifecycle events.
+/// The adapter owns medium mapping: GPU/DEVICE→Device, CPU/CPU_PINNED→HostPinned,
+/// STORAGE/DISK/NVME→Disk, REMOTE/EXTERNAL/NETWORK/SHARED→External.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum KvDeltaEvent {
-    Store {
-        partition: KvPartition,
-        digest: String,
+    BlockStored {
+        blocks: Vec<KvStoredBlock>,
+        placement: KvPlacement,
     },
-    Remove {
-        partition: KvPartition,
-        digest: String,
+    BlockRemoved {
+        block_hashes: Vec<KvBlockHash>,
+        placement: KvPlacement,
+        group_idx: Option<u32>,
     },
-    Clear,
+    AllBlocksCleared,
 }
-
-/// A sequenced KV mutation. The sequence is retained by consumers for cursor correctness.
+/// One sequenced, nested KV lifecycle event. Nested encoding keeps both envelope and event payload
+/// validation strict without serde's flattened internally-tagged-enum limitation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KvDelta {
     pub sequence: u64,
-    #[serde(flatten)]
     pub event: KvDeltaEvent,
 }
-
-/// One bounded page from a model-server KV delta stream.
+/// Bounded source-local page. Identity, producer epoch and rank are independent from route ID.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KvDeltaResponse {
-    pub backend_id: String,
-    pub scope_id: String,
+    pub event_source_id: String,
+    pub model_group_id: String,
     pub epoch: String,
     pub dp_rank: u32,
     pub through: u64,
@@ -265,7 +362,6 @@ pub struct KvDeltaResponse {
     pub deltas: Vec<KvDelta>,
 }
 
-/// Stable terminal error categories for the internal token stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TokenErrorCode {
@@ -273,8 +369,6 @@ pub enum TokenErrorCode {
     RequestFailed,
     Protocol,
 }
-
-/// One NDJSON event returned by model-server.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TokenEvent {
@@ -284,7 +378,3 @@ pub enum TokenEvent {
         code: TokenErrorCode,
     },
 }
-
-#[cfg(test)]
-#[path = "tests/protocol_conversion.rs"]
-mod tests;

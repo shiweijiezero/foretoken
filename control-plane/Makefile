@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Defines control-plane build, validation, and code-generation targets.
 
 SHELL := /usr/bin/env bash

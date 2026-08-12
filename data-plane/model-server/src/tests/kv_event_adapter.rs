@@ -1,64 +1,147 @@
-use super::*;
-use foretoken_model_protocol::KvDeltaEvent as DeltaKind;
+use std::sync::Arc;
+
+use foretoken_model_protocol::{KvCacheLocality, KvDeltaEvent, KvPlacement, KvStorageTier};
 use serde_json::json;
-fn a() -> Arc<KvEventAdapter> {
-    KvEventAdapter::new([7; 32], "scope".into(), "backend".into())
+
+use super::*;
+
+fn adapter(data_parallel_size: u32) -> Arc<KvEventAdapter> {
+    KvEventAdapter::new(
+        [7; 32],
+        "scope".into(),
+        "model-group".into(),
+        "r1".into(),
+        data_parallel_size,
+    )
 }
-fn batch(e: serde_json::Value) -> Vec<u8> {
-    rmp_serde::to_vec(&json!([1.25, [e], 0])).unwrap()
+
+fn batch(event: serde_json::Value, dp_rank: u32) -> Vec<u8> {
+    rmp_serde::to_vec(&json!([1.25, [event], dp_rank])).unwrap()
 }
+
+fn epoch(adapter: &KvEventAdapter) -> String {
+    adapter.inner.lock().unwrap().epoch.clone()
+}
+
 #[test]
-fn strict_wire_and_privacy() {
-    let x = a();
-    let e = json!({"type":"BlockStored","block_hashes":[1],"token_ids":[1,2],"block_size":2,"medium":"GPU","extra_keys":null,"group_idx":0,"kv_cache_spec_kind":"full_attention"});
-    x.ingest_frames(vec![TOPIC.to_vec(), 0u64.to_be_bytes().to_vec(), batch(e)]);
-    let ep = x.inner.lock().unwrap().epoch.clone();
-    let stored = x.delta(&ep, 0, 2).unwrap();
-    let out = serde_json::to_string(&stored).unwrap();
+fn lifecycle_is_private_rank_local_and_replayable() {
+    let adapter = adapter(2);
+    let stored = json!({
+        "type": "BlockStored",
+        "block_hashes": [1, 2],
+        "token_ids": [1, 2, 3, 4],
+        "block_size": 2,
+        "medium": "GPU",
+        "extra_keys": null,
+        "group_idx": 0,
+        "kv_cache_spec_kind": "full_attention"
+    });
+    adapter.ingest_frames(vec![
+        TOPIC.to_vec(),
+        0_u64.to_be_bytes().to_vec(),
+        batch(stored, 1),
+    ]);
+
+    let epoch = epoch(&adapter);
+    let page = adapter.delta(1, Some(&epoch), None, 2).unwrap();
+    assert_eq!(page.event_source_id, "model-group:dp:1");
+    assert_eq!(page.dp_rank, 1);
+    assert_eq!(page.deltas[0].sequence, 0);
+    let KvDeltaEvent::BlockStored { blocks, placement } = &page.deltas[0].event else {
+        panic!("expected normalized store event")
+    };
+    assert_eq!(blocks.len(), 2);
+    assert_eq!(blocks[0].partition.model_revision, "r1");
+    assert_eq!(blocks[0].partition.hash_block_size, 2);
+    assert_eq!(blocks[0].block_index, 0);
+    assert_eq!(blocks[1].block_index, 1);
+    assert_eq!(blocks[1].parent_hash, blocks[0].block_hash);
+    assert_eq!(placement.tier, KvStorageTier::Device);
+    assert_eq!(placement.locality, KvCacheLocality::Local);
+    let encoded = serde_json::to_string(&page).unwrap();
+    assert!(!encoded.contains("token_ids") && !encoded.contains("block_hashes\":[1"));
     assert!(
-        matches!(stored.deltas[0].event, DeltaKind::Store { .. }),
-        "deltas = {:?}",
-        stored.deltas
+        adapter
+            .delta(0, Some(&epoch), None, 2)
+            .unwrap()
+            .deltas
+            .is_empty()
     );
-    assert!(!out.contains("token_ids") && !out.contains("block_hashes"));
 
-    x.ingest_frames(vec![
+    adapter.ingest_frames(vec![
         TOPIC.to_vec(),
-        1u64.to_be_bytes().to_vec(),
-        batch(json!({"type":"BlockRemoved","block_hashes":[1]})),
+        1_u64.to_be_bytes().to_vec(),
+        batch(json!({"type":"BlockRemoved","block_hashes":[1]}), 1),
     ]);
-    let removed = x.delta(&ep, 1, 2).unwrap();
-    assert!(matches!(removed.deltas[0].event, DeltaKind::Remove { .. }));
-
-    x.ingest_frames(vec![
-        TOPIC.to_vec(),
-        3u64.to_be_bytes().to_vec(),
-        batch(json!({"type":"AllBlocksCleared"})),
-    ]);
-    assert!(matches!(x.delta(&ep, 2, 2), Err(KvDeltaError::Unavailable)))
+    let removed = adapter.delta(1, Some(&epoch), Some(0), 2).unwrap();
+    assert_eq!(removed.deltas[0].sequence, 1);
+    assert!(matches!(
+        removed.deltas[0].event,
+        KvDeltaEvent::BlockRemoved { .. }
+    ));
 }
 
 #[test]
-fn protocol_failure_is_reported_as_unavailable_and_recovers_on_a_valid_batch() {
-    let x = a();
-    let epoch = x.inner.lock().unwrap().epoch.clone();
-    x.ingest_msgpack(b"not-msgpack");
+fn placement_and_clear_follow_vllm_lifecycle() {
+    let adapter = adapter(1);
+    adapter.ingest_msgpack(&batch(
+        json!({
+            "type": "BlockStored",
+            "block_hashes": [1],
+            "token_ids": [1, 2],
+            "block_size": 2,
+            "medium": "CPU_PINNED",
+            "locality": "LOCAL",
+            "extra_keys": null,
+            "kv_cache_spec_kind": "full_attention"
+        }),
+        0,
+    ));
+    let epoch = epoch(&adapter);
+    let page = adapter.delta(0, Some(&epoch), None, 2).unwrap();
     assert!(matches!(
-        x.delta(&epoch, 0, 2),
+        page.deltas[0].event,
+        KvDeltaEvent::BlockStored {
+            placement: KvPlacement {
+                tier: KvStorageTier::HostPinned,
+                locality: KvCacheLocality::Local
+            },
+            ..
+        }
+    ));
+
+    adapter.ingest_msgpack(&batch(json!({"type":"AllBlocksCleared"}), 0));
+    let clear = adapter.delta(0, Some(&epoch), Some(0), 2).unwrap();
+    assert!(matches!(
+        clear.deltas[0].event,
+        KvDeltaEvent::AllBlocksCleared
+    ));
+}
+
+#[test]
+fn protocol_failure_is_unavailable_and_valid_batch_recovers() {
+    let adapter = adapter(1);
+    let epoch = epoch(&adapter);
+    adapter.ingest_msgpack(b"not-msgpack");
+    assert!(matches!(
+        adapter.delta(0, Some(&epoch), None, 2),
         Err(KvDeltaError::Unavailable)
     ));
 
-    x.ingest_msgpack(&batch(json!({"type":"AllBlocksCleared"})));
-    assert!(x.delta(&epoch, 0, 2).is_ok());
+    adapter.ingest_msgpack(&batch(json!({"type":"AllBlocksCleared"}), 0));
+    assert!(adapter.delta(0, Some(&epoch), None, 2).is_ok());
 }
 
 #[test]
-fn rejects_a_cursor_ahead_of_the_current_epoch() {
-    let x = a();
-    let epoch = x.inner.lock().unwrap().epoch.clone();
-    let KvDeltaError::CursorReset(reset) = x.delta(&epoch, 10, 2).unwrap_err() else {
-        panic!("cursor reset must not be reported as adapter unavailability");
+fn cursor_reset_returns_source_identity_and_zero_based_cursor() {
+    let adapter = adapter(2);
+    let epoch = epoch(&adapter);
+    let KvDeltaError::CursorReset(reset) = adapter.delta(1, Some(&epoch), Some(10), 2).unwrap_err()
+    else {
+        panic!("cursor reset must not be reported as adapter unavailability")
     };
+    assert_eq!(reset.event_source_id, "model-group:dp:1");
+    assert_eq!(reset.dp_rank, 1);
     assert_eq!(reset.through, 0);
     assert_eq!(reset.current, 0);
 }

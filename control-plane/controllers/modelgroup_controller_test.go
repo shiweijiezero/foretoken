@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Tests single-member ModelGroup workload materialization and isolation.
 
 package controllers
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -87,30 +88,30 @@ func TestModelGroupReconcileMaterializesIsolatedDeployment(t *testing.T) {
 		t.Fatalf("Service = %#v", service.Spec)
 	}
 
-	policy := new(networkingv1.NetworkPolicy)
-	if err := kubeClient.Get(ctx, request.NamespacedName, policy); err != nil {
+	networkPolicy := new(networkingv1.NetworkPolicy)
+	if err := kubeClient.Get(ctx, request.NamespacedName, networkPolicy); err != nil {
 		t.Fatal(err)
 	}
-	if !metav1.IsControlledBy(policy, group) || len(policy.Spec.Ingress) != 1 || len(policy.Spec.PolicyTypes) != 1 || policy.Spec.PolicyTypes[0] != networkingv1.PolicyTypeIngress {
-		t.Fatalf("NetworkPolicy = %#v", policy.Spec)
+	if !metav1.IsControlledBy(networkPolicy, group) || len(networkPolicy.Spec.Ingress) != 1 || len(networkPolicy.Spec.PolicyTypes) != 1 || networkPolicy.Spec.PolicyTypes[0] != networkingv1.PolicyTypeIngress {
+		t.Fatalf("NetworkPolicy = %#v", networkPolicy.Spec)
 	}
-	peers := policy.Spec.Ingress[0].From
-	if len(peers) != 2 || peers[0].PodSelector == nil || peers[0].PodSelector.MatchExpressions[0].Key != frontendServiceLabel || peers[1].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "foretoken-system" || peers[1].PodSelector.MatchLabels[controlPlanePodLabel] != controlPlanePodLabelValue || policy.Spec.Ingress[0].Ports[0].Port.String() != "model-server" {
-		t.Fatalf("NetworkPolicy model-server ingress = %#v", policy.Spec.Ingress)
+	peers := networkPolicy.Spec.Ingress[0].From
+	if len(peers) != 2 || peers[0].PodSelector == nil || peers[0].PodSelector.MatchExpressions[0].Key != frontendServiceLabel || peers[1].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "foretoken-system" || peers[1].PodSelector.MatchLabels[controlPlanePodLabel] != controlPlanePodLabelValue || networkPolicy.Spec.Ingress[0].Ports[0].Port.String() != "model-server" {
+		t.Fatalf("NetworkPolicy model-server ingress = %#v", networkPolicy.Spec.Ingress)
 	}
 
-	policy.Spec.Ingress = nil
-	if err := kubeClient.Update(ctx, policy); err != nil {
+	networkPolicy.Spec.Ingress = nil
+	if err := kubeClient.Update(ctx, networkPolicy); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := reconciler.Reconcile(ctx, request); err != nil {
 		t.Fatal(err)
 	}
-	if err := kubeClient.Get(ctx, request.NamespacedName, policy); err != nil {
+	if err := kubeClient.Get(ctx, request.NamespacedName, networkPolicy); err != nil {
 		t.Fatal(err)
 	}
-	if len(policy.Spec.Ingress) != 1 || policy.Spec.Ingress[0].Ports[0].Port.String() != "model-server" {
-		t.Fatalf("NetworkPolicy drift was not repaired: %#v", policy.Spec)
+	if len(networkPolicy.Spec.Ingress) != 1 || networkPolicy.Spec.Ingress[0].Ports[0].Port.String() != "model-server" {
+		t.Fatalf("NetworkPolicy drift was not repaired: %#v", networkPolicy.Spec)
 	}
 
 	// Server-side apply repairs owned fields without claiming admission-owned defaults.
@@ -149,8 +150,9 @@ func TestModelGroupReconcileMaterializesMooncakePrefill(t *testing.T) {
 	pool, group := testModelGroup("prefill-group")
 	group.Spec.Role = inferencev1alpha1.ModelRolePrefill
 	group.Spec.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{
-		ProfileName: "cluster-pd", ProfileRevision: "release-A", Connector: "MooncakeConnector", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30,
+		ProfileName: "cluster-pd", ProfileRevision: "release-A", Connector: "MooncakeConnector", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30, RDMADeviceName: "mlx5_1", RDMAResourceName: "rdma/hca_shared_devices_a", RDMAResourceCount: 1,
 	}
+	group.Spec.Network = "foretoken-rdma"
 	reconciler, kubeClient := testGroupReconciler(t, pool, group)
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(group)}
 	reconcileModelGroup(t, ctx, reconciler, request)
@@ -159,28 +161,65 @@ func TestModelGroupReconcileMaterializesMooncakePrefill(t *testing.T) {
 	if err := kubeClient.Get(ctx, request.NamespacedName, deployment); err != nil {
 		t.Fatal(err)
 	}
+	if deployment.Spec.Template.Annotations[multusNetworksAnnotation] != "foretoken-rdma" {
+		t.Fatalf("P/D network attachment = %#v", deployment.Spec.Template.Annotations)
+	}
 	container := deployment.Spec.Template.Spec.Containers[0]
-	if len(container.Args) != 0 || !strings.Contains(container.Env[0].Value, `"kind":"pd"`) || len(container.Ports) != 2 || container.Ports[1].Name != "mooncake-bootstrap" || container.Env[9].Name != "VLLM_MOONCAKE_BOOTSTRAP_PORT" || container.Env[10].Name != "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT" {
+	if len(container.Args) != 0 || !strings.Contains(container.Env[0].Value, `"kind":"pd"`) || len(container.Ports) != 2 || container.Ports[1].Name != "mc-bootstrap" || container.Env[9].Name != "VLLM_MOONCAKE_BOOTSTRAP_PORT" || container.Env[10].Name != "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT" {
 		t.Fatalf("P/D container = %#v", container)
+	}
+	rdmaName := corev1.ResourceName("rdma/hca_shared_devices_a")
+	rdmaRequest, requestExists := container.Resources.Requests[rdmaName]
+	rdmaLimit, limitExists := container.Resources.Limits[rdmaName]
+	if !requestExists || !limitExists || rdmaRequest.Value() != 1 || rdmaLimit.Value() != 1 {
+		t.Fatalf("P/D RDMA resources = %#v", container.Resources)
+	}
+	if container.SecurityContext == nil || container.SecurityContext.Capabilities == nil || !slices.Contains(container.SecurityContext.Capabilities.Add, corev1.Capability("IPC_LOCK")) {
+		t.Fatalf("P/D capabilities = %#v", container.SecurityContext)
 	}
 	service := new(corev1.Service)
 	if err := kubeClient.Get(ctx, request.NamespacedName, service); err != nil {
 		t.Fatal(err)
 	}
-	if len(service.Spec.Ports) != 2 || service.Spec.Ports[1].Name != "mooncake-bootstrap" || service.Spec.Ports[1].Port != 29001 {
+	if len(service.Spec.Ports) != 2 || service.Spec.Ports[1].Name != "mc-bootstrap" || service.Spec.Ports[1].Port != 29001 {
 		t.Fatalf("P/D Service = %#v", service.Spec)
 	}
-	policy := new(networkingv1.NetworkPolicy)
-	if err := kubeClient.Get(ctx, request.NamespacedName, policy); err != nil {
+	networkPolicy := new(networkingv1.NetworkPolicy)
+	if err := kubeClient.Get(ctx, request.NamespacedName, networkPolicy); err != nil {
 		t.Fatal(err)
 	}
-	if len(policy.Spec.Ingress) != 3 {
-		t.Fatalf("P/D NetworkPolicy = %#v", policy.Spec)
+	if len(networkPolicy.Spec.Ingress) != 3 {
+		t.Fatalf("P/D NetworkPolicy = %#v", networkPolicy.Spec)
 	}
-	decodeIngress := policy.Spec.Ingress[1]
-	frontendBootstrapIngress := policy.Spec.Ingress[2]
-	if len(decodeIngress.From) != 1 || decodeIngress.From[0].PodSelector.MatchLabels[modelGroupRoleLabel] != string(inferencev1alpha1.ModelRoleDecode) || decodeIngress.From[0].PodSelector.MatchLabels[modelGroupPDDomainLabel] != deployment.Spec.Template.Labels[modelGroupPDDomainLabel] || len(decodeIngress.Ports) != 0 || len(frontendBootstrapIngress.From) != 1 || frontendBootstrapIngress.From[0].PodSelector.MatchExpressions[0].Key != frontendServiceLabel || len(frontendBootstrapIngress.Ports) != 1 || frontendBootstrapIngress.Ports[0].Port.IntVal != 29001 {
-		t.Fatalf("P/D NetworkPolicy = %#v", policy.Spec)
+	decodeIngress := networkPolicy.Spec.Ingress[1]
+	frontendBootstrapIngress := networkPolicy.Spec.Ingress[2]
+	if len(decodeIngress.From) != 1 || len(decodeIngress.From[0].PodSelector.MatchLabels) != 1 || decodeIngress.From[0].PodSelector.MatchLabels[modelGroupPDDomainLabel] != deployment.Spec.Template.Labels[modelGroupPDDomainLabel] || len(decodeIngress.Ports) != 0 || len(frontendBootstrapIngress.From) != 1 || frontendBootstrapIngress.From[0].PodSelector.MatchExpressions[0].Key != frontendServiceLabel || len(frontendBootstrapIngress.Ports) != 1 || frontendBootstrapIngress.Ports[0].Port.IntVal != 29001 {
+		t.Fatalf("P/D NetworkPolicy = %#v", networkPolicy.Spec)
+	}
+}
+
+func TestModelGroupDecodeAllowsSameDomainMooncakeSideChannels(t *testing.T) {
+	ctx := context.Background()
+	pool, group := testModelGroup("decode-group")
+	group.Spec.Role = inferencev1alpha1.ModelRoleDecode
+	group.Spec.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{
+		ProfileName: "cluster-pd", ProfileRevision: "release-A", Connector: "MooncakeConnector", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30, RDMADeviceName: "mlx5_1", RDMAResourceName: "rdma/hca_shared_devices_a", RDMAResourceCount: 1,
+	}
+	reconciler, kubeClient := testGroupReconciler(t, pool, group)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(group)}
+	reconcileModelGroup(t, ctx, reconciler, request)
+	reconcileModelGroup(t, ctx, reconciler, request)
+
+	networkPolicy := new(networkingv1.NetworkPolicy)
+	if err := kubeClient.Get(ctx, request.NamespacedName, networkPolicy); err != nil {
+		t.Fatal(err)
+	}
+	if len(networkPolicy.Spec.Ingress) != 2 {
+		t.Fatalf("decode P/D NetworkPolicy = %#v", networkPolicy.Spec)
+	}
+	peer := networkPolicy.Spec.Ingress[1]
+	if len(peer.From) != 1 || peer.From[0].PodSelector.MatchLabels[modelGroupPDDomainLabel] != pdDomainID(group) || len(peer.Ports) != 0 {
+		t.Fatalf("decode Mooncake side-channel ingress = %#v", peer)
 	}
 }
 
@@ -204,7 +243,7 @@ func TestModelGroupRejectsPDOutsideSingleRankProfile(t *testing.T) {
 	_, group := testModelGroup("invalid-pd-parallelism")
 	group.Spec.Role = inferencev1alpha1.ModelRolePrefill
 	group.Spec.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{
-		ProfileName: "cluster-pd", ProfileRevision: "release-A", Connector: "MooncakeConnector", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30,
+		ProfileName: "cluster-pd", ProfileRevision: "release-A", Connector: "MooncakeConnector", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30, RDMADeviceName: "mlx5_1", RDMAResourceName: "rdma/hca_shared_devices_a", RDMAResourceCount: 1,
 	}
 	group.Spec.Parallelism.DP = 2
 
@@ -296,7 +335,7 @@ func TestModelGroupDoesNotAdoptConflictingDeployment(t *testing.T) {
 
 func TestModelGroupNetworkPolicyDoesNotAdoptForeignOwner(t *testing.T) {
 	pool, group := testModelGroup("demo-group")
-	policy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{
+	networkPolicy := &networkingv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{
 		Name:      group.Name,
 		Namespace: group.Namespace,
 		OwnerReferences: []metav1.OwnerReference{{
@@ -307,7 +346,7 @@ func TestModelGroupNetworkPolicyDoesNotAdoptForeignOwner(t *testing.T) {
 			Controller: ptr(true),
 		}},
 	}}
-	reconciler, _ := testGroupReconciler(t, pool, group, policy)
+	reconciler, _ := testGroupReconciler(t, pool, group, networkPolicy)
 	if err := reconciler.reconcileNetworkPolicy(context.Background(), group); err == nil {
 		t.Fatal("conflicting NetworkPolicy was adopted")
 	}
@@ -377,10 +416,11 @@ func testModelGroup(name string) (*inferencev1alpha1.ModelPool, *inferencev1alph
 				TokenizerRevision: "model-revision",
 			},
 			Runtime: inferencev1alpha1.ModelGroupRuntime{
-				Backend: "vllm",
-				Image:   "vllm:test",
-				Port:    9000,
-				Args:    []inferencev1alpha1.BackendArg{"--max-model-len=32768"},
+				Backend:                               "vllm",
+				Image:                                 "vllm:test",
+				Port:                                  9000,
+				Args:                                  []inferencev1alpha1.BackendArg{"--max-model-len=32768"},
+				InternalGenerateRequestBodyLimitBytes: inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes,
 			},
 			Resources: inferencev1alpha1.ModelResources{Requests: inferencev1alpha1.ModelResourceRequests{
 				ComputeResourceRequests: inferencev1alpha1.ComputeResourceRequests{CPU: "1", Memory: "1Gi"},

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Provides default settings for the Foretoken control-plane chart.
 
 image:
@@ -32,7 +32,7 @@ runtime:
       nodeSelector:
         key: ""
         value: ""
-    # Set every field to enable pinned vLLM's ECExampleConnector over an existing RWX PVC.
+    # Set every field to enable the local vLLM build source's ECExampleConnector over an existing RWX PVC.
     ec:
       profileName: ""
       profileRevision: ""
@@ -47,6 +47,9 @@ runtime:
       protocol: ""
       bootstrapPort: 0
       abortRequestTimeoutSeconds: 0
+      rdmaDeviceName: ""
+      rdmaResourceName: ""
+      rdmaResourceCount: 0
     # Set every field to enable the platform-owned external Mooncake Store profile.
     mooncakeStore:
       profileName: ""

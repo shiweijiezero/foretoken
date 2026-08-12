@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Tests ModelPool revision rollout, scale-down, and apply failure behavior.
 
 package controllers
@@ -139,6 +139,75 @@ func TestModelPoolConfigUpdateActivatesNewRevisionBeforeDeletingOld(t *testing.T
 	}
 }
 
+func TestModelPoolScaleUpKeepsActiveGroupInServingSnapshot(t *testing.T) {
+	ctx := context.Background()
+	pool := testModelPool("demo", 1)
+	reconciler, kubeClient := testPoolReconciler(t, pool)
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(pool)}
+	reconcilePoolTwice(t, ctx, reconciler, request)
+
+	groups := listModelGroups(t, ctx, kubeClient, pool.Namespace)
+	active := &groups[0]
+	setModelGroupReady(active)
+	if err := kubeClient.Status().Update(ctx, active); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+
+	service := new(inferencev1alpha1.ModelService)
+	if err := kubeClient.Get(ctx, client.ObjectKey{Namespace: pool.Namespace, Name: "service"}, service); err != nil {
+		t.Fatal(err)
+	}
+	service.Status.ObservedGeneration = service.Generation
+	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionReady, Status: metav1.ConditionTrue, Reason: "Ready", Message: "Ready", ObservedGeneration: service.Generation})
+	if err := kubeClient.Update(ctx, service); err != nil {
+		t.Fatal(err)
+	}
+
+	current := new(inferencev1alpha1.ModelPool)
+	if err := kubeClient.Get(ctx, request.NamespacedName, current); err != nil {
+		t.Fatal(err)
+	}
+	current.Spec.DesiredGroups = 2
+	current.Generation++
+	if err := kubeClient.Update(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reconciler.Reconcile(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	groups = listModelGroups(t, ctx, kubeClient, pool.Namespace)
+	var pending *inferencev1alpha1.ModelGroup
+	for index := range groups {
+		if groups[index].Name != active.Name {
+			pending = &groups[index]
+		}
+	}
+	if len(groups) != 2 || pending == nil || modelGroupReady(pending) {
+		t.Fatalf("Groups during scale-up = %#v, want one active and one non-ready Group", groups)
+	}
+
+	if err := kubeClient.Get(ctx, request.NamespacedName, current); err != nil {
+		t.Fatal(err)
+	}
+	if ready := meta.FindStatusCondition(current.Status.Conditions, conditionReady); ready == nil || ready.Status != metav1.ConditionTrue || ready.Reason != "ActiveRevisionReady" {
+		t.Fatalf("Ready condition during scale-up = %#v", ready)
+	}
+	if pending := meta.FindStatusCondition(current.Status.Conditions, conditionRolloutPending); pending == nil || pending.Status != metav1.ConditionTrue {
+		t.Fatalf("RolloutPending condition during scale-up = %#v", pending)
+	}
+
+	routes, err := (&FrontendServiceReconciler{Client: kubeClient}).projectableGroups(ctx, pool.Namespace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(routes) != 1 || routes[0].Endpoint != modelGroupEndpoint(active, active.Spec.Runtime.Port) {
+		t.Fatalf("routes during scale-up = %#v, want active Group only", routes)
+	}
+}
+
 func TestModelPoolScaleDownKeepsReadyWhileSurplusGroupDrains(t *testing.T) {
 	ctx := context.Background()
 	pool := testModelPool("demo", 2)
@@ -211,7 +280,7 @@ func TestModelPoolScaleDownKeepsReadyWhileSurplusGroupDrains(t *testing.T) {
 	}
 }
 
-func TestModelPoolApplyFailureDoesNotReportIncompleteActiveRevisionReady(t *testing.T) {
+func TestModelPoolApplyFailureKeepsActiveRevisionServing(t *testing.T) {
 	ctx := context.Background()
 	pool := testModelPool("demo", 1)
 	reconciler, kubeClient := testPoolReconciler(t, pool)
@@ -251,7 +320,7 @@ func TestModelPoolApplyFailureDoesNotReportIncompleteActiveRevisionReady(t *test
 	if condition := meta.FindStatusCondition(current.Status.Conditions, conditionGroupsMaterialized); condition == nil || condition.Status != metav1.ConditionFalse {
 		t.Fatalf("GroupsMaterialized condition = %#v", condition)
 	}
-	if condition := meta.FindStatusCondition(current.Status.Conditions, conditionReady); condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "GroupsNotReady" {
+	if condition := meta.FindStatusCondition(current.Status.Conditions, conditionReady); condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != "ActiveRevisionReady" {
 		t.Fatalf("Ready condition after apply failure = %#v", condition)
 	}
 }

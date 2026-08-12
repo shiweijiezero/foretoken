@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Builds Kubernetes resources owned by one FrontendService.
 
 package controllers
@@ -53,9 +53,27 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	allowPrivilegeEscalation := false
 	readOnlyRootFilesystem := true
 	servingConfigMap := frontendServingConfigMapName(frontend)
-	routerAlgorithm := frontend.Spec.RouterAlgorithm
-	if routerAlgorithm == "" {
-		routerAlgorithm = inferencev1alpha1.RouterAlgorithmKVAware
+	routerFilter := frontend.Spec.RouterPipeline.Filter
+	if routerFilter == "" {
+		routerFilter = inferencev1alpha1.RouterFilterAllowAll
+	}
+	routerScorer := frontend.Spec.RouterPipeline.Scorer
+	if routerScorer == "" {
+		routerScorer = inferencev1alpha1.RouterScorerKVLeastLoaded
+	}
+	routerPicker := frontend.Spec.RouterPipeline.Picker
+	if routerPicker == "" {
+		routerPicker = inferencev1alpha1.RouterPickerRoundRobin
+	}
+	frontendEnv := []corev1.EnvVar{
+		{Name: "FORETOKEN_LISTEN_ADDRESS", Value: fmt.Sprintf("0.0.0.0:%d", profile.Port)},
+		{Name: "FORETOKEN_SERVING_SNAPSHOT", Value: "/etc/foretoken/serving/serving.json"},
+		{Name: "HF_HOME", Value: "/var/cache/foretoken/huggingface"},
+		{Name: "FORETOKEN_STREAM_IDLE_SECONDS", Value: strconv.FormatInt(streamIdleSeconds, 10)},
+		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
+		{Name: "FORETOKEN_ROUTER_FILTER", Value: string(routerFilter)},
+		{Name: "FORETOKEN_ROUTER_SCORER", Value: string(routerScorer)},
+		{Name: "FORETOKEN_ROUTER_PICKER", Value: string(routerPicker)},
 	}
 
 	deployment := &appsv1.Deployment{
@@ -89,14 +107,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 						Image:           profile.Image,
 						ImagePullPolicy: corev1.PullIfNotPresent,
 						Ports:           []corev1.ContainerPort{{Name: "http", ContainerPort: profile.Port, Protocol: corev1.ProtocolTCP}},
-						Env: []corev1.EnvVar{
-							{Name: "FORETOKEN_LISTEN_ADDRESS", Value: fmt.Sprintf("0.0.0.0:%d", profile.Port)},
-							{Name: "FORETOKEN_SERVING_SNAPSHOT", Value: "/etc/foretoken/serving/serving.json"},
-							{Name: "HF_HOME", Value: "/var/cache/foretoken/huggingface"},
-							{Name: "FORETOKEN_STREAM_IDLE_SECONDS", Value: strconv.FormatInt(streamIdleSeconds, 10)},
-							{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
-							{Name: "FORETOKEN_ROUTER_ALGORITHM", Value: string(routerAlgorithm)},
-						},
+						Env:             frontendEnv,
 						VolumeMounts: []corev1.VolumeMount{
 							{Name: "serving", MountPath: "/etc/foretoken/serving", ReadOnly: true},
 							{Name: "tokenizer-cache", MountPath: "/var/cache/foretoken"},
@@ -162,7 +173,11 @@ func desiredHTTPRoute(frontend *inferencev1alpha1.FrontendService, profile Front
 	gatewayGroup := gatewayv1.Group(gatewayv1.GroupName)
 	gatewayKind := gatewayv1.Kind("Gateway")
 	pathType := gatewayv1.PathMatchPathPrefix
-	path := "/"
+	publicPaths := []string{"/v1", "/tokenize", "/detokenize"}
+	matches := make([]gatewayv1.HTTPRouteMatch, 0, len(publicPaths))
+	for index := range publicPaths {
+		matches = append(matches, gatewayv1.HTTPRouteMatch{Path: &gatewayv1.HTTPPathMatch{Type: &pathType, Value: &publicPaths[index]}})
+	}
 	parent := gatewayv1.ParentReference{Group: &gatewayGroup, Kind: &gatewayKind, Name: gatewayv1.ObjectName(profile.Gateway.Name)}
 	if profile.Gateway.Namespace != "" && profile.Gateway.Namespace != frontend.Namespace {
 		namespace := gatewayv1.Namespace(profile.Gateway.Namespace)
@@ -181,7 +196,7 @@ func desiredHTTPRoute(frontend *inferencev1alpha1.FrontendService, profile Front
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{parent}},
 			Hostnames:       []gatewayv1.Hostname{gatewayv1.Hostname(frontend.Spec.Hostname)},
 			Rules: []gatewayv1.HTTPRouteRule{{
-				Matches:  []gatewayv1.HTTPRouteMatch{{Path: &gatewayv1.HTTPPathMatch{Type: &pathType, Value: &path}}},
+				Matches:  matches,
 				Timeouts: &gatewayv1.HTTPRouteTimeouts{Request: &requestTimeout},
 				BackendRefs: []gatewayv1.HTTPBackendRef{{BackendRef: gatewayv1.BackendRef{BackendObjectReference: gatewayv1.BackendObjectReference{
 					Kind: &serviceKind,

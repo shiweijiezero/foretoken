@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Defines a generated Kubernetes API manifest for Foretoken custom resources.
 ---
 apiVersion: apiextensions.k8s.io/v1
@@ -56,6 +56,74 @@ spec:
           spec:
             description: ModelServiceSpec defines the desired state of a model service.
             properties:
+              autoscaling:
+                description: |-
+                  Autoscaling is evaluated by the ModelService controller. Algorithms remain
+                  side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.
+                properties:
+                  algorithm:
+                    default: manual
+                    description: AutoscalingAlgorithm selects one statically assembled
+                      autoscaling configuration.
+                    enum:
+                    - manual
+                    - queue
+                    type: string
+                  maxGroups:
+                    description: MaxGroups is required for queue autoscaling. When
+                      omitted, manual intent is unbounded.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  maxScaleDownStep:
+                    default: 1
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  maxScaleUpStep:
+                    default: 1
+                    description: Zero disables the corresponding per-evaluation rate
+                      limit.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  metricsMaxAge:
+                    default: 15s
+                    description: Duration is a positive Go-style duration.
+                    minLength: 2
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
+                  minGroups:
+                    default: 0
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  pollInterval:
+                    default: 5s
+                    description: Duration is a positive Go-style duration.
+                    minLength: 2
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
+                  targetQueuePerRoutableGroup:
+                    default: 1
+                    format: int64
+                    minimum: 0
+                    type: integer
+                required:
+                - algorithm
+                type: object
+                x-kubernetes-validations:
+                - message: autoscaling minGroups must not exceed maxGroups
+                  rule: '!has(self.minGroups) || !has(self.maxGroups) || self.minGroups
+                    <= self.maxGroups'
+                - message: queue autoscaling requires maxGroups
+                  rule: self.algorithm != 'queue' || has(self.maxGroups)
               backend:
                 enum:
                 - vllm
@@ -96,10 +164,8 @@ spec:
                         modality supported by a model.
                       enum:
                       - image
-                      - video
-                      - audio
                       type: string
-                    maxItems: 3
+                    maxItems: 1
                     type: array
                     x-kubernetes-list-type: set
                   reasoning:
@@ -118,6 +184,15 @@ spec:
                   tools:
                     type: boolean
                 type: object
+              internalGenerateRequestBodyLimitBytes:
+                default: 67108864
+                description: |-
+                  InternalGenerateRequestBodyLimitBytes is the maximum body size accepted by
+                  a group-local generate endpoint. It defaults to 64 MiB.
+                format: int64
+                maximum: 268435456
+                minimum: 1048576
+                type: integer
               kvCache:
                 description: KVCache is the typed cache-placement intent for the Quick
                   Start shorthand.
@@ -200,10 +275,8 @@ spec:
                               input modality supported by a model.
                             enum:
                             - image
-                            - video
-                            - audio
                             type: string
-                          maxItems: 3
+                          maxItems: 1
                           type: array
                           x-kubernetes-list-type: set
                         reasoning:
@@ -484,10 +557,6 @@ spec:
                       == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size
                       : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp
                       * (has(self.parallelism.dp) ? self.parallelism.dp : 1))'
-                  - message: P/D ModelPools do not support multimodal features
-                    rule: '!(self.role == ''prefill'' || self.role == ''decode'')
-                      || !has(self.features) || !has(self.features.multimodal) ||
-                      size(self.features.multimodal) == 0'
                 maxItems: 32
                 minItems: 1
                 type: array
@@ -739,10 +808,107 @@ spec:
                 has(pool.role) && pool.role == ''decode'') && self.modelPools.all(pool,
                 has(pool.role) && (pool.role == ''encoder'' || pool.role == ''prefill''
                 || pool.role == ''decode'')))'
+            - message: E/P/D modelPools must contain exactly one encoder, prefill,
+                and decode Pool
+              rule: '!has(self.modelPools) || !self.modelPools.exists(pool, has(pool.role)
+                && pool.role == ''encoder'') || (size(self.modelPools.filter(pool,
+                has(pool.role) && pool.role == ''encoder'')) == 1 && size(self.modelPools.filter(pool,
+                has(pool.role) && pool.role == ''prefill'')) == 1 && size(self.modelPools.filter(pool,
+                has(pool.role) && pool.role == ''decode'')) == 1)'
+            - message: E/P/D modelPools must have equal encoder, prefill, and decode
+                replica counts
+              rule: '!has(self.modelPools) || !self.modelPools.exists(pool, has(pool.role)
+                && pool.role == ''encoder'') || self.modelPools.filter(pool, has(pool.role)
+                && pool.role == ''encoder'').all(e, self.modelPools.filter(pool, has(pool.role)
+                && pool.role == ''prefill'').all(p, (has(e.replicas) ? e.replicas
+                : 1) == (has(p.replicas) ? p.replicas : 1)) && self.modelPools.filter(pool,
+                has(pool.role) && pool.role == ''decode'').all(d, (has(e.replicas)
+                ? e.replicas : 1) == (has(d.replicas) ? d.replicas : 1)))'
           status:
             description: ModelServiceStatus defines the observed state of a model
               service.
             properties:
+              autoscaling:
+                description: Autoscaling contains the latest decision for each Pool
+                  or E/P/D domain.
+                items:
+                  description: AutoscalingTargetStatus records the latest auditable
+                    decision for one scaling target.
+                  properties:
+                    algorithm:
+                      type: string
+                    appliedGroups:
+                      description: |-
+                        AppliedGroups is the core-constrained target successfully written to all
+                        ModelPools represented by this status entry.
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    direction:
+                      type: string
+                    disposition:
+                      type: string
+                    id:
+                      minLength: 1
+                      type: string
+                    kind:
+                      enum:
+                      - Pool
+                      - EPDDomain
+                      type: string
+                    message:
+                      type: string
+                    observationState:
+                      type: string
+                    observedAt:
+                      format: date-time
+                      type: string
+                    readyGroups:
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    reason:
+                      type: string
+                    requestedGroups:
+                      description: RequestedGroups is the raw advisory target returned
+                        by the algorithm.
+                      format: int32
+                      type: integer
+                    role:
+                      enum:
+                      - Aggregate
+                      - Encoder
+                      - Prefill
+                      - Decode
+                      - EPD
+                      type: string
+                    routableGroups:
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    snapshotID:
+                      type: string
+                  required:
+                  - algorithm
+                  - appliedGroups
+                  - direction
+                  - disposition
+                  - id
+                  - kind
+                  - observationState
+                  - observedAt
+                  - readyGroups
+                  - reason
+                  - requestedGroups
+                  - role
+                  - routableGroups
+                  - snapshotID
+                  type: object
+                maxItems: 32
+                type: array
+                x-kubernetes-list-map-keys:
+                - id
+                x-kubernetes-list-type: map
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

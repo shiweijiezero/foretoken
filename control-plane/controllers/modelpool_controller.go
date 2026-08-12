@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Reconciles ModelPool resources into controller-owned ModelGroups.
 
 package controllers
@@ -98,8 +98,8 @@ func (reconciler *ModelPoolReconciler) validateModelServiceOwnership(ctx context
 type groupState struct {
 	Materialized         bool
 	Ready                bool
+	CapacityReady        bool
 	RolloutPending       bool
-	WaitingForCutover    bool
 	InsufficientCapacity bool
 	ActiveRevision       string
 	Reason               string
@@ -113,7 +113,7 @@ func (reconciler *ModelPoolReconciler) currentActiveState(ctx context.Context, p
 	}
 	active := pool.Status.ActiveRevision
 	return groupState{
-		Ready:          revisionReady(groups, active, pool.Spec.DesiredGroups),
+		Ready:          revisionServingReady(groups, active),
 		RolloutPending: active != "",
 		ActiveRevision: active,
 	}, nil
@@ -171,8 +171,8 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 	targetReady := materialized && pool.Spec.DesiredGroups > 0 && groupsReady(current, pool.Spec.DesiredGroups)
 	targetInsufficientCapacity := materialized && groupsInsufficientCapacity(current, pool.Spec.DesiredGroups)
 	activeRevision := pool.Status.ActiveRevision
-	rolloutPending := activeRevision != "" && activeRevision != template.Revision
-	ready := revisionReady(groups, activeRevision, pool.Spec.DesiredGroups)
+	rolloutPending := (activeRevision != "" && activeRevision != template.Revision) || !targetReady
+	ready := revisionServingReady(groups, activeRevision)
 	if activeRevision != template.Revision && targetReady {
 		activeRevision = template.Revision
 		ready = true
@@ -199,20 +199,19 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 		}
 	}
 
-	waitingForCutover := activeRevision != "" && activeRevision != template.Revision
 	state := groupState{
 		Materialized:         materialized,
 		Ready:                ready && pool.Spec.DesiredGroups > 0,
+		CapacityReady:        targetReady,
 		RolloutPending:       rolloutPending || scalePending,
-		WaitingForCutover:    waitingForCutover,
-		InsufficientCapacity: waitingForCutover && !targetReady && targetInsufficientCapacity,
+		InsufficientCapacity: !targetReady && targetInsufficientCapacity,
 		ActiveRevision:       activeRevision,
 		Reason:               "Applied",
 		Message:              "All requested ModelGroups were materialized",
 	}
 	if state.RolloutPending {
 		state.Reason = "RolloutPending"
-		state.Message = "The target revision is converging or superseded Groups are being retired"
+		state.Message = "Requested Group capacity is converging or superseded Groups are being retired"
 	}
 	return state, nil
 }
@@ -256,6 +255,21 @@ func revisionReady(groups []inferencev1alpha1.ModelGroup, revision string, desir
 		current[group.Spec.Ordinal] = group
 	}
 	return groupsReady(current, desired)
+}
+
+// revisionServingReady reports whether an active revision still has a routable Group.
+// Desired capacity converges separately through revisionReady.
+func revisionServingReady(groups []inferencev1alpha1.ModelGroup, revision string) bool {
+	if revision == "" {
+		return false
+	}
+	for index := range groups {
+		group := &groups[index]
+		if group.Spec.Revision == revision && modelGroupReady(group) {
+			return true
+		}
+	}
+	return false
 }
 
 func modelGroupReady(group *inferencev1alpha1.ModelGroup) bool {
@@ -315,7 +329,7 @@ func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *i
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionResolved, Status: resolvedStatus, Reason: resolvedReason, Message: resolvedMessage, ObservedGeneration: pool.Generation})
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionGroupsMaterialized, Status: conditionStatus(state.Materialized), Reason: state.Reason, Message: state.Message, ObservedGeneration: pool.Generation})
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionRolloutPending, Status: conditionStatus(state.RolloutPending), Reason: rolloutReason(state), Message: rolloutMessage(state), ObservedGeneration: pool.Generation})
-	readyReason, readyMessage := poolReadyReasonMessage(pool.Spec.DesiredGroups, state.Ready, state.WaitingForCutover)
+	readyReason, readyMessage := poolReadyReasonMessage(pool.Spec.DesiredGroups, state.Ready, state.CapacityReady)
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionReady, Status: conditionStatus(state.Ready), Reason: readyReason, Message: readyMessage, ObservedGeneration: pool.Generation})
 	if reflect.DeepEqual(base.Status, pool.Status) {
 		return nil
@@ -326,9 +340,9 @@ func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *i
 	return nil
 }
 
-func poolReadyReasonMessage(desiredGroups int32, ready, rolloutPending bool) (string, string) {
-	if ready && rolloutPending {
-		return "ActiveRevisionReady", "The active revision remains ready while the target revision is pending"
+func poolReadyReasonMessage(desiredGroups int32, ready, capacityReady bool) (string, string) {
+	if ready && !capacityReady {
+		return "ActiveRevisionReady", "The active revision remains ready while requested capacity is converging"
 	}
 	if ready {
 		return "Ready", "All requested ModelGroups are ready"
@@ -351,7 +365,7 @@ func rolloutReason(state groupState) string {
 		return "InsufficientCapacity"
 	}
 	if state.RolloutPending {
-		return "WaitingForCutover"
+		return "Converging"
 	}
 	return "Current"
 }
@@ -361,7 +375,7 @@ func rolloutMessage(state groupState) string {
 		return "The target Group revision is Unschedulable; the active revision remains serving"
 	}
 	if state.RolloutPending {
-		return "The target Group revision is converging or superseded revisions are being retired"
+		return "Requested Group capacity is converging or superseded Groups are being retired"
 	}
 	return "No previous Group revision is pending rollout"
 }

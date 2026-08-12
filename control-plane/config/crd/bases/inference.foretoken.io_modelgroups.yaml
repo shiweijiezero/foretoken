@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Defines a generated Kubernetes API manifest for Foretoken custom resources.
 ---
 apiVersion: apiextensions.k8s.io/v1
@@ -144,7 +144,7 @@ spec:
                   sharedStorageClaim:
                     description: |-
                       SharedStorageClaim is the platform-owned ReadWriteMany PVC used by the
-                      pinned vLLM ECExampleConnector.
+                      the local vLLM build source ECExampleConnector.
                     maxLength: 253
                     minLength: 1
                     type: string
@@ -173,10 +173,8 @@ spec:
                         modality supported by a model.
                       enum:
                       - image
-                      - video
-                      - audio
                       type: string
-                    maxItems: 3
+                    maxItems: 1
                     type: array
                     x-kubernetes-list-type: set
                   reasoning:
@@ -385,6 +383,21 @@ spec:
                     enum:
                     - rdma
                     type: string
+                  rdmaDeviceName:
+                    description: RDMADeviceName selects the platform-verified HCA
+                      shared by both P/D roles.
+                    minLength: 1
+                    type: string
+                  rdmaResourceCount:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  rdmaResourceName:
+                    description: |-
+                      RDMAResourceName is the platform-owned Kubernetes extended resource
+                      whose device plugin injects the P/D transport devices.
+                    minLength: 1
+                    type: string
                 required:
                 - abortRequestTimeoutSeconds
                 - bootstrapPort
@@ -392,6 +405,9 @@ spec:
                 - profileName
                 - profileRevision
                 - protocol
+                - rdmaDeviceName
+                - rdmaResourceCount
+                - rdmaResourceName
                 type: object
               resources:
                 description: ModelResources defines resources for one runtime member
@@ -522,6 +538,14 @@ spec:
                     maxLength: 2048
                     minLength: 1
                     type: string
+                  internalGenerateRequestBodyLimitBytes:
+                    description: |-
+                      InternalGenerateRequestBodyLimitBytes is the group-local generate request
+                      body limit resolved from the ModelService contract.
+                    format: int64
+                    maximum: 268435456
+                    minimum: 1048576
+                    type: integer
                   port:
                     description: Port is the internal Foretoken model-server transport
                       port.
@@ -532,6 +556,7 @@ spec:
                 required:
                 - backend
                 - image
+                - internalGenerateRequestBodyLimitBytes
                 - port
                 type: object
               timeouts:
@@ -588,9 +613,6 @@ spec:
                 ? has(self.pdRuntime) && (!has(self.ecRuntime) || self.ecRuntime.role
                 == ''consumer'') : self.role == ''decode'' ? has(self.pdRuntime) &&
                 !has(self.ecRuntime) : false'
-            - message: P/D ModelGroups do not support multimodal features
-              rule: '!(self.role == ''prefill'' || self.role == ''decode'') || size(self.features.multimodal)
-                == 0'
           status:
             description: ModelGroupStatus defines the observed state of a ModelGroup.
             properties:

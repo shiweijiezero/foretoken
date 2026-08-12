@@ -1167,9 +1167,11 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "foretoken-model-protocol",
- "foretoken-router",
+ "futures",
+ "patricia_tree",
  "reqwest 0.12.28",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "vllm-llm",
@@ -1186,6 +1188,7 @@ dependencies = [
  "foretoken-router",
  "futures",
  "reqwest 0.12.28",
+ "rmp-serde",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
@@ -1199,6 +1202,8 @@ name = "foretoken-metrics"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "foretoken-router",
+ "serde",
  "vllm-metrics",
 ]
 
@@ -1223,6 +1228,8 @@ dependencies = [
 name = "foretoken-router"
 version = "0.0.1"
 dependencies = [
+ "foretoken-kv-indexer",
+ "foretoken-model-protocol",
  "serde",
  "thiserror 2.0.19",
  "vllm-engine-core-client",
@@ -1256,8 +1263,10 @@ dependencies = [
  "axum",
  "foretoken-backend-registry",
  "foretoken-chat",
+ "foretoken-kv-indexer",
  "foretoken-llm-facade",
  "foretoken-metrics",
+ "foretoken-model-protocol",
  "foretoken-router",
  "foretoken-text",
  "foretoken-tokenizer",
@@ -2464,6 +2473,12 @@ name = "pastey"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
+
+[[package]]
+name = "patricia_tree"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4df0e43512f12f23a6b08c7b893192b7d6ec937b95ee03af040847907fe5cef7"
 
 [[package]]
 name = "pcre2"

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
-# Build from the repository root so Cargo can resolve reference/upstream/vllm/rust.
+
+# Build from the repository root so Cargo can resolve third_party/vllm-rust/source.
 
 ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye
 ARG RUNTIME_IMAGE=docker.io/library/debian:bullseye-slim
@@ -14,7 +14,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential libssl-dev perl pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-COPY reference/upstream/vllm/rust/ ./reference/upstream/vllm/rust/
+COPY third_party/vllm-rust/source/rust/ ./third_party/vllm-rust/source/rust/
 COPY data-plane/model-protocol/ ./data-plane/model-protocol/
 COPY data-plane/frontend/ ./data-plane/frontend/
 

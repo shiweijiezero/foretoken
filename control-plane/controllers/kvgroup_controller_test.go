@@ -278,12 +278,12 @@ func TestKVGroupMaterializesClientInfrastructure(t *testing.T) {
 	if pvc.Annotations[kvGroupDiskRetentionAnnotation] != "Delete" || !metav1.IsControlledBy(pvc, group) {
 		t.Fatalf("client PVC = %#v", pvc)
 	}
-	policy := new(networkingv1.NetworkPolicy)
-	if err := kubeClient.Get(ctx, client.ObjectKey{Namespace: group.Namespace, Name: kvGroupWorkloadName(group)}, policy); err != nil {
+	networkPolicy := new(networkingv1.NetworkPolicy)
+	if err := kubeClient.Get(ctx, client.ObjectKey{Namespace: group.Namespace, Name: kvGroupWorkloadName(group)}, networkPolicy); err != nil {
 		t.Fatal(err)
 	}
-	if len(policy.Spec.Ingress) != 1 || len(policy.Spec.Ingress[0].From) != 1 {
-		t.Fatalf("NetworkPolicy = %#v", policy.Spec)
+	if len(networkPolicy.Spec.Ingress) != 1 || len(networkPolicy.Spec.Ingress[0].From) != 1 {
+		t.Fatalf("NetworkPolicy = %#v", networkPolicy.Spec)
 	}
 	current := new(inferencev1alpha1.KVGroup)
 	if err := kubeClient.Get(ctx, request.NamespacedName, current); err != nil {

@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
 //! Builds immutable component inventory and dynamic execution facades from snapshots.
 
 mod build;
 mod registry;
+mod route_target_stats;
 mod snapshot;
 
 pub use registry::{BackendRegistry, RouteTable};
 pub use snapshot::{
     ModelIdentity, ServingSnapshot, SnapshotEpdComponent, SnapshotEpdDomain, SnapshotError,
-    SnapshotGroup, SnapshotPdComponent, SnapshotPdDomain,
+    SnapshotGroup, SnapshotModel, SnapshotPdComponent, SnapshotPdDomain,
 };
 
 use foretoken_kv_indexer::KvRuntimeConfig;

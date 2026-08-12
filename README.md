@@ -2,131 +2,147 @@
 
 English | [简体中文](README_zh.md)
 
-Foretoken is a generative inference orchestration framework built for SLO/SLA targets and heterogeneous accelerators.
+Foretoken is a Kubernetes-native generative inference orchestration framework built for SLO/SLA targets and heterogeneous accelerators.
 
-Built on inference engines such as vLLM and SGLang, Foretoken organizes multiple generation instances into a cluster service for request routing, autoscaling, instance management, and benchmarking.
-We aim to turn an inference cluster into a token factory that continuously converts compute into tokens while meeting latency and quality requirements.
+Built on inference engines such as vLLM and SGLang, Foretoken organizes model runtimes into services with request routing, autoscaling, rollout, failure recovery, and benchmarking. We aim to turn an inference cluster into a token factory that continuously converts compute into tokens while meeting latency and quality requirements.
+
+```text
+Control plane: ModelService → ModelPool → ModelGroup
+Data plane:    Client → platform-managed Gateway → FrontendService
+               → Foretoken Router → selected ModelGroup service
+               → group-local model-server → backend EngineCore
+```
 
 ## When to Use Foretoken
 
-- Serve one or more models across multiple GPUs or nodes.
-- Route requests based on load, queue depth, or KV cache state.
-- Autoscale inference instances based on traffic and SLO targets.
-- Compare aggregated serving, Prefill/Decode disaggregation, and different parallelism strategies.
-- Use the same orchestration stack across NVIDIA, MetaX, Huawei Ascend, and other accelerators.
+- Serve one or more models across multiple accelerators or nodes.
+- Route requests based on load, queue depth, KV cache state, and service objectives.
+- Autoscale model capacity based on traffic and SLO targets.
+- Compare aggregated serving, Prefill/Decode disaggregation, and parallelism strategies.
+- Use one orchestration model across NVIDIA, MetaX, Huawei Ascend, and other accelerators.
 
-If you only need to serve a single model on one GPU, using an inference engine such as vLLM directly is usually enough.
+If you only need to serve a single model on one accelerator, using an inference engine such as vLLM directly is usually enough.
 
 ## Features and Status
 
 | Feature | Description | Status |
 |---|---|---|
-| Benchmarking | Performance benchmarks and parameter sweeps, correctness evaluation, and SLO simulation | In development |
-| Profiling | Use PyTorch Profiler and Nsight to identify compute, communication, and CPU/GPU bottlenecks | Planned |
-| Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics | In development |
-| Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
-| Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP parallelism | Research |
-| Control plane | Model services, instance groups, autoscaling, updates, and failure recovery | Planned |
-| Deployment and observability | Kubernetes deployment, metrics, dashboards, and alerts | Planned |
+| Kubernetes control plane | ModelService, ModelPool, ModelGroup, rollout, scaling, and failure recovery | In development |
+| Request routing | Route lowered requests to compatible model groups | In development |
+| vLLM integration | Reuse vLLM Rust tokenization, lowering, EngineCore client, streams, and detokenization | In development |
+| Benchmarking | Performance sweeps, correctness evaluation, and SLO simulation | In development |
+| Hardware support | Common runtime and scheduling profiles for heterogeneous accelerators | In development |
+| Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP | Research |
+| Observability | Metrics, dashboards, tracing, and alerts | Planned |
 
 ## Quick Start
 
+Foretoken runs as one Kubernetes system. Platform administrators configure the Gateway and accelerator runtime profiles once; serving users submit `FrontendService` and `ModelService` resources without starting individual processes.
+
+### Prerequisites
+
+- A Kubernetes cluster with accelerator nodes and the corresponding device plugin.
+- Gateway API v1 CRDs and a platform-managed Gateway whose listener permits routes from serving namespaces.
+- DNS for the serving hostname, or an equivalent test route to the Gateway.
+- Cluster access to the Foretoken control-plane, frontend, and model-server OCI images.
+
 ### 1. Install Foretoken
 
-Install Foretoken with Helm:
+Install the local Chart after preparing images in a registry accessible to the cluster, as described in [Source and Private Deployments](#source-and-private-deployments):
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
+helm upgrade --install foretoken ./deploy/charts/foretoken \
   --namespace foretoken-platform \
   --create-namespace \
+  --values platform-values.yaml \
   --wait
 ```
 
+`platform-values.yaml` is owned by the platform team. For the complete Frontend Quick Start, it must set `frontend.enabled=true` and provide the required `frontend.image` and `frontend.gateway.name`, `frontend.gateway.namespace`, and `frontend.gateway.sectionName` values, in addition to the model-server runtime, accelerator resource, and node scheduling profile. Private and offline environments can point the same values at mirrored OCI artifacts.
+
+The official `0.0.1` OCI Chart is not yet available for anonymous pulls. Use the local Chart or a private registry until the official OCI Chart is published.
+
 ### 2. Deploy a model service
 
-`examples/quickstart/kustomization.yaml` is the deployment entrypoint. It organizes the frontend and model services, while the Operator creates and manages the underlying resources.
+`examples/quickstart` declares both the northbound frontend and the model service. Foretoken creates and manages the underlying Pools, Groups, Deployments, Services, routes, and runtime configuration.
 
 ```bash
 FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_DIR=examples/quickstart
 
-# Create the namespace for the model service; keep it unchanged if it exists.
 kubectl create namespace "${FORETOKEN_NAMESPACE}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-# Apply the model service configuration; the Operator creates and starts its workloads.
 kubectl apply --server-side \
   --namespace "${FORETOKEN_NAMESPACE}" \
-  -k "${FORETOKEN_SERVING_DIR}"
+  -k examples/quickstart
 ```
 
-### 3. Wait for serving to become ready
+Replace `foretoken.example.com` in `examples/quickstart/frontend.yaml` with a hostname routed to the platform Gateway.
+
+### 3. Wait for serving readiness
 
 ```bash
-FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_DIR=examples/quickstart
+kubectl wait frontendservice/quickstart-frontend \
+  --for=condition=Ready \
+  --namespace foretoken-demo \
+  --timeout=15m
 
-# Wait until the frontend and model services in the Kustomize entrypoint are ready.
-kubectl kustomize "${FORETOKEN_SERVING_DIR}" |
-  kubectl wait --for=condition=Ready \
-    --namespace "${FORETOKEN_NAMESPACE}" \
-    --timeout=15m \
-    -f -
+kubectl wait modelservice/quickstart-qwen3-0.6b \
+  --for=condition=Ready \
+  --namespace foretoken-demo \
+  --timeout=15m
 ```
 
-### 4. Send a generation request through the Gateway
+`FrontendService` becomes Ready when its frontend Deployment is available, its HTTPRoute is accepted and resolved by the Gateway, and a routable backend snapshot is installed. `ModelService` becomes Ready when every serving ModelPool has a routable active revision. A Pool remains Ready while at least one active Group is ready; `CapacityReady` reports whether all requested Groups are ready.
+
+### 4. Send a request through the Gateway
 
 ```bash
 curl --fail-with-body --no-buffer \
   https://foretoken.example.com/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
-
-Users submit the serving configuration. The Operator manages the underlying resources, and clients access the model service through the Gateway.
 
 ## Stop and Uninstall
 
-Delete the serving configuration so the Operator can stop the service and clean up its resources:
+Delete serving intent first so Foretoken can stop and clean up the owned resources:
 
 ```bash
-FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_DIR=examples/quickstart
-
 kubectl delete --wait=true --timeout=10m \
-  --namespace "${FORETOKEN_NAMESPACE}" \
-  -k "${FORETOKEN_SERVING_DIR}"
+  --namespace foretoken-demo \
+  -k examples/quickstart
 ```
 
-After the serving resources are gone, uninstall Foretoken:
+Then uninstall the control plane:
 
 ```bash
 helm uninstall foretoken \
   --namespace foretoken-platform \
-  --wait --timeout 5m
+  --wait --timeout=5m
 ```
 
-Uninstalling the control plane preserves Foretoken CRDs and custom resources. Delete the CRDs explicitly only after all Foretoken resources have been removed:
+Foretoken CRDs are preserved during a normal uninstall. Delete them explicitly only after all Foretoken custom resources have been removed:
 
 ```bash
 kubectl delete crd \
   frontendservices.inference.foretoken.io \
   modelservices.inference.foretoken.io \
   modelpools.inference.foretoken.io \
-  modelgroups.inference.foretoken.io
+  modelgroups.inference.foretoken.io \
+  kvservices.inference.foretoken.io \
+  kvpools.inference.foretoken.io \
+  kvgroups.inference.foretoken.io
 ```
 
-## Install from Source
+## Source and Private Deployments
 
-Use the local Chart from a source checkout:
+Kubernetes runs OCI images rather than the source checkout directly. Source, private-registry, and offline deployments use the same architecture:
 
-```bash
-helm upgrade --install foretoken ./deploy/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --wait
-```
+1. Build the control-plane, frontend, and model-server OCI images from this repository.
+2. Publish them to an OCI registry accessible to the cluster, or import them directly into development cluster nodes.
+3. Set their immutable references and the cluster runtime profile in Helm values.
+4. Install the local Chart with `helm upgrade --install foretoken ./deploy/charts/foretoken --namespace foretoken-platform --create-namespace --values <values-file>`.
 
 ## Related Projects
 
@@ -138,8 +154,8 @@ helm upgrade --install foretoken ./deploy/charts/foretoken \
 
 ## Contributing
 
-Contributions to deployment baselines, hardware support, benchmarking, routing and autoscaling algorithms, tests, and documentation are welcome.
-Performance-related changes should include the test setup, raw results, and reproducible commands.
+Contributions to deployment baselines, hardware support, benchmarking, routing and autoscaling algorithms, tests, and documentation are welcome. Performance-related changes should include the test setup, raw results, and reproducible commands.
+
 See [Contributing to Foretoken](CONTRIBUTING.md) for development principles, collaboration expectations, and the pull request workflow.
 
 ## License

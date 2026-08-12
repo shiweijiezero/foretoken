@@ -5,8 +5,10 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Foretoken Frontend
 
+[简体中文](README_zh.md)
+
 `foretoken-frontend` is the northbound Rust data plane behind the platform-owned
-Gateway. It reuses the pinned vLLM Rust request processors and incremental output
+Gateway. It reuses the the local vLLM build source Rust request processors and incremental output
 APIs while Foretoken owns multi-model routing and backend selection.
 
 ## Data flow
@@ -21,7 +23,7 @@ ModelService / ModelPool / ModelGroup
   → FrontendService controller
   → mounted serving.json serving snapshot
   → BackendRegistry + KvIndexer + per-model vLLM processors
-  → RuntimeState { models, PolicyRouter, LlmFacadeResolver }
+  → RuntimeState { models, PipelineRouter, LlmFacadeResolver }
   → atomic active-generation swap
 ```
 
@@ -33,8 +35,9 @@ introducing a second text-generation path.
 OpenAI HTTP request
   → select pinned model runtime
   → vLLM text/chat processor → vllm_llm::GenerateRequest
-  → PolicyRouter: capability/health/capacity filter → KV/load ranking
-  → BackendRegistry resolves aggregate backend or same-domain P/D pair
+  → PipelineRouter: node-list Filter → Scorer → Picker
+  → BackendRegistry resolves the selected Aggregate or Prefill node
+  → after Prefill, PipelineRouter independently selects one Decode node
   → LlmFacade → GenerateInput JSON
   → Group-local model-server → vLLM Llm / EngineCore
   → TokenEvent<TokenOutput> NDJSON
@@ -43,30 +46,25 @@ OpenAI HTTP request
   → SSE chunks or one collected HTTP response
 ```
 
-Aggregate requests use one backend. P/D requests reserve a prefill and decode
-component atomically, fully consume prefill, then expose only the decode stream to
-the caller. Dropping the output stream releases the reservation and aborts
-unfinished backend work.
+Aggregate requests use one backend. For P/D requests, Router first selects and executes one Prefill node, then reads a fresh backend snapshot and selects one Decode node. P and D are not paired or reserved together. Only the Decode stream is exposed to the caller, and dropping it aborts unfinished backend work.
 
 ## Crate ownership and composition
 
 `cmd` is the composition root. It validates one mounted serving snapshot into a
 `BackendRegistryBuild`, constructs `BackendRegistry` and `KvIndexer` separately,
-and installs `PolicyRouter::new(registry, kv_indexer)`. Its runtime control refreshes
-backend readiness, capacity telemetry, and KV event deltas together; both registry health
-and a valid capacity snapshot affect readiness.
+and installs a `PipelineRouter` with the selected pipeline, KV-prefix reader, and backend-statistics reader. Its runtime control refreshes backend readiness, load telemetry, and KV event deltas. Backend readiness does not depend on a capacity-admission snapshot.
 
 ```text
 serving snapshot (mounted as serving.json)
   → BackendRegistryBuild
       ├→ BackendRegistry: RouteInventory + LlmFacadeResolver + route health
       └→ KvRuntimeConfig → KvIndexer: event sources, bindings, cursors, digest index
-                                      └→ KvPrefixScorer
-BackendRegistry + KvIndexer → PolicyRouter
+                                      └→ KvPrefixIndexer
+BackendRegistry + KvIndexer → PipelineRouter
 ```
 
-The dependency direction is one-way: `kv-indexer → router`; `backend-registry` derives
-KV configuration but owns no KV runtime state; `cmd` joins both owners. KV event access,
+The dependency direction is one-way: `router → kv-indexer`; `backend-registry` derives
+KV configuration but owns no KV runtime state; the Frontend composition root joins both owners. KV event access,
 credentials, and index failures are opportunistic: they produce a neutral score and never
 make an otherwise healthy route ineligible. For P/D routes, the binding always scores the
 prefill source; decode cache state is not used as a prefix signal.
@@ -90,17 +88,7 @@ readiness continues to follow the active generation's backend health.
 A serving snapshot may contain multiple public request models. Groups for the same `model`
 must share one pinned model revision, tokenizer, and tokenizer revision; different
 models may use different identities. The frontend loads one runtime bundle per model
-and selects it before chat rendering, text lowering, routing, and decoding. Backend health
-and capacity telemetry are tracked per component. The Registry owns immutable component/domain
-inventory and resolves an aggregate target or selected dynamic P/D pair through one `VllmFacade`.
-The KV Indexer is best-effort and only scores prefill components. The Router filters model,
-revision, capability, component health, and capacity; ranks P by prefix locality then load; and
-selects a same-domain D by load. It atomically reserves the final P+D pair before prefill begins,
-holding it until the decode stream terminates or is dropped. A failed component removes
-only that component. P/D execution is sequential: the internal prefill NDJSON stream is fully
-consumed to a normal terminal event before decode is submitted, and only decode output reaches
-the caller. Reservations are
-process-local and do not provide cross-replica consistency. P/D-alpha has mock coverage only:
+and selects it before chat rendering, text lowering, routing, and decoding. Backend health and load telemetry are tracked per physical component. The Registry owns the node inventory and resolves the selected node through `LlmFacadeResolver`. The KV Indexer is best-effort and provides local and offloaded prefix signals. Router filters and scores the complete node list, then selects one Aggregate or Prefill node. After Prefill completes, Router reads a fresh snapshot and independently selects one Decode node. P/D execution is sequential: the internal prefill NDJSON stream is fully consumed to a normal terminal event before decode is submitted, and only decode output reaches the caller. P/D-alpha has mock coverage only:
 real GPU/RDMA Mooncake connector timing still requires conformance validation, and this document
 makes no GPU/RDMA conformance claim. The frontend remains
 ready while any route is healthy; a model with no healthy route is omitted from
@@ -109,7 +97,7 @@ supported requests are:
 
 - `POST /v1/completions`;
 - `POST /v1/chat/completions` with text, tools, reasoning, structured-output, and
-  policy-enabled multimodal messages;
+  capability-gated multimodal messages;
 - `POST /v1/generate` as the simplified completion alias;
 - `POST /tokenize` and `POST /detokenize`;
 - `GET /v1/models`, `GET /v1/models/{model}`, `/healthz`, `/readyz`, and `/metrics`.
@@ -123,7 +111,7 @@ serve multimodal requests, while P/D snapshots reject multimodal capabilities.
 
 ## Kubernetes runtime contract
 
-Foretoken packages this component as an OCI image built from the repository root because the Rust workspace directly reuses the pinned vLLM sources under `reference/upstream/vllm/rust`.
+Foretoken packages this component as an OCI image built from the repository root because the Rust workspace directly reuses the local vLLM build source under `third_party/vllm-rust/source/rust`.
 
 The control plane creates and manages the frontend Deployment, mounts the serving snapshot and tokenizer cache, and exposes it only through the platform-managed Gateway. Users do not start frontend replicas individually.
 
@@ -131,16 +119,12 @@ The runtime image uses numeric user `65532`. OCI image startup with a real model
 
 ## Development build
 
-From the repository root, materialize the pinned vLLM Rust source before any
-Cargo command or OCI build:
+Use a local vLLM Git checkout as the build source:
 
 ```bash
-./scripts/bootstrap-vllm-rust.sh
-cargo check --manifest-path data-plane/frontend/Cargo.toml --workspace --locked
-docker build -f data-plane/frontend/Dockerfile -t foretoken-frontend:dev .
+FORETOKEN_VLLM_SOURCE=/path/to/vllm make build-frontend
+FORETOKEN_VLLM_SOURCE=/path/to/vllm make verify-frontend
+FORETOKEN_VLLM_SOURCE=/path/to/vllm make image-frontend
 ```
 
-The bootstrap reads `third_party/vllm-rust/source.lock.toml`, verifies the
-tracked patch checksum, and applies the pinned patch to the ignored
-`reference/upstream/vllm` worktree. It is idempotent and refuses to reset or
-overwrite unexpected local changes there.
+The source selector validates the checkout and updates the ignored `third_party/vllm-rust/source` link. It does not modify the checkout.

@@ -1,23 +1,72 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Best-effort, privacy-preserving vLLM KV event adapter. A bad event loses credit.
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use foretoken_model_protocol::{KvDelta, KvDeltaEvent, KvDeltaResponse, KvPartition};
-use rmpv::Value;
-use std::collections::{HashMap, VecDeque};
+// SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+//! Normalizes vLLM KV lifecycle events into privacy-preserving, rank-local delta streams.
+
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use foretoken_model_protocol::{
+    KvBlockHash, KvCacheLocality, KvDelta, KvDeltaEvent, KvDeltaResponse, KvHashFormat,
+    KvPartition, KvPlacement, KvStorageTier, KvStoredBlock,
+};
+use rmpv::Value;
 use uuid::Uuid;
 use zeromq::SubSocket;
 use zeromq::prelude::{Socket, SocketRecv};
+
 const TOPIC: &[u8] = b"foretoken-kv-v1";
-const CAP: usize = 4096;
+const CAPACITY: usize = 4096;
+
+#[derive(Clone)]
+struct StoredBlock {
+    partition: KvPartition,
+    block_index: u64,
+    block_hash: KvBlockHash,
+    placement: KvPlacement,
+}
+
+struct RankState {
+    ring: VecDeque<KvDelta>,
+    raw_blocks: HashMap<(Option<u32>, Vec<u8>), StoredBlock>,
+}
+
+impl RankState {
+    fn new() -> Self {
+        Self {
+            ring: VecDeque::new(),
+            raw_blocks: HashMap::new(),
+        }
+    }
+
+    fn current(&self) -> u64 {
+        self.ring.back().map_or(0, |delta| delta.sequence)
+    }
+
+    fn push(&mut self, event: KvDeltaEvent) {
+        let sequence = self
+            .ring
+            .back()
+            .map_or(0, |delta| delta.sequence.saturating_add(1));
+        self.ring.push_back(KvDelta { sequence, event });
+        if self.ring.len() > CAPACITY {
+            self.ring.pop_front();
+        }
+    }
+
+    fn clear(&mut self) {
+        self.raw_blocks.clear();
+        self.push(KvDeltaEvent::AllBlocksCleared);
+    }
+}
+
 struct Inner {
     epoch: String,
-    next: u64,
-    ring: VecDeque<KvDelta>,
-    raw: HashMap<Vec<u8>, (KvPartition, [u8; 32])>,
-    expected: Option<u64>,
+    ranks: BTreeMap<u32, RankState>,
     available: bool,
 }
+
 #[derive(Debug)]
 pub enum KvDeltaError {
     Unavailable,
@@ -27,25 +76,36 @@ pub enum KvDeltaError {
 pub struct KvEventAdapter {
     inner: Mutex<Inner>,
     key: [u8; 32],
-    scope: String,
-    backend_id: String,
+    scope_id: String,
+    model_group_id: String,
+    model_revision: String,
+    data_parallel_size: u32,
 }
+
 impl KvEventAdapter {
-    pub fn new(key: [u8; 32], scope: String, backend_id: String) -> Arc<Self> {
+    pub fn new(
+        key: [u8; 32],
+        scope_id: String,
+        model_group_id: String,
+        model_revision: String,
+        data_parallel_size: u32,
+    ) -> Arc<Self> {
         Arc::new(Self {
             inner: Mutex::new(Inner {
                 epoch: Uuid::new_v4().to_string(),
-                next: 0,
-                ring: VecDeque::new(),
-                raw: HashMap::new(),
-                expected: None,
+                ranks: (0..data_parallel_size)
+                    .map(|rank| (rank, RankState::new()))
+                    .collect(),
                 available: true,
             }),
             key,
-            scope,
-            backend_id,
+            scope_id,
+            model_group_id,
+            model_revision,
+            data_parallel_size,
         })
     }
+
     pub fn unavailable(&self) {
         self.mark_unavailable("event_stream_interrupted");
     }
@@ -57,238 +117,326 @@ impl KvEventAdapter {
         }
         inner.available = false;
     }
+
     pub fn delta(
         &self,
-        epoch: &str,
-        after: u64,
+        dp_rank: u32,
+        epoch: Option<&str>,
+        after: Option<u64>,
         limit: usize,
     ) -> Result<KvDeltaResponse, KvDeltaError> {
-        let i = self.inner.lock().unwrap();
-        let clear = KvDeltaResponse {
-            backend_id: self.backend_id.clone(),
-            scope_id: self.scope.clone(),
-            epoch: i.epoch.clone(),
-            dp_rank: 0,
-            through: 0,
-            current: i.next,
-            deltas: vec![],
-        };
-        if !i.available {
+        let inner = self.inner.lock().unwrap();
+        if !inner.available {
             return Err(KvDeltaError::Unavailable);
         }
-        if epoch != i.epoch
-            || after > i.next
-            || (after != 0 && i.ring.front().is_some_and(|d| after + 1 < d.sequence))
+        let Some(rank) = inner.ranks.get(&dp_rank) else {
+            return Err(KvDeltaError::Unavailable);
+        };
+        let reset = self.response(&inner, dp_rank, 0, Vec::new());
+        if epoch != Some(inner.epoch.as_str())
+            || after.is_some_and(|cursor| cursor > rank.current())
+            || after.is_some_and(|cursor| {
+                rank.ring
+                    .front()
+                    .is_some_and(|delta| cursor.saturating_add(1) < delta.sequence)
+            })
         {
-            return Err(KvDeltaError::CursorReset(clear));
+            return Err(KvDeltaError::CursorReset(reset));
         }
-        let deltas = i
+        let deltas = rank
             .ring
             .iter()
-            .filter(|d| d.sequence > after)
+            .filter(|delta| after.is_none_or(|cursor| delta.sequence > cursor))
             .take(limit.min(512))
             .cloned()
             .collect::<Vec<_>>();
-        let through = deltas.last().map(|d| d.sequence).unwrap_or(after);
-        Ok(KvDeltaResponse {
-            backend_id: self.backend_id.clone(),
-            scope_id: self.scope.clone(),
-            epoch: i.epoch.clone(),
-            dp_rank: 0,
-            through,
-            current: i.next,
-            deltas,
-        })
-    }
-    fn push(i: &mut Inner, event: KvDeltaEvent) {
-        i.next += 1;
-        i.ring.push_back(KvDelta {
-            sequence: i.next,
-            event,
-        });
-        if i.ring.len() > CAP {
-            i.ring.pop_front();
-        }
-    }
-    pub fn clear(&self) {
-        let mut i = self.inner.lock().unwrap();
-        i.raw.clear();
-        Self::push(&mut i, KvDeltaEvent::Clear)
-    }
-    fn gap(&self) {
-        self.clear();
-        self.inner.lock().unwrap().expected = None;
-        self.mark_unavailable("event_sequence_gap");
+        let through = deltas
+            .last()
+            .map(|delta| delta.sequence)
+            .or(after)
+            .unwrap_or(0);
+        Ok(self.response(&inner, dp_rank, through, deltas))
     }
 
-    fn protocol_failure(&self) {
-        self.clear();
-        self.mark_unavailable("event_protocol_violation");
-    }
-    fn digest(&self, parent: &[u8; 32], tokens: &[u32], p: &KvPartition) -> [u8; 32] {
-        let mut h = blake3::Hasher::new_keyed(&self.key);
-        h.update(parent);
-        h.update(p.scope_id.as_bytes());
-        h.update(&p.block_size.to_le_bytes());
-        h.update(&p.group_idx.unwrap_or(u32::MAX).to_le_bytes());
-        h.update(p.spec_kind.as_bytes());
-        for t in tokens {
-            h.update(&t.to_le_bytes());
+    fn response(
+        &self,
+        inner: &Inner,
+        dp_rank: u32,
+        through: u64,
+        deltas: Vec<KvDelta>,
+    ) -> KvDeltaResponse {
+        KvDeltaResponse {
+            event_source_id: format!("{}:dp:{dp_rank}", self.model_group_id),
+            model_group_id: self.model_group_id.clone(),
+            epoch: inner.epoch.clone(),
+            dp_rank,
+            through,
+            current: inner.ranks.get(&dp_rank).map_or(0, RankState::current),
+            deltas,
         }
-        *h.finalize().as_bytes()
     }
-    /// Exactly topic, 8-byte BE sequence, MessagePack payload; gaps fail closed.
-    pub fn ingest_frames(&self, f: Vec<Vec<u8>>) {
-        if f.len() != 3 || f[0] != TOPIC || f[1].len() != 8 {
-            self.gap();
+
+    fn clear_all_ranks(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        for rank in inner.ranks.values_mut() {
+            rank.clear();
+        }
+    }
+
+    fn fail_stream(&self, reason: &'static str) {
+        self.clear_all_ranks();
+        let mut inner = self.inner.lock().unwrap();
+        if inner.available {
+            tracing::warn!(reason, "KV event adapter degraded");
+        }
+        inner.available = false;
+    }
+
+    fn normalized_hash(
+        &self,
+        parent: &KvBlockHash,
+        tokens: &[u32],
+        partition: &KvPartition,
+    ) -> KvBlockHash {
+        let mut hasher = blake3::Hasher::new_keyed(&self.key);
+        hasher.update(parent.0.as_bytes());
+        hasher.update(partition.model_revision.as_bytes());
+        hasher.update(partition.scope_id.as_bytes());
+        hasher.update(&partition.hash_block_size.to_le_bytes());
+        hasher.update(&partition.group_idx.unwrap_or(u32::MAX).to_le_bytes());
+        hasher.update(partition.spec_kind.as_bytes());
+        hasher.update(&partition.sliding_window.unwrap_or(u32::MAX).to_le_bytes());
+        for token in tokens {
+            hasher.update(&token.to_le_bytes());
+        }
+        KvBlockHash(URL_SAFE_NO_PAD.encode(hasher.finalize().as_bytes()))
+    }
+
+    /// Accepts exactly topic, 8-byte big-endian sequence, and one MessagePack payload.
+    pub fn ingest_frames(&self, frames: Vec<Vec<u8>>) {
+        if frames.len() != 3 || frames[0] != TOPIC || frames[1].len() != 8 {
+            self.fail_stream("event_protocol_violation");
             return;
         }
-        let n = u64::from_be_bytes(f[1].as_slice().try_into().unwrap());
-        {
-            let mut i = self.inner.lock().unwrap();
-            if i.expected.is_some_and(|x| x != n) {
-                drop(i);
-                self.gap();
-                return;
-            }
-            i.expected = Some(n.wrapping_add(1));
-        }
-        self.ingest_msgpack(&f[2])
+        self.ingest_msgpack(&frames[2]);
     }
-    /// Pinned msgspec array-like payload: [timestamp, tagged events, optional DP rank].
-    pub fn ingest_msgpack(&self, b: &[u8]) {
-        let Ok(Value::Array(a)) = rmp_serde::from_slice::<Value>(b) else {
-            self.protocol_failure();
+
+    /// Accepts vLLM's msgspec array payload: timestamp, tagged events, and optional DP rank.
+    pub fn ingest_msgpack(&self, bytes: &[u8]) {
+        let Ok(Value::Array(batch)) = rmp_serde::from_slice::<Value>(bytes) else {
+            self.fail_stream("event_protocol_violation");
             return;
         };
-        if !(a.len() == 2 || a.len() == 3)
-            || !matches!(a[0], Value::Integer(_) | Value::F32(_) | Value::F64(_))
-            || a[1].as_array().is_none()
-            || a.get(2).is_some_and(|x| x.as_i64() != Some(0))
+        let Some(events) = batch.get(1).and_then(Value::as_array) else {
+            self.fail_stream("event_protocol_violation");
+            return;
+        };
+        if !(batch.len() == 2 || batch.len() == 3)
+            || !matches!(batch[0], Value::Integer(_) | Value::F32(_) | Value::F64(_))
         {
-            self.protocol_failure();
+            self.fail_stream("event_protocol_violation");
             return;
         }
-        for e in a[1].as_array().unwrap().iter().cloned() {
-            if !self.event(e) {
-                self.protocol_failure();
+        let dp_rank = match batch.get(2) {
+            Some(value) => match value.as_u64().and_then(|rank| u32::try_from(rank).ok()) {
+                Some(rank) if rank < self.data_parallel_size => rank,
+                _ => {
+                    self.fail_stream("event_protocol_violation");
+                    return;
+                }
+            },
+            None if self.data_parallel_size == 1 => 0,
+            None => {
+                self.fail_stream("event_protocol_violation");
+                return;
+            }
+        };
+        for event in events.iter().cloned() {
+            if !self.ingest_event(dp_rank, event) {
+                self.fail_stream("event_protocol_violation");
                 return;
             }
         }
         let mut inner = self.inner.lock().unwrap();
         if !inner.available {
-            tracing::info!("KV event adapter recovered");
+            tracing::info!(dp_rank, "KV event adapter recovered");
         }
         inner.available = true;
     }
-    fn event(&self, e: Value) -> bool {
-        let Value::Map(m) = e else { return false };
-        let f = |n: &str| {
-            m.iter()
-                .find_map(|(k, v)| (k.as_str() == Some(n)).then_some(v))
+
+    fn ingest_event(&self, dp_rank: u32, event: Value) -> bool {
+        let Value::Map(fields) = event else {
+            return false;
         };
-        let ty = f("type")
-            .or_else(|| f("event_type"))
+        let event_type = field(&fields, "type")
+            .or_else(|| field(&fields, "event_type"))
             .and_then(Value::as_str)
             .unwrap_or("");
-        if ty.contains("AllBlocksCleared") {
-            self.clear();
+        if event_type.contains("AllBlocksCleared") {
+            let mut inner = self.inner.lock().unwrap();
+            inner.ranks.get_mut(&dp_rank).unwrap().clear();
             return true;
         }
-        let hashes = f("block_hashes").and_then(Value::as_array);
-        if ty.contains("BlockRemoved") {
-            let Some(h) = hashes else { return false };
-            let mut i = self.inner.lock().unwrap();
-            for x in h {
-                if let Some(k) = hash(x)
-                    && let Some((p, d)) = i.raw.remove(&k)
-                {
-                    Self::push(
-                        &mut i,
-                        KvDeltaEvent::Remove {
-                            partition: p,
-                            digest: URL_SAFE_NO_PAD.encode(d),
-                        },
-                    )
-                }
-            }
-            return true;
+        let Some(raw_hashes) = field(&fields, "block_hashes").and_then(Value::as_array) else {
+            return false;
+        };
+        if event_type.contains("BlockRemoved") {
+            return self.remove_blocks(dp_rank, raw_hashes, &fields);
         }
-        if !ty.contains("BlockStored") {
+        if !event_type.contains("BlockStored") {
             return false;
         }
-        let medium = f("medium").and_then(Value::as_str).unwrap_or("GPU");
-        let loc = f("locality").and_then(Value::as_str);
-        let extra = f("extra_keys");
-        let group = f("group_idx").and_then(Value::as_i64);
-        let spec = f("kv_cache_spec_kind")
-            .and_then(Value::as_str)
-            .unwrap_or("full_attention");
-        // GPU events currently provide the complete store/remove/reset lifecycle required for an
-        // authoritative prefix index. Offload and shared-store events remain untrusted hints until
-        // they expose stable store identity and deletion semantics or a store-native lookup verifies them.
-        if medium != "GPU"
-            || matches!(loc, Some("CPU" | "STORAGE" | "REMOTE"))
-            || extra.is_some_and(|x| !x.is_nil())
-            || group.is_some_and(|x| x != 0)
-            || spec != "full_attention"
-        {
+        self.store_blocks(dp_rank, raw_hashes, &fields)
+    }
+
+    fn remove_blocks(&self, dp_rank: u32, raw_hashes: &[Value], fields: &[(Value, Value)]) -> bool {
+        let event_placement = placement(field(fields, "medium"), field(fields, "locality"));
+        let event_group_idx = optional_u32(field(fields, "group_idx"));
+        let mut inner = self.inner.lock().unwrap();
+        let rank = inner.ranks.get_mut(&dp_rank).unwrap();
+        let mut removed = BTreeMap::<(KvPlacement, Option<u32>), Vec<KvBlockHash>>::new();
+        for value in raw_hashes {
+            let Some(raw_hash) = raw_hash(value) else {
+                return false;
+            };
+            let stored = match event_group_idx {
+                Some(group_idx) => rank.raw_blocks.remove(&(Some(group_idx), raw_hash)),
+                None => {
+                    let keys = rank
+                        .raw_blocks
+                        .keys()
+                        .filter(|(_, candidate)| candidate == &raw_hash)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if keys.len() != 1 {
+                        continue;
+                    }
+                    rank.raw_blocks.remove(&keys[0])
+                }
+            };
+            let Some(stored) = stored else {
+                continue;
+            };
+            let placement = event_placement.unwrap_or(stored.placement);
+            let group_idx = event_group_idx.or(stored.partition.group_idx);
+            removed
+                .entry((placement, group_idx))
+                .or_default()
+                .push(stored.block_hash);
+        }
+        for ((placement, group_idx), block_hashes) in removed {
+            rank.push(KvDeltaEvent::BlockRemoved {
+                block_hashes,
+                placement,
+                group_idx,
+            });
+        }
+        true
+    }
+
+    fn store_blocks(&self, dp_rank: u32, raw_hashes: &[Value], fields: &[(Value, Value)]) -> bool {
+        let Some(placement) = placement(field(fields, "medium"), field(fields, "locality")) else {
+            return true;
+        };
+        let extra_keys = field(fields, "extra_keys");
+        if extra_keys.is_some_and(|value| !value.is_nil()) {
             return true;
         }
-        let (Some(h), Some(t), Some(bs)) = (
-            hashes,
-            f("token_ids").and_then(Value::as_array),
-            f("block_size").and_then(Value::as_u64),
+        let group_idx = optional_u32(field(fields, "group_idx"));
+        let spec_kind = field(fields, "kv_cache_spec_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("full_attention");
+        let sliding_window = optional_u32(
+            field(fields, "kv_cache_spec_sliding_window")
+                .or_else(|| field(fields, "sliding_window")),
+        );
+        let (Some(token_values), Some(block_size)) = (
+            field(fields, "token_ids").and_then(Value::as_array),
+            field(fields, "block_size").and_then(Value::as_u64),
         ) else {
             return false;
         };
-        if bs == 0 || t.len() % bs as usize != 0 || h.len() != t.len() / bs as usize {
+        let Ok(block_size) = u32::try_from(block_size) else {
+            return false;
+        };
+        if block_size == 0
+            || token_values.len() % block_size as usize != 0
+            || raw_hashes.len() != token_values.len() / block_size as usize
+        {
             return false;
         }
-        let Some(ids) = t
+        let Some(token_ids) = token_values
             .iter()
-            .map(|x| x.as_u64().map(|n| n as u32))
+            .map(|value| value.as_u64().and_then(|token| u32::try_from(token).ok()))
             .collect::<Option<Vec<_>>>()
         else {
             return false;
         };
-        let p = KvPartition {
-            scope_id: self.scope.clone(),
-            block_size: bs as u32,
-            group_idx: group.map(|x| x as u32),
-            spec_kind: spec.into(),
+        let partition = KvPartition {
+            model_revision: self.model_revision.clone(),
+            scope_id: self.scope_id.clone(),
+            hash_format: KvHashFormat::NormalizedKeyedBlake3V1,
+            hash_block_size: block_size,
+            group_idx,
+            spec_kind: spec_kind.into(),
+            sliding_window,
         };
-        let parent = f("parent_block_hash").and_then(hash);
-        let mut i = self.inner.lock().unwrap();
-        let mut prev = match parent {
-            Some(k) => match i.raw.get(&k) {
-                Some((_, d)) => *d,
+        let parent_raw_hash = field(fields, "parent_block_hash").and_then(raw_hash);
+        let mut inner = self.inner.lock().unwrap();
+        let rank = inner.ranks.get_mut(&dp_rank).unwrap();
+        let (mut parent_hash, first_block_index) = match parent_raw_hash {
+            Some(raw_hash) => match rank.raw_blocks.get(&(group_idx, raw_hash)) {
+                Some(parent) => (
+                    parent.block_hash.clone(),
+                    parent.block_index.saturating_add(1),
+                ),
                 None => return true,
             },
-            None => [0; 32],
+            None => (KvBlockHash(String::new()), 0),
         };
-        for (x, c) in h.iter().zip(ids.chunks(bs as usize)) {
-            let Some(k) = hash(x) else { return false };
-            let d = self.digest(&prev, c, &p);
-            i.raw.insert(k, (p.clone(), d));
-            Self::push(
-                &mut i,
-                KvDeltaEvent::Store {
-                    partition: p.clone(),
-                    digest: URL_SAFE_NO_PAD.encode(d),
+        let mut blocks = Vec::with_capacity(raw_hashes.len());
+        for (offset, (raw_value, tokens)) in raw_hashes
+            .iter()
+            .zip(token_ids.chunks_exact(block_size as usize))
+            .enumerate()
+        {
+            let Some(raw_hash) = raw_hash(raw_value) else {
+                return false;
+            };
+            let block_index = first_block_index.saturating_add(offset as u64);
+            let block_hash = self.normalized_hash(&parent_hash, tokens, &partition);
+            let block = KvStoredBlock {
+                partition: partition.clone(),
+                block_index,
+                parent_hash: parent_hash.clone(),
+                block_hash: block_hash.clone(),
+            };
+            rank.raw_blocks.insert(
+                (group_idx, raw_hash),
+                StoredBlock {
+                    partition: partition.clone(),
+                    block_index,
+                    block_hash: block_hash.clone(),
+                    placement,
                 },
             );
-            prev = d
+            blocks.push(block);
+            parent_hash = block_hash;
+        }
+        if !blocks.is_empty() {
+            rank.push(KvDeltaEvent::BlockStored { blocks, placement });
         }
         true
     }
+
     pub async fn serve(self: Arc<Self>) {
         self.serve_ready(None).await;
     }
+
     pub async fn serve_ready(self: Arc<Self>, ready: Option<tokio::sync::oneshot::Sender<bool>>) {
-        let mut s = SubSocket::new();
-        if s.bind("tcp://127.0.0.1:5557").await.is_err()
-            || s.subscribe("foretoken-kv-v1").await.is_err()
+        let mut socket = SubSocket::new();
+        if socket.connect("tcp://127.0.0.1:5557").await.is_err()
+            || socket.subscribe("foretoken-kv-v1").await.is_err()
         {
             self.unavailable();
             if let Some(ready) = ready {
@@ -300,24 +448,74 @@ impl KvEventAdapter {
             let _ = ready.send(true);
         }
         loop {
-            match s.recv().await {
-                Ok(m) => self.ingest_frames(m.into_vec().into_iter().map(|x| x.to_vec()).collect()),
+            match socket.recv().await {
+                Ok(message) => self.ingest_frames(
+                    message
+                        .into_vec()
+                        .into_iter()
+                        .map(|frame| frame.to_vec())
+                        .collect(),
+                ),
                 Err(_) => {
-                    self.gap();
-                    self.unavailable();
+                    self.fail_stream("event_stream_interrupted");
                     return;
                 }
             }
         }
     }
 }
-fn hash(v: &Value) -> Option<Vec<u8>> {
-    match v {
-        Value::Binary(x) => Some(x.clone()),
-        Value::Integer(n) => n.as_u64().map(|x| x.to_be_bytes().to_vec()),
+
+fn field<'a>(fields: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
+    fields
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
+}
+
+fn raw_hash(value: &Value) -> Option<Vec<u8>> {
+    match value {
+        Value::Binary(bytes) => Some(bytes.clone()),
+        Value::Integer(integer) => integer.as_u64().map(|value| value.to_be_bytes().to_vec()),
         _ => None,
     }
 }
+
+fn optional_u32(value: Option<&Value>) -> Option<u32> {
+    value
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+}
+
+fn placement(medium: Option<&Value>, locality: Option<&Value>) -> Option<KvPlacement> {
+    let medium = medium.and_then(Value::as_str).unwrap_or("GPU");
+    let tier = match medium.to_ascii_uppercase().as_str() {
+        "GPU" | "DEVICE" => KvStorageTier::Device,
+        "CPU" | "CPU_PINNED" => KvStorageTier::HostPinned,
+        "STORAGE" | "DISK" | "NVME" => KvStorageTier::Disk,
+        "REMOTE" | "EXTERNAL" | "NETWORK" | "SHARED" => KvStorageTier::External,
+        _ => return None,
+    };
+    let locality = match locality
+        .and_then(Value::as_str)
+        .map(str::to_ascii_uppercase)
+    {
+        Some(value) if matches!(value.as_str(), "LOCAL" | "GPU" | "CPU" | "CPU_PINNED") => {
+            KvCacheLocality::Local
+        }
+        Some(value)
+            if matches!(
+                value.as_str(),
+                "REMOTE" | "STORAGE" | "DISK" | "NVME" | "EXTERNAL" | "NETWORK" | "SHARED"
+            ) =>
+        {
+            KvCacheLocality::Remote
+        }
+        Some(_) => KvCacheLocality::Unspecified,
+        None if tier == KvStorageTier::External => KvCacheLocality::Remote,
+        None => KvCacheLocality::Local,
+    };
+    Some(KvPlacement { tier, locality })
+}
+
 #[cfg(test)]
 #[path = "tests/kv_event_adapter.rs"]
 mod tests;

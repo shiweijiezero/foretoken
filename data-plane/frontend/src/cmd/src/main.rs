@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             KvIndexCredential::Degraded(reason)
         }
     };
-    let builder = Arc::new(RuntimeBuilder::new(config.router_algorithm, kv_credential));
+    let builder = Arc::new(RuntimeBuilder::new(config.router_pipeline, kv_credential));
 
     let listener = tokio::net::TcpListener::bind(config.listen_address).await?;
     tokio::spawn(refresh_active_generation(generation.clone()));
@@ -45,14 +45,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder,
     ));
     let model_generation = generation.clone();
-    axum::serve(
-        listener,
-        router(
-            generation,
-            Arc::new(move || model_generation.models()),
-            config.stream_idle,
-        ),
-    )
-    .await?;
+    let models = Arc::new(move || model_generation.models());
+    let app = router(generation, models, config.stream_idle);
+    axum::serve(listener, app).await?;
     Ok(())
 }

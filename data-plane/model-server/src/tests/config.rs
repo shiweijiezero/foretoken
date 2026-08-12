@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use super::RuntimeConfig;
 
 fn values() -> HashMap<String, String> {
-    [("FORETOKEN_VLLM_LAUNCH_PLAN", r#"{"version":1,"artifacts":{"model":"model","revision":"main","tokenizer":"tokenizer","tokenizerRevision":"main"},"parallelism":{"tp":1,"pp":1,"dp":2,"pcp":1,"dcp":1},"kv":{"kind":"none","events":false},"lifecycle":{"startupSeconds":30,"drainSeconds":7},"extraArgs":["--max-model-len=42"]}"#), ("FORETOKEN_INTERNAL_LISTEN", "0.0.0.0:8080")].into_iter().map(|(key, value)| (key.into(), value.into())).collect()
+    [("FORETOKEN_VLLM_LAUNCH_PLAN", r#"{"version":1,"artifacts":{"model":"model","revision":"main","tokenizer":"tokenizer","tokenizerRevision":"main"},"parallelism":{"tp":1,"pp":1,"dp":2,"pcp":1,"dcp":1},"kv":{"kind":"none","events":false},"lifecycle":{"startupSeconds":30,"drainSeconds":7},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":["--max-model-len=42"]}"#), ("FORETOKEN_INTERNAL_LISTEN", "0.0.0.0:8080")].into_iter().map(|(key, value)| (key.into(), value.into())).collect()
 }
 
 #[test]

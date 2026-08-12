@@ -12,7 +12,7 @@ use foretoken_backend_registry::{
 };
 use foretoken_kv_indexer::{KvIndexDegradedReason, KvIndexer};
 use foretoken_llm_facade::LlmFacadeResolver;
-use foretoken_router::{PolicyRouter, Router, RouterAlgorithm};
+use foretoken_router::{PipelineRouter, RouteTargetSet, Router, RouterPipelineConfig};
 use foretoken_server::{
     KvIndexDiagnostics, ModelRuntime, RuntimeBundle, RuntimeControl, RuntimeGeneration,
     RuntimeState,
@@ -28,14 +28,14 @@ pub enum KvIndexCredential {
 }
 
 pub struct RuntimeBuilder {
-    router_algorithm: RouterAlgorithm,
+    router_pipeline: RouterPipelineConfig,
     kv_credential: KvIndexCredential,
 }
 
 impl RuntimeBuilder {
-    pub fn new(router_algorithm: RouterAlgorithm, kv_credential: KvIndexCredential) -> Self {
+    pub fn new(router_pipeline: RouterPipelineConfig, kv_credential: KvIndexCredential) -> Self {
         Self {
-            router_algorithm,
+            router_pipeline,
             kv_credential,
         }
     }
@@ -49,6 +49,18 @@ impl RuntimeBuilder {
         snapshot: ServingSnapshot,
     ) -> Result<PreparedRuntime, RuntimeBuildError> {
         let version = snapshot.version;
+        let has_physical_backends = !snapshot.groups.is_empty()
+            || !snapshot.pd_components.is_empty()
+            || !snapshot.epd_components.is_empty();
+        let identities = snapshot
+            .model_identities()
+            .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
+        let logical_targets = snapshot
+            .logical_target_sets()
+            .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?
+            .into_iter()
+            .filter_map(|(model, targets)| targets.into_iter().next().map(|target| (model, target)))
+            .collect::<BTreeMap<String, RouteTargetSet>>();
         let BackendRegistryBuild {
             registry,
             kv_runtime_config,
@@ -59,8 +71,10 @@ impl RuntimeBuilder {
             KvIndexCredential::Disabled if !kv_runtime_config.event_sources.is_empty() => {
                 KvIndexer::degraded(kv_runtime_config, KvIndexDegradedReason::KeyMissing)
             }
-            KvIndexCredential::Disabled => KvIndexer::new(kv_runtime_config, None),
-            KvIndexCredential::Key(key) => KvIndexer::new(kv_runtime_config, Some(key)),
+            KvIndexCredential::Disabled => KvIndexer::new(kv_runtime_config, None)
+                .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?,
+            KvIndexCredential::Key(key) => KvIndexer::new(kv_runtime_config, Some(key))
+                .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?,
             KvIndexCredential::Degraded(reason) => KvIndexer::degraded(kv_runtime_config, reason),
         });
         let control = Arc::new(RegistryRuntimeControl {
@@ -68,35 +82,37 @@ impl RuntimeBuilder {
             kv_indexer: kv_indexer.clone(),
         });
         control.refresh_backend_readiness().await;
-        if !registry.is_ready() {
+        if has_physical_backends && !registry.is_ready() {
             return Err(RuntimeBuildError::BackendUnavailable);
         }
-        let models = model_runtimes(
-            snapshot
-                .model_identities()
-                .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?,
-            &registry,
-        )
-        .await?;
+        let models = if has_physical_backends {
+            model_runtimes(identities, &registry).await?
+        } else {
+            BTreeMap::new()
+        };
 
-        // Preparation may be slow. Probe again so only a fully ready candidate can be published.
+        // Preparation may be slow. Probe again so only a fully ready physical candidate is published.
         control.refresh_backend_readiness().await;
-        let healthy_models = registry
-            .healthy_models()
-            .into_iter()
-            .collect::<BTreeSet<_>>();
-        if !models.keys().all(|model| healthy_models.contains(model)) {
-            return Err(RuntimeBuildError::BackendBecameUnavailable);
+        if has_physical_backends {
+            let healthy_models = registry
+                .healthy_models()
+                .into_iter()
+                .collect::<BTreeSet<_>>();
+            if !models.keys().all(|model| healthy_models.contains(model)) {
+                return Err(RuntimeBuildError::BackendBecameUnavailable);
+            }
         }
-        let router: Arc<dyn Router> = Arc::new(PolicyRouter::with_algorithm(
-            registry.clone(),
-            kv_indexer,
-            self.router_algorithm,
-        ));
+        let router: Arc<dyn Router> = Arc::new(
+            PipelineRouter::with_pipeline(registry.clone(), self.router_pipeline.build())
+                .with_kv_prefix_indexer(kv_indexer)
+                .with_route_target_stats_reader(registry.clone()),
+        );
         let resolver: Arc<dyn LlmFacadeResolver> = registry;
         Ok(PreparedRuntime {
             version,
-            state: Arc::new(RuntimeState::new(models, router, resolver)),
+            state: Arc::new(
+                RuntimeState::new(models, router, resolver).with_logical_targets(logical_targets),
+            ),
             control,
         })
     }
@@ -147,11 +163,11 @@ impl RuntimeControl for RegistryRuntimeControl {
     }
 
     fn healthy_models(&self) -> Vec<String> {
-        self.registry.healthy_models()
+        self.registry.configured_models()
     }
 
     fn is_ready(&self) -> bool {
-        self.registry.is_ready()
+        self.registry.is_configured()
     }
 
     fn kv_index_diagnostics(&self) -> KvIndexDiagnostics {
@@ -194,6 +210,13 @@ async fn model_runtimes(
         )
         .await
         .map_err(|error| RuntimeBuildError::ModelRuntime(error.to_string()))?;
+        let unsupported = unsupported_media_capabilities(&identity.capabilities);
+        if !unsupported.is_empty() {
+            return Err(RuntimeBuildError::ModelRuntime(format!(
+                "model {model} declares unsupported media capabilities: {}",
+                unsupported.join(", ")
+            )));
+        }
         if identity
             .capabilities
             .iter()
@@ -201,7 +224,7 @@ async fn model_runtimes(
             && !supports_multimodal
         {
             return Err(RuntimeBuildError::ModelRuntime(format!(
-                "model {model} declares multimodal routing capabilities but its frontend processor does not support multimodal input"
+                "model {model} declares multimodal routing capabilities but its frontend processor does not support image input"
             )));
         }
         runtimes.insert(
@@ -219,12 +242,19 @@ async fn model_runtimes(
     Ok(runtimes)
 }
 
+fn unsupported_media_capabilities(capabilities: &BTreeSet<String>) -> Vec<&str> {
+    ["multimodal.video", "multimodal.audio"]
+        .into_iter()
+        .filter(|capability| capabilities.contains(*capability))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn builder() -> RuntimeBuilder {
-        RuntimeBuilder::new(RouterAlgorithm::KvAware, KvIndexCredential::Disabled)
+        RuntimeBuilder::new(RouterPipelineConfig::default(), KvIndexCredential::Disabled)
     }
 
     #[test]
@@ -240,10 +270,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn logical_only_snapshot_publishes_a_ready_scale_from_zero_runtime() {
+        let snapshot = ServingSnapshot {
+            version: 1,
+            models: vec![foretoken_backend_registry::SnapshotModel {
+                service_uid: "service".into(),
+                model: "model".into(),
+                revision: "r1".into(),
+                tokenizer: "tokenizer".into(),
+                tokenizer_revision: "r1".into(),
+                capabilities: ["chat".into()].into_iter().collect(),
+                max_input_tokens: Some(2048),
+                targets: vec![foretoken_router::ScalingTarget {
+                    service_uid: "service".into(),
+                    name: "default".into(),
+                    uid: "pool".into(),
+                    kind: foretoken_router::ScalingTargetKind::Pool,
+                }],
+            }],
+            groups: vec![],
+            pd_components: vec![],
+            pd_domains: vec![],
+            epd_components: vec![],
+            epd_domains: vec![],
+        };
+        let prepared = builder().build(snapshot).await.unwrap();
+        let generation = RuntimeGeneration::new();
+
+        assert!(prepared.publish(&generation));
+        assert!(foretoken_server::Generation::ready(&generation));
+        assert_eq!(generation.models(), vec!["model"]);
+    }
+
+    #[test]
+    fn unsupported_media_declarations_fail_closed() {
+        let capabilities = [
+            "chat".to_string(),
+            "multimodal.image".to_string(),
+            "multimodal.video".to_string(),
+            "multimodal.audio".to_string(),
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(
+            unsupported_media_capabilities(&capabilities),
+            ["multimodal.video", "multimodal.audio"]
+        );
+    }
+
+    #[tokio::test]
     async fn invalid_snapshot_fails_before_runtime_preparation() {
         let conflicting = br#"{"version":1,"groups":[
-            {"backend_id":"a","model":"model","revision":"r1","tokenizer":"tokenizer","tokenizer_revision":"r1","endpoint":"http://a"},
-            {"backend_id":"b","model":"model","revision":"r2","tokenizer":"tokenizer","tokenizer_revision":"r1","endpoint":"http://b"}
+            {"route_target_id":"a","model":"model","revision":"r1","tokenizer":"tokenizer","tokenizer_revision":"r1","endpoint":"http://a","data_parallel_size":1},
+            {"route_target_id":"b","model":"model","revision":"r2","tokenizer":"tokenizer","tokenizer_revision":"r1","endpoint":"http://b","data_parallel_size":1}
         ]}"#;
         let builder = builder();
         let snapshot = builder.parse(conflicting).unwrap();

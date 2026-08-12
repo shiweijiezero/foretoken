@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Defines a generated Kubernetes API manifest for Foretoken custom resources.
 ---
 apiVersion: apiextensions.k8s.io/v1
@@ -123,10 +123,8 @@ spec:
                             input modality supported by a model.
                           enum:
                           - image
-                          - video
-                          - audio
                           type: string
-                        maxItems: 3
+                        maxItems: 1
                         type: array
                         x-kubernetes-list-type: set
                       reasoning:
@@ -145,6 +143,14 @@ spec:
                       tools:
                         type: boolean
                     type: object
+                  internalGenerateRequestBodyLimitBytes:
+                    description: |-
+                      InternalGenerateRequestBodyLimitBytes is the resolved group-local generate
+                      request body limit.
+                    format: int64
+                    maximum: 268435456
+                    minimum: 1048576
+                    type: integer
                   kvCache:
                     description: KVCache is immutable resolved cache-placement intent.
                     properties:
@@ -437,6 +443,7 @@ spec:
                 required:
                 - backend
                 - features
+                - internalGenerateRequestBodyLimitBytes
                 - memberCount
                 - model
                 - nodeCount
@@ -452,9 +459,6 @@ spec:
                     count
                   rule: self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp
                     * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp
-                - message: P/D ModelPools do not support multimodal features
-                  rule: '!(self.role == ''prefill'' || self.role == ''decode'') ||
-                    size(self.features.multimodal) == 0'
             required:
             - desiredGroups
             - modelServiceRef

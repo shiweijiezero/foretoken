@@ -9,14 +9,16 @@ license.workspace = true
 
 [dependencies]
 base64 = "0.22.1"
+futures.workspace = true
 blake3 = "1.8.2"
-foretoken-router = { path = "../router" }
+patricia_tree = "0.10.1"
 foretoken-model-protocol = { path = "../../../model-protocol" }
 reqwest.workspace = true
 serde.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+vllm-llm.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
-vllm-llm.workspace = true
+serde_json.workspace = true

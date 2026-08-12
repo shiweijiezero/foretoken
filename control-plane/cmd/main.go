@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Starts the Foretoken control-plane manager and health endpoints.
 
 package main
@@ -54,6 +54,9 @@ func main() {
 	var vllmPDProtocol string
 	var vllmPDBootstrapPort int
 	var vllmPDAbortRequestTimeoutSeconds int
+	var vllmPDRDMADeviceName string
+	var vllmPDRDMAResourceName string
+	var vllmPDRDMAResourceCount int
 	var vllmMooncakeStoreProfileName string
 	var vllmMooncakeStoreProfileRevision string
 	var vllmMooncakeStoreConfigMapName string
@@ -87,6 +90,9 @@ func main() {
 	flag.StringVar(&vllmPDProtocol, "vllm-pd-protocol", "", "Mooncake P/D protocol; only rdma is supported.")
 	flag.IntVar(&vllmPDBootstrapPort, "vllm-pd-bootstrap-port", 0, "Mooncake bootstrap port.")
 	flag.IntVar(&vllmPDAbortRequestTimeoutSeconds, "vllm-pd-abort-request-timeout-seconds", 0, "Mooncake abort request timeout in seconds.")
+	flag.StringVar(&vllmPDRDMADeviceName, "vllm-pd-rdma-device-name", "", "Platform-verified Mooncake RDMA HCA name.")
+	flag.StringVar(&vllmPDRDMAResourceName, "vllm-pd-rdma-resource-name", "", "Kubernetes extended resource that injects Mooncake RDMA devices.")
+	flag.IntVar(&vllmPDRDMAResourceCount, "vllm-pd-rdma-resource-count", 0, "Mooncake RDMA extended resources requested by each P/D Pod.")
 	flag.StringVar(&vllmMooncakeStoreProfileName, "vllm-mooncake-store-profile-name", "", "Opaque platform-owned Mooncake Store profile name; empty disables external Store.")
 	flag.StringVar(&vllmMooncakeStoreProfileRevision, "vllm-mooncake-store-profile-revision", "", "Opaque platform-owned Mooncake Store profile revision.")
 	flag.StringVar(&vllmMooncakeStoreConfigMapName, "vllm-mooncake-store-config-map-name", "", "Mooncake Store ConfigMap name.")
@@ -118,6 +124,9 @@ func main() {
 			Protocol:                   vllmPDProtocol,
 			BootstrapPort:              int32(vllmPDBootstrapPort),
 			AbortRequestTimeoutSeconds: int32(vllmPDAbortRequestTimeoutSeconds),
+			RDMADeviceName:             vllmPDRDMADeviceName,
+			RDMAResourceName:           vllmPDRDMAResourceName,
+			RDMAResourceCount:          int32(vllmPDRDMAResourceCount),
 		}
 	}
 
@@ -187,7 +196,10 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	if err := (&controllers.ModelServiceReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.ModelServiceReconciler{
+		Client:              manager.GetClient(),
+		PoolMetricsProvider: controllers.NewHTTPPoolMetricsProvider(manager.GetClient()),
+	}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelService controller")
 		os.Exit(1)
 	}

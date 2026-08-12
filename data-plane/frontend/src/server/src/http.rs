@@ -3,7 +3,7 @@
 
 //! Defines OpenAI-compatible request DTOs and HTTP handlers.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -32,34 +32,16 @@ use crate::response::{
 };
 use crate::runtime::{Generation, GenerationError, GenerationRequest};
 
-const TEXT_CAPABILITY: &str = "text";
-const CHAT_CAPABILITY: &str = "chat";
-const TOOL_CALLING_CAPABILITY: &str = "tool_calling";
-const REASONING_CAPABILITY: &str = "reasoning";
-const STRUCTURED_OUTPUT_JSON_OBJECT_CAPABILITY: &str = "structured_output.json_object";
-const STRUCTURED_OUTPUT_JSON_SCHEMA_CAPABILITY: &str = "structured_output.json_schema";
-const MULTIMODAL_CAPABILITY: &str = "multimodal";
-const MULTIMODAL_IMAGE_CAPABILITY: &str = "multimodal.image";
-const MULTIMODAL_VIDEO_CAPABILITY: &str = "multimodal.video";
-const MULTIMODAL_AUDIO_CAPABILITY: &str = "multimodal.audio";
 const MAX_HTTP_BODY_BYTES: usize = 48 * 1024 * 1024;
 const MAX_MEDIA_PARTS: usize = 8;
 const MAX_IMAGE_PARTS: usize = 4;
-const MAX_VIDEO_PARTS: usize = 1;
-const MAX_AUDIO_PARTS: usize = 1;
 const MAX_TOTAL_MEDIA_BYTES: usize = 32 * 1024 * 1024;
 const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
-const MAX_VIDEO_BYTES: usize = 24 * 1024 * 1024;
-const MAX_AUDIO_BYTES: usize = 16 * 1024 * 1024;
 const MAX_COMPLETION_PROMPTS: usize = 16;
 const MAX_COMPLETION_CANDIDATES: u32 = 16;
 const MAX_COMPLETION_FAN_OUT: usize = 64;
 
-type LoweredResponseFormat = (
-    Option<Value>,
-    Option<StructuredOutputsParams>,
-    Option<&'static str>,
-);
+type LoweredResponseFormat = (Option<Value>, Option<StructuredOutputsParams>);
 
 #[derive(Clone)]
 struct AppState {
@@ -68,24 +50,31 @@ struct AppState {
     stream_idle: Duration,
 }
 
-/// Creates the frontend router. Model inventory is evaluated per request.
+/// Creates the frontend HTTP router.
 pub fn router(
     generation: Arc<dyn Generation>,
     models: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     stream_idle: Duration,
 ) -> Router {
-    Router::new()
-        .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
-        .route("/statusz", get(statusz))
-        .route("/metrics", get(metrics))
+    let public = Router::new()
         .route("/v1/models", get(list_models))
         .route("/v1/models/{model}", get(retrieve_model))
         .route("/tokenize", post(tokenize))
         .route("/detokenize", post(detokenize))
         .route("/v1/generate", post(completions))
         .route("/v1/completions", post(completions))
-        .route("/v1/chat/completions", post(chat_completions))
+        .route("/v1/chat/completions", post(chat_completions));
+
+    Router::new()
+        .route("/healthz", get(healthz))
+        .route("/readyz", get(readyz))
+        .route("/statusz", get(statusz))
+        .route("/metrics", get(metrics))
+        .route(
+            "/internal/autoscaling/telemetry",
+            get(autoscaling_telemetry),
+        )
+        .merge(public)
         .with_state(AppState {
             generation,
             models,
@@ -108,6 +97,10 @@ async fn readyz(State(state): State<AppState>) -> StatusCode {
 async fn statusz(State(state): State<AppState>) -> Json<crate::runtime::RuntimeDiagnostics> {
     Json(state.generation.diagnostics())
 }
+async fn autoscaling_telemetry() -> Json<foretoken_metrics::AutoscalingTelemetry> {
+    Json(foretoken_metrics::autoscaling_telemetry())
+}
+
 async fn metrics(State(state): State<AppState>) -> Response {
     let diagnostics = state.generation.diagnostics();
     foretoken_metrics::scrape_with_kv_index(
@@ -553,9 +546,6 @@ enum OpenAiChatContent {
 enum OpenAiContentPart {
     Text { text: String },
     ImageUrl { image_url: OpenAiImageUrl },
-    VideoUrl { video_url: OpenAiMediaUrl },
-    InputAudio { input_audio: OpenAiInputAudio },
-    AudioUrl { audio_url: OpenAiMediaUrl },
 }
 
 #[derive(Debug, Deserialize)]
@@ -564,27 +554,6 @@ struct OpenAiImageUrl {
     url: String,
     #[serde(default)]
     detail: Option<Value>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum OpenAiMediaUrl {
-    Url(String),
-    Object(OpenAiUrlObject),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiUrlObject {
-    url: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct OpenAiInputAudio {
-    data: String,
-    #[serde(default)]
-    format: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -821,7 +790,6 @@ async fn completions(
                     model: request.model.clone(),
                     request_id: server_request_id("cmpl"),
                     revision: None,
-                    required_capabilities: BTreeSet::from([TEXT_CAPABILITY.into()]),
                     prompt: prompt.clone(),
                     sampling_params: sampling_params.clone(),
                     decode_options: decode_options(request.stop.clone()),
@@ -894,7 +862,7 @@ async fn chat_completions(
         Ok(tools) => tools,
         Err(_) => return client_error(),
     };
-    let tool_choice = match request
+    let mut tool_choice = match request
         .tool_choice
         .as_ref()
         .map(openai_tool_choice)
@@ -906,7 +874,7 @@ async fn chat_completions(
     };
     if !tools.is_empty() && matches!(&tool_choice, ChatToolChoice::None) {
         // OpenAI's omitted tool_choice defaults to auto when tools are supplied.
-        return chat_with_request(state, request, id, messages, tools, ChatToolChoice::Auto).await;
+        tool_choice = ChatToolChoice::Auto;
     }
     chat_with_request(state, request, id, messages, tools, tool_choice).await
 }
@@ -945,11 +913,10 @@ async fn chat_with_request(
     sampling_params.logprobs = request
         .logprobs
         .then_some(request.top_logprobs.unwrap_or_default() as i32);
-    let (response_format, structured_output, structured_output_capability) =
-        match response_format(request.response_format) {
-            Ok(format) => format,
-            Err(_) => return client_error(),
-        };
+    let (response_format, structured_output) = match response_format(request.response_format) {
+        Ok(format) => format,
+        Err(_) => return client_error(),
+    };
     if let Some(constraint) = structured_output {
         sampling_params.structured_outputs = Some(constraint);
     }
@@ -965,17 +932,6 @@ async fn chat_with_request(
     if tools.is_empty() && !matches!(&tool_choice, ChatToolChoice::None) {
         return client_error();
     }
-    let mut required_capabilities = BTreeSet::from([CHAT_CAPABILITY.into()]);
-    if tool_requested {
-        required_capabilities.insert(TOOL_CALLING_CAPABILITY.into());
-    }
-    if reasoning_requested {
-        required_capabilities.insert(REASONING_CAPABILITY.into());
-    }
-    if let Some(capability) = structured_output_capability {
-        required_capabilities.insert(capability.into());
-    }
-    required_capabilities.extend(multimodal_capabilities(&request.messages));
     let chat = ChatRequest {
         request_id: id.clone(),
         messages,
@@ -1007,7 +963,6 @@ async fn chat_with_request(
                 model: request.model,
                 request_id: id,
                 revision: None,
-                required_capabilities,
                 prompt: Prompt::Text(String::new()),
                 sampling_params,
                 decode_options: chat.decode_options.clone(),
@@ -1066,8 +1021,6 @@ fn data_url_size(
 fn validate_multimodal_input(messages: &[OpenAiMessage]) -> Result<(), GenerationError> {
     let mut total_parts = 0;
     let mut images = 0;
-    let mut videos = 0;
-    let mut audios = 0;
     let mut total_bytes = 0usize;
     for part in messages
         .iter()
@@ -1083,23 +1036,6 @@ fn validate_multimodal_input(messages: &[OpenAiMessage]) -> Result<(), Generatio
                 images += 1;
                 data_url_size(&image_url.url, "data:image/", MAX_IMAGE_BYTES)?
             }
-            OpenAiContentPart::VideoUrl { video_url } => {
-                videos += 1;
-                data_url_size(&media_url(video_url), "data:video/", MAX_VIDEO_BYTES)?
-            }
-            OpenAiContentPart::InputAudio { input_audio } => {
-                audios += 1;
-                if input_audio.data.is_empty()
-                    || input_audio.data.len() > encoded_limit(MAX_AUDIO_BYTES)
-                {
-                    return Err(GenerationError::InvalidRequest);
-                }
-                input_audio.data.len().saturating_add(3) / 4 * 3
-            }
-            OpenAiContentPart::AudioUrl { audio_url } => {
-                audios += 1;
-                data_url_size(&media_url(audio_url), "data:audio/", MAX_AUDIO_BYTES)?
-            }
         };
         total_parts += 1;
         total_bytes = total_bytes
@@ -1107,8 +1043,6 @@ fn validate_multimodal_input(messages: &[OpenAiMessage]) -> Result<(), Generatio
             .ok_or(GenerationError::InvalidRequest)?;
         if total_parts > MAX_MEDIA_PARTS
             || images > MAX_IMAGE_PARTS
-            || videos > MAX_VIDEO_PARTS
-            || audios > MAX_AUDIO_PARTS
             || total_bytes > MAX_TOTAL_MEDIA_BYTES
         {
             return Err(GenerationError::InvalidRequest);
@@ -1117,44 +1051,19 @@ fn validate_multimodal_input(messages: &[OpenAiMessage]) -> Result<(), Generatio
     Ok(())
 }
 
-fn multimodal_capabilities(messages: &[OpenAiMessage]) -> BTreeSet<String> {
-    let mut capabilities = BTreeSet::new();
-    for part in messages
-        .iter()
-        .filter_map(|message| match &message.content {
-            Some(OpenAiChatContent::Parts(parts)) => Some(parts.as_slice()),
-            Some(OpenAiChatContent::Text(_)) | None => None,
-        })
-        .flatten()
-    {
-        let capability = match part {
-            OpenAiContentPart::Text { .. } => continue,
-            OpenAiContentPart::ImageUrl { .. } => MULTIMODAL_IMAGE_CAPABILITY,
-            OpenAiContentPart::VideoUrl { .. } => MULTIMODAL_VIDEO_CAPABILITY,
-            OpenAiContentPart::InputAudio { .. } | OpenAiContentPart::AudioUrl { .. } => {
-                MULTIMODAL_AUDIO_CAPABILITY
-            }
-        };
-        capabilities.insert(MULTIMODAL_CAPABILITY.into());
-        capabilities.insert(capability.into());
-    }
-    capabilities
-}
-
 /// Returns the renderer format and grammar constraint to lower.
 fn response_format(
     format: Option<OpenAiResponseFormat>,
 ) -> Result<LoweredResponseFormat, GenerationError> {
     match format {
-        None => Ok((None, None, None)),
-        Some(OpenAiResponseFormat::Text) => Ok((Some(json!({"type":"text"})), None, None)),
+        None => Ok((None, None)),
+        Some(OpenAiResponseFormat::Text) => Ok((Some(json!({"type":"text"})), None)),
         Some(OpenAiResponseFormat::JsonObject) => Ok((
             Some(json!({"type":"json_object"})),
             Some(StructuredOutputsParams::json_object()),
-            Some(STRUCTURED_OUTPUT_JSON_OBJECT_CAPABILITY),
         )),
         Some(OpenAiResponseFormat::JsonSchema { json_schema }) => {
-            // The pinned vLLM type accepts a JSON value. Restrict the public shape to
+            // The the local vLLM build source type accepts a JSON value. Restrict the public shape to
             // OpenAI's named schema envelope and require an object before lowering it.
             if json_schema.name.is_empty() || !json_schema.schema.is_object() {
                 return Err(GenerationError::InvalidRequest);
@@ -1173,7 +1082,6 @@ fn response_format(
             Ok((
                 Some(json!({"type":"json_schema", "json_schema": value})),
                 Some(StructuredOutputsParams::json(json_schema.schema)),
-                Some(STRUCTURED_OUTPUT_JSON_SCHEMA_CAPABILITY),
             ))
         }
     }
@@ -1221,26 +1129,9 @@ fn openai_content(content: &OpenAiChatContent) -> Result<ChatContent, Generation
                     "detail": image_url.detail.clone(),
                 }))
                 .map_err(|_| GenerationError::InvalidRequest),
-                OpenAiContentPart::VideoUrl { video_url } => {
-                    Ok(ChatContentPart::video_url(media_url(video_url)))
-                }
-                OpenAiContentPart::InputAudio { input_audio } => Ok(ChatContentPart::input_audio(
-                    input_audio.data.clone(),
-                    input_audio.format.clone(),
-                )),
-                OpenAiContentPart::AudioUrl { audio_url } => {
-                    Ok(ChatContentPart::audio_url(media_url(audio_url)))
-                }
             })
             .collect::<Result<Vec<_>, _>>()
             .map(ChatContent::Parts),
-    }
-}
-
-fn media_url(url: &OpenAiMediaUrl) -> String {
-    match url {
-        OpenAiMediaUrl::Url(url) => url.clone(),
-        OpenAiMediaUrl::Object(url) => url.url.clone(),
     }
 }
 

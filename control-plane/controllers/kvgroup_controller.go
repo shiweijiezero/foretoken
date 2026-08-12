@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Reconciles one KVGroup into a single Mooncake client workload.
 
 package controllers
@@ -63,11 +63,11 @@ func (reconciler *KVGroupReconciler) Reconcile(ctx context.Context, request ctrl
 		}
 		return ctrl.Result{Requeue: true}, nil
 	}
-	deployment, service, pvc, policy, err := desiredKVGroupResources(group)
+	deployment, service, pvc, networkPolicy, err := desiredKVGroupResources(group)
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, group, inferencev1alpha1.KVGroupPhaseDegraded, false, "InvalidIntent", err.Error())
 	}
-	for _, object := range []client.Object{pvc, deployment, service, policy} {
+	for _, object := range []client.Object{pvc, deployment, service, networkPolicy} {
 		if err := reconciler.applyOwned(ctx, group, object); err != nil {
 			statusErr := reconciler.updateStatus(ctx, group, inferencev1alpha1.KVGroupPhaseDegraded, false, "ApplyFailed", err.Error())
 			return ctrl.Result{}, errors.Join(err, statusErr)
@@ -155,8 +155,8 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup) (*appsv1.Deployme
 	// Mooncake RDMA can use provider-specific dynamic paths. Until a fixed port
 	// contract is verified, namespace is the trust boundary; all namespace Pods
 	// may reach client Pods rather than accidentally blocking RDMA data traffic.
-	policy := &networkingv1.NetworkPolicy{TypeMeta: metav1.TypeMeta{APIVersion: networkingv1.SchemeGroupVersion.String(), Kind: "NetworkPolicy"}, ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: group.Namespace, Labels: labels}, Spec: networkingv1.NetworkPolicySpec{PodSelector: metav1.LabelSelector{MatchLabels: labels}, PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}, Ingress: []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{}}}}}}}
-	return deployment, service, pvc, policy, nil
+	networkPolicy := &networkingv1.NetworkPolicy{TypeMeta: metav1.TypeMeta{APIVersion: networkingv1.SchemeGroupVersion.String(), Kind: "NetworkPolicy"}, ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: group.Namespace, Labels: labels}, Spec: networkingv1.NetworkPolicySpec{PodSelector: metav1.LabelSelector{MatchLabels: labels}, PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}, Ingress: []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{}}}}}}}
+	return deployment, service, pvc, networkPolicy, nil
 }
 
 func (reconciler *KVGroupReconciler) applyOwned(ctx context.Context, group *inferencev1alpha1.KVGroup, desired client.Object) error {

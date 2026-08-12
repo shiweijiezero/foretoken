@@ -14,6 +14,7 @@ foretoken-model-protocol = { path = "../../../model-protocol" }
 foretoken-router = { path = "../router" }
 futures.workspace = true
 reqwest.workspace = true
+rmp-serde.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

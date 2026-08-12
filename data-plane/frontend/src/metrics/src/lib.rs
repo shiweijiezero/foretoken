@@ -1,25 +1,140 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! vLLM-compatible Prometheus metrics and Axum adapters for Foretoken.
+//! vLLM-compatible Prometheus metrics and Foretoken-owned admission telemetry.
 
-use std::time::Instant;
+use std::collections::BTreeMap;
+use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::{MatchedPath, Request};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use foretoken_router::{RouteTargetSet, ScalingTarget, ScalingTargetKind};
+use serde::Serialize;
 
 pub use vllm_metrics::*;
 
 const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
-const EXCLUDED_HANDLERS: &[&str] = &["/metrics", "/healthz", "/readyz", "/statusz"];
+const EXCLUDED_HANDLERS: &[&str] = &[
+    "/metrics",
+    "/healthz",
+    "/readyz",
+    "/statusz",
+    "/internal/autoscaling/telemetry",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+pub struct QueuedTarget {
+    pub service_uid: String,
+    pub target_kind: String,
+    pub target_id: String,
+}
+
+impl From<&ScalingTarget> for QueuedTarget {
+    fn from(target: &ScalingTarget) -> Self {
+        Self {
+            service_uid: target.service_uid.clone(),
+            target_kind: match target.kind {
+                ScalingTargetKind::Pool => "Pool",
+                ScalingTargetKind::EPDDomain => "EPDDomain",
+            }
+            .to_owned(),
+            target_id: if target.kind == ScalingTargetKind::Pool {
+                target.uid.clone()
+            } else {
+                target.service_uid.clone()
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AutoscalingTargetTelemetry {
+    #[serde(flatten)]
+    pub target: QueuedTarget,
+    pub queued_requests: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AutoscalingTelemetry {
+    pub version: u8,
+    pub collected_at_unix_ms: u64,
+    pub targets: Vec<AutoscalingTargetTelemetry>,
+}
+
+static QUEUED: OnceLock<Mutex<BTreeMap<QueuedTarget, u64>>> = OnceLock::new();
+fn queued() -> &'static Mutex<BTreeMap<QueuedTarget, u64>> {
+    QUEUED.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+fn queued_lock() -> MutexGuard<'static, BTreeMap<QueuedTarget, u64>> {
+    queued()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+pub fn register_targets(targets: &RouteTargetSet) {
+    let mut values = queued_lock();
+    for target in targets.targets() {
+        values.entry(target.into()).or_default();
+    }
+}
+
+/// RAII ownership of one request waiting for admission to a fixed target set.
+pub struct QueueGuard {
+    targets: Vec<QueuedTarget>,
+}
+impl QueueGuard {
+    pub fn new(targets: &RouteTargetSet) -> Self {
+        let targets = targets
+            .targets()
+            .iter()
+            .map(QueuedTarget::from)
+            .collect::<Vec<_>>();
+        let mut values = queued_lock();
+        for target in &targets {
+            *values.entry(target.clone()).or_default() += 1;
+        }
+        drop(values);
+        Self { targets }
+    }
+}
+impl Drop for QueueGuard {
+    fn drop(&mut self) {
+        let mut values = queued_lock();
+        for target in &self.targets {
+            let value = values.entry(target.clone()).or_default();
+            *value = value.saturating_sub(1);
+        }
+    }
+}
+
+pub fn autoscaling_telemetry() -> AutoscalingTelemetry {
+    let targets = queued_lock()
+        .iter()
+        .map(|(target, queued_requests)| AutoscalingTargetTelemetry {
+            target: target.clone(),
+            queued_requests: *queued_requests,
+        })
+        .collect();
+    let collected_at_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX);
+    AutoscalingTelemetry {
+        version: 1,
+        collected_at_unix_ms,
+        targets,
+    }
+}
 
 pub async fn scrape() -> Response {
     render(None)
 }
-
 pub async fn scrape_with_kv_index(
     state: &str,
     reason: Option<&str>,
@@ -32,21 +147,14 @@ pub async fn scrape_with_kv_index(
 fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
     match METRICS.render() {
         Ok(mut body) => {
-            if let Some((state, reason, sources_healthy, sources_total)) = kv_index {
-                let suffix = format!(
-                    "# TYPE foretoken_kv_index_enabled gauge\nforetoken_kv_index_enabled {}\n# TYPE foretoken_kv_index_degraded gauge\nforetoken_kv_index_degraded{{reason=\"{}\"}} {}\n# TYPE foretoken_kv_index_sources_healthy gauge\nforetoken_kv_index_sources_healthy {}\n# TYPE foretoken_kv_index_sources_total gauge\nforetoken_kv_index_sources_total {}\n",
-                    usize::from(!matches!(state, "disabled" | "unavailable")),
-                    reason.unwrap_or("none"),
-                    usize::from(state == "degraded"),
-                    sources_healthy,
-                    sources_total,
-                );
-                if let Some(without_eof) = body.strip_suffix("# EOF\n") {
-                    body = format!("{without_eof}{suffix}# EOF\n");
-                } else {
-                    body.push_str(&suffix);
-                }
+            if let Some(without_eof) = body.strip_suffix("# EOF\n") {
+                body = without_eof.to_owned();
             }
+            body.push_str(&render_admission_metrics());
+            if let Some((state, reason, sources_healthy, sources_total)) = kv_index {
+                body.push_str(&format!("# TYPE foretoken_kv_index_enabled gauge\nforetoken_kv_index_enabled {}\n# TYPE foretoken_kv_index_degraded gauge\nforetoken_kv_index_degraded{{reason=\"{}\"}} {}\n# TYPE foretoken_kv_index_sources_healthy gauge\nforetoken_kv_index_sources_healthy {}\n# TYPE foretoken_kv_index_sources_total gauge\nforetoken_kv_index_sources_total {}\n", usize::from(!matches!(state, "disabled" | "unavailable")), escape_label(reason.unwrap_or("none")), usize::from(state == "degraded"), sources_healthy, sources_total));
+            }
+            body.push_str("# EOF\n");
             (
                 [(
                     CONTENT_TYPE,
@@ -58,6 +166,23 @@ fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
+}
+
+fn render_admission_metrics() -> String {
+    let values = queued_lock();
+    let mut body = String::from(
+        "# TYPE foretoken_upstream_queued_requests gauge\n# HELP foretoken_upstream_queued_requests Requests waiting for admission to a scaling target.\n",
+    );
+    for (target, value) in values.iter() {
+        body.push_str(&format!("foretoken_upstream_queued_requests{{service_uid=\"{}\",target_kind=\"{}\",target_id=\"{}\"}} {}\n", escape_label(&target.service_uid), escape_label(&target.target_kind), escape_label(&target.target_id), value));
+    }
+    body
+}
+fn escape_label(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('"', "\\\"")
 }
 
 pub async fn track_http_metrics(request: Request, next: Next) -> Response {
@@ -72,7 +197,6 @@ pub async fn track_http_metrics(request: Request, next: Next) -> Response {
     if excluded {
         return response;
     }
-
     let elapsed = started_at.elapsed().as_secs_f64();
     let metrics = &METRICS.api_server;
     metrics
@@ -90,7 +214,6 @@ pub async fn track_http_metrics(request: Request, next: Next) -> Response {
     metrics.http_request_duration_highr_seconds.observe(elapsed);
     response
 }
-
 fn status_group(status: u16) -> &'static str {
     match status / 100 {
         1 => "1xx",
@@ -99,5 +222,46 @@ fn status_group(status: u16) -> &'static str {
         4 => "4xx",
         5 => "5xx",
         _ => "unknown",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{QueueGuard, autoscaling_telemetry};
+    use foretoken_router::{RouteTargetSet, ScalingTarget, ScalingTargetKind};
+
+    #[test]
+    fn queue_guard_releases_every_target_exactly_once() {
+        let targets = RouteTargetSet::new(vec![
+            ScalingTarget {
+                service_uid: "metrics-test".into(),
+                name: "prefill".into(),
+                uid: "prefill-uid".into(),
+                kind: ScalingTargetKind::Pool,
+            },
+            ScalingTarget {
+                service_uid: "metrics-test".into(),
+                name: "decode".into(),
+                uid: "decode-uid".into(),
+                kind: ScalingTargetKind::Pool,
+            },
+        ]);
+        {
+            let _guard = QueueGuard::new(&targets);
+            assert!(
+                autoscaling_telemetry()
+                    .targets
+                    .iter()
+                    .filter(|value| value.target.service_uid == "metrics-test")
+                    .all(|value| value.queued_requests == 1)
+            );
+        }
+        assert!(
+            autoscaling_telemetry()
+                .targets
+                .iter()
+                .filter(|value| value.target.service_uid == "metrics-test")
+                .all(|value| value.queued_requests == 0)
+        );
     }
 }

@@ -15,6 +15,7 @@ axum.workspace = true
 foretoken-chat = { path = "../chat" }
 foretoken-llm-facade = { path = "../llm-facade" }
 foretoken-metrics = { path = "../metrics" }
+foretoken-model-protocol = { path = "../../../model-protocol" }
 foretoken-router = { path = "../router" }
 foretoken-text = { path = "../text" }
 foretoken-tokenizer = { path = "../tokenizer" }
@@ -29,4 +30,5 @@ vllm-llm.workspace = true
 
 [dev-dependencies]
 foretoken-backend-registry = { path = "../backend-registry" }
+foretoken-kv-indexer = { path = "../kv-indexer" }
 tower.workspace = true

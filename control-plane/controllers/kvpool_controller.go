@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Reconciles KVPool into immutable revisioned Mooncake client Groups.
 
 package controllers

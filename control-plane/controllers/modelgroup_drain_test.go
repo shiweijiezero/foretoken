@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Tests route withdrawal, admission close, and bounded ModelGroup deletion.
 
 package controllers
@@ -52,7 +52,7 @@ func TestModelGroupDeleteWaitsForWithdrawalAndRunningRequests(t *testing.T) {
 	frontend := testFrontendService("frontend")
 	snapshot := testServingSnapshotConfigMap(t, frontend, servingSnapshot{
 		Version: 7,
-		Groups:  []servingSnapshotGroup{{BackendID: string(group.UID)}},
+		Groups:  []servingSnapshotGroup{{RouteTargetID: string(group.UID)}},
 	})
 	pod := testReadyFrontendPod(frontend, "10.0.0.8")
 	drainClient := &fakeModelGroupDrainClient{

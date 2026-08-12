@@ -6,7 +6,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 # Foretoken Model Server
 
 `foretoken-model-server` is the group-local Rust process for one model Pod. It
-uses pinned vLLM Rust crates directly: `vllm-managed-engine` starts the
+uses the local vLLM build source Rust crates directly: `vllm-managed-engine` starts the
 headless Python EngineCore, `vllm-engine-core-client` owns the handshake and
 transport, `vllm-llm` provides generate/abort, and `vllm-tracing` initializes
 process logging. Foretoken does not provide a Python launcher or process
@@ -67,28 +67,18 @@ ceiling plus five seconds for vLLM's upstream minimum engine shutdown window.
 
 ## Kubernetes runtime artifact
 
-Build the Dockerfile from the repository root and pass `VLLM_RUNTIME_IMAGE`.
-That artifact must contain `python3` and `vllm.entrypoints.cli.main`, built from
-the same pinned vLLM commit
-`5b14019576475224d86044b262e28a04a85d4086`. There is no verified matching
-public image and CI intentionally does not build or claim compatibility with an
-arbitrary runtime image. The selected artifact must be validated in Kubernetes
-with its intended GPU profile before deployment.
+Build the Dockerfile from the repository root and pass a digest-qualified `VLLM_RUNTIME_IMAGE`. The artifact must contain `python3` and `vllm.entrypoints.cli.main`, and its source revision must match the local vLLM build source used for the Foretoken model-server build.
 
 ## Development build
 
-From the repository root, materialize the pinned vLLM Rust source before any
-Cargo command or OCI build:
+Use a local vLLM Git checkout as the build source:
 
 ```bash
-./scripts/bootstrap-vllm-rust.sh
-cargo check --manifest-path data-plane/model-server/Cargo.toml --locked
-docker build \
-  --build-arg VLLM_RUNTIME_IMAGE=<validated-runtime-image> \
-  -f data-plane/model-server/Dockerfile -t foretoken-model-server:dev .
+FORETOKEN_VLLM_SOURCE=/path/to/vllm make build-model-server
+FORETOKEN_VLLM_SOURCE=/path/to/vllm make verify-model-server
+FORETOKEN_VLLM_SOURCE=/path/to/vllm \
+  VLLM_RUNTIME_IMAGE=<repository>@sha256:<digest> \
+  make image-model-server
 ```
 
-`third_party/vllm-rust/source.lock.toml` pins the official upstream commit and
-the checksum of the tracked patch. The bootstrap is idempotent; it fails rather
-than reset or overwrite unexpected local changes under the ignored
-`reference/upstream/vllm` worktree.
+The source selector validates the checkout and updates the ignored `third_party/vllm-rust/source` link without modifying the checkout.

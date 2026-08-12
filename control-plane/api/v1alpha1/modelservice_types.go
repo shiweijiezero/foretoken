@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Defines the v1alpha1 ModelService custom-resource API.
 
 package v1alpha1
@@ -8,6 +8,12 @@ package v1alpha1
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+)
+
+const (
+	DefaultInternalGenerateRequestBodyLimitBytes int64 = 64 * 1024 * 1024
+	MinInternalGenerateRequestBodyLimitBytes     int64 = 1 * 1024 * 1024
+	MaxInternalGenerateRequestBodyLimitBytes     int64 = 256 * 1024 * 1024
 )
 
 // ModelTimeouts defines ModelService lifecycle budgets.
@@ -115,7 +121,6 @@ type ECProfileReference struct {
 // of ModelGroups sharing the same role, network, resources, and parallelism.
 // The controller instantiates it as a ModelPool owned by the ModelService.
 // +kubebuilder:validation:XValidation:rule="(has(self.nodes) ? self.nodes : 1) * self.resources.requests.gpu.count == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * (has(self.parallelism.dp) ? self.parallelism.dp : 1))",message="nodes * resources.requests.gpu.count must equal the compiled worker rank count"
-// +kubebuilder:validation:XValidation:rule="!(self.role == 'prefill' || self.role == 'decode') || !has(self.features) || !has(self.features.multimodal) || size(self.features.multimodal) == 0",message="P/D ModelPools do not support multimodal features"
 type ModelPoolTemplate struct {
 	// Name is the stable identity of this Pool within one ModelService.
 	// +kubebuilder:validation:MinLength=1
@@ -161,6 +166,58 @@ type ModelPoolTemplate struct {
 	Features *ModelFeatures `json:"features,omitempty"`
 }
 
+// AutoscalingAlgorithm selects one statically assembled autoscaling configuration.
+// +enum
+// +kubebuilder:validation:Enum=manual;queue
+type AutoscalingAlgorithm string
+
+const (
+	AutoscalingAlgorithmManual AutoscalingAlgorithm = "manual"
+	AutoscalingAlgorithmQueue  AutoscalingAlgorithm = "queue"
+)
+
+// ModelAutoscalingConfig configures controller-owned Group autoscaling.
+// +kubebuilder:validation:XValidation:rule="!has(self.minGroups) || !has(self.maxGroups) || self.minGroups <= self.maxGroups",message="autoscaling minGroups must not exceed maxGroups"
+// +kubebuilder:validation:XValidation:rule="self.algorithm != 'queue' || has(self.maxGroups)",message="queue autoscaling requires maxGroups"
+type ModelAutoscalingConfig struct {
+	// +kubebuilder:default=manual
+	Algorithm AutoscalingAlgorithm `json:"algorithm"`
+
+	// +optional
+	// +kubebuilder:default=0
+	// +kubebuilder:validation:Minimum=0
+	MinGroups *int32 `json:"minGroups,omitempty"`
+
+	// MaxGroups is required for queue autoscaling. When omitted, manual intent is unbounded.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	MaxGroups *int32 `json:"maxGroups,omitempty"`
+
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
+	TargetQueuePerRoutableGroup *int64 `json:"targetQueuePerRoutableGroup,omitempty"`
+
+	// +optional
+	// +kubebuilder:default="5s"
+	PollInterval Duration `json:"pollInterval,omitempty"`
+
+	// +optional
+	// +kubebuilder:default="15s"
+	MetricsMaxAge Duration `json:"metricsMaxAge,omitempty"`
+
+	// Zero disables the corresponding per-evaluation rate limit.
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
+	MaxScaleUpStep *int32 `json:"maxScaleUpStep,omitempty"`
+
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
+	MaxScaleDownStep *int32 `json:"maxScaleDownStep,omitempty"`
+}
+
 // ModelServiceSpec defines the desired state of a model service.
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !(has(self.replicas) || has(self.nodes) || has(self.resources) || has(self.parallelism) || has(self.maxInputTokens) || has(self.kvCache) || has(self.features))",message="spec.modelPools is mutually exclusive with top-level replicas, nodes, resources, parallelism, maxInputTokens, kvCache, and features"
 // +kubebuilder:validation:XValidation:rule="has(self.modelPools) || (has(self.resources) && has(self.parallelism))",message="top-level resources and parallelism are required when spec.modelPools is omitted"
@@ -168,6 +225,8 @@ type ModelPoolTemplate struct {
 // +kubebuilder:validation:XValidation:rule="has(self.modelPools) || (has(self.resources) && has(self.parallelism) && (has(self.nodes) ? self.nodes : 1) * self.resources.requests.gpu.count == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * (has(self.parallelism.dp) ? self.parallelism.dp : 1)))",message="nodes * resources.requests.gpu.count must equal the compiled worker rank count"
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, !has(pool.role) || pool.role == 'aggregate') || (self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'prefill' || pool.role == 'decode'))) || (has(self.ecProfile) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'encoder' || pool.role == 'prefill' || pool.role == 'decode')))",message="modelPools must be aggregate-only, complete P/D, or complete E/P/D without aggregate pools"
 // +kubebuilder:validation:XValidation:rule="!has(self.ecProfile) || (has(self.modelPools) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'encoder' || pool.role == 'prefill' || pool.role == 'decode')))",message="ecProfile requires complete E/P/D modelPools"
+// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') || (size(self.modelPools.filter(pool, has(pool.role) && pool.role == 'encoder')) == 1 && size(self.modelPools.filter(pool, has(pool.role) && pool.role == 'prefill')) == 1 && size(self.modelPools.filter(pool, has(pool.role) && pool.role == 'decode')) == 1)",message="E/P/D modelPools must contain exactly one encoder, prefill, and decode Pool"
+// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') || self.modelPools.filter(pool, has(pool.role) && pool.role == 'encoder').all(e, self.modelPools.filter(pool, has(pool.role) && pool.role == 'prefill').all(p, (has(e.replicas) ? e.replicas : 1) == (has(p.replicas) ? p.replicas : 1)) && self.modelPools.filter(pool, has(pool.role) && pool.role == 'decode').all(d, (has(e.replicas) ? e.replicas : 1) == (has(d.replicas) ? d.replicas : 1)))",message="E/P/D modelPools must have equal encoder, prefill, and decode replica counts"
 type ModelServiceSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
@@ -194,6 +253,14 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`
 
+	// InternalGenerateRequestBodyLimitBytes is the maximum body size accepted by
+	// a group-local generate endpoint. It defaults to 64 MiB.
+	// +optional
+	// +kubebuilder:default=67108864
+	// +kubebuilder:validation:Minimum=1048576
+	// +kubebuilder:validation:Maximum=268435456
+	InternalGenerateRequestBodyLimitBytes *int64 `json:"internalGenerateRequestBodyLimitBytes,omitempty"`
+
 	// Replicas is the number of complete ModelGroups in the default Pool; the compiler defaults it to 1.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
@@ -208,6 +275,11 @@ type ModelServiceSpec struct {
 	Resources *ModelResources `json:"resources,omitempty"`
 
 	Timeouts ModelTimeouts `json:"timeouts"`
+
+	// Autoscaling is evaluated by the ModelService controller. Algorithms remain
+	// side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.
+	// +optional
+	Autoscaling *ModelAutoscalingConfig `json:"autoscaling,omitempty"`
 
 	// +optional
 	Parallelism *Parallelism `json:"parallelism,omitempty"`
@@ -244,6 +316,41 @@ type ModelServiceSpec struct {
 	ExtraArgs []BackendArg `json:"extraArgs,omitempty"`
 }
 
+// AutoscalingTargetStatus records the latest auditable decision for one scaling target.
+type AutoscalingTargetStatus struct {
+	// +kubebuilder:validation:MinLength=1
+	ID string `json:"id"`
+
+	// +kubebuilder:validation:Enum=Pool;EPDDomain
+	Kind string `json:"kind"`
+
+	// +kubebuilder:validation:Enum=Aggregate;Encoder;Prefill;Decode;EPD
+	Role string `json:"role"`
+
+	Algorithm        string      `json:"algorithm"`
+	SnapshotID       string      `json:"snapshotID"`
+	ObservedAt       metav1.Time `json:"observedAt"`
+	ObservationState string      `json:"observationState"`
+	Disposition      string      `json:"disposition"`
+	Reason           string      `json:"reason"`
+	Message          string      `json:"message,omitempty"`
+	Direction        string      `json:"direction"`
+
+	// RequestedGroups is the raw advisory target returned by the algorithm.
+	RequestedGroups int32 `json:"requestedGroups"`
+
+	// AppliedGroups is the core-constrained target successfully written to all
+	// ModelPools represented by this status entry.
+	// +kubebuilder:validation:Minimum=0
+	AppliedGroups int32 `json:"appliedGroups"`
+
+	// +kubebuilder:validation:Minimum=0
+	ReadyGroups int32 `json:"readyGroups"`
+
+	// +kubebuilder:validation:Minimum=0
+	RoutableGroups int32 `json:"routableGroups"`
+}
+
 // ModelServiceStatus defines the observed state of a model service.
 type ModelServiceStatus struct {
 	// +optional
@@ -255,6 +362,13 @@ type ModelServiceStatus struct {
 	// +listMapKey=type
 	// +kubebuilder:validation:MaxItems=8
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// Autoscaling contains the latest decision for each Pool or E/P/D domain.
+	// +optional
+	// +listType=map
+	// +listMapKey=id
+	// +kubebuilder:validation:MaxItems=32
+	Autoscaling []AutoscalingTargetStatus `json:"autoscaling,omitempty"`
 }
 
 // +kubebuilder:object:root=true

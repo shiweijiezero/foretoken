@@ -1,9 +1,0 @@
-# SPDX-License-Identifier: Apache-2.0
-# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
-# The bootstrap script materializes this exact source tree under the ignored
-# reference/upstream/vllm directory and applies the checked-in patch below.
-repository = "https://github.com/vllm-project/vllm.git"
-commit = "5b14019576475224d86044b262e28a04a85d4086"
-patch = "third_party/vllm-rust/patches/0001-public-engine-free-chat-processor.patch"
-patch_sha256 = "7f0d7c1444d6239f85d5d21d9a719504f8e11fa3ce77a34de1d0954dc7e8a5f8"

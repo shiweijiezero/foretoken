@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Build from the repository root. The runtime artifact must contain python3 and
 # vllm.entrypoints.cli.main built from vLLM commit 5b14019576475224d86044b262e28a04a85d4086.
 
@@ -12,7 +12,7 @@ WORKDIR /workspace
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential perl pkg-config \
     && rm -rf /var/lib/apt/lists/*
-COPY reference/upstream/vllm/rust/ ./reference/upstream/vllm/rust/
+COPY third_party/vllm-rust/source/rust/ ./third_party/vllm-rust/source/rust/
 COPY data-plane/model-protocol/ ./data-plane/model-protocol/
 COPY data-plane/model-server/ ./data-plane/model-server/
 RUN cargo build --locked --release --manifest-path data-plane/model-server/Cargo.toml

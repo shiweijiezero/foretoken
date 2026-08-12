@@ -5,6 +5,7 @@
 
 pub mod api;
 pub mod backend;
+mod backend_telemetry;
 pub mod config;
 pub mod kv_event_adapter;
 pub mod launch;

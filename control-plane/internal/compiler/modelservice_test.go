@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Tests deterministic ModelService intent compilation.
 
 package compiler
@@ -57,6 +57,9 @@ func TestCompileShorthand(t *testing.T) {
 	if template.MaxInputTokens == nil || *template.MaxInputTokens != 16384 || template.MaxInputTokens == spec.MaxInputTokens {
 		t.Fatalf("compiled maxInputTokens = %#v", template.MaxInputTokens)
 	}
+	if template.InternalGenerateRequestBodyLimitBytes != inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes {
+		t.Fatalf("compiled internal generate request body limit = %d", template.InternalGenerateRequestBodyLimitBytes)
+	}
 }
 
 func TestCompileAdvancedPools(t *testing.T) {
@@ -110,31 +113,36 @@ func TestCompilePropagatesQuickStartFeatures(t *testing.T) {
 	spec := inferencev1alpha1.ModelServiceSpec{
 		Model: "model", Backend: "vllm", Resources: ptr(modelResources("1", "1Gi", "auto", 1)),
 		Parallelism: &inferencev1alpha1.Parallelism{}, Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "1m", Drain: "1m"},
-		Features: &inferencev1alpha1.ModelFeatures{Tools: true, Reasoning: true, StructuredOutputs: []inferencev1alpha1.StructuredOutputFormat{inferencev1alpha1.StructuredOutputFormatJSONSchema, inferencev1alpha1.StructuredOutputFormatJSONObject, inferencev1alpha1.StructuredOutputFormatJSONSchema}, Multimodal: []inferencev1alpha1.MultimodalModality{inferencev1alpha1.MultimodalModalityVideo, inferencev1alpha1.MultimodalModalityImage, inferencev1alpha1.MultimodalModalityVideo}},
+		Features: &inferencev1alpha1.ModelFeatures{Tools: true, Reasoning: true, StructuredOutputs: []inferencev1alpha1.StructuredOutputFormat{inferencev1alpha1.StructuredOutputFormatJSONSchema, inferencev1alpha1.StructuredOutputFormatJSONObject, inferencev1alpha1.StructuredOutputFormatJSONSchema}, Multimodal: []inferencev1alpha1.MultimodalModality{inferencev1alpha1.MultimodalModalityImage, inferencev1alpha1.MultimodalModalityImage}},
 	}
 	pools, err := CompileModelService(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := pools[0].Template.Features
-	if !got.Tools || !got.Reasoning || !reflect.DeepEqual(got.StructuredOutputs, []inferencev1alpha1.StructuredOutputFormat{inferencev1alpha1.StructuredOutputFormatJSONObject, inferencev1alpha1.StructuredOutputFormatJSONSchema}) || !reflect.DeepEqual(got.Multimodal, []inferencev1alpha1.MultimodalModality{inferencev1alpha1.MultimodalModalityImage, inferencev1alpha1.MultimodalModalityVideo}) {
+	if !got.Tools || !got.Reasoning || !reflect.DeepEqual(got.StructuredOutputs, []inferencev1alpha1.StructuredOutputFormat{inferencev1alpha1.StructuredOutputFormatJSONObject, inferencev1alpha1.StructuredOutputFormatJSONSchema}) || !reflect.DeepEqual(got.Multimodal, []inferencev1alpha1.MultimodalModality{inferencev1alpha1.MultimodalModalityImage}) {
 		t.Fatalf("normalized quick-start features = %#v", got)
 	}
 }
 
-func TestCompilePropagatesAdvancedPoolFeatures(t *testing.T) {
-	spec := inferencev1alpha1.ModelServiceSpec{Model: "model", Backend: "vllm", Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "1m", Drain: "1m"}, ModelPools: []inferencev1alpha1.ModelPoolTemplate{{Name: "aggregate", Resources: modelResources("1", "1Gi", "auto", 1), Parallelism: inferencev1alpha1.Parallelism{}, Features: &inferencev1alpha1.ModelFeatures{Tools: true, Multimodal: []inferencev1alpha1.MultimodalModality{inferencev1alpha1.MultimodalModalityAudio}}}}}
-	pools, err := CompileModelService(spec)
-	if err != nil || !pools[0].Template.Features.Tools || !reflect.DeepEqual(pools[0].Template.Features.Multimodal, []inferencev1alpha1.MultimodalModality{inferencev1alpha1.MultimodalModalityAudio}) {
-		t.Fatalf("advanced pool features = %#v, err = %v", pools, err)
+func TestCompileRejectsUnsupportedMultimodalFeatures(t *testing.T) {
+	spec := inferencev1alpha1.ModelServiceSpec{Model: "model", Backend: "vllm", Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "1m", Drain: "1m"}, ModelPools: []inferencev1alpha1.ModelPoolTemplate{{Name: "aggregate", Resources: modelResources("1", "1Gi", "auto", 1), Parallelism: inferencev1alpha1.Parallelism{}, Features: &inferencev1alpha1.ModelFeatures{Multimodal: []inferencev1alpha1.MultimodalModality{"audio"}}}}}
+	if _, err := CompileModelService(spec); err == nil {
+		t.Fatal("unsupported audio modality was accepted")
 	}
 }
 
-func TestCompileRejectsPDMultiModalFeatures(t *testing.T) {
+func TestCompilePropagatesPDMultiModalModelFeatures(t *testing.T) {
 	features := &inferencev1alpha1.ModelFeatures{Multimodal: []inferencev1alpha1.MultimodalModality{inferencev1alpha1.MultimodalModalityImage}}
-	spec := inferencev1alpha1.ModelServiceSpec{Model: "model", Backend: "vllm", Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "1m", Drain: "1m"}, ModelPools: []inferencev1alpha1.ModelPoolTemplate{{Name: "prefill", Role: inferencev1alpha1.ModelRolePrefill, Resources: modelResources("1", "1Gi", "auto", 1), Parallelism: inferencev1alpha1.Parallelism{}, Features: features}, {Name: "decode", Role: inferencev1alpha1.ModelRoleDecode, Resources: modelResources("1", "1Gi", "auto", 1), Parallelism: inferencev1alpha1.Parallelism{}}}}
-	if _, err := CompileModelService(spec); err == nil {
-		t.Fatal("P/D multimodal features were accepted")
+	spec := inferencev1alpha1.ModelServiceSpec{Model: "model", Backend: "vllm", Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "1m", Drain: "1m"}, ModelPools: []inferencev1alpha1.ModelPoolTemplate{{Name: "prefill", Role: inferencev1alpha1.ModelRolePrefill, Resources: modelResources("1", "1Gi", "auto", 1), Parallelism: inferencev1alpha1.Parallelism{}, Features: features}, {Name: "decode", Role: inferencev1alpha1.ModelRoleDecode, Resources: modelResources("1", "1Gi", "auto", 1), Parallelism: inferencev1alpha1.Parallelism{}, Features: features}}}
+	pools, err := CompileModelService(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, pool := range pools {
+		if !reflect.DeepEqual(pool.Template.Features.Multimodal, features.Multimodal) {
+			t.Fatalf("%s multimodal features = %#v", pool.Name, pool.Template.Features.Multimodal)
+		}
 	}
 }
 
@@ -165,6 +173,28 @@ func TestCompileRejectsIncompleteOrMixedPDRoles(t *testing.T) {
 				t.Fatalf("roles %v were accepted", roles)
 			}
 		})
+	}
+}
+
+func TestCompileValidatesAutoscalingPolicy(t *testing.T) {
+	spec := inferencev1alpha1.ModelServiceSpec{
+		Model: "model", Backend: "vllm", Resources: ptr(modelResources("1", "1Gi", "auto", 1)),
+		Parallelism: &inferencev1alpha1.Parallelism{}, Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "1m", Drain: "1m"},
+		Autoscaling: &inferencev1alpha1.ModelAutoscalingConfig{Algorithm: inferencev1alpha1.AutoscalingAlgorithmQueue},
+	}
+	if _, err := CompileModelService(spec); err == nil {
+		t.Fatal("queue autoscaling without maxGroups was accepted")
+	}
+	minimum, maximum := int32(1), int32(2)
+	spec.Autoscaling.MinGroups = &minimum
+	spec.Autoscaling.MaxGroups = &maximum
+	spec.Autoscaling.PollInterval = "invalid"
+	if _, err := CompileModelService(spec); err == nil {
+		t.Fatal("invalid autoscaling poll interval was accepted")
+	}
+	spec.Autoscaling.PollInterval = "5s"
+	if _, err := CompileModelService(spec); err != nil {
+		t.Fatalf("valid autoscaling config was rejected: %v", err)
 	}
 }
 
@@ -232,5 +262,34 @@ func TestCompileEPDPropagatesECProfileAndRejectsIncompleteTriplets(t *testing.T)
 	spec.ModelPools = spec.ModelPools[:2]
 	if _, err := CompileModelService(spec); err == nil {
 		t.Fatal("incomplete E/P/D triplet was accepted")
+	}
+
+	spec.ModelPools = []inferencev1alpha1.ModelPoolTemplate{
+		base("encoder-a", inferencev1alpha1.ModelRoleEncoder),
+		base("encoder-b", inferencev1alpha1.ModelRoleEncoder),
+		base("prefill", inferencev1alpha1.ModelRolePrefill),
+		base("decode", inferencev1alpha1.ModelRoleDecode),
+	}
+	if _, err := CompileModelService(spec); err == nil {
+		t.Fatal("multiple encoder Pools were accepted for E/P/D")
+	}
+}
+
+func TestCompileInternalGenerateRequestBodyLimit(t *testing.T) {
+	limit := int64(96 * 1024 * 1024)
+	spec := inferencev1alpha1.ModelServiceSpec{
+		Model: "model", Backend: "vllm", Resources: ptr(modelResources("1", "1Gi", "auto", 1)),
+		Parallelism: &inferencev1alpha1.Parallelism{}, Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "1m", Drain: "1m"},
+		InternalGenerateRequestBodyLimitBytes: &limit,
+	}
+	pools, err := CompileModelService(spec)
+	if err != nil || pools[0].Template.InternalGenerateRequestBodyLimitBytes != limit {
+		t.Fatalf("compiled internal generate request body limit = %#v, err = %v", pools, err)
+	}
+	for _, invalid := range []int64{inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes - 1, inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes + 1} {
+		spec.InternalGenerateRequestBodyLimitBytes = &invalid
+		if _, err := CompileModelService(spec); err == nil {
+			t.Fatalf("invalid limit %d was accepted", invalid)
+		}
 	}
 }

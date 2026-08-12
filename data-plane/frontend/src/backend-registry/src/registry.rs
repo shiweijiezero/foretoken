@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
 //! Runtime backend registry, health refresh, telemetry, and facade resolution.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -7,48 +8,55 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver, VllmFacade};
+use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver};
 use foretoken_model_protocol::{
-    RuntimeEcTransferMetadata, RuntimeMetadataResponse, TelemetryResponse, VLLM_PINNED_REVISION,
+    RuntimeEcTransferMetadata, RuntimeMetadataResponse, TelemetryResponse, VLLM_SOURCE_REVISION,
 };
 use vllm_engine_core_client::protocol::dtype::ModelDtype;
 
+use foretoken_model_protocol::{ModelServerRole, RouteStage};
 use foretoken_router::{
-    AdmissionTarget, BackendId, BackendRole, BackendRoute, ComponentCapacity, ExecutionPlan,
-    ModelRouter, RouteInventory,
+    ModelRouteTable, RouteCandidate, RouteDecision, RouteInventory, RouteTarget, RouteTargetId,
+    RouteTargetLoad, RouteTargetSet, RouteTargetStats, RouteTargetStatsReader,
 };
 
+use crate::route_target_stats::RouteTargetStatsHistory;
 use crate::snapshot::{ServingSnapshot, SnapshotError};
+
+const ROUTE_TARGET_STATS_RETENTION: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteTable {
     version: u64,
-    router: ModelRouter,
+    model_routes: ModelRouteTable,
 }
 impl RouteTable {
-    pub(crate) fn new(version: u64, routes: Vec<BackendRoute>) -> Self {
+    pub(crate) fn new(version: u64, routes: Vec<RouteTarget>) -> Self {
         Self {
             version,
-            router: ModelRouter::new(routes),
+            model_routes: ModelRouteTable::new(routes),
         }
     }
 
     pub fn version(&self) -> u64 {
         self.version
     }
-    pub fn router(&self) -> &ModelRouter {
-        &self.router
+    pub fn model_routes(&self) -> &ModelRouteTable {
+        &self.model_routes
     }
-    pub fn routes(&self) -> &[BackendRoute] {
-        self.router.routes()
+
+    pub fn routes(&self) -> &[RouteTarget] {
+        self.model_routes.routes()
     }
 }
 pub struct BackendRegistry {
     table: RouteTable,
-    components: BTreeMap<BackendId, Component>,
-    health: BTreeMap<BackendId, AtomicBool>,
-    capacity: Mutex<BTreeMap<BackendId, ComponentCapacity>>,
-    metadata: Mutex<BTreeMap<BackendId, RuntimeMetadataResponse>>,
+    logical_targets: BTreeMap<String, Vec<RouteTargetSet>>,
+    components: BTreeMap<RouteTargetId, Component>,
+    health: BTreeMap<RouteTargetId, AtomicBool>,
+    loads: Mutex<BTreeMap<RouteTargetId, RouteTargetLoad>>,
+    stats: Mutex<BTreeMap<RouteTargetId, RouteTargetStatsHistory>>,
+    metadata: Mutex<BTreeMap<RouteTargetId, RuntimeMetadataResponse>>,
     health_client: reqwest::Client,
 }
 #[derive(Debug, Clone)]
@@ -109,6 +117,7 @@ impl BackendRegistry {
         Self::from_snapshot(serde_json::from_slice(bytes).map_err(SnapshotError::Parse)?)
     }
     pub fn from_snapshot(snapshot: ServingSnapshot) -> Result<Self, SnapshotError> {
+        let logical_targets = snapshot.logical_target_sets()?;
         let (table, components) = crate::build::build(snapshot)?;
         let health = components
             .keys()
@@ -116,9 +125,11 @@ impl BackendRegistry {
             .collect();
         Ok(Self {
             table,
+            logical_targets,
             components,
             health,
-            capacity: Mutex::new(BTreeMap::new()),
+            loads: Mutex::new(BTreeMap::new()),
+            stats: Mutex::new(BTreeMap::new()),
             metadata: Mutex::new(BTreeMap::new()),
             health_client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(1))
@@ -130,8 +141,23 @@ impl BackendRegistry {
         &self.table
     }
 
+    pub fn configured_models(&self) -> Vec<String> {
+        self.logical_targets.keys().cloned().collect()
+    }
+
+    pub fn logical_target_set(&self, model: &str) -> Option<RouteTargetSet> {
+        self.logical_targets
+            .get(model)
+            .and_then(|targets| targets.first())
+            .cloned()
+    }
+
+    pub fn is_configured(&self) -> bool {
+        !self.logical_targets.is_empty()
+    }
+
     /// Returns the last metadata response that passed this component's snapshot checks.
-    pub fn metadata(&self, id: &BackendId) -> Option<RuntimeMetadataResponse> {
+    pub fn metadata(&self, id: &RouteTargetId) -> Option<RuntimeMetadataResponse> {
         self.metadata.lock().ok()?.get(id).cloned()
     }
 
@@ -144,8 +170,10 @@ impl BackendRegistry {
         self.table
             .routes()
             .iter()
-            .filter(|route| route.model == model && self.is_backend_healthy(&route.backend_id))
-            .filter_map(|route| self.metadata(&route.backend_id))
+            .filter(|route| {
+                route.model == model && self.is_route_target_healthy(&route.route_target_id)
+            })
+            .filter_map(|route| self.metadata(&route.route_target_id))
             .map(|metadata| metadata.effective_max_model_len)
             .min()
     }
@@ -156,8 +184,10 @@ impl BackendRegistry {
             .table
             .routes()
             .iter()
-            .filter(|route| route.model == model && self.is_backend_healthy(&route.backend_id))
-            .filter_map(|route| self.metadata(&route.backend_id))
+            .filter(|route| {
+                route.model == model && self.is_route_target_healthy(&route.route_target_id)
+            })
+            .filter_map(|route| self.metadata(&route.route_target_id))
             .map(|metadata| metadata.model_dtype);
         let dtype = dtypes.next()?;
         dtypes.all(|candidate| candidate == dtype).then_some(dtype)
@@ -165,43 +195,39 @@ impl BackendRegistry {
 
     pub fn healthy_models(&self) -> Vec<String> {
         let mut models = BTreeSet::new();
-        let mut pd_domains = BTreeMap::<(String, String), (bool, bool, bool)>::new();
-        for route in self
-            .table
-            .routes()
-            .iter()
-            .filter(|route| self.is_backend_healthy(&route.backend_id))
-        {
-            match route.role {
-                BackendRole::Aggregate => {
-                    models.insert(route.model.clone());
-                }
-                BackendRole::Encoder | BackendRole::Prefill | BackendRole::Decode => {
-                    let Some(domain_id) = route.domain_id.as_ref() else {
-                        continue;
-                    };
-                    let roles = pd_domains
-                        .entry((route.model.clone(), domain_id.clone()))
-                        .or_default();
-                    match route.role {
-                        BackendRole::Encoder => roles.0 = true,
-                        BackendRole::Prefill => roles.1 = true,
-                        BackendRole::Decode => roles.2 = true,
-                        BackendRole::Aggregate => unreachable!("aggregate was handled above"),
-                    }
+        let mut domains = BTreeMap::<(String, String), (bool, bool, bool)>::new();
+        for route in self.table.routes() {
+            if route.role == ModelServerRole::Aggregate
+                && self.is_route_target_healthy(&route.route_target_id)
+            {
+                models.insert(route.model.clone());
+                continue;
+            }
+            let Some(domain) = &route.domain_id else {
+                continue;
+            };
+            let roles = domains
+                .entry((route.model.clone(), domain.clone()))
+                .or_default();
+            if self.is_route_target_healthy(&route.route_target_id) {
+                match route.role {
+                    ModelServerRole::Encoder => roles.0 = true,
+                    ModelServerRole::Prefill => roles.1 = true,
+                    ModelServerRole::Decode => roles.2 = true,
+                    ModelServerRole::Aggregate => {}
                 }
             }
         }
-        models.extend(pd_domains.into_iter().filter_map(
-            |((model, domain_id), (encoder, prefill, decode))| {
-                let requires_encoder = self.table.routes().iter().any(|route| {
-                    route.model == model
-                        && route.domain_id.as_deref() == Some(domain_id.as_str())
-                        && route.role == BackendRole::Encoder
-                });
-                ((!requires_encoder || encoder) && prefill && decode).then_some(model)
-            },
-        ));
+        for ((model, domain), (encoder, prefill, decode)) in domains {
+            let epd = self.table.routes().iter().any(|route| {
+                route.model == model
+                    && route.domain_id.as_deref() == Some(domain.as_str())
+                    && route.role == ModelServerRole::Encoder
+            });
+            if prefill && decode && (!epd || encoder) {
+                models.insert(model);
+            }
+        }
         models.into_iter().collect()
     }
     /// Health, runtime metadata, and telemetry are per physical component.
@@ -217,7 +243,7 @@ impl BackendRegistry {
                 }
                 None => true,
             };
-            let telemetry = telemetry(&self.health_client, id, c.endpoint()).await;
+            let stats = telemetry(&self.health_client, c.endpoint()).await;
             let metadata_valid = metadata
                 .as_ref()
                 .is_some_and(|value| metadata_matches(c.expected(), value));
@@ -225,98 +251,89 @@ impl BackendRegistry {
                 id.clone(),
                 ready && bootstrap && metadata_valid,
                 metadata,
-                telemetry,
+                stats,
             )
         });
-        let mut results = futures::future::join_all(probes).await;
-        invalidate_incompatible_pd_pairs(&self.table, &mut results);
-
-        let mut next_capacity = BTreeMap::new();
+        let results = futures::future::join_all(probes).await;
+        let mut next_loads = BTreeMap::new();
         let mut next_metadata = BTreeMap::new();
-        for (id, healthy, metadata, capacity) in results {
-            let healthy = healthy && capacity.is_some();
+        let mut histories = self.stats.lock().expect("backend stats mutex");
+        for (id, healthy, metadata, stats) in results {
             self.health
                 .get(&id)
                 .expect("component health")
                 .store(healthy, Ordering::Release);
             if healthy {
-                next_capacity.insert(id.clone(), capacity.expect("checked above"));
+                if let Some(stats) = stats {
+                    next_loads.insert(
+                        id.clone(),
+                        RouteTargetLoad {
+                            running_requests: Some(stats.running_requests),
+                        },
+                    );
+                    histories
+                        .entry(id.clone())
+                        .or_insert_with(|| {
+                            RouteTargetStatsHistory::new(ROUTE_TARGET_STATS_RETENTION)
+                        })
+                        .push(stats);
+                } else {
+                    histories.remove(&id);
+                }
                 next_metadata.insert(id, metadata.expect("validated above"));
+            } else {
+                histories.remove(&id);
             }
         }
-        *self.capacity.lock().expect("capacity mutex") = next_capacity;
+        drop(histories);
+        *self.loads.lock().expect("backend load mutex") = next_loads;
         *self.metadata.lock().expect("metadata mutex") = next_metadata;
     }
 }
 impl LlmFacadeResolver for BackendRegistry {
-    fn resolve(&self, plan: &ExecutionPlan) -> Option<Arc<dyn LlmFacade>> {
-        match plan {
-            ExecutionPlan::Aggregate { decision } => {
-                match self.components.get(&decision.backend_id)? {
-                    Component::Aggregate { facade, .. } => Some(facade.clone()),
-                    Component::Encoder { .. }
-                    | Component::Prefill { .. }
-                    | Component::Decode { .. } => None,
-                }
+    fn resolve_stage(
+        &self,
+        decision: &RouteDecision,
+        stage: RouteStage,
+    ) -> Option<Arc<dyn LlmFacade>> {
+        let component = self.components.get(&decision.route_target_id)?;
+        match (stage, component) {
+            (RouteStage::Aggregate, Component::Aggregate { facade, .. }) => Some(facade.clone()),
+            (RouteStage::Encoder, Component::Encoder { endpoint, .. })
+            | (RouteStage::Prefill, Component::Prefill { endpoint, .. })
+            | (RouteStage::Decode, Component::Decode { endpoint, .. }) => {
+                Some(Arc::new(HttpFacade::new(endpoint.clone()).ok()?))
             }
-            ExecutionPlan::PrefillDecode { prefill, decode } => {
-                let p = self.components.get(&prefill.backend_id)?;
-                let d = self.components.get(&decode.backend_id)?;
-                Some(Arc::new(
-                    VllmFacade::prefill_decode(
-                        p.endpoint().to_owned(),
-                        d.endpoint().to_owned(),
-                        p.bootstrap()?.to_owned(),
-                    )
-                    .ok()?,
-                ))
-            }
-            ExecutionPlan::EncoderPrefillDecode {
-                encoder,
-                prefill,
-                decode,
-            } => {
-                let e = self.components.get(&encoder.backend_id)?;
-                let p = self.components.get(&prefill.backend_id)?;
-                let d = self.components.get(&decode.backend_id)?;
-                Some(Arc::new(
-                    VllmFacade::encoder_prefill_decode(
-                        e.endpoint().to_owned(),
-                        p.endpoint().to_owned(),
-                        d.endpoint().to_owned(),
-                        p.bootstrap()?.to_owned(),
-                    )
-                    .ok()?,
-                ))
-            }
+            _ => None,
         }
+    }
+
+    fn bootstrap_endpoint(&self, prefill: &RouteDecision) -> Option<String> {
+        self.components
+            .get(&prefill.route_target_id)?
+            .bootstrap()
+            .map(str::to_owned)
     }
 }
 impl RouteInventory for BackendRegistry {
-    fn model_router(&self) -> &ModelRouter {
-        self.table.router()
+    fn model_routes(&self) -> &ModelRouteTable {
+        self.table.model_routes()
     }
-    fn is_backend_healthy(&self, id: &BackendId) -> bool {
+    fn is_route_target_healthy(&self, id: &RouteTargetId) -> bool {
         self.health
             .get(id)
             .is_some_and(|v| v.load(Ordering::Acquire))
     }
-    fn admission_target(&self, id: &BackendId) -> Option<AdmissionTarget> {
-        self.capacity
-            .lock()
-            .ok()?
-            .get(id)
-            .cloned()
-            .map(|c| AdmissionTarget {
-                components: vec![c],
-            })
+    fn route_target_load(&self, id: &RouteTargetId) -> Option<RouteTargetLoad> {
+        self.loads.lock().ok()?.get(id).cloned()
     }
-    fn effective_capabilities(&self, id: &BackendId) -> BTreeSet<String> {
-        let Some(policy) = self
+
+    fn effective_capabilities(&self, id: &RouteTargetId) -> BTreeSet<String> {
+        let Some(declared) = self
             .table
             .routes()
             .iter()
-            .find(|route| &route.backend_id == id)
+            .find(|route| &route.route_target_id == id)
             .map(|route| &route.capabilities)
         else {
             return BTreeSet::new();
@@ -329,7 +346,7 @@ impl RouteInventory for BackendRegistry {
         };
         // Chat/text/tool/reasoning/structured-output and multimodal preprocessing are
         // frontend-owned. Only capabilities proved by EngineCore metadata are gated here.
-        policy
+        declared
             .iter()
             .filter(|capability| {
                 !requires_runtime_observation(capability)
@@ -339,6 +356,17 @@ impl RouteInventory for BackendRegistry {
             .collect()
     }
 }
+
+impl RouteTargetStatsReader for BackendRegistry {
+    fn stats(&self, candidate: &RouteCandidate, window: Duration) -> Option<RouteTargetStats> {
+        self.stats
+            .lock()
+            .ok()?
+            .get(&candidate.route_target_id)?
+            .stats(window)
+    }
+}
+
 fn requires_runtime_observation(capability: &str) -> bool {
     matches!(capability, "lora")
 }
@@ -348,52 +376,8 @@ fn metadata_matches(expected: &RuntimeExpectation, metadata: &RuntimeMetadataRes
         && metadata.model.model == expected.model
         && metadata.model.revision == expected.revision
         && metadata.ec_transfer == expected.ec_transfer
-        && metadata.vllm_pinned_revision == VLLM_PINNED_REVISION
+        && metadata.vllm_source_revision == VLLM_SOURCE_REVISION
         && metadata.effective_max_model_len > 0
-}
-
-fn invalidate_incompatible_pd_pairs(
-    table: &RouteTable,
-    results: &mut [(
-        BackendId,
-        bool,
-        Option<RuntimeMetadataResponse>,
-        Option<ComponentCapacity>,
-    )],
-) {
-    let mut domains = BTreeMap::<String, Vec<usize>>::new();
-    for route in table.routes() {
-        if matches!(
-            route.role,
-            BackendRole::Encoder | BackendRole::Prefill | BackendRole::Decode
-        ) {
-            let Some(domain) = route.domain_id.as_ref() else {
-                continue;
-            };
-            if let Some(index) = results.iter().position(|(id, ..)| id == &route.backend_id) {
-                domains.entry(domain.clone()).or_default().push(index);
-            }
-        }
-    }
-    for indices in domains.into_values() {
-        let metadata: Vec<&RuntimeMetadataResponse> = indices
-            .iter()
-            .filter_map(|index| {
-                let (_, healthy, metadata, _) = &results[*index];
-                (*healthy).then_some(metadata.as_ref()?)
-            })
-            .collect();
-        if metadata.len() == indices.len()
-            && metadata.windows(2).any(|pair| {
-                pair[0].model_dtype != pair[1].model_dtype
-                    || pair[0].effective_max_model_len != pair[1].effective_max_model_len
-            })
-        {
-            for index in indices {
-                results[index].1 = false;
-            }
-        }
-    }
 }
 
 async fn metadata(client: &reqwest::Client, endpoint: &str) -> Option<RuntimeMetadataResponse> {
@@ -411,11 +395,7 @@ async fn metadata(client: &reqwest::Client, endpoint: &str) -> Option<RuntimeMet
         .then_some(response.json().await.ok()?)
 }
 
-async fn telemetry(
-    client: &reqwest::Client,
-    id: &BackendId,
-    endpoint: &str,
-) -> Option<ComponentCapacity> {
+async fn telemetry(client: &reqwest::Client, endpoint: &str) -> Option<TelemetryResponse> {
     let response = client
         .get(format!(
             "{}/v1/internal/telemetry",
@@ -428,11 +408,7 @@ async fn telemetry(
         return None;
     }
     let response: TelemetryResponse = response.json().await.ok()?;
-    (response.version == 1 && response.accepting).then_some(ComponentCapacity {
-        component_id: id.clone(),
-        running_requests: response.running_requests,
-        max_concurrent_requests: response.max_concurrent_requests,
-    })
+    (response.version == 2).then_some(response)
 }
 async fn ready(client: &reqwest::Client, endpoint: &str) -> bool {
     matches!(client.get(format!("{}/readyz",endpoint.trim_end_matches('/'))).send().await,Ok(response) if response.status().is_success())

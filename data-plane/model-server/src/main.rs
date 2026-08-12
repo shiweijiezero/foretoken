@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use foretoken_model_protocol::{
-    RuntimeMetadataResponse, RuntimeModelIdentity, VLLM_PINNED_REVISION,
+    RuntimeMetadataResponse, RuntimeModelIdentity, VLLM_SOURCE_REVISION,
 };
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
@@ -23,13 +23,13 @@ use vllm_managed_engine::{ManagedEngineHandle, allocate_handshake_port};
 
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
-const BACKEND_GROUP_UID_ENV: &str = "FORETOKEN_BACKEND_GROUP_UID";
+const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     vllm_tracing::init_tracing("ForetokenModelServer");
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
-    let kv_events = match kv_event_adapter() {
+    let kv_events = match kv_event_adapter(&config) {
         Ok(adapter) => {
             let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
             tokio::spawn(adapter.clone().serve_ready(Some(ready_tx)));
@@ -95,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         model_dtype: client.model_dtype(),
         effective_max_model_len: client.max_model_len(),
-        vllm_pinned_revision: VLLM_PINNED_REVISION.into(),
+        vllm_source_revision: VLLM_SOURCE_REVISION.into(),
         vllm_version: client.vllm_version().into(),
         ec_transfer: config.launch.ec.runtime_metadata(),
         capabilities: if config.launch.ec.enabled() {
@@ -125,9 +125,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         app_state = app_state.with_kv_events(kv_events);
     }
     let mut server = Box::pin(
-        axum::serve(listener, router(app_state))
-            .with_graceful_shutdown(async move { server_shutdown.notified().await })
-            .into_future(),
+        axum::serve(
+            listener,
+            router(
+                app_state,
+                config.launch.internal_generate_request_body_limit_bytes,
+            ),
+        )
+        .with_graceful_shutdown(async move { server_shutdown.notified().await })
+        .into_future(),
     );
 
     enum Stop {
@@ -189,15 +195,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn kv_event_adapter() -> Result<Arc<KvEventAdapter>, Box<dyn std::error::Error>> {
+fn kv_event_adapter(
+    config: &RuntimeConfig,
+) -> Result<Arc<KvEventAdapter>, Box<dyn std::error::Error>> {
     let bytes = std::fs::read(std::env::var(KV_KEY_PATH_ENV)?)?;
     let key: [u8; 32] = bytes
         .as_slice()
         .try_into()
         .map_err(|_| "KV index key must be exactly 32 bytes")?;
-    let scope = required_env(KV_SCOPE_ENV)?;
-    let backend_id = required_env(BACKEND_GROUP_UID_ENV)?;
-    Ok(KvEventAdapter::new(key, scope, backend_id))
+    let scope_id = required_env(KV_SCOPE_ENV)?;
+    let model_group_id = required_env(MODEL_GROUP_UID_ENV)?;
+    Ok(KvEventAdapter::new(
+        key,
+        scope_id,
+        model_group_id,
+        config.launch.artifacts.revision.clone(),
+        config.launch.parallelism.dp.try_into()?,
+    ))
 }
 
 fn required_env(name: &str) -> Result<String, Box<dyn std::error::Error>> {

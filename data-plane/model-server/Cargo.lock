@@ -600,6 +600,7 @@ dependencies = [
  "vllm-engine-core-client",
  "vllm-llm",
  "vllm-managed-engine",
+ "vllm-metrics",
  "vllm-tracing",
  "zeromq",
 ]

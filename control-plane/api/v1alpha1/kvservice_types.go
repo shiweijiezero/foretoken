@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Defines the user-owned Mooncake standalone Store API and its controller-owned Pools.
 
 package v1alpha1

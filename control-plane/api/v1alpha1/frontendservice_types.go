@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Defines the v1alpha1 FrontendService custom-resource API.
 
 package v1alpha1
@@ -20,13 +20,38 @@ type FrontendTimeouts struct {
 	StreamIdle Duration `json:"streamIdle"`
 }
 
-type RouterAlgorithm string
+type RouterFilterAlgorithm string
+type RouterScorerAlgorithm string
+type RouterPickerAlgorithm string
 
 const (
-	RouterAlgorithmKVAware     RouterAlgorithm = "kv_aware"
-	RouterAlgorithmLeastLoaded RouterAlgorithm = "least_loaded"
-	RouterAlgorithmRoundRobin  RouterAlgorithm = "round_robin"
+	RouterFilterAllowAll RouterFilterAlgorithm = "allow_all"
+
+	RouterScorerUniform       RouterScorerAlgorithm = "uniform"
+	RouterScorerLeastLoaded   RouterScorerAlgorithm = "least_loaded"
+	RouterScorerKVLeastLoaded RouterScorerAlgorithm = "kv_least_loaded"
+
+	RouterPickerMax        RouterPickerAlgorithm = "max"
+	RouterPickerRoundRobin RouterPickerAlgorithm = "round_robin"
 )
+
+// RouterPipeline selects each independently composable routing algorithm stage.
+type RouterPipeline struct {
+	// +optional
+	// +kubebuilder:default=allow_all
+	// +kubebuilder:validation:Enum=allow_all
+	Filter RouterFilterAlgorithm `json:"filter,omitempty"`
+
+	// +optional
+	// +kubebuilder:default=kv_least_loaded
+	// +kubebuilder:validation:Enum=uniform;least_loaded;kv_least_loaded
+	Scorer RouterScorerAlgorithm `json:"scorer,omitempty"`
+
+	// +optional
+	// +kubebuilder:default=round_robin
+	// +kubebuilder:validation:Enum=max;round_robin
+	Picker RouterPickerAlgorithm `json:"picker,omitempty"`
+}
 
 // FrontendServiceSpec defines the desired state of a frontend service.
 type FrontendServiceSpec struct {
@@ -39,9 +64,7 @@ type FrontendServiceSpec struct {
 	Timeouts  FrontendTimeouts  `json:"timeouts"`
 
 	// +optional
-	// +kubebuilder:default=kv_aware
-	// +kubebuilder:validation:Enum=kv_aware;least_loaded;round_robin
-	RouterAlgorithm RouterAlgorithm `json:"routerAlgorithm,omitempty"`
+	RouterPipeline RouterPipeline `json:"routerPipeline,omitempty"`
 
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253

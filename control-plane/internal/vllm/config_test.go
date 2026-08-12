@@ -52,7 +52,7 @@ func TestBuildLaunchPlanKVVariants(t *testing.T) {
 		{"aggregate", kvNone, "", func(*inferencev1alpha1.ModelGroupSpec) {}},
 		{"pd", kvPD, "kv_consumer", func(g *inferencev1alpha1.ModelGroupSpec) {
 			g.Role = inferencev1alpha1.ModelRoleDecode
-			g.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{Protocol: "rdma"}
+			g.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{Protocol: "rdma", RDMADeviceName: "mlx5_1"}
 		}},
 		{"cpu", kvCPUOffload, "", func(g *inferencev1alpha1.ModelGroupSpec) {
 			g.KVRuntime = &inferencev1alpha1.ModelGroupKVRuntimeConfig{Offload: &inferencev1alpha1.ModelGroupKVOffloadRuntime{CPUBytes: 1024}}
@@ -63,7 +63,7 @@ func TestBuildLaunchPlanKVVariants(t *testing.T) {
 		{"store", kvMooncakeStore, "kv_both", func(g *inferencev1alpha1.ModelGroupSpec) { g.KVRuntime = storeRuntime() }},
 		{"multi", kvMultiConnector, "kv_producer", func(g *inferencev1alpha1.ModelGroupSpec) {
 			g.Role = inferencev1alpha1.ModelRolePrefill
-			g.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{Protocol: "rdma"}
+			g.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{Protocol: "rdma", RDMADeviceName: "mlx5_1"}
 			g.KVRuntime = storeRuntime()
 		}},
 	}
@@ -77,6 +77,9 @@ func TestBuildLaunchPlanKVVariants(t *testing.T) {
 			}
 			if plan.KV.Kind != tc.kind || plan.KV.Role != tc.role || !plan.KV.Events {
 				t.Fatalf("kv = %#v", plan.KV)
+			}
+			if (tc.kind == kvPD || tc.kind == kvMultiConnector) && plan.KV.DeviceName != "mlx5_1" {
+				t.Fatalf("P/D device name = %q", plan.KV.DeviceName)
 			}
 			json, err := plan.JSON()
 			if err != nil || !strings.Contains(json, `"version":1`) || !strings.Contains(json, `"kind":"`+tc.kind+`"`) {
@@ -100,7 +103,24 @@ func testVLLMTemplate(gpus int32) inferencev1alpha1.NormalizedPoolTemplate {
 }
 
 func testGroup() inferencev1alpha1.ModelGroupSpec {
-	return inferencev1alpha1.ModelGroupSpec{Role: inferencev1alpha1.ModelRoleAggregate, Artifacts: inferencev1alpha1.ModelGroupArtifacts{Model: "model", ModelRevision: "revision", Tokenizer: "tokenizer", TokenizerRevision: "tokenizer-revision"}, Runtime: inferencev1alpha1.ModelGroupRuntime{Args: []inferencev1alpha1.BackendArg{"--max-model-len=32768"}}, Parallelism: inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1}, Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"}}
+	return inferencev1alpha1.ModelGroupSpec{Role: inferencev1alpha1.ModelRoleAggregate, Artifacts: inferencev1alpha1.ModelGroupArtifacts{Model: "model", ModelRevision: "revision", Tokenizer: "tokenizer", TokenizerRevision: "tokenizer-revision"}, Runtime: inferencev1alpha1.ModelGroupRuntime{Args: []inferencev1alpha1.BackendArg{"--max-model-len=32768"}, InternalGenerateRequestBodyLimitBytes: inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes}, Parallelism: inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1}, Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"}}
+}
+
+func TestBuildLaunchPlanProjectsInternalGenerateRequestBodyLimit(t *testing.T) {
+	group := testGroup()
+	group.Runtime.InternalGenerateRequestBodyLimitBytes = 96 * 1024 * 1024
+	plan, err := BuildLaunchPlan(group)
+	if err != nil || plan.InternalGenerateRequestBodyLimitBytes != group.Runtime.InternalGenerateRequestBodyLimitBytes {
+		t.Fatalf("launch plan = %#v, err = %v", plan, err)
+	}
+	json, err := plan.JSON()
+	if err != nil || !strings.Contains(json, `"internalGenerateRequestBodyLimitBytes":100663296`) {
+		t.Fatalf("launch plan JSON = %q, err = %v", json, err)
+	}
+	group.Runtime.InternalGenerateRequestBodyLimitBytes = inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes - 1
+	if _, err := BuildLaunchPlan(group); err == nil {
+		t.Fatal("undersized internal generate request body limit was accepted")
+	}
 }
 
 func storeRuntime() *inferencev1alpha1.ModelGroupKVRuntimeConfig {

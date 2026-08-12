@@ -22,5 +22,4 @@ pub(crate) use response::{
 };
 
 #[cfg(test)]
-#[path = "tests/http_api.rs"]
 mod tests;

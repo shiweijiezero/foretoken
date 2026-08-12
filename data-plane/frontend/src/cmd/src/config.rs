@@ -7,19 +7,20 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use foretoken_router::RouterAlgorithm;
+use foretoken_router::{FilterAlgorithm, PickerAlgorithm, RouterPipelineConfig, ScorerAlgorithm};
 
 const SERVING_SNAPSHOT_ENV: &str = "FORETOKEN_SERVING_SNAPSHOT";
 const LISTEN_ADDRESS_ENV: &str = "FORETOKEN_LISTEN_ADDRESS";
 const STREAM_IDLE_SECONDS_ENV: &str = "FORETOKEN_STREAM_IDLE_SECONDS";
 const KV_INDEX_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
-const ROUTER_ALGORITHM_ENV: &str = "FORETOKEN_ROUTER_ALGORITHM";
-
+const ROUTER_FILTER_ENV: &str = "FORETOKEN_ROUTER_FILTER";
+const ROUTER_SCORER_ENV: &str = "FORETOKEN_ROUTER_SCORER";
+const ROUTER_PICKER_ENV: &str = "FORETOKEN_ROUTER_PICKER";
 pub(crate) struct RuntimeConfig {
     pub(crate) serving_snapshot: PathBuf,
     pub(crate) listen_address: String,
     pub(crate) stream_idle: Duration,
-    pub(crate) router_algorithm: RouterAlgorithm,
+    pub(crate) router_pipeline: RouterPipelineConfig,
 }
 
 impl RuntimeConfig {
@@ -28,10 +29,23 @@ impl RuntimeConfig {
             serving_snapshot: required_path(SERVING_SNAPSHOT_ENV)?,
             listen_address: required_env(LISTEN_ADDRESS_ENV)?,
             stream_idle: required_positive_duration(STREAM_IDLE_SECONDS_ENV)?,
-            router_algorithm: env::var(ROUTER_ALGORITHM_ENV)
-                .unwrap_or_else(|_| RouterAlgorithm::default().as_str().into())
-                .parse()?,
+            router_pipeline: RouterPipelineConfig {
+                filter: optional_algorithm(ROUTER_FILTER_ENV, FilterAlgorithm::default())?,
+                scorer: optional_algorithm(ROUTER_SCORER_ENV, ScorerAlgorithm::default())?,
+                picker: optional_algorithm(ROUTER_PICKER_ENV, PickerAlgorithm::default())?,
+            },
         })
+    }
+}
+
+fn optional_algorithm<T>(name: &str, default: T) -> Result<T, String>
+where
+    T: std::str::FromStr<Err = String>,
+{
+    match env::var(name) {
+        Ok(value) => value.parse(),
+        Err(env::VarError::NotPresent) => Ok(default),
+        Err(env::VarError::NotUnicode(_)) => Err(format!("{name} must be valid UTF-8")),
     }
 }
 

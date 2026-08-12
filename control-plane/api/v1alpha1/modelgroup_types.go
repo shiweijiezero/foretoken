@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Defines the controller-owned v1alpha1 ModelGroup custom-resource API.
 
 package v1alpha1
@@ -65,6 +65,18 @@ type ModelGroupPDRuntimeConfig struct {
 
 	// +kubebuilder:validation:Minimum=1
 	AbortRequestTimeoutSeconds int32 `json:"abortRequestTimeoutSeconds"`
+
+	// RDMADeviceName selects the platform-verified HCA shared by both P/D roles.
+	// +kubebuilder:validation:MinLength=1
+	RDMADeviceName string `json:"rdmaDeviceName"`
+
+	// RDMAResourceName is the platform-owned Kubernetes extended resource
+	// whose device plugin injects the P/D transport devices.
+	// +kubebuilder:validation:MinLength=1
+	RDMAResourceName string `json:"rdmaResourceName"`
+
+	// +kubebuilder:validation:Minimum=1
+	RDMAResourceCount int32 `json:"rdmaResourceCount"`
 }
 
 // ECTransferRole is the fixed role assigned to a controller-owned EC runtime.
@@ -100,7 +112,7 @@ type ModelGroupECRuntimeConfig struct {
 	RuntimeFingerprint string `json:"runtimeFingerprint"`
 
 	// SharedStorageClaim is the platform-owned ReadWriteMany PVC used by the
-	// pinned vLLM ECExampleConnector.
+	// the local vLLM build source ECExampleConnector.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	SharedStorageClaim string `json:"sharedStorageClaim"`
@@ -168,6 +180,12 @@ type ModelGroupRuntime struct {
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=256
 	Args []BackendArg `json:"args,omitempty"`
+
+	// InternalGenerateRequestBodyLimitBytes is the group-local generate request
+	// body limit resolved from the ModelService contract.
+	// +kubebuilder:validation:Minimum=1048576
+	// +kubebuilder:validation:Maximum=268435456
+	InternalGenerateRequestBodyLimitBytes int64 `json:"internalGenerateRequestBodyLimitBytes"`
 }
 
 // ModelGroupSpec is an immutable execution contract compiled by the Pool controller.
@@ -175,7 +193,6 @@ type ModelGroupRuntime struct {
 // +kubebuilder:validation:XValidation:rule="self.memberCount == self.nodeCount",message="memberCount must equal nodeCount in v1alpha1"
 // +kubebuilder:validation:XValidation:rule="self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp",message="accelerator capacity must equal the compiled worker rank count"
 // +kubebuilder:validation:XValidation:rule="self.role == 'aggregate' ? !has(self.pdRuntime) && !has(self.ecRuntime) : self.role == 'encoder' ? !has(self.pdRuntime) && has(self.ecRuntime) && self.ecRuntime.role == 'producer' : self.role == 'prefill' ? has(self.pdRuntime) && (!has(self.ecRuntime) || self.ecRuntime.role == 'consumer') : self.role == 'decode' ? has(self.pdRuntime) && !has(self.ecRuntime) : false",message="aggregate, encoder, prefill, and decode ModelGroups require their fixed runtime contracts"
-// +kubebuilder:validation:XValidation:rule="!(self.role == 'prefill' || self.role == 'decode') || size(self.features.multimodal) == 0",message="P/D ModelGroups do not support multimodal features"
 type ModelGroupSpec struct {
 	ModelPoolRef LocalObjectReference `json:"modelPoolRef"`
 

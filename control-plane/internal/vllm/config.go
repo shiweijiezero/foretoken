@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Compiles validated ModelPool templates and ModelGroup contracts for vLLM.
 
 package vllm
@@ -28,13 +28,14 @@ type EffectiveConfig struct {
 // LaunchPlanV1 is the versioned, private Go-to-Rust launch contract. Rust is
 // the only component that renders this contract into vLLM command-line flags.
 type LaunchPlanV1 struct {
-	Version     int               `json:"version"`
-	Artifacts   LaunchArtifacts   `json:"artifacts"`
-	Parallelism LaunchParallelism `json:"parallelism"`
-	KV          LaunchKVPlan      `json:"kv"`
-	EC          *LaunchECPlan     `json:"ec,omitempty"`
-	Lifecycle   LaunchLifecycle   `json:"lifecycle"`
-	ExtraArgs   []string          `json:"extraArgs"`
+	Version                               int               `json:"version"`
+	Artifacts                             LaunchArtifacts   `json:"artifacts"`
+	Parallelism                           LaunchParallelism `json:"parallelism"`
+	KV                                    LaunchKVPlan      `json:"kv"`
+	EC                                    *LaunchECPlan     `json:"ec,omitempty"`
+	Lifecycle                             LaunchLifecycle   `json:"lifecycle"`
+	InternalGenerateRequestBodyLimitBytes int64             `json:"internalGenerateRequestBodyLimitBytes"`
+	ExtraArgs                             []string          `json:"extraArgs"`
 }
 
 type LaunchArtifacts struct {
@@ -59,13 +60,14 @@ type LaunchExpertPlan struct {
 }
 
 // LaunchKVPlan uses a closed kind discriminator rather than an untyped vLLM
-// config map. KV Events are the fixed controller policy for single-DP groups.
+// config map. KV Events are the fixed controller configuration for single-DP groups.
 type LaunchKVPlan struct {
-	Kind     string `json:"kind"`
-	Role     string `json:"role,omitempty"`
-	Protocol string `json:"protocol,omitempty"`
-	CPUBytes int64  `json:"cpuBytes,omitempty"`
-	Events   bool   `json:"events"`
+	Kind       string `json:"kind"`
+	Role       string `json:"role,omitempty"`
+	Protocol   string `json:"protocol,omitempty"`
+	DeviceName string `json:"deviceName,omitempty"`
+	CPUBytes   int64  `json:"cpuBytes,omitempty"`
+	Events     bool   `json:"events"`
 }
 
 // LaunchECPlan is the sole typed source for --ec-transfer-config. It exposes no
@@ -141,6 +143,9 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if err := validateExtraArgs(group.Runtime.Args); err != nil {
 		return LaunchPlanV1{}, err
 	}
+	if group.Runtime.InternalGenerateRequestBodyLimitBytes < inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes || group.Runtime.InternalGenerateRequestBodyLimitBytes > inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes {
+		return LaunchPlanV1{}, fmt.Errorf("vLLM internal generate request body limit must be between %d and %d", inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes, inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes)
+	}
 	parallelism := LaunchParallelism{TP: group.Parallelism.TP, PP: group.Parallelism.PP, DP: group.Parallelism.DP, PCP: group.Parallelism.PCP, DCP: group.Parallelism.DCP}
 	if group.Parallelism.EP != nil {
 		parallelism.EP = &LaunchExpertPlan{Backend: group.Parallelism.EP.Backend, EPLB: group.Parallelism.EP.EPLB}
@@ -157,7 +162,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	for i := range group.Runtime.Args {
 		extra[i] = string(group.Runtime.Args[i])
 	}
-	return LaunchPlanV1{Version: 1, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, ExtraArgs: extra}, nil
+	return LaunchPlanV1{Version: 1, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, ExtraArgs: extra}, nil
 }
 
 // JSON returns deterministic output because LaunchPlanV1 uses only ordered structs and slices.
@@ -175,7 +180,7 @@ func buildKVPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchKVPlan, error) {
 	}
 	plan := LaunchKVPlan{Kind: kvNone, Events: group.Parallelism.DP == 1}
 	if group.PDRuntime != nil && group.KVRuntime == nil {
-		return LaunchKVPlan{Kind: kvPD, Role: role, Protocol: group.PDRuntime.Protocol, Events: plan.Events}, nil
+		return LaunchKVPlan{Kind: kvPD, Role: role, Protocol: group.PDRuntime.Protocol, DeviceName: group.PDRuntime.RDMADeviceName, Events: plan.Events}, nil
 	}
 	if group.KVRuntime == nil {
 		return plan, nil
@@ -193,7 +198,7 @@ func buildKVPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchKVPlan, error) {
 	}
 	if group.KVRuntime.MooncakeStore != nil {
 		if group.PDRuntime != nil {
-			return LaunchKVPlan{Kind: kvMultiConnector, Role: role, Protocol: group.PDRuntime.Protocol, Events: plan.Events}, nil
+			return LaunchKVPlan{Kind: kvMultiConnector, Role: role, Protocol: group.PDRuntime.Protocol, DeviceName: group.PDRuntime.RDMADeviceName, Events: plan.Events}, nil
 		}
 		storeRole := "kv_both"
 		if group.Role == inferencev1alpha1.ModelRoleDecode {

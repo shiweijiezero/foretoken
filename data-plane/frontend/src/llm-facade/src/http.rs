@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
 //! HTTP model-server transport, NDJSON decoding, and endpoint helpers.
 
 use std::collections::BTreeMap;
@@ -42,11 +43,14 @@ impl HttpFacade {
         &self,
         request: GenerateRequest,
     ) -> Result<TokenStream, LlmFacadeError> {
+        let body = rmp_serde::to_vec_named(&GenerateInput::from(request))
+            .map_err(|_| LlmFacadeError::RequestFailed)?;
         let response = tokio::time::timeout(
             self.request_start_timeout,
             self.client
                 .post(self.url("/v1/internal/generate"))
-                .json(&GenerateInput::from(request))
+                .header(reqwest::header::CONTENT_TYPE, "application/msgpack")
+                .body(body)
                 .send(),
         )
         .await

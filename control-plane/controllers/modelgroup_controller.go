@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Reconciles single-member ModelGroups into isolated model-server workloads.
 
 package controllers
@@ -39,6 +39,7 @@ const (
 	modelGroupLabel               = "inference.foretoken.io/model-group"
 	modelGroupRoleLabel           = "inference.foretoken.io/model-role"
 	modelGroupPDDomainLabel       = "inference.foretoken.io/pd-domain"
+	multusNetworksAnnotation      = "k8s.v1.cni.cncf.io/networks"
 	modelGroupFieldOwner          = "foretoken-modelgroup-controller"
 	controlPlanePodLabel          = "app.kubernetes.io/name"
 	controlPlanePodLabelValue     = "foretoken-control-plane"
@@ -202,7 +203,7 @@ func validateGroupProfile(group *inferencev1alpha1.ModelGroup) error {
 			return fmt.Errorf("P/D Groups do not support local KV offload")
 		}
 		pd := group.Spec.PDRuntime
-		if pd == nil || pd.ProfileName == "" || pd.ProfileRevision == "" || pd.Connector != "MooncakeConnector" || pd.Protocol != "rdma" || pd.BootstrapPort < 1 || pd.BootstrapPort > 65535 || pd.AbortRequestTimeoutSeconds < 1 {
+		if pd == nil || pd.ProfileName == "" || pd.ProfileRevision == "" || pd.Connector != "MooncakeConnector" || pd.Protocol != "rdma" || pd.BootstrapPort < 1 || pd.BootstrapPort > 65535 || pd.AbortRequestTimeoutSeconds < 1 || pd.RDMADeviceName == "" || pd.RDMAResourceName == "" || pd.RDMAResourceCount < 1 {
 			return fmt.Errorf("P/D Groups require a complete Mooncake runtime config")
 		}
 		if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
@@ -284,6 +285,10 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment,
 		return nil, fmt.Errorf("marshal vLLM launch plan: %w", err)
 	}
 	labels := modelGroupLabels(group)
+	var annotations map[string]string
+	if group.Spec.Network != "" {
+		annotations = map[string]string{multusNetworksAnnotation: group.Spec.Network}
+	}
 	replicas := int32(1)
 	revisionHistoryLimit := int32(10)
 	progressDeadlineSeconds := int32(launchPlan.Lifecycle.StartupSeconds)
@@ -293,6 +298,12 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment,
 	fileSystemGroup := int64(65532)
 	allowPrivilegeEscalation := false
 	readOnlyRootFilesystem := true
+	capabilities := &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}
+	if group.Spec.PDRuntime != nil {
+		// RDMA completion queues pin userspace memory. IPC_LOCK permits that
+		// without making the model container privileged.
+		capabilities.Add = []corev1.Capability{"IPC_LOCK"}
+	}
 	// vLLM managed-engine reserves at least five seconds for process-group shutdown.
 	terminationGracePeriodSeconds := launchPlan.Lifecycle.DrainSeconds + 5
 	startupFailureThreshold := int32(math.Ceil(float64(launchPlan.Lifecycle.StartupSeconds) / 10))
@@ -306,7 +317,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment,
 		{Name: "TMPDIR", Value: "/tmp"},
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
 		{Name: "FORETOKEN_KV_SCOPE_ID", Value: kvScopeID(group)},
-		{Name: "FORETOKEN_BACKEND_GROUP_UID", Value: string(group.UID)},
+		{Name: "FORETOKEN_MODEL_GROUP_UID", Value: string(group.UID)},
 	}
 	if group.Spec.PDRuntime != nil {
 		env = append(env,
@@ -314,7 +325,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment,
 			corev1.EnvVar{Name: "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT", Value: strconv.Itoa(int(group.Spec.PDRuntime.AbortRequestTimeoutSeconds))},
 		)
 		if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
-			ports = append(ports, corev1.ContainerPort{Name: "mooncake-bootstrap", ContainerPort: group.Spec.PDRuntime.BootstrapPort, Protocol: corev1.ProtocolTCP})
+			ports = append(ports, corev1.ContainerPort{Name: "mc-bootstrap", ContainerPort: group.Spec.PDRuntime.BootstrapPort, Protocol: corev1.ProtocolTCP})
 		}
 	}
 
@@ -335,6 +346,12 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment,
 	deviceCount := *resource.NewQuantity(int64(group.Spec.Resources.Requests.GPU.Count), resource.DecimalSI)
 	requests[deviceResource] = deviceCount
 	limits[deviceResource] = deviceCount
+	if pd := group.Spec.PDRuntime; pd != nil {
+		rdmaResource := corev1.ResourceName(pd.RDMAResourceName)
+		rdmaCount := *resource.NewQuantity(int64(pd.RDMAResourceCount), resource.DecimalSI)
+		requests[rdmaResource] = rdmaCount
+		limits[rdmaResource] = rdmaCount
+	}
 	volumes := []corev1.Volume{
 		{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
@@ -367,7 +384,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment,
 			Strategy:                appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Selector:                &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
 				Spec: corev1.PodSpec{
 					AutomountServiceAccountToken:  &automountToken,
 					EnableServiceLinks:            &enableServiceLinks,
@@ -394,7 +411,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment,
 						SecurityContext: &corev1.SecurityContext{
 							AllowPrivilegeEscalation: &allowPrivilegeEscalation,
 							ReadOnlyRootFilesystem:   &readOnlyRootFilesystem,
-							Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+							Capabilities:             capabilities,
 						},
 						StartupProbe:             modelServerProbe("/readyz", 10, startupFailureThreshold),
 						LivenessProbe:            modelServerProbe("/healthz", 10, 3),
@@ -427,9 +444,9 @@ func (reconciler *ModelGroupReconciler) reconcileService(ctx context.Context, gr
 	}
 	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill && group.Spec.PDRuntime != nil {
 		desired.Spec.Ports = append(desired.Spec.Ports, corev1.ServicePort{
-			Name:       "mooncake-bootstrap",
+			Name:       "mc-bootstrap",
 			Port:       group.Spec.PDRuntime.BootstrapPort,
-			TargetPort: intstr.FromString("mooncake-bootstrap"),
+			TargetPort: intstr.FromString("mc-bootstrap"),
 			Protocol:   corev1.ProtocolTCP,
 		})
 	}
@@ -482,24 +499,24 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 		},
 		Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &modelServerPort}},
 	}}
-	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill && group.Spec.PDRuntime != nil {
-		bootstrapPort := intstr.FromInt32(group.Spec.PDRuntime.BootstrapPort)
-		// Mooncake opens runtime side channels on dynamic ports after bootstrap.
-		ingress = append(ingress,
-			networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{{
-				PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-					modelGroupRoleLabel:     string(inferencev1alpha1.ModelRoleDecode),
-					modelGroupPDDomainLabel: pdDomainID(group),
-				}},
-			}}},
-			networkingv1.NetworkPolicyIngressRule{
+	if group.Spec.PDRuntime != nil {
+		// Mooncake opens bidirectional runtime side channels on dynamic ports
+		// after bootstrap. Restrict them to the same controller-owned P/D domain.
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{{
+			PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+				modelGroupPDDomainLabel: pdDomainID(group),
+			}},
+		}}})
+		if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
+			bootstrapPort := intstr.FromInt32(group.Spec.PDRuntime.BootstrapPort)
+			ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{
 				From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{MatchExpressions: []metav1.LabelSelectorRequirement{{
 					Key:      frontendServiceLabel,
 					Operator: metav1.LabelSelectorOpExists,
 				}}}}},
 				Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &bootstrapPort}},
-			},
-		)
+			})
+		}
 	}
 	desired := &networkingv1.NetworkPolicy{
 		TypeMeta:   metav1.TypeMeta{APIVersion: networkingv1.SchemeGroupVersion.String(), Kind: "NetworkPolicy"},

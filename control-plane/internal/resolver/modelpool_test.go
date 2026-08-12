@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Tests ModelPool resolution into immutable ModelGroup templates.
 
 package resolver
@@ -32,6 +32,9 @@ func TestResolveModelPool(t *testing.T) {
 	groupSpec := resolved.Spec(&inferencev1alpha1.ModelPool{}, 0)
 	if groupSpec.MaxInputTokens == nil || *groupSpec.MaxInputTokens != 16384 || groupSpec.MaxInputTokens == resolved.MaxInputTokens {
 		t.Fatalf("resolved ModelGroup maxInputTokens = %#v", groupSpec.MaxInputTokens)
+	}
+	if groupSpec.Runtime.InternalGenerateRequestBodyLimitBytes != inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes {
+		t.Fatalf("resolved ModelGroup internal generate request body limit = %d", groupSpec.Runtime.InternalGenerateRequestBodyLimitBytes)
 	}
 }
 
@@ -105,8 +108,9 @@ func resolverTemplate() inferencev1alpha1.NormalizedPoolTemplate {
 			ComputeResourceRequests: inferencev1alpha1.ComputeResourceRequests{CPU: "1", Memory: "1Gi"},
 			GPU:                     inferencev1alpha1.GPURequest{Type: "auto", Count: 1},
 		}},
-		Parallelism: inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1},
-		Timeouts:    inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"},
+		Parallelism:                           inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1},
+		InternalGenerateRequestBodyLimitBytes: inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes,
+		Timeouts:                              inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"},
 	}
 }
 
@@ -123,7 +127,7 @@ func resolverProfile() RuntimeProfile {
 
 func TestResolveModelPoolMaterializesMooncakePD(t *testing.T) {
 	profile := resolverProfile()
-	profile.MooncakePD = &MooncakePDProfile{Name: "cluster-pd", Revision: "release-A", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30}
+	profile.MooncakePD = &MooncakePDProfile{Name: "cluster-pd", Revision: "release-A", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30, RDMADeviceName: "mlx5_1", RDMAResourceName: "rdma/hca_shared_devices_a", RDMAResourceCount: 1}
 	for _, role := range []inferencev1alpha1.ModelRole{inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode} {
 		template := resolverTemplate()
 		template.Role = role
@@ -131,7 +135,7 @@ func TestResolveModelPoolMaterializesMooncakePD(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if resolved.PDRuntime == nil || resolved.PDRuntime.ProfileName != "cluster-pd" || resolved.PDRuntime.ProfileRevision != "release-A" || resolved.PDRuntime.Connector != "MooncakeConnector" {
+		if resolved.PDRuntime == nil || resolved.PDRuntime.ProfileName != "cluster-pd" || resolved.PDRuntime.ProfileRevision != "release-A" || resolved.PDRuntime.Connector != "MooncakeConnector" || resolved.PDRuntime.RDMADeviceName != "mlx5_1" || resolved.PDRuntime.RDMAResourceName != "rdma/hca_shared_devices_a" || resolved.PDRuntime.RDMAResourceCount != 1 {
 			t.Fatalf("P/D runtime = %#v", resolved.PDRuntime)
 		}
 	}
@@ -144,7 +148,7 @@ func TestResolveModelPoolRejectsIncompleteOrNonSingleMooncakePD(t *testing.T) {
 		t.Fatal("P/D without profile was accepted")
 	}
 	profile := resolverProfile()
-	profile.MooncakePD = &MooncakePDProfile{Name: "cluster-pd", Revision: "release-A", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30}
+	profile.MooncakePD = &MooncakePDProfile{Name: "cluster-pd", Revision: "release-A", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30, RDMADeviceName: "mlx5_1", RDMAResourceName: "rdma/hca_shared_devices_a", RDMAResourceCount: 1}
 	template.Parallelism.TP = 2
 	template.Resources.Requests.GPU.Count = 2
 	if _, err := ResolveModelPool(template, profile); err == nil {
@@ -162,7 +166,7 @@ func TestResolveModelPoolKVStoreAndRejectsPDOffload(t *testing.T) {
 		t.Fatalf("KV store = %#v, err = %v", resolved.KVRuntime, err)
 	}
 	template.Role = inferencev1alpha1.ModelRolePrefill
-	profile.MooncakePD = &MooncakePDProfile{Name: "pd", Revision: "r1", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 1}
+	profile.MooncakePD = &MooncakePDProfile{Name: "pd", Revision: "r1", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 1, RDMADeviceName: "mlx5_1", RDMAResourceName: "rdma/hca_shared_devices_a", RDMAResourceCount: 1}
 	resolved, err = ResolveModelPool(template, profile)
 	if err != nil || resolved.PDRuntime == nil || resolved.KVRuntime == nil {
 		t.Fatalf("P/D Store = %#v, err = %v", resolved, err)
@@ -220,7 +224,7 @@ func TestResolveModelPoolExternalProfileSkipsManagedBufferBudget(t *testing.T) {
 
 func TestResolveModelPoolMaterializesECProducerAndConsumer(t *testing.T) {
 	profile := resolverProfile()
-	profile.MooncakePD = &MooncakePDProfile{Name: "pd", Revision: "r1", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30}
+	profile.MooncakePD = &MooncakePDProfile{Name: "pd", Revision: "r1", Protocol: "rdma", BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30, RDMADeviceName: "mlx5_1", RDMAResourceName: "rdma/hca_shared_devices_a", RDMAResourceCount: 1}
 	profile.EC = &ECProfile{Name: "verified-ec", Revision: "r2", Connector: "ECExampleConnector", RuntimeFingerprint: "vllm-pinned-ec-r2", SharedStorageClaim: "ec-rwx", SharedStoragePath: "/var/lib/foretoken/ec"}
 	for role, want := range map[inferencev1alpha1.ModelRole]inferencev1alpha1.ECTransferRole{inferencev1alpha1.ModelRoleEncoder: inferencev1alpha1.ECTransferRoleProducer, inferencev1alpha1.ModelRolePrefill: inferencev1alpha1.ECTransferRoleConsumer} {
 		template := resolverTemplate()
@@ -228,6 +232,12 @@ func TestResolveModelPoolMaterializesECProducerAndConsumer(t *testing.T) {
 		resolved, err := ResolveModelPool(template, profile)
 		if err != nil || resolved.ECRuntime == nil || resolved.ECRuntime.Role != want || resolved.ECRuntime.RuntimeFingerprint != "vllm-pinned-ec-r2" {
 			t.Fatalf("%s EC runtime = %#v, err = %v", role, resolved.ECRuntime, err)
+		}
+		if role == inferencev1alpha1.ModelRoleEncoder && resolved.PDRuntime != nil {
+			t.Fatalf("encoder P/D runtime = %#v, want nil", resolved.PDRuntime)
+		}
+		if role == inferencev1alpha1.ModelRolePrefill && resolved.PDRuntime == nil {
+			t.Fatal("prefill P/D runtime is nil")
 		}
 	}
 }

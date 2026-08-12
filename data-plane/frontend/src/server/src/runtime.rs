@@ -3,8 +3,8 @@
 
 //! Owns immutable model runtimes and request dispatch.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
@@ -12,15 +12,18 @@ use foretoken_chat::{
     ChatRequest, ChatRequestProcessor, DynChatOutputProcessor, NewChatOutputProcessorOptions,
     ParserSelection,
 };
-use foretoken_llm_facade::{LlmFacadeError, LlmFacadeResolver, TokenStream, abort_on_drop};
-use foretoken_router::{RouteContext, RouteDecision, RouteSelection, Router};
+use foretoken_llm_facade::{LlmFacadeError, LlmFacadeResolver, TokenStream};
+use foretoken_router::{RouteDecision, RouteTargetSet, Router, RouterRequest};
 use foretoken_text::{
     Prompt, SamplingParams, TextDecodeOptions, TextRequest, TextRequestProcessor,
 };
 use foretoken_tokenizer::DynTokenizer;
-use futures::StreamExt;
 use serde::Serialize;
 use thiserror::Error;
+
+pub(crate) mod workflow;
+
+use workflow::execute_workflow;
 
 /// The tokenizer and chat renderer from one immutable model snapshot.
 pub struct RuntimeBundle {
@@ -48,7 +51,6 @@ pub struct GenerationRequest {
     pub model: String,
     pub request_id: String,
     pub revision: Option<String>,
-    pub required_capabilities: BTreeSet<String>,
     pub prompt: Prompt,
     pub sampling_params: SamplingParams,
     pub decode_options: TextDecodeOptions,
@@ -220,6 +222,7 @@ impl ModelRuntime {
 /// immutable vLLM request processors and pinned revision.
 pub struct RuntimeState {
     models: BTreeMap<String, ModelRuntime>,
+    logical_targets: BTreeMap<String, RouteTargetSet>,
     router: Arc<dyn Router>,
     resolver: Arc<dyn LlmFacadeResolver>,
 }
@@ -232,9 +235,26 @@ impl RuntimeState {
     ) -> Self {
         Self {
             models,
+            logical_targets: BTreeMap::new(),
             router,
             resolver,
         }
+    }
+
+    pub fn with_logical_targets(
+        mut self,
+        logical_targets: BTreeMap<String, RouteTargetSet>,
+    ) -> Self {
+        self.logical_targets = logical_targets;
+        self
+    }
+
+    pub fn logical_target_set(&self, model: &str) -> Option<&RouteTargetSet> {
+        self.logical_targets.get(model)
+    }
+
+    pub fn has_runtime_model(&self, model: &str) -> bool {
+        self.models.contains_key(model)
     }
 
     pub fn model(
@@ -266,6 +286,7 @@ struct RuntimeSlot {
 /// Real adapter: each request loads one immutable runtime state before lowering and routing.
 pub struct RuntimeGeneration {
     slot: ArcSwapOption<RuntimeSlot>,
+    publication: Mutex<()>,
 }
 
 impl Default for RuntimeGeneration {
@@ -278,17 +299,21 @@ impl RuntimeGeneration {
     pub fn new() -> Self {
         Self {
             slot: ArcSwapOption::empty(),
+            publication: Mutex::new(()),
         }
     }
 
-    /// Publishes a newer serving generation. Candidate construction is serialized by cmd;
-    /// the version guard prevents a stale mounted snapshot from replacing a newer generation.
+    /// Publishes a newer serving generation without allowing concurrent stale writers to win.
     pub fn replace_state(
         &self,
         version: u64,
         state: Arc<RuntimeState>,
         control: Arc<dyn RuntimeControl>,
     ) -> bool {
+        let _publication = self
+            .publication
+            .lock()
+            .expect("runtime publication lock poisoned");
         if self
             .slot
             .load_full()
@@ -330,6 +355,24 @@ impl RuntimeGeneration {
         }
     }
 
+    async fn generation_slot(
+        &self,
+        model: &str,
+        revision: Option<&str>,
+    ) -> Result<Arc<RuntimeSlot>, GenerationError> {
+        let slot = self.ready_state()?;
+        if slot.state.model(model, revision).is_ok() {
+            return Ok(slot);
+        }
+        if slot.state.has_runtime_model(model) {
+            return Err(GenerationError::ModelNotFound);
+        }
+        if slot.state.logical_target_set(model).is_some() {
+            return Err(GenerationError::Unavailable);
+        }
+        Err(GenerationError::ModelNotFound)
+    }
+
     async fn dispatch(
         &self,
         slot: Arc<RuntimeSlot>,
@@ -350,38 +393,25 @@ impl RuntimeGeneration {
                 }
             })?;
         let generate_request = prepared.generate_request;
-        let selection = slot
+        let context = RouterRequest::new(
+            request.model.clone(),
+            Some(runtime.revision.clone()),
+            Arc::new(generate_request.clone()),
+        );
+        let targets = slot
             .state
-            .router
-            .select(RouteContext {
-                model: &request.model,
-                revision: Some(&runtime.revision),
-                required_capabilities: &request.required_capabilities,
-                request: &generate_request,
-            })
-            .map_err(|_| GenerationError::Unavailable)?;
-        let RouteSelection {
-            decision,
-            plan,
-            reservation,
-        } = selection;
-        let facade = slot
-            .state
-            .resolver
-            .resolve(&plan)
-            .ok_or(GenerationError::Internal)?;
-        let backend_stream = facade
-            .generate(generate_request.clone())
-            .await
-            .map_err(GenerationError::from)?;
-        let backend_stream =
-            abort_on_drop(facade, generate_request.request_id.clone(), backend_stream);
-        // Reservation and backend cancellation share the output stream lifetime.
-        let stream: TokenStream = Box::pin(async_stream::stream! {
-            let _reservation = reservation;
-            let mut backend_stream = Box::pin(backend_stream);
-            while let Some(item) = backend_stream.next().await { yield item; }
-        });
+            .logical_target_set(&request.model)
+            .ok_or(GenerationError::Unavailable)?;
+        foretoken_metrics::register_targets(targets);
+        let _queue = foretoken_metrics::QueueGuard::new(targets);
+        let mut session = slot.state.router.start(context);
+        let (decision, backend_stream) = execute_workflow(
+            &*slot.state.resolver,
+            &mut *session,
+            generate_request.clone(),
+        )
+        .await?;
+        let stream = backend_stream;
         let routed = RoutedGenerate {
             routed_request: RoutedRequest {
                 decision,
@@ -400,7 +430,9 @@ impl RuntimeGeneration {
 #[async_trait]
 impl Generation for RuntimeGeneration {
     async fn generate(&self, request: GenerationRequest) -> Result<Generated, GenerationError> {
-        let slot = self.ready_state()?;
+        let slot = self
+            .generation_slot(&request.model, request.revision.as_deref())
+            .await?;
         let runtime = slot
             .state
             .model(&request.model, request.revision.as_deref())?;
@@ -429,7 +461,9 @@ impl Generation for RuntimeGeneration {
         chat: ChatRequest,
         include_reasoning: bool,
     ) -> Result<GeneratedChat, GenerationError> {
-        let slot = self.ready_state()?;
+        let slot = self
+            .generation_slot(&request.model, request.revision.as_deref())
+            .await?;
         let runtime = slot
             .state
             .model(&request.model, request.revision.as_deref())?;
@@ -575,5 +609,78 @@ impl Generation for RuntimeGeneration {
             active_generation: Some(slot.version),
             kv_index: slot.control.kv_index_diagnostics(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use foretoken_backend_registry::BackendRegistry;
+    use foretoken_router::{PipelineRouter, ScalingTarget, ScalingTargetKind};
+
+    struct LogicalControl;
+
+    #[async_trait]
+    impl RuntimeControl for LogicalControl {
+        async fn refresh_backend_readiness(&self) {}
+
+        fn healthy_models(&self) -> Vec<String> {
+            vec!["model".into()]
+        }
+
+        fn is_ready(&self) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn logical_only_runtime_returns_unavailable_without_queueing() {
+        let registry = Arc::new(
+            BackendRegistry::from_json(
+                br#"{"version":1,"models":[{"service_uid":"service","model":"model","revision":"r1","tokenizer":"model","tokenizer_revision":"r1","targets":[{"service_uid":"service","name":"default","uid":"pool","kind":"Pool"}]}],"groups":[]}"#,
+            )
+            .unwrap(),
+        );
+        let target = ScalingTarget {
+            service_uid: "service".into(),
+            name: "default".into(),
+            uid: "pool".into(),
+            kind: ScalingTargetKind::Pool,
+        };
+        let state = RuntimeState::new(
+            BTreeMap::new(),
+            Arc::new(PipelineRouter::new(registry.clone())),
+            registry,
+        )
+        .with_logical_targets(BTreeMap::from([(
+            "model".into(),
+            RouteTargetSet::new(vec![target.clone()]),
+        )]));
+        let generation = Arc::new(RuntimeGeneration::new());
+        assert!(generation.replace_state(1, Arc::new(state), Arc::new(LogicalControl)));
+        let request = GenerationRequest {
+            model: "model".into(),
+            request_id: "cold-start".into(),
+            revision: None,
+            prompt: Prompt::Text("hello".into()),
+            sampling_params: SamplingParams::default(),
+            decode_options: TextDecodeOptions::default(),
+            intermediate: false,
+            priority: 0,
+            cache_salt: None,
+            arrival_time: None,
+            tool_call_parser: ParserSelection::None,
+            reasoning_parser: ParserSelection::None,
+        };
+        assert!(matches!(
+            generation.generate(request).await,
+            Err(GenerationError::Unavailable)
+        ));
+        assert!(
+            foretoken_metrics::autoscaling_telemetry()
+                .targets
+                .iter()
+                .all(|value| value.target.target_id != target.uid || value.queued_requests == 0)
+        );
     }
 }

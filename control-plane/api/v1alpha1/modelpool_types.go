@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Defines the controller-owned v1alpha1 ModelPool custom-resource API.
 
 package v1alpha1
@@ -61,7 +61,6 @@ type NormalizedKVCache struct {
 // Platform runtime and accelerator resolution may further constrain it before Groups are created.
 // +kubebuilder:validation:XValidation:rule="self.memberCount == self.nodeCount",message="memberCount must equal nodeCount in v1alpha1"
 // +kubebuilder:validation:XValidation:rule="self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp",message="accelerator capacity must equal the compiled worker rank count"
-// +kubebuilder:validation:XValidation:rule="!(self.role == 'prefill' || self.role == 'decode') || size(self.features.multimodal) == 0",message="P/D ModelPools do not support multimodal features"
 type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
@@ -101,6 +100,12 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
+
+	// InternalGenerateRequestBodyLimitBytes is the resolved group-local generate
+	// request body limit.
+	// +kubebuilder:validation:Minimum=1048576
+	// +kubebuilder:validation:Maximum=268435456
+	InternalGenerateRequestBodyLimitBytes int64 `json:"internalGenerateRequestBodyLimitBytes"`
 
 	// +optional
 	// +kubebuilder:validation:MinLength=1

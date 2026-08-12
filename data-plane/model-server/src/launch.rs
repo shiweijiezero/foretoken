@@ -15,6 +15,8 @@ use foretoken_model_protocol::RuntimeEcTransferMetadata;
 const HANDSHAKE_HOST: &str = "127.0.0.1";
 const KV_OFFLOAD_ROOT: &str = "/var/lib/foretoken/kv-offload";
 const PYTHON: &str = "python3";
+const MIN_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES: usize = 1024 * 1024;
+const MAX_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -26,6 +28,8 @@ pub struct LaunchPlanV1 {
     #[serde(default)]
     pub ec: EcTransferPlan,
     pub lifecycle: Lifecycle,
+    #[serde(rename = "internalGenerateRequestBodyLimitBytes")]
+    pub internal_generate_request_body_limit_bytes: usize,
     #[serde(rename = "extraArgs")]
     pub extra_args: Vec<String>,
 }
@@ -77,6 +81,8 @@ pub enum KvPlan {
     Pd {
         role: KvRole,
         protocol: MooncakeProtocol,
+        #[serde(rename = "deviceName")]
+        device_name: String,
         events: bool,
     },
     #[serde(rename = "cpuOffload")]
@@ -97,6 +103,8 @@ pub enum KvPlan {
     MultiConnector {
         role: KvRole,
         protocol: MooncakeProtocol,
+        #[serde(rename = "deviceName")]
+        device_name: String,
         events: bool,
     },
 }
@@ -132,7 +140,7 @@ impl MooncakeProtocol {
 
 /// Controller-owned EC transfer configuration for one model-server.
 ///
-/// The pinned vLLM release exposes `ECExampleConnector` as its reference
+/// The the local vLLM build source release exposes `ECExampleConnector` as its reference
 /// disaggregated-encoder path. Encoder and prefill Pods share one platform-owned
 /// ReadWriteMany volume; no client-controlled connector options are accepted.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
@@ -265,6 +273,12 @@ impl LaunchPlanV1 {
         if self.lifecycle.startup_seconds == 0 || self.lifecycle.drain_seconds == 0 {
             return Err("launch plan lifecycle seconds must be positive".into());
         }
+        if !(MIN_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES
+            ..=MAX_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES)
+            .contains(&self.internal_generate_request_body_limit_bytes)
+        {
+            return Err("launch plan internalGenerateRequestBodyLimitBytes must be between 1048576 and 268435456".into());
+        }
         if self.kv.events() != (p.dp == 1) {
             return Err("KV events must be enabled exactly when DP is 1".into());
         }
@@ -273,6 +287,11 @@ impl LaunchPlanV1 {
                 if *cpu_bytes <= 0 =>
             {
                 return Err("KV offload cpuBytes must be positive".into());
+            }
+            KvPlan::Pd { device_name, .. } | KvPlan::MultiConnector { device_name, .. }
+                if device_name.trim().is_empty() =>
+            {
+                return Err("P/D KV plans require a platform-owned RDMA device name".into());
             }
             KvPlan::Pd {
                 role: KvRole::KvBoth,
@@ -334,6 +353,9 @@ impl LaunchPlanV1 {
             }
         }
         args.extend(self.extra_args.clone());
+        if matches!(self.ec.role, Some(EcRole::Producer)) {
+            args.push("--no-enable-prefix-caching".into());
+        }
         if self.kv.events() {
             args.push(format!("--kv-events-config={}", json!({"publisher":"zmq","endpoint":"tcp://127.0.0.1:5557","replay_endpoint":"tcp://127.0.0.1:5558","topic":"foretoken-kv-v1","enable_kv_cache_events":true,"buffer_steps":1024,"hwm":4096,"max_queue_size":4096})));
         }
@@ -363,10 +385,15 @@ impl KvPlan {
         }
     }
     fn transfer_config(&self) -> Option<serde_json::Value> {
-        let pd = |role: KvRole, protocol: MooncakeProtocol| json!({"kv_connector":"MooncakeConnector","kv_role":role.as_str(),"kv_connector_extra_config":{"mooncake_protocol":protocol.as_str()}});
+        let pd = |role: KvRole, protocol: MooncakeProtocol, device_name: &str| json!({"kv_connector":"MooncakeConnector","kv_role":role.as_str(),"kv_connector_extra_config":{"mooncake_protocol":protocol.as_str(),"device_name":device_name}});
         match self {
             Self::None { .. } => None,
-            Self::Pd { role, protocol, .. } => Some(pd(*role, *protocol)),
+            Self::Pd {
+                role,
+                protocol,
+                device_name,
+                ..
+            } => Some(pd(*role, *protocol, device_name)),
             Self::CpuOffload { cpu_bytes, .. } => Some(
                 json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"kv_connector":"CPUOffloadingSpec"}}),
             ),
@@ -376,14 +403,19 @@ impl KvPlan {
             Self::MooncakeStore { role, .. } => Some(
                 json!({"kv_connector":"MooncakeStoreConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute"}),
             ),
-            Self::MultiConnector { role, protocol, .. } => {
+            Self::MultiConnector {
+                role,
+                protocol,
+                device_name,
+                ..
+            } => {
                 let store_role = if *role == KvRole::KvConsumer {
                     KvRole::KvConsumer
                 } else {
                     KvRole::KvBoth
                 };
                 Some(
-                    json!({"kv_connector":"MultiConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute","kv_connector_extra_config":{"connectors":[pd(*role, *protocol), {"kv_connector":"MooncakeStoreConnector","kv_role":store_role.as_str()}]}}),
+                    json!({"kv_connector":"MultiConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute","kv_connector_extra_config":{"connectors":[pd(*role, *protocol, device_name), {"kv_connector":"MooncakeStoreConnector","kv_role":store_role.as_str()}]}}),
                 )
             }
         }

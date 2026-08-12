@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Builds the group-local typed HTTP model server and its vLLM adapter.
 
 [package]
@@ -28,10 +28,13 @@ tracing = "0.1.44"
 tokio = { version = "1.47.1", features = ["macros", "net", "process", "rt-multi-thread", "signal", "sync"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 zeromq = { version = "0.6.0", default-features = false, features = ["tokio-runtime", "all-transport"] }
-vllm-engine-core-client = { path = "../../reference/upstream/vllm/rust/src/engine-core-client" }
-vllm-llm = { path = "../../reference/upstream/vllm/rust/src/llm" }
-vllm-managed-engine = { path = "../../reference/upstream/vllm/rust/src/managed-engine" }
-vllm-tracing = { path = "../../reference/upstream/vllm/rust/src/tracing" }
+
+# Make targets prepare this repository-relative local vLLM build source.
+vllm-engine-core-client = { path = "../../third_party/vllm-rust/source/rust/src/engine-core-client" }
+vllm-llm = { path = "../../third_party/vllm-rust/source/rust/src/llm" }
+vllm-managed-engine = { path = "../../third_party/vllm-rust/source/rust/src/managed-engine" }
+vllm-metrics = { path = "../../third_party/vllm-rust/source/rust/src/metrics" }
+vllm-tracing = { path = "../../third_party/vllm-rust/source/rust/src/tracing" }
 
 [dev-dependencies]
 http-body-util = "0.1.3"

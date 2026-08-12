@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Deploys the control-plane manager and initializes its CRDs.
 
 apiVersion: apps/v1
@@ -86,6 +86,9 @@ spec:
             - {{ printf "--vllm-pd-protocol=%s" $.Values.runtime.vllm.pd.protocol | quote }}
             - {{ printf "--vllm-pd-bootstrap-port=%d" (int $.Values.runtime.vllm.pd.bootstrapPort) | quote }}
             - {{ printf "--vllm-pd-abort-request-timeout-seconds=%d" (int $.Values.runtime.vllm.pd.abortRequestTimeoutSeconds) | quote }}
+            - {{ printf "--vllm-pd-rdma-device-name=%s" $.Values.runtime.vllm.pd.rdmaDeviceName | quote }}
+            - {{ printf "--vllm-pd-rdma-resource-name=%s" $.Values.runtime.vllm.pd.rdmaResourceName | quote }}
+            - {{ printf "--vllm-pd-rdma-resource-count=%d" (int $.Values.runtime.vllm.pd.rdmaResourceCount) | quote }}
             {{- end }}
             {{- if $.Values.runtime.vllm.mooncakeStore.profileName }}
             - {{ printf "--vllm-mooncake-store-profile-name=%s" $.Values.runtime.vllm.mooncakeStore.profileName | quote }}

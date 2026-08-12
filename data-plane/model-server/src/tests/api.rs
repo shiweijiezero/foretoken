@@ -1,16 +1,23 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+use bytes::Bytes;
 use foretoken_model_protocol::{
-    RuntimeMetadataResponse, RuntimeModelIdentity, VLLM_PINNED_REVISION,
+    CumulativeHistogram, CumulativeHistogramBucket, RuntimeMetadataResponse, RuntimeModelIdentity,
+    VLLM_SOURCE_REVISION,
 };
 use futures::stream;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 use vllm_engine_core_client::protocol::dtype::ModelDtype;
+use vllm_engine_core_client::protocol::multimodal::{
+    MmBatchedField, MmFeatureSpec, MmField, MmFieldElem, MmKwargValue, PlaceholderRange,
+};
 use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
+use vllm_engine_core_client::protocol::tensor::WireNdArray;
 
 use super::{AppState, RuntimeHealth, router};
 use crate::backend::{
@@ -31,6 +38,7 @@ impl Default for RecordingBackend {
             telemetry: BackendTelemetry {
                 running_requests: 0,
                 max_concurrent_requests: 7,
+                ..Default::default()
             },
         }
     }
@@ -61,7 +69,7 @@ impl Backend for RecordingBackend {
     }
 
     fn telemetry(&self) -> BackendTelemetry {
-        self.telemetry
+        self.telemetry.clone()
     }
 }
 
@@ -74,7 +82,7 @@ fn metadata() -> RuntimeMetadataResponse {
         },
         model_dtype: ModelDtype::BFloat16,
         effective_max_model_len: 32_768,
-        vllm_pinned_revision: VLLM_PINNED_REVISION.into(),
+        vllm_source_revision: VLLM_SOURCE_REVISION.into(),
         vllm_version: "0.0.0".into(),
         ec_transfer: None,
         capabilities: Default::default(),
@@ -82,11 +90,43 @@ fn metadata() -> RuntimeMetadataResponse {
 }
 
 fn app(backend: Arc<dyn Backend>, healthy: bool, accepting: bool) -> axum::Router {
+    app_with_body_limit(backend, healthy, accepting, 64 * 1024 * 1024)
+}
+
+fn app_with_body_limit(
+    backend: Arc<dyn Backend>,
+    healthy: bool,
+    accepting: bool,
+    body_limit: usize,
+) -> axum::Router {
     let health = Arc::new(RuntimeHealth::new());
     health.set_process_alive(healthy);
     health.set_client_healthy(healthy);
     health.set_accepting(accepting);
-    router(AppState::new(backend, health, metadata()))
+    router(AppState::new(backend, health, metadata()), body_limit)
+}
+
+fn assert_default_telemetry_snapshot(body: Bytes, running_requests: u64) {
+    let telemetry: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(telemetry["version"], 2);
+    assert!(telemetry["collected_at_unix_ms"].as_u64().is_some());
+    assert_eq!(telemetry["accepting"], false);
+    assert_eq!(telemetry["running_requests"], running_requests);
+    assert_eq!(telemetry["max_concurrent_requests"], 7);
+    assert_eq!(
+        telemetry["scheduler_running_requests"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        telemetry["scheduler_waiting_requests"],
+        serde_json::Value::Null
+    );
+    assert_eq!(telemetry["kv_cache_usage"], serde_json::Value::Null);
+    assert_eq!(telemetry["prompt_tokens_total"], serde_json::Value::Null);
+    assert_eq!(
+        telemetry["generation_tokens_total"],
+        serde_json::Value::Null
+    );
 }
 
 #[tokio::test]
@@ -95,7 +135,7 @@ async fn missing_kv_adapter_disables_only_the_soft_hint_endpoint() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/v1/internal/kv-index/delta")
+                .uri("/v1/internal/kv-index/delta?dpRank=0")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -108,11 +148,13 @@ struct PendingStreamBackend;
 
 #[async_trait]
 impl Backend for PendingStreamBackend {
-    async fn generate(&self, _: GenerateInput) -> Result<TokenStream, BackendError> {
+    #[allow(unused_variables)]
+    async fn generate(&self, request: GenerateInput) -> Result<TokenStream, BackendError> {
         Ok(Box::pin(stream::pending()))
     }
 
-    async fn abort(&self, _: &[String]) -> Result<(), BackendError> {
+    #[allow(unused_variables)]
+    async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError> {
         Ok(())
     }
 
@@ -120,6 +162,7 @@ impl Backend for PendingStreamBackend {
         BackendTelemetry {
             running_requests: 0,
             max_concurrent_requests: 7,
+            ..Default::default()
         }
     }
 }
@@ -128,11 +171,13 @@ struct FailingStreamBackend;
 
 #[async_trait]
 impl Backend for FailingStreamBackend {
-    async fn generate(&self, _: GenerateInput) -> Result<TokenStream, BackendError> {
+    #[allow(unused_variables)]
+    async fn generate(&self, request: GenerateInput) -> Result<TokenStream, BackendError> {
         Ok(Box::pin(stream::iter([Err(BackendError::Unavailable)])))
     }
 
-    async fn abort(&self, _: &[String]) -> Result<(), BackendError> {
+    #[allow(unused_variables)]
+    async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError> {
         Ok(())
     }
 
@@ -140,6 +185,7 @@ impl Backend for FailingStreamBackend {
         BackendTelemetry {
             running_requests: 0,
             max_concurrent_requests: 0,
+            ..Default::default()
         }
     }
 }
@@ -174,6 +220,65 @@ async fn generate_forwards_pretokenized_input_as_ndjson() {
     );
     assert_eq!(backend.requests.lock().unwrap()[0].prompt_token_ids, [1, 2]);
     assert_eq!(backend.requests.lock().unwrap()[0].priority, -2);
+}
+
+#[tokio::test]
+async fn generate_accepts_msgpack_multimodal_tensors() {
+    let backend = Arc::new(RecordingBackend::default());
+    let tensor = WireNdArray::from_f32(vec![2], vec![1.0, 2.0]).unwrap();
+    let mut data = BTreeMap::new();
+    data.insert(
+        "pixel_values".into(),
+        MmFieldElem {
+            data: Some(MmKwargValue::Tensor(tensor)),
+            field: MmField::Batched(MmBatchedField { keep_on_cpu: false }),
+        },
+    );
+    let body = rmp_serde::to_vec_named(&foretoken_model_protocol::GenerateInput {
+        stage: foretoken_model_protocol::RouteStage::Aggregate,
+        request_id: "request-mm".into(),
+        prompt_token_ids: vec![1, 2],
+        mm_features: Some(vec![MmFeatureSpec {
+            data: Some(data),
+            modality: "image".into(),
+            identifier: "image-1".into(),
+            mm_position: PlaceholderRange {
+                offset: 1,
+                length: 1,
+                is_embed: None,
+            },
+            mm_hash: None,
+        }]),
+        sampling_params: EngineCoreSamplingParams::default(),
+        arrival_time: None,
+        cache_salt: None,
+        trace_headers: None,
+        priority: 0,
+        data_parallel_rank: None,
+        reasoning_parser_kwargs: None,
+        lora_request: None,
+    })
+    .unwrap();
+
+    let response = app(backend.clone(), true, true)
+        .oneshot(
+            Request::post("/v1/internal/generate")
+                .header("content-type", "application/msgpack")
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        backend.requests.lock().unwrap()[0]
+            .mm_features
+            .as_ref()
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -278,16 +383,32 @@ async fn metadata_exposes_observed_enginecore_values_without_feature_claims() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response.into_body().collect().await.unwrap().to_bytes(),
-        r#"{"version":1,"model":{"model":"model","revision":"r1"},"model_dtype":"bfloat16","effective_max_model_len":32768,"vllm_pinned_revision":"5b14019576475224d86044b262e28a04a85d4086","vllm_version":"0.0.0","ec_transfer":null,"capabilities":[]}"#,
+        r#"{"version":1,"model":{"model":"model","revision":"r1"},"model_dtype":"bfloat16","effective_max_model_len":32768,"vllm_source_revision":"5b14019576475224d86044b262e28a04a85d4086","vllm_version":"0.0.0","ec_transfer":null,"capabilities":[]}"#,
     );
 }
 
 #[tokio::test]
-async fn telemetry_exposes_capacity_runtime_admission_and_backend_work() {
+async fn telemetry_exposes_cumulative_backend_snapshot() {
+    let histogram = CumulativeHistogram {
+        count: 2,
+        sum_seconds: 0.3,
+        buckets: vec![CumulativeHistogramBucket {
+            le_seconds: 0.5,
+            count: 2,
+        }],
+    };
     let backend = Arc::new(RecordingBackend {
         telemetry: BackendTelemetry {
             running_requests: 3,
             max_concurrent_requests: 7,
+            scheduler_running_requests: Some(2),
+            scheduler_waiting_requests: Some(1),
+            kv_cache_usage: Some(0.75),
+            prompt_tokens_total: Some(12),
+            generation_tokens_total: Some(8),
+            ttft_seconds: histogram.clone(),
+            tpot_seconds: histogram.clone(),
+            e2e_seconds: histogram,
         },
         ..Default::default()
     });
@@ -301,10 +422,28 @@ async fn telemetry_exposes_capacity_runtime_admission_and_backend_work() {
         .unwrap();
 
     assert_eq!(response.status(), 200);
+    let telemetry: serde_json::Value =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(telemetry["version"], 2);
+    assert!(telemetry["collected_at_unix_ms"].as_u64().is_some());
+    assert_eq!(telemetry["accepting"], false);
+    assert_eq!(telemetry["running_requests"], 3);
+    assert_eq!(telemetry["max_concurrent_requests"], 7);
+    assert_eq!(telemetry["scheduler_running_requests"], 2);
+    assert_eq!(telemetry["scheduler_waiting_requests"], 1);
+    assert_eq!(telemetry["kv_cache_usage"], 0.75);
+    assert_eq!(telemetry["prompt_tokens_total"], 12);
+    assert_eq!(telemetry["generation_tokens_total"], 8);
     assert_eq!(
-        response.into_body().collect().await.unwrap().to_bytes(),
-        r#"{"version":1,"accepting":false,"running_requests":3,"max_concurrent_requests":7}"#,
+        telemetry["ttft_seconds"],
+        serde_json::json!({
+            "count": 2,
+            "sum_seconds": 0.3,
+            "buckets": [{"le_seconds": 0.5, "count": 2}]
+        })
     );
+    assert_eq!(telemetry["tpot_seconds"], telemetry["ttft_seconds"]);
+    assert_eq!(telemetry["e2e_seconds"], telemetry["ttft_seconds"]);
 }
 
 #[tokio::test]
@@ -324,6 +463,41 @@ async fn readiness_gates_generation_without_calling_the_backend() {
 
     assert_eq!(response.status(), 503);
     assert!(backend.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn generate_accepts_processed_multimodal_bodies_above_axum_default() {
+    let response = app(Arc::new(RecordingBackend::default()), true, true)
+        .oneshot(
+            Request::post("/v1/internal/generate")
+                .header("content-type", "application/json")
+                .body(Body::from(vec![b' '; 3 * 1024 * 1024]))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn generate_enforces_the_configured_request_body_limit() {
+    let response = app_with_body_limit(
+        Arc::new(RecordingBackend::default()),
+        true,
+        true,
+        1024 * 1024,
+    )
+    .oneshot(
+        Request::post("/v1/internal/generate")
+            .header("content-type", "application/json")
+            .body(Body::from(vec![b' '; 2 * 1024 * 1024]))
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
 #[tokio::test]
@@ -383,10 +557,7 @@ async fn admission_close_observes_every_accepted_response_stream() {
         )
         .await
         .unwrap();
-    assert_eq!(
-        close.into_body().collect().await.unwrap().to_bytes(),
-        r#"{"version":1,"accepting":false,"running_requests":1,"max_concurrent_requests":7}"#,
-    );
+    assert_default_telemetry_snapshot(close.into_body().collect().await.unwrap().to_bytes(), 1);
 
     drop(response);
     let close = app
@@ -397,10 +568,7 @@ async fn admission_close_observes_every_accepted_response_stream() {
         )
         .await
         .unwrap();
-    assert_eq!(
-        close.into_body().collect().await.unwrap().to_bytes(),
-        r#"{"version":1,"accepting":false,"running_requests":0,"max_concurrent_requests":7}"#,
-    );
+    assert_default_telemetry_snapshot(close.into_body().collect().await.unwrap().to_bytes(), 0);
 }
 
 #[tokio::test]
@@ -419,10 +587,7 @@ async fn admission_close_is_idempotent_and_keeps_abort_available() {
             .await
             .unwrap();
         assert_eq!(close.status(), StatusCode::OK);
-        assert_eq!(
-            close.into_body().collect().await.unwrap().to_bytes(),
-            r#"{"version":1,"accepting":false,"running_requests":0,"max_concurrent_requests":7}"#,
-        );
+        assert_default_telemetry_snapshot(close.into_body().collect().await.unwrap().to_bytes(), 0);
     }
 
     let abort = app

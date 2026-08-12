@@ -6,11 +6,12 @@
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Query, State};
-use axum::http::{StatusCode, header};
+use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -128,7 +129,7 @@ impl AppState {
 }
 
 /// Construct only the group-local API; this is not an OpenAI-compatible router.
-pub fn router(state: AppState) -> Router {
+pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -138,6 +139,9 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/internal/generate", post(generate))
         .route("/v1/internal/abort", post(abort))
         .route("/v1/internal/kv-index/delta", get(kv_index_delta))
+        .layer(DefaultBodyLimit::max(
+            internal_generate_request_body_limit_bytes,
+        ))
         .with_state(state)
 }
 async fn healthz(State(state): State<AppState>) -> StatusCode {
@@ -163,21 +167,40 @@ async fn close_admission(State(state): State<AppState>) -> Json<TelemetryRespons
 fn telemetry_response(state: &AppState) -> TelemetryResponse {
     let telemetry = state.backend.telemetry();
     TelemetryResponse {
-        version: 1,
+        version: 2,
+        collected_at_unix_ms: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX),
         accepting: state.health.accepting(),
         running_requests: state
             .health
             .running_requests()
             .max(telemetry.running_requests),
         max_concurrent_requests: telemetry.max_concurrent_requests,
+        scheduler_running_requests: telemetry.scheduler_running_requests,
+        scheduler_waiting_requests: telemetry.scheduler_waiting_requests,
+        kv_cache_usage: telemetry.kv_cache_usage,
+        prompt_tokens_total: telemetry.prompt_tokens_total,
+        generation_tokens_total: telemetry.generation_tokens_total,
+        ttft_seconds: telemetry.ttft_seconds,
+        tpot_seconds: telemetry.tpot_seconds,
+        e2e_seconds: telemetry.e2e_seconds,
     }
 }
 
 async fn generate(
     State(state): State<AppState>,
-    input: Result<Json<GenerateInput>, JsonRejection>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> Result<Response, ApiError> {
-    let Json(input) = input.map_err(|_| ApiError::InvalidRequest)?;
+    let input: GenerateInput = if content_type_is(&headers, "application/msgpack") {
+        rmp_serde::from_slice(&body).map_err(|_| ApiError::InvalidRequest)?
+    } else {
+        serde_json::from_slice(&body).map_err(|_| ApiError::InvalidRequest)?
+    };
     if !state.health.healthy() {
         return Err(ApiError::Unavailable);
     }
@@ -235,8 +258,12 @@ async fn kv_index_delta(
     let Some(adapter) = state.kv_events else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    let epoch = query.epoch.unwrap_or_default();
-    match adapter.delta(&epoch, query.after.unwrap_or(0), query.limit.unwrap_or(256)) {
+    match adapter.delta(
+        query.dp_rank,
+        query.epoch.as_deref(),
+        query.after,
+        query.limit.unwrap_or(256),
+    ) {
         Ok(delta) => (StatusCode::OK, Json(delta)).into_response(),
         Err(KvDeltaError::Unavailable) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
         Err(KvDeltaError::CursorReset(clear)) => {
@@ -244,6 +271,14 @@ async fn kv_index_delta(
         }
     }
 }
+fn content_type_is(headers: &HeaderMap, expected: &str) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(';').next())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case(expected))
+}
+
 fn status(healthy: bool) -> StatusCode {
     if healthy {
         StatusCode::OK

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Coordinates route withdrawal and bounded request drain before ModelGroup deletion.
 
 package controllers
@@ -196,7 +196,7 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 	if err := reconciler.List(ctx, &frontends, client.InNamespace(group.Namespace)); err != nil {
 		return false, fmt.Errorf("list FrontendServices for drain: %w", err)
 	}
-	backendID := string(group.UID)
+	routeTargetID := string(group.UID)
 	for index := range frontends.Items {
 		frontend := &frontends.Items[index]
 		if !frontend.DeletionTimestamp.IsZero() {
@@ -214,7 +214,7 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 		if err := json.Unmarshal([]byte(configMap.Data[servingSnapshotKey]), &snapshot); err != nil {
 			return false, fmt.Errorf("decode frontend serving snapshot for drain: %w", err)
 		}
-		if servingSnapshotContainsBackend(snapshot, backendID) {
+		if servingSnapshotContainsRouteTarget(snapshot, routeTargetID) {
 			return false, nil
 		}
 
@@ -243,19 +243,19 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 	return true, nil
 }
 
-func servingSnapshotContainsBackend(snapshot servingSnapshot, backendID string) bool {
+func servingSnapshotContainsRouteTarget(snapshot servingSnapshot, routeTargetID string) bool {
 	for _, group := range snapshot.Groups {
-		if group.BackendID == backendID {
+		if group.RouteTargetID == routeTargetID {
 			return true
 		}
 	}
 	for _, component := range snapshot.PDComponents {
-		if component.BackendID == backendID {
+		if component.RouteTargetID == routeTargetID {
 			return true
 		}
 	}
 	for _, component := range snapshot.EPDComponents {
-		if component.BackendID == backendID {
+		if component.RouteTargetID == routeTargetID {
 			return true
 		}
 	}

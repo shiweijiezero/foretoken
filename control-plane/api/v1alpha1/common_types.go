@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Defines shared validated types used by the Foretoken custom resources.
 
 package v1alpha1
@@ -37,14 +37,10 @@ const (
 
 // MultimodalModality identifies one non-text input modality supported by a model.
 // +enum
-// +kubebuilder:validation:Enum=image;video;audio
+// +kubebuilder:validation:Enum=image
 type MultimodalModality string
 
-const (
-	MultimodalModalityImage MultimodalModality = "image"
-	MultimodalModalityVideo MultimodalModality = "video"
-	MultimodalModalityAudio MultimodalModality = "audio"
-)
+const MultimodalModalityImage MultimodalModality = "image"
 
 // ModelFeatures declares opt-in model capabilities. Chat and text are always
 // available and therefore intentionally are not configurable here.
@@ -62,7 +58,7 @@ type ModelFeatures struct {
 
 	// +optional
 	// +listType=set
-	// +kubebuilder:validation:MaxItems=3
+	// +kubebuilder:validation:MaxItems=1
 	Multimodal []MultimodalModality `json:"multimodal,omitempty"`
 }
 

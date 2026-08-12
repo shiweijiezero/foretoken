@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Resolves normalized ModelPool templates into immutable ModelGroup contracts.
 
 package resolver
@@ -34,6 +34,9 @@ type MooncakePDProfile struct {
 	Protocol                   string
 	BootstrapPort              int32
 	AbortRequestTimeoutSeconds int32
+	RDMADeviceName             string
+	RDMAResourceName           string
+	RDMAResourceCount          int32
 }
 
 // ECProfile contains the fixed platform-owned vLLM encoder/prefill connector contract.
@@ -94,9 +97,6 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if template.Role != inferencev1alpha1.ModelRoleAggregate && template.Role != inferencev1alpha1.ModelRoleEncoder && template.Role != inferencev1alpha1.ModelRolePrefill && template.Role != inferencev1alpha1.ModelRoleDecode {
 		return ModelGroupTemplate{}, fmt.Errorf("ModelPool role %q is not supported", template.Role)
 	}
-	if (template.Role == inferencev1alpha1.ModelRolePrefill || template.Role == inferencev1alpha1.ModelRoleDecode) && len(template.Features.Multimodal) > 0 {
-		return ModelGroupTemplate{}, fmt.Errorf("P/D ModelPools do not support multimodal features")
-	}
 	if template.NodeCount != 1 || template.MemberCount != 1 {
 		return ModelGroupTemplate{}, fmt.Errorf("only single-member vLLM Groups are currently supported")
 	}
@@ -148,10 +148,11 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			TokenizerRevision: effective.TokenizerRevision,
 		},
 		Runtime: inferencev1alpha1.ModelGroupRuntime{
-			Backend: template.Backend,
-			Image:   profile.Image,
-			Port:    profile.ModelServerPort,
-			Args:    append([]inferencev1alpha1.BackendArg(nil), effective.ExtraArgs...),
+			Backend:                               template.Backend,
+			Image:                                 profile.Image,
+			Port:                                  profile.ModelServerPort,
+			Args:                                  append([]inferencev1alpha1.BackendArg(nil), effective.ExtraArgs...),
+			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,
 		},
 		PDRuntime:      pdRuntime,
 		ECRuntime:      ecRuntime,
@@ -248,13 +249,13 @@ func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, paralle
 }
 
 func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, parallelism inferencev1alpha1.CompiledParallelism, profile *MooncakePDProfile) (*inferencev1alpha1.ModelGroupPDRuntimeConfig, error) {
-	if template.Role == inferencev1alpha1.ModelRoleAggregate {
+	if template.Role == inferencev1alpha1.ModelRoleAggregate || template.Role == inferencev1alpha1.ModelRoleEncoder {
 		return nil, nil
 	}
 	if template.NodeCount != 1 || template.MemberCount != 1 || parallelism.TP != 1 || parallelism.PP != 1 || parallelism.DP != 1 || parallelism.PCP != 1 || parallelism.DCP != 1 || parallelism.EP != nil {
 		return nil, fmt.Errorf("Mooncake P/D requires a single member/node and TP=PP=DP=PCP=DCP=1 without expert parallelism")
 	}
-	if profile == nil || profile.Name == "" || profile.Revision == "" || profile.Protocol == "" || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 {
+	if profile == nil || profile.Name == "" || profile.Revision == "" || profile.Protocol == "" || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 || profile.RDMADeviceName == "" || profile.RDMAResourceName == "" || profile.RDMAResourceCount < 1 {
 		return nil, fmt.Errorf("Mooncake P/D runtime profile is incomplete")
 	}
 	if profile.Protocol != "rdma" {
@@ -267,6 +268,9 @@ func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, paralle
 		Protocol:                   profile.Protocol,
 		BootstrapPort:              profile.BootstrapPort,
 		AbortRequestTimeoutSeconds: profile.AbortRequestTimeoutSeconds,
+		RDMADeviceName:             profile.RDMADeviceName,
+		RDMAResourceName:           profile.RDMAResourceName,
+		RDMAResourceCount:          profile.RDMAResourceCount,
 	}, nil
 }
 

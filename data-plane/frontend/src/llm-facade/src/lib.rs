@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
 //! Backend-neutral generation execution port and vLLM adapter.
 mod facade;
 mod http;
 use async_trait::async_trait;
-pub use facade::VllmFacade;
-use foretoken_router::ExecutionPlan;
+pub use facade::{
+    consume_encoder, consume_prefill, encoder_stage_request, inject_ec_transfer_params,
+    pd_stage_requests, reject_client_transfer_params,
+};
+use foretoken_model_protocol::RouteStage;
+use foretoken_router::RouteDecision;
 use futures::Stream;
 pub use http::{HttpFacade, bootstrap_engine_id};
 use std::pin::Pin;
@@ -44,6 +49,7 @@ pub trait LlmFacade: Send + Sync {
 struct AbortOnDrop {
     facade: Option<Arc<dyn LlmFacade>>,
     request_id: Option<String>,
+    runtime: Option<tokio::runtime::Handle>,
 }
 
 impl AbortOnDrop {
@@ -56,7 +62,11 @@ impl AbortOnDrop {
         let (Some(facade), Some(request_id)) = (self.facade.take(), self.request_id.take()) else {
             return;
         };
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+        let runtime = self
+            .runtime
+            .clone()
+            .or_else(|| tokio::runtime::Handle::try_current().ok());
+        if let Some(runtime) = runtime {
             runtime.spawn(async move {
                 let _ = facade.abort(&[request_id]).await;
             });
@@ -110,14 +120,112 @@ pub fn abort_on_drop(
         abort: AbortOnDrop {
             facade: Some(facade),
             request_id: Some(request_id),
+            runtime: tokio::runtime::Handle::try_current().ok(),
         },
     })
 }
 
-/// Resolves an aggregate execution target or a dynamic P/D pair without exposing registry ownership.
-pub trait LlmFacadeResolver: Send + Sync {
-    fn resolve(&self, plan: &ExecutionPlan) -> Option<Arc<dyn LlmFacade>>;
+/// Best-effort cleanup for execution stages that have been admitted but not completed.
+///
+/// Register a stage before its `generate` future is awaited.  Dropping the guard aborts every
+/// registered child request; handing it to `with_stream` keeps that ownership until a terminal
+/// output makes the entire workflow successful.
+pub struct MultiStageCleanup {
+    stages: Vec<(Arc<dyn LlmFacade>, String)>,
+    runtime: Option<tokio::runtime::Handle>,
 }
-#[cfg(test)]
-#[path = "tests/facade.rs"]
-mod tests;
+
+impl Default for MultiStageCleanup {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MultiStageCleanup {
+    pub fn new() -> Self {
+        Self {
+            stages: Vec::new(),
+            runtime: tokio::runtime::Handle::try_current().ok(),
+        }
+    }
+
+    pub fn register(&mut self, facade: Arc<dyn LlmFacade>, request_id: String) {
+        self.stages.push((facade, request_id));
+    }
+
+    pub fn with_stream(self, stream: TokenStream) -> TokenStream {
+        Box::pin(CleanupStream {
+            stream,
+            cleanup: self,
+        })
+    }
+
+    fn disarm(&mut self) {
+        self.stages.clear();
+    }
+
+    fn spawn_abort(&mut self) {
+        if self.stages.is_empty() {
+            return;
+        }
+        let stages = std::mem::take(&mut self.stages);
+        let runtime = self
+            .runtime
+            .clone()
+            .or_else(|| tokio::runtime::Handle::try_current().ok());
+        if let Some(runtime) = runtime {
+            runtime.spawn(async move {
+                for (facade, request_id) in stages {
+                    let _ = facade.abort(&[request_id]).await;
+                }
+            });
+        }
+    }
+}
+
+impl Drop for MultiStageCleanup {
+    fn drop(&mut self) {
+        self.spawn_abort();
+    }
+}
+
+struct CleanupStream {
+    stream: TokenStream,
+    cleanup: MultiStageCleanup,
+}
+
+impl Stream for CleanupStream {
+    type Item = Result<GenerateOutput, LlmFacadeError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        match self.stream.as_mut().poll_next(context) {
+            Poll::Ready(Some(Ok(output))) => {
+                if output.finish_reason.is_some() {
+                    self.cleanup.disarm();
+                }
+                Poll::Ready(Some(Ok(output)))
+            }
+            Poll::Ready(Some(Err(error))) => {
+                self.cleanup.spawn_abort();
+                Poll::Ready(Some(Err(error)))
+            }
+            Poll::Ready(None) => {
+                self.cleanup.spawn_abort();
+                Poll::Ready(None)
+            }
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+/// Resolves selected execution stages without exposing registry ownership.
+pub trait LlmFacadeResolver: Send + Sync {
+    /// Resolves exactly one selected stage. Router Core keeps all health,
+    /// capacity, topology, and domain decisions; execution only opens endpoints.
+    fn resolve_stage(
+        &self,
+        decision: &RouteDecision,
+        stage: RouteStage,
+    ) -> Option<Arc<dyn LlmFacade>>;
+    fn bootstrap_endpoint(&self, prefill: &RouteDecision) -> Option<String>;
+}

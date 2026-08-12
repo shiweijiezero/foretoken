@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use foretoken_backend_registry::BackendRegistry;
-use foretoken_router::{NeutralScorer, PolicyRouter, RouterAlgorithm};
+use foretoken_router::{PipelineRouter, RouterPipelineConfig};
 use foretoken_runtime_builder::{KvIndexCredential, RuntimeBuilder};
 use foretoken_server::{Generation, RuntimeControl, RuntimeGeneration, RuntimeState};
 
@@ -13,7 +13,7 @@ use super::{
 };
 
 fn runtime_builder() -> RuntimeBuilder {
-    RuntimeBuilder::new(RouterAlgorithm::KvAware, KvIndexCredential::Disabled)
+    RuntimeBuilder::new(RouterPipelineConfig::default(), KvIndexCredential::Disabled)
 }
 
 struct ReadyControl;
@@ -53,13 +53,13 @@ impl RuntimeControl for CountingControl {
 fn empty_state() -> Arc<RuntimeState> {
     let registry = Arc::new(
         BackendRegistry::from_json(
-            br#"{"version":1,"groups":[{"backend_id":"active","model":"active","revision":"r1","tokenizer":"tokenizer","tokenizer_revision":"r1","endpoint":"http://127.0.0.1:1"}]}"#,
+            br#"{"version":1,"groups":[{"service_uid":"service","pool_uid":"pool","pool_name":"pool","route_target_id":"active","model":"active","revision":"r1","tokenizer":"tokenizer","tokenizer_revision":"r1","endpoint":"http://127.0.0.1:1","data_parallel_size":1}]}"#,
         )
         .unwrap(),
     );
     Arc::new(RuntimeState::new(
         Default::default(),
-        Arc::new(PolicyRouter::new(registry.clone(), Arc::new(NeutralScorer))),
+        Arc::new(PipelineRouter::new(registry.clone())),
         registry,
     ))
 }
@@ -78,7 +78,7 @@ async fn invalid_or_unready_candidate_keeps_the_active_generation() {
     assert!(generation.ready());
     assert_eq!(generation.active_version(), Some(10));
 
-    let unready = br#"{"version":11,"groups":[{"backend_id":"candidate","model":"candidate","revision":"r1","tokenizer":"tokenizer","tokenizer_revision":"r1","endpoint":"http://127.0.0.1:1"}]}"#;
+    let unready = br#"{"version":11,"groups":[{"route_target_id":"candidate","model":"candidate","revision":"r1","tokenizer":"tokenizer","tokenizer_revision":"r1","endpoint":"http://127.0.0.1:1","data_parallel_size":1}]}"#;
     assert!(!install_serving_snapshot(&generation, unready, &runtime_builder()).await);
     assert!(generation.ready());
     assert_eq!(generation.models(), vec!["active"]);
@@ -93,7 +93,7 @@ async fn initial_failure_stays_unavailable_and_stale_candidate_is_ignored() {
     assert_eq!(initial.active_version(), None);
 
     let generation = active_generation(10);
-    let stale = br#"{"version":9,"groups":[{"backend_id":"stale","model":"stale","revision":"r1","tokenizer":"tokenizer","tokenizer_revision":"r1","endpoint":"http://127.0.0.1:1"}]}"#;
+    let stale = br#"{"version":9,"groups":[{"route_target_id":"stale","model":"stale","revision":"r1","tokenizer":"tokenizer","tokenizer_revision":"r1","endpoint":"http://127.0.0.1:1","data_parallel_size":1}]}"#;
     assert!(!install_serving_snapshot(&generation, stale, &runtime_builder()).await);
     assert!(generation.ready());
     assert_eq!(generation.active_version(), Some(10));
