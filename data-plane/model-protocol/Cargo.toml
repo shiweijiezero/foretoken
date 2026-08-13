@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+[package]
+name = "foretoken-model-protocol"
+version = "0.0.1"
+edition = "2024"
+license = "Apache-2.0"
+description = "Typed internal protocol between Foretoken frontend and model-server"
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+
+# Make targets select a compatible repository-relative source or FORETOKEN_VLLM_SOURCE.
+vllm-engine-core-client = { path = "../../third_party/vllm-rust/source/rust/src/engine-core-client" }
+vllm-llm = { path = "../../third_party/vllm-rust/source/rust/src/llm" }
+
+[dev-dependencies]
+serde_json = "1.0.145"
