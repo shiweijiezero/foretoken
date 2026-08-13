@@ -158,6 +158,7 @@ type ModelPoolStatus struct {
 
 	// ActiveRevision is the immutable Group revision currently admitted to routing.
 	// +optional
+	// +kubebuilder:validation:MaxLength=63
 	ActiveRevision string `json:"activeRevision,omitempty"`
 
 	// +optional

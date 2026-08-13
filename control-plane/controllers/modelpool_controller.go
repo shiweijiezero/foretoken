@@ -48,6 +48,10 @@ func (reconciler *ModelPoolReconciler) SetupWithManager(manager ctrl.Manager) er
 		Complete(reconciler)
 }
 
+// +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelpools,verbs=get;list;watch
+// +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelpools/status,verbs=get;patch;update
+// +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelgroups,verbs=get;list;watch;create;delete
+
 // Reconcile materializes the desired Group revision and aggregates Group readiness.
 func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	pool := new(inferencev1alpha1.ModelPool)
