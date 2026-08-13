@@ -238,7 +238,7 @@ async fn error_finish_reason_is_an_openai_error_not_a_successful_finish() {
         .await
         .unwrap();
     let body = std::str::from_utf8(&body).unwrap();
-    assert!(body.contains(r#""error":{"message":"generation backend request failed"#));
+    assert!(body.contains(r#""error":{"message":"model server request failed"#));
     assert!(!body.contains(r#""finish_reason":"error"#));
     assert_eq!(body.matches("[DONE]").count(), 1);
 }
@@ -266,6 +266,6 @@ async fn backend_stream_error_emits_one_done_after_the_error() {
         .await
         .unwrap();
     let body = std::str::from_utf8(&body).unwrap();
-    assert!(body.contains("generation backend request failed"));
+    assert!(body.contains("model server request failed"));
     assert_eq!(body.matches("[DONE]").count(), 1);
 }

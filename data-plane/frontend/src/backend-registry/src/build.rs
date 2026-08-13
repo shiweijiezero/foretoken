@@ -104,12 +104,12 @@ fn pool_target(service_uid: String, pool_uid: String, pool_name: String) -> Scal
     }
 }
 
-fn epd_target(service_uid: String) -> ScalingTarget {
+fn epd_pipeline_scope_target(service_uid: String) -> ScalingTarget {
     ScalingTarget {
         uid: service_uid.clone(),
         service_uid,
         name: "epd".into(),
-        kind: ScalingTargetKind::EPDDomain,
+        kind: ScalingTargetKind::EPDPipelineScope,
     }
 }
 
@@ -161,18 +161,26 @@ pub(crate) fn build(
             max_input_tokens: group.max_input_tokens,
             ready: true,
             role: ModelServerRole::Aggregate,
-            domain_id: None,
+            pipeline_scope_id: None,
             data_parallel_size: group.data_parallel_size,
         });
     }
-    let mut domain_members =
+    let mut pipeline_scope_members =
         BTreeMap::<String, (BTreeSet<RouteTargetId>, BTreeSet<RouteTargetId>)>::new();
-    for domain in &snapshot.pd_domains {
-        domain_members.insert(
-            domain.domain_id.clone(),
+    for pipeline_scope in &snapshot.pd_pipeline_scopes {
+        pipeline_scope_members.insert(
+            pipeline_scope.pipeline_scope_id.clone(),
             (
-                domain.prefill_route_target_ids.iter().cloned().collect(),
-                domain.decode_route_target_ids.iter().cloned().collect(),
+                pipeline_scope
+                    .prefill_route_target_ids
+                    .iter()
+                    .cloned()
+                    .collect(),
+                pipeline_scope
+                    .decode_route_target_ids
+                    .iter()
+                    .cloned()
+                    .collect(),
             ),
         );
     }
@@ -181,7 +189,7 @@ pub(crate) fn build(
             || component.pool_uid.is_empty()
             || component.pool_name.is_empty()
             || component.route_target_id.as_str().is_empty()
-            || component.domain_id.is_empty()
+            || component.pipeline_scope_id.is_empty()
             || component.endpoint.is_empty()
             || component.profile_name.is_empty()
             || component.profile_revision.is_empty()
@@ -208,15 +216,19 @@ pub(crate) fn build(
                 component.route_target_id,
             ));
         }
-        let member = domain_members
-            .get(&component.domain_id)
-            .ok_or_else(|| SnapshotError::InvalidPdDomain(component.domain_id.clone()))?;
+        let member = pipeline_scope_members
+            .get(&component.pipeline_scope_id)
+            .ok_or_else(|| {
+                SnapshotError::InvalidPdPipelineScope(component.pipeline_scope_id.clone())
+            })?;
         if !(if component.role == ModelServerRole::Prefill {
             member.0.contains(&component.route_target_id)
         } else {
             member.1.contains(&component.route_target_id)
         }) {
-            return Err(SnapshotError::InvalidPdDomain(component.domain_id));
+            return Err(SnapshotError::InvalidPdPipelineScope(
+                component.pipeline_scope_id,
+            ));
         }
         let route = RouteTarget {
             route_target_id: component.route_target_id.clone(),
@@ -231,7 +243,7 @@ pub(crate) fn build(
             max_input_tokens: component.max_input_tokens,
             ready: true,
             role: component.role,
-            domain_id: Some(component.domain_id),
+            pipeline_scope_id: Some(component.pipeline_scope_id),
             data_parallel_size: component.data_parallel_size,
         };
         let component = match route.role {
@@ -245,8 +257,8 @@ pub(crate) fn build(
                 endpoint: component.endpoint,
             },
             ModelServerRole::Aggregate | ModelServerRole::Encoder => {
-                return Err(SnapshotError::InvalidPdDomain(
-                    route.domain_id.clone().unwrap_or_default(),
+                return Err(SnapshotError::InvalidPdPipelineScope(
+                    route.pipeline_scope_id.clone().unwrap_or_default(),
                 ));
             }
         };
@@ -258,63 +270,75 @@ pub(crate) fn build(
         }
         routes.push(route);
     }
-    for (domain, (p, d)) in domain_members {
-        if p.is_empty() || d.is_empty() {
-            return Err(SnapshotError::InvalidPdDomain(domain));
+    for (pipeline_scope_id, (prefill_ids, decode_ids)) in pipeline_scope_members {
+        if prefill_ids.is_empty() || decode_ids.is_empty() {
+            return Err(SnapshotError::InvalidPdPipelineScope(pipeline_scope_id));
         }
     }
 
-    let mut epd_domains = BTreeMap::new();
-    for domain in &snapshot.epd_domains {
-        if domain.domain_id.is_empty()
-            || domain.encoder_route_target_id.as_str().is_empty()
-            || domain.prefill_route_target_id.as_str().is_empty()
-            || domain.decode_route_target_id.as_str().is_empty()
-            || epd_domains
-                .insert(domain.domain_id.clone(), domain)
+    let mut epd_pipeline_scopes = BTreeMap::new();
+    for pipeline_scope in &snapshot.epd_pipeline_scopes {
+        if pipeline_scope.pipeline_scope_id.is_empty()
+            || pipeline_scope.encoder_route_target_id.as_str().is_empty()
+            || pipeline_scope.prefill_route_target_id.as_str().is_empty()
+            || pipeline_scope.decode_route_target_id.as_str().is_empty()
+            || epd_pipeline_scopes
+                .insert(pipeline_scope.pipeline_scope_id.clone(), pipeline_scope)
                 .is_some()
         {
-            return Err(SnapshotError::InvalidEpdDomain(domain.domain_id.clone()));
+            return Err(SnapshotError::InvalidEpdPipelineScope(
+                pipeline_scope.pipeline_scope_id.clone(),
+            ));
         }
     }
-    let mut epd_members =
+    let mut epd_pipeline_scope_members =
         BTreeMap::<String, [Option<&crate::snapshot::SnapshotEpdComponent>; 3]>::new();
     for component in &snapshot.epd_components {
         if component.service_uid.is_empty()
             || component.pool_uid.is_empty()
             || component.pool_name.is_empty()
             || component.route_target_id.as_str().is_empty()
-            || component.domain_id.is_empty()
+            || component.pipeline_scope_id.is_empty()
             || component.endpoint.is_empty()
         {
             return Err(SnapshotError::IncompleteEpdComponent(
                 component.route_target_id.clone(),
             ));
         }
-        let Some(domain) = epd_domains.get(&component.domain_id) else {
-            return Err(SnapshotError::InvalidEpdDomain(component.domain_id.clone()));
+        let Some(pipeline_scope) = epd_pipeline_scopes.get(&component.pipeline_scope_id) else {
+            return Err(SnapshotError::InvalidEpdPipelineScope(
+                component.pipeline_scope_id.clone(),
+            ));
         };
         let (index, expected_id) = match component.role {
-            ModelServerRole::Encoder => (0, &domain.encoder_route_target_id),
-            ModelServerRole::Prefill => (1, &domain.prefill_route_target_id),
-            ModelServerRole::Decode => (2, &domain.decode_route_target_id),
+            ModelServerRole::Encoder => (0, &pipeline_scope.encoder_route_target_id),
+            ModelServerRole::Prefill => (1, &pipeline_scope.prefill_route_target_id),
+            ModelServerRole::Decode => (2, &pipeline_scope.decode_route_target_id),
             ModelServerRole::Aggregate => {
-                return Err(SnapshotError::InvalidEpdDomain(component.domain_id.clone()));
+                return Err(SnapshotError::InvalidEpdPipelineScope(
+                    component.pipeline_scope_id.clone(),
+                ));
             }
         };
         if &component.route_target_id != expected_id
-            || epd_members
-                .entry(component.domain_id.clone())
+            || epd_pipeline_scope_members
+                .entry(component.pipeline_scope_id.clone())
                 .or_insert([None, None, None])[index]
                 .replace(component)
                 .is_some()
         {
-            return Err(SnapshotError::InvalidEpdDomain(component.domain_id.clone()));
+            return Err(SnapshotError::InvalidEpdPipelineScope(
+                component.pipeline_scope_id.clone(),
+            ));
         }
     }
-    for (domain_id, domain) in &epd_domains {
-        let Some([Some(encoder), Some(prefill), Some(decode)]) = epd_members.get(domain_id) else {
-            return Err(SnapshotError::InvalidEpdDomain(domain_id.clone()));
+    for (pipeline_scope_id, pipeline_scope) in &epd_pipeline_scopes {
+        let Some([Some(encoder), Some(prefill), Some(decode)]) =
+            epd_pipeline_scope_members.get(pipeline_scope_id)
+        else {
+            return Err(SnapshotError::InvalidEpdPipelineScope(
+                pipeline_scope_id.clone(),
+            ));
         };
         if aggregate_models.contains(&encoder.model)
             || pd_models.contains(&encoder.model)
@@ -356,20 +380,22 @@ pub(crate) fn build(
             || !decode.ec_profile_revision.is_empty()
             || !decode.ec_connector.is_empty()
         {
-            return Err(SnapshotError::InvalidEpdDomain(domain.domain_id.clone()));
+            return Err(SnapshotError::InvalidEpdPipelineScope(
+                pipeline_scope.pipeline_scope_id.clone(),
+            ));
         }
     }
     for component in snapshot.epd_components {
         let route = RouteTarget {
             route_target_id: component.route_target_id.clone(),
-            target: epd_target(component.service_uid.clone()),
+            target: epd_pipeline_scope_target(component.service_uid.clone()),
             model: component.model,
             revision: component.revision,
             capabilities: component.capabilities,
             max_input_tokens: component.max_input_tokens,
             ready: true,
             role: component.role,
-            domain_id: Some(component.domain_id),
+            pipeline_scope_id: Some(component.pipeline_scope_id),
             data_parallel_size: component.data_parallel_size,
         };
         let component = match route.role {

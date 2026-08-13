@@ -103,9 +103,14 @@ impl RuntimeBuilder {
             }
         }
         let router: Arc<dyn Router> = Arc::new(
-            PipelineRouter::with_pipeline(registry.clone(), self.router_pipeline.build())
-                .with_kv_prefix_indexer(kv_indexer)
-                .with_route_target_stats_reader(registry.clone()),
+            PipelineRouter::with_pipeline(
+                registry.clone(),
+                self.router_pipeline
+                    .build()
+                    .map_err(|error| RuntimeBuildError::RouterPipeline(error.to_string()))?,
+            )
+            .with_kv_prefix_indexer(kv_indexer)
+            .with_route_target_stats_reader(registry.clone()),
         );
         let resolver: Arc<dyn LlmFacadeResolver> = registry;
         Ok(PreparedRuntime {
@@ -138,6 +143,8 @@ impl PreparedRuntime {
 pub enum RuntimeBuildError {
     #[error("could not parse serving snapshot: {0}")]
     Parse(#[from] serde_json::Error),
+    #[error("could not build configured Router pipeline: {0}")]
+    RouterPipeline(String),
     #[error("could not validate serving snapshot: {0}")]
     InvalidSnapshot(String),
     #[error("model-server backend is not ready")]
@@ -290,9 +297,9 @@ mod tests {
             }],
             groups: vec![],
             pd_components: vec![],
-            pd_domains: vec![],
+            pd_pipeline_scopes: vec![],
             epd_components: vec![],
-            epd_domains: vec![],
+            epd_pipeline_scopes: vec![],
         };
         let prepared = builder().build(snapshot).await.unwrap();
         let generation = RuntimeGeneration::new();

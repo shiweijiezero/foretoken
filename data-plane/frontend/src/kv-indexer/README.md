@@ -17,7 +17,7 @@ Device, HostPinned, Disk, and External records remain separate throughout indexi
 
 ## vLLM normalization
 
-The request-side hash contract is `normalized_keyed_blake3_v1`. The model-server adapter converts vLLM Store hashes and parent chains to this format and retains the reverse mapping needed by Remove events. Foretoken does not treat raw vLLM hashes as normalized hashes.
+The request-side hash format is `normalized_keyed_blake3_v1`. The model-server adapter converts vLLM Store hashes and parent chains to this format and retains the reverse mapping needed by Remove events. Foretoken does not treat raw vLLM hashes as normalized hashes.
 
 Storage mappings are:
 
@@ -30,4 +30,4 @@ Storage mappings are:
 
 The synchronizer validates zero-based sequence continuity before marking a source healthy. Duplicates, gaps, reordered events, and epoch changes are handled without publishing partial state.
 
-Both index implementations share this lifecycle contract. The radix implementation uses `patricia_tree` for compressed-prefix storage; Foretoken adds event, ownership, rank, and placement semantics around it.
+Both index implementations share this lifecycle behavior and guarantees. The radix implementation uses `patricia_tree` for compressed-prefix storage; Foretoken adds event, ownership, rank, and placement semantics around it.

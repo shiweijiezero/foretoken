@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Defines the controller-projected component/domain routing snapshot contract.
+//! Defines the controller-projected component/pipeline-scope routing snapshot contract.
 use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::{RouteTargetId, RouteTargetSet, ScalingTarget, ScalingTargetKind};
 use serde::{Deserialize, Serialize};
@@ -17,11 +17,11 @@ pub struct ServingSnapshot {
     #[serde(default)]
     pub pd_components: Vec<SnapshotPdComponent>,
     #[serde(default)]
-    pub pd_domains: Vec<SnapshotPdDomain>,
+    pub pd_pipeline_scopes: Vec<SnapshotPdPipelineScope>,
     #[serde(default)]
     pub epd_components: Vec<SnapshotEpdComponent>,
     #[serde(default)]
-    pub epd_domains: Vec<SnapshotEpdDomain>,
+    pub epd_pipeline_scopes: Vec<SnapshotEpdPipelineScope>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotModel {
@@ -53,7 +53,7 @@ pub struct SnapshotEpdComponent {
     pub pool_name: String,
     pub route_target_id: RouteTargetId,
     pub role: ModelServerRole,
-    pub domain_id: String,
+    pub pipeline_scope_id: String,
     pub model: String,
     pub revision: String,
     pub tokenizer: String,
@@ -84,8 +84,8 @@ pub struct SnapshotEpdComponent {
     pub data_parallel_size: u32,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SnapshotEpdDomain {
-    pub domain_id: String,
+pub struct SnapshotEpdPipelineScope {
+    pub pipeline_scope_id: String,
     pub encoder_route_target_id: RouteTargetId,
     pub prefill_route_target_id: RouteTargetId,
     pub decode_route_target_id: RouteTargetId,
@@ -100,7 +100,7 @@ pub struct SnapshotPdComponent {
     pub pool_name: String,
     pub route_target_id: RouteTargetId,
     pub role: ModelServerRole,
-    pub domain_id: String,
+    pub pipeline_scope_id: String,
     pub model: String,
     pub revision: String,
     pub tokenizer: String,
@@ -121,8 +121,8 @@ pub struct SnapshotPdComponent {
     pub data_parallel_size: u32,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SnapshotPdDomain {
-    pub domain_id: String,
+pub struct SnapshotPdPipelineScope {
+    pub pipeline_scope_id: String,
     pub prefill_route_target_ids: Vec<RouteTargetId>,
     pub decode_route_target_ids: Vec<RouteTargetId>,
 }
@@ -215,7 +215,7 @@ impl ServingSnapshot {
                         service_uid: component.service_uid.clone(),
                         name: "epd".into(),
                         uid: component.service_uid.clone(),
-                        kind: ScalingTargetKind::EPDDomain,
+                        kind: ScalingTargetKind::EPDPipelineScope,
                     }]));
             }
         }
@@ -318,8 +318,10 @@ pub enum SnapshotError {
     IncompletePdComponent(RouteTargetId),
     #[error("routing snapshot P/D component {0:?} must use MooncakeConnector over rdma")]
     UnsupportedPdTransport(RouteTargetId),
-    #[error("routing snapshot domain {0:?} is incomplete or crosses a ModelService boundary")]
-    InvalidPdDomain(String),
+    #[error(
+        "routing configuration P/D linked processing unit {0:?} is incomplete or crosses a ModelService boundary"
+    )]
+    InvalidPdPipelineScope(String),
     #[error("routing snapshot model {0:?} cannot mix aggregate and P/D routes")]
     MixedModelRoles(String),
     #[error("routing snapshot model {0:?} has conflicting revision or tokenizer identity")]
@@ -333,7 +335,7 @@ pub enum SnapshotError {
     #[error("routing snapshot E/P/D component {0:?} has an invalid EC or KV transfer contract")]
     InvalidEpdTransferContract(RouteTargetId),
     #[error(
-        "routing snapshot E/P/D domain {0:?} is incomplete, inconsistent, or not a static triplet"
+        "routing configuration E/P/D linked processing unit {0:?} is incomplete, inconsistent, or not a static triplet"
     )]
-    InvalidEpdDomain(String),
+    InvalidEpdPipelineScope(String),
 }

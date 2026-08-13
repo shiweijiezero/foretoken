@@ -29,21 +29,34 @@ impl RuntimeConfig {
             serving_snapshot: required_path(SERVING_SNAPSHOT_ENV)?,
             listen_address: required_env(LISTEN_ADDRESS_ENV)?,
             stream_idle: required_positive_duration(STREAM_IDLE_SECONDS_ENV)?,
-            router_pipeline: RouterPipelineConfig {
-                filter: optional_algorithm(ROUTER_FILTER_ENV, FilterAlgorithm::default())?,
-                scorer: optional_algorithm(ROUTER_SCORER_ENV, ScorerAlgorithm::default())?,
-                picker: optional_algorithm(ROUTER_PICKER_ENV, PickerAlgorithm::default())?,
-            },
+            router_pipeline: router_pipeline_from_env(|name| env::var(name))?,
         })
     }
 }
 
-fn optional_algorithm<T>(name: &str, default: T) -> Result<T, String>
+pub(crate) fn router_pipeline_from_env(
+    get_env: impl Fn(&str) -> Result<String, env::VarError>,
+) -> Result<RouterPipelineConfig, String> {
+    let pipeline = RouterPipelineConfig {
+        filter: optional_algorithm(&get_env, ROUTER_FILTER_ENV, FilterAlgorithm::default())?,
+        scorer: optional_algorithm(&get_env, ROUTER_SCORER_ENV, ScorerAlgorithm::default())?,
+        picker: optional_algorithm(&get_env, ROUTER_PICKER_ENV, PickerAlgorithm::default())?,
+    };
+    pipeline.validate().map_err(|error| error.to_string())?;
+    Ok(pipeline)
+}
+
+fn optional_algorithm<T>(
+    get_env: &impl Fn(&str) -> Result<String, env::VarError>,
+    name: &str,
+    default: T,
+) -> Result<T, String>
 where
-    T: std::str::FromStr<Err = String>,
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
 {
-    match env::var(name) {
-        Ok(value) => value.parse(),
+    match get_env(name) {
+        Ok(value) => value.parse().map_err(|error: T::Err| error.to_string()),
         Err(env::VarError::NotPresent) => Ok(default),
         Err(env::VarError::NotUnicode(_)) => Err(format!("{name} must be valid UTF-8")),
     }

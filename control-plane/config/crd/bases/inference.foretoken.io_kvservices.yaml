@@ -421,7 +421,7 @@ spec:
               not claim provider registration, usable Store state, or available capacity.
             properties:
               binding:
-                description: KVServiceBinding is the immutable current requester contract
+                description: KVServiceBinding is the immutable current requester configuration
                   consumed by ModelPools.
                 properties:
                   configMapKey:

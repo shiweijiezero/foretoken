@@ -276,13 +276,6 @@ func validateAutoscalingConfig(config *inferencev1alpha1.ModelAutoscalingConfig)
 	if config == nil {
 		return nil
 	}
-	algorithm := config.Algorithm
-	if algorithm == "" {
-		algorithm = inferencev1alpha1.AutoscalingAlgorithmManual
-	}
-	if algorithm != inferencev1alpha1.AutoscalingAlgorithmManual && algorithm != inferencev1alpha1.AutoscalingAlgorithmQueue {
-		return fmt.Errorf("autoscaling.algorithm must be manual or queue")
-	}
 	minimum := int32(0)
 	if config.MinGroups != nil {
 		minimum = *config.MinGroups
@@ -290,17 +283,27 @@ func validateAutoscalingConfig(config *inferencev1alpha1.ModelAutoscalingConfig)
 	if minimum < 0 || config.MaxGroups != nil && *config.MaxGroups < minimum {
 		return fmt.Errorf("autoscaling group bounds are invalid")
 	}
-	if algorithm == inferencev1alpha1.AutoscalingAlgorithmQueue {
-		if config.MaxGroups == nil {
-			return fmt.Errorf("queue autoscaling requires maxGroups")
+	if config.Algorithm != "" && config.Algorithm != inferencev1alpha1.AutoscalingAlgorithmManual && config.MaxGroups == nil {
+		return fmt.Errorf("autoscaling maxGroups is required unless algorithm is manual")
+	}
+	if config.TargetQueuePerRoutableGroup != nil && *config.TargetQueuePerRoutableGroup < 0 || config.ScaleUpQueue != nil && *config.ScaleUpQueue < 0 {
+		return fmt.Errorf("autoscaling thresholds must be non-negative")
+	}
+	if adjustment := config.Adjustment; adjustment != nil {
+		if adjustment.MaxScaleUpGroups != nil && *adjustment.MaxScaleUpGroups < 0 || adjustment.MaxScaleDownGroups != nil && *adjustment.MaxScaleDownGroups < 0 {
+			return fmt.Errorf("autoscaling adjustment step limits must be non-negative")
 		}
 	}
-	if config.TargetQueuePerRoutableGroup != nil && *config.TargetQueuePerRoutableGroup < 0 || config.MaxScaleUpStep != nil && *config.MaxScaleUpStep < 0 || config.MaxScaleDownStep != nil && *config.MaxScaleDownStep < 0 {
-		return fmt.Errorf("autoscaling thresholds and scale steps must be non-negative")
+	if trigger := config.Trigger; trigger != nil {
+		low := valueOrDefaultInt64(trigger.LowQueuePerRoutableGroup, 0)
+		high := valueOrDefaultInt64(trigger.HighQueuePerRoutableGroup, 1)
+		if low < 0 || high < 0 || low > high {
+			return fmt.Errorf("autoscaling trigger watermarks are invalid")
+		}
 	}
 	for field, value := range map[string]inferencev1alpha1.Duration{
-		"autoscaling.pollInterval":  valueOrDefaultDuration(config.PollInterval, "5s"),
-		"autoscaling.metricsMaxAge": valueOrDefaultDuration(config.MetricsMaxAge, "15s"),
+		"autoscaling.trigger.interval": triggerIntervalDuration(config.Trigger),
+		"autoscaling.metricsMaxAge":    valueOrDefaultDuration(config.MetricsMaxAge, "15s"),
 	} {
 		if duration, err := time.ParseDuration(string(value)); err != nil || duration <= 0 {
 			return fmt.Errorf("%s must be a positive duration", field)
@@ -341,6 +344,13 @@ func valueOrDefaultDuration(value inferencev1alpha1.Duration, fallback inference
 		return fallback
 	}
 	return value
+}
+
+func triggerIntervalDuration(trigger *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.Duration {
+	if trigger == nil {
+		return "5s"
+	}
+	return valueOrDefaultDuration(trigger.Interval, "5s")
 }
 
 func valueOrDefaultInt64(value *int64, fallback int64) int64 {

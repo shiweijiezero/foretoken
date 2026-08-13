@@ -166,19 +166,85 @@ type ModelPoolTemplate struct {
 	Features *ModelFeatures `json:"features,omitempty"`
 }
 
-// AutoscalingAlgorithm selects one statically assembled autoscaling configuration.
-// +enum
-// +kubebuilder:validation:Enum=manual;queue
+// AutoscalingAlgorithm selects a statically linked autoscaling decision algorithm.
+// +kubebuilder:validation:MaxLength=63
+// +kubebuilder:validation:Pattern="^[a-z][a-z0-9_]*$"
 type AutoscalingAlgorithm string
 
 const (
-	AutoscalingAlgorithmManual AutoscalingAlgorithm = "manual"
-	AutoscalingAlgorithmQueue  AutoscalingAlgorithm = "queue"
+	AutoscalingAlgorithmManual    AutoscalingAlgorithm = "manual"
+	AutoscalingAlgorithmQueue     AutoscalingAlgorithm = "queue"
+	AutoscalingAlgorithmThreshold AutoscalingAlgorithm = "threshold"
 )
+
+// AutoscalingTriggerAlgorithm selects when an automatic scaling algorithm is evaluated.
+// +kubebuilder:validation:MaxLength=63
+// +kubebuilder:validation:Pattern="^[a-z][a-z0-9_]*$"
+type AutoscalingTriggerAlgorithm string
+
+const (
+	AutoscalingTriggerAlgorithmPeriodic  AutoscalingTriggerAlgorithm = "periodic"
+	AutoscalingTriggerAlgorithmWatermark AutoscalingTriggerAlgorithm = "watermark"
+)
+
+// ModelAutoscalingTriggerConfig configures evaluation triggering for automatic scaling.
+// +kubebuilder:validation:XValidation:rule="!has(self.lowQueuePerRoutableGroup) || !has(self.highQueuePerRoutableGroup) || self.lowQueuePerRoutableGroup <= self.highQueuePerRoutableGroup",message="autoscaling trigger lowQueuePerRoutableGroup must not exceed highQueuePerRoutableGroup"
+type ModelAutoscalingTriggerConfig struct {
+	// +optional
+	// +kubebuilder:default=periodic
+	Algorithm AutoscalingTriggerAlgorithm `json:"algorithm,omitempty"`
+
+	// +optional
+	// +kubebuilder:default="5s"
+	Interval Duration `json:"interval,omitempty"`
+
+	// LowQueuePerRoutableGroup fires a watermark evaluation for idle capacity when
+	// queue is at or below this per-routable-Group level and no requests are active.
+	// +optional
+	// +kubebuilder:default=0
+	// +kubebuilder:validation:Minimum=0
+	LowQueuePerRoutableGroup *int64 `json:"lowQueuePerRoutableGroup,omitempty"`
+
+	// HighQueuePerRoutableGroup fires a watermark evaluation only when queue
+	// strictly exceeds this per-routable-Group level.
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
+	HighQueuePerRoutableGroup *int64 `json:"highQueuePerRoutableGroup,omitempty"`
+}
+
+// AutoscalingAdjustmentAlgorithm selects how a desired capacity is adjusted before resolution.
+// +kubebuilder:validation:MaxLength=63
+// +kubebuilder:validation:Pattern="^[a-z][a-z0-9_]*$"
+type AutoscalingAdjustmentAlgorithm string
+
+const (
+	AutoscalingAdjustmentAlgorithmDirect AutoscalingAdjustmentAlgorithm = "direct"
+	AutoscalingAdjustmentAlgorithmStep   AutoscalingAdjustmentAlgorithm = "step"
+)
+
+// ModelAutoscalingAdjustmentConfig configures the adjustment stage.
+type ModelAutoscalingAdjustmentConfig struct {
+	// +optional
+	// +kubebuilder:default=step
+	Algorithm AutoscalingAdjustmentAlgorithm `json:"algorithm,omitempty"`
+
+	// Zero disables the upward per-evaluation step limit.
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
+	MaxScaleUpGroups *int32 `json:"maxScaleUpGroups,omitempty"`
+
+	// Zero disables the downward per-evaluation step limit.
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
+	MaxScaleDownGroups *int32 `json:"maxScaleDownGroups,omitempty"`
+}
 
 // ModelAutoscalingConfig configures controller-owned Group autoscaling.
 // +kubebuilder:validation:XValidation:rule="!has(self.minGroups) || !has(self.maxGroups) || self.minGroups <= self.maxGroups",message="autoscaling minGroups must not exceed maxGroups"
-// +kubebuilder:validation:XValidation:rule="self.algorithm != 'queue' || has(self.maxGroups)",message="queue autoscaling requires maxGroups"
+// +kubebuilder:validation:XValidation:rule="self.algorithm == 'manual' || has(self.maxGroups)",message="autoscaling maxGroups is required unless algorithm is manual"
 type ModelAutoscalingConfig struct {
 	// +kubebuilder:default=manual
 	Algorithm AutoscalingAlgorithm `json:"algorithm"`
@@ -188,7 +254,7 @@ type ModelAutoscalingConfig struct {
 	// +kubebuilder:validation:Minimum=0
 	MinGroups *int32 `json:"minGroups,omitempty"`
 
-	// MaxGroups is required for queue autoscaling. When omitted, manual intent is unbounded.
+	// MaxGroups is required for automatic autoscaling. When omitted, manual intent is unbounded.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	MaxGroups *int32 `json:"maxGroups,omitempty"`
@@ -198,24 +264,25 @@ type ModelAutoscalingConfig struct {
 	// +kubebuilder:validation:Minimum=0
 	TargetQueuePerRoutableGroup *int64 `json:"targetQueuePerRoutableGroup,omitempty"`
 
+	// ScaleUpQueue is the queue-depth threshold above which threshold adds one Group.
 	// +optional
-	// +kubebuilder:default="5s"
-	PollInterval Duration `json:"pollInterval,omitempty"`
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=0
+	ScaleUpQueue *int64 `json:"scaleUpQueue,omitempty"`
+
+	// Trigger controls when an automatic algorithm receives a fresh observation.
+	// It is ignored by manual autoscaling.
+	// +optional
+	Trigger *ModelAutoscalingTriggerConfig `json:"trigger,omitempty"`
 
 	// +optional
 	// +kubebuilder:default="15s"
 	MetricsMaxAge Duration `json:"metricsMaxAge,omitempty"`
 
-	// Zero disables the corresponding per-evaluation rate limit.
+	// Adjustment modifies a scaling desired capacity before platform decision resolution.
+	// Manual intent always uses direct adjustment.
 	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=0
-	MaxScaleUpStep *int32 `json:"maxScaleUpStep,omitempty"`
-
-	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=0
-	MaxScaleDownStep *int32 `json:"maxScaleDownStep,omitempty"`
+	Adjustment *ModelAutoscalingAdjustmentConfig `json:"adjustment,omitempty"`
 }
 
 // ModelServiceSpec defines the desired state of a model service.
@@ -309,7 +376,7 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:MaxItems=32
 	ModelPools []ModelPoolTemplate `json:"modelPools,omitempty"`
 
-	// ExtraArgs are backend CLI flags shared by every compiled Pool.
+	// ExtraArgs are inference-engine CLI flags shared by every compiled Pool.
 	// +optional
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=256
@@ -321,25 +388,37 @@ type AutoscalingTargetStatus struct {
 	// +kubebuilder:validation:MinLength=1
 	ID string `json:"id"`
 
-	// +kubebuilder:validation:Enum=Pool;EPDDomain
+	// +kubebuilder:validation:Enum=Pool;EPDPipelineScope
 	Kind string `json:"kind"`
 
 	// +kubebuilder:validation:Enum=Aggregate;Encoder;Prefill;Decode;EPD
 	Role string `json:"role"`
 
-	Algorithm        string      `json:"algorithm"`
-	SnapshotID       string      `json:"snapshotID"`
-	ObservedAt       metav1.Time `json:"observedAt"`
-	ObservationState string      `json:"observationState"`
-	Disposition      string      `json:"disposition"`
-	Reason           string      `json:"reason"`
-	Message          string      `json:"message,omitempty"`
-	Direction        string      `json:"direction"`
+	Algorithm           string      `json:"algorithm"`
+	AdjustmentAlgorithm string      `json:"adjustmentAlgorithm"`
+	TriggerAlgorithm    string      `json:"triggerAlgorithm,omitempty"`
+	SnapshotID          string      `json:"snapshotID"`
+	ObservedAt          metav1.Time `json:"observedAt"`
+	ObservationState    string      `json:"observationState"`
+	Disposition         string      `json:"disposition"`
+	Reason              string      `json:"reason"`
+	Message             string      `json:"message,omitempty"`
+	TriggerDisposition  string      `json:"triggerDisposition,omitempty"`
+	TriggerReason       string      `json:"triggerReason,omitempty"`
+	TriggerMessage      string      `json:"triggerMessage,omitempty"`
+	Direction           string      `json:"direction"`
 
-	// RequestedGroups is the raw advisory target returned by the algorithm.
-	RequestedGroups int32 `json:"requestedGroups"`
+	// DesiredGroups is the capacity calculated by the scaling decision algorithm.
+	DesiredGroups int32 `json:"desiredGroups"`
 
-	// AppliedGroups is the core-constrained target successfully written to all
+	// AdjustmentReason and AdjustmentMessage explain desired-capacity adjustment.
+	AdjustmentReason  string `json:"adjustmentReason,omitempty"`
+	AdjustmentMessage string `json:"adjustmentMessage,omitempty"`
+
+	// AdjustedGroups is the capacity proposed by the adjustment decision.
+	AdjustedGroups int32 `json:"adjustedGroups"`
+
+	// AppliedGroups is the platform-resolved target successfully written to all
 	// ModelPools represented by this status entry.
 	// +kubebuilder:validation:Minimum=0
 	AppliedGroups int32 `json:"appliedGroups"`
@@ -363,7 +442,7 @@ type ModelServiceStatus struct {
 	// +kubebuilder:validation:MaxItems=8
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// Autoscaling contains the latest decision for each Pool or E/P/D domain.
+	// Autoscaling contains the latest decision for each Pool or linked E/P/D processing unit.
 	// +optional
 	// +listType=map
 	// +listMapKey=id

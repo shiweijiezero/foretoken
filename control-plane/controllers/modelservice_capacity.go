@@ -7,14 +7,14 @@ package controllers
 
 import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
-	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 	"k8s.io/apimachinery/pkg/api/meta"
 )
 
 // modelPoolCapacity counts actual Groups only. Requested capacity is assigned by the
 // caller, then any not-yet-materialized requested ordinals are recorded as Pending.
-func modelPoolCapacity(pool *inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup) algorithm.CapacityState {
-	var capacity algorithm.CapacityState
+func modelPoolCapacity(pool *inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup) core.CapacityState {
+	var capacity core.CapacityState
 	if pool == nil {
 		return capacity
 	}
@@ -31,10 +31,10 @@ func modelPoolCapacity(pool *inferencev1alpha1.ModelPool, groups []inferencev1al
 	return capacity
 }
 
-// epdDomainCapacity counts one unit only when its encoder, prefill, and decode
+// epdPipelineScopeCapacity counts one unit only when its encoder, prefill, and decode
 // members form an ordinal-complete active revision triplet. This deliberately does
 // not apply to P/D: P and D retain their independent Pool scaling targets.
-func epdDomainCapacity(pools map[string]*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, requested int32) algorithm.CapacityState {
+func epdPipelineScopeCapacity(pools map[string]*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, requested int32) core.CapacityState {
 	byRoleOrdinal := map[inferencev1alpha1.ModelRole]map[int32]*inferencev1alpha1.ModelGroup{
 		inferencev1alpha1.ModelRoleEncoder: {},
 		inferencev1alpha1.ModelRolePrefill: {},
@@ -55,7 +55,7 @@ func epdDomainCapacity(pools map[string]*inferencev1alpha1.ModelPool, groups []i
 		roleGroups[group.Spec.Ordinal] = group
 	}
 
-	var capacity algorithm.CapacityState
+	var capacity core.CapacityState
 	for ordinal := int32(0); ordinal < requested; ordinal++ {
 		encoder := byRoleOrdinal[inferencev1alpha1.ModelRoleEncoder][ordinal]
 		prefill := byRoleOrdinal[inferencev1alpha1.ModelRolePrefill][ordinal]
@@ -89,7 +89,7 @@ func modelGroupOwnedByPool(group *inferencev1alpha1.ModelGroup, pool *inferencev
 		routingControllerOwnerMatches(group, inferencev1alpha1.GroupVersion.String(), "ModelPool", pool.Name, pool.UID)
 }
 
-func addGroupLifecycle(capacity *algorithm.CapacityState, group *inferencev1alpha1.ModelGroup) {
+func addGroupLifecycle(capacity *core.CapacityState, group *inferencev1alpha1.ModelGroup) {
 	if group.DeletionTimestamp.IsZero() && group.Status.Phase == inferencev1alpha1.ModelGroupPhaseReady && routingGroupReady(group) {
 		capacity.ReadyGroups++
 		return
@@ -97,7 +97,7 @@ func addGroupLifecycle(capacity *algorithm.CapacityState, group *inferencev1alph
 	addLifecycle(capacity, group)
 }
 
-func addTripletLifecycle(capacity *algorithm.CapacityState, groups ...*inferencev1alpha1.ModelGroup) {
+func addTripletLifecycle(capacity *core.CapacityState, groups ...*inferencev1alpha1.ModelGroup) {
 	allReady := true
 	for _, group := range groups {
 		allReady = allReady && group.DeletionTimestamp.IsZero() && group.Status.Phase == inferencev1alpha1.ModelGroupPhaseReady && routingGroupReady(group)
@@ -131,7 +131,7 @@ func addTripletLifecycle(capacity *algorithm.CapacityState, groups ...*inference
 	capacity.Transitioning = true
 }
 
-func addLifecycle(capacity *algorithm.CapacityState, group *inferencev1alpha1.ModelGroup) {
+func addLifecycle(capacity *core.CapacityState, group *inferencev1alpha1.ModelGroup) {
 	if !group.DeletionTimestamp.IsZero() {
 		if meta.IsStatusConditionTrue(group.Status.Conditions, conditionDrained) {
 			capacity.TerminatingGroups++
@@ -157,7 +157,7 @@ func addLifecycle(capacity *algorithm.CapacityState, group *inferencev1alpha1.Mo
 	capacity.Transitioning = true
 }
 
-func finalizeCapacity(capacity *algorithm.CapacityState) {
+func finalizeCapacity(capacity *core.CapacityState) {
 	observed := capacity.ReadyGroups + capacity.PendingGroups + capacity.ProvisioningGroups + capacity.DrainingGroups + capacity.TerminatingGroups + capacity.FailedGroups
 	if observed < capacity.RequestedGroups {
 		capacity.PendingGroups += capacity.RequestedGroups - observed

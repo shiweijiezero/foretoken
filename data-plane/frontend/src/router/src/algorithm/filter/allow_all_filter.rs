@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Built-in filter that preserves every eligible candidate.
+//! Filter that preserves every eligible candidate.
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 
-use crate::{RouteCandidate, RouteFilter, RouterRequest};
+use std::sync::Arc;
+
+use crate::{CandidateIndex, FilterDescriptor, RouteCandidate, RouteFilter, RouterRequest};
+
+inventory::submit! {
+    FilterDescriptor {
+        name: "allow_all",
+        factory: || Arc::new(AllowAllFilter),
+    }
+}
 
 /// Keeps every candidate produced by the Router's health and compatibility checks.
 #[derive(Default)]
@@ -16,11 +25,10 @@ impl RouteFilter for AllowAllFilter {
     fn filter(
         &self,
         request: &RouterRequest,
-        candidates: Vec<RouteCandidate>,
+        candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
-        route_target_stats_reader: &dyn crate::RouteTargetStatsReader,
         customized_context: &mut (),
-    ) -> Vec<RouteCandidate> {
-        candidates
+    ) -> Vec<CandidateIndex> {
+        (0..candidates.len()).map(CandidateIndex).collect()
     }
 }

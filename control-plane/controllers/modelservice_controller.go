@@ -14,7 +14,7 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling"
-	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/compiler"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -43,7 +43,7 @@ var defaultAutoscaler = autoscaling.Manual()
 // PoolMetricsProvider supplies one read-only, target-attributed demand observation.
 // Implementations must not modify Kubernetes resources or autoscaling algorithms.
 type PoolMetricsProvider interface {
-	Observation(context.Context, algorithm.TargetID) (algorithm.DemandObservation, error)
+	Observation(context.Context, core.TargetID) (core.DemandObservation, error)
 }
 
 // ModelServiceReconciler compiles ModelService intent and owns ModelPool specs.
@@ -53,14 +53,6 @@ type ModelServiceReconciler struct {
 	PoolMetricsProvider PoolMetricsProvider
 }
 
-type modelScalingConfig struct {
-	Autoscaler    *autoscaling.Autoscaler
-	Limits        algorithm.CapacityLimits
-	PollInterval  time.Duration
-	MetricsMaxAge time.Duration
-	Automatic     bool
-}
-
 // SetupWithManager registers the ModelService controller and its owned resources.
 func (reconciler *ModelServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(manager).
@@ -68,78 +60,6 @@ func (reconciler *ModelServiceReconciler) SetupWithManager(manager ctrl.Manager)
 		Owns(&inferencev1alpha1.ModelPool{}).
 		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
 		Complete(reconciler)
-}
-
-func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alpha1.ModelService) (modelScalingConfig, error) {
-	config := modelScalingConfig{
-		Autoscaler:    defaultAutoscaler,
-		Limits:        algorithm.CapacityLimits{MinGroups: 0, MaxGroups: maxDesiredGroups},
-		PollInterval:  defaultScalingPollInterval,
-		MetricsMaxAge: defaultMetricsMaxAge,
-	}
-	if reconciler.Autoscaler != nil {
-		config.Autoscaler = reconciler.Autoscaler
-	}
-	autoscalingConfig := service.Spec.Autoscaling
-	if autoscalingConfig == nil {
-		return config, nil
-	}
-	if autoscalingConfig.MinGroups != nil {
-		config.Limits.MinGroups = *autoscalingConfig.MinGroups
-	}
-	if autoscalingConfig.MaxGroups != nil {
-		config.Limits.MaxGroups = *autoscalingConfig.MaxGroups
-	}
-	config.Limits.MaxScaleUpStep = int32OrDefault(autoscalingConfig.MaxScaleUpStep, 1)
-	config.Limits.MaxScaleDownStep = int32OrDefault(autoscalingConfig.MaxScaleDownStep, 1)
-	pollInterval, err := durationOrDefault(autoscalingConfig.PollInterval, defaultScalingPollInterval)
-	if err != nil {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling pollInterval: %w", err)
-	}
-	metricsMaxAge, err := durationOrDefault(autoscalingConfig.MetricsMaxAge, defaultMetricsMaxAge)
-	if err != nil {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling metricsMaxAge: %w", err)
-	}
-	config.PollInterval = pollInterval
-	config.MetricsMaxAge = metricsMaxAge
-	name := autoscaling.AlgorithmName(autoscalingConfig.Algorithm)
-	if name == "" {
-		name = autoscaling.AlgorithmManual
-	}
-	config.Automatic = name == autoscaling.AlgorithmQueue
-	if reconciler.Autoscaler == nil {
-		selected, err := autoscaling.New(autoscaling.Configuration{Algorithm: name, TargetQueuePerRoutableGroup: int64OrDefault(autoscalingConfig.TargetQueuePerRoutableGroup, 1)})
-		if err != nil {
-			return modelScalingConfig{}, err
-		}
-		config.Autoscaler = selected
-	}
-	return config, nil
-}
-
-func int32OrDefault(value *int32, fallback int32) int32 {
-	if value == nil {
-		return fallback
-	}
-	return *value
-}
-
-func int64OrDefault(value *int64, fallback int64) int64 {
-	if value == nil {
-		return fallback
-	}
-	return *value
-}
-
-func durationOrDefault(value inferencev1alpha1.Duration, fallback time.Duration) (time.Duration, error) {
-	if value == "" {
-		return fallback, nil
-	}
-	duration, err := time.ParseDuration(string(value))
-	if err != nil || duration <= 0 {
-		return 0, fmt.Errorf("must be a positive duration")
-	}
-	return duration, nil
 }
 
 // Reconcile materializes stable ModelPools and aggregates their serving readiness.
@@ -197,9 +117,10 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	pools := conditionState{metav1.ConditionTrue, "Applied", "All ModelPools were materialized"}
 	if err := reconciler.updateStatus(ctx, service, modelServiceState{
 		compiled:    conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
-		pools:       conditionState{metav1.ConditionTrue, "Applied", "All ModelPools were materialized"},
+		pools:       pools,
 		ready:       conditionState{conditionStatus(ready), readyReason, readyMessage},
 		autoscaling: &autoscalingStatus,
 	}); err != nil {
@@ -210,260 +131,9 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 		return ctrl.Result{}, err
 	}
 	if scaling.Automatic {
-		return ctrl.Result{RequeueAfter: scaling.PollInterval}, nil
+		return ctrl.Result{RequeueAfter: scaling.TriggerInterval}, nil
 	}
 	return ctrl.Result{}, nil
-}
-
-func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) ([]compiler.ModelPool, []inferencev1alpha1.AutoscalingTargetStatus, error) {
-	owned, err := reconciler.ownedPools(ctx, service)
-	if err != nil {
-		return nil, nil, err
-	}
-	byPoolName := make(map[string]*inferencev1alpha1.ModelPool, len(owned))
-	for index := range owned {
-		pool := &owned[index]
-		byPoolName[pool.Spec.PoolName] = pool
-	}
-	var groupList inferencev1alpha1.ModelGroupList
-	if err := reconciler.List(ctx, &groupList, client.InNamespace(service.Namespace)); err != nil {
-		return nil, nil, fmt.Errorf("list ModelGroups: %w", err)
-	}
-	scaling, err := reconciler.scalingConfig(service)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	evaluatedAt := metav1.Now()
-	policyRevision := fmt.Sprintf("%d", service.Generation)
-	snapshots := make([]algorithm.Snapshot, 0, len(compiledPools))
-	epdIndexes := make([]int, 0, 3)
-	hasEPD := false
-	for index, compiled := range compiledPools {
-		if compiled.Template.Role == inferencev1alpha1.ModelRoleEncoder {
-			hasEPD = true
-		}
-		if isEPDRole(compiled.Template.Role) {
-			epdIndexes = append(epdIndexes, index)
-		}
-	}
-	for _, compiled := range compiledPools {
-		if hasEPD && isEPDRole(compiled.Template.Role) {
-			continue
-		}
-		pool := byPoolName[compiled.Name]
-		current := compiled.DesiredGroups
-		transitioning := false
-		poolUID := ""
-		if pool != nil {
-			current = pool.Spec.DesiredGroups
-			transitioning = modelPoolTransitioning(pool)
-			poolUID = string(pool.UID)
-		}
-		target := algorithm.TargetID{
-			ServiceNamespace: service.Namespace,
-			ServiceName:      service.Name,
-			ServiceUID:       string(service.UID),
-			Name:             compiled.Name,
-			UID:              poolUID,
-			Kind:             algorithm.TargetPool,
-			Role:             autoscalingRole(compiled.Template.Role),
-		}
-		capacity := modelPoolCapacity(pool, groupList.Items)
-		capacity.BaselineGroups = compiled.DesiredGroups
-		capacity.RequestedGroups = current
-		capacity.Transitioning = capacity.Transitioning || transitioning
-		finalizeCapacity(&capacity)
-		// A Pool not yet created has no transition to fence; its first controller
-		// write remains eligible for the selected algorithm's bootstrap decision.
-		if pool == nil {
-			capacity.Transitioning = false
-		}
-		snapshots = append(snapshots, reconciler.scalingSnapshot(ctx, service, target, policyRevision, evaluatedAt, capacity, scaling))
-	}
-	if hasEPD {
-		snapshot, err := reconciler.epdScalingSnapshot(ctx, service, compiledPools, epdIndexes, byPoolName, groupList.Items, policyRevision, evaluatedAt, scaling)
-		if err != nil {
-			return nil, nil, err
-		}
-		snapshots = append(snapshots, snapshot)
-	}
-	decisions, err := scaling.Autoscaler.Plan(ctx, snapshots)
-	if err != nil {
-		return nil, nil, err
-	}
-	if len(decisions) != len(snapshots) {
-		return nil, nil, fmt.Errorf("autoscaler returned %d decisions for %d scaling targets", len(decisions), len(snapshots))
-	}
-
-	bySnapshotTarget := make(map[algorithm.TargetID]algorithm.Snapshot, len(snapshots))
-	for _, snapshot := range snapshots {
-		bySnapshotTarget[snapshot.Target] = snapshot
-	}
-	byTarget := make(map[algorithm.TargetID]int32, len(decisions))
-	statuses := make([]inferencev1alpha1.AutoscalingTargetStatus, 0, len(decisions))
-	for _, decision := range decisions {
-		if _, exists := byTarget[decision.Target]; exists {
-			return nil, nil, fmt.Errorf("autoscaler returned duplicate decision for target %q", decision.Target.Name)
-		}
-		snapshot, exists := bySnapshotTarget[decision.Target]
-		if !exists {
-			return nil, nil, fmt.Errorf("autoscaler returned unknown target %q", decision.Target.Name)
-		}
-		byTarget[decision.Target] = decision.AppliedGroups
-		reason := decision.Recommendation.Reason
-		if decision.Constraint != "" {
-			reason = decision.Constraint
-		}
-		statuses = append(statuses, inferencev1alpha1.AutoscalingTargetStatus{
-			ID:               fmt.Sprintf("%s/%s", decision.Target.Kind, decision.Target.Name),
-			Kind:             string(decision.Target.Kind),
-			Role:             string(decision.Target.Role),
-			Algorithm:        decision.Algorithm,
-			SnapshotID:       decision.Recommendation.SnapshotID,
-			ObservedAt:       metav1.NewTime(snapshot.EvaluatedAt),
-			ObservationState: string(snapshot.Observation.State),
-			Disposition:      string(decision.Recommendation.Disposition),
-			Reason:           string(reason),
-			Message:          decision.Message,
-			Direction:        string(decision.Direction),
-			RequestedGroups:  decision.Recommendation.DesiredGroups,
-			AppliedGroups:    decision.AppliedGroups,
-			ReadyGroups:      snapshot.Capacity.ReadyGroups,
-			RoutableGroups:   snapshot.Capacity.RoutableGroups,
-		})
-	}
-	resolved := append([]compiler.ModelPool(nil), compiledPools...)
-	for index := range resolved {
-		compiled := resolved[index]
-		var target algorithm.TargetID
-		if hasEPD && isEPDRole(compiled.Template.Role) {
-			target = epdTargetID(service)
-		} else {
-			poolUID := ""
-			if pool := byPoolName[compiled.Name]; pool != nil {
-				poolUID = string(pool.UID)
-			}
-			target = algorithm.TargetID{ServiceNamespace: service.Namespace, ServiceName: service.Name, ServiceUID: string(service.UID), Name: compiled.Name, UID: poolUID, Kind: algorithm.TargetPool, Role: autoscalingRole(compiled.Template.Role)}
-		}
-		desired, exists := byTarget[target]
-		if !exists {
-			return nil, nil, fmt.Errorf("autoscaler omitted target %q", target.Name)
-		}
-		resolved[index].DesiredGroups = desired
-	}
-	return resolved, statuses, nil
-}
-
-func (reconciler *ModelServiceReconciler) scalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, target algorithm.TargetID, policyRevision string, evaluatedAt metav1.Time, capacity algorithm.CapacityState, scaling modelScalingConfig) algorithm.Snapshot {
-	return algorithm.Snapshot{
-		Target:      target,
-		Ref:         algorithm.SnapshotRef{ID: fmt.Sprintf("%s/%s/%s/%s", service.UID, service.ResourceVersion, target.Kind, target.Name), PolicyRevision: policyRevision},
-		EvaluatedAt: evaluatedAt.Time,
-		Capacity:    capacity,
-		Limits:      scaling.Limits,
-		Observation: reconciler.demandObservation(ctx, target, evaluatedAt.Time, scaling.MetricsMaxAge),
-	}
-}
-
-// demandObservation fails closed: a missing or failed provider can never be interpreted as zero demand.
-func (reconciler *ModelServiceReconciler) demandObservation(ctx context.Context, target algorithm.TargetID, _ time.Time, maxAge time.Duration) algorithm.DemandObservation {
-	if reconciler.PoolMetricsProvider == nil {
-		return algorithm.DemandObservation{State: algorithm.ObservationUnavailable}
-	}
-	observation, err := reconciler.PoolMetricsProvider.Observation(ctx, target)
-	if err != nil || observation.State == "" {
-		return algorithm.DemandObservation{State: algorithm.ObservationUnavailable}
-	}
-	if observation.State == algorithm.ObservationFresh {
-		if observation.Window.End.IsZero() || observation.Window.CollectedAt.IsZero() {
-			return algorithm.DemandObservation{State: algorithm.ObservationUnavailable}
-		}
-		age := observation.Window.CollectedAt.Sub(observation.Window.End)
-		if age < 0 || age > maxAge {
-			observation.State = algorithm.ObservationStale
-		}
-	}
-	return observation
-}
-
-func (reconciler *ModelServiceReconciler) epdScalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, pools []compiler.ModelPool, indexes []int, owned map[string]*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, policyRevision string, evaluatedAt metav1.Time, scaling modelScalingConfig) (algorithm.Snapshot, error) {
-	if len(indexes) != 3 {
-		return algorithm.Snapshot{}, fmt.Errorf("E/P/D scaling requires exactly one encoder, prefill, and decode Pool")
-	}
-	seenRoles := make(map[inferencev1alpha1.ModelRole]struct{}, 3)
-	baseline := pools[indexes[0]].DesiredGroups
-	requested := int32(0)
-	hasRequested := false
-	transitioning := false
-	for _, index := range indexes {
-		pool := pools[index]
-		if _, exists := seenRoles[pool.Template.Role]; exists {
-			return algorithm.Snapshot{}, fmt.Errorf("E/P/D scaling requires exactly one %s Pool", pool.Template.Role)
-		}
-		seenRoles[pool.Template.Role] = struct{}{}
-		if pool.DesiredGroups != baseline {
-			return algorithm.Snapshot{}, fmt.Errorf("E/P/D scaling requires equal baseline capacity")
-		}
-		if existing := owned[pool.Name]; existing != nil {
-			// A failed multi-object write can temporarily leave E/P/D Pools at
-			// different desired counts. Use the highest request as the safe
-			// recovery baseline so scale-down never removes a partial triplet.
-			if !hasRequested || existing.Spec.DesiredGroups > requested {
-				requested = existing.Spec.DesiredGroups
-			}
-			hasRequested = true
-			transitioning = transitioning || modelPoolTransitioning(existing)
-		} else {
-			transitioning = true
-		}
-	}
-	if !hasRequested {
-		requested = baseline
-	}
-	for _, role := range []inferencev1alpha1.ModelRole{inferencev1alpha1.ModelRoleEncoder, inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode} {
-		if _, exists := seenRoles[role]; !exists {
-			return algorithm.Snapshot{}, fmt.Errorf("E/P/D scaling requires a %s Pool", role)
-		}
-	}
-	capacity := epdDomainCapacity(owned, groups, requested)
-	capacity.BaselineGroups = baseline
-	capacity.RequestedGroups = requested
-	capacity.Transitioning = capacity.Transitioning || transitioning
-	finalizeCapacity(&capacity)
-	return reconciler.scalingSnapshot(ctx, service, epdTargetID(service), policyRevision, evaluatedAt, capacity, scaling), nil
-}
-
-// epdScalingSnapshot preserves the pure snapshot helper used by controller tests.
-func epdScalingSnapshot(service *inferencev1alpha1.ModelService, pools []compiler.ModelPool, indexes []int, owned map[string]*inferencev1alpha1.ModelPool, policyRevision string, evaluatedAt metav1.Time) (algorithm.Snapshot, error) {
-	scaling := modelScalingConfig{Autoscaler: defaultAutoscaler, Limits: algorithm.CapacityLimits{MinGroups: 0, MaxGroups: maxDesiredGroups}, MetricsMaxAge: defaultMetricsMaxAge}
-	return (&ModelServiceReconciler{}).epdScalingSnapshot(context.Background(), service, pools, indexes, owned, nil, policyRevision, evaluatedAt, scaling)
-}
-
-func epdTargetID(service *inferencev1alpha1.ModelService) algorithm.TargetID {
-	return algorithm.TargetID{ServiceNamespace: service.Namespace, ServiceName: service.Name, ServiceUID: string(service.UID), Name: "epd", Kind: algorithm.TargetEPDDomain, Role: algorithm.RoleEPD}
-}
-
-func autoscalingRole(role inferencev1alpha1.ModelRole) algorithm.TargetRole {
-	switch role {
-	case inferencev1alpha1.ModelRoleEncoder:
-		return algorithm.RoleEncoder
-	case inferencev1alpha1.ModelRolePrefill:
-		return algorithm.RolePrefill
-	case inferencev1alpha1.ModelRoleDecode:
-		return algorithm.RoleDecode
-	default:
-		return algorithm.RoleAggregate
-	}
-}
-
-func isEPDRole(role inferencev1alpha1.ModelRole) bool {
-	switch role {
-	case inferencev1alpha1.ModelRoleEncoder, inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode:
-		return true
-	default:
-		return false
-	}
 }
 
 func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) error {
@@ -548,12 +218,15 @@ func (reconciler *ModelServiceReconciler) serviceReadiness(ctx context.Context, 
 	}
 	hasCapacity := false
 	for _, compiled := range compiledPools {
+		pool := byPoolName[compiled.Name]
+		if pool == nil || pool.Spec.DesiredGroups != compiled.DesiredGroups || !reflect.DeepEqual(pool.Spec.Template, compiled.Template) {
+			return false, "PoolsNotReady", "One or more ModelPools are not ready", nil
+		}
 		if compiled.DesiredGroups == 0 {
 			continue
 		}
 		hasCapacity = true
-		pool := byPoolName[compiled.Name]
-		if pool == nil || pool.Spec.DesiredGroups != compiled.DesiredGroups || !modelPoolReady(pool) {
+		if !modelPoolReady(pool) {
 			return false, "PoolsNotReady", "One or more ModelPools are not ready", nil
 		}
 	}
@@ -658,7 +331,7 @@ func (reconciler *ModelServiceReconciler) updateStatus(ctx context.Context, serv
 }
 
 // resolveManagedKVBindings replaces a user name reference with the KVService UID and
-// current binding contract before any ModelPool is created or changed.
+// current binding configuration before any ModelPool is created or changed.
 func (reconciler *ModelServiceReconciler) resolveManagedKVBindings(ctx context.Context, service *inferencev1alpha1.ModelService, pools []compiler.ModelPool) error {
 	for i := range pools {
 		store := modelServicePoolStore(service, pools[i].Name)

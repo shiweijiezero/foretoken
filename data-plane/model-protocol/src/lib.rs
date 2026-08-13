@@ -27,8 +27,8 @@ pub enum ModelServerRole {
 
 /// Model-server wire execution stage selected for a routed request.
 ///
-/// This is distinct from Router's session stage and route target execution role; it is the typed value
-/// consumed by the model-server HTTP contract.
+/// This typed value is sent to the model-server HTTP endpoint. It is distinct from the Router's
+/// request-local routing state and from a route target's execution role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RouteStage {
@@ -44,7 +44,7 @@ pub enum RouteStage {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GenerateInput {
-    /// Model-server execution stage selected by the router, not Router's session stage.
+    /// Model-server execution stage selected by the router, not Router's per-request routing stage.
     #[serde(default)]
     pub stage: RouteStage,
     pub request_id: String,
@@ -63,6 +63,8 @@ pub struct GenerateInput {
     #[serde(default)]
     pub data_parallel_rank: Option<u32>,
     #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
     pub reasoning_parser_kwargs: Option<ReasoningParserKwargs>,
     #[serde(default)]
     pub lora_request: Option<LoraRequest>,
@@ -80,6 +82,7 @@ impl From<GenerateRequest> for GenerateInput {
             trace_headers: request.trace_headers,
             priority: request.priority,
             data_parallel_rank: request.data_parallel_rank,
+            session_id: request.session_id,
             reasoning_parser_kwargs: request.reasoning_parser_kwargs,
             lora_request: request.lora_request,
         }
@@ -114,6 +117,7 @@ impl From<GenerateInput> for GenerateRequest {
             trace_headers: request.trace_headers,
             priority: request.priority,
             data_parallel_rank: request.data_parallel_rank,
+            session_id: request.session_id,
             reasoning_parser_kwargs: request.reasoning_parser_kwargs,
             lora_request: request.lora_request,
         }

@@ -87,7 +87,7 @@ spec:
                 type: string
               template:
                 description: |-
-                  NormalizedPoolTemplate is the normalized contract produced from ModelService intent.
+                  NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
                   Platform runtime and accelerator resolution may further constrain it before Groups are created.
                 properties:
                   backend:
@@ -99,11 +99,11 @@ spec:
                       selected for encoder and prefill Pools.
                     type: string
                   extraArgs:
-                    description: ExtraArgs are backend flags that the concrete adapter
-                      must validate before Group creation.
+                    description: ExtraArgs are inference-engine flags that the concrete
+                      adapter must validate before Group creation.
                     items:
                       description: |-
-                        BackendArg is one long-form CLI argument passed to the inference backend.
+                        BackendArg is one long-form CLI argument passed to the inference engine.
                         The vLLM compiler checks the allowed arguments and whether they require values;
                         this schema rejects spaces, aliases, and positional arguments.
                       maxLength: 4096
@@ -114,7 +114,7 @@ spec:
                     type: array
                     x-kubernetes-list-type: atomic
                   features:
-                    description: Features is the normalized explicit capability contract
+                    description: Features is the normalized explicit capabilities
                       for this Pool.
                     properties:
                       multimodal:
@@ -216,7 +216,7 @@ spec:
                         type: object
                     type: object
                     x-kubernetes-validations:
-                    - message: kvCache must select exactly one backend
+                    - message: kvCache must select exactly one storage mode
                       rule: (has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload)
                         && has(self.mooncakeStore))
                   maxInputTokens:

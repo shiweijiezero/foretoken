@@ -45,6 +45,7 @@ async fn chat_response_uses_vllms_structured_output_processor() {
         cache_salt: None,
         add_special_tokens: false,
         data_parallel_rank: None,
+        session_id: None,
         lora_request: None,
     };
     let tool_call_parser = foretoken_chat::ParserSelection::Auto;
@@ -69,6 +70,7 @@ async fn chat_response_uses_vllms_structured_output_processor() {
         trace_headers: None,
         priority: 0,
         data_parallel_rank: None,
+        session_id: None,
         reasoning_parser_kwargs: None,
         lora_request: None,
     };
@@ -198,7 +200,7 @@ async fn chat_maps_tool_history_choice_reasoning_and_structured_output() {
         Arc::new(Vec::new),
         std::time::Duration::from_secs(1),
     );
-    let response = app.oneshot(Request::builder().method("POST").uri("/v1/chat/completions").header("content-type", "application/json").body(Body::from(r#"{"model":"m","include_reasoning":false,"parallel_tool_calls":true,"tools":[{"type":"function","function":{"name":"weather","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"weather"}},"response_format":{"type":"json_object"},"messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"weather","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"sunny"},{"role":"user","content":"continue"}]}"#)).unwrap()).await.unwrap();
+    let response = app.oneshot(Request::builder().method("POST").uri("/v1/chat/completions").header("content-type", "application/json").body(Body::from(r#"{"model":"m","include_reasoning":false,"parallel_tool_calls":true,"tools":[{"type":"function","function":{"name":"weather","parameters":{"type":"object"}}}],"tool_choice":{"type":"function","function":{"name":"weather"}},"response_format":{"type":"json_object"},"session_id":"session-1","messages":[{"role":"assistant","content":null,"tool_calls":[{"id":"call_1","type":"function","function":{"name":"weather","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"sunny"},{"role":"user","content":"continue"}]}"#)).unwrap()).await.unwrap();
     assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     let captured = generation.chat_requests.lock().unwrap();
     let (chat, include_reasoning) = &captured[0];
@@ -211,6 +213,7 @@ async fn chat_maps_tool_history_choice_reasoning_and_structured_output() {
         }
     );
     assert!(chat.parallel_tool_calls);
+    assert_eq!(chat.session_id.as_deref(), Some("session-1"));
     assert!(matches!(chat.messages[0], ChatMessage::Assistant { .. }));
     assert!(
         matches!(chat.messages[1], ChatMessage::ToolResponse { ref tool_call_id, .. } if tool_call_id == "call_1")

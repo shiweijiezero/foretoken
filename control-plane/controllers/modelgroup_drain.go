@@ -33,7 +33,7 @@ const (
 	conditionDrained            = "Drained"
 	modelGroupDrainPollInterval = time.Second
 	frontendHTTPPortName        = "http"
-	modelServerTelemetryVersion = 1
+	modelServerTelemetryVersion = 2
 )
 
 type drainTelemetry struct {

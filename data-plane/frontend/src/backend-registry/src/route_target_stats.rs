@@ -187,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn calculates_an_algorithm_selected_window_from_cumulative_snapshots() {
+    fn calculates_a_router_selected_window_from_cumulative_snapshots() {
         let mut history = RouteTargetStatsHistory::new(Duration::from_secs(300));
         history.push(snapshot(1_000, 100, histogram(2, 0.2, 1)));
         history.push(snapshot(151_000, 400, histogram(4, 0.8, 2)));

@@ -37,7 +37,13 @@ const (
 type KVGroupReconciler struct{ client.Client }
 
 func (reconciler *KVGroupReconciler) SetupWithManager(manager ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(manager).For(&inferencev1alpha1.KVGroup{}).Owns(&appsv1.Deployment{}).Owns(&corev1.Service{}).Owns(&corev1.PersistentVolumeClaim{}).Owns(&networkingv1.NetworkPolicy{}).Complete(reconciler)
+	return ctrl.NewControllerManagedBy(manager).
+		For(&inferencev1alpha1.KVGroup{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
+		Owns(&corev1.PersistentVolumeClaim{}).
+		Owns(&networkingv1.NetworkPolicy{}).
+		Complete(reconciler)
 }
 
 func (reconciler *KVGroupReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
@@ -153,7 +159,7 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup) (*appsv1.Deployme
 	}
 	service := &corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: group.Namespace, Labels: labels}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: labels, Ports: []corev1.ServicePort{{Name: "rpc", Port: port, TargetPort: intstr.FromString("rpc")}}}}
 	// Mooncake RDMA can use provider-specific dynamic paths. Until a fixed port
-	// contract is verified, namespace is the trust boundary; all namespace Pods
+	// configuration is verified, namespace is the trust boundary; all namespace Pods
 	// may reach client Pods rather than accidentally blocking RDMA data traffic.
 	networkPolicy := &networkingv1.NetworkPolicy{TypeMeta: metav1.TypeMeta{APIVersion: networkingv1.SchemeGroupVersion.String(), Kind: "NetworkPolicy"}, ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: group.Namespace, Labels: labels}, Spec: networkingv1.NetworkPolicySpec{PodSelector: metav1.LabelSelector{MatchLabels: labels}, PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress}, Ingress: []networkingv1.NetworkPolicyIngressRule{{From: []networkingv1.NetworkPolicyPeer{{PodSelector: &metav1.LabelSelector{}}}}}}}
 	return deployment, service, pvc, networkPolicy, nil

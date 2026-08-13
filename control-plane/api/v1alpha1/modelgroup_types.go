@@ -89,7 +89,7 @@ const (
 	ECTransferRoleConsumer ECTransferRole = "consumer"
 )
 
-// ModelGroupECRuntimeConfig is the immutable encoder/prefill transfer contract.
+// ModelGroupECRuntimeConfig is the immutable encoder/prefill transfer configuration.
 // The controller resolves every value from a platform profile; users cannot supply
 // connector options, module paths, or peer endpoints.
 type ModelGroupECRuntimeConfig struct {
@@ -127,7 +127,7 @@ type ModelGroupKVOffloadRuntime struct {
 	Filesystem bool `json:"filesystem,omitempty"`
 }
 
-// ModelGroupMooncakeStoreRuntime defines the resolved external Store contract.
+// ModelGroupMooncakeStoreRuntime defines the resolved external Store configuration.
 type ModelGroupMooncakeStoreRuntime struct {
 	// +kubebuilder:validation:MinLength=1
 	ProfileName string `json:"profileName"`
@@ -147,8 +147,8 @@ type ModelGroupMooncakeStoreRuntime struct {
 	PythonHashSeed string `json:"pythonHashSeed"`
 }
 
-// ModelGroupKVRuntimeConfig is the immutable resolved KV runtime contract.
-// +kubebuilder:validation:XValidation:rule="(has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload) && has(self.mooncakeStore))",message="kvRuntime must select exactly one KV backend"
+// ModelGroupKVRuntimeConfig is the immutable resolved KV storage-mode configuration.
+// +kubebuilder:validation:XValidation:rule="(has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload) && has(self.mooncakeStore))",message="kvRuntime must select exactly one KV storage mode"
 type ModelGroupKVRuntimeConfig struct {
 	// +optional
 	Offload *ModelGroupKVOffloadRuntime `json:"offload,omitempty"`
@@ -156,7 +156,7 @@ type ModelGroupKVRuntimeConfig struct {
 	MooncakeStore *ModelGroupMooncakeStoreRuntime `json:"mooncakeStore,omitempty"`
 }
 
-// ModelGroupRuntime defines the resolved backend runtime.
+// ModelGroupRuntime defines the resolved inference-engine runtime.
 type ModelGroupRuntime struct {
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`
@@ -170,28 +170,28 @@ type ModelGroupRuntime struct {
 	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port"`
 
-	// Args contains backend-owned flags not represented by the typed Group contract.
+	// Args contains inference-engine flags not represented by the typed Group specification.
 	// +optional
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=256
 	Args []BackendArg `json:"args,omitempty"`
 
 	// InternalGenerateRequestBodyLimitBytes is the group-local generate request
-	// body limit resolved from the ModelService contract.
+	// body limit resolved from the ModelService specification.
 	// +kubebuilder:validation:Minimum=1048576
 	// +kubebuilder:validation:Maximum=268435456
 	InternalGenerateRequestBodyLimitBytes int64 `json:"internalGenerateRequestBodyLimitBytes"`
 }
 
-// ModelGroupSpec is an immutable execution contract compiled by the Pool controller.
+// ModelGroupSpec is an immutable execution specification compiled by the Pool controller.
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ModelGroup spec is immutable"
 // +kubebuilder:validation:XValidation:rule="self.memberCount == self.nodeCount",message="memberCount must equal nodeCount in v1alpha1"
 // +kubebuilder:validation:XValidation:rule="self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp",message="accelerator capacity must equal the compiled worker rank count"
-// +kubebuilder:validation:XValidation:rule="self.role == 'aggregate' ? !has(self.pdRuntime) && !has(self.ecRuntime) : self.role == 'encoder' ? !has(self.pdRuntime) && has(self.ecRuntime) && self.ecRuntime.role == 'producer' : self.role == 'prefill' ? has(self.pdRuntime) && (!has(self.ecRuntime) || self.ecRuntime.role == 'consumer') : self.role == 'decode' ? has(self.pdRuntime) && !has(self.ecRuntime) : false",message="aggregate, encoder, prefill, and decode ModelGroups require their fixed runtime contracts"
+// +kubebuilder:validation:XValidation:rule="self.role == 'aggregate' ? !has(self.pdRuntime) && !has(self.ecRuntime) : self.role == 'encoder' ? !has(self.pdRuntime) && has(self.ecRuntime) && self.ecRuntime.role == 'producer' : self.role == 'prefill' ? has(self.pdRuntime) && (!has(self.ecRuntime) || self.ecRuntime.role == 'consumer') : self.role == 'decode' ? has(self.pdRuntime) && !has(self.ecRuntime) : false",message="aggregate, encoder, prefill, and decode ModelGroups require their fixed runtime configurations"
 type ModelGroupSpec struct {
 	ModelPoolRef LocalObjectReference `json:"modelPoolRef"`
 
-	// Revision identifies one resolved Pool execution contract.
+	// Revision identifies one resolved Pool execution specification.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
@@ -206,15 +206,15 @@ type ModelGroupSpec struct {
 	Artifacts ModelGroupArtifacts `json:"artifacts"`
 	Runtime   ModelGroupRuntime   `json:"runtime"`
 
-	// PDRuntime is the controller-owned P/D transport contract.
+	// PDRuntime is the controller-owned P/D transport configuration.
 	// +optional
 	PDRuntime *ModelGroupPDRuntimeConfig `json:"pdRuntime,omitempty"`
 
-	// ECRuntime is the controller-owned resolved encoder/prefill transfer contract.
+	// ECRuntime is the controller-owned resolved encoder/prefill transfer configuration.
 	// +optional
 	ECRuntime *ModelGroupECRuntimeConfig `json:"ecRuntime,omitempty"`
 
-	// KVRuntime is the controller-owned resolved KV cache contract.
+	// KVRuntime is the controller-owned resolved KV storage-mode configuration.
 	// +optional
 	KVRuntime *ModelGroupKVRuntimeConfig `json:"kvRuntime,omitempty"`
 
@@ -236,7 +236,7 @@ type ModelGroupSpec struct {
 	// +kubebuilder:validation:Minimum=1
 	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
 
-	// Features is the immutable capability contract advertised to routing clients.
+	// Features is the immutable capabilities advertised to routing clients.
 	Features ModelFeatures `json:"features"`
 
 	Accelerator ModelGroupAccelerator `json:"accelerator"`

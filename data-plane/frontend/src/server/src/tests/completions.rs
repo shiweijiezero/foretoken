@@ -63,7 +63,7 @@ async fn completion_preserves_token_prompts_and_supported_sampling_fields() {
         Arc::new(Vec::new),
         std::time::Duration::from_secs(1),
     );
-    let body = r#"{"model":"m","prompt":[1,2,3],"stream":true,"temperature":0.4,"top_p":0.8,"top_k":20,"min_p":0.1,"seed":7,"max_tokens":64,"min_tokens":2,"frequency_penalty":0.2,"presence_penalty":0.3,"repetition_penalty":1.1,"stop_token_ids":[9],"ignore_eos":true,"logit_bias":{"10":-2.0},"allowed_token_ids":[10,11],"bad_words":["bad"],"logprobs":5,"prompt_logprobs":3,"priority":4,"cache_salt":"tenant"}"#;
+    let body = r#"{"model":"m","prompt":[1,2,3],"stream":true,"temperature":0.4,"top_p":0.8,"top_k":20,"min_p":0.1,"seed":7,"max_tokens":64,"min_tokens":2,"frequency_penalty":0.2,"presence_penalty":0.3,"repetition_penalty":1.1,"stop_token_ids":[9],"ignore_eos":true,"logit_bias":{"10":-2.0},"allowed_token_ids":[10,11],"bad_words":["bad"],"logprobs":5,"prompt_logprobs":3,"priority":4,"cache_salt":"tenant","session_id":"session-1"}"#;
     let response = app
         .oneshot(
             Request::builder()
@@ -78,7 +78,8 @@ async fn completion_preserves_token_prompts_and_supported_sampling_fields() {
 
     assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     let captured = generation.text_requests.lock().unwrap();
-    let (prompt, sampling, intermediate, priority, cache_salt, arrival_time) = &captured[0];
+    let (prompt, sampling, intermediate, priority, cache_salt, session_id, arrival_time) =
+        &captured[0];
     assert_eq!(prompt, &Prompt::TokenIds(vec![1, 2, 3]));
     assert_eq!(sampling.top_k, Some(20));
     assert_eq!(sampling.min_p, Some(0.1));
@@ -91,6 +92,7 @@ async fn completion_preserves_token_prompts_and_supported_sampling_fields() {
     assert!(*intermediate);
     assert_eq!(*priority, 4);
     assert_eq!(cache_salt.as_deref(), Some("tenant"));
+    assert_eq!(session_id.as_deref(), Some("session-1"));
     assert!(arrival_time.is_some());
 }
 

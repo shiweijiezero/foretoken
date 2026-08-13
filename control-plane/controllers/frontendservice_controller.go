@@ -33,7 +33,24 @@ const (
 	frontendConditionAvailable    = "WorkloadAvailable"
 	frontendConditionRouteReady   = "RouteAccepted"
 	frontendConditionRoutingReady = "RoutingReady"
+
+	frontendResourcesAppliedMessage         = "Frontend resources were applied"
+	frontendResourcesNotMaterializedMessage = "Frontend resources were not materialized"
+	frontendDeploymentAvailableMessage      = "The frontend Deployment is available"
+	frontendDeploymentUnavailableMessage    = "The frontend Deployment is not available"
+	frontendRouteAcceptedMessage            = "The HTTPRoute is accepted and resolved"
+	frontendRoutePendingMessage             = "The HTTPRoute is not accepted and resolved"
+	frontendRoutingInstalledMessage         = "A routable backend snapshot is installed"
+	frontendRoutingNotInstalledMessage      = "No routable backend snapshot is installed"
 )
+
+var frontendConditionTypes = [...]string{
+	frontendConditionMaterialized,
+	frontendConditionAvailable,
+	frontendConditionRouteReady,
+	frontendConditionRoutingReady,
+	conditionReady,
+}
 
 // GatewayParent identifies the platform-owned Gateway that accepts frontend traffic.
 type GatewayParent struct {
@@ -175,14 +192,38 @@ func (reconciler *FrontendServiceReconciler) updateStatus(ctx context.Context, f
 	base := frontend.DeepCopy()
 	frontend.Status.ObservedGeneration = frontend.Generation
 	if state.FailureReason != "" {
-		for _, conditionType := range []string{frontendConditionMaterialized, frontendConditionAvailable, frontendConditionRouteReady, frontendConditionRoutingReady, conditionReady} {
+		for _, conditionType := range frontendConditionTypes {
 			setFrontendCondition(frontend, conditionType, metav1.ConditionFalse, state.FailureReason, state.FailureMessage)
 		}
 	} else {
-		setFrontendCondition(frontend, frontendConditionMaterialized, conditionStatus(state.Materialized), frontendBooleanReason(state.Materialized, "Applied", "NotMaterialized"), frontendBooleanMessage(state.Materialized, "Frontend resources were applied", "Frontend resources were not materialized"))
-		setFrontendCondition(frontend, frontendConditionAvailable, conditionStatus(state.Available), frontendBooleanReason(state.Available, "Available", "Unavailable"), frontendBooleanMessage(state.Available, "The frontend Deployment is available", "The frontend Deployment is not available"))
-		setFrontendCondition(frontend, frontendConditionRouteReady, conditionStatus(state.RouteReady), frontendBooleanReason(state.RouteReady, "Accepted", "Pending"), frontendBooleanMessage(state.RouteReady, "The HTTPRoute is accepted and resolved", "The HTTPRoute is not accepted and resolved"))
-		setFrontendCondition(frontend, frontendConditionRoutingReady, conditionStatus(state.RoutingReady), frontendBooleanReason(state.RoutingReady, "Installed", "NotInstalled"), frontendBooleanMessage(state.RoutingReady, "A routable backend snapshot is installed", "No routable backend snapshot is installed"))
+		setFrontendCondition(
+			frontend,
+			frontendConditionMaterialized,
+			conditionStatus(state.Materialized),
+			frontendBooleanReason(state.Materialized, "Applied", "NotMaterialized"),
+			frontendBooleanMessage(state.Materialized, frontendResourcesAppliedMessage, frontendResourcesNotMaterializedMessage),
+		)
+		setFrontendCondition(
+			frontend,
+			frontendConditionAvailable,
+			conditionStatus(state.Available),
+			frontendBooleanReason(state.Available, "Available", "Unavailable"),
+			frontendBooleanMessage(state.Available, frontendDeploymentAvailableMessage, frontendDeploymentUnavailableMessage),
+		)
+		setFrontendCondition(
+			frontend,
+			frontendConditionRouteReady,
+			conditionStatus(state.RouteReady),
+			frontendBooleanReason(state.RouteReady, "Accepted", "Pending"),
+			frontendBooleanMessage(state.RouteReady, frontendRouteAcceptedMessage, frontendRoutePendingMessage),
+		)
+		setFrontendCondition(
+			frontend,
+			frontendConditionRoutingReady,
+			conditionStatus(state.RoutingReady),
+			frontendBooleanReason(state.RoutingReady, "Installed", "NotInstalled"),
+			frontendBooleanMessage(state.RoutingReady, frontendRoutingInstalledMessage, frontendRoutingNotInstalledMessage),
+		)
 		reason, message := frontendReadyFailure(state)
 		setFrontendCondition(frontend, conditionReady, conditionStatus(reason == "Ready"), reason, message)
 	}
@@ -208,7 +249,7 @@ func frontendReadyFailure(state frontendState) (string, string) {
 	case !state.RouteReady:
 		return "RouteNotAccepted", "The HTTPRoute is not accepted and resolved by its Gateway"
 	case !state.RoutingReady:
-		return "RoutingNotReady", "No routable backend snapshot is installed"
+		return "RoutingNotReady", frontendRoutingNotInstalledMessage
 	default:
 		return "Ready", "The frontend workload, route, and backend routing are ready"
 	}

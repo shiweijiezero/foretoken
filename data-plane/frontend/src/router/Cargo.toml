@@ -10,7 +10,11 @@ license.workspace = true
 [dependencies]
 foretoken-kv-indexer = { path = "../kv-indexer" }
 foretoken-model-protocol = { path = "../../../model-protocol" }
+inventory.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 vllm-engine-core-client.workspace = true
 vllm-llm.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

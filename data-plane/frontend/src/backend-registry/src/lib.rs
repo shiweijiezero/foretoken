@@ -10,8 +10,8 @@ mod snapshot;
 
 pub use registry::{BackendRegistry, RouteTable};
 pub use snapshot::{
-    ModelIdentity, ServingSnapshot, SnapshotEpdComponent, SnapshotEpdDomain, SnapshotError,
-    SnapshotGroup, SnapshotModel, SnapshotPdComponent, SnapshotPdDomain,
+    ModelIdentity, ServingSnapshot, SnapshotEpdComponent, SnapshotEpdPipelineScope, SnapshotError,
+    SnapshotGroup, SnapshotModel, SnapshotPdComponent, SnapshotPdPipelineScope,
 };
 
 use foretoken_kv_indexer::KvRuntimeConfig;

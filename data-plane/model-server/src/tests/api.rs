@@ -253,6 +253,7 @@ async fn generate_accepts_msgpack_multimodal_tensors() {
         trace_headers: None,
         priority: 0,
         data_parallel_rank: None,
+        session_id: Some("session-mm".into()),
         reasoning_parser_kwargs: None,
         lora_request: None,
     })
@@ -269,14 +270,9 @@ async fn generate_accepts_msgpack_multimodal_tensors() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        backend.requests.lock().unwrap()[0]
-            .mm_features
-            .as_ref()
-            .unwrap()
-            .len(),
-        1
-    );
+    let requests = backend.requests.lock().unwrap();
+    assert_eq!(requests[0].session_id.as_deref(), Some("session-mm"));
+    assert_eq!(requests[0].mm_features.as_ref().unwrap().len(), 1);
 }
 
 #[tokio::test]

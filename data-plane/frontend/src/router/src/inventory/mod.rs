@@ -21,12 +21,6 @@ pub trait RouteInventory: Send + Sync {
     /// Reports whether one route target may receive new work.
     fn is_route_target_healthy(&self, route_target_id: &RouteTargetId) -> bool;
 
-    /// Returns the latest current-load snapshot when available.
-    #[allow(unused_variables)]
-    fn route_target_load(&self, route_target_id: &RouteTargetId) -> Option<crate::RouteTargetLoad> {
-        None
-    }
-
     /// Returns the capabilities currently trusted for one route target.
     fn effective_capabilities(&self, route_target_id: &RouteTargetId) -> BTreeSet<String> {
         self.model_routes()

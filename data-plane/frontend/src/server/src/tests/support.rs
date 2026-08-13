@@ -25,6 +25,7 @@ pub(super) type CapturedTextRequest = (
     bool,
     i32,
     Option<String>,
+    Option<String>,
     Option<f64>,
 );
 
@@ -45,6 +46,7 @@ impl Generation for RecordingGeneration {
             request.intermediate,
             request.priority,
             request.cache_salt.clone(),
+            request.session_id.clone(),
             request.arrival_time,
         ));
         self.request_ids
@@ -257,6 +259,7 @@ pub(super) fn generated_text(
                     trace_headers: None,
                     priority: 0,
                     data_parallel_rank: None,
+                    session_id: None,
                     reasoning_parser_kwargs: None,
                     lora_request: None,
                 },

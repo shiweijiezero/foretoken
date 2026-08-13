@@ -145,6 +145,7 @@ async fn logical_only_runtime_returns_unavailable_without_queueing() {
         intermediate: false,
         priority: 0,
         cache_salt: None,
+        session_id: None,
         arrival_time: None,
         tool_call_parser: ParserSelection::None,
         reasoning_parser: ParserSelection::None,

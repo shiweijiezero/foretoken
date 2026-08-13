@@ -30,8 +30,8 @@ impl RouteTargetId {
 pub enum ScalingTargetKind {
     /// ModelPool-owned capacity.
     Pool,
-    /// E-P-D domain-owned capacity.
-    EPDDomain,
+    /// Capacity owned by a linked E/P/D route set.
+    EPDPipelineScope,
 }
 
 /// Stable control-plane target that owns route target capacity.
@@ -86,9 +86,9 @@ pub struct RouteTarget {
     /// Execution role provided by the route target.
     #[serde(default)]
     pub role: ModelServerRole,
-    /// Optional E-P-D domain identity used outside Router selection.
+    /// Optional identity that links the Encoder, Prefill, and Decode routes in one E/P/D route set.
     #[serde(default)]
-    pub domain_id: Option<String>,
+    pub pipeline_scope_id: Option<String>,
     /// Number of data-parallel replicas selectable for this route target.
     pub data_parallel_size: u32,
 }

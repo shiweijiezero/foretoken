@@ -17,7 +17,7 @@ type ResourceQuantity string
 // +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="must be a positive duration"
 type Duration string
 
-// BackendArg is one long-form CLI argument passed to the inference backend.
+// BackendArg is one long-form CLI argument passed to the inference engine.
 // The vLLM compiler checks the allowed arguments and whether they require values;
 // this schema rejects spaces, aliases, and positional arguments.
 // +kubebuilder:validation:MinLength=3

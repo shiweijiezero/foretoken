@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Picker output behavior tests.
+//! Malformed routing algorithm output tests.
 
 use std::sync::Arc;
 
+use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
 
 use super::support::{inventory, request, route};
 use foretoken_router::algorithm::{AllowAllFilter, UniformScorer};
 use foretoken_router::{
-    PipelineRouter, RouteCandidate, RouteError, RoutePicker, RouteTargetId, Router, RouterPipeline,
-    RouterRequest, ScoredCandidate,
+    CandidateIndex, PipelineRouter, RouteCandidate, RouteError, RouteFilter, RoutePicker,
+    RouteScore, RouteScorer, Router, RouterPipeline, RouterRequest, ScoredCandidate,
 };
 
 struct InvalidPicker;
@@ -23,27 +24,128 @@ impl RoutePicker for InvalidPicker {
         request: &RouterRequest,
         scored_candidates: &[ScoredCandidate],
         customized_context: &mut (),
-    ) -> Option<RouteCandidate> {
-        let mut candidate = scored_candidates.first()?.candidate.clone();
-        candidate.route_target_id = RouteTargetId::new("not-in-round");
-        Some(candidate)
+    ) -> Option<CandidateIndex> {
+        Some(CandidateIndex(scored_candidates.len()))
+    }
+}
+
+struct EmptyPicker;
+
+impl RoutePicker for EmptyPicker {
+    #[allow(unused_variables)]
+    fn pick(
+        &self,
+        request: &RouterRequest,
+        scored_candidates: &[ScoredCandidate],
+        customized_context: &mut (),
+    ) -> Option<CandidateIndex> {
+        None
+    }
+}
+
+struct InvalidFilter;
+
+impl RouteFilter for InvalidFilter {
+    #[allow(unused_variables)]
+    fn filter(
+        &self,
+        request: &RouterRequest,
+        candidates: &[RouteCandidate],
+        kv_prefix_indexer: &dyn KvPrefixIndexer,
+        customized_context: &mut (),
+    ) -> Vec<CandidateIndex> {
+        vec![CandidateIndex(candidates.len())]
+    }
+}
+
+struct DuplicateFilter;
+
+impl RouteFilter for DuplicateFilter {
+    #[allow(unused_variables)]
+    fn filter(
+        &self,
+        request: &RouterRequest,
+        candidates: &[RouteCandidate],
+        kv_prefix_indexer: &dyn KvPrefixIndexer,
+        customized_context: &mut (),
+    ) -> Vec<CandidateIndex> {
+        vec![CandidateIndex(0), CandidateIndex(0)]
+    }
+}
+
+struct InvalidScorer;
+
+impl RouteScorer for InvalidScorer {
+    #[allow(unused_variables)]
+    fn score(
+        &self,
+        request: &RouterRequest,
+        candidates: &[RouteCandidate],
+        kv_prefix_indexer: &dyn KvPrefixIndexer,
+        customized_context: &mut (),
+    ) -> Vec<RouteScore> {
+        vec![]
     }
 }
 
 #[test]
-fn picker_must_return_a_candidate_from_the_current_stage() {
-    let (inventory, _) = inventory(vec![route("a", ModelServerRole::Aggregate)]);
-    let router = PipelineRouter::with_pipeline(
-        inventory,
-        RouterPipeline::new(
+fn malformed_algorithm_outputs_are_explicit_errors() {
+    let make_router = |filter: Arc<dyn RouteFilter>, scorer: Arc<dyn RouteScorer>, picker| {
+        let inventory = inventory(vec![route("a", ModelServerRole::Aggregate)]);
+        PipelineRouter::with_pipeline(inventory, RouterPipeline::new(filter, scorer, picker))
+    };
+
+    assert_eq!(
+        make_router(
+            Arc::new(InvalidFilter),
+            Arc::new(UniformScorer),
+            Arc::new(InvalidPicker),
+        )
+        .start(request())
+        .select_initial(),
+        Err(RouteError::InvalidFilterIndex { index: 1 })
+    );
+    assert_eq!(
+        make_router(
+            Arc::new(DuplicateFilter),
+            Arc::new(UniformScorer),
+            Arc::new(InvalidPicker),
+        )
+        .start(request())
+        .select_initial(),
+        Err(RouteError::DuplicateFilterIndex { index: 0 })
+    );
+    assert_eq!(
+        make_router(
+            Arc::new(AllowAllFilter),
+            Arc::new(InvalidScorer),
+            Arc::new(InvalidPicker),
+        )
+        .start(request())
+        .select_initial(),
+        Err(RouteError::InvalidScorerResult {
+            expected: 1,
+            actual: 0,
+        })
+    );
+    assert_eq!(
+        make_router(
+            Arc::new(AllowAllFilter),
+            Arc::new(UniformScorer),
+            Arc::new(EmptyPicker),
+        )
+        .start(request())
+        .select_initial(),
+        Err(RouteError::EmptyPickerResult)
+    );
+    assert_eq!(
+        make_router(
             Arc::new(AllowAllFilter),
             Arc::new(UniformScorer),
             Arc::new(InvalidPicker),
-        ),
-    );
-
-    assert_eq!(
-        router.start(request()).select_initial(),
-        Err(RouteError::InvalidPickerResult)
+        )
+        .start(request())
+        .select_initial(),
+        Err(RouteError::InvalidPickerIndex { index: 1 })
     );
 }

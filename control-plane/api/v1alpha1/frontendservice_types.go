@@ -20,8 +20,22 @@ type FrontendTimeouts struct {
 	StreamIdle Duration `json:"streamIdle"`
 }
 
+// RouterFilterAlgorithm identifies a compiled Router Filter by its stable lower_snake_case name.
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=128
+// +kubebuilder:validation:Pattern="^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
 type RouterFilterAlgorithm string
+
+// RouterScorerAlgorithm identifies a compiled Router Scorer by its stable lower_snake_case name.
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=128
+// +kubebuilder:validation:Pattern="^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
 type RouterScorerAlgorithm string
+
+// RouterPickerAlgorithm identifies a compiled Router Picker by its stable lower_snake_case name.
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=128
+// +kubebuilder:validation:Pattern="^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$"
 type RouterPickerAlgorithm string
 
 const (
@@ -39,17 +53,14 @@ const (
 type RouterPipeline struct {
 	// +optional
 	// +kubebuilder:default=allow_all
-	// +kubebuilder:validation:Enum=allow_all
 	Filter RouterFilterAlgorithm `json:"filter,omitempty"`
 
 	// +optional
 	// +kubebuilder:default=kv_least_loaded
-	// +kubebuilder:validation:Enum=uniform;least_loaded;kv_least_loaded
 	Scorer RouterScorerAlgorithm `json:"scorer,omitempty"`
 
 	// +optional
 	// +kubebuilder:default=round_robin
-	// +kubebuilder:validation:Enum=max;round_robin
 	Picker RouterPickerAlgorithm `json:"picker,omitempty"`
 }
 
@@ -78,7 +89,7 @@ type FrontendServiceStatus struct {
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// Last successfully persisted serving snapshot version. It survives ConfigMap recreation.
+	// Last successfully persisted versioned routing configuration version. It survives ConfigMap recreation.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ServingSnapshotVersion uint64 `json:"servingSnapshotVersion,omitempty"`

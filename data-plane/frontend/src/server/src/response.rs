@@ -273,7 +273,7 @@ struct StreamErrorBody<'a> {
 fn stream_backend_error() -> StreamError<'static> {
     StreamError {
         error: StreamErrorBody {
-            message: "generation backend request failed",
+            message: "model server request failed",
             kind: "server_error",
             code: "request_failed",
         },

@@ -61,29 +61,43 @@ spec:
                   Autoscaling is evaluated by the ModelService controller. Algorithms remain
                   side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.
                 properties:
+                  adjustment:
+                    description: |-
+                      Adjustment modifies a scaling desired capacity before platform decision resolution.
+                      Manual intent always uses direct adjustment.
+                    properties:
+                      algorithm:
+                        default: step
+                        description: AutoscalingAdjustmentAlgorithm selects how a
+                          desired capacity is adjusted before resolution.
+                        maxLength: 63
+                        pattern: ^[a-z][a-z0-9_]*$
+                        type: string
+                      maxScaleDownGroups:
+                        default: 1
+                        description: Zero disables the downward per-evaluation step
+                          limit.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      maxScaleUpGroups:
+                        default: 1
+                        description: Zero disables the upward per-evaluation step
+                          limit.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    type: object
                   algorithm:
                     default: manual
-                    description: AutoscalingAlgorithm selects one statically assembled
-                      autoscaling configuration.
-                    enum:
-                    - manual
-                    - queue
+                    description: AutoscalingAlgorithm selects a statically linked
+                      autoscaling decision algorithm.
+                    maxLength: 63
+                    pattern: ^[a-z][a-z0-9_]*$
                     type: string
                   maxGroups:
-                    description: MaxGroups is required for queue autoscaling. When
-                      omitted, manual intent is unbounded.
-                    format: int32
-                    minimum: 0
-                    type: integer
-                  maxScaleDownStep:
-                    default: 1
-                    format: int32
-                    minimum: 0
-                    type: integer
-                  maxScaleUpStep:
-                    default: 1
-                    description: Zero disables the corresponding per-evaluation rate
-                      limit.
+                    description: MaxGroups is required for automatic autoscaling.
+                      When omitted, manual intent is unbounded.
                     format: int32
                     minimum: 0
                     type: integer
@@ -101,20 +115,61 @@ spec:
                     format: int32
                     minimum: 0
                     type: integer
-                  pollInterval:
-                    default: 5s
-                    description: Duration is a positive Go-style duration.
-                    minLength: 2
-                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
-                    type: string
-                    x-kubernetes-validations:
-                    - message: must be a positive duration
-                      rule: duration(self) > duration('0s')
+                  scaleUpQueue:
+                    default: 1
+                    description: ScaleUpQueue is the queue-depth threshold above which
+                      threshold adds one Group.
+                    format: int64
+                    minimum: 0
+                    type: integer
                   targetQueuePerRoutableGroup:
                     default: 1
                     format: int64
                     minimum: 0
                     type: integer
+                  trigger:
+                    description: |-
+                      Trigger controls when an automatic algorithm receives a fresh observation.
+                      It is ignored by manual autoscaling.
+                    properties:
+                      algorithm:
+                        default: periodic
+                        description: AutoscalingTriggerAlgorithm selects when an automatic
+                          scaling algorithm is evaluated.
+                        maxLength: 63
+                        pattern: ^[a-z][a-z0-9_]*$
+                        type: string
+                      highQueuePerRoutableGroup:
+                        default: 1
+                        description: |-
+                          HighQueuePerRoutableGroup fires a watermark evaluation only when queue
+                          strictly exceeds this per-routable-Group level.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      interval:
+                        default: 5s
+                        description: Duration is a positive Go-style duration.
+                        minLength: 2
+                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a positive duration
+                          rule: duration(self) > duration('0s')
+                      lowQueuePerRoutableGroup:
+                        default: 0
+                        description: |-
+                          LowQueuePerRoutableGroup fires a watermark evaluation for idle capacity when
+                          queue is at or below this per-routable-Group level and no requests are active.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                    type: object
+                    x-kubernetes-validations:
+                    - message: autoscaling trigger lowQueuePerRoutableGroup must not
+                        exceed highQueuePerRoutableGroup
+                      rule: '!has(self.lowQueuePerRoutableGroup) || !has(self.highQueuePerRoutableGroup)
+                        || self.lowQueuePerRoutableGroup <= self.highQueuePerRoutableGroup'
                 required:
                 - algorithm
                 type: object
@@ -122,8 +177,8 @@ spec:
                 - message: autoscaling minGroups must not exceed maxGroups
                   rule: '!has(self.minGroups) || !has(self.maxGroups) || self.minGroups
                     <= self.maxGroups'
-                - message: queue autoscaling requires maxGroups
-                  rule: self.algorithm != 'queue' || has(self.maxGroups)
+                - message: autoscaling maxGroups is required unless algorithm is manual
+                  rule: self.algorithm == 'manual' || has(self.maxGroups)
               backend:
                 enum:
                 - vllm
@@ -140,11 +195,11 @@ spec:
                 - profile
                 type: object
               extraArgs:
-                description: ExtraArgs are backend CLI flags shared by every compiled
-                  Pool.
+                description: ExtraArgs are inference-engine CLI flags shared by every
+                  compiled Pool.
                 items:
                   description: |-
-                    BackendArg is one long-form CLI argument passed to the inference backend.
+                    BackendArg is one long-form CLI argument passed to the inference engine.
                     The vLLM compiler checks the allowed arguments and whether they require values;
                     this schema rejects spaces, aliases, and positional arguments.
                   maxLength: 4096
@@ -830,19 +885,37 @@ spec:
             properties:
               autoscaling:
                 description: Autoscaling contains the latest decision for each Pool
-                  or E/P/D domain.
+                  or linked E/P/D processing unit.
                 items:
                   description: AutoscalingTargetStatus records the latest auditable
                     decision for one scaling target.
                   properties:
+                    adjustedGroups:
+                      description: AdjustedGroups is the capacity proposed by the
+                        adjustment decision.
+                      format: int32
+                      type: integer
+                    adjustmentAlgorithm:
+                      type: string
+                    adjustmentMessage:
+                      type: string
+                    adjustmentReason:
+                      description: AdjustmentReason and AdjustmentMessage explain
+                        desired-capacity adjustment.
+                      type: string
                     algorithm:
                       type: string
                     appliedGroups:
                       description: |-
-                        AppliedGroups is the core-constrained target successfully written to all
+                        AppliedGroups is the platform-resolved target successfully written to all
                         ModelPools represented by this status entry.
                       format: int32
                       minimum: 0
+                      type: integer
+                    desiredGroups:
+                      description: DesiredGroups is the capacity calculated by the
+                        scaling decision algorithm.
+                      format: int32
                       type: integer
                     direction:
                       type: string
@@ -854,7 +927,7 @@ spec:
                     kind:
                       enum:
                       - Pool
-                      - EPDDomain
+                      - EPDPipelineScope
                       type: string
                     message:
                       type: string
@@ -869,11 +942,6 @@ spec:
                       type: integer
                     reason:
                       type: string
-                    requestedGroups:
-                      description: RequestedGroups is the raw advisory target returned
-                        by the algorithm.
-                      format: int32
-                      type: integer
                     role:
                       enum:
                       - Aggregate
@@ -888,9 +956,20 @@ spec:
                       type: integer
                     snapshotID:
                       type: string
+                    triggerAlgorithm:
+                      type: string
+                    triggerDisposition:
+                      type: string
+                    triggerMessage:
+                      type: string
+                    triggerReason:
+                      type: string
                   required:
+                  - adjustedGroups
+                  - adjustmentAlgorithm
                   - algorithm
                   - appliedGroups
+                  - desiredGroups
                   - direction
                   - disposition
                   - id
@@ -899,7 +978,6 @@ spec:
                   - observedAt
                   - readyGroups
                   - reason
-                  - requestedGroups
                   - role
                   - routableGroups
                   - snapshotID

@@ -14,7 +14,7 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
-	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -55,59 +55,59 @@ func NewHTTPPoolMetricsProvider(kubeClient client.Client) *HTTPPoolMetricsProvid
 	}
 }
 
-func (provider *HTTPPoolMetricsProvider) Observation(ctx context.Context, target algorithm.TargetID) (algorithm.DemandObservation, error) {
+func (provider *HTTPPoolMetricsProvider) Observation(ctx context.Context, target core.TargetID) (core.DemandObservation, error) {
 	if provider == nil || provider.client == nil || provider.httpClient == nil {
-		return algorithm.DemandObservation{}, fmt.Errorf("pool metrics provider is not configured")
+		return core.DemandObservation{}, fmt.Errorf("pool metrics provider is not configured")
 	}
 	startedAt := provider.now()
 	collectionCtx, cancel := context.WithTimeout(ctx, metricsCollectionTimeout)
 	defer cancel()
-	var queue, active uint64
+	var queuedRequests, activeRequests uint64
 	var queueSamples, activeSamples int64
-	var observedAt time.Time
+	var queueObservedAt time.Time
 	group, collectionCtx := errgroup.WithContext(collectionCtx)
 	group.Go(func() error {
 		var err error
-		queue, queueSamples, observedAt, err = provider.frontendQueue(collectionCtx, target)
+		queuedRequests, queueSamples, queueObservedAt, err = provider.frontendQueue(collectionCtx, target)
 		return err
 	})
 	group.Go(func() error {
 		var err error
-		active, activeSamples, err = provider.activeRequests(collectionCtx, target)
+		activeRequests, activeSamples, err = provider.activeRequests(collectionCtx, target)
 		return err
 	})
 	if err := group.Wait(); err != nil {
-		return algorithm.DemandObservation{}, err
+		return core.DemandObservation{}, err
 	}
 	collectedAt := provider.now()
 	samples := queueSamples + activeSamples
 	if samples > math.MaxInt32 {
 		samples = math.MaxInt32
 	}
-	return algorithm.DemandObservation{
-		State: algorithm.ObservationFresh,
-		Window: algorithm.ObservationWindow{
+	return core.DemandObservation{
+		State: core.ObservationFresh,
+		Window: core.ObservationWindow{
 			Start:       startedAt,
-			End:         observedAt,
+			End:         queueObservedAt,
 			CollectedAt: collectedAt,
 			Samples:     int32(samples),
 			Complete:    true,
 		},
-		QueueRequests:  saturatingInt64(queue),
-		ActiveRequests: saturatingInt64(active),
+		QueueRequests:  saturatingInt64(queuedRequests),
+		ActiveRequests: saturatingInt64(activeRequests),
 	}, nil
 }
 
-func (provider *HTTPPoolMetricsProvider) frontendQueue(ctx context.Context, target algorithm.TargetID) (uint64, int64, time.Time, error) {
+func (provider *HTTPPoolMetricsProvider) frontendQueue(ctx context.Context, target core.TargetID) (uint64, int64, time.Time, error) {
 	var pods corev1.PodList
 	if err := provider.client.List(ctx, &pods, client.InNamespace(target.ServiceNamespace)); err != nil {
 		return 0, 0, time.Time{}, fmt.Errorf("list frontend Pods: %w", err)
 	}
-	type result struct {
-		value      uint64
-		observedAt time.Time
+	type queueSample struct {
+		queuedRequests uint64
+		observedAt     time.Time
 	}
-	results := make(chan result, len(pods.Items))
+	results := make(chan queueSample, len(pods.Items))
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(metricsCollectionConcurrency)
 	for index := range pods.Items {
@@ -125,8 +125,8 @@ func (provider *HTTPPoolMetricsProvider) frontendQueue(ctx context.Context, targ
 			if err != nil {
 				return fmt.Errorf("frontend Pod %q autoscaling telemetry: %w", name, err)
 			}
-			value, _ := telemetryTarget(telemetry.Targets, target)
-			results <- result{value: value, observedAt: time.UnixMilli(int64(telemetry.CollectedAtUnixMS))}
+			queuedRequests, _ := telemetryTarget(telemetry.Targets, target)
+			results <- queueSample{queuedRequests: queuedRequests, observedAt: time.UnixMilli(int64(telemetry.CollectedAtUnixMS))}
 			return nil
 		})
 	}
@@ -137,11 +137,11 @@ func (provider *HTTPPoolMetricsProvider) frontendQueue(ctx context.Context, targ
 	var total uint64
 	var samples int64
 	var oldest time.Time
-	for result := range results {
-		total = saturatingAdd(total, result.value)
+	for sample := range results {
+		total = saturatingAdd(total, sample.queuedRequests)
 		samples++
-		if oldest.IsZero() || result.observedAt.Before(oldest) {
-			oldest = result.observedAt
+		if oldest.IsZero() || sample.observedAt.Before(oldest) {
+			oldest = sample.observedAt
 		}
 	}
 	if samples == 0 {
@@ -150,7 +150,7 @@ func (provider *HTTPPoolMetricsProvider) frontendQueue(ctx context.Context, targ
 	return total, samples, oldest, nil
 }
 
-func (provider *HTTPPoolMetricsProvider) activeRequests(ctx context.Context, target algorithm.TargetID) (uint64, int64, error) {
+func (provider *HTTPPoolMetricsProvider) activeRequests(ctx context.Context, target core.TargetID) (uint64, int64, error) {
 	var pools inferencev1alpha1.ModelPoolList
 	if err := provider.client.List(ctx, &pools, client.InNamespace(target.ServiceNamespace)); err != nil {
 		return 0, 0, fmt.Errorf("list ModelPools for telemetry: %w", err)
@@ -161,10 +161,10 @@ func (provider *HTTPPoolMetricsProvider) activeRequests(ctx context.Context, tar
 		if !pool.DeletionTimestamp.IsZero() || pool.Spec.ModelServiceRef.UID != target.ServiceUID {
 			continue
 		}
-		if target.Kind == algorithm.TargetPool && string(pool.UID) != target.UID {
+		if target.Kind == core.TargetPool && string(pool.UID) != target.UID {
 			continue
 		}
-		if target.Kind == algorithm.TargetEPDDomain && !isEPDRole(pool.Spec.Template.Role) {
+		if target.Kind == core.TargetEPDPipelineScope && !isEPDRole(pool.Spec.Template.Role) {
 			continue
 		}
 		selectedPools[string(pool.UID)] = pool
@@ -262,9 +262,9 @@ func (provider *HTTPPoolMetricsProvider) getModelTelemetry(ctx context.Context, 
 	return telemetry, nil
 }
 
-func telemetryTarget(values []frontendAutoscalingTarget, target algorithm.TargetID) (uint64, bool) {
+func telemetryTarget(values []frontendAutoscalingTarget, target core.TargetID) (uint64, bool) {
 	targetID := target.UID
-	if target.Kind == algorithm.TargetEPDDomain {
+	if target.Kind == core.TargetEPDPipelineScope {
 		targetID = target.ServiceUID
 	}
 	for _, value := range values {

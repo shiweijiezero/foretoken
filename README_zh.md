@@ -2,69 +2,60 @@
 
 [English](README.md) | 简体中文
 
-Foretoken 是一个面向 SLO/SLA 与异构加速器的 Kubernetes 原生生成式推理编排框架。
+Foretoken 是一个面向 SLO/SLA 的 Kubernetes 原生 GPU 生成式推理编排框架。
 
-Foretoken 基于 vLLM、SGLang 等推理引擎，把模型运行时组织成一套具备请求路由、自动扩缩容、滚动更新、故障恢复和性能评测能力的服务。我们希望将推理集群转化为 Token 工厂，把算力持续转化为满足延迟和质量要求的 token。
-
-```text
-控制面：ModelService → ModelPool → ModelGroup
-数据面：Client → 平台托管 Gateway → FrontendService
-        → Foretoken Router → 选中的 ModelGroup Service
-        → Group-local model-server → backend EngineCore
-```
+Foretoken 当前基于 vLLM，把模型运行时组织成一套具备请求路由、自动扩缩容、滚动更新、优雅排空和性能评测能力的服务。我们希望将推理集群转化为 Token 工厂，把算力持续转化为满足延迟和质量要求的 token。
 
 ## 什么时候需要 Foretoken
 
-- 在多加速器或多节点上运行一种或多种模型。
-- 根据负载、队列、KV Cache 状态和服务目标路由请求。
-- 根据流量和 SLO 自动扩缩模型容量。
-- 比较聚合部署、Prefill/Decode 分离和不同并行策略。
-- 在 NVIDIA、沐曦、昇腾等不同硬件上使用同一套编排模型。
+- 在多 GPU 或多节点上运行一种或多种模型。
+- 根据健康状态、当前负载和可选 KV Cache 信号路由请求。
+- 根据 frontend 队列和 model-server 活跃请求自动扩缩模型容量。
+- 探索聚合部署、Prefill/Decode 分离和不同并行策略。
+- 通过平台配置的 vLLM GPU runtime profile 管理运行时与节点调度。
 
-如果只在单个加速器上运行一个模型，直接使用 vLLM 等推理引擎通常就够了。
+如果只在单个 GPU 上运行一个模型，直接使用 vLLM 通常就够了。
 
 ## 功能与进展
 
 | 功能 | 说明 | 状态 |
 |---|---|---|
-| Kubernetes 控制面 | ModelService、ModelPool、ModelGroup、更新、扩缩和故障恢复 | 开发中 |
-| 请求路由 | 将 lowering 后的请求路由到兼容的模型 Group | 开发中 |
+| Kubernetes 控制面 | ModelService、ModelPool、ModelGroup、滚动更新、扩缩和优雅排空 | 开发中 |
+| 请求路由 | 将 lowering 后的请求路由到兼容且健康的 ModelGroup | 开发中 |
 | vLLM 集成 | 复用 vLLM Rust 的 tokenization、lowering、EngineCore client、stream 和 detokenization | 开发中 |
-| 评测 | 性能参数扫描、正确性评测和 SLO 仿真 | 开发中 |
-| 硬件支持 | 面向异构加速器的统一 runtime 与调度 profile | 开发中 |
-| 分布式推理 | 聚合部署、Prefill/Decode 分离和 WideEP | 研究中 |
-| 可观测性 | 指标、仪表盘、追踪和告警 | 规划中 |
+| 评测 | 单负载点 OpenAI 兼容压测，统计延迟、TTFT、TPOT 和吞吐 | 开发中 |
+| GPU 支持 | 平台配置的 vLLM runtime、GPU 资源与节点调度 profile | 开发中 |
+| 分布式推理 | 聚合部署已实现；Prefill/Decode 分离仍在实验和验证中 | 研究中 |
+| 可观测性 | frontend 指标与自动扩缩遥测；仪表盘、分布式追踪和告警仍在规划中 | 开发中 |
 
 ## 快速开始
 
-Foretoken 作为一套完整的 Kubernetes 系统运行。平台管理员统一配置 Gateway 和加速器 runtime profile；服务用户只需提交 `FrontendService` 和 `ModelService`，不需要分别启动底层进程。
+Foretoken 作为一套完整的 Kubernetes 系统运行。平台管理员通过 Chart 配置 Gateway 和当前 vLLM GPU runtime profile；服务用户只需提交 `FrontendService` 和 `ModelService`，不需要分别启动底层进程。
 
 ### 前置条件
 
-- 具备加速器节点及对应 device plugin 的 Kubernetes 集群。
-- Gateway API v1 CRD，以及 listener 允许服务 namespace 挂载 Route 的平台托管 Gateway。
-- 指向 Gateway 的服务域名，或等价的测试访问入口。
-- 集群能够访问 Foretoken control-plane、frontend 和 model-server OCI 镜像。
+- Kubernetes 1.29+，具备 GPU 节点和集群级安装权限；
+- 已安装 Kubernetes Gateway API，并提供允许服务 namespace 挂载 Route 的 Gateway；
 
 ### 1. 安装 Foretoken
 
-按[源码与私有化部署](#源码与私有化部署)准备好集群可访问 registry 中的镜像后，使用本地 Chart 安装：
+使用官方 Helm Chart 安装 Foretoken：
 
 ```bash
-helm upgrade --install foretoken ./deploy/charts/foretoken \
+helm upgrade --install foretoken \
+  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
+  --version 0.0.1 \
   --namespace foretoken-platform \
   --create-namespace \
-  --values platform-values.yaml \
   --wait
 ```
 
-`platform-values.yaml` 由平台团队维护。要完成 Frontend 快速开始，必须设置 `frontend.enabled=true`，并提供必填的 `frontend.image` 以及 `frontend.gateway.name`、`frontend.gateway.namespace` 和 `frontend.gateway.sectionName`；此外还需配置 model-server runtime、加速器资源和节点调度 profile。私有化和离线环境可以通过同一份 values 指向内部同步的 OCI artifacts。
+Chart 会使用同版本的官方 control-plane、frontend 和 model-server 镜像。自定义镜像的部署方法见[从源码构建](#从源码构建)。
 
-官方 `0.0.1` OCI Chart 目前尚不能匿名拉取。在官方 OCI Chart 发布前，请使用本地 Chart 或私有 registry。
 
 ### 2. 部署模型服务
 
-`examples/quickstart` 同时声明北向 frontend 和模型服务。Foretoken 自动创建并管理底层 Pool、Group、Deployment、Service、路由和运行时配置。
+`examples/quickstart` 同时声明对外提供 API 的 frontend 和模型服务。Foretoken 自动创建并管理底层 Pool、Group、Deployment、Service、路由和运行时配置。
 
 ```bash
 FORETOKEN_NAMESPACE=foretoken-demo
@@ -84,22 +75,25 @@ kubectl apply --server-side \
 ```bash
 kubectl wait frontendservice/quickstart-frontend \
   --for=condition=Ready \
-  --namespace foretoken-demo \
+  --namespace "${FORETOKEN_NAMESPACE}" \
   --timeout=15m
 
 kubectl wait modelservice/quickstart-qwen3-0.6b \
   --for=condition=Ready \
-  --namespace foretoken-demo \
+  --namespace "${FORETOKEN_NAMESPACE}" \
   --timeout=15m
 ```
 
-`FrontendService` 在 frontend Deployment 可用、HTTPRoute 已被 Gateway 接受并解析，且已安装可路由的后端快照后进入 Ready。`ModelService` 在每个承载流量的 ModelPool 都有可路由的 active revision 后进入 Ready。只要至少一个 active Group 已就绪，Pool 就会保持 Ready；`CapacityReady` 表示全部期望 Group 是否已就绪。
+frontend Deployment 可用、HTTPRoute 已被 Gateway 接受且引用解析完成，并安装可路由的服务配置后，`FrontendService` 进入 Ready。每个具有请求服务容量的 ModelPool 都进入 Ready 后，`ModelService` 进入 Ready。滚动更新或容量收敛期间，只要 active revision 中至少一个 ModelGroup 仍为 Ready，ModelPool 就可以保持 Ready。
 
 ### 4. 通过 Gateway 发送请求
 
 ```bash
+# 使用已配置 Gateway listener 的对外访问地址。
+FORETOKEN_BASE_URL=https://foretoken.example.com
+
 curl --fail-with-body --no-buffer \
-  https://foretoken.example.com/v1/chat/completions \
+  "${FORETOKEN_BASE_URL}/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
@@ -110,11 +104,11 @@ curl --fail-with-body --no-buffer \
 
 ```bash
 kubectl delete --wait=true --timeout=10m \
-  --namespace foretoken-demo \
+  --namespace "${FORETOKEN_NAMESPACE}" \
   -k examples/quickstart
 ```
 
-再卸载控制面：
+再卸载 Foretoken：
 
 ```bash
 helm uninstall foretoken \
@@ -135,14 +129,50 @@ kubectl delete crd \
   kvgroups.inference.foretoken.io
 ```
 
-## 源码与私有化部署
+## 从源码构建
 
-Kubernetes 运行 OCI 镜像，不会直接运行源码目录。源码、私有 registry 和离线部署使用相同架构：
+自定义修改 Foretoken 代码后，可以构建自己的镜像并通过官方 Chart 部署。Frontend 和 model-server 构建需要本地 vLLM Git checkout：
 
-1. 从本仓库构建 control-plane、frontend 和 model-server OCI 镜像。
-2. 将镜像发布到集群可访问的 OCI registry，或直接导入开发集群节点。
-3. 在 Helm values 中设置不可变镜像引用和集群 runtime profile。
-4. 使用 `helm upgrade --install foretoken ./deploy/charts/foretoken --namespace foretoken-platform --create-namespace --values <values-file>` 安装本地 Chart。
+```bash
+FORETOKEN_VLLM_SOURCE=/path/to/vllm make image-frontend
+FORETOKEN_VLLM_SOURCE=/path/to/vllm \
+  VLLM_RUNTIME_IMAGE=<vLLM runtime 镜像> \
+  make image-model-server
+
+docker build -f control-plane/Dockerfile \
+  -t foretoken-control-plane:dev .
+```
+
+给镜像加上 registry 地址并推送，例如：
+
+```bash
+REGISTRY=registry.example.com/foretoken
+
+docker tag foretoken-frontend:dev "${REGISTRY}/frontend:dev"
+docker tag foretoken-model-server:dev "${REGISTRY}/model-server:dev"
+docker tag foretoken-control-plane:dev "${REGISTRY}/control-plane:dev"
+
+docker push "${REGISTRY}/frontend:dev"
+docker push "${REGISTRY}/model-server:dev"
+docker push "${REGISTRY}/control-plane:dev"
+```
+
+安装时指定自定义镜像：
+
+```bash
+helm upgrade --install foretoken \
+  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
+  --version 0.0.1 \
+  --namespace foretoken-platform \
+  --create-namespace \
+  --set image.repository="${REGISTRY}/control-plane" \
+  --set image.tag=dev \
+  --set frontend.image="${REGISTRY}/frontend:dev" \
+  --set runtime.vllm.image="${REGISTRY}/model-server:dev" \
+  --wait
+```
+
+只修改了其中一个组件时，只需要构建、推送并覆盖该组件的镜像。
 
 ## 相关项目
 

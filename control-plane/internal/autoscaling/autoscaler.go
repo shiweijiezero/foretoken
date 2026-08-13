@@ -1,64 +1,89 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Statically assembles autoscaling algorithms and evaluates Pool snapshots.
-
+// Assembles statically linked autoscaling algorithms through their typed registry.
 package autoscaling
 
 import (
 	"context"
-	"fmt"
-
+	"errors"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm"
+	_ "github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm/adjustment"
+	_ "github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm/decision"
+	_ "github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm/trigger"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 )
 
-// Autoscaler evaluates snapshots with one statically selected algorithm.
-type Autoscaler struct {
-	evaluator core.Evaluator
-}
+var ErrAutoscalerRequired = errors.New("autoscaler is required")
+
+type Autoscaler struct{ pipeline core.Pipeline }
 
 func New(configuration Configuration) (*Autoscaler, error) {
-	name := configuration.Algorithm
-	if name == "" {
-		name = AlgorithmManual
+	decisionName := string(configuration.DecisionAlgorithm)
+	if decisionName == "" {
+		decisionName = string(DecisionAlgorithmManual)
 	}
-	switch name {
-	case AlgorithmManual:
-		return Manual(), nil
-	case AlgorithmQueue:
-		return NewWithAlgorithm(algorithm.QueueAlgorithm{TargetQueuePerRoutableGroup: configuration.TargetQueuePerRoutableGroup}), nil
-	default:
-		return nil, fmt.Errorf("unknown autoscaling algorithm %q", name)
+	decision, err := algorithm.BuildDecision(decisionName, configuration.Decision)
+	if err != nil {
+		return nil, err
 	}
-}
-
-// Manual returns the production default that preserves ModelService replicas.
-func Manual() *Autoscaler {
-	return &Autoscaler{evaluator: core.Evaluator{Algorithm: algorithm.ManualAlgorithm{}, AllowDuringTransition: true}}
-}
-
-// NewWithAlgorithm supports in-tree community algorithms without dynamic plugins.
-func NewWithAlgorithm(selected algorithm.Algorithm) *Autoscaler {
-	return &Autoscaler{evaluator: core.Evaluator{Algorithm: selected}}
-}
-
-func (autoscaler *Autoscaler) Plan(ctx context.Context, snapshots []algorithm.Snapshot) ([]core.Decision, error) {
-	if autoscaler == nil {
-		return nil, fmt.Errorf("autoscaler is required")
+	adjustmentName := string(configuration.AdjustmentAlgorithm)
+	if adjustmentName == "" {
+		adjustmentName = string(AdjustmentAlgorithmStep)
 	}
-	decisions := make([]core.Decision, 0, len(snapshots))
-	seen := make(map[algorithm.TargetID]struct{}, len(snapshots))
-	for _, snapshot := range snapshots {
-		if _, exists := seen[snapshot.Target]; exists {
-			return nil, fmt.Errorf("duplicate autoscaling target %q", snapshot.Target.Name)
+	automatic := decisionName != string(DecisionAlgorithmManual)
+	if !automatic {
+		adjustmentName = string(AdjustmentAlgorithmDirect)
+	}
+	adjustment, err := algorithm.BuildAdjustment(adjustmentName)
+	if err != nil {
+		return nil, err
+	}
+	pipeline := core.Pipeline{DecisionAlgorithm: decision, AdjustmentAlgorithm: adjustment, Automatic: automatic}
+	if !automatic {
+		pipeline.Resolver.AllowDuringTransition = true
+	}
+	if automatic {
+		triggerName := string(configuration.TriggerAlgorithm)
+		if triggerName == "" {
+			triggerName = string(TriggerAlgorithmPeriodic)
 		}
-		seen[snapshot.Target] = struct{}{}
-		decision, err := autoscaler.evaluator.Evaluate(ctx, snapshot)
+		trigger, err := algorithm.BuildTrigger(triggerName, configuration.Trigger)
 		if err != nil {
 			return nil, err
 		}
-		decisions = append(decisions, decision)
+		pipeline.TriggerAlgorithm = trigger
 	}
-	return decisions, nil
+	return &Autoscaler{pipeline: pipeline}, nil
+}
+func Manual() *Autoscaler {
+	autoscaler, err := New(Configuration{DecisionAlgorithm: DecisionAlgorithmManual})
+	if err != nil {
+		panic(err)
+	}
+	return autoscaler
+}
+func (autoscaler *Autoscaler) Automatic() bool {
+	return autoscaler != nil && autoscaler.pipeline.Automatic
+}
+func (autoscaler *Autoscaler) TriggerAlgorithmName() string {
+	if autoscaler == nil || autoscaler.pipeline.TriggerAlgorithm == nil {
+		return ""
+	}
+	return autoscaler.pipeline.TriggerAlgorithm.Name()
+}
+func (autoscaler *Autoscaler) AdjustmentAlgorithmName() string {
+	if autoscaler == nil || autoscaler.pipeline.AdjustmentAlgorithm == nil {
+		return ""
+	}
+	return autoscaler.pipeline.AdjustmentAlgorithm.Name()
+}
+func (autoscaler *Autoscaler) Plan(ctx context.Context, snapshots []core.ScalingSnapshot) ([]core.ScalingDecision, error) {
+	if autoscaler == nil {
+		return nil, ErrAutoscalerRequired
+	}
+	return autoscaler.pipeline.Plan(ctx, snapshots)
+}
+func NewWithAlgorithms(decision core.DecisionAlgorithm, trigger core.TriggerAlgorithm, adjustment core.AdjustmentAlgorithm, automatic bool) *Autoscaler {
+	return &Autoscaler{pipeline: core.Pipeline{DecisionAlgorithm: decision, TriggerAlgorithm: trigger, AdjustmentAlgorithm: adjustment, Automatic: automatic}}
 }

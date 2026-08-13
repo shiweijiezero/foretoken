@@ -147,6 +147,7 @@ fn request() -> GenerateRequest {
         trace_headers: None,
         priority: 0,
         data_parallel_rank: None,
+        session_id: None,
         reasoning_parser_kwargs: None,
         lora_request: None,
     }
@@ -188,7 +189,7 @@ async fn workflow_orders_epd_tracks_admission_and_aborts_every_child_on_decode_f
         service_uid: "workflow-service".into(),
         name: "epd".into(),
         uid: "workflow-service".into(),
-        kind: ScalingTargetKind::EPDDomain,
+        kind: ScalingTargetKind::EPDPipelineScope,
     }]);
     foretoken_metrics::register_targets(&targets);
     let _queue = foretoken_metrics::QueueGuard::new(&targets);

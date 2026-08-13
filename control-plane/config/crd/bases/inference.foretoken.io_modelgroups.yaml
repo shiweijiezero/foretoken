@@ -61,7 +61,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: ModelGroupSpec is an immutable execution contract compiled
+            description: ModelGroupSpec is an immutable execution specification compiled
               by the Pool controller.
             properties:
               accelerator:
@@ -114,7 +114,7 @@ spec:
                 type: object
               ecRuntime:
                 description: ECRuntime is the controller-owned resolved encoder/prefill
-                  transfer contract.
+                  transfer configuration.
                 properties:
                   connector:
                     enum:
@@ -157,8 +157,8 @@ spec:
                 - sharedStoragePath
                 type: object
               features:
-                description: Features is the immutable capability contract advertised
-                  to routing clients.
+                description: Features is the immutable capabilities advertised to
+                  routing clients.
                 properties:
                   multimodal:
                     items:
@@ -187,11 +187,12 @@ spec:
                     type: boolean
                 type: object
               kvRuntime:
-                description: KVRuntime is the controller-owned resolved KV cache contract.
+                description: KVRuntime is the controller-owned resolved KV storage-mode
+                  configuration.
                 properties:
                   mooncakeStore:
                     description: ModelGroupMooncakeStoreRuntime defines the resolved
-                      external Store contract.
+                      external Store configuration.
                     properties:
                       configMapKey:
                         minLength: 1
@@ -238,7 +239,7 @@ spec:
                     type: object
                 type: object
                 x-kubernetes-validations:
-                - message: kvRuntime must select exactly one KV backend
+                - message: kvRuntime must select exactly one KV storage mode
                   rule: (has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload)
                     && has(self.mooncakeStore))
               maxInputTokens:
@@ -347,7 +348,7 @@ spec:
                   rule: 'self.pcp == 1 ? self.tp % self.dcp == 0 : self.dcp == 1 ||
                     self.dcp == self.pcp || self.dcp == self.tp * self.pcp'
               pdRuntime:
-                description: PDRuntime is the controller-owned P/D transport contract.
+                description: PDRuntime is the controller-owned P/D transport configuration.
                 properties:
                   abortRequestTimeoutSeconds:
                     format: int32
@@ -491,7 +492,7 @@ spec:
                   rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                     <= 0'
               revision:
-                description: Revision identifies one resolved Pool execution contract.
+                description: Revision identifies one resolved Pool execution specification.
                 maxLength: 63
                 minLength: 1
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
@@ -506,14 +507,15 @@ spec:
                 - decode
                 type: string
               runtime:
-                description: ModelGroupRuntime defines the resolved backend runtime.
+                description: ModelGroupRuntime defines the resolved inference-engine
+                  runtime.
                 properties:
                   args:
-                    description: Args contains backend-owned flags not represented
-                      by the typed Group contract.
+                    description: Args contains inference-engine flags not represented
+                      by the typed Group specification.
                     items:
                       description: |-
-                        BackendArg is one long-form CLI argument passed to the inference backend.
+                        BackendArg is one long-form CLI argument passed to the inference engine.
                         The vLLM compiler checks the allowed arguments and whether they require values;
                         this schema rejects spaces, aliases, and positional arguments.
                       maxLength: 4096
@@ -534,7 +536,7 @@ spec:
                   internalGenerateRequestBodyLimitBytes:
                     description: |-
                       InternalGenerateRequestBodyLimitBytes is the group-local generate request
-                      body limit resolved from the ModelService contract.
+                      body limit resolved from the ModelService specification.
                     format: int64
                     maximum: 268435456
                     minimum: 1048576
@@ -599,7 +601,7 @@ spec:
               rule: self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp
                 * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp
             - message: aggregate, encoder, prefill, and decode ModelGroups require
-                their fixed runtime contracts
+                their fixed runtime configurations
               rule: 'self.role == ''aggregate'' ? !has(self.pdRuntime) && !has(self.ecRuntime)
                 : self.role == ''encoder'' ? !has(self.pdRuntime) && has(self.ecRuntime)
                 && self.ecRuntime.role == ''producer'' : self.role == ''prefill''

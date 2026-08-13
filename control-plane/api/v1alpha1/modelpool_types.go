@@ -50,14 +50,14 @@ type NormalizedMooncakeStore struct {
 	ManagedBinding *ManagedMooncakeStoreBinding `json:"managedBinding,omitempty"`
 }
 
-// NormalizedKVCache is the controller-owned cache contract attached to ModelPool.
-// +kubebuilder:validation:XValidation:rule="(has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload) && has(self.mooncakeStore))",message="kvCache must select exactly one backend"
+// NormalizedKVCache is the controller-owned cache configuration attached to ModelPool.
+// +kubebuilder:validation:XValidation:rule="(has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload) && has(self.mooncakeStore))",message="kvCache must select exactly one storage mode"
 type NormalizedKVCache struct {
 	Offload       *KVOffload               `json:"offload,omitempty"`
 	MooncakeStore *NormalizedMooncakeStore `json:"mooncakeStore,omitempty"`
 }
 
-// NormalizedPoolTemplate is the normalized contract produced from ModelService intent.
+// NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
 // Platform runtime and accelerator resolution may further constrain it before Groups are created.
 // +kubebuilder:validation:XValidation:rule="self.memberCount == self.nodeCount",message="memberCount must equal nodeCount in v1alpha1"
 // +kubebuilder:validation:XValidation:rule="self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp",message="accelerator capacity must equal the compiled worker rank count"
@@ -119,14 +119,14 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	KVCache *NormalizedKVCache `json:"kvCache,omitempty"`
 
-	// Features is the normalized explicit capability contract for this Pool.
+	// Features is the normalized explicit capabilities for this Pool.
 	Features ModelFeatures `json:"features"`
 
 	// ECProfile is the controller-owned platform EC profile selected for encoder and prefill Pools.
 	// +optional
 	ECProfile string `json:"ecProfile,omitempty"`
 
-	// ExtraArgs are backend flags that the concrete adapter must validate before Group creation.
+	// ExtraArgs are inference-engine flags that the concrete adapter must validate before Group creation.
 	// +optional
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=256

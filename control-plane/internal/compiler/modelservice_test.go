@@ -182,19 +182,33 @@ func TestCompileValidatesAutoscalingPolicy(t *testing.T) {
 		Parallelism: &inferencev1alpha1.Parallelism{}, Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "1m", Drain: "1m"},
 		Autoscaling: &inferencev1alpha1.ModelAutoscalingConfig{Algorithm: inferencev1alpha1.AutoscalingAlgorithmQueue},
 	}
-	if _, err := CompileModelService(spec); err == nil {
-		t.Fatal("queue autoscaling without maxGroups was accepted")
-	}
 	minimum, maximum := int32(1), int32(2)
+	if _, err := CompileModelService(spec); err == nil {
+		t.Fatal("automatic autoscaling without maxGroups was accepted")
+	}
+	spec.Autoscaling.Algorithm = inferencev1alpha1.AutoscalingAlgorithmThreshold
 	spec.Autoscaling.MinGroups = &minimum
 	spec.Autoscaling.MaxGroups = &maximum
-	spec.Autoscaling.PollInterval = "invalid"
+	negativeThreshold := int64(-1)
+	spec.Autoscaling.ScaleUpQueue = &negativeThreshold
+	if _, err := CompileModelService(spec); err == nil {
+		t.Fatal("negative threshold scaleUpQueue was accepted")
+	}
+	spec.Autoscaling.ScaleUpQueue = nil
+	spec.Autoscaling.Trigger = &inferencev1alpha1.ModelAutoscalingTriggerConfig{Interval: "invalid"}
 	if _, err := CompileModelService(spec); err == nil {
 		t.Fatal("invalid autoscaling poll interval was accepted")
 	}
-	spec.Autoscaling.PollInterval = "5s"
+	spec.Autoscaling.Trigger.Interval = "5s"
 	if _, err := CompileModelService(spec); err != nil {
-		t.Fatalf("valid autoscaling config was rejected: %v", err)
+		t.Fatalf("valid threshold autoscaling config was rejected: %v", err)
+	}
+	spec.Autoscaling.Trigger = &inferencev1alpha1.ModelAutoscalingTriggerConfig{Algorithm: inferencev1alpha1.AutoscalingTriggerAlgorithmWatermark, LowQueuePerRoutableGroup: ptr(int64(0))}
+	low, high := int64(2), int64(1)
+	spec.Autoscaling.Trigger.LowQueuePerRoutableGroup = &low
+	spec.Autoscaling.Trigger.HighQueuePerRoutableGroup = &high
+	if _, err := CompileModelService(spec); err == nil {
+		t.Fatal("inverted watermark bounds were accepted")
 	}
 }
 

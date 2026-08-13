@@ -139,7 +139,7 @@ type KVRequesterSpec struct {
 	LocalBufferSize ByteQuantity `json:"localBufferSize"`
 }
 
-// KVServiceBinding is the immutable current requester contract consumed by ModelPools.
+// KVServiceBinding is the immutable current requester configuration consumed by ModelPools.
 type KVServiceBinding struct {
 	Revision       string `json:"revision"`
 	ConfigMapName  string `json:"configMapName"`

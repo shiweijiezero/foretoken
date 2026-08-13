@@ -71,6 +71,29 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
+func TestGeneratedModelServiceAutoscalingSchemaIncludesThreshold(t *testing.T) {
+	crds, err := loadCRDs(filepath.Join(moduleRoot(t), "config", "crd", "bases"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var modelService *apiextensionsv1.CustomResourceDefinition
+	for _, crd := range crds {
+		if crd.Name == "modelservices.inference.foretoken.io" {
+			modelService = crd
+			break
+		}
+	}
+	autoscaling := schemaProperty(t, crdSpecSchema(t, modelService), "autoscaling")
+	scaleUpQueue := schemaProperty(t, autoscaling, "scaleUpQueue")
+	if scaleUpQueue.Type != "integer" || scaleUpQueue.Format != "int64" || scaleUpQueue.Minimum == nil || *scaleUpQueue.Minimum != 0 {
+		t.Fatalf("scaleUpQueue schema = %#v", scaleUpQueue)
+	}
+	algorithm := schemaProperty(t, autoscaling, "algorithm")
+	if len(algorithm.Enum) != 0 || algorithm.MaxLength == nil || *algorithm.MaxLength != 63 || algorithm.Pattern != "^[a-z][a-z0-9_]*$" {
+		t.Fatalf("algorithm schema = %#v, want an open stable-name field", algorithm)
+	}
+}
+
 func TestGeneratedCRDListMapSemantics(t *testing.T) {
 	crds, err := loadCRDs(filepath.Join(moduleRoot(t), "config", "crd", "bases"))
 	if err != nil {

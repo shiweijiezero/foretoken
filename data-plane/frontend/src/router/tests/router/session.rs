@@ -4,19 +4,36 @@
 //! Aggregate, P/D, and E/P/D routing session tests.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use foretoken_model_protocol::ModelServerRole;
 
-use super::support::{inventory, inventory_with_unhealthy, request, route};
+use super::support::{TestStatsReader, inventory, inventory_with_unhealthy, request, route, stats};
 use foretoken_router::algorithm::{AllowAllFilter, LeastLoadedScorer, MaxPicker};
 use foretoken_router::{
-    PipelineRouter, RouteError, RouteTargetId, RouteTargetLoad, Router, RouterPipeline,
+    PipelineRouter, RouteError, RouteTargetId, RouteTargetStats, Router, RouterPipeline,
 };
+
+fn target_stats(running_requests: u64) -> RouteTargetStats {
+    RouteTargetStats {
+        collected_at_unix_ms: 1,
+        observed_window: Duration::from_secs(60),
+        running_requests,
+        max_concurrent_requests: 8,
+        scheduler_running_requests: Some(1),
+        scheduler_waiting_requests: Some(2),
+        kv_cache_usage: Some(0.5),
+        prompt_tokens_per_second: Some(100.0),
+        generation_tokens_per_second: Some(50.0),
+        ttft: None,
+        tpot: None,
+        e2e_latency: None,
+    }
+}
 
 #[test]
 fn single_rank_route_returns_an_explicit_rank_zero_decision() {
-    let (inventory, _) = inventory(vec![route("a", ModelServerRole::Aggregate)]);
-    let router = PipelineRouter::new(inventory);
+    let router = PipelineRouter::new(inventory(vec![route("a", ModelServerRole::Aggregate)]));
     let mut session = router.start(request());
 
     let decision = session.select_initial().unwrap();
@@ -31,8 +48,7 @@ fn single_rank_route_returns_an_explicit_rank_zero_decision() {
 
 #[test]
 fn prefill_is_not_selected_without_an_available_decode() {
-    let (inventory, _) = inventory(vec![route("p", ModelServerRole::Prefill)]);
-    let router = PipelineRouter::new(inventory);
+    let router = PipelineRouter::new(inventory(vec![route("p", ModelServerRole::Prefill)]));
     let mut session = router.start(request());
 
     assert!(matches!(
@@ -42,13 +58,12 @@ fn prefill_is_not_selected_without_an_available_decode() {
 }
 
 #[test]
-fn encoder_prefill_decode_stays_in_its_domain_and_never_falls_back_without_encoder() {
-    let (inventory, _) = inventory(vec![
+fn encoder_prefill_decode_stays_in_its_pipeline_scope_and_never_falls_back_without_encoder() {
+    let router = PipelineRouter::new(inventory(vec![
         route("e", ModelServerRole::Encoder),
         route("p", ModelServerRole::Prefill),
         route("d", ModelServerRole::Decode),
-    ]);
-    let router = PipelineRouter::new(inventory);
+    ]));
     let mut session = router.start(request());
     assert_eq!(
         session.select_initial().unwrap().route_target_id.as_str(),
@@ -63,7 +78,7 @@ fn encoder_prefill_decode_stays_in_its_domain_and_never_falls_back_without_encod
         "d"
     );
 
-    let (inventory, _) = inventory_with_unhealthy(
+    let inventory = inventory_with_unhealthy(
         vec![
             route("e", ModelServerRole::Encoder),
             route("p", ModelServerRole::Prefill),
@@ -80,39 +95,30 @@ fn encoder_prefill_decode_stays_in_its_domain_and_never_falls_back_without_encod
 }
 
 #[test]
-fn decode_uses_fresh_load_and_is_not_bound_during_prefill_selection() {
-    let (inventory, loads) = inventory(vec![
-        route("p", ModelServerRole::Prefill),
-        route("d1", ModelServerRole::Decode),
-        route("d2", ModelServerRole::Decode),
-    ]);
+fn decode_uses_fresh_candidate_stats_and_is_not_bound_during_prefill_selection() {
+    let stat_values = stats();
     let router = PipelineRouter::with_pipeline(
-        inventory,
+        inventory(vec![
+            route("p", ModelServerRole::Prefill),
+            route("d1", ModelServerRole::Decode),
+            route("d2", ModelServerRole::Decode),
+        ]),
         RouterPipeline::new(
             Arc::new(AllowAllFilter),
             Arc::new(LeastLoadedScorer),
             Arc::new(MaxPicker),
         ),
-    );
+    )
+    .with_route_target_stats_reader(Arc::new(TestStatsReader::new(stat_values.clone())));
     let mut session = router.start(request());
     assert_eq!(
         session.select_initial().unwrap().route_target_id.as_str(),
         "p"
     );
 
-    loads.lock().unwrap().extend([
-        (
-            RouteTargetId::new("d1"),
-            RouteTargetLoad {
-                running_requests: Some(10),
-            },
-        ),
-        (
-            RouteTargetId::new("d2"),
-            RouteTargetLoad {
-                running_requests: Some(1),
-            },
-        ),
+    stat_values.lock().unwrap().extend([
+        (RouteTargetId::new("d1"), target_stats(10)),
+        (RouteTargetId::new("d2"), target_stats(1)),
     ]);
     assert_eq!(
         session.select_decode().unwrap().route_target_id.as_str(),

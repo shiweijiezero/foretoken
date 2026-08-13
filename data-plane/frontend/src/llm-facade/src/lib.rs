@@ -221,7 +221,7 @@ impl Stream for CleanupStream {
 /// Resolves selected execution stages without exposing registry ownership.
 pub trait LlmFacadeResolver: Send + Sync {
     /// Resolves exactly one selected stage. Router Core keeps all health,
-    /// capacity, topology, and domain decisions; execution only opens endpoints.
+    /// capacity, topology, and pipeline-scope decisions; execution only opens endpoints.
     fn resolve_stage(
         &self,
         decision: &RouteDecision,

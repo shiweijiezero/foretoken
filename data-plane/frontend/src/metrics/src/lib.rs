@@ -39,7 +39,7 @@ impl From<&ScalingTarget> for QueuedTarget {
             service_uid: target.service_uid.clone(),
             target_kind: match target.kind {
                 ScalingTargetKind::Pool => "Pool",
-                ScalingTargetKind::EPDDomain => "EPDDomain",
+                ScalingTargetKind::EPDPipelineScope => "EPDPipelineScope",
             }
             .to_owned(),
             target_id: if target.kind == ScalingTargetKind::Pool {

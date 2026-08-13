@@ -140,21 +140,27 @@ spec:
                 properties:
                   filter:
                     default: allow_all
-                    enum:
-                    - allow_all
+                    description: RouterFilterAlgorithm identifies a compiled Router
+                      Filter by its stable lower_snake_case name.
+                    maxLength: 128
+                    minLength: 1
+                    pattern: ^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$
                     type: string
                   picker:
                     default: round_robin
-                    enum:
-                    - max
-                    - round_robin
+                    description: RouterPickerAlgorithm identifies a compiled Router
+                      Picker by its stable lower_snake_case name.
+                    maxLength: 128
+                    minLength: 1
+                    pattern: ^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$
                     type: string
                   scorer:
                     default: kv_least_loaded
-                    enum:
-                    - uniform
-                    - least_loaded
-                    - kv_least_loaded
+                    description: RouterScorerAlgorithm identifies a compiled Router
+                      Scorer by its stable lower_snake_case name.
+                    maxLength: 128
+                    minLength: 1
+                    pattern: ^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$
                     type: string
                 type: object
               timeouts:
@@ -261,8 +267,8 @@ spec:
                 minimum: 0
                 type: integer
               servingSnapshotVersion:
-                description: Last successfully persisted serving snapshot version.
-                  It survives ConfigMap recreation.
+                description: Last successfully persisted versioned routing configuration
+                  version. It survives ConfigMap recreation.
                 format: int64
                 minimum: 0
                 type: integer

@@ -1,11 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Built-in scorer that assigns every candidate the same score.
+//! Scorer that assigns every candidate the same score.
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 
-use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScoredCandidate};
+use std::sync::Arc;
+
+use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescriptor};
+
+inventory::submit! {
+    ScorerDescriptor {
+        name: "uniform",
+        factory: || Arc::new(UniformScorer),
+    }
+}
 
 /// Assigns the same score to every candidate.
 #[derive(Default)]
@@ -16,17 +25,10 @@ impl RouteScorer for UniformScorer {
     fn score(
         &self,
         request: &RouterRequest,
-        candidates: Vec<RouteCandidate>,
+        candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
-        route_target_stats_reader: &dyn crate::RouteTargetStatsReader,
         customized_context: &mut (),
-    ) -> Vec<ScoredCandidate> {
-        candidates
-            .into_iter()
-            .map(|candidate| ScoredCandidate {
-                candidate,
-                score: RouteScore::default(),
-            })
-            .collect()
+    ) -> Vec<RouteScore> {
+        vec![RouteScore::default(); candidates.len()]
     }
 }

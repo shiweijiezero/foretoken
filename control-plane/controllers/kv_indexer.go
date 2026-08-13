@@ -72,8 +72,8 @@ func kvScopeID(group *inferencev1alpha1.ModelGroup) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// pdDomainID scopes dynamic Mooncake side-channel ingress to compatible P/D Groups.
-func pdDomainID(group *inferencev1alpha1.ModelGroup) string {
+// pdPipelineScopeID scopes dynamic Mooncake side-channel ingress to compatible P/D Groups.
+func pdPipelineScopeID(group *inferencev1alpha1.ModelGroup) string {
 	encoded, _ := json.Marshal(struct {
 		KVScope   string
 		PDRuntime *inferencev1alpha1.ModelGroupPDRuntimeConfig

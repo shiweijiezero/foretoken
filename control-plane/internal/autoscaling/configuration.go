@@ -1,18 +1,27 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-
 package autoscaling
 
-// AlgorithmName is the stable name used by Foretoken's static assembly.
-type AlgorithmName string
+import "github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
+
+type DecisionAlgorithmName string
+type TriggerAlgorithmName string
+type AdjustmentAlgorithmName string
 
 const (
-	AlgorithmManual AlgorithmName = "manual"
-	AlgorithmQueue  AlgorithmName = "queue"
+	DecisionAlgorithmManual    DecisionAlgorithmName   = "manual"
+	DecisionAlgorithmQueue     DecisionAlgorithmName   = "queue"
+	DecisionAlgorithmThreshold DecisionAlgorithmName   = "threshold"
+	TriggerAlgorithmPeriodic   TriggerAlgorithmName    = "periodic"
+	TriggerAlgorithmWatermark  TriggerAlgorithmName    = "watermark"
+	AdjustmentAlgorithmDirect  AdjustmentAlgorithmName = "direct"
+	AdjustmentAlgorithmStep    AdjustmentAlgorithmName = "step"
 )
 
-// Configuration contains read-only algorithm selection and configuration.
 type Configuration struct {
-	Algorithm                   AlgorithmName
-	TargetQueuePerRoutableGroup int64
+	DecisionAlgorithm   DecisionAlgorithmName
+	TriggerAlgorithm    TriggerAlgorithmName
+	AdjustmentAlgorithm AdjustmentAlgorithmName
+	Decision            core.DecisionConfig
+	Trigger             core.TriggerConfig
 }

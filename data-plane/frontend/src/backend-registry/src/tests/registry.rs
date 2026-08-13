@@ -8,8 +8,8 @@ use tokio::net::TcpListener;
 use vllm_engine_core_client::protocol::dtype::ModelDtype;
 
 use crate::{
-    BackendRegistryBuild, SnapshotEpdComponent, SnapshotEpdDomain, SnapshotGroup,
-    SnapshotPdComponent, SnapshotPdDomain,
+    BackendRegistryBuild, SnapshotEpdComponent, SnapshotEpdPipelineScope, SnapshotGroup,
+    SnapshotPdComponent, SnapshotPdPipelineScope,
 };
 use foretoken_model_protocol::{ModelServerRole, RouteStage};
 use foretoken_router::RouteDecision;
@@ -21,7 +21,7 @@ fn component(id: &str, role: ModelServerRole) -> SnapshotPdComponent {
         pool_name: "pool".into(),
         route_target_id: RouteTargetId::new(id),
         role,
-        domain_id: "service-a".into(),
+        pipeline_scope_id: "service-a".into(),
         model: "model".into(),
         revision: "r1".into(),
         tokenizer: "tokenizer".into(),
@@ -48,13 +48,13 @@ fn pd_snapshot() -> ServingSnapshot {
             component("p", ModelServerRole::Prefill),
             component("d", ModelServerRole::Decode),
         ],
-        pd_domains: vec![SnapshotPdDomain {
-            domain_id: "service-a".into(),
+        pd_pipeline_scopes: vec![SnapshotPdPipelineScope {
+            pipeline_scope_id: "service-a".into(),
             prefill_route_target_ids: vec![RouteTargetId::new("p")],
             decode_route_target_ids: vec![RouteTargetId::new("d")],
         }],
         epd_components: vec![],
-        epd_domains: vec![],
+        epd_pipeline_scopes: vec![],
     }
 }
 
@@ -67,7 +67,7 @@ fn epd_component(id: &str, role: ModelServerRole) -> SnapshotEpdComponent {
         pool_name: "pool".into(),
         route_target_id: RouteTargetId::new(id),
         role,
-        domain_id: "epd-a".into(),
+        pipeline_scope_id: "epd-a".into(),
         model: "model".into(),
         revision: "r1".into(),
         tokenizer: "tokenizer".into(),
@@ -110,14 +110,14 @@ fn epd_snapshot() -> ServingSnapshot {
         models: vec![],
         groups: vec![],
         pd_components: vec![],
-        pd_domains: vec![],
+        pd_pipeline_scopes: vec![],
         epd_components: vec![
             epd_component("e", ModelServerRole::Encoder),
             epd_component("p", ModelServerRole::Prefill),
             epd_component("d", ModelServerRole::Decode),
         ],
-        epd_domains: vec![SnapshotEpdDomain {
-            domain_id: "epd-a".into(),
+        epd_pipeline_scopes: vec![SnapshotEpdPipelineScope {
+            pipeline_scope_id: "epd-a".into(),
             encoder_route_target_id: RouteTargetId::new("e"),
             prefill_route_target_id: RouteTargetId::new("p"),
             decode_route_target_id: RouteTargetId::new("d"),
@@ -196,9 +196,9 @@ fn aggregate_snapshot(endpoint: String) -> ServingSnapshot {
             data_parallel_size: 1,
         }],
         pd_components: vec![],
-        pd_domains: vec![],
+        pd_pipeline_scopes: vec![],
         epd_components: vec![],
-        epd_domains: vec![],
+        epd_pipeline_scopes: vec![],
     }
 }
 
@@ -273,12 +273,14 @@ fn preserves_pd_input_limits_in_route_inventory() {
 }
 
 #[test]
-fn rejects_component_not_in_its_service_domain() {
+fn rejects_component_not_in_its_pipeline_scope() {
     let mut snapshot = pd_snapshot();
-    snapshot.pd_domains[0].decode_route_target_ids.clear();
+    snapshot.pd_pipeline_scopes[0]
+        .decode_route_target_ids
+        .clear();
     assert!(matches!(
         BackendRegistry::from_snapshot(snapshot),
-        Err(SnapshotError::InvalidPdDomain(_))
+        Err(SnapshotError::InvalidPdPipelineScope(_))
     ));
 }
 #[test]
@@ -342,10 +344,10 @@ fn epd_snapshot_requires_one_compatible_static_triplet() {
     );
 
     let mut not_a_triplet = epd_snapshot();
-    not_a_triplet.epd_domains[0].decode_route_target_id = RouteTargetId::new("other");
+    not_a_triplet.epd_pipeline_scopes[0].decode_route_target_id = RouteTargetId::new("other");
     assert!(matches!(
         BackendRegistry::from_snapshot(not_a_triplet),
-        Err(SnapshotError::InvalidEpdDomain(_))
+        Err(SnapshotError::InvalidEpdPipelineScope(_))
     ));
 }
 

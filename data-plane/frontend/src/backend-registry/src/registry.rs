@@ -14,8 +14,8 @@ use vllm_engine_core_client::protocol::dtype::ModelDtype;
 
 use foretoken_model_protocol::{ModelServerRole, RouteStage};
 use foretoken_router::{
-    ModelRouteTable, RouteCandidate, RouteDecision, RouteInventory, RouteTarget, RouteTargetId,
-    RouteTargetLoad, RouteTargetSet, RouteTargetStats, RouteTargetStatsReader,
+    ModelRouteTable, RouteDecision, RouteInventory, RouteTarget, RouteTargetId, RouteTargetSet,
+    RouteTargetStats, RouteTargetStatsReader,
 };
 
 use crate::route_target_stats::RouteTargetStatsHistory;
@@ -52,7 +52,6 @@ pub struct BackendRegistry {
     logical_targets: BTreeMap<String, Vec<RouteTargetSet>>,
     components: BTreeMap<RouteTargetId, Component>,
     health: BTreeMap<RouteTargetId, AtomicBool>,
-    loads: Mutex<BTreeMap<RouteTargetId, RouteTargetLoad>>,
     stats: Mutex<BTreeMap<RouteTargetId, RouteTargetStatsHistory>>,
     metadata: Mutex<BTreeMap<RouteTargetId, RuntimeMetadataResponse>>,
     health_client: reqwest::Client,
@@ -107,7 +106,6 @@ impl BackendRegistry {
             logical_targets,
             components,
             health,
-            loads: Mutex::new(BTreeMap::new()),
             stats: Mutex::new(BTreeMap::new()),
             metadata: Mutex::new(BTreeMap::new()),
             health_client: reqwest::Client::builder()
@@ -174,7 +172,7 @@ impl BackendRegistry {
 
     pub fn healthy_models(&self) -> Vec<String> {
         let mut models = BTreeSet::new();
-        let mut domains = BTreeMap::<(String, String), (bool, bool, bool)>::new();
+        let mut pipeline_scopes = BTreeMap::<(String, String), (bool, bool, bool)>::new();
         for route in self.table.routes() {
             if route.role == ModelServerRole::Aggregate
                 && self.is_route_target_healthy(&route.route_target_id)
@@ -182,11 +180,11 @@ impl BackendRegistry {
                 models.insert(route.model.clone());
                 continue;
             }
-            let Some(domain) = &route.domain_id else {
+            let Some(pipeline_scope_id) = &route.pipeline_scope_id else {
                 continue;
             };
-            let roles = domains
-                .entry((route.model.clone(), domain.clone()))
+            let roles = pipeline_scopes
+                .entry((route.model.clone(), pipeline_scope_id.clone()))
                 .or_default();
             if self.is_route_target_healthy(&route.route_target_id) {
                 match route.role {
@@ -197,10 +195,10 @@ impl BackendRegistry {
                 }
             }
         }
-        for ((model, domain), (encoder, prefill, decode)) in domains {
+        for ((model, pipeline_scope_id), (encoder, prefill, decode)) in pipeline_scopes {
             let epd = self.table.routes().iter().any(|route| {
                 route.model == model
-                    && route.domain_id.as_deref() == Some(domain.as_str())
+                    && route.pipeline_scope_id.as_deref() == Some(pipeline_scope_id.as_str())
                     && route.role == ModelServerRole::Encoder
             });
             if prefill && decode && (!epd || encoder) {
@@ -226,7 +224,6 @@ impl BackendRegistry {
             (id.clone(), ready && bootstrap, metadata, stats)
         });
         let results = futures::future::join_all(probes).await;
-        let mut next_loads = BTreeMap::new();
         let mut next_metadata = BTreeMap::new();
         let mut histories = self.stats.lock().expect("backend stats mutex");
         for (id, healthy, metadata, stats) in results {
@@ -236,12 +233,6 @@ impl BackendRegistry {
                 .store(healthy, Ordering::Release);
             if healthy {
                 if let Some(stats) = stats {
-                    next_loads.insert(
-                        id.clone(),
-                        RouteTargetLoad {
-                            running_requests: Some(stats.running_requests),
-                        },
-                    );
                     histories
                         .entry(id.clone())
                         .or_insert_with(|| {
@@ -257,7 +248,6 @@ impl BackendRegistry {
             }
         }
         drop(histories);
-        *self.loads.lock().expect("backend load mutex") = next_loads;
         *self.metadata.lock().expect("metadata mutex") = next_metadata;
     }
 }
@@ -295,9 +285,6 @@ impl RouteInventory for BackendRegistry {
             .get(id)
             .is_some_and(|v| v.load(Ordering::Acquire))
     }
-    fn route_target_load(&self, id: &RouteTargetId) -> Option<RouteTargetLoad> {
-        self.loads.lock().ok()?.get(id).cloned()
-    }
 
     fn effective_capabilities(&self, id: &RouteTargetId) -> BTreeSet<String> {
         let Some(declared) = self
@@ -329,12 +316,8 @@ impl RouteInventory for BackendRegistry {
 }
 
 impl RouteTargetStatsReader for BackendRegistry {
-    fn stats(&self, candidate: &RouteCandidate, window: Duration) -> Option<RouteTargetStats> {
-        self.stats
-            .lock()
-            .ok()?
-            .get(&candidate.route_target_id)?
-            .stats(window)
+    fn stats(&self, route_target_id: &RouteTargetId, window: Duration) -> Option<RouteTargetStats> {
+        self.stats.lock().ok()?.get(route_target_id)?.stats(window)
     }
 }
 

@@ -102,3 +102,40 @@ fn kv_delta_query_requires_camel_case_data_parallel_rank() {
     assert!(serde_json::from_str::<KvDeltaQuery>(r#"{"limit":16}"#).is_err());
     assert!(serde_json::from_str::<KvDeltaQuery>(r#"{"dp_rank":1}"#).is_err());
 }
+
+#[test]
+fn generate_input_preserves_session_id_across_vllm_conversions() {
+    let input = GenerateInput {
+        stage: RouteStage::Prefill,
+        request_id: "request-1".into(),
+        prompt_token_ids: vec![1, 2],
+        sampling_params: Default::default(),
+        mm_features: None,
+        arrival_time: None,
+        cache_salt: None,
+        trace_headers: None,
+        priority: 0,
+        data_parallel_rank: Some(3),
+        session_id: Some("session-1".into()),
+        reasoning_parser_kwargs: None,
+        lora_request: None,
+    };
+
+    let vllm_request = vllm_llm::GenerateRequest::from(input);
+    assert_eq!(vllm_request.session_id.as_deref(), Some("session-1"));
+
+    let round_trip = GenerateInput::from(vllm_request);
+    assert_eq!(round_trip.session_id.as_deref(), Some("session-1"));
+}
+
+#[test]
+fn generate_input_defaults_session_id_for_older_payloads() {
+    let input: GenerateInput = serde_json::from_value(serde_json::json!({
+        "request_id": "request-1",
+        "prompt_token_ids": [1, 2],
+        "sampling_params": {},
+    }))
+    .expect("payload without session_id remains valid");
+
+    assert_eq!(input.session_id, None);
+}

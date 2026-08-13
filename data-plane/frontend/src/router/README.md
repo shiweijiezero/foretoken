@@ -3,15 +3,33 @@
 
 # Router
 
-The Router selects one routable ModelGroup and DP rank for each execution stage.
+For each execution stage, the Router selects one routable ModelGroup (that is, an engine-core-server) and an exact DP rank.
 
-Its pipeline has three list-level contracts:
+Its pipeline has three list-level interfaces:
 
-- **Filter** receives the compatible, healthy candidate snapshot. It may remove candidates but cannot create or modify them.
-- **Scorer** returns one `ScoredCandidate` for every retained candidate. Built-in KV scoring compares matched prompt tokens, storage tier, locality, and load.
-- **Picker** returns one unchanged candidate from the scored list. The Router then exposes a `RouteDecision` containing the ModelGroup route target, execution role, model revision, and exact DP rank.
+- **Filter** receives the compatible, healthy eligible route-option snapshot (a candidate) and returns indexes for a retained subset. It cannot create or modify candidates. Out-of-range or duplicate indexes are explicit routing errors.
+- **Scorer** returns one `RouteScore` for every retained eligible route option, in the same order. The Router owns the candidate/score view; a score-count mismatch is an explicit routing error. `KvLeastLoadedScorer` compares matched prompt tokens, storage tier, locality, and load.
+- **Picker** selects an index in the current scored list rather than returning an eligible route option. An out-of-range index, or `None` for a nonempty list, is an explicit routing error. The Router then exposes a `RouteDecision` containing the ModelGroup `RouteTarget` (the model-server route destination), execution role, model revision, and exact DP rank.
 
-A RouteTarget with `data_parallel_size: 1` contributes only rank `0`, so its decision explicitly returns `data_parallel_rank: 0`. Larger targets contribute one candidate per rank.
+Stage and E/P/D linked route-set narrowing (the same group of associated Encoder, Prefill, and Decode route components) remain Router-owned and run after scoring, before Picker. Algorithms can compare the complete compatible, healthy snapshot but cannot choose outside the stage's narrowed eligible route options. Each eligible route option also carries the Router's immutable observation for that routing round: current admitted load and concurrency, optional scheduler/KV gauges, and throughput and latency statistics over the Router-owned observation window. Filter and Scorer consume that snapshot rather than querying target statistics; only request-dependent KV-prefix lookup remains an algorithm query.
+
+A `RouteTarget` (a model-server route destination) with `data_parallel_size: 1` contributes only rank `0`, so its decision explicitly returns `data_parallel_rank: 0`. Larger targets contribute one eligible route option per rank.
+
+## Customized Context case
+
+`RouterPipeline::with_customized_context` creates one owned `C` for each request. The Router passes `&mut C` to Filter, Scorer, and Picker in every selection round; the same value lives through the initial, Prefill, and Decode selections, then is dropped when request processing ends. It is not shared with another request.
+
+```rust
+let pipeline = RouterPipeline::with_customized_context(
+    Arc::new(ContextFilter),
+    Arc::new(ContextScorer),
+    Arc::new(ContextPicker),
+    |request| RoutingContext { request_id: request.generate_request.request_id.clone(), rounds: 0 },
+);
+let router = PipelineRouter::with_pipeline(inventory, pipeline);
+```
+
+For example, Filter increments `rounds`, Scorer reads that round to attach scoring policy, and Picker consumes the same state to make its final choice. The executable behavior is covered by `tests/router/pipeline.rs`; the default `RouterPipeline::new` remains the `()` convenience for algorithms that need no request-local state.
 
 ## Example
 
@@ -25,9 +43,9 @@ Candidates:
   2f48f8e1-7f89-4eb8-bf31-e6d482504f66 / rank 1  KV match: 512 tokens
   8c88ee9a-c10f-41fd-98ef-a09d256b5213 / rank 0  KV match: 256 tokens
 
-Filter:  retain all three healthy, compatible candidates
-Scorer:  first Group/rank 0 → 0, first Group/rank 1 → 512, second Group/rank 0 → 256
-Picker:  select the first Group at rank 1
+Filter:  retain indexes 0, 1, and 2
+Scorer:  score indexes 0 → 0, 1 → 512, 2 → 256
+Picker:  select index 1
 
 RouteDecision:
   route_target_id: 2f48f8e1-7f89-4eb8-bf31-e6d482504f66
@@ -36,4 +54,10 @@ RouteDecision:
 
 ModelGroup names follow `<pool-name>-<revision>-<ordinal>`. Router identity uses the Kubernetes ModelGroup UID rather than `metadata.name`; the name is used by the Deployment, Service, and service DNS endpoint.
 
-For Aggregate and Prefill, built-in KV scoring is lexicographic: longest complete matched prompt prefix first, then `Device > HostPinned > Disk > External`, then `Local > Remote`, then lower load. Decode prefix, tier, and locality scores are zero. Unavailable KV facts never become a confirmed miss.
+For Aggregate and Prefill, `KvLeastLoadedScorer` is lexicographic: longest complete matched prompt prefix first, then `Device > HostPinned > Disk > External`, then `Local > Remote`, then lower load. Decode prefix, tier, and locality scores are zero. Unavailable KV facts never become a confirmed miss.
+
+## Compiled algorithm registry
+
+Filter, Scorer, and Picker implementations register themselves at compile time with `inventory::submit!`. Pipeline configuration uses stable lower-snake-case names: the built-ins are `allow_all`; `uniform`, `least_loaded`, and `kv_least_loaded`; and `max` and `round_robin`. The Router validates compiled descriptors and configuration during startup. Empty, duplicate, or unknown names are explicit errors; it never falls back silently.
+
+To add a community algorithm, add its Rust implementation in the appropriate `src/algorithm/{filter,scorer,picker}/` directory, implement the category trait, and place an `inventory::submit!` descriptor with its stable name and factory in that file. Add one `mod my_algorithm;` line to that category's `mod.rs` so Rust compiles the module. No central configuration catalog, source scanning, runtime plugin loader, `build.rs`, or code generation is involved.

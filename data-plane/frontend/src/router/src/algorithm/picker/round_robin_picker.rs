@@ -1,11 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Built-in round-robin tie breaking among highest-scored candidates.
+//! Round-robin tie breaking among highest-scored candidates.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::{RouteCandidate, RoutePicker, RouterRequest, ScoredCandidate};
+use crate::{CandidateIndex, PickerDescriptor, RoutePicker, RouterRequest, ScoredCandidate};
+
+inventory::submit! {
+    PickerDescriptor {
+        name: "round_robin",
+        factory: || std::sync::Arc::new(RoundRobinPicker::default()),
+    }
+}
 
 /// Rotates across candidates tied for the maximum score.
 #[derive(Default)]
@@ -19,24 +26,25 @@ impl RoutePicker for RoundRobinPicker {
         request: &RouterRequest,
         scored_candidates: &[ScoredCandidate],
         customized_context: &mut (),
-    ) -> Option<RouteCandidate> {
+    ) -> Option<CandidateIndex> {
         let best_score = scored_candidates
             .iter()
             .map(|scored_candidate| scored_candidate.score)
             .max()?;
-        let mut best_candidates = scored_candidates
+        let mut best_indexes = scored_candidates
             .iter()
-            .filter(|scored_candidate| scored_candidate.score == best_score)
+            .enumerate()
+            .filter(|(_, scored_candidate)| scored_candidate.score == best_score)
+            .map(|(index, _)| index)
             .collect::<Vec<_>>();
-        best_candidates.sort_by(|left, right| {
-            left.candidate
-                .route_target_id
-                .cmp(&right.candidate.route_target_id)
-        });
-        Some(
-            best_candidates[self.next.fetch_add(1, Ordering::Relaxed) % best_candidates.len()]
+        best_indexes.sort_by(|left, right| {
+            scored_candidates[*left]
                 .candidate
-                .clone(),
-        )
+                .route_target_id
+                .cmp(&scored_candidates[*right].candidate.route_target_id)
+        });
+        Some(CandidateIndex(
+            best_indexes[self.next.fetch_add(1, Ordering::Relaxed) % best_indexes.len()],
+        ))
     }
 }

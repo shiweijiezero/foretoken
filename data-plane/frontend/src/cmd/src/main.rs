@@ -6,6 +6,10 @@
 mod config;
 mod serving_snapshot;
 
+#[cfg(test)]
+#[path = "tests/config.rs"]
+mod config_tests;
+
 use std::sync::Arc;
 
 use config::{KvIndexKeyError, RuntimeConfig, kv_index_key};

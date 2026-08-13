@@ -9,8 +9,12 @@ mod pipeline;
 mod pipeline_router;
 mod session;
 
-pub use candidate::{RouteCandidate, RouteScore, RouteTargetLoad, ScoredCandidate};
-pub use config::{FilterAlgorithm, PickerAlgorithm, RouterPipelineConfig, ScorerAlgorithm};
+pub use candidate::{CandidateIndex, RouteCandidate, RouteScore, ScoredCandidate};
+pub use config::{
+    AlgorithmName, FilterAlgorithm, FilterDescriptor, PickerAlgorithm, PickerDescriptor,
+    RouterPipelineConfig, RouterPipelineConfigError, ScorerAlgorithm, ScorerDescriptor,
+    validate_descriptor_names,
+};
 pub use pipeline::RouterPipeline;
 pub use pipeline_router::PipelineRouter;
 pub use session::{RouteError, RouteSession, Router};

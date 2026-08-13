@@ -247,6 +247,7 @@ async fn tokenize(
                 cache_salt: None,
                 add_special_tokens: request.add_special_tokens,
                 data_parallel_rank: None,
+                session_id: None,
                 lora_request: None,
             };
             state
@@ -432,6 +433,8 @@ struct CompletionRequest {
     #[serde(default)]
     cache_salt: Option<String>,
     #[serde(default)]
+    session_id: Option<String>,
+    #[serde(default)]
     stop: Option<Stop>,
 }
 
@@ -506,6 +509,8 @@ struct ChatCompletionRequest {
     priority: i32,
     #[serde(default)]
     cache_salt: Option<String>,
+    #[serde(default)]
+    session_id: Option<String>,
     #[serde(default)]
     stop: Option<Stop>,
     #[serde(default)]
@@ -716,19 +721,19 @@ pub(crate) fn openai_error(error: GenerationError) -> Response {
         ),
         GenerationError::BackendRejected => (
             StatusCode::BAD_GATEWAY,
-            "generation backend rejected the request",
+            "model server rejected the request",
             "server_error",
             "backend_rejected",
         ),
         GenerationError::BackendProtocol => (
             StatusCode::BAD_GATEWAY,
-            "generation backend protocol failed",
+            "model server protocol failed",
             "server_error",
             "backend_protocol",
         ),
         GenerationError::RequestFailed => (
             StatusCode::BAD_GATEWAY,
-            "generation backend request failed",
+            "model server request failed",
             "server_error",
             "request_failed",
         ),
@@ -796,6 +801,7 @@ async fn completions(
                     intermediate: stream,
                     priority: request.priority,
                     cache_salt: request.cache_salt.clone(),
+                    session_id: request.session_id.clone(),
                     arrival_time: Some(vllm_llm::current_unix_timestamp_secs()),
                     tool_call_parser: ParserSelection::None,
                     reasoning_parser: ParserSelection::None,
@@ -951,6 +957,7 @@ async fn chat_with_request(
         cache_salt: request.cache_salt.clone(),
         add_special_tokens: false,
         data_parallel_rank: None,
+        session_id: request.session_id.clone(),
         lora_request: None,
     };
     if chat.validate().is_err() {
@@ -969,6 +976,7 @@ async fn chat_with_request(
                 intermediate: stream,
                 priority: chat.priority,
                 cache_salt: chat.cache_salt.clone(),
+                session_id: chat.session_id.clone(),
                 arrival_time: None,
                 tool_call_parser: if tool_requested {
                     ParserSelection::Auto

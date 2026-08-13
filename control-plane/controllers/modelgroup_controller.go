@@ -15,7 +15,6 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
-	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -33,16 +32,16 @@ import (
 )
 
 const (
-	conditionWorkloadMaterialized = "WorkloadMaterialized"
-	conditionWorkloadAvailable    = "WorkloadAvailable"
-	conditionSchedulingCapacity   = "SchedulingCapacity"
-	modelGroupLabel               = "inference.foretoken.io/model-group"
-	modelGroupRoleLabel           = "inference.foretoken.io/model-role"
-	modelGroupPDDomainLabel       = "inference.foretoken.io/pd-domain"
-	multusNetworksAnnotation      = "k8s.v1.cni.cncf.io/networks"
-	modelGroupFieldOwner          = "foretoken-modelgroup-controller"
-	controlPlanePodLabel          = "app.kubernetes.io/name"
-	controlPlanePodLabelValue     = "foretoken-control-plane"
+	conditionWorkloadMaterialized  = "WorkloadMaterialized"
+	conditionWorkloadAvailable     = "WorkloadAvailable"
+	conditionSchedulingCapacity    = "SchedulingCapacity"
+	modelGroupLabel                = "inference.foretoken.io/model-group"
+	modelGroupRoleLabel            = "inference.foretoken.io/model-role"
+	modelGroupPDPipelineScopeLabel = "inference.foretoken.io/pd-pipeline-scope"
+	multusNetworksAnnotation       = "k8s.v1.cni.cncf.io/networks"
+	modelGroupFieldOwner           = "foretoken-modelgroup-controller"
+	controlPlanePodLabel           = "app.kubernetes.io/name"
+	controlPlanePodLabelValue      = "foretoken-control-plane"
 )
 
 // ModelGroupReconciler owns the Kubernetes workload for one execution Group.
@@ -74,39 +73,6 @@ func (reconciler *ModelGroupReconciler) modelGroupsForPod(_ context.Context, obj
 	return []reconcile.Request{{NamespacedName: client.ObjectKey{Namespace: object.GetNamespace(), Name: groupName}}}
 }
 
-type schedulingCapacityState struct {
-	status  metav1.ConditionStatus
-	reason  string
-	message string
-}
-
-// schedulingCapacity reports insufficient capacity only from the scheduler's
-// explicit Unschedulable signal; image pulls and slow startup remain unknown.
-func (reconciler *ModelGroupReconciler) schedulingCapacity(ctx context.Context, group *inferencev1alpha1.ModelGroup) (schedulingCapacityState, error) {
-	var pods corev1.PodList
-	if err := reconciler.List(ctx, &pods, client.InNamespace(group.Namespace), client.MatchingLabels(modelGroupLabels(group))); err != nil {
-		return schedulingCapacityState{}, fmt.Errorf("list Group Pods: %w", err)
-	}
-	scheduled := false
-	for index := range pods.Items {
-		for _, condition := range pods.Items[index].Status.Conditions {
-			if condition.Type != corev1.PodScheduled {
-				continue
-			}
-			if condition.Status == corev1.ConditionFalse && condition.Reason == corev1.PodReasonUnschedulable {
-				return schedulingCapacityState{status: metav1.ConditionFalse, reason: "InsufficientCapacity", message: "The Kubernetes scheduler reported the Group Pod as Unschedulable"}, nil
-			}
-			if condition.Status == corev1.ConditionTrue {
-				scheduled = true
-			}
-		}
-	}
-	if scheduled {
-		return schedulingCapacityState{status: metav1.ConditionTrue, reason: "Scheduled", message: "The Group Pod was scheduled"}, nil
-	}
-	return schedulingCapacityState{status: metav1.ConditionUnknown, reason: "WaitingForScheduling", message: "The Group Pod has not reported a scheduling result"}, nil
-}
-
 // Reconcile materializes the workload and derives readiness from the model server.
 func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	group := new(inferencev1alpha1.ModelGroup)
@@ -120,7 +86,7 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 		return ctrl.Result{}, err
 	}
 	if err := validateGroupProfile(group); err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, group, inferencev1alpha1.ModelGroupPhaseFailed, metav1.ConditionFalse, "UnsupportedProfile", err.Error(), false, schedulingCapacityState{status: metav1.ConditionUnknown, reason: "NotEvaluated", message: "Scheduling capacity was not evaluated"})
+		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupFailureState(err))
 	}
 	if err := ensureKVIndexerSecret(ctx, reconciler.Client, group.Namespace); err != nil {
 		return ctrl.Result{}, err
@@ -144,90 +110,14 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if err := reconciler.reconcileNetworkPolicy(ctx, group); err != nil {
 		return ctrl.Result{}, err
 	}
-	schedulingCapacity, err := reconciler.schedulingCapacity(ctx, group)
+	scheduling, err := reconciler.schedulingCapacity(ctx, group)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	available := modelGroupDeploymentAvailable(deployment)
-	phase := inferencev1alpha1.ModelGroupPhaseProvisioning
-	if available {
-		phase = inferencev1alpha1.ModelGroupPhaseReady
-	}
-	if err := reconciler.updateStatus(ctx, group, phase, metav1.ConditionTrue, "Applied", "Group workload was materialized", available, schedulingCapacity); err != nil {
+	if err := reconciler.updateStatus(ctx, group, modelGroupMaterializedState(modelGroupDeploymentAvailable(deployment), scheduling)); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
-}
-
-func validateGroupProfile(group *inferencev1alpha1.ModelGroup) error {
-	if group.Spec.NodeCount != 1 || group.Spec.MemberCount != 1 || group.Spec.Runtime.Backend != "vllm" {
-		return fmt.Errorf("only single-member vLLM Groups are currently supported")
-	}
-	if group.Spec.KVRuntime != nil {
-		if (group.Spec.KVRuntime.Offload == nil) == (group.Spec.KVRuntime.MooncakeStore == nil) {
-			return fmt.Errorf("KV runtime must select exactly one backend")
-		}
-		if group.Spec.KVRuntime.Offload != nil && group.Spec.KVRuntime.Offload.CPUBytes < 1 {
-			return fmt.Errorf("KV offload CPU bytes must be greater than zero")
-		}
-		if store := group.Spec.KVRuntime.MooncakeStore; store != nil {
-			if store.ProfileName == "" || store.ProfileRevision == "" || store.ConfigMapName == "" || store.ConfigMapKey == "" || store.PythonHashSeed == "" {
-				return fmt.Errorf("Mooncake Store runtime config is incomplete")
-			}
-			if store.KVServiceUID != "" && store.RequesterBufferBytes < 1 {
-				return fmt.Errorf("managed Mooncake Store requester buffer is incomplete")
-			}
-			if store.RequesterBufferBytes > 0 {
-				if err := resourcevalidation.ValidateRequesterBufferBudget(group.Spec.Resources, store.RequesterBufferBytes); err != nil {
-					return fmt.Errorf("managed Mooncake Store requester buffer: %w", err)
-				}
-			}
-		}
-	}
-	switch group.Spec.Role {
-	case inferencev1alpha1.ModelRoleAggregate:
-		if group.Spec.PDRuntime != nil || group.Spec.ECRuntime != nil {
-			return fmt.Errorf("aggregate Groups must not have split runtime configs")
-		}
-		return nil
-	case inferencev1alpha1.ModelRoleEncoder:
-		if group.Spec.PDRuntime != nil {
-			return fmt.Errorf("encoder Groups must not have a P/D runtime config")
-		}
-		if !completeECRuntime(group.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleProducer) {
-			return fmt.Errorf("encoder Groups require a complete EC producer runtime config")
-		}
-		return validateEPDParallelism(group.Spec.Parallelism)
-	case inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode:
-		if group.Spec.KVRuntime != nil && group.Spec.KVRuntime.Offload != nil {
-			return fmt.Errorf("P/D Groups do not support local KV offload")
-		}
-		pd := group.Spec.PDRuntime
-		if pd == nil || pd.ProfileName == "" || pd.ProfileRevision == "" || pd.Connector != "MooncakeConnector" || pd.Protocol != "rdma" || pd.BootstrapPort < 1 || pd.BootstrapPort > 65535 || pd.AbortRequestTimeoutSeconds < 1 || pd.RDMADeviceName == "" || pd.RDMAResourceName == "" || pd.RDMAResourceCount < 1 {
-			return fmt.Errorf("P/D Groups require a complete Mooncake runtime config")
-		}
-		if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
-			if group.Spec.ECRuntime != nil && !completeECRuntime(group.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleConsumer) {
-				return fmt.Errorf("prefill Groups require a complete EC consumer runtime config")
-			}
-		} else if group.Spec.ECRuntime != nil {
-			return fmt.Errorf("decode Groups must not have an EC runtime config")
-		}
-		return validateEPDParallelism(group.Spec.Parallelism)
-	default:
-		return fmt.Errorf("ModelGroup role %q is not supported", group.Spec.Role)
-	}
-}
-
-func completeECRuntime(runtime *inferencev1alpha1.ModelGroupECRuntimeConfig, role inferencev1alpha1.ECTransferRole) bool {
-	return runtime != nil && runtime.ProfileName != "" && runtime.ProfileRevision != "" && runtime.Connector == "ECExampleConnector" && runtime.Role == role && runtime.SharedStorageClaim != "" && runtime.SharedStoragePath != ""
-}
-
-func validateEPDParallelism(parallelism inferencev1alpha1.CompiledParallelism) error {
-	if parallelism.TP != 1 || parallelism.PP != 1 || parallelism.DP != 1 || parallelism.PCP != 1 || parallelism.DCP != 1 || parallelism.EP != nil {
-		return fmt.Errorf("E/P/D Groups currently require TP=PP=DP=PCP=DCP=1 with EP disabled")
-	}
-	return nil
 }
 
 func (reconciler *ModelGroupReconciler) validateModelPoolOwnership(ctx context.Context, group *inferencev1alpha1.ModelGroup) error {
@@ -241,6 +131,8 @@ func (reconciler *ModelGroupReconciler) validateModelPoolOwnership(ctx context.C
 	}
 	return nil
 }
+
+// Workload reconciliation and desired resources.
 
 func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment, error) {
 	desired, err := desiredDeployment(group)
@@ -270,7 +162,7 @@ func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context,
 func modelGroupLabels(group *inferencev1alpha1.ModelGroup) map[string]string {
 	labels := map[string]string{modelGroupLabel: group.Name, modelGroupRoleLabel: string(group.Spec.Role)}
 	if group.Spec.PDRuntime != nil {
-		labels[modelGroupPDDomainLabel] = pdDomainID(group)
+		labels[modelGroupPDPipelineScopeLabel] = pdPipelineScopeID(group)
 	}
 	return labels
 }
@@ -501,10 +393,10 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 	}}
 	if group.Spec.PDRuntime != nil {
 		// Mooncake opens bidirectional runtime side channels on dynamic ports
-		// after bootstrap. Restrict them to the same controller-owned P/D domain.
+		// after bootstrap. Restrict them to the same controller-owned P/D linked processing unit.
 		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{{
 			PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
-				modelGroupPDDomainLabel: pdDomainID(group),
+				modelGroupPDPipelineScopeLabel: pdPipelineScopeID(group),
 			}},
 		}}})
 		if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
@@ -544,6 +436,75 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 	return nil
 }
 
+// Scheduling and status projection.
+
+type modelGroupConditionState struct {
+	status  metav1.ConditionStatus
+	reason  string
+	message string
+}
+
+type schedulingCapacityState = modelGroupConditionState
+
+type modelGroupStatusState struct {
+	phase        inferencev1alpha1.ModelGroupPhase
+	materialized modelGroupConditionState
+	available    bool
+	scheduling   schedulingCapacityState
+}
+
+func schedulingNotEvaluated() schedulingCapacityState {
+	return schedulingCapacityState{status: metav1.ConditionUnknown, reason: "NotEvaluated", message: "Scheduling capacity was not evaluated"}
+}
+
+func modelGroupFailureState(err error) modelGroupStatusState {
+	return modelGroupStatusState{
+		phase:        inferencev1alpha1.ModelGroupPhaseFailed,
+		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "UnsupportedProfile", message: err.Error()},
+		scheduling:   schedulingNotEvaluated(),
+	}
+}
+
+func modelGroupMaterializedState(available bool, scheduling schedulingCapacityState) modelGroupStatusState {
+	phase := inferencev1alpha1.ModelGroupPhaseProvisioning
+	if available {
+		phase = inferencev1alpha1.ModelGroupPhaseReady
+	}
+	return modelGroupStatusState{
+		phase:        phase,
+		materialized: modelGroupConditionState{status: metav1.ConditionTrue, reason: "Applied", message: "Group workload was materialized"},
+		available:    available,
+		scheduling:   scheduling,
+	}
+}
+
+// schedulingCapacity reports insufficient capacity only from the scheduler's
+// explicit Unschedulable signal; image pulls and slow startup remain unknown.
+func (reconciler *ModelGroupReconciler) schedulingCapacity(ctx context.Context, group *inferencev1alpha1.ModelGroup) (schedulingCapacityState, error) {
+	var pods corev1.PodList
+	if err := reconciler.List(ctx, &pods, client.InNamespace(group.Namespace), client.MatchingLabels(modelGroupLabels(group))); err != nil {
+		return schedulingCapacityState{}, fmt.Errorf("list Group Pods: %w", err)
+	}
+	scheduled := false
+	for index := range pods.Items {
+		for _, condition := range pods.Items[index].Status.Conditions {
+			if condition.Type != corev1.PodScheduled {
+				continue
+			}
+			if condition.Status == corev1.ConditionFalse && condition.Reason == corev1.PodReasonUnschedulable {
+				return schedulingCapacityState{status: metav1.ConditionFalse, reason: "InsufficientCapacity", message: "The Kubernetes scheduler reported the Group Pod as Unschedulable"}, nil
+			}
+			if condition.Status == corev1.ConditionTrue {
+				scheduled = true
+			}
+		}
+	}
+	if scheduled {
+		return schedulingCapacityState{status: metav1.ConditionTrue, reason: "Scheduled", message: "The Group Pod was scheduled"}, nil
+	}
+	return schedulingCapacityState{status: metav1.ConditionUnknown, reason: "WaitingForScheduling", message: "The Group Pod has not reported a scheduling result"}, nil
+}
+
 func modelGroupDeploymentAvailable(deployment *appsv1.Deployment) bool {
 	if deployment.Status.ObservedGeneration < deployment.Generation || deployment.Status.AvailableReplicas != 1 {
 		return false
@@ -556,19 +517,19 @@ func modelGroupDeploymentAvailable(deployment *appsv1.Deployment) bool {
 	return false
 }
 
-func (reconciler *ModelGroupReconciler) updateStatus(ctx context.Context, group *inferencev1alpha1.ModelGroup, phase inferencev1alpha1.ModelGroupPhase, materializedStatus metav1.ConditionStatus, materializedReason, materializedMessage string, workloadAvailable bool, schedulingCapacity schedulingCapacityState) error {
+func (reconciler *ModelGroupReconciler) updateStatus(ctx context.Context, group *inferencev1alpha1.ModelGroup, state modelGroupStatusState) error {
 	base := group.DeepCopy()
-	group.Status.Phase = phase
+	group.Status.Phase = state.phase
 	group.Status.TotalMembers = group.Spec.MemberCount
-	if workloadAvailable {
+	if state.available {
 		group.Status.ReadyMembers = group.Spec.MemberCount
 	} else {
 		group.Status.ReadyMembers = 0
 	}
-	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionWorkloadMaterialized, Status: materializedStatus, Reason: materializedReason, Message: materializedMessage, ObservedGeneration: group.Generation})
-	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionSchedulingCapacity, Status: schedulingCapacity.status, Reason: schedulingCapacity.reason, Message: schedulingCapacity.message, ObservedGeneration: group.Generation})
-	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionWorkloadAvailable, Status: conditionStatus(workloadAvailable), Reason: availabilityReason(workloadAvailable), Message: availabilityMessage(workloadAvailable), ObservedGeneration: group.Generation})
-	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionReady, Status: conditionStatus(workloadAvailable), Reason: availabilityReason(workloadAvailable), Message: readinessMessage(workloadAvailable), ObservedGeneration: group.Generation})
+	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionWorkloadMaterialized, Status: state.materialized.status, Reason: state.materialized.reason, Message: state.materialized.message, ObservedGeneration: group.Generation})
+	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionSchedulingCapacity, Status: state.scheduling.status, Reason: state.scheduling.reason, Message: state.scheduling.message, ObservedGeneration: group.Generation})
+	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionWorkloadAvailable, Status: conditionStatus(state.available), Reason: availabilityReason(state.available), Message: availabilityMessage(state.available), ObservedGeneration: group.Generation})
+	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionReady, Status: conditionStatus(state.available), Reason: availabilityReason(state.available), Message: readinessMessage(state.available), ObservedGeneration: group.Generation})
 	if reflect.DeepEqual(base.Status, group.Status) {
 		return nil
 	}
@@ -594,7 +555,7 @@ func availabilityMessage(available bool) string {
 
 func readinessMessage(ready bool) string {
 	if ready {
-		return "The group-local model server and EngineCore are ready"
+		return "The group-local model server and vLLM EngineCore are ready"
 	}
-	return "The group-local model server or EngineCore is not yet ready"
+	return "The group-local model server or vLLM EngineCore is not yet ready"
 }

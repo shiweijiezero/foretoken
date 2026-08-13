@@ -28,7 +28,10 @@ const kvPoolFinalizer = "inference.foretoken.io/kvpool-protection"
 type KVPoolReconciler struct{ client.Client }
 
 func (reconciler *KVPoolReconciler) SetupWithManager(manager ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(manager).For(&inferencev1alpha1.KVPool{}).Owns(&inferencev1alpha1.KVGroup{}).Complete(reconciler)
+	return ctrl.NewControllerManagedBy(manager).
+		For(&inferencev1alpha1.KVPool{}).
+		Owns(&inferencev1alpha1.KVGroup{}).
+		Complete(reconciler)
 }
 
 func (reconciler *KVPoolReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {

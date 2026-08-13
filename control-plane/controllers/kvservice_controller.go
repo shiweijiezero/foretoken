@@ -31,8 +31,28 @@ const (
 
 type KVServiceReconciler struct{ client.Client }
 
+type kvServiceCondition struct {
+	ready   bool
+	reason  string
+	message string
+}
+
+type kvServiceStatus struct {
+	phase          inferencev1alpha1.KVServicePhase
+	infrastructure kvServiceCondition
+	pools          kvServiceCondition
+	ready          kvServiceCondition
+}
+
 func (reconciler *KVServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(manager).For(&inferencev1alpha1.KVService{}).Owns(&inferencev1alpha1.KVPool{}).Owns(&appsv1.Deployment{}).Owns(&corev1.Service{}).Owns(&corev1.ConfigMap{}).Owns(&corev1.PersistentVolumeClaim{}).Complete(reconciler)
+	return ctrl.NewControllerManagedBy(manager).
+		For(&inferencev1alpha1.KVService{}).
+		Owns(&inferencev1alpha1.KVPool{}).
+		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Service{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.PersistentVolumeClaim{}).
+		Complete(reconciler)
 }
 
 func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
@@ -52,10 +72,20 @@ func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ct
 		return ctrl.Result{Requeue: true}, nil
 	}
 	if err := reconciler.reconcileInfrastructure(ctx, service); err != nil {
-		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, service, inferencev1alpha1.KVServicePhaseDegraded, false, "ApplyFailed", "Master infrastructure was not fully materialized", false, "ApplyFailed", "KVPools were not fully materialized", false, "InfrastructureNotReady", "Master infrastructure is not ready"))
+		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, service, kvServiceStatus{
+			phase:          inferencev1alpha1.KVServicePhaseDegraded,
+			infrastructure: kvServiceCondition{reason: "ApplyFailed", message: "Master infrastructure was not fully materialized"},
+			pools:          kvServiceCondition{reason: "ApplyFailed", message: "KVPools were not fully materialized"},
+			ready:          kvServiceCondition{reason: "InfrastructureNotReady", message: "Master infrastructure is not ready"},
+		}))
 	}
 	if err := reconciler.reconcilePools(ctx, service); err != nil {
-		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, service, inferencev1alpha1.KVServicePhaseDegraded, false, "ApplyFailed", "Master infrastructure was not fully materialized", false, "ApplyFailed", "KVPools were not fully materialized", false, "PoolsNotReady", "KVPools are not ready"))
+		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, service, kvServiceStatus{
+			phase:          inferencev1alpha1.KVServicePhaseDegraded,
+			infrastructure: kvServiceCondition{reason: "ApplyFailed", message: "Master infrastructure was not fully materialized"},
+			pools:          kvServiceCondition{reason: "ApplyFailed", message: "KVPools were not fully materialized"},
+			ready:          kvServiceCondition{reason: "PoolsNotReady", message: "KVPools are not ready"},
+		}))
 	}
 	infrastructureReady, err := reconciler.infrastructureReady(ctx, service)
 	if err != nil {
@@ -70,11 +100,16 @@ func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ct
 	if ready {
 		phase = inferencev1alpha1.KVServicePhaseReady
 	}
-	readyReason, readyMessage := "DependenciesNotReady", "Master infrastructure or KVPools are not ready"
+	readyCondition := kvServiceCondition{reason: "DependenciesNotReady", message: "Master infrastructure or KVPools are not ready"}
 	if ready {
-		readyReason, readyMessage = "Ready", "Master infrastructure is available and all KVPools are materialized"
+		readyCondition = kvServiceCondition{ready: true, reason: "Ready", message: "Master infrastructure is available and all KVPools are materialized"}
 	}
-	return ctrl.Result{}, reconciler.updateStatus(ctx, service, phase, infrastructureReady, infrastructureReason(infrastructureReady), infrastructureMessage(infrastructureReady), poolsMaterialized && poolsReady, poolsReason(poolsMaterialized && poolsReady), poolsMessage(poolsMaterialized && poolsReady), ready, readyReason, readyMessage)
+	return ctrl.Result{}, reconciler.updateStatus(ctx, service, kvServiceStatus{
+		phase:          phase,
+		infrastructure: infrastructureCondition(infrastructureReady),
+		pools:          poolsCondition(poolsMaterialized && poolsReady),
+		ready:          readyCondition,
+	})
 }
 
 func (reconciler *KVServiceReconciler) reconcileInfrastructure(ctx context.Context, service *inferencev1alpha1.KVService) error {
@@ -344,7 +379,12 @@ func (reconciler *KVServiceReconciler) reconcileDelete(ctx context.Context, serv
 	if blocked, err := reconciler.hasConsumers(ctx, service); err != nil {
 		return ctrl.Result{}, err
 	} else if blocked {
-		_ = reconciler.updateStatus(ctx, service, inferencev1alpha1.KVServicePhaseTerminating, false, "Deleting", "KVService is deleting", false, "ReferencesPresent", "KVService still has consumers", false, "ReferencesResolved", "Wait for ModelService, ModelPool, and ModelGroup consumers to disappear")
+		_ = reconciler.updateStatus(ctx, service, kvServiceStatus{
+			phase:          inferencev1alpha1.KVServicePhaseTerminating,
+			infrastructure: kvServiceCondition{reason: "Deleting", message: "KVService is deleting"},
+			pools:          kvServiceCondition{reason: "ReferencesPresent", message: "KVService still has consumers"},
+			ready:          kvServiceCondition{reason: "ReferencesResolved", message: "Wait for ModelService, ModelPool, and ModelGroup consumers to disappear"},
+		})
 		return ctrl.Result{Requeue: true}, nil
 	}
 	pools, err := reconciler.ownedPools(ctx, service)
@@ -430,51 +470,62 @@ func (reconciler *KVServiceReconciler) releaseSnapshotPVC(ctx context.Context, s
 	return reconciler.Patch(ctx, pvc, client.MergeFrom(base))
 }
 
-func (reconciler *KVServiceReconciler) updateStatus(ctx context.Context, service *inferencev1alpha1.KVService, phase inferencev1alpha1.KVServicePhase, infra bool, infraReason, infraMessage string, pools bool, poolsReason, poolsMessage string, ready bool, readyReason, readyMessage string) error {
+// Status projection keeps resource reconciliation separate from condition details.
+func (reconciler *KVServiceReconciler) updateStatus(ctx context.Context, service *inferencev1alpha1.KVService, desired kvServiceStatus) error {
 	base := service.DeepCopy()
 	service.Status.ObservedGeneration = service.Generation
-	service.Status.Phase = phase
-	if ready {
-		_, requesterName, _, masterService := kvMasterNames(service)
-		// requester ConfigMaps are UID/generation-scoped, so a resolved consumer cannot
-		// accidentally attach to a same-name KVService recreated after deletion.
-		requesterName = kvChildName(service.Name+"-requester-config", string(service.UID)+":"+fmt.Sprint(service.Generation))
-		rpcPort, _, _ := masterPorts(service.Spec.Master)
-		service.Status.Binding = &inferencev1alpha1.KVServiceBinding{Revision: kvPoolRevision(inferencev1alpha1.NormalizedKVPoolTemplate{}, requesterName, rpcPort), ConfigMapName: requesterName, ConfigMapKey: requesterConfigKey, MasterEndpoint: fmt.Sprintf("%s.%s.svc:%d", masterService, service.Namespace, rpcPort), PythonHashSeed: "0"}
+	service.Status.Phase = desired.phase
+	if desired.ready.ready {
+		service.Status.Binding = desiredKVServiceBinding(service)
 	} else {
 		service.Status.Binding = nil
 	}
-	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionInfrastructureReady, Status: conditionStatus(infra), Reason: infraReason, Message: infraMessage, ObservedGeneration: service.Generation})
-	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionKVPoolsMaterialized, Status: conditionStatus(pools), Reason: poolsReason, Message: poolsMessage, ObservedGeneration: service.Generation})
-	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionReady, Status: conditionStatus(ready), Reason: readyReason, Message: readyMessage, ObservedGeneration: service.Generation})
+	setKVServiceCondition(service, conditionInfrastructureReady, desired.infrastructure)
+	setKVServiceCondition(service, conditionKVPoolsMaterialized, desired.pools)
+	setKVServiceCondition(service, conditionReady, desired.ready)
 	if reflect.DeepEqual(base.Status, service.Status) {
 		return nil
 	}
 	return reconciler.Status().Patch(ctx, service, client.MergeFrom(base))
 }
-func infrastructureReason(ready bool) string {
-	if ready {
-		return "Available"
+
+func desiredKVServiceBinding(service *inferencev1alpha1.KVService) *inferencev1alpha1.KVServiceBinding {
+	_, _, _, masterService := kvMasterNames(service)
+	// Requester ConfigMaps are UID/generation-scoped, so a resolved consumer cannot
+	// accidentally attach to a same-name KVService recreated after deletion.
+	requesterName := kvChildName(service.Name+"-requester-config", string(service.UID)+":"+fmt.Sprint(service.Generation))
+	rpcPort, _, _ := masterPorts(service.Spec.Master)
+	return &inferencev1alpha1.KVServiceBinding{
+		Revision:       kvPoolRevision(inferencev1alpha1.NormalizedKVPoolTemplate{}, requesterName, rpcPort),
+		ConfigMapName:  requesterName,
+		ConfigMapKey:   requesterConfigKey,
+		MasterEndpoint: fmt.Sprintf("%s.%s.svc:%d", masterService, service.Namespace, rpcPort),
+		PythonHashSeed: "0",
 	}
-	return "DeploymentNotAvailable"
 }
-func infrastructureMessage(ready bool) string {
-	if ready {
-		return "Master Deployment is available"
-	}
-	return "Master Deployment is not available"
+
+func setKVServiceCondition(service *inferencev1alpha1.KVService, conditionType string, desired kvServiceCondition) {
+	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{
+		Type:               conditionType,
+		Status:             conditionStatus(desired.ready),
+		Reason:             desired.reason,
+		Message:            desired.message,
+		ObservedGeneration: service.Generation,
+	})
 }
-func poolsReason(ready bool) string {
+
+func infrastructureCondition(ready bool) kvServiceCondition {
 	if ready {
-		return "Applied"
+		return kvServiceCondition{ready: true, reason: "Available", message: "Master Deployment is available"}
 	}
-	return "Reconciling"
+	return kvServiceCondition{reason: "DeploymentNotAvailable", message: "Master Deployment is not available"}
 }
-func poolsMessage(ready bool) string {
+
+func poolsCondition(ready bool) kvServiceCondition {
 	if ready {
-		return "All KVPools were materialized"
+		return kvServiceCondition{ready: true, reason: "Applied", message: "All KVPools were materialized"}
 	}
-	return "KVPools are not fully materialized"
+	return kvServiceCondition{reason: "Reconciling", message: "KVPools are not fully materialized"}
 }
 
 func (reconciler *KVServiceReconciler) hasConsumers(ctx context.Context, service *inferencev1alpha1.KVService) (bool, error) {

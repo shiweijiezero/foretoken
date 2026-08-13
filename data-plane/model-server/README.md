@@ -45,18 +45,18 @@ readiness.
 - `POST /v1/internal/generate` accepts tokenized vLLM inputs and returns NDJSON
   token events.
 - `POST /v1/internal/abort` accepts a non-empty request-id list.
-- `GET /v1/internal/telemetry` returns only version `1`, admission state, local
-  accepted-and-not-terminal request count, and capacity. Capacity is the checked
-  sum of the connected EngineCore `ready_responses().max_num_seqs`; it has no
-  configured fallback and exposes no engine, request, KV, byte, or latency data.
+- `GET /v1/internal/telemetry` returns version `2` admission and runtime
+  telemetry. Control-plane drain and autoscaling consume admission state, the
+  local accepted-and-not-terminal request count, and capacity. Frontend routing
+  also consumes optional scheduler load, KV utilization, cumulative token
+  counters, and cumulative TTFT, TPOT, and end-to-end latency histograms.
 - `GET /v1/internal/kv-index/delta` returns cursor-based opaque KV-prefix
   events.
 
 The in-flight counter increments only after vLLM accepts a request. Its stream
 ownership guard releases exactly once on terminal output, stream error/end, or a
-client/body drop. It is the precise minimum local signal available because this
-process is the only EngineCore client; it is not a scheduler-load, KV-byte, or
-TTFT measurement.
+client/body drop. It remains the control plane's request-drain signal; scheduler,
+KV, token, and latency fields are separate vLLM observations.
 
 On SIGTERM/Ctrl-C, client transport failure, managed child exit, or HTTP server
 failure, the server stops admission, performs Axum graceful drain for the

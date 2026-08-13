@@ -19,7 +19,8 @@ pub use route_target_stats::{
     NoopRouteTargetStatsReader, RouteTargetLatencyStats, RouteTargetStats, RouteTargetStatsReader,
 };
 pub use selection::{
-    FilterAlgorithm, PickerAlgorithm, PipelineRouter, RouteCandidate, RouteError, RouteScore,
-    RouteSession, RouteTargetLoad, Router, RouterPipeline, RouterPipelineConfig, ScoredCandidate,
-    ScorerAlgorithm,
+    AlgorithmName, CandidateIndex, FilterAlgorithm, FilterDescriptor, PickerAlgorithm,
+    PickerDescriptor, PipelineRouter, RouteCandidate, RouteError, RouteScore, RouteSession, Router,
+    RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError, ScoredCandidate,
+    ScorerAlgorithm, ScorerDescriptor, validate_descriptor_names,
 };
