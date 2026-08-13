@@ -15,6 +15,10 @@ __pycache__/
 
 # Vendored upstream sources
 reference/
+third_party/vllm-rust/source
+
+# Rust build artifacts
+target/
 
 # Experiment records
 results/

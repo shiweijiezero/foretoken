@@ -20,3 +20,14 @@ serde_json = "1.0.145"
 thiserror = "2.0.16"
 tokio = { version = "1.47.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tracing = "0.1.44"
+
+# vLLM Rust crates resolved through the local source symlink
+# (see scripts/select-vllm-source.sh and FORETOKEN_VLLM_SOURCE).
+vllm-chat = { path = "../../third_party/vllm-rust/source/rust/src/chat" }
+vllm-engine-core-client = { path = "../../third_party/vllm-rust/source/rust/src/engine-core-client" }
+vllm-llm = { path = "../../third_party/vllm-rust/source/rust/src/llm" }
+vllm-metrics = { path = "../../third_party/vllm-rust/source/rust/src/metrics" }
+vllm-parser = { path = "../../third_party/vllm-rust/source/rust/src/parser" }
+vllm-text = { path = "../../third_party/vllm-rust/source/rust/src/text" }
+vllm-tokenizer = { path = "../../third_party/vllm-rust/source/rust/src/tokenizer" }
+vllm-tracing = { path = "../../third_party/vllm-rust/source/rust/src/tracing" }
