@@ -5,13 +5,14 @@
 
 use std::net::{SocketAddr, ToSocketAddrs};
 
-/// Address and port the HTTP frontend binds to.
+/// Address, port, and downstream model-server the HTTP frontend talks to.
 ///
 /// `port: 0` requests an ephemeral port chosen by the OS, useful for tests.
 #[derive(Debug, Clone)]
 pub struct ServerConfig {
     pub host: String,
     pub port: u16,
+    pub model_server_url: String,
 }
 
 impl Default for ServerConfig {
@@ -19,6 +20,7 @@ impl Default for ServerConfig {
         Self {
             host: "0.0.0.0".to_string(),
             port: 8000,
+            model_server_url: "http://127.0.0.1:9000".to_string(),
         }
     }
 }

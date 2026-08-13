@@ -91,6 +91,26 @@ impl ChatFacade {
     }
 }
 
+/// Placeholder tokenizer that maps each char to its Unicode scalar value.
+///
+/// This is NOT a real vocabulary; it bootstraps the pipeline until a real
+/// tokenizer (e.g. [`vllm::HfTokenizer`]) is wired in.
+#[derive(Debug, Default)]
+pub struct CharTokenizer;
+
+impl Tokenizer for CharTokenizer {
+    fn encode(&self, text: &str, _add_special_tokens: bool) -> Result<Vec<u32>, ChatError> {
+        Ok(text.chars().map(|c| c as u32).collect())
+    }
+
+    fn decode(&self, ids: &[u32], _skip_special_tokens: bool) -> Result<String, ChatError> {
+        Ok(ids
+            .iter()
+            .map(|&id| char::from_u32(id).unwrap_or('?'))
+            .collect())
+    }
+}
+
 /// Backend adapters. vLLM-backed implementations live in [`vllm`].
 pub mod vllm;
 

@@ -3,17 +3,16 @@
 
 //! Verifies the mock model-server helper itself.
 
-mod common;
-
 use std::sync::Arc;
 
 use foretoken_model_protocol::{GenerateInput, RouteStage, TokenEvent};
+use foretoken_model_server::{MockModelServer, build_mock_router};
 use vllm_llm::FinishReason;
 
 #[tokio::test]
 async fn mock_receives_input_and_streams_fixed_tokens() {
-    let state = Arc::new(common::MockModelServer::default());
-    let router = common::build_mock_router(state.clone());
+    let state = Arc::new(MockModelServer::default());
+    let router = build_mock_router(state.clone());
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -58,13 +57,13 @@ async fn mock_receives_input_and_streams_fixed_tokens() {
         panic!("expected token event");
     };
     assert_eq!(first.request_id, "req-1");
-    assert_eq!(first.token_ids, vec![100, 200]);
+    assert_eq!(first.token_ids, vec![72, 101, 108, 108, 111]);
     assert!(first.finish_reason.is_none());
 
     let TokenEvent::Token(second) = &events[1] else {
         panic!("expected token event");
     };
-    assert_eq!(second.token_ids, vec![300]);
+    assert_eq!(second.token_ids, vec![32, 119, 111, 114, 108, 100, 33]);
     assert_eq!(second.finish_reason, Some(FinishReason::Stop(None)));
 
     let received = state.received_prompt_token_ids.lock().unwrap();

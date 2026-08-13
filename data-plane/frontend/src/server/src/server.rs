@@ -7,11 +7,12 @@ use tokio::net::TcpListener;
 
 use crate::config::ServerConfig;
 use crate::routes::build_router;
+use crate::state::AppState;
 
 /// Bind the configured address and serve the frontend until shutdown.
-pub async fn serve(config: ServerConfig) -> std::io::Result<()> {
+pub async fn serve(config: ServerConfig, state: AppState) -> std::io::Result<()> {
     let listener = TcpListener::bind(config.socket_addr()).await?;
-    serve_listener(listener, shutdown_signal()).await
+    serve_listener(listener, state, shutdown_signal()).await
 }
 
 /// Serve on an already-bound listener until `shutdown` resolves.
@@ -21,12 +22,13 @@ pub async fn serve(config: ServerConfig) -> std::io::Result<()> {
 /// the shutdown signal.
 pub async fn serve_listener(
     listener: TcpListener,
+    state: AppState,
     shutdown: impl std::future::Future<Output = ()> + Send + 'static,
 ) -> std::io::Result<()> {
     let addr = listener.local_addr()?;
     tracing::info!(%addr, "foretoken frontend listening");
 
-    let app = build_router();
+    let app = build_router(state);
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown)
         .await

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Shared test helpers for the frontend server.
+//! Mock model-server: accepts a `GenerateInput` and streams fixed token events.
+//!
+//! Replaced by a real inference backend in a later step.
 
 use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
@@ -42,9 +44,14 @@ async fn generate(
         .push(input.prompt_token_ids.clone());
 
     let request_id = input.request_id.clone();
+    // Fixed "Hello world!" reply as char-coded token IDs.
     let events = vec![
-        token(&request_id, vec![100, 200], None),
-        token(&request_id, vec![300], Some(FinishReason::Stop(None))),
+        token(&request_id, vec![72, 101, 108, 108, 111], None),
+        token(
+            &request_id,
+            vec![32, 119, 111, 114, 108, 100, 33],
+            Some(FinishReason::Stop(None)),
+        ),
     ];
 
     let stream = stream::iter(events)

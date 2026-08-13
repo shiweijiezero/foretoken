@@ -1153,6 +1153,7 @@ name = "foretoken-frontend"
 version = "0.0.1"
 dependencies = [
  "clap",
+ "foretoken-chat",
  "foretoken-server",
  "tokio",
  "tracing",
@@ -1170,11 +1171,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "foretoken-model-server"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "clap",
+ "foretoken-model-protocol",
+ "futures",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "vllm-llm",
+]
+
+[[package]]
 name = "foretoken-server"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "foretoken-chat",
  "foretoken-model-protocol",
+ "foretoken-model-server",
  "futures",
  "reqwest 0.12.28",
  "serde",
