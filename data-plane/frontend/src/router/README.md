@@ -56,6 +56,34 @@ ModelGroup names follow `<pool-name>-<revision>-<ordinal>`. Router identity uses
 
 For Aggregate and Prefill, `KvLeastLoadedScorer` is lexicographic: longest complete matched prompt prefix first, then `Device > HostPinned > Disk > External`, then `Local > Remote`, then lower load. Decode prefix, tier, and locality scores are zero. Unavailable KV facts never become a confirmed miss.
 
+## Using the KV prefix indexer
+
+Filter and Scorer receive a `&dyn KvPrefixIndexer`. A KV-aware algorithm constructs one lookup for each candidate from the candidate's exact ModelGroup identity and DP rank:
+
+```rust
+use foretoken_kv_indexer::{KvPrefixLookup, KvPrefixQueryResult};
+
+let result = KvPrefixLookup::from_generate_request(
+    candidate.route_target_id.as_str(),
+    candidate.data_parallel_rank,
+    request.generate_request.as_ref(),
+)
+.map_or_else(KvPrefixQueryResult::Unavailable, |lookup| {
+    kv_prefix_indexer.prefix_matches(lookup)
+});
+
+let matched_tokens = match result {
+    KvPrefixQueryResult::Matches(matches) => matches
+        .into_iter()
+        .map(|matched| matched.matched_tokens)
+        .max()
+        .unwrap_or(0),
+    KvPrefixQueryResult::Unavailable(_) => 0,
+};
+```
+
+`Unavailable` is not a confirmed cache miss, so it must not by itself remove a candidate. A Filter returns indexes into its input candidate list. A Scorer returns one `RouteScore` for every input candidate in the same order. See `src/algorithm/scorer/kv_least_loaded_scorer.rs` for the built-in tier, locality, and load policy.
+
 ## Compiled algorithm registry
 
 Filter, Scorer, and Picker implementations register themselves at compile time with `inventory::submit!`. Pipeline configuration uses stable lower-snake-case names: the built-ins are `allow_all`; `uniform`, `least_loaded`, and `kv_least_loaded`; and `max` and `round_robin`. The Router validates compiled descriptors and configuration during startup. Empty, duplicate, or unknown names are explicit errors; it never falls back silently.
