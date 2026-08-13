@@ -1,0 +1,13 @@
+[package]
+name = "foretoken-frontend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+clap = { workspace = true }
+foretoken-server = { path = "../server" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
