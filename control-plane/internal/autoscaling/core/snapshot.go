@@ -40,10 +40,6 @@ type TargetID struct {
 	Kind             TargetKind
 	Role             TargetRole
 }
-type ScalingSnapshotRef struct {
-	ID             string
-	PolicyRevision string
-}
 type ObservationState string
 
 const (
@@ -84,8 +80,8 @@ type CapacityLimits struct {
 	MaxScaleDownGroups int32
 }
 type ScalingSnapshot struct {
+	ID          string
 	Target      TargetID
-	Ref         ScalingSnapshotRef
 	EvaluatedAt time.Time
 	Capacity    CapacityState
 	Limits      CapacityLimits
