@@ -223,7 +223,8 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
     bench.add_argument(
         "--wandb-run-name",
         default=_default(WandbConfig, "run_name"),
-        help="W&B run name; default {model}_{YYYYMMDD_HHMMSS}",
+        help="W&B name base; default {model}_{YYYYMMDD_HHMMSS}; "
+        "runs become {base}_{config}",
     )
 
     # Engine metrics
@@ -247,31 +248,21 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
 
     # Param sweep
     bench.add_argument(
-        "--serve-params",
-        default=_default(ParamSweepConfig, "serve_params"),
-        help="JSON path of serve parameter combinations",
-    )
-    bench.add_argument(
         "--bench-params",
         default=_default(ParamSweepConfig, "bench_params"),
         help="JSON path of bench parameter combinations",
     )
     bench.add_argument(
-        "--link-vars",
-        default=_default(ParamSweepConfig, "link_vars"),
-        help="Comma-separated serve_key=bench_key product filters",
-    )
-    bench.add_argument(
         "--num-runs",
         type=int,
         default=_default(ParamSweepConfig, "num_runs"),
-        help="Repeats per serve×bench combination",
+        help="Repeats per bench-params combination",
     )
     bench.add_argument(
         "--dry-run",
         action=argparse.BooleanOptionalAction,
         default=_default(ParamSweepConfig, "dry_run"),
-        help="Print serve×bench plan without executing",
+        help="Print bench-params plan without executing",
     )
     bench.add_argument(
         "--experiment-name",
@@ -328,9 +319,7 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
             interval=ns.engine_metrics_interval,
         ),
         param_sweep=ParamSweepConfig(
-            serve_params=ns.serve_params,
             bench_params=ns.bench_params,
-            link_vars=ns.link_vars,
             num_runs=ns.num_runs,
             dry_run=ns.dry_run,
             experiment_name=ns.experiment_name,

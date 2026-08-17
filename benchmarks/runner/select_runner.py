@@ -8,28 +8,25 @@ from __future__ import annotations
 
 from benchmarks.config import BenchConfig
 from benchmarks.runner.base import Runner
+from benchmarks.runner.load_sweep import LoadSweepRunner
 from benchmarks.runner.multi_dataset import MultiDatasetRunner
+from benchmarks.runner.param_sweep import ParamSweepRunner
 from benchmarks.runner.run_benchmark import RunBenchmark
 
 
 def select_runner(config: BenchConfig) -> Runner:
     """Choose runner from config.
 
+    - ``param_sweep.enabled`` selects ``ParamSweepRunner``
+    - ``load.is_sweep`` selects ``LoadSweepRunner``
     - multi-value ``--dataset`` selects ``MultiDatasetRunner``
-    - ``load.is_sweep`` / param sweep are not implemented in this phase
     - otherwise selects ``RunBenchmark`` for a single-point load test
     """
     config.validate()
     if config.param_sweep.enabled:
-        raise NotImplementedError(
-            "Parameter sweep is not implemented yet; omit "
-            "--serve-params / --bench-params for a single run."
-        )
+        return ParamSweepRunner(config)
     if config.load.is_sweep:
-        raise NotImplementedError(
-            "Load sweep (multi parallel/number/rate) is not implemented "
-            "yet; pass a single --parallel / --number / --rate value."
-        )
+        return LoadSweepRunner(config)
     if config.dataset.is_multi:
         return MultiDatasetRunner(config)
     return RunBenchmark(config)

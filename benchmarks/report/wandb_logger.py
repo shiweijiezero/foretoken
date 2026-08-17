@@ -145,6 +145,41 @@ def metrics_to_wandb_message(metrics: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def wandb_timestamp() -> str:
+    """Return ``YYYYMMDD_HHMMSS`` for W&B names / groups."""
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def wandb_run_base(config: BenchConfig) -> str:
+    """Name/group base: ``--wandb-run-name`` if set, else ``{model}_{time}``."""
+    run_name = config.wandb.run_name.strip()
+    if run_name:
+        return run_name
+    return f"{config.target.model}_{wandb_timestamp()}"
+
+
+def format_wandb_run_name(base: str, config_label: Optional[str] = None) -> str:
+    """``{base}`` or ``{base}_{config}`` (config uses ``-`` separators)."""
+    if config_label is None:
+        return base
+    label = config_label.strip().replace("_", "-")
+    if not label:
+        return base
+    return f"{base}_{label}"
+
+
+def compose_wandb_config_label(*parts: Optional[str]) -> Optional[str]:
+    """Join non-empty config label parts with ``-``."""
+    labels = [
+        part.strip().replace("_", "-")
+        for part in parts
+        if part and part.strip()
+    ]
+    if not labels:
+        return None
+    return "-".join(labels)
+
+
 class WandbLogger:
     """Optional W&B session: init, progressive log, final log, finish."""
 
@@ -169,10 +204,10 @@ class WandbLogger:
     ) -> None:
         """Initialize W&B; no-op when ``config.wandb`` is off.
 
-        Default run name is ``{model}_{YYYYMMDD_HHMMSS}``. ``--wandb-run-name``
-        replaces that base when set. With ``group`` (multi-dataset experiment),
-        runs share the group and the name base is the group id; ``name_suffix``
-        then yields ``{group}_{suffix}`` per dataset run.
+        Naming:
+        - Single-point: run name ``{model}_{time}`` (no ``group``).
+        - Multi-run: ``group`` is ``{model}_{time}``; each run is
+          ``{group}_{config}`` (config segments joined with ``-``).
         """
         wandb_config: WandbConfig = config.wandb
         if not wandb_config.enabled:
@@ -180,13 +215,11 @@ class WandbLogger:
 
         os.environ["WANDB_SILENT"] = "true"
         os.environ["WANDB_DIR"] = output_dir
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base = (
-            group
-            or wandb_config.run_name
-            or f"{config.target.model}_{stamp}"
-        )
-        name = f"{base}_{name_suffix}" if name_suffix else base
+        if group:
+            base = group
+        else:
+            base = wandb_run_base(config)
+        name = format_wandb_run_name(base, name_suffix)
         init_kwargs: dict[str, Any] = {
             "project": wandb_config.project,
             "name": name,
@@ -210,7 +243,7 @@ class WandbLogger:
             "W&B logging enabled: project=%s name=%s group=%s",
             wandb_config.project,
             name,
-            group or "-",
+            group if group else "-",
         )
 
     def log_result(self, result: dict[str, Any]) -> None:

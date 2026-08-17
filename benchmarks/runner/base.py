@@ -25,10 +25,23 @@ from benchmarks.metrics.aggregator import (
     attach_user_throughput,
 )
 from benchmarks.report.summary import log_summary
-from benchmarks.report.wandb_logger import WandbLogger
+from benchmarks.report.wandb_logger import (
+    WandbLogger,
+    compose_wandb_config_label,
+    wandb_run_base,
+)
 from benchmarks.storage.result_writer import ResultWriter
 
 logger = logging.getLogger(__name__)
+
+
+def load_point_label(
+    parallel: int, number: int, rate: float, open_loop: bool
+) -> str:
+    """Stable label for a load point (dirs and W&B config suffix)."""
+    p_tag = "open" if open_loop or parallel < 0 else str(int(parallel))
+    rate_tag = "inf" if float(rate) <= 0 else f"{float(rate):g}"
+    return f"p{p_tag}-n{int(number)}-r{rate_tag}"
 
 
 class Runner(ABC):
@@ -41,7 +54,7 @@ class Runner(ABC):
     async def run(self) -> dict[str, Any]:
         """Execute the benchmark and return a result dict."""
 
-    def make_client(self) -> OpenAICompatClient:
+    def make_client(self, parallel: int, number: int) -> OpenAICompatClient:
         """Build an OpenAI-compatible client from ``config.target`` / load."""
         target = self.config.target
         load = self.config.load
@@ -51,37 +64,58 @@ class Runner(ABC):
             timeout=target.timeout,
             api_key=target.api_key,
             max_connections=derive_max_connections(
-                parallel=load.parallel[0],
-                number=load.number[0],
+                parallel=parallel,
+                number=number,
                 open_loop=load.open_loop,
             ),
             max_retries=target.max_retries,
         )
 
     def make_writer(self) -> ResultWriter:
-        """Create a timestamped result writer under ``config.output``."""
+        """Create a result writer under ``config.output.outputs_dir``."""
+        if self.config.wandb.run_suffix.strip():
+            return ResultWriter(output_dir=self.config.output.outputs_dir)
         return ResultWriter(root_dir=self.config.output.outputs_dir)
 
     def make_wandb_logger(
         self,
         writer: ResultWriter,
         load: dict[str, Any],
-        *,
         name_suffix: Optional[str] = None,
         group: Optional[str] = None,
         config: Optional[BenchConfig] = None,
     ) -> WandbLogger:
-        """Start W&B logging when ``config.wandb.enabled``."""
+        """Start W&B logging when ``config.wandb.enabled``.
+
+        Single-point runs omit ``name_suffix`` → name ``{model}_{time}``.
+        Multi-run experiments pass ``group`` plus a config ``name_suffix``
+        (composed with ``wandb.run_suffix``) → ``{model}_{time}_{config}``.
+        """
+        cfg = config if config is not None else self.config
+        if group is None:
+            configured_group = cfg.wandb.group.strip()
+            if configured_group:
+                group = configured_group
+        resolved_suffix = compose_wandb_config_label(
+            cfg.wandb.run_suffix, name_suffix
+        )
         wandb_logger = WandbLogger()
         wandb_logger.start(
-            config if config is not None else self.config,
+            cfg,
             output_dir=writer.output_dir,
             parallel=int(load["resolved_parallel"]),
             rate=float(load["rate"]),
-            name_suffix=name_suffix,
+            name_suffix=resolved_suffix,
             group=group,
         )
         return wandb_logger
+
+    def experiment_wandb_group(self) -> str:
+        """Shared W&B group for this experiment (frozen once at top level)."""
+        existing = self.config.wandb.group.strip()
+        if existing:
+            return existing
+        return wandb_run_base(self.config)
 
     def default_load(self) -> dict[str, Any]:
         """Return the first load-point fields from ``config.load``."""

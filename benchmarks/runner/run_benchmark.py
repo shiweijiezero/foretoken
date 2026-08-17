@@ -19,6 +19,10 @@ class RunBenchmark(Runner):
     - Default closed-loop: semaphore = ``parallel``.
     - ``rate > 0``: Poisson absolute-time pacing.
     - ``open_loop``: fire on schedule without semaphore backpressure.
+
+    W&B: single-point run name is ``{model}_{time}`` (no config suffix).
+    Nested under multi-run experiments, ``wandb.run_suffix`` / ``group``
+    from the parent still apply.
     """
 
     async def run(self) -> dict[str, Any]:
@@ -30,7 +34,7 @@ class RunBenchmark(Runner):
 
         try:
             raw_output = await self.dispatch(
-                self.make_client(),
+                self.make_client(load["parallel"], load["number"]),
                 requests,
                 parallel=load["parallel"],
                 rate=load["rate"],

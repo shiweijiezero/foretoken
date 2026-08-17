@@ -21,8 +21,11 @@ dependencies = [
     "matplotlib>=3.7",
     "numpy>=1.24",
     "openai>=1.40",
+    "pandas>=2.0",
+    "seaborn>=0.13",
     "tqdm>=4.65",
     "transformers>=4.40",
+    "vllm>=0.18",
     "wandb>=0.16",
 ]
 
@@ -42,6 +45,7 @@ packages = [
     "benchmarks.report",
     "benchmarks.runner",
     "benchmarks.storage",
+    "benchmarks.sweep",
     "benchmarks.workload",
 ]
 

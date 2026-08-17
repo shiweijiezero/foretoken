@@ -21,7 +21,7 @@
 |---|---|
 | 性能压测 | 对推理服务加压，测量延迟、吞吐、首包时间等 |
 | 负载扫描 | 在多个并发、请求数或到达率上扫一遍，看性能怎么变化 |
-| 参数扫描 | 组合不同服务端参数和压测参数，批量对比配置 |
+| 参数扫描 | 按 bench-params JSON 组合批量压测已部署服务 |
 | 正确性评测 | 检查回答对不对、工具调用行不行，不只看速度 |
 | SLO 评测 | 按延迟和质量目标做搜索或仿真，辅助定容量和扩缩容 |
 
@@ -94,5 +94,34 @@ foretoken bench \
   --dataset /path/a.jsonl,org/name:train,/path/b.jsonl \
   --parallel 4 \
   --number 30 \
+  --wandb
+```
+
+并发扫参；结束后绘制 Pareto（横轴 Tok/s/user，纵轴 Tok/s/GPU）：
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset random \
+  --tokenizer-path Qwen/Qwen3.6-27B \
+  --min-prompt-length 128 --max-prompt-length 512 \
+  --parallel 1,2,4,8 --number 20 --max-tokens 64 \
+  --gpu-count 2 \
+  --wandb
+```
+
+参数扫参（`--bench-params`）：按 JSON 中每组条目覆盖压测参数：
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset random \
+  --tokenizer-path Qwen/Qwen3.6-27B \
+  --min-prompt-length 128 --max-prompt-length 512 \
+  --bench-params examples/bench_params.json \
+  --num-runs 3 \
+  --gpu-count 2 \
   --wandb
 ```

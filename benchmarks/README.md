@@ -21,7 +21,7 @@ If you are only poking the API by hand, you usually do not need the full evaluat
 |---|---|
 | Performance benchmark | Stress the inference service and measure latency, throughput, time to first token, and related metrics |
 | Load sweep | Sweep concurrency, request count, or arrival rate to see how performance changes |
-| Parameter sweep | Combine server and bench parameters to compare configurations in batch |
+| Parameter sweep | Sweep bench-params JSON combinations against a running service |
 | Correctness evaluation | Check answer quality and tool calling, not speed alone |
 | SLO evaluation | Search or simulate against latency and quality targets to guide capacity and autoscaling |
 
@@ -94,5 +94,35 @@ foretoken bench \
   --dataset /path/a.jsonl,org/name:train,/path/b.jsonl \
   --parallel 4 \
   --number 30 \
+  --wandb
+```
+
+Load sweep over concurrency; after the sweep, Pareto is plotted
+(`Tok/s/user` vs `Tok/s/GPU`):
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset random \
+  --tokenizer-path Qwen/Qwen3.6-27B \
+  --min-prompt-length 128 --max-prompt-length 512 \
+  --parallel 1,2,4,8 --number 20 --max-tokens 64 \
+  --gpu-count 2 \
+  --wandb
+```
+
+Param sweep over `--bench-params` combinations (overrides per JSON entry):
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset random \
+  --tokenizer-path Qwen/Qwen3.6-27B \
+  --min-prompt-length 128 --max-prompt-length 512 \
+  --bench-params examples/bench_params.json \
+  --num-runs 3 \
+  --gpu-count 2 \
   --wandb
 ```

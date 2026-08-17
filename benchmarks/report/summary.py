@@ -76,3 +76,34 @@ def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
         ]
     )
     logger.info("\n%s", "\n".join(lines))
+
+
+def log_sweep_results(results: list[dict[str, Any]]) -> None:
+    """Log one row per load-sweep point."""
+    header = (
+        f"{'Parallel':>10} {'Rate':>8} {'Number':>8} "
+        f"{'Token/s':>10} {'Tok/s/user':>10} {'Tok/s/GPU':>10} "
+        f"{'P99 Lat':>10}"
+    )
+    lines = [
+        "============= Load Sweep Result ============",
+        header,
+    ]
+    for item in results:
+        parallel = item["parallel"]
+        parallel_label = (
+            "open" if int(parallel) < 0 else str(int(parallel))
+        )
+        rate = float(item["rate"])
+        rate_label = "INF" if rate <= 0 else f"{rate:g}"
+        throughput = item["throughput"]
+        pareto = item["pareto"]
+        lines.append(
+            f"{parallel_label:>10} {rate_label:>8} {int(item['number']):>8} "
+            f"{_format_metric(throughput['token/s'], 2):>10} "
+            f"{_format_metric(throughput['token/s/user'], 2):>10} "
+            f"{_format_metric(pareto['token_s_per_gpu'], 2):>10} "
+            f"{_format_metric(item['latency']['p99'], 3):>10}"
+        )
+    lines.append("============================================")
+    logger.info("\n%s", "\n".join(lines))

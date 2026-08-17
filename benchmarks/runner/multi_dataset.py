@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import replace
-from datetime import datetime
 from typing import Any
 
 from benchmarks.config import allocate_dataset_counts
@@ -43,11 +42,7 @@ class MultiDatasetRunner(Runner):
         run_config["datasets"] = sources
         run_config["dataset_numbers"] = counts
 
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        wandb_group = (
-            self.config.wandb.run_name
-            or f"{self.config.target.model}_{stamp}"
-        )
+        wandb_group = self.experiment_wandb_group()
 
         raw_outputs: list[dict[str, Any]] = []
         for index, (source, count) in enumerate(zip(sources, counts)):
@@ -99,7 +94,7 @@ class MultiDatasetRunner(Runner):
             )
             try:
                 raw_output = await self.dispatch(
-                    self.make_client(),
+                    self.make_client(load["parallel"], load["number"]),
                     requests,
                     parallel=load["parallel"],
                     rate=load["rate"],
@@ -149,5 +144,5 @@ class MultiDatasetRunner(Runner):
             "output_dir": writer.output_dir,
             "datasets": sources,
             "dataset_numbers": counts,
-            "wandb_group": wandb_group,
+            "wandb_group": wandb_group if self.config.wandb.enabled else None,
         }

@@ -164,6 +164,8 @@ class WandbConfig:
     project: str = "foretoken-bench"
     entity: str = ""
     run_name: str = ""
+    group: str = ""
+    run_suffix: str = ""
 
 
 @dataclass
@@ -177,18 +179,16 @@ class EngineMetricsConfig:
 
 @dataclass
 class ParamSweepConfig:
-    """Serve × bench parameter product sweep."""
+    """Bench-params JSON sweep against an already-running service."""
 
-    serve_params: str = ""
     bench_params: str = ""
-    link_vars: str = ""
     num_runs: int = 1
     dry_run: bool = False
     experiment_name: str = ""
 
     @property
     def enabled(self) -> bool:
-        return bool(self.serve_params or self.bench_params)
+        return bool(self.bench_params)
 
 
 @dataclass
@@ -268,10 +268,7 @@ class BenchConfig:
             rate_label = str(self.load.rate)
 
         return (
-            "\n============================================\n"
-            " Foretoken Benchmark\n"
-            "============================================\n"
-            f"Configuration:\n"
+            "\n===== Foretoken Benchmark Configuration ====\n"
             f"  URL        : {self.target.url}\n"
             f"  Model      : {self.target.model}\n"
             f"  Parallel   : {parallel_label}\n"
@@ -280,6 +277,7 @@ class BenchConfig:
             f"  Open Loop  : {open_loop}\n"
             f"  Stream     : {self.generation.stream}\n"
             f"  Dataset    : {dataset_label}\n"
+            "============================================\n"
         )
 
     def to_dict(self) -> dict[str, Any]:
