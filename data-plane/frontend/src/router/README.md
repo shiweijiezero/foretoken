@@ -3,74 +3,116 @@
 
 # Router
 
-For each execution stage, the Router selects one routable ModelGroup (that is, an engine-core-server) and an exact DP rank.
+## What problem the Router solves
 
-Its pipeline has three list-level interfaces:
+The same model can be served by multiple ModelGroups, and each ModelGroup may contain multiple DP ranks. For each request, the Router selects an exact route target and DP rank and returns a `RouteDecision`.
 
-- **Filter** receives the compatible, healthy eligible route-option snapshot (a candidate) and returns indexes for a retained subset. It cannot create or modify candidates. Out-of-range or duplicate indexes are explicit routing errors.
-- **Scorer** returns one `RouteScore` for every retained eligible route option, in the same order. The Router owns the candidate/score view; a score-count mismatch is an explicit routing error. `KvLeastLoadedScorer` compares matched prompt tokens, storage tier, locality, and load.
-- **Picker** selects an index in the current scored list rather than returning an eligible route option. An out-of-range index, or `None` for a nonempty list, is an explicit routing error. The Router then exposes a `RouteDecision` containing the ModelGroup `RouteTarget` (the model-server route destination), execution role, model revision, and exact DP rank.
+The Router does not run model inference. It only selects a target from the currently available routes using request requirements, KV cache matches, load, and other routing information.
 
-Stage and E/P/D linked route-set narrowing (the same group of associated Encoder, Prefill, and Decode route components) remain Router-owned and run after scoring, before Picker. Algorithms can compare the complete compatible, healthy snapshot but cannot choose outside the stage's narrowed eligible route options. Each eligible route option also carries the Router's immutable observation for that routing round: current admitted load and concurrency, optional scheduler/KV gauges, and throughput and latency statistics over the Router-owned observation window. Filter and Scorer consume that snapshot rather than querying target statistics; only request-dependent KV-prefix lookup remains an algorithm query.
-
-A `RouteTarget` (a model-server route destination) with `data_parallel_size: 1` contributes only rank `0`, so its decision explicitly returns `data_parallel_rank: 0`. Larger targets contribute one eligible route option per rank.
-
-## Customized Context case
-
-`RouterPipeline::with_customized_context` creates one owned `C` for each request. The Router passes `&mut C` to Filter, Scorer, and Picker in every selection round; the same value lives through the initial, Prefill, and Decode selections, then is dropped when request processing ends. It is not shared with another request.
-
-```rust
-let pipeline = RouterPipeline::with_customized_context(
-    Arc::new(ContextFilter),
-    Arc::new(ContextScorer),
-    Arc::new(ContextPicker),
-    |request| RoutingContext { request_id: request.generate_request.request_id.clone(), rounds: 0 },
-);
-let router = PipelineRouter::with_pipeline(inventory, pipeline);
-```
-
-For example, Filter increments `rounds`, Scorer reads that round to attach scoring policy, and Picker consumes the same state to make its final choice. The executable behavior is covered by `tests/router/pipeline.rs`; the default `RouterPipeline::new` remains the `()` convenience for algorithms that need no request-local state.
-
-## Example
+## How a request is routed
 
 ```text
-ModelGroups:
-  llama3-serve-r-2gosa7pa2jpf2-0  UID 2f48f8e1-7f89-4eb8-bf31-e6d482504f66
-  llama3-serve-r-2gosa7pa2jpf2-1  UID 8c88ee9a-c10f-41fd-98ef-a09d256b5213
+RouterRequest
+    ↓
+Compatible and healthy route candidates
+    ↓ Filter
+Retained candidates
+    ↓ Scorer
+Scored candidates
+    ↓ Picker
+RouteDecision
+```
 
+### Route candidates
+
+The Router obtains route targets from the `RouteInventory`. A target becomes a candidate only when its model, revision, input limit, and request capabilities are compatible and the target is healthy. Its execution role remains part of the candidate for later stage selection.
+
+Dynamic capability-aware matching deeply inspects target node `capabilities` to satisfy advanced requests:
+
+- **Model & Basic Limits**: Strictly matches the request's `model` and `revision`, ensuring the request's token count does not exceed the node's `max_input_tokens`.
+- **LoRA & Reasoning**: Accurately identifies whether target nodes possess the corresponding `lora` or `reasoning` parsing capabilities.
+- **Multimodal**: Automatically extracts multimodal features from requests and strictly matches whether nodes support the corresponding sub-modalities.
+- **Structured Output**: Perceives and matches mandatory output constraints.
+
+A `RouteTarget` expands according to its `data_parallel_size`:
+
+- `data_parallel_size: 1` produces rank `0`;
+- larger values produce one candidate for each DP rank.
+
+Each candidate also contains the load and runtime observations read by the Router for that selection round. Algorithms use this snapshot instead of querying model servers themselves.
+
+### Filter, Scorer, and Picker
+
+The routing pipeline has three replaceable interfaces:
+
+- **Filter** returns the indexes of candidates to retain and can exclude candidates that do not meet a policy.
+- **Scorer** returns one `RouteScore` for every retained candidate in the same order.
+- **Picker** selects an index from the current scored list.
+
+All three interfaces use indexes instead of creating or returning new candidates. The Router keeps ownership of the candidates, so an algorithm cannot change route identity or select a target outside the current list. Duplicate or out-of-range indexes and score-count mismatches are explicit routing errors.
+
+### Built-in routing algorithm policies (Planned)
+
+The system includes or plans the following compile-ready policy implementations:
+
+**Filters:**
+
+- `allow_all`: Default pass-through filter. Retains all healthy, basically compatible candidate nodes to enter the scoring stage without extra interception.
+
+**Scorers:**
+
+- `kv_least_loaded`: KV Cache locality and low-load priority policy. Evaluation dimensions in priority order:
+  - Matched token count: Prefers the longest KV matched prefix.
+  - Storage tier preference: Device (4) > HostPinned (3) > Disk (2) > External (1).
+  - Physical locality preference: Local (2) > Remote (1).
+  - Current load: When prefix conditions match, prefers lower overall load (including downstream Decode nodes).
+- `least_loaded`: Absolute low-load priority policy. Scores solely based on nodes' current processing load and automatically aggregates downstream associated loads.
+- `uniform`: Uniform scoring policy. Assigns the same score to all candidate nodes, typically paired with `round_robin` for random or round-robin routing.
+- `weighted_round_robin`: Weighted round-robin based on preset node weights (GPU compute power, VRAM size, etc.), allowing higher-performance nodes to handle more requests.
+- `lowest_latency`: Scores based on target nodes' recent average response latencies (such as TTFT - Time to First Token, or TPOT - Time Per Output Token), prioritizing the fastest responding nodes.
+- `multi_tenant`: Multi-tenant rate limiting, planned to be implemented via a combination of Filter and Scorer.
+
+**Pickers:**
+
+- `max`: Selects the node with the highest score. In case of ties, uses the smallest `route_target_id` as a deterministic tie-breaking condition.
+- `round_robin`: Rotates among all nodes tied for the maximum score, utilizing atomic operations to ensure requests are evenly distributed across equally excellent tied nodes under high concurrency.
+
+## A complete example
+
+Suppose two ModelGroups are healthy:
+
+```text
 Candidates:
-  2f48f8e1-7f89-4eb8-bf31-e6d482504f66 / rank 0  KV match:   0 tokens
-  2f48f8e1-7f89-4eb8-bf31-e6d482504f66 / rank 1  KV match: 512 tokens
-  8c88ee9a-c10f-41fd-98ef-a09d256b5213 / rank 0  KV match: 256 tokens
+  ModelGroup A / rank 0  KV match:   0 tokens
+  ModelGroup A / rank 1  KV match: 512 tokens
+  ModelGroup B / rank 0  KV match: 256 tokens
 
-Filter:  retain indexes 0, 1, and 2
-Scorer:  score indexes 0 → 0, 1 → 512, 2 → 256
-Picker:  select index 1
+Filter: retain indexes 0, 1, and 2
+Scorer: produce one score for each candidate
+Picker: select index 1
 
 RouteDecision:
-  route_target_id: 2f48f8e1-7f89-4eb8-bf31-e6d482504f66
+  route_target_id: ModelGroup A
   data_parallel_rank: 1
 ```
 
-ModelGroup names follow `<pool-name>-<revision>-<ordinal>`. Router identity uses the Kubernetes ModelGroup UID rather than `metadata.name`; the name is used by the Deployment, Service, and service DNS endpoint.
+`route_target_id` is the stable routing identity supplied by the Model Server Registry. `RouteDecision` also returns the execution role, model, revision, and exact DP rank.
 
-For Aggregate and Prefill, `KvLeastLoadedScorer` is lexicographic: longest complete matched prompt prefix first, then `Device > HostPinned > Disk > External`, then `Local > Remote`, then lower load. Decode prefix, tier, and locality scores are zero. Unavailable KV facts never become a confirmed miss.
+## Using KV prefix information
 
-## Using the KV prefix indexer
-
-Filter and Scorer receive a `&dyn KvPrefixIndexer`. A KV-aware algorithm constructs one lookup for each candidate from the candidate's exact ModelGroup identity and DP rank:
+Filter and Scorer receive a `&dyn KvPrefixIndexer`. A KV-aware algorithm queries reusable prompt prefixes using the candidate's route target and DP rank:
 
 ```rust
-use foretoken_kv_indexer::{KvPrefixLookup, KvPrefixQueryResult};
+use foretoken_kv_indexer::KvPrefixQueryResult;
 
-let result = KvPrefixLookup::from_generate_request(
-    candidate.route_target_id.as_str(),
-    candidate.data_parallel_rank,
-    request.generate_request.as_ref(),
-)
-.map_or_else(KvPrefixQueryResult::Unavailable, |lookup| {
-    kv_prefix_indexer.prefix_matches(lookup)
-});
+let result = request
+    .kv_prefix_lookup(
+        candidate.route_target_id.as_str(),
+        candidate.data_parallel_rank,
+    )
+    .map_or_else(KvPrefixQueryResult::Unavailable, |lookup| {
+        kv_prefix_indexer.prefix_matches(lookup)
+    });
 
 let matched_tokens = match result {
     KvPrefixQueryResult::Matches(matches) => matches
@@ -82,10 +124,51 @@ let matched_tokens = match result {
 };
 ```
 
-`Unavailable` is not a confirmed cache miss, so it must not by itself remove a candidate. A Filter returns indexes into its input candidate list. A Scorer returns one `RouteScore` for every input candidate in the same order. See `src/algorithm/scorer/kv_least_loaded_scorer.rs` for the built-in tier, locality, and load policy.
+`Unavailable` means the index cannot provide a reliable answer. It is not a confirmed cache miss and must not by itself remove a candidate. See [`../kv-indexer/README.md`](../kv-indexer/README.md) for the KV prefix indexer's responsibilities and extension model.
 
-## Compiled algorithm registry
+## Adding a custom algorithm
 
-Filter, Scorer, and Picker implementations register themselves at compile time with `inventory::submit!`. Pipeline configuration uses stable lower-snake-case names: the built-ins are `allow_all`; `uniform`, `least_loaded`, and `kv_least_loaded`; and `max` and `round_robin`. The Router validates compiled descriptors and configuration during startup. Empty, duplicate, or unknown names are explicit errors; it never falls back silently.
+### Implement an algorithm interface
 
-To add a community algorithm, add its Rust implementation in the appropriate `src/algorithm/{filter,scorer,picker}/` directory, implement the category trait, and place an `inventory::submit!` descriptor with its stable name and factory in that file. Add one `mod my_algorithm;` line to that category's `mod.rs` so Rust compiles the module. No central configuration catalog, source scanning, runtime plugin loader, `build.rs`, or code generation is involved.
+Implement `RouteFilter`, `RouteScorer`, or `RoutePicker` as needed. An implementation should use the request, candidates, and observation snapshot provided by the Router. It should not modify candidates or maintain a second route catalog inside the algorithm.
+
+Community algorithms belong in the corresponding directory:
+
+```text
+src/algorithm/filter/
+src/algorithm/scorer/
+src/algorithm/picker/
+```
+
+### Register the algorithm
+
+Use `inventory::submit!` to register a stable name and factory at compile time, then declare the module in the corresponding directory's `mod.rs`:
+
+```rust
+mod my_algorithm;
+```
+
+No central algorithm catalog, source scanning, runtime plugin loader, `build.rs`, or code generation is required. The Router validates configured algorithm names at startup; empty, duplicate, and unknown names return explicit errors.
+
+## Request-local Context
+
+Most algorithms need no additional state and can use `RouterPipeline::new`. When Filter, Scorer, and Picker need to share state within one request, use `RouterPipeline::with_customized_context`:
+
+```rust
+let pipeline = RouterPipeline::with_customized_context(
+    Arc::new(ContextFilter),
+    Arc::new(ContextScorer),
+    Arc::new(ContextPicker),
+    |_| RoutingContext { rounds: 0 },
+);
+```
+
+The Router creates one Context for each request and passes it through Filter, Scorer, and Picker in every selection round. The Context is dropped when the request ends and is never shared with another request.
+
+## E/P/D multi-stage routing
+
+A request may be served by associated Encoder, Prefill, and Decode route components. The Router selects a target for each required execution stage and keeps those targets within the same pipeline scope.
+
+Built-in load-aware scorers possess pipeline visibility: when scoring for the Prefill stage, the scorer automatically factors in the load of the lightest Decode node within that E/P/D path, achieving load balancing across the entire pipeline.
+
+Algorithms may score the complete compatible and healthy candidate snapshot. After scoring and before Picker, the Router narrows the list for the current execution stage and the selected pipeline scope. Picker therefore cannot select a target outside the associated component set. The same request-local Context remains available across these selection stages.

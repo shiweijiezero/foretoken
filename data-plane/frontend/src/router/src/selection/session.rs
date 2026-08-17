@@ -8,12 +8,12 @@ use thiserror::Error;
 use crate::{RouteDecision, RouterRequest};
 
 /// Holds request-local routing state for one generation request. Aggregate completes directly;
-/// P/D executes P→a fresh D choice, and E/P/D executes E→P→a fresh D choice within one linked route set.
+/// P/D executes P→a fresh D choice, and E/P/D executes E→P→a fresh D choice within one E/P/D route set.
 pub trait RouteSession: Send {
     /// Selects one Aggregate, ordinary Prefill, or E/P/D Encoder from the current snapshot.
     fn select_initial(&mut self) -> Result<RouteDecision, RouteError>;
 
-    /// Selects the Prefill in the Encoder-selected E/P/D linked route set.
+    /// Selects the Prefill in the Encoder-selected E/P/D route set.
     fn select_prefill(&mut self) -> Result<RouteDecision, RouteError>;
 
     /// Selects one Decode model-server route from a fresh snapshot after Prefill completes.

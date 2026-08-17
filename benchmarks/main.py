@@ -22,7 +22,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
     )
+    # Keep request chatter off the console so tqdm can refresh one bar in place.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     config = parse_arguments(argv)
+    config.validate()
     logger.info("%s", config.summary())
     asyncio.run(select_runner(config).run())
 

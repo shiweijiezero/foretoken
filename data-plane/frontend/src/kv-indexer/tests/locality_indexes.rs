@@ -48,7 +48,7 @@ fn blocks(group_idx: Option<u32>) -> Vec<KvStoredBlock> {
         .into_iter()
         .enumerate()
         .map(|(block_index, tokens)| {
-            // Keep protocol hashing independent from both index implementations.
+            // This is the protocol hash contract, kept independent from both implementations.
             let mut hasher = blake3::Hasher::new_keyed(&KEY);
             hasher.update(parent_hash.0.as_bytes());
             hasher.update(partition.model_revision.as_bytes());

@@ -38,12 +38,9 @@ impl RouteScorer for KvLeastLoadedScorer {
                     candidate.role,
                     ModelServerRole::Aggregate | ModelServerRole::Prefill
                 ) {
-                    // The lookup borrows prompt data and uses the candidate's exact replica; it does
-                    // not clone or mutate the client generation request.
-                    let lookup = foretoken_kv_indexer::KvPrefixLookup::from_generate_request(
+                    let lookup = request.kv_prefix_lookup(
                         candidate.route_target_id.as_str(),
                         candidate.data_parallel_rank,
-                        request.generate_request.as_ref(),
                     );
                     match lookup.map_or_else(
                         foretoken_kv_indexer::KvPrefixQueryResult::Unavailable,

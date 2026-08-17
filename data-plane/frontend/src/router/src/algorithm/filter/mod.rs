@@ -14,8 +14,8 @@ pub use allow_all_filter::AllowAllFilter;
 /// Filters the complete compatible, healthy route target snapshot for one routing round.
 ///
 /// A filter returns positions from `candidates`, which permits it to retain any subset without
-/// returning candidate identities or metadata. The Router applies execution-stage and linked
-/// E/P/D route-set eligibility after scoring.
+/// returning candidate identities or metadata. The Router applies execution-stage and E/P/D
+/// route-set eligibility after scoring.
 ///
 /// - `request`: model, optional revision, prompt tokens, sampling, multimodal, LoRA, and priority.
 /// - `candidates`: routable ModelGroups with route metadata and the Router's immutable current-round

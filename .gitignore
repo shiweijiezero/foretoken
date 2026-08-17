@@ -16,8 +16,8 @@ __pycache__/
 # Manually downloaded upstream references
 reference/
 
-# Local vLLM build source
-third_party/vllm-rust/source
+# Rust
+target/
 
 # Experiment records
 results/

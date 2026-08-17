@@ -22,7 +22,7 @@ pub use uniform_scorer::UniformScorer;
 ///
 /// The returned score slice is parallel to `candidates`: position `n` scores candidate `n`. This
 /// lets a scorer express ranking without echoing candidate identity or metadata. The Router
-/// applies execution-stage and linked E/P/D route-set eligibility only after scores are available.
+/// applies execution-stage and E/P/D route-set eligibility only after scores are available.
 ///
 /// - `request`: model, optional revision, prompt tokens, sampling, multimodal, LoRA, and priority.
 /// - `candidates`: Filter output with route metadata and the Router's immutable current-round
@@ -49,7 +49,7 @@ pub(crate) fn load(candidate: &RouteCandidate) -> i64 {
         .unwrap_or(0)
 }
 
-/// Returns the least model-server route load among Decode eligible route options in each linked route set.
+/// Returns the least model-server route load among Decode eligible route options in each E/P/D route set.
 pub(crate) fn decode_loads_by_pipeline_scope(
     candidates: &[RouteCandidate],
 ) -> BTreeMap<Option<String>, i64> {

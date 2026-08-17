@@ -44,24 +44,16 @@ pub struct KvPrefixLookup<'a> {
 }
 
 impl<'a> KvPrefixLookup<'a> {
-    /// Borrows KV-relevant fields without cloning the generation request.
-    pub fn from_generate_request(
+    pub const fn new(
         route_target_id: &'a str,
         data_parallel_rank: u32,
-        request: &'a vllm_llm::GenerateRequest,
-    ) -> Result<Self, KvPrefixUnavailableReason> {
-        if request.cache_salt.is_some()
-            || request.lora_request.is_some()
-            || request.mm_features.is_some()
-            || request.sampling_params.skip_reading_prefix_cache == Some(true)
-        {
-            return Err(KvPrefixUnavailableReason::UnsupportedRequest);
-        }
-        Ok(Self {
+        prompt_token_ids: &'a [u32],
+    ) -> Self {
+        Self {
             route_target_id,
             data_parallel_rank,
-            prompt_token_ids: &request.prompt_token_ids,
-        })
+            prompt_token_ids,
+        }
     }
 }
 

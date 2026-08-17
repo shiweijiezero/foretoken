@@ -3,74 +3,116 @@
 
 # Router
 
-Router 为每个执行阶段选择一个可路由的 ModelGroup(即engine-core-server) 和精确 DP rank。
+## Router 解决什么问题
 
-Filter–Scorer–Picker 是候选路由项（eligible route option，candidate）列表级接口：
+同一个模型可以由多个 ModelGroup 提供服务，每个 ModelGroup 还可能包含多个 DP rank。Router 为一次请求选择具体的路由目标和 DP rank，并返回 `RouteDecision`。
 
-- **Filter** 接收兼容且健康的候选路由项快照，返回保留子集的索引。它不能新增或修改候选路由项；越界或重复索引会成为明确的路由错误。
-- **Scorer** 按保留候选路由项的原有顺序为每项返回一个 `RouteScore`。Router 持有 candidate/score 视图；数量不匹配会成为明确的路由错误。内置 KV 评分比较 prompt 命中长度、存储层级、locality 和负载。
-- **Picker** 从当前评分列表选择一个索引，而不是回传候选路由项。非空列表返回 `None` 或越界索引都会成为明确的路由错误。Router 随后输出 `RouteDecision`，其中包含 ModelGroup `RouteTarget`（模型服务器路由目标）、执行角色、模型 revision 和精确 DP rank。
+Router 不执行模型推理。它只根据当前可用的路由目标、请求要求、KV cache 命中和负载等信息完成选择。
 
-执行阶段和 E/P/D 关联路由组件集收窄（同一组关联的 Encoder、Prefill 和 Decode 路由组件）仍由 Router 负责，在评分后、Picker 前执行。算法可比较完整的兼容健康快照，但不能选择当前阶段收窄范围以外的候选路由项。每个候选路由项还携带 Router 在该轮构造的不可变观测：当前 admitted load 和并发上限、可选 scheduler/KV gauge，以及 Router 统一观测窗口上的吞吐和延迟统计。Filter 和 Scorer 只消费该快照，不再查询 target stats；只有与 request prompt 相关的 KV-prefix lookup 仍是算法查询。
-
-`data_parallel_size: 1` 的 `RouteTarget`（模型服务器路由目标） 只产生 rank `0` 候选路由项，最终决策仍显式返回 `data_parallel_rank: 0`。更大的 RouteTarget 会为每个 rank 产生一个候选路由项。
-
-## 自定义 Context 示例
-
-`RouterPipeline::with_customized_context` 为每个请求创建一个独立的 `C`。Router 在该请求的每轮选择中，将同一个 `&mut C` 依次传给 Filter、Scorer 和 Picker；它会贯穿 initial、Prefill 和 Decode，请求处理结束后释放，不会与其他请求共享。
-
-```rust
-let pipeline = RouterPipeline::with_customized_context(
-    Arc::new(ContextFilter),
-    Arc::new(ContextScorer),
-    Arc::new(ContextPicker),
-    |request| RoutingContext { request_id: request.generate_request.request_id.clone(), rounds: 0 },
-);
-let router = PipelineRouter::with_pipeline(inventory, pipeline);
-```
-
-例如 Filter 增加 `rounds`，Scorer 读取当前轮次应用评分策略，Picker 再使用同一状态完成选择。可执行行为覆盖位于 `tests/router/pipeline.rs`；不需要 request-local 状态的算法继续使用默认 `RouterPipeline::new` 和 `()` Context。
-
-## 示例
+## 一次请求如何完成路由
 
 ```text
-ModelGroups：
-  llama3-serve-r-2gosa7pa2jpf2-0  UID 2f48f8e1-7f89-4eb8-bf31-e6d482504f66
-  llama3-serve-r-2gosa7pa2jpf2-1  UID 8c88ee9a-c10f-41fd-98ef-a09d256b5213
+RouterRequest
+    ↓
+兼容且健康的候选路由项
+    ↓ Filter
+保留的候选路由项
+    ↓ Scorer
+带分数的候选路由项
+    ↓ Picker
+RouteDecision
+```
 
-候选：
-  2f48f8e1-7f89-4eb8-bf31-e6d482504f66 / rank 0  KV 命中：  0 tokens
-  2f48f8e1-7f89-4eb8-bf31-e6d482504f66 / rank 1  KV 命中：512 tokens
-  8c88ee9a-c10f-41fd-98ef-a09d256b5213 / rank 0  KV 命中：256 tokens
+### 候选路由项
+
+Router 从 `RouteInventory` 获取路由目标。只有模型、revision、输入限制和请求能力兼容且当前健康的目标才会成为候选项。执行角色会保留在候选项中，供后续执行阶段筛选。
+
+动态能力感知匹配会深度检查目标节点的 `capabilities` 以满足高级请求：
+
+- 模型与基础限制：严格匹配请求的 `model` 和 `revision`，确保请求的 Token 数不超过节点的 `max_input_tokens`。
+- LoRA & 推理：精准识别目标节点是否具备对应的 `lora` 或 `reasoning` 解析能力。
+- 多模态：自动提取请求中的多模态特征，并严格匹配节点是否支持相应的子模态。
+- 结构化输出 (Structured Output)：感知并匹配强制输出约束。
+
+一个 `RouteTarget` 会按 `data_parallel_size` 展开为候选项：
+
+- `data_parallel_size: 1` 产生 rank `0`；
+- 更大的值为每个 DP rank 产生一个候选项。
+
+候选项还包含 Router 在本轮读取的负载和运行状态。算法使用这份快照，不需要自行查询模型服务器。
+
+### Filter、Scorer 和 Picker
+
+路由流程由三个可替换的接口组成：
+
+- **Filter** 返回要保留的候选项索引，用于排除不满足策略要求的候选项。
+- **Scorer** 按原顺序为每个保留候选项返回一个严格用于比较大小的得分集 `RouteScore`。
+- **Picker** 从当前评分列表中选择一个索引。
+
+三个接口都使用索引，而不是创建或返回新的候选项。候选项始终由 Router 持有，因此算法不能修改路由身份或选择列表之外的目标。重复索引、越界索引和分数数量不匹配都会成为明确的路由错误。
+
+### 内置路由算法策略（计划中）
+
+系统内置了以下编译就绪的策略实现：
+
+**Filters:**
+
+- `allow_all`：默认直通过滤器。保留所有健康的、基础兼容的候选节点进入打分阶段，不进行额外拦截。
+
+**Scorers:**
+
+- `kv_least_loaded`：KV Cache 本地性与低负载优先策略。评估维度按优先级依次为：
+  1. **匹配的 Token 数**：优先选择 KV 命中前缀最长者。
+  2. **存储层级优先**：Device (4) > HostPinned (3) > Disk (2) > External (1)。
+  3. **物理位置优先**：Local (2) > Remote (1)。
+  4. **当前负载**：前缀条件相同时，优先选择总体负载（含下游 Decode）最轻的节点。
+- `least_loaded`：绝对低负载优先策略。仅根据节点的当前处理负载进行打分，并自动累加上下游关联负载。
+- `uniform`：均匀打分策略。给予所有候选节点相同的分数，通常搭配 `round_robin` 实现随机或轮询路由。
+- `weighted_round_robin`：基于预设的节点权重（GPU 算力大小、显存容量等）进行加权轮询，让性能更强的节点承担更多请求。
+- `lowest_latency`：基于目标节点近期的平均响应延迟（如 TTFT - 首字延迟，或 TPOT - 每个 Token 输出延迟）进行打分，优先路由给响应最快的节点。
+- `multi_tenant`：多租户流控，计划通过 Filter 和 Scorer 组合实现。
+
+**Pickers:**
+
+- `max`：选择得分最高的节点。出现同分时，以 `route_target_id` 最小的节点作为确定性平局决胜条件。
+- `round_robin`：在所有得分最高的节点中进行轮询，利用原子操作确保高并发下请求能均匀分布到同样优秀的同分节点上。
+
+## 一个完整示例
+
+假设有两个健康的 ModelGroup：
+
+```text
+候选项：
+  ModelGroup A / rank 0  KV 命中 0 tokens
+  ModelGroup A / rank 1  KV 命中 512 tokens
+  ModelGroup B / rank 0  KV 命中 256 tokens
 
 Filter：保留索引 0、1、2
-Scorer：索引 0 → 0，1 → 512，2 → 256
+Scorer：为三个候选项分别生成分数
 Picker：选择索引 1
 
 RouteDecision：
-  route_target_id: 2f48f8e1-7f89-4eb8-bf31-e6d482504f66
+  route_target_id: ModelGroup A
   data_parallel_rank: 1
 ```
 
-ModelGroup 名称遵循 `<pool-name>-<revision>-<ordinal>`。Router 使用 Kubernetes ModelGroup UID 作为路由身份，而不是使用 `metadata.name`；Deployment、Service 和 Service DNS endpoint 使用 ModelGroup 名称。
+`route_target_id` 是 Model Server Registry 提供的稳定路由身份。`RouteDecision` 还会返回执行角色、模型、revision 和精确 DP rank。
 
-Aggregate 和 Prefill 的内置 KV 评分按以下顺序做字典序比较：完整 prompt prefix 命中长度、`Device > HostPinned > Disk > External`、`Local > Remote`，最后比较负载。Decode 的 prefix、tier 和 locality 分数为零。Unavailable KV facts 不会被当作确认 miss。
+## 使用 KV 前缀信息
 
-## 使用 KV prefix indexer
-
-Filter 和 Scorer 都会接收 `&dyn KvPrefixIndexer`。KV 感知算法需要使用候选项的精确 ModelGroup identity 和 DP rank，为每个 candidate 构造查询：
+Filter 和 Scorer 都会接收 `&dyn KvPrefixIndexer`。KV 感知算法使用候选项的路由目标和 DP rank 查询可复用的 prompt 前缀：
 
 ```rust
-use foretoken_kv_indexer::{KvPrefixLookup, KvPrefixQueryResult};
+use foretoken_kv_indexer::KvPrefixQueryResult;
 
-let result = KvPrefixLookup::from_generate_request(
-    candidate.route_target_id.as_str(),
-    candidate.data_parallel_rank,
-    request.generate_request.as_ref(),
-)
-.map_or_else(KvPrefixQueryResult::Unavailable, |lookup| {
-    kv_prefix_indexer.prefix_matches(lookup)
-});
+let result = request
+    .kv_prefix_lookup(
+        candidate.route_target_id.as_str(),
+        candidate.data_parallel_rank,
+    )
+    .map_or_else(KvPrefixQueryResult::Unavailable, |lookup| {
+        kv_prefix_indexer.prefix_matches(lookup)
+    });
 
 let matched_tokens = match result {
     KvPrefixQueryResult::Matches(matches) => matches
@@ -82,10 +124,51 @@ let matched_tokens = match result {
 };
 ```
 
-`Unavailable` 不是确认的 cache miss，不能仅据此删除 candidate。Filter 返回输入 candidate 列表中的索引；Scorer 必须按原顺序为每个输入 candidate 返回一个 `RouteScore`。内置的 tier、locality 和负载策略可参考 `src/algorithm/scorer/kv_least_loaded_scorer.rs`。
+`Unavailable` 表示当前无法可靠查询，不是已经确认的 cache miss，不能仅凭它删除候选项。KV 前缀索引的职责和扩展方式见 [`../kv-indexer/README_zh.md`](../kv-indexer/README_zh.md)。
 
-## 编译期算法注册
+## 添加自定义算法
 
-Filter、Scorer 和 Picker 实现通过 `inventory::submit!` 在编译期自行注册。Pipeline 配置使用稳定的 lower_snake_case 名称：内置 Filter 是 `allow_all`；Scorer 是 `uniform`、`least_loaded` 和 `kv_least_loaded`；Picker 是 `max` 和 `round_robin`。Router 在启动时校验编译进二进制的 descriptor 与配置；空名、重名和未知名称都是明确错误，绝不静默回退。
+### 实现算法接口
 
-社区算法只需在对应的 `src/algorithm/{filter,scorer,picker}/` 目录增加 Rust 实现、实现该类别 trait，并在文件中放置带稳定名称和 factory 的 `inventory::submit!` descriptor。再在该类别的 `mod.rs` 加一行 `mod my_algorithm;`，让 Rust 编译该模块。无需修改中央配置目录，不使用源码扫描、runtime plugin loader、`build.rs` 或 codegen。
+根据需要实现 `RouteFilter`、`RouteScorer` 或 `RoutePicker`。实现应只使用 Router 提供的请求、候选项和观测快照，不应修改候选项或在算法内部维护另一份路由目录。
+
+社区算法放在对应目录：
+
+```text
+src/algorithm/filter/
+src/algorithm/scorer/
+src/algorithm/picker/
+```
+
+### 注册算法
+
+算法通过 `inventory::submit!` 在编译期注册稳定名称和 factory，并在对应目录的 `mod.rs` 中声明模块：
+
+```rust
+mod my_algorithm;
+```
+
+不需要修改中央算法清单，也不依赖源码扫描、runtime plugin loader、`build.rs` 或 codegen。Router 启动时会校验配置引用的算法名称；空名称、重复名称和未知名称都会返回明确错误。
+
+## 请求级 Context
+
+多数算法不需要额外状态，可以使用 `RouterPipeline::new`。如果 Filter、Scorer 和 Picker 需要在同一个请求内共享状态，可使用 `RouterPipeline::with_customized_context`：
+
+```rust
+let pipeline = RouterPipeline::with_customized_context(
+    Arc::new(ContextFilter),
+    Arc::new(ContextScorer),
+    Arc::new(ContextPicker),
+    |_| RoutingContext { rounds: 0 },
+);
+```
+
+Router 为每个请求创建独立的 Context，并在该请求的每轮选择中依次传给 Filter、Scorer 和 Picker。请求结束后 Context 被释放，不会与其他请求共享。
+
+## E/P/D 多阶段路由
+
+一个请求可能由关联的 Encoder、Prefill 和 Decode 路由组件共同完成。Router 会为每个需要的执行阶段分别选择目标，并确保这些目标属于同一个 pipeline scope (`pipeline_scope_id`)。
+
+内置的负载感知打分器具备流水线视野：当为 Prefill 阶段进行评分时，打分器会自动将该 E/P/D 链路中负载最轻的 Decode 节点的负载计算在内，从而实现整条流水线的负载均衡。
+
+算法可以为完整的兼容健康候选快照评分。Router 在评分后、Picker 前根据当前执行阶段和已选择的 pipeline scope 收窄候选范围，因此 Picker 不能选择关联组件集之外的目标。同一个请求级 Context 会贯穿这些选择阶段。

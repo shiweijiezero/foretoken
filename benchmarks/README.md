@@ -41,16 +41,58 @@ foretoken bench \
   --model Qwen3.6-27B \
   --prompt "hello" \
   --parallel 2 \
-  --number 200
+  --number 20
 ```
 
-Dataset file:
+Local dataset file:
 
 ```bash
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
-  --dataset-path /home/wshiah/code/zhuting/foretoken/conversation.jsonl \
-  --parallel 2 \
-  --number 200
+  --dataset foretoken/conversation.jsonl \
+  --parallel 4 \
+  --number 20 \
+  --wandb
+```
+
+Random synthetic prompts (tokenizer required):
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset random \
+  --tokenizer-path Qwen/Qwen3.6-27B \
+  --min-prompt-length 128 --max-prompt-length 512 \
+  --parallel 4 --number 20 --max-tokens 64 \
+  --rate 5 \
+  --wandb
+```
+
+HuggingFace dataset id (rows: `messages`, `prompt`, or `user`[+`system`]):
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
+  --parallel 4 \
+  --number 20 \
+  --wandb
+```
+
+Multiple JSONL / HuggingFace sources (comma-separated). `--number` is the
+**total** across all datasets (split evenly); each source runs sequentially,
+then raw results are merged and metrics recomputed. With `--wandb`, the
+experiment is one W&B **group** and each dataset is its own **run**:
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen3.6-27B \
+  --dataset /path/a.jsonl,org/name:train,/path/b.jsonl \
+  --parallel 4 \
+  --number 30 \
+  --wandb
 ```

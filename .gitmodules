@@ -1,0 +1,4 @@
+[submodule "data-plane/third_party/vllm"]
+	path = data-plane/third_party/vllm
+	url = https://github.com/vllm-project/vllm.git
+	shallow = true

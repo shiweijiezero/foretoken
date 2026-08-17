@@ -9,7 +9,7 @@ license.workspace = true
 
 [dependencies]
 foretoken-kv-indexer = { path = "../kv-indexer" }
-foretoken-model-protocol = { path = "../../../model-protocol" }
+foretoken-model-protocol.workspace = true
 inventory.workspace = true
 serde.workspace = true
 thiserror.workspace = true

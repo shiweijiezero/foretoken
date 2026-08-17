@@ -254,8 +254,7 @@ pub struct KvDeltaQuery {
     pub limit: Option<usize>,
 }
 
-/// Hash representation. `NormalizedKeyedBlake3V1` is Foretoken's request-side contract; it is
-/// deliberately not a claim that vLLM's opaque/raw hash has the same bytes.
+/// Hash representation shared by request-side lookup and backend event adapters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KvHashFormat {
@@ -303,8 +302,7 @@ pub struct KvPartition {
     pub sliding_window: Option<u32>,
 }
 
-/// A normalized block produced by the model-server adapter from an authoritative vLLM parent
-/// chain. `block_index` is never inferred by index arrival order.
+/// A normalized block produced from a backend-reported parent chain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KvStoredBlock {
@@ -314,11 +312,7 @@ pub struct KvStoredBlock {
     pub block_hash: KvBlockHash,
 }
 
-/// vLLM lifecycle normalization. Store carries adapter-normalized ancestry and placement; Remove is
-/// hash-only for block identity but retains vLLM's placement and group selector. Clear has no
-/// selector, matching vLLM's asymmetric lifecycle events.
-/// The adapter owns medium mapping: GPU/DEVICE→Device, CPU/CPU_PINNED→HostPinned,
-/// STORAGE/DISK/NVME→Disk, REMOTE/EXTERNAL/NETWORK/SHARED→External.
+/// Backend-neutral KV block lifecycle events emitted by a model-server adapter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
     tag = "kind",

@@ -30,7 +30,7 @@ impl RouteTargetId {
 pub enum ScalingTargetKind {
     /// ModelPool-owned capacity.
     Pool,
-    /// Capacity owned by a linked E/P/D route set.
+    /// Capacity owned by an E/P/D route set.
     EPDPipelineScope,
 }
 
@@ -86,7 +86,7 @@ pub struct RouteTarget {
     /// Execution role provided by the route target.
     #[serde(default)]
     pub role: ModelServerRole,
-    /// Optional identity that links the Encoder, Prefill, and Decode routes in one E/P/D route set.
+    /// Optional identity for the Encoder, Prefill, and Decode routes in one E/P/D route set.
     #[serde(default)]
     pub pipeline_scope_id: Option<String>,
     /// Number of data-parallel replicas selectable for this route target.

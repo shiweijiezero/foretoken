@@ -29,7 +29,7 @@ pub struct RouteCandidate {
     pub model: String,
     /// Route target model revision.
     pub revision: String,
-    /// E/P/D linked route-set identity, if this routable ModelGroup participates in one.
+    /// E/P/D route-set identity, if this routable ModelGroup participates in one.
     pub pipeline_scope_id: Option<String>,
     /// Exact data-parallel replica selected within the route target.
     pub data_parallel_rank: u32,

@@ -68,6 +68,28 @@ fn prefix(tokens: usize, tier: KvStorageTier, locality: KvCacheLocality) -> KvPr
     }
 }
 
+#[test]
+fn kv_lookup_rejects_requests_with_separate_cache_semantics() {
+    let mut salted = request();
+    Arc::get_mut(&mut salted.generate_request)
+        .expect("test request has one owner")
+        .cache_salt = Some("tenant-a".into());
+    assert!(matches!(
+        salted.kv_prefix_lookup("target", 0),
+        Err(KvPrefixUnavailableReason::UnsupportedRequest)
+    ));
+
+    let mut disabled = request();
+    Arc::get_mut(&mut disabled.generate_request)
+        .expect("test request has one owner")
+        .sampling_params
+        .skip_reading_prefix_cache = Some(true);
+    assert!(matches!(
+        disabled.kv_prefix_lookup("target", 0),
+        Err(KvPrefixUnavailableReason::UnsupportedRequest)
+    ));
+}
+
 fn target_stats(running_requests: u64) -> Arc<RouteTargetStats> {
     Arc::new(RouteTargetStats {
         collected_at_unix_ms: 1,

@@ -15,32 +15,44 @@ from benchmarks.workload.loader import load_requests
 class RunBenchmark(Runner):
     """Run one closed-loop or open-loop load point.
 
-    Semantics (EvalScope-aligned):
+    Semantics:
     - Default closed-loop: semaphore = ``parallel``.
     - ``rate > 0``: Poisson absolute-time pacing.
     - ``open_loop``: fire on schedule without semaphore backpressure.
     """
 
     async def run(self) -> dict[str, Any]:
-        load = self.primary_load()
+        load = self.default_load()
         requests = load_requests(self.config)
         writer = self.make_writer()
         run_config = self.build_run_config("run_benchmark", load)
+        wandb_logger = self.make_wandb_logger(writer, load)
 
-        raw = await self.dispatch(
-            self.make_client(),
-            requests,
-            parallel=load["parallel"],
-            rate=load["rate"],
-            open_loop=load["open_loop"],
-        )
-        metrics = self.aggregate_metrics(
-            raw,
-            rate=load["rate"],
-            number=load["number"],
-            resolved_parallel=load["resolved_parallel"],
-        )
-        self.save_results(writer, run_config, raw, metrics)
+        try:
+            raw_output = await self.dispatch(
+                self.make_client(),
+                requests,
+                parallel=load["parallel"],
+                rate=load["rate"],
+                open_loop=load["open_loop"],
+                wandb_logger=wandb_logger,
+            )
+            metrics = self.aggregate_metrics(
+                raw_output,
+                rate=load["rate"],
+                number=load["number"],
+                resolved_parallel=load["resolved_parallel"],
+            )
+            self.save_results(
+                writer,
+                run_config,
+                raw_output,
+                metrics,
+                wandb_logger=wandb_logger,
+            )
+        except Exception:
+            wandb_logger.finish()
+            raise
 
         return {
             "mode": "run_benchmark",

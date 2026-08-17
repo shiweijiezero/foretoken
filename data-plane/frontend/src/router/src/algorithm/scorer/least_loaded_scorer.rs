@@ -31,8 +31,8 @@ impl RouteScorer for LeastLoadedScorer {
         kv_prefix_indexer: &dyn KvPrefixIndexer,
         customized_context: &mut (),
     ) -> Vec<RouteScore> {
-        // A Prefill eligible route option includes the lightest Decode load in its own linked route set.
-        // The score compares linked route sets without prematurely binding to one Decode rank.
+        // A Prefill eligible route option includes the lightest Decode load in its own E/P/D route set.
+        // The score compares E/P/D route sets without prematurely binding to one Decode rank.
         let decode_loads = decode_loads_by_pipeline_scope(candidates);
 
         candidates

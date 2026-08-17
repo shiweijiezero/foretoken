@@ -16,8 +16,7 @@ from benchmarks.metrics.aggregator import compute_tpot
 
 
 def _base_url(url: str) -> str:
-    u = url.rstrip("/")
-    return u.removesuffix("/chat/completions") or u
+    return url.rstrip("/").removesuffix("/chat/completions")
 
 
 def derive_max_connections(
@@ -28,7 +27,7 @@ def derive_max_connections(
     Closed-loop: in-flight ≤ ``parallel``.
     Open-loop: up to ``number`` may be in flight (gather / paced fire).
     """
-    return max(number if open_loop else parallel, 1)
+    return number if open_loop else parallel
 
 
 class OpenAICompatClient:
@@ -41,14 +40,15 @@ class OpenAICompatClient:
         timeout: int,
         api_key: str,
         max_connections: int,
+        max_retries: int,
     ):
         self.model = model
         # Keepalive matches max so finished requests can be reused under the
         # same concurrency budget; the client is closed at end of each run.
         self.client = AsyncOpenAI(
             base_url=_base_url(url),
-            api_key=api_key or "EMPTY",
-            max_retries=2,
+            api_key=api_key,
+            max_retries=max_retries,
             http_client=httpx.AsyncClient(
                 timeout=timeout,
                 limits=httpx.Limits(
@@ -57,9 +57,6 @@ class OpenAICompatClient:
                 ),
             ),
         )
-
-    async def start(self) -> None:
-        """No-op; client is ready after ``__init__`` (kept for runner API)."""
 
     async def close(self) -> None:
         await self.client.close()
@@ -88,40 +85,38 @@ class OpenAICompatClient:
         if tools:
             kwargs["tools"] = tools
 
-        t0 = time.perf_counter()
+        start_time = time.perf_counter()
         ttft: Optional[float] = None
-        in_tok = out_tok = n_content = 0
+        input_tokens = output_tokens = 0
         status: Optional[int] = None
-        error: Optional[str] = None
+        error_message: Optional[str] = None
         success = True
         try:
-            resp = await self.client.chat.completions.create(**kwargs)
+            response = await self.client.chat.completions.create(**kwargs)
             status = httpx.codes.OK
-            async for chunk in resp:
-                if chunk.usage:
-                    in_tok = int(chunk.usage.prompt_tokens or in_tok)
-                    out_tok = int(chunk.usage.completion_tokens or out_tok)
+            async for chunk in response:
+                if chunk.usage is not None:
+                    input_tokens = int(chunk.usage.prompt_tokens)
+                    output_tokens = int(chunk.usage.completion_tokens)
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
                 if delta.content or delta.tool_calls:
-                    ttft = ttft if ttft is not None else time.perf_counter() - t0
-                    if delta.content:
-                        n_content += 1
-        except Exception as e:
+                    if ttft is None:
+                        ttft = time.perf_counter() - start_time
+        except Exception as exc:
             success = False
-            status = getattr(e, "status_code", status)
-            error = str(e)
+            status = getattr(exc, "status_code", None)
+            error_message = str(exc)
 
-        latency = time.perf_counter() - t0
-        out_tok = out_tok or n_content
+        latency = time.perf_counter() - start_time
         return {
             "success": success,
             "status_code": status,
             "latency": latency,
             "ttft": ttft,
-            "tpot": compute_tpot(latency, ttft, out_tok),
-            "input_tokens": in_tok,
-            "output_tokens": out_tok,
-            "error": error,
+            "tpot": compute_tpot(latency, ttft, output_tokens),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "error": error_message,
         }
