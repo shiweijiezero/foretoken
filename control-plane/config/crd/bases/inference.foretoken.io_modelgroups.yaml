@@ -82,6 +82,12 @@ spec:
                     maxProperties: 16
                     minProperties: 1
                     type: object
+                  runtimeClassName:
+                    description: RuntimeClassName selects the container runtime required
+                      by this accelerator profile.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
                 required:
                 - deviceResourceName
                 - nodeSelector

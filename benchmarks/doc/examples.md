@@ -1,14 +1,14 @@
 # Random dataset
 
 ```
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
+foretoken bench run \
+  --base-url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
   --dataset random \
   --tokenizer-path Qwen/Qwen3.6-27B \
   --min-prompt-length 128 --max-prompt-length 512 \
-  --parallel 4 --number 20 --max-tokens 64 \
-  --rate 5 \
+  --max-concurrency 4 --num-requests 20 --max-tokens 64 \
+  --request-rate 5 \
   --wandb
 ```
 
@@ -19,12 +19,12 @@ foretoken bench \
 # HuggingFace dataset
 
 ```
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
+foretoken bench run \
+  --base-url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
   --dataset weijiezz/foretoken-trace:conversation \
-  --parallel 4 \
-  --number 20 \
+  --max-concurrency 4 \
+  --num-requests 20 \
   --wandb
 ```
 
@@ -35,12 +35,12 @@ foretoken bench \
 # Local dataset
 
 ```
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
+foretoken bench run \
+  --base-url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
   --dataset /home/wshiah/code/zhuting/foretoken/conversation.jsonl \
-  --parallel 4 \
-  --number 20 \
+  --max-concurrency 4 \
+  --num-requests 20 \
   --wandb
 ```
 
@@ -51,12 +51,12 @@ foretoken bench \
 # Multi-dataset
 
 ```
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
+foretoken bench run \
+  --base-url http://127.0.0.1:8008/v1/chat/completions \
   --model Qwen3.6-27B \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train,ianncity/GLM-5.2-Conversation:train \
-  --parallel 4 \
-  --number 20 \
+  --max-concurrency 4 \
+  --num-requests 20 \
   --wandb
 ```
 

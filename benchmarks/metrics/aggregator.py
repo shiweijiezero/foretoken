@@ -12,6 +12,8 @@ import numpy as np
 
 
 def _percentile_stats(values: list[float]) -> dict[str, float]:
+    if not values:
+        return {"mean": 0.0, "p50": 0.0, "p95": 0.0, "p99": 0.0}
     array = np.asarray(values, dtype=float)
     return {
         "mean": float(np.mean(array)),
@@ -111,7 +113,7 @@ class MetricsAggregator:
                 "input_token/s": input_tokens / total_time,
                 "total_token/s": (input_tokens + output_tokens) / total_time,
             },
-            "avg_input_tokens": input_tokens / success_count,
-            "avg_output_tokens": output_tokens / success_count,
+            "avg_input_tokens": input_tokens / success_count if success_count else 0.0,
+            "avg_output_tokens": output_tokens / success_count if success_count else 0.0,
             "benchmark_time": total_time,
         }

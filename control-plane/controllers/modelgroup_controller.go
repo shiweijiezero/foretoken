@@ -265,6 +265,10 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment,
 		mounts = append(mounts, corev1.VolumeMount{Name: "mooncake-store-config", MountPath: "/etc/foretoken/mooncake/mooncake.json", SubPath: "mooncake.json", ReadOnly: true})
 		env = append(env, corev1.EnvVar{Name: "MOONCAKE_CONFIG_PATH", Value: "/etc/foretoken/mooncake/mooncake.json"}, corev1.EnvVar{Name: "PYTHONHASHSEED", Value: store.PythonHashSeed})
 	}
+	var runtimeClassName *string
+	if group.Spec.Accelerator.RuntimeClassName != "" {
+		runtimeClassName = &group.Spec.Accelerator.RuntimeClassName
+	}
 
 	return &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: appsv1.SchemeGroupVersion.String(), Kind: "Deployment"},
@@ -283,6 +287,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment,
 					RestartPolicy:                 corev1.RestartPolicyAlways,
 					DNSPolicy:                     corev1.DNSClusterFirst,
 					SchedulerName:                 corev1.DefaultSchedulerName,
+					RuntimeClassName:              runtimeClassName,
 					NodeSelector:                  maps.Clone(group.Spec.Accelerator.NodeSelector),
 					TerminationGracePeriodSeconds: &terminationGracePeriodSeconds,
 					SecurityContext: &corev1.PodSecurityContext{

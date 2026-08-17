@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+**
+!LICENSE
+!benchmarks/
+!benchmarks/**
+benchmarks/tests/
+benchmarks/build/
+benchmarks/*.egg-info/
+benchmarks/**/__pycache__/
+benchmarks/**/*.pyc

@@ -81,5 +81,5 @@ func contains(names []string, wanted string) bool {
 }
 
 func scalingSnapshot() core.ScalingSnapshot {
-	return core.ScalingSnapshot{Target: core.TargetID{ServiceUID: "service", Name: "default", Kind: core.TargetPool, Role: core.RoleAggregate}, Ref: core.ScalingSnapshotRef{ID: "snapshot"}, Capacity: core.CapacityState{BaselineGroups: 2, RequestedGroups: 2, RoutableGroups: 1}, Limits: core.CapacityLimits{MinGroups: 0, MaxGroups: 8}, Observation: core.DemandObservation{State: core.ObservationFresh, Window: core.ObservationWindow{Complete: true}}}
+	return core.ScalingSnapshot{ID: "snapshot", Target: core.TargetID{ServiceUID: "service", Name: "default", Kind: core.TargetPool, Role: core.RoleAggregate}, Capacity: core.CapacityState{BaselineGroups: 2, RequestedGroups: 2, RoutableGroups: 1}, Limits: core.CapacityLimits{MinGroups: 0, MaxGroups: 8}, Observation: core.DemandObservation{State: core.ObservationFresh, Window: core.ObservationWindow{Complete: true}}}
 }

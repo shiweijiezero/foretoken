@@ -41,6 +41,7 @@ func main() {
 	var vllmModelServerPort int
 	var vllmAcceleratorType string
 	var vllmDeviceResourceName string
+	var vllmRuntimeClassName string
 	var vllmNodeSelectorKey string
 	var vllmNodeSelectorValue string
 	var vllmECProfileName string
@@ -76,6 +77,7 @@ func main() {
 	flag.IntVar(&vllmModelServerPort, "vllm-model-server-port", 9000, "Internal Foretoken model-server port.")
 	flag.StringVar(&vllmAcceleratorType, "vllm-accelerator-type", "", "Concrete accelerator type served by the vLLM profile.")
 	flag.StringVar(&vllmDeviceResourceName, "vllm-device-resource-name", "", "Kubernetes extended resource for the vLLM accelerator.")
+	flag.StringVar(&vllmRuntimeClassName, "vllm-runtime-class-name", "", "Optional Kubernetes RuntimeClass for vLLM Pods.")
 	flag.StringVar(&vllmNodeSelectorKey, "vllm-node-selector-key", "", "Node label key for the vLLM accelerator profile.")
 	flag.StringVar(&vllmNodeSelectorValue, "vllm-node-selector-value", "", "Node label value for the vLLM accelerator profile.")
 	flag.StringVar(&vllmECProfileName, "vllm-ec-profile-name", "", "Platform-owned EC profile name; empty disables E/P/D.")
@@ -220,6 +222,7 @@ func main() {
 			ModelServerPort:    int32(vllmModelServerPort),
 			AcceleratorType:    vllmAcceleratorType,
 			DeviceResourceName: vllmDeviceResourceName,
+			RuntimeClassName:   vllmRuntimeClassName,
 			NodeSelectorKey:    vllmNodeSelectorKey,
 			NodeSelectorValue:  vllmNodeSelectorValue,
 			MooncakePD:         mooncakePD,

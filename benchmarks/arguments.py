@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-
-"""CLI argument definition and parsing → ``BenchConfig``."""
+"""Command-line interface for direct and Kubernetes-managed benchmarks."""
 
 from __future__ import annotations
 
 import argparse
-from dataclasses import MISSING, fields
-from typing import Any, Sequence
+import os
+from collections.abc import Sequence
+from dataclasses import dataclass
 
 from benchmarks.config import (
     BenchConfig,
@@ -17,322 +17,225 @@ from benchmarks.config import (
     GenerationConfig,
     LoadConfig,
     OutputConfig,
-    ParamSweepConfig,
     TargetConfig,
     WandbConfig,
 )
 
 
-def _default(cls: type, name: str) -> Any:
-    field_info = next(item for item in fields(cls) if item.name == name)
-    if field_info.default_factory is not MISSING:
-        return field_info.default_factory()
-    if field_info.default is not MISSING:
-        return field_info.default
-    raise KeyError(name)
+@dataclass(frozen=True)
+class RunCommand:
+    base_url: str
+    deploy: str
+    model: str
+    prompt: str
+    datasets: tuple[str, ...]
+    dataset_offset: int
+    tokenizer_path: str
+    min_prompt_length: int
+    max_prompt_length: int
+    prefix_length: int
+    apply_chat_template: bool | None
+    max_turns: int | None
+    max_concurrency: int
+    num_requests: int
+    request_rate: float
+    open_loop: bool
+    timeout: int
+    max_retries: int
+    max_tokens: int
+    temperature: float
+    stream: bool
+    name: str
+    output_dir: str
+    keep: bool
+    benchmark_image: str
+    storage_class: str
+    results_size: str
+    service_timeout: int
+    job_timeout: int
+    wandb: bool
+    wandb_project: str
+    wandb_entity: str
+    wandb_run_name: str
+    collect_engine_metrics: bool
+    engine_metrics_url: str
+    engine_metrics_interval: float
+    run_id: str
+    execution_context: str
+
+    @property
+    def is_managed(self) -> bool:
+        return bool(self.deploy)
+
+    @property
+    def dataset_path(self) -> str:
+        """Compatibility accessor for a single JSONL deploy workload."""
+        return self.datasets[0] if len(self.datasets) == 1 else ""
+
+    def bench_config(
+        self,
+        *,
+        base_url: str,
+        model: str,
+        run_id: str,
+        dataset_path: str | None = None,
+        output_dir: str | None = None,
+        execution_context: str | None = None,
+    ) -> BenchConfig:
+        datasets = self.datasets if dataset_path is None else ((dataset_path,) if dataset_path else ())
+        return BenchConfig(
+            target=TargetConfig(
+                url=base_url,
+                model=model,
+                api_key=os.environ.get("OPENAI_API_KEY", ""),
+                timeout=self.timeout,
+                max_retries=self.max_retries,
+            ),
+            load=LoadConfig(
+                parallel=[self.max_concurrency],
+                number=[self.num_requests],
+                rate=[self.request_rate],
+                open_loop=self.open_loop,
+            ),
+            generation=GenerationConfig(
+                max_tokens=self.max_tokens,
+                temperature=self.temperature,
+                stream=self.stream,
+            ),
+            dataset=DatasetConfig(
+                dataset=list(datasets),
+                dataset_offset=self.dataset_offset,
+                tokenizer_path=self.tokenizer_path,
+                min_prompt_length=self.min_prompt_length,
+                max_prompt_length=self.max_prompt_length,
+                prefix_length=self.prefix_length,
+                apply_chat_template=self.apply_chat_template,
+                prompt=self.prompt,
+                max_turns=self.max_turns,
+            ),
+            output=OutputConfig(
+                outputs_dir=output_dir or self.output_dir,
+                run_id=run_id,
+                execution_context=execution_context or self.execution_context,
+            ),
+            wandb=WandbConfig(
+                enabled=self.wandb,
+                project=self.wandb_project,
+                entity=self.wandb_entity,
+                run_name=self.wandb_run_name or run_id,
+            ),
+            engine=EngineMetricsConfig(
+                collect=self.collect_engine_metrics,
+                url=self.engine_metrics_url,
+                interval=self.engine_metrics_interval,
+            ),
+        )
 
 
-def parse_arguments(argv: Sequence[str] | None = None) -> BenchConfig:
-    """Parse ``foretoken bench`` CLI into ``BenchConfig``."""
-    parser = argparse.ArgumentParser(
-        prog="foretoken",
-        description=(
-            "LLM inference tool"
-        ),
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    bench = subparsers.add_parser(
-        "bench",
-        help="Run an inference benchmark",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
-    )
+@dataclass(frozen=True)
+class CleanupCommand:
+    run_id: str
+    output_dir: str
 
-    # Target
-    bench.add_argument("--url", required=True, help="OpenAI compatible API URL")
-    bench.add_argument("--model", required=True, help="Model name")
-    bench.add_argument(
-        "--api-key", default=_default(TargetConfig, "api_key"), help="API key"
-    )
-    bench.add_argument(
-        "--timeout",
-        type=int,
-        default=_default(TargetConfig, "timeout"),
-        help="Request timeout seconds",
-    )
-    bench.add_argument(
-        "--max-retries",
-        type=int,
-        default=_default(TargetConfig, "max_retries"),
-        help="OpenAI client max retries on transient failures",
-    )
 
-    # Load
-    bench.add_argument(
-        "--parallel",
-        type=lambda s: [int(x.strip()) for x in s.split(",") if x.strip()],
-        default=_default(LoadConfig, "parallel"),
-        help="Concurrency; list like 1,2,4,8 triggers sweep",
-    )
-    bench.add_argument(
-        "--number",
-        type=lambda s: [int(x.strip()) for x in s.split(",") if x.strip()],
-        default=_default(LoadConfig, "number"),
-        help=(
-            "Request count (total across all --dataset values when multiple); "
-            "list aligns with parallel"
-        ),
-    )
-    bench.add_argument(
-        "--rate",
-        type=lambda s: [float(x.strip()) for x in s.split(",") if x.strip()],
-        default=_default(LoadConfig, "rate"),
-        help=(
-            "Arrival rate (req/s). -1 = no pacing; >0 = Poisson pacing. "
-            "Still closed-loop unless --open-loop. List e.g. 5,10,20 for sweep"
-        ),
-    )
-    bench.add_argument(
-        "--open-loop",
-        action="store_true",
-        default=_default(LoadConfig, "open_loop"),
-        help=(
-            "Open-loop: no concurrency limit; optionally pace with --rate"
-        ),
-    )
+Command = RunCommand | CleanupCommand
 
-    # Generation
-    bench.add_argument(
-        "--max-tokens",
-        type=int,
-        default=_default(GenerationConfig, "max_tokens"),
-        help="Max generation tokens",
-    )
-    bench.add_argument(
-        "--temperature",
-        type=float,
-        default=_default(GenerationConfig, "temperature"),
-        help="Sampling temperature",
-    )
-    bench.add_argument(
-        "--stream",
-        action=argparse.BooleanOptionalAction,
-        default=_default(GenerationConfig, "stream"),
-        help="Use streaming to measure TTFT/TPOT",
-    )
 
-    # Dataset
-    bench.add_argument(
-        "--dataset",
-        type=lambda s: [x.strip() for x in s.split(",") if x.strip()],
-        default=_default(DatasetConfig, "dataset"),
-        help=(
-            "Workload source(s), comma-separated: 'random', local JSONL "
-            "path(s), and/or HuggingFace id(s) ('org/name:split'). "
-            "Multiple JSONL/HF sources run sequentially and metrics are "
-            "merged; --number is the total across all"
-        ),
-    )
-    bench.add_argument(
-        "--dataset-offset",
-        type=int,
-        default=_default(DatasetConfig, "dataset_offset"),
-        help="Skip first N samples (JSONL/HF) or token-sequence offset (random)",
-    )
-    bench.add_argument(
-        "--tokenizer-path",
-        default=_default(DatasetConfig, "tokenizer_path"),
-        help="Tokenizer path (required for --dataset random)",
-    )
-    bench.add_argument(
-        "--min-prompt-length",
-        type=int,
-        default=_default(DatasetConfig, "min_prompt_length"),
-        help="Minimum prompt length in tokens (random: sampled inner length)",
-    )
-    bench.add_argument(
-        "--max-prompt-length",
-        type=int,
-        default=_default(DatasetConfig, "max_prompt_length"),
-        help="Maximum prompt length in tokens (random: sampled inner length)",
-    )
-    bench.add_argument(
-        "--prefix-length",
-        type=int,
-        default=_default(DatasetConfig, "prefix_length"),
-        help="Shared prefix token length (random dataset only)",
-    )
-    bench.add_argument(
-        "--apply-chat-template",
-        action=argparse.BooleanOptionalAction,
-        default=_default(DatasetConfig, "apply_chat_template"),
-        help="Apply chat template (default: auto from URL)",
-    )
-    bench.add_argument(
-        "--prompt",
-        default=_default(DatasetConfig, "prompt"),
-        help="Fixed prompt text; overrides dataset",
-    )
-    bench.add_argument(
-        "--max-turns",
-        type=int,
-        default=_default(DatasetConfig, "max_turns"),
-        help="Max user turns for custom_multi_turn",
-    )
+def _add_run_arguments(parser: argparse.ArgumentParser) -> None:
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--base-url", help="Existing OpenAI-compatible API root, for example https://host/v1")
+    source.add_argument("--deploy", help="YAML file or Kustomize directory to deploy before benchmarking")
+    parser.add_argument("--model", default="", help="Model name; inferred from a single deployed ModelService")
+    parser.add_argument("--timeout", type=int, default=300, help="Per-request timeout in seconds")
+    parser.add_argument("--max-retries", type=int, default=2, help="Retry count for transient OpenAI client failures")
 
-    # Output
-    bench.add_argument(
-        "--sla-auto-tune",
-        action=argparse.BooleanOptionalAction,
-        default=_default(OutputConfig, "sla_auto_tune"),
-        help="Enable SLA auto-tune search",
-    )
-    bench.add_argument(
-        "--gpu-count",
-        type=int,
-        default=_default(OutputConfig, "gpu_count"),
-        help="GPU count for Pareto tokens/s/GPU axis",
-    )
-    bench.add_argument(
-        "--eval-suite",
-        default=_default(OutputConfig, "eval_suite"),
-        help="Correctness suite: none | general | tool | both",
-    )
-    bench.add_argument(
-        "--outputs-dir",
-        default=_default(OutputConfig, "outputs_dir"),
-        help="Results root directory",
-    )
+    workload = parser.add_argument_group("workload")
+    workload.add_argument("--prompt", help='Fixed prompt text; defaults to "Hello"')
+    workload.add_argument("--dataset", action="append", default=[], help="Workload source: local JSONL, random, or Hugging Face id such as org/name:split; repeat for multiple sources")
+    workload.add_argument("--dataset-path", dest="dataset", action="append", help="Compatibility alias for a local JSONL workload")
+    workload.add_argument("--dataset-offset", type=int, default=0, help="Skip initial workload samples")
+    workload.add_argument("--tokenizer-path", default="", help="Tokenizer path required by --dataset random")
+    workload.add_argument("--min-prompt-length", type=int, default=0, help="Minimum random prompt length in tokens")
+    workload.add_argument("--max-prompt-length", type=int, default=131072, help="Maximum random prompt length in tokens")
+    workload.add_argument("--prefix-length", type=int, default=0, help="Shared random prompt prefix length in tokens")
+    workload.add_argument("--apply-chat-template", action=argparse.BooleanOptionalAction, default=None, help="Apply the tokenizer chat template")
+    workload.add_argument("--max-turns", type=int, default=None, help="Maximum user turns for multi-turn datasets")
 
-    # WandB
-    bench.add_argument(
-        "--wandb",
-        action=argparse.BooleanOptionalAction,
-        default=_default(WandbConfig, "enabled"),
-        help="Enable Weights & Biases logging",
-    )
-    bench.add_argument(
-        "--wandb-project",
-        default=_default(WandbConfig, "project"),
-        help="W&B project",
-    )
-    bench.add_argument(
-        "--wandb-entity",
-        default=_default(WandbConfig, "entity"),
-        help="W&B entity",
-    )
-    bench.add_argument(
-        "--wandb-run-name",
-        default=_default(WandbConfig, "run_name"),
-        help="W&B run name; default {model}_{YYYYMMDD_HHMMSS}",
-    )
+    load = parser.add_argument_group("load")
+    load.add_argument("--num-requests", "--number", dest="num_requests", type=int, default=100, help="Total request count")
+    load.add_argument("--max-concurrency", "--parallel", dest="max_concurrency", type=int, default=1, help="Maximum in-flight requests")
+    load.add_argument("--request-rate", "--rate", dest="request_rate", type=float, default=-1.0, help="Poisson request rate in requests/second; -1 disables pacing")
+    load.add_argument("--open-loop", action="store_true", help="Do not limit in-flight requests with max concurrency")
 
-    # Engine metrics
-    bench.add_argument(
-        "--collect-engine-metrics",
-        action=argparse.BooleanOptionalAction,
-        default=_default(EngineMetricsConfig, "collect"),
-        help="Collect foretoken metrics through /metrics gate",
-    )
-    bench.add_argument(
-        "--engine-metrics-url",
-        default=_default(EngineMetricsConfig, "url"),
-        help="Prometheus /metrics URL",
-    )
-    bench.add_argument(
-        "--engine-metrics-interval",
-        type=float,
-        default=_default(EngineMetricsConfig, "interval"),
-        help="Engine /metrics polling interval seconds",
-    )
+    generation = parser.add_argument_group("generation")
+    generation.add_argument("--max-tokens", type=int, default=128, help="Maximum generated tokens per request")
+    generation.add_argument("--temperature", type=float, default=0.0, help="Sampling temperature")
+    generation.add_argument("--stream", action=argparse.BooleanOptionalAction, default=True, help="Use streaming responses")
 
-    # Param sweep
-    bench.add_argument(
-        "--serve-params",
-        default=_default(ParamSweepConfig, "serve_params"),
-        help="JSON path of serve parameter combinations",
-    )
-    bench.add_argument(
-        "--bench-params",
-        default=_default(ParamSweepConfig, "bench_params"),
-        help="JSON path of bench parameter combinations",
-    )
-    bench.add_argument(
-        "--link-vars",
-        default=_default(ParamSweepConfig, "link_vars"),
-        help="Comma-separated serve_key=bench_key product filters",
-    )
-    bench.add_argument(
-        "--num-runs",
-        type=int,
-        default=_default(ParamSweepConfig, "num_runs"),
-        help="Repeats per serve×bench combination",
-    )
-    bench.add_argument(
-        "--dry-run",
-        action=argparse.BooleanOptionalAction,
-        default=_default(ParamSweepConfig, "dry_run"),
-        help="Print serve×bench plan without executing",
-    )
-    bench.add_argument(
-        "--experiment-name",
-        default=_default(ParamSweepConfig, "experiment_name"),
-        help="Param-sweep experiment subdir under --outputs-dir",
-    )
+    output = parser.add_argument_group("results")
+    output.add_argument("--name", default="", help="Human-readable run name")
+    output.add_argument("--output-dir", "--outputs-dir", dest="output_dir", default="results", help="Local results root")
+    output.add_argument("--keep", action="store_true", help="Keep Kubernetes resources after a --deploy run")
+    output.add_argument("--wandb", action=argparse.BooleanOptionalAction, default=False, help="Enable Weights & Biases logging")
+    output.add_argument("--wandb-project", default="foretoken-bench", help="Weights & Biases project")
+    output.add_argument("--wandb-entity", default="", help="Weights & Biases entity")
+    output.add_argument("--wandb-run-name", default="", help="Weights & Biases run name")
+    output.add_argument("--collect-engine-metrics", action=argparse.BooleanOptionalAction, default=True, help="Collect engine Prometheus metrics")
+    output.add_argument("--engine-metrics-url", default="", help="Engine Prometheus /metrics URL")
+    output.add_argument("--engine-metrics-interval", type=float, default=1.0, help="Engine metrics polling interval")
+
+    deployment = parser.add_argument_group("Kubernetes deployment")
+    deployment.add_argument("--benchmark-image", default=os.environ.get("FORETOKEN_BENCHMARK_IMAGE", ""), help="Benchmark runner image; defaults to FORETOKEN_BENCHMARK_IMAGE")
+    deployment.add_argument("--storage-class", default="", help="Results PVC StorageClass; defaults to the cluster default")
+    deployment.add_argument("--results-size", default="1Gi", help="Results PVC requested size")
+    deployment.add_argument("--service-timeout", type=int, default=900, help="Seconds to wait for Foretoken services")
+    deployment.add_argument("--job-timeout", type=int, default=86400, help="Seconds to wait for the Benchmark Job")
+    parser.add_argument("--run-id", default="", help=argparse.SUPPRESS)
+    parser.add_argument("--execution-context", choices=("endpoint", "managed"), default="endpoint", help=argparse.SUPPRESS)
+
+
+def _dataset_values(values: list[str]) -> tuple[str, ...]:
+    return tuple(item.strip() for value in values for item in value.split(",") if item.strip())
+
+
+def parse_arguments(argv: Sequence[str] | None = None) -> Command:
+    parser = argparse.ArgumentParser(prog="foretoken", description="Foretoken command-line tools")
+    commands = parser.add_subparsers(dest="command", required=True)
+    bench = commands.add_parser("bench", help="Run inference benchmarks")
+    bench_commands = bench.add_subparsers(dest="bench_command", required=True)
+    run = bench_commands.add_parser("run", help="Run against an endpoint or a temporary deployment", formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    _add_run_arguments(run)
+    cleanup = bench_commands.add_parser("cleanup", help="Delete Kubernetes resources retained by a managed run")
+    cleanup.add_argument("run_id", help="Managed benchmark run ID")
+    cleanup.add_argument("--output-dir", default="results", help="Results root containing the run manifest")
 
     ns = parser.parse_args(argv)
-    return BenchConfig(
-        target=TargetConfig(
-            url=ns.url,
-            model=ns.model,
-            api_key=ns.api_key,
-            timeout=ns.timeout,
-            max_retries=ns.max_retries,
-        ),
-        load=LoadConfig(
-            parallel=ns.parallel,
-            number=ns.number,
-            rate=ns.rate,
-            open_loop=ns.open_loop,
-        ),
-        generation=GenerationConfig(
-            max_tokens=ns.max_tokens,
-            temperature=ns.temperature,
-            stream=ns.stream,
-        ),
-        dataset=DatasetConfig(
-            dataset=ns.dataset,
-            dataset_offset=ns.dataset_offset,
-            tokenizer_path=ns.tokenizer_path,
-            min_prompt_length=ns.min_prompt_length,
-            max_prompt_length=ns.max_prompt_length,
-            prefix_length=ns.prefix_length,
-            apply_chat_template=ns.apply_chat_template,
-            prompt=ns.prompt,
-            max_turns=ns.max_turns,
-        ),
-        output=OutputConfig(
-            outputs_dir=ns.outputs_dir,
-            gpu_count=ns.gpu_count,
-            eval_suite=ns.eval_suite,
-            sla_auto_tune=ns.sla_auto_tune,
-        ),
-        wandb=WandbConfig(
-            enabled=ns.wandb,
-            project=ns.wandb_project,
-            entity=ns.wandb_entity,
-            run_name=ns.wandb_run_name,
-        ),
-        engine=EngineMetricsConfig(
-            collect=ns.collect_engine_metrics,
-            url=ns.engine_metrics_url,
-            interval=ns.engine_metrics_interval,
-        ),
-        param_sweep=ParamSweepConfig(
-            serve_params=ns.serve_params,
-            bench_params=ns.bench_params,
-            link_vars=ns.link_vars,
-            num_runs=ns.num_runs,
-            dry_run=ns.dry_run,
-            experiment_name=ns.experiment_name,
-        ),
+    if ns.bench_command == "cleanup":
+        return CleanupCommand(run_id=ns.run_id, output_dir=ns.output_dir)
+    datasets = _dataset_values(ns.dataset)
+    if ns.base_url and not ns.model:
+        run.error("--model is required with --base-url")
+    if ns.base_url and ns.keep:
+        run.error("--keep is only valid with --deploy")
+    if ns.prompt and datasets:
+        run.error("--prompt cannot be combined with --dataset")
+    return RunCommand(
+        base_url=ns.base_url or "", deploy=ns.deploy or "", model=ns.model,
+        prompt=ns.prompt or ("" if datasets else "Hello"), datasets=datasets,
+        dataset_offset=ns.dataset_offset, tokenizer_path=ns.tokenizer_path,
+        min_prompt_length=ns.min_prompt_length, max_prompt_length=ns.max_prompt_length,
+        prefix_length=ns.prefix_length, apply_chat_template=ns.apply_chat_template,
+        max_turns=ns.max_turns, max_concurrency=ns.max_concurrency,
+        num_requests=ns.num_requests, request_rate=ns.request_rate,
+        open_loop=ns.open_loop, timeout=ns.timeout, max_retries=ns.max_retries,
+        max_tokens=ns.max_tokens, temperature=ns.temperature, stream=ns.stream,
+        name=ns.name, output_dir=ns.output_dir, keep=ns.keep,
+        benchmark_image=ns.benchmark_image, storage_class=ns.storage_class,
+        results_size=ns.results_size, service_timeout=ns.service_timeout,
+        job_timeout=ns.job_timeout, wandb=ns.wandb, wandb_project=ns.wandb_project,
+        wandb_entity=ns.wandb_entity, wandb_run_name=ns.wandb_run_name,
+        collect_engine_metrics=ns.collect_engine_metrics,
+        engine_metrics_url=ns.engine_metrics_url,
+        engine_metrics_interval=ns.engine_metrics_interval,
+        run_id=ns.run_id, execution_context=ns.execution_context,
     )

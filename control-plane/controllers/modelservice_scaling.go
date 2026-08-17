@@ -185,7 +185,6 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 	}
 
 	evaluatedAt := metav1.Now()
-	policyRevision := fmt.Sprintf("%d", service.Generation)
 	snapshots := make([]core.ScalingSnapshot, 0, len(compiledPools))
 	epdIndexes := make([]int, 0, 3)
 	hasEPD := false
@@ -229,10 +228,10 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 		if pool == nil {
 			capacity.Transitioning = false
 		}
-		snapshots = append(snapshots, reconciler.scalingSnapshot(ctx, service, target, policyRevision, evaluatedAt, capacity, scaling))
+		snapshots = append(snapshots, reconciler.scalingSnapshot(ctx, service, target, evaluatedAt, capacity, scaling))
 	}
 	if hasEPD {
-		snapshot, err := reconciler.epdScalingSnapshot(ctx, service, compiledPools, epdIndexes, byPoolName, groupList.Items, policyRevision, evaluatedAt, scaling)
+		snapshot, err := reconciler.epdScalingSnapshot(ctx, service, compiledPools, epdIndexes, byPoolName, groupList.Items, evaluatedAt, scaling)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -281,7 +280,7 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 			Algorithm:           decision.DecisionAlgorithm,
 			AdjustmentAlgorithm: decision.AdjustmentAlgorithm,
 			TriggerAlgorithm:    scaling.Autoscaler.TriggerAlgorithmName(),
-			SnapshotID:          snapshot.Ref.ID,
+			SnapshotID:          snapshot.ID,
 			ObservedAt:          metav1.NewTime(snapshot.EvaluatedAt),
 			ObservationState:    string(snapshot.Observation.State),
 			Disposition:         string(decision.DesiredCapacity.Disposition),
@@ -322,14 +321,14 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 	return resolved, statuses, nil
 }
 
-func (reconciler *ModelServiceReconciler) scalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, target core.TargetID, policyRevision string, evaluatedAt metav1.Time, capacity core.CapacityState, scaling modelScalingConfig) core.ScalingSnapshot {
+func (reconciler *ModelServiceReconciler) scalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, target core.TargetID, evaluatedAt metav1.Time, capacity core.CapacityState, scaling modelScalingConfig) core.ScalingSnapshot {
 	observation := core.DemandObservation{State: core.ObservationUnavailable}
 	if scaling.Automatic {
 		observation = reconciler.demandObservation(ctx, target, scaling.MetricsMaxAge)
 	}
 	return core.ScalingSnapshot{
+		ID:          fmt.Sprintf("%s/%s/%s/%s", service.UID, service.ResourceVersion, target.Kind, target.Name),
 		Target:      target,
-		Ref:         core.ScalingSnapshotRef{ID: fmt.Sprintf("%s/%s/%s/%s", service.UID, service.ResourceVersion, target.Kind, target.Name), PolicyRevision: policyRevision},
 		EvaluatedAt: evaluatedAt.Time,
 		Capacity:    capacity,
 		Limits:      scaling.Limits,
@@ -357,7 +356,7 @@ func (reconciler *ModelServiceReconciler) demandObservation(ctx context.Context,
 	return observation
 }
 
-func (reconciler *ModelServiceReconciler) epdScalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, pools []compiler.ModelPool, indexes []int, owned map[string]*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, policyRevision string, evaluatedAt metav1.Time, scaling modelScalingConfig) (core.ScalingSnapshot, error) {
+func (reconciler *ModelServiceReconciler) epdScalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, pools []compiler.ModelPool, indexes []int, owned map[string]*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, evaluatedAt metav1.Time, scaling modelScalingConfig) (core.ScalingSnapshot, error) {
 	if len(indexes) != 3 {
 		return core.ScalingSnapshot{}, fmt.Errorf("E/P/D scaling requires exactly one encoder, prefill, and decode Pool")
 	}
@@ -401,13 +400,13 @@ func (reconciler *ModelServiceReconciler) epdScalingSnapshot(ctx context.Context
 	capacity.RequestedGroups = requested
 	capacity.Transitioning = capacity.Transitioning || transitioning
 	finalizeCapacity(&capacity)
-	return reconciler.scalingSnapshot(ctx, service, epdPipelineScopeTargetID(service), policyRevision, evaluatedAt, capacity, scaling), nil
+	return reconciler.scalingSnapshot(ctx, service, epdPipelineScopeTargetID(service), evaluatedAt, capacity, scaling), nil
 }
 
 // epdScalingSnapshot preserves the pure snapshot helper used by controller tests.
-func epdScalingSnapshot(service *inferencev1alpha1.ModelService, pools []compiler.ModelPool, indexes []int, owned map[string]*inferencev1alpha1.ModelPool, policyRevision string, evaluatedAt metav1.Time) (core.ScalingSnapshot, error) {
+func epdScalingSnapshot(service *inferencev1alpha1.ModelService, pools []compiler.ModelPool, indexes []int, owned map[string]*inferencev1alpha1.ModelPool, evaluatedAt metav1.Time) (core.ScalingSnapshot, error) {
 	scaling := modelScalingConfig{Autoscaler: defaultAutoscaler, Limits: core.CapacityLimits{MinGroups: 0, MaxGroups: maxDesiredGroups}, MetricsMaxAge: defaultMetricsMaxAge}
-	return (&ModelServiceReconciler{}).epdScalingSnapshot(context.Background(), service, pools, indexes, owned, nil, policyRevision, evaluatedAt, scaling)
+	return (&ModelServiceReconciler{}).epdScalingSnapshot(context.Background(), service, pools, indexes, owned, nil, evaluatedAt, scaling)
 }
 
 func epdPipelineScopeTargetID(service *inferencev1alpha1.ModelService) core.TargetID {

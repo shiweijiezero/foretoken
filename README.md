@@ -23,73 +23,96 @@ If you only need to serve a single model on one GPU, using vLLM directly is usua
 | Kubernetes control plane | ModelService, ModelPool, ModelGroup, rollout, scaling, and graceful drain | In development |
 | Request routing | Route lowered requests to compatible and healthy ModelGroups | In development |
 | vLLM integration | Reuse vLLM Rust tokenization, lowering, EngineCore client, streams, and detokenization | In development |
-| Benchmarking | Single-point OpenAI-compatible load tests with latency, TTFT, TPOT, and throughput metrics | In development |
+| [Benchmarking](benchmarks/README.md) | Existing-endpoint and Kubernetes-managed load tests with latency, TTFT, TPOT, and throughput metrics | In development |
 | GPU support | Platform-configured vLLM runtime, GPU resource, and node scheduling profile | In development |
 | Distributed inference | Aggregate serving is implemented; Prefill/Decode disaggregation remains experimental | Research |
 | Observability | Frontend metrics and autoscaling telemetry; dashboards, distributed tracing, and alerts are planned | In development |
 
 ## Quick Start
 
-Foretoken runs as one Kubernetes system. Platform administrators configure the Gateway and current vLLM GPU runtime profile through the Chart; serving users submit `FrontendService` and `ModelService` resources without starting individual processes.
+Foretoken runs as one Kubernetes system. A platform administrator installs the control plane once; serving users deploy `FrontendService` and `ModelService` resources without starting the underlying processes themselves.
+
+The first OCI release and matching component images have not been published yet. The current source checkout therefore uses the local Chart and three images from a registry reachable by every cluster node.
 
 ### Prerequisites
 
 - Kubernetes 1.29+ with GPU nodes and cluster-scoped installation permissions;
-- Kubernetes Gateway API and a Gateway that permits Routes from serving namespaces;
+- a working GPU device plugin and the node label used by the selected runtime profile;
+- Kubernetes Gateway API and a Gateway that allows Routes from `foretoken-demo`;
+- a registry that cluster workloads can pull from.
 
-### 1. Install Foretoken
+### 1. Build and push the images
 
-Install Foretoken with the official Helm Chart:
+The first data-plane `make` command initializes the official vLLM submodule and applies the generic Rust API extension required by Foretoken; no manual vLLM edits are needed. The model-server runtime image must provide a compatible vLLM Python runtime.
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --version 0.0.1 \
+REGISTRY=registry.example.com/foretoken
+VLLM_RUNTIME_IMAGE=registry.example.com/vllm/runtime:tag
+
+make image-frontend
+make image-model-server VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE}"
+docker build -f control-plane/Dockerfile -t foretoken-control-plane:dev .
+
+docker tag foretoken-control-plane:dev "${REGISTRY}/control-plane:dev"
+docker tag foretoken-frontend:dev "${REGISTRY}/frontend:dev"
+docker tag foretoken-model-server:dev "${REGISTRY}/model-server:dev"
+
+docker push "${REGISTRY}/control-plane:dev"
+docker push "${REGISTRY}/frontend:dev"
+docker push "${REGISTRY}/model-server:dev"
+```
+
+To initialize the source before building, run `git submodule update --init data-plane/third_party/vllm`. All workload nodes must be able to pull the three pushed images without per-Pod registry credentials.
+
+### 2. Configure the platform
+
+Copy the example and replace the three image paths, Gateway parent, and GPU profile with values that exist in your cluster:
+
+```bash
+cp deploy/platform-values.example.yaml /tmp/foretoken-platform-values.yaml
+${EDITOR:-vi} /tmp/foretoken-platform-values.yaml
+```
+
+If `kubectl get runtimeclass` shows a GPU runtime such as `nvidia`, set `runtime.vllm.accelerator.runtimeClassName` to that name. Leave it empty when the cluster injects GPU devices without a RuntimeClass.
+
+This is a one-time platform configuration. Model authors do not repeat it for each service.
+
+### 3. Install Foretoken
+
+```bash
+helm upgrade --install foretoken ./deploy/charts/foretoken \
   --namespace foretoken-platform \
   --create-namespace \
-  --wait
+  --values /tmp/foretoken-platform-values.yaml \
+  --wait \
+  --timeout=5m
 ```
 
-The Chart uses matching official control-plane, frontend, and model-server images. See [Build from Source](#build-from-source) to deploy custom images.
+The Chart rejects an incomplete frontend, Gateway, or GPU runtime profile before creating the control-plane Deployment.
 
+### 4. Deploy the example service
 
-### 2. Deploy a model service
-
-`examples/quickstart` declares both the API-serving frontend and the model service. Foretoken creates and manages the underlying Pools, Groups, Deployments, Services, routes, and runtime configuration.
+Before applying the example, replace `foretoken.example.com` in `examples/quickstart/frontend.yaml` with a hostname accepted by the configured Gateway listener. Then submit the namespace, frontend, and model service together:
 
 ```bash
-FORETOKEN_NAMESPACE=foretoken-demo
-
-kubectl create namespace "${FORETOKEN_NAMESPACE}" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl apply --server-side \
-  --namespace "${FORETOKEN_NAMESPACE}" \
-  -k examples/quickstart
+kubectl apply --server-side -k examples/quickstart
 ```
 
-Replace `foretoken.example.com` in `examples/quickstart/frontend.yaml` with a hostname routed to the platform Gateway.
+Foretoken creates and manages the underlying Pools, Groups, Deployments, Services, routes, and runtime configuration.
 
-### 3. Wait for serving readiness
+### 5. Wait for readiness and send a request
 
 ```bash
 kubectl wait frontendservice/quickstart-frontend \
   --for=condition=Ready \
-  --namespace "${FORETOKEN_NAMESPACE}" \
+  --namespace foretoken-demo \
   --timeout=15m
 
 kubectl wait modelservice/quickstart-qwen3-0.6b \
   --for=condition=Ready \
-  --namespace "${FORETOKEN_NAMESPACE}" \
+  --namespace foretoken-demo \
   --timeout=15m
-```
 
-`FrontendService` becomes Ready after its frontend Deployment is available, its HTTPRoute is accepted with resolved references by the Gateway, and a routable serving configuration is installed. `ModelService` becomes Ready when every ModelPool with requested serving capacity is Ready. During rollout or capacity convergence, a ModelPool can remain Ready while its active revision still has at least one Ready ModelGroup.
-
-### 4. Send a request through the Gateway
-
-```bash
-# Use the externally reachable address of the configured Gateway listener.
 FORETOKEN_BASE_URL=https://foretoken.example.com
 
 curl --fail-with-body --no-buffer \
@@ -98,17 +121,17 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
+`FrontendService` becomes Ready after its Deployment is available, its HTTPRoute is accepted by the Gateway, and a routable backend is installed. `ModelService` becomes Ready after its requested ModelGroups can serve requests.
+
 ## Stop and Uninstall
 
-Delete serving intent first so Foretoken can stop and clean up the owned resources:
+Delete serving intent first so Foretoken can stop and clean up the resources it owns:
 
 ```bash
-kubectl delete --wait=true --timeout=10m \
-  --namespace "${FORETOKEN_NAMESPACE}" \
-  -k examples/quickstart
+kubectl delete --wait=true --timeout=10m -k examples/quickstart
 ```
 
-Then uninstall Foretoken:
+Then uninstall the platform release:
 
 ```bash
 helm uninstall foretoken \
@@ -128,51 +151,6 @@ kubectl delete crd \
   kvpools.inference.foretoken.io \
   kvgroups.inference.foretoken.io
 ```
-
-## Build from Source
-
-After modifying Foretoken, build custom images and deploy them with the official Chart. Frontend and model-server builds require a local vLLM Git checkout:
-
-```bash
-FORETOKEN_VLLM_SOURCE=/path/to/vllm make image-frontend
-FORETOKEN_VLLM_SOURCE=/path/to/vllm \
-  VLLM_RUNTIME_IMAGE=<vLLM runtime image> \
-  make image-model-server
-
-docker build -f control-plane/Dockerfile \
-  -t foretoken-control-plane:dev .
-```
-
-Tag the images with your registry and push them, for example:
-
-```bash
-REGISTRY=registry.example.com/foretoken
-
-docker tag foretoken-frontend:dev "${REGISTRY}/frontend:dev"
-docker tag foretoken-model-server:dev "${REGISTRY}/model-server:dev"
-docker tag foretoken-control-plane:dev "${REGISTRY}/control-plane:dev"
-
-docker push "${REGISTRY}/frontend:dev"
-docker push "${REGISTRY}/model-server:dev"
-docker push "${REGISTRY}/control-plane:dev"
-```
-
-Install with the custom images:
-
-```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --version 0.0.1 \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set image.repository="${REGISTRY}/control-plane" \
-  --set image.tag=dev \
-  --set frontend.image="${REGISTRY}/frontend:dev" \
-  --set runtime.vllm.image="${REGISTRY}/model-server:dev" \
-  --wait
-```
-
-If you changed only one component, build, push, and override only that component's image.
 
 ## Related Projects
 

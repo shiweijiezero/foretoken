@@ -117,7 +117,7 @@ class MultiDatasetRunner(Runner):
                     "config.json",
                     {**per_dataset_config.to_dict(), **child_config},
                 )
-                child.save_json("raw_output.json", raw_output["results"])
+                child.save_json("raw-output.json", raw_output["results"])
                 child.save_json("metrics.json", metrics)
                 if wandb_logger.enabled:
                     wandb_logger.log_metrics(metrics)

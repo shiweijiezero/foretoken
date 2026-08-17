@@ -50,6 +50,10 @@ class RunBenchmark(Runner):
                 metrics,
                 wandb_logger=wandb_logger,
             )
+            if metrics["success_num"] == 0:
+                raise RuntimeError(
+                    f"all benchmark requests failed; results saved in {writer.output_dir}"
+                )
         except Exception:
             wandb_logger.finish()
             raise

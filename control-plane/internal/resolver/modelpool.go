@@ -54,6 +54,7 @@ type RuntimeProfile struct {
 	ModelServerPort    int32
 	AcceleratorType    string
 	DeviceResourceName string
+	RuntimeClassName   string
 	NodeSelectorKey    string
 	NodeSelectorValue  string
 	MooncakePD         *MooncakePDProfile
@@ -165,6 +166,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		Features:       *template.Features.DeepCopy(),
 		Accelerator: inferencev1alpha1.ModelGroupAccelerator{
 			DeviceResourceName: profile.DeviceResourceName,
+			RuntimeClassName:   profile.RuntimeClassName,
 			NodeSelector:       map[string]string{profile.NodeSelectorKey: profile.NodeSelectorValue},
 		},
 		Network: template.Network,

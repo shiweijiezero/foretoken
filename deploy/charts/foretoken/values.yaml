@@ -3,9 +3,10 @@
 
 # Provides default settings for the Foretoken control-plane chart.
 
+# Required until release artifacts provide a published default.
 image:
-  repository: ghcr.io/shiweijiezero/foretoken/control-plane
-  tag: "" # Defaults to Chart.appVersion.
+  repository: ""
+  tag: ""
   digest: "" # Overrides tag when an immutable digest is provided.
   pullPolicy: IfNotPresent
 
@@ -29,6 +30,7 @@ runtime:
     accelerator:
       type: ""
       resourceName: ""
+      runtimeClassName: ""
       nodeSelector:
         key: ""
         value: ""

@@ -20,6 +20,7 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 	ctx := context.Background()
 	t.Run("ModelService materializes owned Pool and aggregates readiness", func(t *testing.T) {
 		service := modelService("chat", 1)
+		service.Spec.ModelRevision = "model-revision"
 		c := controllerClient(t, service)
 		r := &controllers.ModelServiceReconciler{Client: c}
 		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(service)}
@@ -29,7 +30,7 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 			}
 		}
 		pool := get(t, ctx, c, client.ObjectKey{Namespace: service.Namespace, Name: "chat-default"}, new(inferencev1alpha1.ModelPool))
-		if !metav1.IsControlledBy(pool, service) || pool.Spec.ModelServiceRef.UID != string(service.UID) || pool.Spec.DesiredGroups != 1 {
+		if !metav1.IsControlledBy(pool, service) || pool.Spec.ModelServiceRef.UID != string(service.UID) || pool.Spec.DesiredGroups != 1 || pool.Spec.Template.Tokenizer != service.Spec.Model || pool.Spec.Template.TokenizerRevision != service.Spec.ModelRevision {
 			t.Fatalf("materialized pool = %#v", pool)
 		}
 		meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: readyCondition, Status: metav1.ConditionTrue, ObservedGeneration: pool.Generation})

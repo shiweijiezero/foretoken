@@ -17,6 +17,12 @@ type ModelGroupAccelerator struct {
 	// +kubebuilder:validation:MaxLength=253
 	DeviceResourceName string `json:"deviceResourceName"`
 
+	// RuntimeClassName selects the container runtime required by this accelerator profile.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	RuntimeClassName string `json:"runtimeClassName,omitempty"`
+
 	// NodeSelector constrains members to the resolved accelerator profile.
 	// +kubebuilder:validation:MinProperties=1
 	// +kubebuilder:validation:MaxProperties=16

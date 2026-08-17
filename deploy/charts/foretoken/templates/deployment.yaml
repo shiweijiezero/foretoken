@@ -3,6 +3,7 @@
 
 # Deploys the control-plane manager and initializes its CRDs.
 
+{{- include "foretoken.validateValues" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -70,6 +71,7 @@ spec:
             - {{ printf "--vllm-model-server-port=%d" (int $.Values.runtime.vllm.modelServerPort) | quote }}
             - {{ printf "--vllm-accelerator-type=%s" $.Values.runtime.vllm.accelerator.type | quote }}
             - {{ printf "--vllm-device-resource-name=%s" $.Values.runtime.vllm.accelerator.resourceName | quote }}
+            - {{ printf "--vllm-runtime-class-name=%s" $.Values.runtime.vllm.accelerator.runtimeClassName | quote }}
             - {{ printf "--vllm-node-selector-key=%s" $.Values.runtime.vllm.accelerator.nodeSelector.key | quote }}
             - {{ printf "--vllm-node-selector-value=%s" $.Values.runtime.vllm.accelerator.nodeSelector.value | quote }}
             {{- if $.Values.runtime.vllm.ec.profileName }}

@@ -24,6 +24,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		service := modelService("model", 1)
 		pool := modelPool(service, "model-default", 1)
 		group := modelGroup(pool, "model-r1-0", 0)
+		group.Spec.Accelerator.RuntimeClassName = "nvidia"
 		c := controllerClient(t, service, pool, group)
 		r := &controllers.ModelGroupReconciler{Client: c, ControlPlaneNamespace: "foretoken-system"}
 		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(group)}
@@ -34,7 +35,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		}
 		deployment := get(t, ctx, c, request.NamespacedName, new(appsv1.Deployment))
 		pod := deployment.Spec.Template.Spec
-		if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 || pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken || pod.Containers[0].Image != "vllm:test" || pod.Containers[0].ReadinessProbe == nil {
+		if deployment.Spec.Replicas == nil || *deployment.Spec.Replicas != 1 || pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken || pod.RuntimeClassName == nil || *pod.RuntimeClassName != "nvidia" || pod.Containers[0].Image != "vllm:test" || pod.Containers[0].ReadinessProbe == nil {
 			t.Fatalf("deployment contract = %#v", deployment.Spec)
 		}
 		serviceObject := get(t, ctx, c, request.NamespacedName, new(corev1.Service))

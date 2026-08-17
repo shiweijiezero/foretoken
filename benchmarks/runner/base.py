@@ -59,8 +59,13 @@ class Runner(ABC):
         )
 
     def make_writer(self) -> ResultWriter:
-        """Create a timestamped result writer under ``config.output``."""
-        return ResultWriter(root_dir=self.config.output.outputs_dir)
+        """Create a writer under the requested result root."""
+        output = self.config.output
+        if output.run_id:
+            return ResultWriter(
+                output_dir=f"{output.outputs_dir.rstrip('/')}/{output.run_id}"
+            )
+        return ResultWriter(root_dir=output.outputs_dir)
 
     def make_wandb_logger(
         self,
@@ -143,12 +148,13 @@ class Runner(ABC):
             if semaphore is not None:
                 await semaphore.acquire()
             try:
-                result = await client.generate_stream(
+                result = await client.generate(
                     prompt=request.get("prompt"),
                     messages=request.get("messages"),
                     tools=request.get("tools"),
                     max_tokens=max_tokens,
                     temperature=temperature,
+                    stream=generation.stream,
                 )
                 results[index] = result
                 if wandb_logger is not None and wandb_logger.enabled:
@@ -226,7 +232,7 @@ class Runner(ABC):
             else self.config.to_dict()
         )
         writer.save_json("config.json", {**base, **run_config})
-        writer.save_json("raw_output.json", raw["results"])
+        writer.save_json("raw-output.json", raw["results"])
         writer.save_json("metrics.json", metrics)
         if wandb_logger is not None:
             try:

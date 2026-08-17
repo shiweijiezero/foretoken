@@ -5,36 +5,34 @@
 
 [package]
 name = "foretoken-model-server"
-version = "0.0.1"
-edition = "2024"
-license = "Apache-2.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 description = "Group-local managed EngineCore and typed streaming API"
 
 [dependencies]
-async-stream = "0.3.6"
-async-trait = "0.1.89"
-axum = "0.8.8"
-base64 = "0.22.1"
-blake3 = "1.8.2"
-bytes = "1.12.0"
-foretoken-model-protocol = { path = "../model-protocol" }
-futures = "0.3.31"
-rmp-serde = "1.3.1"
-rmpv = { version = "1.3.1", features = ["with-serde"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.145"
-thiserror = "2.0.16"
-tracing = "0.1.44"
-tokio = { version = "1.47.1", features = ["macros", "net", "process", "rt-multi-thread", "signal", "sync"] }
-uuid = { version = "1.18.1", features = ["v4"] }
-zeromq = { version = "0.6.0", default-features = false, features = ["tokio-runtime", "all-transport"] }
-
-# Make targets prepare this repository-relative local vLLM build source.
-vllm-engine-core-client = { path = "../../third_party/vllm-rust/source/rust/src/engine-core-client" }
-vllm-llm = { path = "../../third_party/vllm-rust/source/rust/src/llm" }
-vllm-managed-engine = { path = "../../third_party/vllm-rust/source/rust/src/managed-engine" }
-vllm-metrics = { path = "../../third_party/vllm-rust/source/rust/src/metrics" }
-vllm-tracing = { path = "../../third_party/vllm-rust/source/rust/src/tracing" }
+async-stream.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+base64.workspace = true
+blake3.workspace = true
+bytes.workspace = true
+foretoken-model-protocol.workspace = true
+futures.workspace = true
+rmp-serde.workspace = true
+rmpv.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+zeromq.workspace = true
+vllm-engine-core-client.workspace = true
+vllm-llm.workspace = true
+vllm-managed-engine.workspace = true
+vllm-metrics.workspace = true
+vllm-tracing.workspace = true
 
 [dev-dependencies]
 http-body-util = "0.1.3"

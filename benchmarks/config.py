@@ -151,6 +151,8 @@ class OutputConfig:
     """Result location and analysis knobs."""
 
     outputs_dir: str = "results"
+    run_id: str = ""
+    execution_context: str = "endpoint"
     gpu_count: int = 1
     eval_suite: str = "none"
     sla_auto_tune: bool = False
@@ -283,5 +285,7 @@ class BenchConfig:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Nested dict snapshot (e.g. param-sweep plan base config)."""
-        return asdict(self)
+        """Nested dict snapshot suitable for result artifacts."""
+        data = asdict(self)
+        data["target"]["api_key"] = "<redacted>" if self.target.api_key else ""
+        return data

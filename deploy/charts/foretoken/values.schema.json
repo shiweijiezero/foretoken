@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "image",
+    "frontend",
+    "runtime"
+  ],
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": [
+        "repository",
+        "tag",
+        "digest",
+        "pullPolicy"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "tag": {
+              "minLength": 1
+            }
+          }
+        },
+        {
+          "properties": {
+            "digest": {
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "frontend": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "image",
+        "port",
+        "gateway"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "image": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "gateway": {
+          "type": "object",
+          "required": [
+            "name",
+            "namespace",
+            "sectionName"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "namespace": {
+              "type": "string"
+            },
+            "sectionName": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "vllm"
+      ],
+      "properties": {
+        "vllm": {
+          "type": "object",
+          "required": [
+            "image",
+            "modelServerPort",
+            "accelerator"
+          ],
+          "properties": {
+            "image": {
+              "type": "string"
+            },
+            "modelServerPort": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "accelerator": {
+              "type": "object",
+              "required": [
+                "type",
+                "resourceName",
+                "nodeSelector"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string"
+                },
+                "resourceName": {
+                  "type": "string"
+                },
+                "runtimeClassName": {
+                  "type": "string"
+                },
+                "nodeSelector": {
+                  "type": "object",
+                  "required": [
+                    "key",
+                    "value"
+                  ],
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "frontend": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "frontend": {
+            "properties": {
+              "image": {
+                "minLength": 1
+              },
+              "gateway": {
+                "properties": {
+                  "name": {
+                    "minLength": 1
+                  },
+                  "namespace": {
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "vllm": {
+                "properties": {
+                  "image": {
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "vllm": {
+                "properties": {
+                  "accelerator": {
+                    "properties": {
+                      "type": {
+                        "minLength": 1
+                      },
+                      "resourceName": {
+                        "minLength": 1
+                      },
+                      "nodeSelector": {
+                        "properties": {
+                          "key": {
+                            "minLength": 1
+                          },
+                          "value": {
+                            "minLength": 1
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

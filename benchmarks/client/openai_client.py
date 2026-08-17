@@ -47,7 +47,7 @@ class OpenAICompatClient:
         # same concurrency budget; the client is closed at end of each run.
         self.client = AsyncOpenAI(
             base_url=_base_url(url),
-            api_key=api_key,
+            api_key=api_key or "EMPTY",
             max_retries=max_retries,
             http_client=httpx.AsyncClient(
                 timeout=timeout,
@@ -61,10 +61,11 @@ class OpenAICompatClient:
     async def close(self) -> None:
         await self.client.close()
 
-    async def generate_stream(
+    async def generate(
         self,
         max_tokens: int,
         temperature: float,
+        stream: bool,
         prompt: Optional[str] = None,
         messages: Optional[list[dict[str, Any]]] = None,
         tools: Optional[list[dict[str, Any]]] = None,
@@ -79,9 +80,10 @@ class OpenAICompatClient:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
-            "stream": True,
-            "stream_options": {"include_usage": True},
+            "stream": stream,
         }
+        if stream:
+            kwargs["stream_options"] = {"include_usage": True}
         if tools:
             kwargs["tools"] = tools
 
@@ -94,16 +96,19 @@ class OpenAICompatClient:
         try:
             response = await self.client.chat.completions.create(**kwargs)
             status = httpx.codes.OK
-            async for chunk in response:
-                if chunk.usage is not None:
-                    input_tokens = int(chunk.usage.prompt_tokens)
-                    output_tokens = int(chunk.usage.completion_tokens)
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                if delta.content or delta.tool_calls:
-                    if ttft is None:
+            if stream:
+                async for chunk in response:
+                    if chunk.usage is not None:
+                        input_tokens = int(chunk.usage.prompt_tokens or input_tokens)
+                        output_tokens = int(chunk.usage.completion_tokens or output_tokens)
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    if (delta.content or delta.tool_calls) and ttft is None:
                         ttft = time.perf_counter() - start_time
+            elif response.usage is not None:
+                input_tokens = int(response.usage.prompt_tokens or 0)
+                output_tokens = int(response.usage.completion_tokens or 0)
         except Exception as exc:
             success = False
             status = getattr(exc, "status_code", None)

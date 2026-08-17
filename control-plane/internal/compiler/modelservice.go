@@ -135,6 +135,14 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, name string, role infe
 	if err != nil {
 		return ModelPool{}, err
 	}
+	tokenizer := spec.Tokenizer
+	if tokenizer == "" {
+		tokenizer = spec.Model
+	}
+	tokenizerRevision := spec.TokenizerRevision
+	if tokenizerRevision == "" {
+		tokenizerRevision = spec.ModelRevision
+	}
 
 	return ModelPool{
 		Name:          name,
@@ -142,8 +150,8 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, name string, role infe
 		Template: inferencev1alpha1.NormalizedPoolTemplate{
 			Model:                                 spec.Model,
 			ModelRevision:                         spec.ModelRevision,
-			Tokenizer:                             spec.Tokenizer,
-			TokenizerRevision:                     spec.TokenizerRevision,
+			Tokenizer:                             tokenizer,
+			TokenizerRevision:                     tokenizerRevision,
 			Backend:                               spec.Backend,
 			Role:                                  role,
 			NodeCount:                             nodes,

@@ -23,7 +23,7 @@ func TestResolveModelPool(t *testing.T) {
 	if resolved.Revision == "" || resolved.Artifacts.ModelRevision != "model-revision" {
 		t.Fatalf("resolved artifacts = %#v", resolved)
 	}
-	if resolved.Resources.Requests.GPU.Type != "nvidia-h100-80gb" || resolved.Accelerator.NodeSelector["nvidia.com/gpu.product"] != "NVIDIA-H100-80GB-HBM3" {
+	if resolved.Resources.Requests.GPU.Type != "nvidia-h100-80gb" || resolved.Accelerator.RuntimeClassName != "nvidia" || resolved.Accelerator.NodeSelector["nvidia.com/gpu.product"] != "NVIDIA-H100-80GB-HBM3" {
 		t.Fatalf("resolved accelerator = %#v", resolved)
 	}
 	if resolved.MaxInputTokens == nil || *resolved.MaxInputTokens != 16384 || resolved.MaxInputTokens == template.MaxInputTokens {
@@ -120,6 +120,7 @@ func resolverProfile() RuntimeProfile {
 		ModelServerPort:    9000,
 		AcceleratorType:    "nvidia-h100-80gb",
 		DeviceResourceName: "nvidia.com/gpu",
+		RuntimeClassName:   "nvidia",
 		NodeSelectorKey:    "nvidia.com/gpu.product",
 		NodeSelectorValue:  "NVIDIA-H100-80GB-HBM3",
 	}

@@ -18,7 +18,7 @@ use axum::{Json, Router};
 use foretoken_chat::{
     AssistantContentBlock, AssistantToolCall, ChatContent, ChatContentPart, ChatMessage,
     ChatOptions, ChatRequest, ChatTool, ChatToolChoice, GenerationPromptMode, ParserSelection,
-    ReasoningEffort,
+    ReasoningEffort, ResolvedToolContext,
 };
 use foretoken_text::{Prompt, SamplingParams, TextDecodeOptions};
 use serde::{Deserialize, Serialize};
@@ -215,6 +215,10 @@ async fn tokenize(
                 Ok(tools) => tools,
                 Err(error) => return openai_error(error),
             };
+            let tool_context = match ResolvedToolContext::new(&messages, tools, None, true) {
+                Ok(tool_context) => tool_context,
+                Err(_) => return client_error(),
+            };
             let generation_prompt_mode = if request.continue_final_message {
                 GenerationPromptMode::ContinueFinalAssistant
             } else if request.add_generation_prompt {
@@ -233,13 +237,7 @@ async fn tokenize(
                     generation_prompt_mode,
                     ..Default::default()
                 },
-                tool_choice: if tools.is_empty() {
-                    ChatToolChoice::None
-                } else {
-                    ChatToolChoice::Auto
-                },
-                tools,
-                parallel_tool_calls: true,
+                tool_context,
                 decode_options: TextDecodeOptions::default(),
                 intermediate: false,
                 priority: 0,
@@ -930,14 +928,15 @@ async fn chat_with_request(
     let reasoning_requested = include_reasoning
         || matches!(request.reasoning_effort, Some(effort) if effort != ReasoningEffort::None);
     let tool_requested = !tools.is_empty() && !matches!(&tool_choice, ChatToolChoice::None);
-    if !tools.is_empty()
-        && matches!(&tool_choice, ChatToolChoice::Function { name } if !tools.iter().any(|tool| tool.name == *name))
-    {
-        return client_error();
-    }
-    if tools.is_empty() && !matches!(&tool_choice, ChatToolChoice::None) {
-        return client_error();
-    }
+    let tool_context = match ResolvedToolContext::new(
+        &messages,
+        tools,
+        Some(tool_choice),
+        request.parallel_tool_calls,
+    ) {
+        Ok(tool_context) => tool_context,
+        Err(_) => return client_error(),
+    };
     let chat = ChatRequest {
         request_id: id.clone(),
         messages,
@@ -947,9 +946,7 @@ async fn chat_with_request(
             response_format,
             ..Default::default()
         },
-        tools,
-        tool_choice,
-        parallel_tool_calls: request.parallel_tool_calls,
+        tool_context,
         decode_options: decode_options(request.stop),
         intermediate: request.stream,
         priority: request.priority,

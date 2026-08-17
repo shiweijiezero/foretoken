@@ -1,98 +1,152 @@
-# Benchmarks
+# Benchmark
 
 English | [简体中文](README_zh.md)
 
-`benchmarks/` is the evaluation module for Foretoken.
+Foretoken Benchmark measures request latency, TTFT, TPOT, and throughput through an OpenAI-compatible API. Use the same CLI either to benchmark an existing service or to let Kubernetes temporarily deploy a Foretoken workload and benchmark it from inside the cluster.
 
-It sends requests to a deployed inference service, measures performance, compares configurations, and checks whether answer quality meets the bar. The goal is reproducible experiments that answer: can this service hold latency and throughput, and is the quality good enough?
+## Install
 
-## When to Use It
-
-- You want latency and throughput at a given concurrency or arrival rate.
-- You want to compare concurrency, request count, generation settings, or server configs.
-- You want to confirm the model is not only fast, but also correct on answers and tool use.
-- You want a suitable load point or capacity plan under latency and throughput targets.
-
-If you are only poking the API by hand, you usually do not need the full evaluation flow.
-
-## Main Features
-
-| Feature | Description |
-|---|---|
-| Performance benchmark | Stress the inference service and measure latency, throughput, time to first token, and related metrics |
-| Load sweep | Sweep concurrency, request count, or arrival rate to see how performance changes |
-| Parameter sweep | Combine server and bench parameters to compare configurations in batch |
-| Correctness evaluation | Check answer quality and tool calling, not speed alone |
-| SLO evaluation | Search or simulate against latency and quality targets to guide capacity and autoscaling |
-
-## What It Produces
-
-- Readable summary results in the console
-- Locally saved configs, raw results, and metrics for later review
-- Optional Weights & Biases (W&B) experiment logs and charts for cross-run comparison and config selection
-
-## Examples
-
-Fixed prompt:
+From the source checkout:
 
 ```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --prompt "hello" \
-  --parallel 2 \
-  --number 20
+python -m pip install --upgrade pip
+python -m pip install ./benchmarks
 ```
 
-Local dataset file:
+The commands are:
 
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --dataset foretoken/conversation.jsonl \
-  --parallel 4 \
-  --number 20 \
-  --wandb
+```text
+foretoken bench run (--base-url URL | --deploy PATH) [OPTIONS]
+foretoken bench cleanup RUN_ID
 ```
 
-Random synthetic prompts (tokenizer required):
+## Benchmark an existing service
+
+Point the CLI at an OpenAI-compatible `/v1` API and select its model:
 
 ```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
+foretoken bench run \
+  --base-url http://127.0.0.1:8000/v1 \
+  --model Qwen/Qwen3-0.6B
+```
+
+By default this sends `Hello` 100 times with one request in flight. Change the load and prompt when needed:
+
+```bash
+foretoken bench run \
+  --base-url http://127.0.0.1:8000/v1 \
+  --model Qwen/Qwen3-0.6B \
+  --prompt "Explain prefix caching" \
+  --num-requests 200 \
+  --max-concurrency 16
+```
+
+For an authenticated endpoint, use the environment rather than a command-line flag. The API key is not written to result artifacts:
+
+```bash
+OPENAI_API_KEY=... foretoken bench run \
+  --base-url https://inference.example.com/v1 \
+  --model Qwen/Qwen3-0.6B
+```
+
+## Workloads and experiment records
+
+`--dataset` accepts a local JSONL workload, a Hugging Face dataset selector such as `org/name:split`, or `random`. Multiple local/Hugging Face sources are run sequentially and share `--num-requests`.
+
+```bash
+foretoken bench run \
+  --base-url http://127.0.0.1:8000/v1 \
+  --model Qwen/Qwen3-0.6B \
+  --dataset workload.jsonl \
+  --num-requests 200
+```
+
+Synthetic requests need a tokenizer:
+
+```bash
+foretoken bench run \
+  --base-url http://127.0.0.1:8000/v1 \
+  --model Qwen/Qwen3-0.6B \
   --dataset random \
-  --tokenizer-path Qwen/Qwen3.6-27B \
-  --min-prompt-length 128 --max-prompt-length 512 \
-  --parallel 4 --number 20 --max-tokens 64 \
-  --rate 5 \
-  --wandb
+  --tokenizer-path Qwen/Qwen3-0.6B \
+  --min-prompt-length 128 \
+  --max-prompt-length 512
 ```
 
-HuggingFace dataset id (rows: `messages`, `prompt`, or `user`[+`system`]):
+Add `--wandb` to record the run in Weights & Biases. See [examples](doc/examples.md) for local, Hugging Face, random, and multi-dataset workloads.
+
+## Deploy, then benchmark
+
+Use this with a Kubernetes cluster where the Foretoken control plane is already installed. `--deploy` takes one YAML file or a Kustomize directory containing one `FrontendService` and one or more `ModelService` objects. The CLI creates an isolated Namespace, PVC, and Benchmark Job, then returns the artifacts locally.
+
+Build the runner image and make it reachable from every Kubernetes node. A registry is the normal option:
 
 ```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
-  --parallel 4 \
-  --number 20 \
-  --wandb
+make image-benchmark
+docker tag foretoken-benchmark:dev registry.example.com/foretoken/benchmark:dev
+docker push registry.example.com/foretoken/benchmark:dev
+export FORETOKEN_BENCHMARK_IMAGE=registry.example.com/foretoken/benchmark:dev
 ```
 
-Multiple JSONL / HuggingFace sources (comma-separated). `--number` is the
-**total** across all datasets (split evenly); each source runs sequentially,
-then raw results are merged and metrics recomputed. With `--wandb`, the
-experiment is one W&B **group** and each dataset is its own **run**:
+Then run the supplied workload:
 
 ```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --dataset /path/a.jsonl,org/name:train,/path/b.jsonl \
-  --parallel 4 \
-  --number 30 \
-  --wandb
+foretoken bench run --deploy examples/quickstart
 ```
+
+When the manifests contain one `ModelService`, its model is selected automatically. With several models, choose one explicitly:
+
+```bash
+foretoken bench run \
+  --deploy path/to/workload \
+  --model Qwen/Qwen3-0.6B \
+  --num-requests 200 \
+  --max-concurrency 16
+```
+
+The cluster needs a default `StorageClass`; otherwise select it:
+
+```bash
+foretoken bench run \
+  --deploy examples/quickstart \
+  --storage-class local-path
+```
+
+### Lifecycle
+
+Before starting the Benchmark Job, the CLI waits for the selected `ModelService` and for the Frontend to load its routable serving snapshot. Successful runs copy results locally and delete the temporary Namespace. Failed runs retain resources for inspection and print the cleanup command:
+
+```bash
+foretoken bench cleanup bench-20260817-143210-a1b2c3
+```
+
+Use `--keep` to retain resources after a successful managed run. Managed mode currently accepts one local JSONL workload; run Hugging Face, random, and multi-dataset workloads directly against an existing service.
+
+## Load controls
+
+```text
+--num-requests N       Total requests; default 100
+--max-concurrency N    Maximum in-flight requests; default 1
+--request-rate R       Poisson arrival rate; -1 disables pacing
+--open-loop            Remove the in-flight request limit
+--max-tokens N         Maximum generated tokens per request; default 128
+--temperature T        Sampling temperature; default 0
+--no-stream            Use non-streaming responses; TTFT/TPOT are unavailable
+```
+
+The default is closed-loop: `--max-concurrency` limits in-flight requests. `--request-rate` enables Poisson pacing; add `--open-loop` to remove the concurrency limit.
+
+## Result files
+
+Each run writes:
+
+```text
+results/<run-id>/
+├── manifest.json       # Run and resource-cleanup state
+├── config.json
+├── raw-output.json
+├── metrics.json
+└── logs/              # Job and Kubernetes diagnostics in deploy mode
+```
+
+`manifest.json` records only the run ID, execution mode, and resource-cleanup state; `cleanup` uses it to verify Kubernetes resource ownership. Performance results are in `metrics.json` and `raw-output.json`. `raw-output.json` records per-request status, timing, token counts, and errors, but not generated response text. Multi-dataset runs also create one subdirectory per source with the same filenames.

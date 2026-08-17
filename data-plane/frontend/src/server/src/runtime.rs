@@ -472,7 +472,7 @@ impl Generation for RuntimeGeneration {
         let (text_request, output_processor) = runtime
             .bundle
             .chat_processor
-            .prepare(
+            .prepare_with_options(
                 chat,
                 NewChatOutputProcessorOptions {
                     tool_call_parser: &request.tool_call_parser,
@@ -539,17 +539,10 @@ impl Generation for RuntimeGeneration {
     ) -> Result<Tokenization, GenerationError> {
         let slot = self.ready_state()?;
         let runtime = slot.state.model(model, None)?;
-        let parser = ParserSelection::None;
-        let (text_request, _) = runtime
+        let text_request = runtime
             .bundle
             .chat_processor
-            .prepare(
-                chat,
-                NewChatOutputProcessorOptions {
-                    tool_call_parser: &parser,
-                    reasoning_parser: &parser,
-                },
-            )
+            .prepare_for_tokenization(chat)
             .await
             .map_err(|_| GenerationError::InvalidRequest)?;
         let prepared = runtime
