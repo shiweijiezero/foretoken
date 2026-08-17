@@ -23,7 +23,6 @@ type modelScalingConfig struct {
 	Limits          core.CapacityLimits
 	TriggerInterval time.Duration
 	MetricsMaxAge   time.Duration
-	Automatic       bool
 }
 
 func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alpha1.ModelService) (modelScalingConfig, error) {
@@ -41,13 +40,6 @@ func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alph
 		return config, nil
 	}
 	name := autoscaling.DecisionAlgorithmName(autoscalingConfig.Algorithm)
-	if name == "" {
-		name = autoscaling.DecisionAlgorithmManual
-	}
-	config.Automatic = name != autoscaling.DecisionAlgorithmManual
-	if config.Automatic && autoscalingConfig.MaxGroups == nil {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling maxGroups is required unless algorithm is manual")
-	}
 	if autoscalingConfig.MinGroups != nil {
 		config.Limits.MinGroups = *autoscalingConfig.MinGroups
 	}
@@ -70,7 +62,7 @@ func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alph
 		selected, err := autoscaling.New(autoscaling.Configuration{
 			DecisionAlgorithm:   name,
 			TriggerAlgorithm:    autoscaling.TriggerAlgorithmName(triggerAlgorithm(autoscalingConfig.Trigger)),
-			AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmName(adjustmentAlgorithm(autoscalingConfig.Adjustment, name)),
+			AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmName(adjustmentAlgorithm(autoscalingConfig.Adjustment)),
 			Decision: core.DecisionConfig{
 				TargetQueuePerRoutableGroup: int64OrDefault(autoscalingConfig.TargetQueuePerRoutableGroup, 1),
 				ScaleUpQueue:                int64OrDefault(autoscalingConfig.ScaleUpQueue, 1),
@@ -85,15 +77,15 @@ func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alph
 		}
 		config.Autoscaler = selected
 	}
+	if config.Autoscaler.Automatic() && autoscalingConfig.MaxGroups == nil {
+		return modelScalingConfig{}, fmt.Errorf("autoscaling maxGroups is required unless algorithm is manual")
+	}
 	return config, nil
 }
 
-func adjustmentAlgorithm(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig, scaling autoscaling.DecisionAlgorithmName) inferencev1alpha1.AutoscalingAdjustmentAlgorithm {
-	if scaling == autoscaling.DecisionAlgorithmManual {
-		return inferencev1alpha1.AutoscalingAdjustmentAlgorithmDirect
-	}
-	if config == nil || config.Algorithm == "" {
-		return inferencev1alpha1.AutoscalingAdjustmentAlgorithmStep
+func adjustmentAlgorithm(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) inferencev1alpha1.AutoscalingAdjustmentAlgorithm {
+	if config == nil {
+		return ""
 	}
 	return config.Algorithm
 }
@@ -120,8 +112,8 @@ func triggerInterval(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) in
 }
 
 func triggerAlgorithm(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.AutoscalingTriggerAlgorithm {
-	if config == nil || config.Algorithm == "" {
-		return inferencev1alpha1.AutoscalingTriggerAlgorithmPeriodic
+	if config == nil {
+		return ""
 	}
 	return config.Algorithm
 }
@@ -323,7 +315,7 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 
 func (reconciler *ModelServiceReconciler) scalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, target core.TargetID, evaluatedAt metav1.Time, capacity core.CapacityState, scaling modelScalingConfig) core.ScalingSnapshot {
 	observation := core.DemandObservation{State: core.ObservationUnavailable}
-	if scaling.Automatic {
+	if scaling.Autoscaler.Automatic() {
 		observation = reconciler.demandObservation(ctx, target, scaling.MetricsMaxAge)
 	}
 	return core.ScalingSnapshot{

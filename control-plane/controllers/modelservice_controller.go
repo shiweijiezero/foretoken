@@ -130,7 +130,7 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if scaling.Automatic {
+	if scaling.Autoscaler.Automatic() {
 		return ctrl.Result{RequeueAfter: scaling.TriggerInterval}, nil
 	}
 	return ctrl.Result{}, nil
