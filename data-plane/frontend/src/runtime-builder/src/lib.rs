@@ -169,7 +169,7 @@ impl RuntimeControl for RegistryRuntimeControl {
         );
     }
 
-    fn healthy_models(&self) -> Vec<String> {
+    fn configured_models(&self) -> Vec<String> {
         self.registry.configured_models()
     }
 
@@ -254,72 +254,4 @@ fn unsupported_media_capabilities(capabilities: &BTreeSet<String>) -> Vec<&str> 
         .into_iter()
         .filter(|capability| capabilities.contains(*capability))
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn builder() -> RuntimeBuilder {
-        RuntimeBuilder::new(RouterPipelineConfig::default(), KvIndexCredential::Disabled)
-    }
-
-    #[test]
-    fn snapshot_is_parsed_without_building_model_runtime() {
-        assert_eq!(
-            builder()
-                .parse(br#"{"version":42,"groups":[]}"#)
-                .unwrap()
-                .version,
-            42
-        );
-        assert!(builder().parse(b"not-json").is_err());
-    }
-
-    #[tokio::test]
-    async fn logical_only_snapshot_publishes_a_ready_scale_from_zero_runtime() {
-        let snapshot = ServingSnapshot {
-            version: 1,
-            models: vec![foretoken_backend_registry::SnapshotModel {
-                service_uid: "service".into(),
-                model: "model".into(),
-                revision: "r1".into(),
-                tokenizer: "tokenizer".into(),
-                tokenizer_revision: "r1".into(),
-                capabilities: ["chat".into()].into_iter().collect(),
-                max_input_tokens: Some(2048),
-                targets: vec![foretoken_router::ScalingTarget {
-                    service_uid: "service".into(),
-                    name: "default".into(),
-                    uid: "pool".into(),
-                    kind: foretoken_router::ScalingTargetKind::Pool,
-                }],
-            }],
-            groups: vec![],
-            pd_components: vec![],
-            pd_pipeline_scopes: vec![],
-            epd_components: vec![],
-            epd_pipeline_scopes: vec![],
-        };
-        let prepared = builder().build(snapshot).await.unwrap();
-        let generation = RuntimeGeneration::new();
-
-        assert!(prepared.publish(&generation));
-        assert!(foretoken_server::Generation::ready(&generation));
-        assert_eq!(generation.models(), vec!["model"]);
-    }
-
-    #[tokio::test]
-    async fn invalid_snapshot_fails_before_runtime_preparation() {
-        let conflicting = br#"{"version":1,"groups":[
-            {"route_target_id":"a","model":"model","revision":"r1","tokenizer":"tokenizer","tokenizer_revision":"r1","endpoint":"http://a","data_parallel_size":1},
-            {"route_target_id":"b","model":"model","revision":"r2","tokenizer":"tokenizer","tokenizer_revision":"r1","endpoint":"http://b","data_parallel_size":1}
-        ]}"#;
-        let builder = builder();
-        let snapshot = builder.parse(conflicting).unwrap();
-        assert!(matches!(
-            builder.build(snapshot).await,
-            Err(RuntimeBuildError::InvalidSnapshot(_))
-        ));
-    }
 }

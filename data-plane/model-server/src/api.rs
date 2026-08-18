@@ -355,7 +355,3 @@ impl IntoResponse for ApiError {
             .into_response()
     }
 }
-
-#[cfg(test)]
-#[path = "tests/api.rs"]
-mod tests;

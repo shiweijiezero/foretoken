@@ -66,7 +66,7 @@ Foretoken's main directories have distinct responsibilities:
 - `benchmarks/`: correctness, randomized workloads, SLO evaluation, and simulation;
 - `deploy/`: deployment composition, hardware configuration, and release artifacts.
 
-Keep module-level unit tests next to their source. Do not use the root `tests/` directory for tests that belong to a single module.
+Keep public behavior and contract tests in each crate's `tests/` directory alongside `src/`, grouped into a small number of responsibility-focused suites. Only important private algorithms that cannot be exercised through public APIs should retain local tests next to the implementation. Do not widen public APIs for tests or keep trivial tests of forwarding code, defaults, or third-party behavior.
 
 ## Opening a Pull Request
 

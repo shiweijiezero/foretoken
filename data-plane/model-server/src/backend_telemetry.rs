@@ -181,37 +181,3 @@ fn average_engine_metric(
         .try_fold(0.0, |total, value| Some(total + value?))?;
     Some(total / engine_labels.len() as f64)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn absent_engine_series_stay_absent() {
-        assert_eq!(sum_engine_metric(&[], |_| Some(1)), None);
-        assert_eq!(average_engine_metric(&[], |_| Some(1.0)), None);
-        assert_eq!(
-            sum_engine_metric(
-                &[EngineLabels {
-                    model_name: "model".into(),
-                    engine: 0,
-                }],
-                |_| None,
-            ),
-            None,
-        );
-    }
-
-    #[test]
-    fn latency_observations_are_exported_cumulatively() {
-        let mut metrics = BoundaryLatencyMetrics::new();
-        metrics.observe_ttft(0.1);
-        metrics.observe_tpot(0.2);
-        metrics.observe_e2e(0.5);
-
-        let (ttft, tpot, e2e) = metrics.snapshot();
-        assert_eq!(ttft.count, 1);
-        assert_eq!(tpot.count, 1);
-        assert_eq!(e2e.count, 1);
-    }
-}

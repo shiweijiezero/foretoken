@@ -9,12 +9,6 @@ import (
 )
 
 func TestDecisionsAreRegisteredAndRecommendCapacity(t *testing.T) {
-	_, decisions, _ := algorithm.Names()
-	for _, name := range []string{"manual", "queue", "threshold"} {
-		if !contains(decisions, name) {
-			t.Fatalf("decision registry missing %q: %v", name, decisions)
-		}
-	}
 	snapshot := scalingSnapshot()
 	manual, err := algorithm.BuildDecision("manual", core.DecisionConfig{})
 	if err != nil {

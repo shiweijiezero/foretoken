@@ -41,15 +41,6 @@ impl ResponseMetadata {
             model: generated.routed.routed_request.decision.model.clone(),
         }
     }
-
-    #[cfg(test)]
-    fn unknown() -> Self {
-        Self {
-            id: "unknown".into(),
-            created: 0,
-            model: "unknown".into(),
-        }
-    }
 }
 
 #[derive(Serialize)]
@@ -411,107 +402,6 @@ pub(crate) fn idle_timed(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn text_stream(generated: Generated, idle: Duration) -> Response {
-    text_stream_with_options(generated, idle, false)
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn text_stream_with_options(
-    generated: Generated,
-    idle: Duration,
-    include_usage: bool,
-) -> Response {
-    let metadata = ResponseMetadata::from_generated(&generated);
-    completion_stream_response(
-        idle_timed(decoded(generated), idle),
-        metadata,
-        include_usage,
-    )
-}
-
-#[cfg(test)]
-pub(crate) fn stream_response(stream: impl foretoken_text::TextOutputStream) -> Response {
-    completion_stream_response(stream, ResponseMetadata::unknown(), false)
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-fn completion_stream_response(
-    stream: impl foretoken_text::TextOutputStream,
-    metadata: ResponseMetadata,
-    include_usage: bool,
-) -> Response {
-    let events = async_stream::stream! {
-        let mut stream = Box::pin(stream);
-        let mut text_offset = 0;
-        while let Some(event) = stream.next().await {
-            match event {
-                Ok(DecodedTextEvent::Start { .. }) => {}
-                Ok(DecodedTextEvent::TextDelta { delta, token_ids, logprobs, finished }) => {
-                    let logprobs = completion_logprobs(&token_ids, logprobs, text_offset);
-                    text_offset += delta.len();
-                    if !delta.is_empty() || logprobs.is_some() {
-                        yield Ok::<_, Infallible>(Event::default().json_data(CompletionStreamResponse {
-                            metadata: metadata.clone(),
-                            object: "text_completion",
-                            choices: vec![CompletionStreamChoice {
-                                index: 0,
-                                text: delta,
-                                logprobs,
-                                token_ids: None,
-                                finish_reason: None,
-                                stop_reason: None,
-                            }],
-                            usage: None,
-                            prompt_token_ids: None,
-                        }).unwrap());
-                    }
-                    if let Some(finished) = finished {
-                        let Ok(finish_reason) = completion_finish_reason(&finished.finish_reason) else {
-                            yield Ok(Event::default().json_data(stream_backend_error()).unwrap());
-                            break;
-                        };
-                        yield Ok(Event::default().json_data(CompletionStreamResponse {
-                            metadata: metadata.clone(),
-                            object: "text_completion",
-                            choices: vec![CompletionStreamChoice {
-                                index: 0,
-                                text: String::new(),
-                                logprobs: None,
-                                token_ids: None,
-                                finish_reason: Some(finish_reason),
-                                stop_reason: openai_stop_reason(&finished.finish_reason),
-                            }],
-                            usage: None,
-                            prompt_token_ids: None,
-                        }).unwrap());
-                        if include_usage {
-                            yield Ok(Event::default().json_data(CompletionStreamResponse {
-                                metadata: metadata.clone(),
-                                object: "text_completion",
-                                choices: Vec::new(),
-                                usage: Some(Usage::from_counts(
-                                    finished.usage.prompt_token_count,
-                                    finished.usage.output_token_count,
-                                    finished.usage.cached_token_count,
-                                )),
-                                prompt_token_ids: None,
-                            }).unwrap());
-                        }
-                        break;
-                    }
-                }
-                Err(_) => {
-                    yield Ok(Event::default().json_data(stream_backend_error()).unwrap());
-                    break;
-                }
-            }
-        }
-        yield Ok(Event::default().data("[DONE]"));
-    };
-    Sse::new(events).into_response()
-}
-
 fn chat_events(
     generated: GeneratedChat,
     idle: Duration,
@@ -752,9 +642,10 @@ pub(crate) async fn text_collected_many(
     for (candidate_index, item) in generated.into_iter().enumerate() {
         let prompt_ids = item.routed.routed_request.request.prompt_token_ids.clone();
         let prompt_text = if options.echo {
-            item.tokenizer
-                .decode(&prompt_ids, false)
-                .unwrap_or_default()
+            match item.tokenizer.decode(&prompt_ids, false) {
+                Ok(prompt) => prompt,
+                Err(_) => return backend_error(GenerationError::Internal),
+            }
         } else {
             String::new()
         };
@@ -891,36 +782,6 @@ pub(crate) fn text_stream_many(
         yield Ok(Event::default().data("[DONE]"));
     };
     Sse::new(events).into_response()
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) async fn text_collected(generated: Generated, idle: Duration) -> Response {
-    let metadata = ResponseMetadata::from_generated(&generated);
-    match idle_timed(decoded(generated), idle).collect_output().await {
-        Ok(output) => match completion_finish_reason(&output.finish_reason) {
-            Ok(finish_reason) => Json(CompletionResponse {
-                metadata,
-                object: "text_completion",
-                choices: vec![CompletionChoice {
-                    index: 0,
-                    text: output.text,
-                    logprobs: completion_logprobs(&output.token_ids, output.logprobs, 0),
-                    token_ids: None,
-                    finish_reason: finish_reason.to_owned(),
-                    stop_reason: openai_stop_reason(&output.finish_reason),
-                }],
-                usage: Usage::from_counts(
-                    output.usage.prompt_token_count,
-                    output.usage.output_token_count,
-                    output.usage.cached_token_count,
-                ),
-                prompt_token_ids: None,
-            })
-            .into_response(),
-            Err(()) => backend_error(GenerationError::RequestFailed),
-        },
-        Err(_) => backend_error(GenerationError::RequestFailed),
-    }
 }
 
 pub(crate) async fn chat_collected(generated: GeneratedChat, idle: Duration) -> Response {

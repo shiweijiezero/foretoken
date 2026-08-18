@@ -1,20 +1,21 @@
-use super::*;
-use axum::Json;
-use axum::Router;
-use axum::http::StatusCode;
-use axum::routing::get;
-use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity, TelemetryResponse};
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+use axum::{Json, Router, http::StatusCode, routing::get};
+use foretoken_backend_registry::{
+    BackendRegistry, BackendRegistryBuild, ServingSnapshot, SnapshotEpdComponent,
+    SnapshotEpdPipelineScope, SnapshotError, SnapshotGroup, SnapshotPdComponent,
+    SnapshotPdPipelineScope,
+};
+use foretoken_llm_facade::LlmFacadeResolver;
+use foretoken_model_protocol::{
+    ModelServerRole, RouteStage, RuntimeMetadataResponse, RuntimeModelIdentity, TelemetryResponse,
+};
+use foretoken_router::{RouteDecision, RouteInventory, RouteTargetId};
 use tokio::net::TcpListener;
 use vllm_engine_core_client::protocol::dtype::ModelDtype;
 
-use crate::{
-    BackendRegistryBuild, SnapshotEpdComponent, SnapshotEpdPipelineScope, SnapshotGroup,
-    SnapshotPdComponent, SnapshotPdPipelineScope,
-};
-use foretoken_model_protocol::{ModelServerRole, RouteStage};
-use foretoken_router::RouteDecision;
-
-fn component(id: &str, role: ModelServerRole) -> SnapshotPdComponent {
+fn pd_component(id: &str, role: ModelServerRole) -> SnapshotPdComponent {
     SnapshotPdComponent {
         service_uid: "service".into(),
         pool_uid: "pool".into(),
@@ -32,21 +33,22 @@ fn component(id: &str, role: ModelServerRole) -> SnapshotPdComponent {
         protocol: "rdma".into(),
         capabilities: ["chat".into()].into_iter().collect(),
         max_input_tokens: None,
-        endpoint: "http://127.0.0.1:9000".into(),
+        endpoint: "http://127.0.0.1:1".into(),
         prefill_bootstrap_endpoint: (role == ModelServerRole::Prefill)
             .then(|| "http://127.0.0.1:29001".into()),
         kv_scope_id: "scope".into(),
         data_parallel_size: 1,
     }
 }
+
 fn pd_snapshot() -> ServingSnapshot {
     ServingSnapshot {
         version: 1,
         models: vec![],
         groups: vec![],
         pd_components: vec![
-            component("p", ModelServerRole::Prefill),
-            component("d", ModelServerRole::Decode),
+            pd_component("p", ModelServerRole::Prefill),
+            pd_component("d", ModelServerRole::Decode),
         ],
         pd_pipeline_scopes: vec![SnapshotPdPipelineScope {
             pipeline_scope_id: "service-a".into(),
@@ -97,13 +99,14 @@ fn epd_component(id: &str, role: ModelServerRole) -> SnapshotEpdComponent {
         },
         capabilities: ["chat".into()].into_iter().collect(),
         max_input_tokens: None,
-        endpoint: "http://127.0.0.1:9000".into(),
+        endpoint: "http://127.0.0.1:1".into(),
         prefill_bootstrap_endpoint: (role == ModelServerRole::Prefill)
             .then(|| "http://127.0.0.1:29001".into()),
         kv_scope_id: "scope".into(),
         data_parallel_size: 1,
     }
 }
+
 fn epd_snapshot() -> ServingSnapshot {
     ServingSnapshot {
         version: 1,
@@ -125,12 +128,12 @@ fn epd_snapshot() -> ServingSnapshot {
     }
 }
 
-fn runtime_metadata(model: &str, revision: &str) -> RuntimeMetadataResponse {
+fn runtime_metadata() -> RuntimeMetadataResponse {
     RuntimeMetadataResponse {
         version: 1,
         model: RuntimeModelIdentity {
-            model: model.into(),
-            revision: revision.into(),
+            model: "model".into(),
+            revision: "r1".into(),
         },
         model_dtype: ModelDtype::BFloat16,
         effective_max_model_len: 32_768,
@@ -140,16 +143,20 @@ fn runtime_metadata(model: &str, revision: &str) -> RuntimeMetadataResponse {
     }
 }
 
-async fn serve_model_server(metadata: RuntimeMetadataResponse) -> String {
+async fn serve_model_server() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
-    let metadata_route = metadata.clone();
+    let metadata = runtime_metadata();
     let app = Router::new()
         .route("/readyz", get(|| async { StatusCode::OK }))
         .route(
+            "/query",
+            get(|| async { Json(serde_json::json!({"0":{"engine_id":"engine-0"}})) }),
+        )
+        .route(
             "/v1/internal/metadata",
             get(move || {
-                let metadata = metadata_route.clone();
+                let metadata = metadata.clone();
                 async move { Json(metadata) }
             }),
         )
@@ -176,6 +183,7 @@ async fn serve_model_server(metadata: RuntimeMetadataResponse) -> String {
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     endpoint
 }
+
 fn aggregate_snapshot(endpoint: String) -> ServingSnapshot {
     ServingSnapshot {
         version: 1,
@@ -203,16 +211,16 @@ fn aggregate_snapshot(endpoint: String) -> ServingSnapshot {
 }
 
 #[tokio::test]
-async fn readiness_preserves_frontend_owned_capabilities() {
-    let endpoint = serve_model_server(runtime_metadata("model", "r1")).await;
-    let registry = BackendRegistry::from_snapshot(aggregate_snapshot(endpoint)).unwrap();
+async fn aggregate_readiness_preserves_frontend_owned_capabilities() {
+    let registry =
+        BackendRegistry::from_snapshot(aggregate_snapshot(serve_model_server().await)).unwrap();
 
     registry.refresh_backend_readiness().await;
 
     assert!(registry.is_route_target_healthy(&RouteTargetId::new("a")));
     assert_eq!(
         registry.metadata(&RouteTargetId::new("a")),
-        Some(runtime_metadata("model", "r1"))
+        Some(runtime_metadata())
     );
     assert_eq!(
         registry.effective_capabilities(&RouteTargetId::new("a")),
@@ -225,35 +233,29 @@ async fn readiness_preserves_frontend_owned_capabilities() {
     );
 }
 
-#[test]
-fn builds_component_inventory_without_cartesian_links() {
-    let registry = BackendRegistry::from_snapshot(pd_snapshot()).unwrap();
-    assert_eq!(registry.route_table().routes().len(), 2);
-    assert!(
-        registry
-            .route_table()
-            .routes()
-            .iter()
-            .any(|route| route.role == ModelServerRole::Prefill)
-    );
-    assert!(
-        registry
-            .route_table()
-            .routes()
-            .iter()
-            .any(|route| route.role == ModelServerRole::Decode)
-    );
-}
+#[tokio::test]
+async fn pd_snapshot_projects_routing_readiness_and_kv_contracts() {
+    let mut partial = pd_snapshot();
+    partial.pd_components[0].endpoint = serve_model_server().await;
+    partial.pd_components[0].prefill_bootstrap_endpoint =
+        Some(partial.pd_components[0].endpoint.clone());
+    let partial_registry = BackendRegistry::from_snapshot(partial).unwrap();
+    partial_registry.refresh_backend_readiness().await;
+    assert!(!partial_registry.is_ready());
 
-#[test]
-fn preserves_pd_input_limits_in_route_inventory() {
     let mut snapshot = pd_snapshot();
+    snapshot.pd_components[0].endpoint = serve_model_server().await;
+    snapshot.pd_components[0].prefill_bootstrap_endpoint =
+        Some(snapshot.pd_components[0].endpoint.clone());
     snapshot.pd_components[0].max_input_tokens = Some(4096);
+    snapshot.pd_components[1].endpoint = serve_model_server().await;
     snapshot.pd_components[1].max_input_tokens = Some(8192);
+    let build = BackendRegistryBuild::from_snapshot(snapshot).unwrap();
+    let registry = build.registry;
+    registry.refresh_backend_readiness().await;
 
-    let registry = BackendRegistry::from_snapshot(snapshot).unwrap();
     let routes = registry.route_table().routes();
-
+    assert_eq!(routes.len(), 2);
     assert_eq!(
         routes
             .iter()
@@ -270,22 +272,9 @@ fn preserves_pd_input_limits_in_route_inventory() {
             .max_input_tokens,
         Some(8192)
     );
-}
+    assert!(registry.is_ready());
+    assert_eq!(registry.healthy_models(), vec!["model"]);
 
-#[test]
-fn rejects_component_not_in_its_pipeline_scope() {
-    let mut snapshot = pd_snapshot();
-    snapshot.pd_pipeline_scopes[0]
-        .decode_route_target_ids
-        .clear();
-    assert!(matches!(
-        BackendRegistry::from_snapshot(snapshot),
-        Err(SnapshotError::InvalidPdPipelineScope(_))
-    ));
-}
-#[test]
-fn resolver_resolves_only_the_router_selected_stage() {
-    let registry = BackendRegistry::from_snapshot(pd_snapshot()).unwrap();
     let prefill = RouteDecision {
         route_target_id: RouteTargetId::new("p"),
         role: ModelServerRole::Prefill,
@@ -294,74 +283,16 @@ fn resolver_resolves_only_the_router_selected_stage() {
         data_parallel_rank: 0,
     };
     assert!(
-        <BackendRegistry as foretoken_llm_facade::LlmFacadeResolver>::resolve_stage(
-            &registry,
-            &prefill,
-            RouteStage::Prefill,
-        )
-        .is_some()
+        registry
+            .resolve_stage(&prefill, RouteStage::Prefill)
+            .is_some()
     );
-    assert!(
-        <BackendRegistry as foretoken_llm_facade::LlmFacadeResolver>::resolve_stage(
-            &registry,
-            &prefill,
-            RouteStage::Decode,
-        )
-        .is_none()
-    );
-}
-
-#[test]
-fn readiness_requires_a_healthy_pd_pair() {
-    let registry = BackendRegistry::from_snapshot(pd_snapshot()).unwrap();
-    registry.health[&RouteTargetId::new("p")].store(true, Ordering::Release);
-    assert!(!registry.is_ready());
-    assert!(registry.healthy_models().is_empty());
-
-    registry.health[&RouteTargetId::new("d")].store(true, Ordering::Release);
-    assert!(registry.is_ready());
-    assert_eq!(registry.healthy_models(), vec!["model"]);
-}
-
-#[test]
-fn epd_snapshot_requires_one_compatible_static_triplet() {
-    let registry = BackendRegistry::from_snapshot(epd_snapshot()).unwrap();
-    assert_eq!(registry.route_table().routes().len(), 3);
     assert!(
         registry
-            .route_table()
-            .routes()
-            .iter()
-            .any(|route| route.role == ModelServerRole::Encoder)
-    );
-    let target_set = registry.logical_target_set("model").unwrap();
-    assert!(
-        registry
-            .route_table()
-            .routes()
-            .iter()
-            .all(|route| target_set.targets() == std::slice::from_ref(&route.target))
+            .resolve_stage(&prefill, RouteStage::Decode)
+            .is_none()
     );
 
-    let mut not_a_triplet = epd_snapshot();
-    not_a_triplet.epd_pipeline_scopes[0].decode_route_target_id = RouteTargetId::new("other");
-    assert!(matches!(
-        BackendRegistry::from_snapshot(not_a_triplet),
-        Err(SnapshotError::InvalidEpdPipelineScope(_))
-    ));
-}
-
-#[test]
-fn epd_prefill_component_is_included_in_the_kv_prefix_index() {
-    let build = BackendRegistryBuild::from_snapshot(epd_snapshot()).unwrap();
-    assert_eq!(build.kv_runtime_config.route_bindings.len(), 1);
-    assert_eq!(build.kv_runtime_config.event_sources.len(), 1);
-    assert!(build.kv_runtime_config.route_bindings.contains_key("p"));
-}
-
-#[test]
-fn kv_index_binds_and_polls_only_prefill_components() {
-    let build = BackendRegistryBuild::from_snapshot(pd_snapshot()).unwrap();
     assert_eq!(build.kv_runtime_config.route_bindings.len(), 1);
     assert_eq!(build.kv_runtime_config.event_sources.len(), 1);
     assert!(build.kv_runtime_config.route_bindings.contains_key("p"));
@@ -369,13 +300,46 @@ fn kv_index_binds_and_polls_only_prefill_components() {
         build.kv_runtime_config.event_sources[0].event_source_id,
         "p:dp:0"
     );
-    assert_eq!(build.kv_runtime_config.event_sources[0].model_group_id, "p");
-    assert_eq!(build.kv_runtime_config.event_sources[0].dp_rank, 0);
 }
 
 #[test]
-fn empty_scaling_identity_is_rejected() {
-    let mut aggregate = aggregate_snapshot("http://127.0.0.1:8000".into());
+fn epd_snapshot_projects_one_static_triplet_and_prefill_kv_source() {
+    let build = BackendRegistryBuild::from_snapshot(epd_snapshot()).unwrap();
+    let routes = build.registry.route_table().routes();
+    assert_eq!(routes.len(), 3);
+    assert!(
+        routes
+            .iter()
+            .any(|route| route.role == ModelServerRole::Encoder)
+    );
+    let target_set = build.registry.logical_target_set("model").unwrap();
+    assert!(
+        routes
+            .iter()
+            .all(|route| target_set.targets() == std::slice::from_ref(&route.target))
+    );
+    assert_eq!(build.kv_runtime_config.route_bindings.len(), 1);
+    assert_eq!(build.kv_runtime_config.event_sources.len(), 1);
+    assert!(build.kv_runtime_config.route_bindings.contains_key("p"));
+}
+
+#[test]
+fn invalid_scaling_identity_or_pipeline_scope_is_rejected() {
+    let mut pd = pd_snapshot();
+    pd.pd_pipeline_scopes[0].decode_route_target_ids.clear();
+    assert!(matches!(
+        BackendRegistry::from_snapshot(pd),
+        Err(SnapshotError::InvalidPdPipelineScope(_))
+    ));
+
+    let mut epd = epd_snapshot();
+    epd.epd_pipeline_scopes[0].decode_route_target_id = RouteTargetId::new("other");
+    assert!(matches!(
+        BackendRegistry::from_snapshot(epd),
+        Err(SnapshotError::InvalidEpdPipelineScope(_))
+    ));
+
+    let mut aggregate = aggregate_snapshot("http://127.0.0.1:1".into());
     aggregate.groups[0].service_uid.clear();
     assert!(matches!(
         BackendRegistry::from_snapshot(aggregate),

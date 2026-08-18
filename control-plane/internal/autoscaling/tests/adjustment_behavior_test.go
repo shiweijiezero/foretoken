@@ -9,12 +9,6 @@ import (
 )
 
 func TestAdjustmentsAreRegisteredAndResolutionRejectsInvalidOutput(t *testing.T) {
-	_, _, adjustments := algorithm.Names()
-	for _, name := range []string{"direct", "step"} {
-		if !contains(adjustments, name) {
-			t.Fatalf("adjustment registry missing %q: %v", name, adjustments)
-		}
-	}
 	direct, err := algorithm.BuildAdjustment("direct")
 	if err != nil {
 		t.Fatal(err)

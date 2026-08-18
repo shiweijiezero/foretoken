@@ -1,4 +1,7 @@
-use super::*;
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+use foretoken_model_server::launch::LaunchPlanV1;
 
 fn plan() -> LaunchPlanV1 {
     LaunchPlanV1::parse(r#"{"version":1,"artifacts":{"model":"model","revision":"rev","tokenizer":"tokenizer","tokenizerRevision":"tokenizer-rev"},"parallelism":{"tp":2,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":30,"drainSeconds":7},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":["--max-model-len=32768"]}"#).unwrap()
@@ -32,10 +35,7 @@ fn rejects_invalid_topology_and_extra_arg_bypass() {
 
 #[test]
 fn rejects_out_of_range_internal_generate_request_body_limits() {
-    for limit in [
-        MIN_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES - 1,
-        MAX_INTERNAL_GENERATE_REQUEST_BODY_LIMIT_BYTES + 1,
-    ] {
+    for limit in [1_048_575, 268_435_457] {
         let mut invalid = plan();
         invalid.internal_generate_request_body_limit_bytes = limit;
         assert!(invalid.validate().is_err(), "limit {limit} was accepted");

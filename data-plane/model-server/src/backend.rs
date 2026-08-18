@@ -334,5 +334,5 @@ impl Backend for VllmBackend {
 }
 
 #[cfg(test)]
-#[path = "tests/backend.rs"]
+#[path = "backend_test.rs"]
 mod tests;

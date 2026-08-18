@@ -14,12 +14,3 @@ pub use runtime::{
     ModelRuntime, RoutedGenerate, RoutedRequest, RuntimeBundle, RuntimeControl, RuntimeDiagnostics,
     RuntimeGeneration, RuntimeState, Tokenization,
 };
-
-#[cfg(test)]
-pub(crate) use response::{
-    CompletionResponseOptions, chat_collected, idle_timed, stream_response, text_collected,
-    text_collected_many, text_stream, text_stream_with_options,
-};
-
-#[cfg(test)]
-mod tests;

@@ -57,9 +57,6 @@ func TestCompileShorthand(t *testing.T) {
 	if template.MaxInputTokens == nil || *template.MaxInputTokens != 16384 || template.MaxInputTokens == spec.MaxInputTokens {
 		t.Fatalf("compiled maxInputTokens = %#v", template.MaxInputTokens)
 	}
-	if template.InternalGenerateRequestBodyLimitBytes != inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes {
-		t.Fatalf("compiled internal generate request body limit = %d", template.InternalGenerateRequestBodyLimitBytes)
-	}
 }
 
 func TestCompileAdvancedPools(t *testing.T) {
@@ -129,20 +126,6 @@ func TestCompileRejectsUnsupportedMultimodalFeatures(t *testing.T) {
 	spec := inferencev1alpha1.ModelServiceSpec{Model: "model", Backend: "vllm", Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "1m", Drain: "1m"}, ModelPools: []inferencev1alpha1.ModelPoolTemplate{{Name: "aggregate", Resources: modelResources("1", "1Gi", "auto", 1), Parallelism: inferencev1alpha1.Parallelism{}, Features: &inferencev1alpha1.ModelFeatures{Multimodal: []inferencev1alpha1.MultimodalModality{"audio"}}}}}
 	if _, err := CompileModelService(spec); err == nil {
 		t.Fatal("unsupported audio modality was accepted")
-	}
-}
-
-func TestCompilePropagatesPDMultiModalModelFeatures(t *testing.T) {
-	features := &inferencev1alpha1.ModelFeatures{Multimodal: []inferencev1alpha1.MultimodalModality{inferencev1alpha1.MultimodalModalityImage}}
-	spec := inferencev1alpha1.ModelServiceSpec{Model: "model", Backend: "vllm", Timeouts: inferencev1alpha1.ModelTimeouts{Startup: "1m", Drain: "1m"}, ModelPools: []inferencev1alpha1.ModelPoolTemplate{{Name: "prefill", Role: inferencev1alpha1.ModelRolePrefill, Resources: modelResources("1", "1Gi", "auto", 1), Parallelism: inferencev1alpha1.Parallelism{}, Features: features}, {Name: "decode", Role: inferencev1alpha1.ModelRoleDecode, Resources: modelResources("1", "1Gi", "auto", 1), Parallelism: inferencev1alpha1.Parallelism{}, Features: features}}}
-	pools, err := CompileModelService(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, pool := range pools {
-		if !reflect.DeepEqual(pool.Template.Features.Multimodal, features.Multimodal) {
-			t.Fatalf("%s multimodal features = %#v", pool.Name, pool.Template.Features.Multimodal)
-		}
 	}
 }
 

@@ -4,46 +4,65 @@ English | [简体中文](README_zh.md)
 
 Foretoken is a Kubernetes-native GPU generative inference orchestration framework built for SLO/SLA targets.
 
-Currently built on vLLM, Foretoken organizes model runtimes into services with request routing, autoscaling, rollout, graceful drain, and benchmarking. We aim to turn an inference cluster into a token factory that continuously converts compute into tokens while meeting latency and quality requirements.
+Foretoken organizes model-serving instances into one cluster service for request routing, autoscaling, rolling updates, graceful draining, and benchmarking. vLLM is the currently supported inference backend.
+
+We aim to turn an inference cluster into a token factory that continuously converts compute into tokens while meeting latency requirements.
+
+```text
+Resource management: ModelService → ModelPool → ModelGroup
+Request path:       Client → Gateway → FrontendService → ModelGroup → model-server / vLLM
+```
 
 ## When to Use Foretoken
 
-- Serve one or more models across multiple GPUs or nodes.
-- Route requests using health, current load, and optional KV cache signals.
-- Autoscale model capacity from frontend queue depth and model-server active requests.
-- Explore aggregated serving, Prefill/Decode disaggregation, and parallelism strategies.
-- Manage runtime and node scheduling through a platform-configured vLLM GPU runtime profile.
+- Manage one or more model services in a Kubernetes cluster.
+- Route requests using backend health, load, and opportunities to reuse KV cache.
+- When autoscaling is enabled, adjust model-serving capacity from queued and in-progress requests.
+- Explore aggregate inference, Prefill/Decode disaggregation, and parallelism strategies.
 
 If you only need to serve a single model on one GPU, using vLLM directly is usually enough.
 
-## Features and Status
+## Current Capabilities
 
-| Feature | Description | Status |
-|---|---|---|
-| Kubernetes control plane | ModelService, ModelPool, ModelGroup, rollout, scaling, and graceful drain | In development |
-| Request routing | Route lowered requests to compatible and healthy ModelGroups | In development |
-| vLLM integration | Reuse vLLM Rust tokenization, lowering, EngineCore client, streams, and detokenization | In development |
-| [Benchmarking](benchmarks/README.md) | Existing-endpoint and Kubernetes-managed load tests with latency, TTFT, TPOT, and throughput metrics | In development |
-| GPU support | Platform-configured vLLM runtime, GPU resource, and node scheduling profile | In development |
-| Distributed inference | Aggregate serving is implemented; Prefill/Decode disaggregation remains experimental | Research |
-| Observability | Frontend metrics and autoscaling telemetry; dashboards, distributed tracing, and alerts are planned | In development |
+Foretoken is under active development. Its APIs and deployment configuration may continue to change.
 
-## Quick Start
+| Capability | Description |
+|---|---|
+| Service management | Create and manage model workloads from `ModelService`, including scaling, updates, and draining |
+| Request routing | Select an available `ModelGroup` by model, health, and configured routing policy |
+| Autoscaling | Adjust the number of complete `ModelGroup` instances from queued and in-progress requests |
+| Data plane | Provide an OpenAI-compatible API with request processing, backend selection, and streaming or non-streaming responses |
+| [Benchmarking](benchmarks/README.md) | Test an existing service or temporarily deploy Foretoken services in Kubernetes for a load test |
+| Distributed inference | Aggregate inference is implemented; Prefill/Decode disaggregation remains experimental |
+| Observability | The frontend exposes runtime metrics; dashboards, distributed tracing, and alerts are planned |
 
-Foretoken runs as one Kubernetes system. A platform administrator installs the control plane once; serving users deploy `FrontendService` and `ModelService` resources without starting the underlying processes themselves.
+## Deploy from Source
 
-The first OCI release and matching component images have not been published yet. The current source checkout therefore uses the local Chart and three images from a registry reachable by every cluster node.
+This flow uses the Helm chart in this repository and pushes three images—control-plane, frontend, and model-server—to a registry the cluster can pull from. A platform administrator installs the control plane once. Service operators then create `FrontendService` and `ModelService` resources instead of deploying frontend or model-server workloads directly.
 
 ### Prerequisites
 
-- Kubernetes 1.29+ with GPU nodes and cluster-scoped installation permissions;
-- a working GPU device plugin and the node label used by the selected runtime profile;
-- Kubernetes Gateway API and a Gateway that allows Routes from `foretoken-demo`;
-- a registry that cluster workloads can pull from.
+The build machine needs:
+
+- a Git checkout of Foretoken, plus Docker, GNU Make, Helm, and kubectl;
+- kubectl configured for the target cluster;
+- access to the Git submodule, container base images, and a vLLM Python runtime image compatible with this source revision.
+
+The cluster needs:
+
+- Kubernetes 1.29+, GPU nodes, and cluster-scoped installation permissions;
+- a working GPU device plugin and node labels that identify the target GPU nodes;
+- Kubernetes Gateway API and a Gateway that accepts `HTTPRoute` resources from `foretoken-demo`;
+- workload nodes that can pull all three Foretoken component images;
+- access to the Qwen model and tokenizer used by the example, unless the runtime already provides those files.
+
+The Quick Start requests 4 CPUs, 48 GiB of memory, and one GPU by default. Adjust `examples/quickstart/model.yaml` first when the cluster cannot schedule those resources.
+
+> The chart currently applies `imagePullSecrets` only to the control-plane Pod. Frontend and model-server Pods created by Foretoken do not inherit those Secrets; when using a private registry, ensure the workload nodes already have pull access.
 
 ### 1. Build and push the images
 
-The first data-plane `make` command initializes the official vLLM submodule and applies the generic Rust API extension required by Foretoken; no manual vLLM edits are needed. The model-server runtime image must provide a compatible vLLM Python runtime.
+The first data-plane image build prepares the vLLM source used by Foretoken. `VLLM_RUNTIME_IMAGE` must provide Python and `vllm.entrypoints.cli.main`, and it must be compatible with the current source revision.
 
 ```bash
 REGISTRY=registry.example.com/foretoken
@@ -62,20 +81,24 @@ docker push "${REGISTRY}/frontend:dev"
 docker push "${REGISTRY}/model-server:dev"
 ```
 
-To initialize the source before building, run `git submodule update --init data-plane/third_party/vllm`. All workload nodes must be able to pull the three pushed images without per-Pod registry credentials.
-
 ### 2. Configure the platform
 
-Copy the example and replace the three image paths, Gateway parent, and GPU profile with values that exist in your cluster:
+Copy the example configuration:
 
 ```bash
 cp deploy/platform-values.example.yaml /tmp/foretoken-platform-values.yaml
 ${EDITOR:-vi} /tmp/foretoken-platform-values.yaml
 ```
 
-If `kubectl get runtimeclass` shows a GPU runtime such as `nvidia`, set `runtime.vllm.accelerator.runtimeClassName` to that name. Leave it empty when the cluster injects GPU devices without a RuntimeClass.
+Set:
 
-This is a one-time platform configuration. Model authors do not repeat it for each service.
+- the control-plane, frontend, and model-server image references;
+- the Gateway name and namespace, plus `sectionName` when a specific listener must be selected;
+- the GPU type, Kubernetes GPU resource name, and node selector.
+
+If `kubectl get runtimeclass` lists a GPU RuntimeClass such as `nvidia`, set `runtime.vllm.accelerator.runtimeClassName` to that name. Leave it empty when the cluster provides GPUs without a RuntimeClass.
+
+These are platform-level settings; service operators do not repeat them for each model.
 
 ### 3. Install Foretoken
 
@@ -88,27 +111,27 @@ helm upgrade --install foretoken ./deploy/charts/foretoken \
   --timeout=5m
 ```
 
-The Chart rejects an incomplete frontend, Gateway, or GPU runtime profile before creating the control-plane Deployment.
-
 ### 4. Deploy the example service
 
-Before applying the example, replace `foretoken.example.com` in `examples/quickstart/frontend.yaml` with a hostname accepted by the configured Gateway listener. Then submit the namespace, frontend, and model service together:
+Replace `foretoken.example.com` in `examples/quickstart/frontend.yaml` with a hostname served by the selected Gateway listener, then deploy the example:
 
 ```bash
 kubectl apply --server-side -k examples/quickstart
 ```
 
-Foretoken creates and manages the underlying Pools, Groups, Deployments, Services, routes, and runtime configuration.
+The example creates one `FrontendService` and one `ModelService` in `foretoken-demo`. Foretoken uses them to create the frontend route and model-serving workloads.
 
 ### 5. Wait for readiness and send a request
 
+Wait for the model backend before waiting for the frontend and route:
+
 ```bash
-kubectl wait frontendservice/quickstart-frontend \
+kubectl wait modelservice/quickstart-qwen3-0.6b \
   --for=condition=Ready \
   --namespace foretoken-demo \
   --timeout=15m
 
-kubectl wait modelservice/quickstart-qwen3-0.6b \
+kubectl wait frontendservice/quickstart-frontend \
   --for=condition=Ready \
   --namespace foretoken-demo \
   --timeout=15m
@@ -121,17 +144,28 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-`FrontendService` becomes Ready after its Deployment is available, its HTTPRoute is accepted by the Gateway, and a routable backend is installed. `ModelService` becomes Ready after its requested ModelGroups can serve requests.
+Change `https` to the actual `http` or `https` scheme used by the Gateway listener. `ModelService` Ready means the model backend can serve requests. `FrontendService` Ready means its replicas, Gateway route, and routable backend are available.
+
+If either wait command times out, inspect status and events first:
+
+```bash
+kubectl describe modelservice/quickstart-qwen3-0.6b -n foretoken-demo
+kubectl describe frontendservice/quickstart-frontend -n foretoken-demo
+```
+
+## Benchmarking
+
+[Foretoken Benchmark](benchmarks/README.md) can test an existing OpenAI-compatible service or temporarily deploy services into a Kubernetes cluster with the Foretoken control plane installed. Managed mode also needs a usable StorageClass, a benchmark image, and a Gateway that accepts `HTTPRoute` resources from temporary namespaces.
 
 ## Stop and Uninstall
 
-Delete serving intent first so Foretoken can stop and clean up the resources it owns:
+Delete the example `FrontendService` and `ModelService` first. Their controllers remove the workloads they manage and preserve the configured drain time for model groups:
 
 ```bash
 kubectl delete --wait=true --timeout=10m -k examples/quickstart
 ```
 
-Then uninstall the platform release:
+Then uninstall the platform:
 
 ```bash
 helm uninstall foretoken \
@@ -139,7 +173,7 @@ helm uninstall foretoken \
   --wait --timeout=5m
 ```
 
-Foretoken CRDs are preserved during a normal uninstall. Delete them explicitly only after all Foretoken custom resources have been removed:
+A normal uninstall preserves Foretoken CRDs. Delete these cluster-scoped API definitions only after confirming that all Foretoken custom resources have been removed:
 
 ```bash
 kubectl delete crd \
@@ -154,6 +188,8 @@ kubectl delete crd \
 
 ## Related Projects
 
+Foretoken currently uses vLLM as its inference backend. The following projects provide related production-inference and Kubernetes-orchestration approaches:
+
 - [vLLM](https://github.com/vllm-project/vllm)
 - [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo)
 - [llm-d](https://github.com/llm-d/llm-d)
@@ -162,9 +198,7 @@ kubectl delete crd \
 
 ## Contributing
 
-Contributions to deployment baselines, hardware support, benchmarking, routing and autoscaling algorithms, tests, and documentation are welcome. Performance-related changes should include the test setup, raw results, and reproducible commands.
-
-See [Contributing to Foretoken](CONTRIBUTING.md) for development principles, collaboration expectations, and the pull request workflow.
+Contributions are welcome. For development setup, contribution expectations, and reproducibility requirements for performance changes, see [Contributing to Foretoken](CONTRIBUTING.md).
 
 ## License
 

@@ -515,7 +515,3 @@ fn placement(medium: Option<&Value>, locality: Option<&Value>) -> Option<KvPlace
     };
     Some(KvPlacement { tier, locality })
 }
-
-#[cfg(test)]
-#[path = "tests/kv_event_adapter.rs"]
-mod tests;

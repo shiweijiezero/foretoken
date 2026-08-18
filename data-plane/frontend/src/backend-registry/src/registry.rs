@@ -358,7 +358,3 @@ async fn telemetry(client: &reqwest::Client, endpoint: &str) -> Option<Telemetry
 async fn ready(client: &reqwest::Client, endpoint: &str) -> bool {
     matches!(client.get(format!("{}/readyz",endpoint.trim_end_matches('/'))).send().await,Ok(response) if response.status().is_success())
 }
-
-#[cfg(test)]
-#[path = "tests/registry.rs"]
-mod tests;

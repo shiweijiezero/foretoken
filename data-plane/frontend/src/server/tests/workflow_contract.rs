@@ -1,21 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+mod support;
+
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use axum::{Json, Router, routing::get};
+use foretoken_chat::ParserSelection;
 use foretoken_llm_facade::{LlmFacade, LlmFacadeError, LlmFacadeResolver, TokenStream};
 use foretoken_model_protocol::{ModelServerRole, RouteStage};
 use foretoken_router::{
-    RouteDecision, RouteError, RouteSession, RouteTargetId, RouteTargetSet, ScalingTarget,
-    ScalingTargetKind,
+    RouteDecision, RouteError, RouteSession, RouteTargetId, RouteTargetSet, Router as RouteRouter,
+    RouterRequest, ScalingTarget, ScalingTargetKind,
 };
+use foretoken_server::{
+    Generation, GenerationError, GenerationRequest, RuntimeControl, RuntimeGeneration, RuntimeState,
+};
+use foretoken_text::{Prompt, SamplingParams, TextDecodeOptions};
 use tokio::net::TcpListener;
 use vllm_llm::{FinishReason, GenerateOutput, GeneratePromptInfo, GenerateRequest};
 
-use crate::GenerationError;
-use crate::runtime::workflow::execute_workflow;
+use support::test_runtime;
 
 struct WorkflowSession {
     encoder: RouteDecision,
@@ -47,6 +54,23 @@ impl RouteSession for WorkflowSession {
     }
 }
 
+struct WorkflowRouter {
+    encoder: RouteDecision,
+    prefill: RouteDecision,
+    decode: RouteDecision,
+}
+
+impl RouteRouter for WorkflowRouter {
+    fn start(&self, _: RouterRequest) -> Box<dyn RouteSession> {
+        Box::new(WorkflowSession {
+            encoder: self.encoder.clone(),
+            prefill: self.prefill.clone(),
+            decode: self.decode.clone(),
+            stage: 0,
+        })
+    }
+}
+
 struct StageFacade {
     stage: &'static str,
     target_id: String,
@@ -57,13 +81,14 @@ struct StageFacade {
 #[async_trait]
 impl LlmFacade for StageFacade {
     async fn generate(&self, request: GenerateRequest) -> Result<TokenStream, LlmFacadeError> {
-        let queued = foretoken_metrics::autoscaling_telemetry()
-            .targets
-            .iter()
-            .any(|value| value.target.target_id == self.target_id && value.queued_requests == 1);
         assert!(
-            queued,
-            "{} generate must run while its target is queued",
+            foretoken_metrics::autoscaling_telemetry()
+                .targets
+                .iter()
+                .any(|target| {
+                    target.target.target_id == self.target_id && target.queued_requests == 1
+                }),
+            "{} generation must run while admitted to its scaling target",
             self.stage
         );
         self.calls
@@ -126,6 +151,21 @@ impl LlmFacadeResolver for WorkflowResolver {
     }
 }
 
+struct ReadyControl;
+
+#[async_trait]
+impl RuntimeControl for ReadyControl {
+    async fn refresh_backend_readiness(&self) {}
+
+    fn configured_models(&self) -> Vec<String> {
+        vec!["model".into()]
+    }
+
+    fn is_ready(&self) -> bool {
+        true
+    }
+}
+
 fn decision(id: &str, role: ModelServerRole, data_parallel_rank: u32) -> RouteDecision {
     RouteDecision {
         route_target_id: RouteTargetId::new(id),
@@ -136,20 +176,21 @@ fn decision(id: &str, role: ModelServerRole, data_parallel_rank: u32) -> RouteDe
     }
 }
 
-fn request() -> GenerateRequest {
-    GenerateRequest {
+fn request() -> GenerationRequest {
+    GenerationRequest {
+        model: "model".into(),
         request_id: "workflow-request".into(),
-        prompt_token_ids: vec![1],
-        sampling_params: Default::default(),
-        mm_features: None,
-        arrival_time: None,
-        cache_salt: None,
-        trace_headers: None,
+        revision: None,
+        prompt: Prompt::Text("hello".into()),
+        sampling_params: SamplingParams::default(),
+        decode_options: TextDecodeOptions::default(),
+        intermediate: false,
         priority: 0,
-        data_parallel_rank: None,
+        cache_salt: None,
         session_id: None,
-        reasoning_parser_kwargs: None,
-        lora_request: None,
+        arrival_time: None,
+        tool_call_parser: ParserSelection::None,
+        reasoning_parser: ParserSelection::None,
     }
 }
 
@@ -167,44 +208,49 @@ async fn bootstrap_endpoint() -> (String, tokio::task::JoinHandle<()>) {
 }
 
 #[tokio::test]
-async fn workflow_orders_epd_tracks_admission_and_aborts_every_child_on_decode_failure() {
+async fn runtime_workflow_aborts_every_started_stage_after_decode_admission_fails() {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let aborts = Arc::new(Mutex::new(Vec::new()));
     let (bootstrap, bootstrap_task) = bootstrap_endpoint().await;
-    let make_facade = |stage: &'static str, target_id: &str| -> Arc<dyn LlmFacade> {
+    let facade = |stage: &'static str| -> Arc<dyn LlmFacade> {
         Arc::new(StageFacade {
             stage,
-            target_id: target_id.into(),
+            target_id: "workflow-service".into(),
             calls: calls.clone(),
             aborts: aborts.clone(),
         })
     };
-    let resolver = WorkflowResolver {
-        encoder: make_facade("encoder", "workflow-service"),
-        prefill: make_facade("prefill", "workflow-service"),
-        decode: make_facade("decode", "workflow-service"),
-        bootstrap,
-    };
+    let encoder = decision("encoder", ModelServerRole::Encoder, 0);
+    let prefill = decision("prefill", ModelServerRole::Prefill, 1);
+    let decode = decision("decode", ModelServerRole::Decode, 2);
     let targets = RouteTargetSet::new(vec![ScalingTarget {
         service_uid: "workflow-service".into(),
         name: "epd".into(),
         uid: "workflow-service".into(),
         kind: ScalingTargetKind::EPDPipelineScope,
     }]);
-    foretoken_metrics::register_targets(&targets);
-    let _queue = foretoken_metrics::QueueGuard::new(&targets);
-    let mut session = WorkflowSession {
-        encoder: decision("encoder", ModelServerRole::Encoder, 0),
-        prefill: decision("prefill", ModelServerRole::Prefill, 1),
-        decode: decision("decode", ModelServerRole::Decode, 2),
-        stage: 0,
-    };
+    let state = RuntimeState::new(
+        BTreeMap::from([("model".into(), test_runtime("r1"))]),
+        Arc::new(WorkflowRouter {
+            encoder: encoder.clone(),
+            prefill: prefill.clone(),
+            decode: decode.clone(),
+        }),
+        Arc::new(WorkflowResolver {
+            encoder: facade("encoder"),
+            prefill: facade("prefill"),
+            decode: facade("decode"),
+            bootstrap,
+        }),
+    )
+    .with_logical_targets(BTreeMap::from([("model".into(), targets)]));
+    let generation = RuntimeGeneration::new();
+    assert!(generation.replace_state(1, Arc::new(state), Arc::new(ReadyControl)));
 
     assert!(matches!(
-        execute_workflow(&resolver, &mut session, request()).await,
+        generation.generate(request()).await,
         Err(GenerationError::Unavailable)
     ));
-    drop(_queue);
     assert_eq!(
         *calls.lock().unwrap(),
         [
@@ -212,14 +258,6 @@ async fn workflow_orders_epd_tracks_admission_and_aborts_every_child_on_decode_f
             "prefill:workflow-request/prefill",
             "decode:workflow-request/decode",
         ]
-    );
-    assert!(
-        foretoken_metrics::autoscaling_telemetry()
-            .targets
-            .iter()
-            .any(|value| {
-                value.target.target_id == "workflow-service" && value.queued_requests == 0
-            })
     );
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         loop {
@@ -240,5 +278,13 @@ async fn workflow_orders_epd_tracks_admission_and_aborts_every_child_on_decode_f
     })
     .await
     .unwrap();
+    assert!(
+        foretoken_metrics::autoscaling_telemetry()
+            .targets
+            .iter()
+            .any(|target| {
+                target.target.target_id == "workflow-service" && target.queued_requests == 0
+            })
+    );
     bootstrap_task.abort();
 }

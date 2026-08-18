@@ -187,7 +187,7 @@ mod tests {
     }
 
     #[test]
-    fn calculates_a_router_selected_window_from_cumulative_snapshots() {
+    fn derives_rates_and_latency_from_cumulative_windows() {
         let mut history = RouteTargetStatsHistory::new(Duration::from_secs(300));
         history.push(snapshot(1_000, 100, histogram(2, 0.2, 1)));
         history.push(snapshot(151_000, 400, histogram(4, 0.8, 2)));
@@ -197,17 +197,13 @@ mod tests {
         assert_eq!(stats.prompt_tokens_per_second, Some(2.0));
         assert_eq!(stats.generation_tokens_per_second, Some(1.0));
         assert_eq!(stats.ttft.unwrap().p95_ms, Some(500.0));
-    }
 
-    #[test]
-    fn keeps_average_when_p95_exceeds_the_largest_bucket() {
-        let mut history = RouteTargetStatsHistory::new(Duration::from_secs(300));
-        history.push(snapshot(1_000, 100, histogram(1, 0.1, 1)));
-        let mut overflow = histogram(2, 1.1, 1);
-        overflow.buckets[1].count = 1;
-        history.push(snapshot(151_000, 400, overflow));
-
-        let latency = history
+        let mut overflow = RouteTargetStatsHistory::new(Duration::from_secs(300));
+        overflow.push(snapshot(1_000, 100, histogram(1, 0.1, 1)));
+        let mut current = histogram(2, 1.1, 1);
+        current.buckets[1].count = 1;
+        overflow.push(snapshot(151_000, 400, current));
+        let latency = overflow
             .stats(Duration::from_secs(150))
             .unwrap()
             .ttft
@@ -217,24 +213,19 @@ mod tests {
     }
 
     #[test]
-    fn clears_history_when_a_histogram_cumulative_value_resets() {
-        let mut history = RouteTargetStatsHistory::new(Duration::from_secs(300));
-        history.push(snapshot(1_000, 100, histogram(10, 5.0, 8)));
-        history.push(snapshot(151_000, 400, histogram(10, 1.0, 2)));
+    fn rejects_incomplete_windows_and_counter_resets() {
+        let mut incomplete = RouteTargetStatsHistory::new(Duration::from_secs(300));
+        incomplete.push(snapshot(100_000, 100, histogram(1, 0.1, 1)));
+        incomplete.push(snapshot(200_000, 200, histogram(2, 0.2, 2)));
+        assert!(incomplete.stats(Duration::from_secs(150)).is_none());
 
-        assert!(history.stats(Duration::from_secs(150)).is_none());
+        let mut reset = RouteTargetStatsHistory::new(Duration::from_secs(300));
+        reset.push(snapshot(1_000, 100, histogram(10, 5.0, 8)));
+        reset.push(snapshot(151_000, 400, histogram(10, 1.0, 2)));
+        assert!(reset.stats(Duration::from_secs(150)).is_none());
         assert!(histogram_reset(
             &histogram(10, 5.0, 8),
             &histogram(10, 5.0, 7),
         ));
-    }
-
-    #[test]
-    fn returns_none_until_the_requested_window_is_available() {
-        let mut history = RouteTargetStatsHistory::new(Duration::from_secs(300));
-        history.push(snapshot(100_000, 100, histogram(1, 0.1, 1)));
-        history.push(snapshot(200_000, 200, histogram(2, 0.2, 2)));
-
-        assert!(history.stats(Duration::from_secs(150)).is_none());
     }
 }

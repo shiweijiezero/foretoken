@@ -10,12 +10,28 @@
 +    pub fn with_model_dtype(backend: DynChatBackend, model_dtype: ModelDtype) -> Self {
 +        Self::new(backend, model_dtype)
      }
- 
+
      /// Create a render-only processor that rejects multimodal requests.
-@@ -227,6 +232,20 @@
-         let text_request = self.prepare_text_request(request).await?;
-         Ok((text_request, output_processor))
-     }
+@@ -214,16 +219,28 @@
+     /// Prepare one chat request without submitting it to an engine.
+     pub async fn prepare(
+         &self,
+-        mut request: ChatRequest,
++        request: ChatRequest,
+     ) -> Result<(TextRequest, DynChatOutputProcessor)> {
+-        request.validate()?;
+-        let output_processor = self.backend.new_chat_output_processor(
+-            &mut request,
++        self.prepare_with_options(
++            request,
+             NewChatOutputProcessorOptions {
+                 tool_call_parser: &self.tool_call_parser,
+                 reasoning_parser: &self.reasoning_parser,
+             },
+-        )?;
++        )
++        .await
++    }
 +
 +    /// Prepare one request with parser selections supplied by the caller.
 +    pub async fn prepare_with_options(
@@ -27,9 +43,6 @@
 +        let output_processor = self
 +            .backend
 +            .new_chat_output_processor(&mut request, options)?;
-+        let text_request = self.prepare_text_request(request).await?;
-+        Ok((text_request, output_processor))
-+    }
- }
- 
- /// Structured chat facade above [`TextLlm`].
+         let text_request = self.prepare_text_request(request).await?;
+         Ok((text_request, output_processor))
+     }

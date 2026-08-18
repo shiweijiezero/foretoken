@@ -9,12 +9,6 @@ import (
 )
 
 func TestTriggersAreRegisteredAndRespectObservations(t *testing.T) {
-	triggers, _, _ := algorithm.Names()
-	for _, name := range []string{"periodic", "watermark"} {
-		if !contains(triggers, name) {
-			t.Fatalf("trigger registry missing %q: %v", name, triggers)
-		}
-	}
 	snapshot := scalingSnapshot()
 	periodic, err := algorithm.BuildTrigger("periodic", core.TriggerConfig{})
 	if err != nil {

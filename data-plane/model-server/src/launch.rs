@@ -458,7 +458,3 @@ fn validate_extra_args(args: &[String]) -> Result<(), String> {
     }
     Ok(())
 }
-
-#[cfg(test)]
-#[path = "tests/launch.rs"]
-mod tests;

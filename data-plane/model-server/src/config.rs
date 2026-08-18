@@ -59,7 +59,3 @@ fn required(values: &HashMap<String, String>, name: &str) -> Result<String, Stri
         .cloned()
         .ok_or_else(|| format!("{name} must be set by the ModelGroup controller"))
 }
-
-#[cfg(test)]
-#[path = "tests/config.rs"]
-mod tests;

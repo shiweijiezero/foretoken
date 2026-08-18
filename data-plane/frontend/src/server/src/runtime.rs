@@ -141,7 +141,7 @@ pub struct RuntimeDiagnostics {
 #[async_trait]
 pub trait RuntimeControl: Send + Sync {
     async fn refresh_backend_readiness(&self);
-    fn healthy_models(&self) -> Vec<String>;
+    fn configured_models(&self) -> Vec<String>;
     fn is_ready(&self) -> bool;
     fn kv_index_diagnostics(&self) -> KvIndexDiagnostics {
         KvIndexDiagnostics {
@@ -340,10 +340,10 @@ impl RuntimeGeneration {
         }
     }
 
-    pub fn models(&self) -> Vec<String> {
+    pub fn configured_models(&self) -> Vec<String> {
         self.slot
             .load_full()
-            .map(|slot| slot.control.healthy_models())
+            .map(|slot| slot.control.configured_models())
             .unwrap_or_default()
     }
 

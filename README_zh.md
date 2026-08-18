@@ -4,46 +4,65 @@
 
 Foretoken 是一个面向 SLO/SLA 的 Kubernetes 原生 GPU 生成式推理编排框架。
 
-Foretoken 当前基于 vLLM，把模型运行时组织成一套具备请求路由、自动扩缩容、滚动更新、优雅排空和性能评测能力的服务。我们希望将推理集群转化为 Token 工厂，把算力持续转化为满足延迟和质量要求的 token。
+Foretoken 把多个模型推理实例组织成一套集群服务，负责请求路由、自动扩缩容、实例更新与排空和性能评测。当前支持 vLLM 后端。
+
+我们希望将推理集群转化为 Token 工厂，把算力持续转化为满足延迟要求的 token。
+
+```text
+资源管理：ModelService → ModelPool → ModelGroup
+请求路径：Client → Gateway → FrontendService → ModelGroup → model-server / vLLM
+```
 
 ## 什么时候需要 Foretoken
 
-- 在多 GPU 或多节点上运行一种或多种模型。
-- 根据健康状态、当前负载和可选 KV Cache 信号路由请求。
-- 根据 frontend 队列和 model-server 活跃请求自动扩缩模型容量。
-- 探索聚合部署、Prefill/Decode 分离和不同并行策略。
-- 通过平台配置的 vLLM GPU runtime profile 管理运行时与节点调度。
+- 在 Kubernetes 集群中统一管理一个或多个模型服务。
+- 根据模型实例的健康状态、负载和 KV Cache 复用机会路由请求。
+- 启用自动扩缩容后，根据等待处理和正在执行的请求数量增减模型服务容量。
+- 探索聚合式推理、Prefill/Decode 分离和不同并行策略。
 
 如果只在单个 GPU 上运行一个模型，直接使用 vLLM 通常就够了。
 
-## 功能与进展
+## 当前能力
 
-| 功能 | 说明 | 状态 |
-|---|---|---|
-| Kubernetes 控制面 | ModelService、ModelPool、ModelGroup、滚动更新、扩缩和优雅排空 | 开发中 |
-| 请求路由 | 将 lowering 后的请求路由到兼容且健康的 ModelGroup | 开发中 |
-| vLLM 集成 | 复用 vLLM Rust 的 tokenization、lowering、EngineCore client、stream 和 detokenization | 开发中 |
-| [评测](benchmarks/README_zh.md) | 测试已有 endpoint，或在 Kubernetes 中临时部署后压测，统计延迟、TTFT、TPOT 和吞吐 | 开发中 |
-| GPU 支持 | 平台配置的 vLLM runtime、GPU 资源与节点调度 profile | 开发中 |
-| 分布式推理 | 聚合部署已实现；Prefill/Decode 分离仍在实验和验证中 | 研究中 |
-| 可观测性 | frontend 指标与自动扩缩遥测；仪表盘、分布式追踪和告警仍在规划中 | 开发中 |
+Foretoken 仍处于开发阶段，接口和部署配置可能继续调整。
 
-## 快速开始
+| 能力 | 说明 |
+|---|---|
+| 服务管理 | 根据 `ModelService` 创建并管理模型工作负载，支持扩缩、更新和排空 |
+| 请求路由 | 根据模型、健康状态和配置的路由策略选择可用的 `ModelGroup` |
+| 自动扩缩容 | 根据请求队列和正在执行的请求调整完整 `ModelGroup` 数量 |
+| 数据面 | 提供 OpenAI 兼容接口，处理请求、选择后端并返回流式或非流式响应 |
+| [性能评测](benchmarks/README_zh.md) | 测试已有服务，或在 Kubernetes 中临时部署 Foretoken 服务后进行负载测试 |
+| 分布式推理 | 聚合式推理已实现；Prefill/Decode 分离仍在实验和验证中 |
+| 可观测性 | frontend 提供运行指标；仪表盘、分布式追踪和告警仍在规划中 |
 
-Foretoken 作为一套完整的 Kubernetes 系统运行。平台管理员只需安装一次控制面；服务用户通过 `FrontendService` 和 `ModelService` 部署服务，不需要分别启动底层进程。
+## 从源码部署
 
-首个 OCI Chart 和配套组件镜像尚未发布。当前源码版本使用本地 Chart，以及集群中每个节点都能拉取的三张组件镜像。
+以下流程使用仓库中的 Helm Chart，并将 control-plane、frontend 和 model-server 三张镜像推送到集群能够拉取的 registry。平台管理员只需安装一次控制面；服务使用者随后创建 `FrontendService` 和 `ModelService`，无需直接部署 frontend 或 model-server。
 
 ### 前置条件
 
-- Kubernetes 1.29+，具备 GPU 节点和集群级安装权限；
-- 可用的 GPU device plugin，以及 runtime profile 使用的节点标签；
-- Kubernetes Gateway API，以及允许 `foretoken-demo` 挂载 Route 的 Gateway；
-- 集群工作负载可以拉取镜像的 registry。
+构建机器需要：
+
+- 通过 Git 获取的 Foretoken 源码，以及 Docker、GNU Make、Helm 和 kubectl；
+- kubectl 已连接目标集群；
+- 能够访问 Git submodule、容器基础镜像，以及一张与当前源码兼容的 vLLM Python runtime 镜像。
+
+集群需要：
+
+- Kubernetes 1.29+、GPU 节点和集群级安装权限；
+- 可用的 GPU device plugin，以及能够识别目标 GPU 节点的标签；
+- Kubernetes Gateway API，以及允许 `foretoken-demo` 命名空间创建 `HTTPRoute` 的 Gateway；
+- 工作负载节点能够拉取 Foretoken 的三张组件镜像；
+- 能够下载示例使用的 Qwen 模型和 tokenizer，或已通过运行环境提供这些文件。
+
+Quick Start 默认请求 4 个 CPU、48 GiB 内存和 1 个 GPU。资源不足时，请先调整 `examples/quickstart/model.yaml`。
+
+> Chart 的 `imagePullSecrets` 当前只用于 control-plane。Foretoken 创建的 frontend 和 model-server Pod 不会继承这些 Secret；使用私有 registry 时，请确保工作负载节点已经具备拉取权限。
 
 ### 1. 构建并推送镜像
 
-第一次执行 data-plane 的 `make` 命令时，会自动初始化官方 vLLM submodule，并应用 Foretoken 所需的通用 Rust API 扩展，不需要手动修改 vLLM。model-server 的运行时镜像必须包含兼容的 vLLM Python runtime。
+首次执行 data-plane 镜像构建命令时，Makefile 会自动准备 Foretoken 使用的 vLLM 源码。`VLLM_RUNTIME_IMAGE` 必须包含 Python 和 `vllm.entrypoints.cli.main`，并与当前源码兼容。
 
 ```bash
 REGISTRY=registry.example.com/foretoken
@@ -62,20 +81,24 @@ docker push "${REGISTRY}/frontend:dev"
 docker push "${REGISTRY}/model-server:dev"
 ```
 
-想在构建前准备好源码，可以先执行 `git submodule update --init data-plane/third_party/vllm`。集群的所有工作负载节点都必须能拉取这三张镜像，且当前运行时不注入 Pod 级 registry 凭据。
-
 ### 2. 配置平台
 
-复制示例文件，并将三张镜像、Gateway parent 和 GPU profile 替换为集群中的真实配置：
+复制示例配置：
 
 ```bash
 cp deploy/platform-values.example.yaml /tmp/foretoken-platform-values.yaml
 ${EDITOR:-vi} /tmp/foretoken-platform-values.yaml
 ```
 
-如果 `kubectl get runtimeclass` 能看到 `nvidia` 等 GPU runtime，请将 `runtime.vllm.accelerator.runtimeClassName` 填为对应名称；如果集群不依赖 RuntimeClass 注入 GPU 设备，则保持为空。
+在文件中设置：
 
-这是平台管理员的一次性配置，不需要模型服务用户为每个服务重复填写。
+- control-plane、frontend 和 model-server 的镜像地址；
+- Gateway 的名称、namespace，以及需要指定具体 listener 时使用的 `sectionName`；
+- GPU 类型、Kubernetes GPU resource name 和 node selector。
+
+如果 `kubectl get runtimeclass` 能看到 `nvidia` 等 GPU RuntimeClass，请将 `runtime.vllm.accelerator.runtimeClassName` 设置为对应名称；如果集群不依赖 RuntimeClass 提供 GPU，则保持为空。
+
+这些是平台级配置，不需要为每个模型服务重复填写。
 
 ### 3. 安装 Foretoken
 
@@ -88,27 +111,27 @@ helm upgrade --install foretoken ./deploy/charts/foretoken \
   --timeout=5m
 ```
 
-如果 frontend、Gateway 或 GPU runtime profile 不完整，Chart 会在创建控制面 Deployment 前给出明确错误。
-
 ### 4. 部署示例服务
 
-应用示例前，先将 `examples/quickstart/frontend.yaml` 中的 `foretoken.example.com` 替换为配置的 Gateway listener 接受的真实域名。然后一次性提交 namespace、frontend 和模型服务：
+将 `examples/quickstart/frontend.yaml` 中的 `foretoken.example.com` 替换为目标 Gateway listener 服务的域名，然后部署示例：
 
 ```bash
 kubectl apply --server-side -k examples/quickstart
 ```
 
-Foretoken 会自动创建并管理底层 Pool、Group、Deployment、Service、路由和运行时配置。
+示例会在 `foretoken-demo` 命名空间中创建一个 `FrontendService` 和一个 `ModelService`。Foretoken 会据此创建前端路由和模型推理工作负载。
 
 ### 5. 等待就绪并发送请求
 
+先等待模型后端，再等待前端和路由：
+
 ```bash
-kubectl wait frontendservice/quickstart-frontend \
+kubectl wait modelservice/quickstart-qwen3-0.6b \
   --for=condition=Ready \
   --namespace foretoken-demo \
   --timeout=15m
 
-kubectl wait modelservice/quickstart-qwen3-0.6b \
+kubectl wait frontendservice/quickstart-frontend \
   --for=condition=Ready \
   --namespace foretoken-demo \
   --timeout=15m
@@ -121,11 +144,22 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-frontend Deployment 可用、HTTPRoute 被 Gateway 接受且安装了可路由后端后，`FrontendService` 进入 Ready。请求的 ModelGroup 可以提供服务后，`ModelService` 进入 Ready。
+请根据 Gateway listener 将 `https` 改为实际使用的 `http` 或 `https`。`ModelService` 进入 Ready 表示模型后端已经可以服务请求；`FrontendService` 进入 Ready 表示前端副本、Gateway 路由和可路由后端都已可用。
+
+如果等待超时，可以先查看状态和事件：
+
+```bash
+kubectl describe modelservice/quickstart-qwen3-0.6b -n foretoken-demo
+kubectl describe frontendservice/quickstart-frontend -n foretoken-demo
+```
+
+## 性能评测
+
+[Foretoken Benchmark](benchmarks/README_zh.md) 可以测试已有的 OpenAI 兼容服务，也可以在已安装 Foretoken 控制面的 Kubernetes 集群中临时部署服务后进行测试。托管模式还需要可用的 StorageClass、Benchmark 镜像，以及允许临时命名空间创建 `HTTPRoute` 的 Gateway。
 
 ## 停止与卸载
 
-先删除服务意图，让 Foretoken 停止并清理所辖资源：
+先删除示例中的 `FrontendService` 和 `ModelService`。控制器会清理它们所管理的工作负载，并为模型组保留配置的排空时间：
 
 ```bash
 kubectl delete --wait=true --timeout=10m -k examples/quickstart
@@ -139,7 +173,7 @@ helm uninstall foretoken \
   --wait --timeout=5m
 ```
 
-正常卸载时会保留 Foretoken CRD。只有在全部 Foretoken 自定义资源清理完成后，才应显式删除 CRD：
+正常卸载会保留 Foretoken CRD。只有确认所有 Foretoken 自定义资源都已删除后，才应删除这些集群级 API 定义：
 
 ```bash
 kubectl delete crd \
@@ -154,6 +188,8 @@ kubectl delete crd \
 
 ## 相关项目
 
+Foretoken 当前使用 vLLM 作为推理后端。以下项目提供相关的生产推理和 Kubernetes 编排方案：
+
 - [vLLM](https://github.com/vllm-project/vllm)
 - [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo)
 - [llm-d](https://github.com/llm-d/llm-d)
@@ -162,9 +198,7 @@ kubectl delete crd \
 
 ## 贡献
 
-欢迎贡献部署基线、硬件适配、Benchmark、路由和自动扩缩算法、测试及文档。性能相关变更需要附上测试条件、原始结果和可重复执行的命令。
-
-开发原则、协作约定和 Pull Request 流程见 [《为 Foretoken 做贡献》](CONTRIBUTING_zh.md)。
+欢迎贡献。开发环境、协作约定，以及性能变更的可复现性要求见 [《为 Foretoken 做贡献》](CONTRIBUTING_zh.md)。
 
 ## 许可证
 

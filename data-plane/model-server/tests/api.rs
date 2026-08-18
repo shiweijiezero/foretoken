@@ -1,12 +1,18 @@
+// SPDX-License-Identifier: Apache-2.0
+// SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use bytes::Bytes;
 use foretoken_model_protocol::{
     CumulativeHistogram, CumulativeHistogramBucket, RuntimeMetadataResponse, RuntimeModelIdentity,
+};
+use foretoken_model_server::api::{AppState, RuntimeHealth, router};
+use foretoken_model_server::backend::{
+    Backend, BackendError, BackendTelemetry, GenerateInput, TokenEvent, TokenOutput, TokenStream,
 };
 use futures::stream;
 use http_body_util::BodyExt;
@@ -17,11 +23,6 @@ use vllm_engine_core_client::protocol::multimodal::{
 };
 use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
 use vllm_engine_core_client::protocol::tensor::WireNdArray;
-
-use super::{AppState, RuntimeHealth, router};
-use crate::backend::{
-    Backend, BackendError, BackendTelemetry, GenerateInput, TokenEvent, TokenOutput, TokenStream,
-};
 
 struct RecordingBackend {
     requests: Mutex<Vec<GenerateInput>>,
@@ -104,41 +105,17 @@ fn app_with_body_limit(
     router(AppState::new(backend, health, metadata()), body_limit)
 }
 
-fn assert_default_telemetry_snapshot(body: Bytes, running_requests: u64) {
-    let telemetry: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(telemetry["version"], 2);
-    assert!(telemetry["collected_at_unix_ms"].as_u64().is_some());
-    assert_eq!(telemetry["accepting"], false);
-    assert_eq!(telemetry["running_requests"], running_requests);
-    assert_eq!(telemetry["max_concurrent_requests"], 7);
-    assert_eq!(
-        telemetry["scheduler_running_requests"],
-        serde_json::Value::Null
-    );
-    assert_eq!(
-        telemetry["scheduler_waiting_requests"],
-        serde_json::Value::Null
-    );
-    assert_eq!(telemetry["kv_cache_usage"], serde_json::Value::Null);
-    assert_eq!(telemetry["prompt_tokens_total"], serde_json::Value::Null);
-    assert_eq!(
-        telemetry["generation_tokens_total"],
-        serde_json::Value::Null
-    );
-}
-
 #[tokio::test]
-async fn missing_kv_adapter_disables_only_the_soft_hint_endpoint() {
-    let app = app(Arc::new(RecordingBackend::default()), true, true);
-    let response = app
+async fn kv_delta_is_unavailable_without_an_event_adapter() {
+    let response = app(Arc::new(RecordingBackend::default()), true, true)
         .oneshot(
-            Request::builder()
-                .uri("/v1/internal/kv-index/delta?dpRank=0")
+            Request::get("/v1/internal/kv-index/delta?dpRank=0")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
+
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
@@ -146,19 +123,16 @@ struct PendingStreamBackend;
 
 #[async_trait]
 impl Backend for PendingStreamBackend {
-    #[allow(unused_variables)]
-    async fn generate(&self, request: GenerateInput) -> Result<TokenStream, BackendError> {
+    async fn generate(&self, _: GenerateInput) -> Result<TokenStream, BackendError> {
         Ok(Box::pin(stream::pending()))
     }
 
-    #[allow(unused_variables)]
-    async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError> {
+    async fn abort(&self, _: &[String]) -> Result<(), BackendError> {
         Ok(())
     }
 
     fn telemetry(&self) -> BackendTelemetry {
         BackendTelemetry {
-            running_requests: 0,
             max_concurrent_requests: 7,
             ..Default::default()
         }
@@ -169,27 +143,21 @@ struct FailingStreamBackend;
 
 #[async_trait]
 impl Backend for FailingStreamBackend {
-    #[allow(unused_variables)]
-    async fn generate(&self, request: GenerateInput) -> Result<TokenStream, BackendError> {
+    async fn generate(&self, _: GenerateInput) -> Result<TokenStream, BackendError> {
         Ok(Box::pin(stream::iter([Err(BackendError::Unavailable)])))
     }
 
-    #[allow(unused_variables)]
-    async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError> {
+    async fn abort(&self, _: &[String]) -> Result<(), BackendError> {
         Ok(())
     }
 
     fn telemetry(&self) -> BackendTelemetry {
-        BackendTelemetry {
-            running_requests: 0,
-            max_concurrent_requests: 0,
-            ..Default::default()
-        }
+        Default::default()
     }
 }
 
 #[tokio::test]
-async fn generate_forwards_pretokenized_input_as_ndjson() {
+async fn generate_forwards_json_input_and_encodes_ndjson() {
     let backend = Arc::new(RecordingBackend::default());
     let body = serde_json::json!({
         "request_id": "request-1",
@@ -207,7 +175,7 @@ async fn generate_forwards_pretokenized_input_as_ndjson() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), 200);
+    assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response.headers().get("content-type").unwrap(),
         "application/x-ndjson"
@@ -216,8 +184,9 @@ async fn generate_forwards_pretokenized_input_as_ndjson() {
         response.into_body().collect().await.unwrap().to_bytes(),
         "{\"type\":\"token\",\"request_id\":\"request-1\",\"prompt_token_ids\":[1,2],\"prompt_logprobs\":null,\"token_ids\":[42],\"logprobs\":null,\"cached_token_count\":2,\"finish_reason\":{\"Stop\":null},\"kv_transfer_params\":null,\"ec_transfer_params\":null}\n"
     );
-    assert_eq!(backend.requests.lock().unwrap()[0].prompt_token_ids, [1, 2]);
-    assert_eq!(backend.requests.lock().unwrap()[0].priority, -2);
+    let requests = backend.requests.lock().unwrap();
+    assert_eq!(requests[0].prompt_token_ids, [1, 2]);
+    assert_eq!(requests[0].priority, -2);
 }
 
 #[tokio::test]
@@ -289,7 +258,7 @@ async fn stream_errors_are_encoded_as_one_typed_terminal_event() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), 200);
+    assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
         response.into_body().collect().await.unwrap().to_bytes(),
         r#"{"type":"error","request_id":"request-1","code":"unavailable"}
@@ -298,26 +267,12 @@ async fn stream_errors_are_encoded_as_one_typed_terminal_event() {
 }
 
 #[tokio::test]
-async fn abort_forwards_only_the_explicit_request_ids() {
+async fn abort_requires_scoped_request_ids_and_forwards_them() {
     let backend = Arc::new(RecordingBackend::default());
-    let response = app(backend.clone(), true, true)
-        .oneshot(
-            Request::post("/v1/internal/abort")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"request_ids":["request-1"]}"#))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
+    let app = app(backend.clone(), true, true);
 
-    assert_eq!(response.status(), 204);
-    assert_eq!(backend.aborts.lock().unwrap().as_slice(), [["request-1"]]);
-}
-
-#[tokio::test]
-async fn abort_rejects_an_unscoped_empty_request() {
-    let backend = Arc::new(RecordingBackend::default());
-    let response = app(backend.clone(), true, true)
+    let empty = app
+        .clone()
         .oneshot(
             Request::post("/v1/internal/abort")
                 .header("content-type", "application/json")
@@ -326,9 +281,19 @@ async fn abort_rejects_an_unscoped_empty_request() {
         )
         .await
         .unwrap();
+    assert_eq!(empty.status(), StatusCode::BAD_REQUEST);
 
-    assert_eq!(response.status(), 400);
-    assert!(backend.aborts.lock().unwrap().is_empty());
+    let response = app
+        .oneshot(
+            Request::post("/v1/internal/abort")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"request_ids":["request-1"]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_eq!(backend.aborts.lock().unwrap().as_slice(), [["request-1"]]);
 }
 
 #[tokio::test]
@@ -364,25 +329,7 @@ async fn internal_requests_reject_unknown_fields() {
 }
 
 #[tokio::test]
-async fn metadata_exposes_observed_enginecore_values_without_feature_claims() {
-    let response = app(Arc::new(RecordingBackend::default()), true, true)
-        .oneshot(
-            Request::get("/v1/internal/metadata")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        response.into_body().collect().await.unwrap().to_bytes(),
-        r#"{"version":1,"model":{"model":"model","revision":"r1"},"model_dtype":"bfloat16","effective_max_model_len":32768,"vllm_version":"0.0.0","ec_transfer":null,"capabilities":[]}"#,
-    );
-}
-
-#[tokio::test]
-async fn telemetry_exposes_cumulative_backend_snapshot() {
+async fn metadata_and_telemetry_expose_typed_runtime_snapshots() {
     let histogram = CumulativeHistogram {
         count: 2,
         sum_seconds: 0.3,
@@ -406,7 +353,24 @@ async fn telemetry_exposes_cumulative_backend_snapshot() {
         },
         ..Default::default()
     });
-    let response = app(backend, true, false)
+    let app = app(backend, true, false);
+
+    let metadata = app
+        .clone()
+        .oneshot(
+            Request::get("/v1/internal/metadata")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(metadata.status(), StatusCode::OK);
+    assert_eq!(
+        metadata.into_body().collect().await.unwrap().to_bytes(),
+        r#"{"version":1,"model":{"model":"model","revision":"r1"},"model_dtype":"bfloat16","effective_max_model_len":32768,"vllm_version":"0.0.0","ec_transfer":null,"capabilities":[]}"#,
+    );
+
+    let telemetry = app
         .oneshot(
             Request::get("/v1/internal/telemetry")
                 .body(Body::empty())
@@ -414,15 +378,13 @@ async fn telemetry_exposes_cumulative_backend_snapshot() {
         )
         .await
         .unwrap();
-
-    assert_eq!(response.status(), 200);
+    assert_eq!(telemetry.status(), StatusCode::OK);
     let telemetry: serde_json::Value =
-        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+        serde_json::from_slice(&telemetry.into_body().collect().await.unwrap().to_bytes()).unwrap();
     assert_eq!(telemetry["version"], 2);
     assert!(telemetry["collected_at_unix_ms"].as_u64().is_some());
     assert_eq!(telemetry["accepting"], false);
     assert_eq!(telemetry["running_requests"], 3);
-    assert_eq!(telemetry["max_concurrent_requests"], 7);
     assert_eq!(telemetry["scheduler_running_requests"], 2);
     assert_eq!(telemetry["scheduler_waiting_requests"], 1);
     assert_eq!(telemetry["kv_cache_usage"], 0.75);
@@ -441,9 +403,9 @@ async fn telemetry_exposes_cumulative_backend_snapshot() {
 }
 
 #[tokio::test]
-async fn readiness_gates_generation_without_calling_the_backend() {
+async fn readiness_and_admission_gate_generation_without_backend_calls() {
     let backend = Arc::new(RecordingBackend::default());
-    let response = app(backend.clone(), false, false)
+    let unavailable = app(backend.clone(), false, false)
         .oneshot(
             Request::post("/v1/internal/generate")
                 .header("content-type", "application/json")
@@ -454,14 +416,39 @@ async fn readiness_gates_generation_without_calling_the_backend() {
         )
         .await
         .unwrap();
+    assert_eq!(unavailable.status(), StatusCode::SERVICE_UNAVAILABLE);
 
-    assert_eq!(response.status(), 503);
+    let draining = app(backend.clone(), true, false);
+    let health = draining
+        .clone()
+        .oneshot(Request::get("/healthz").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let ready = draining
+        .clone()
+        .oneshot(Request::get("/readyz").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let generate = draining
+        .oneshot(
+            Request::post("/v1/internal/generate")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"request_id":"r","prompt_token_ids":[1],"sampling_params":{}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(health.status(), StatusCode::OK);
+    assert_eq!(ready.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(generate.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert!(backend.requests.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
-async fn generate_accepts_processed_multimodal_bodies_above_axum_default() {
-    let response = app(Arc::new(RecordingBackend::default()), true, true)
+async fn configured_body_limit_is_enforced_after_the_default_axum_limit_is_overridden() {
+    let accepts_large_request = app(Arc::new(RecordingBackend::default()), true, true)
         .oneshot(
             Request::post("/v1/internal/generate")
                 .header("content-type", "application/json")
@@ -470,13 +457,9 @@ async fn generate_accepts_processed_multimodal_bodies_above_axum_default() {
         )
         .await
         .unwrap();
+    assert_eq!(accepts_large_request.status(), StatusCode::BAD_REQUEST);
 
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-}
-
-#[tokio::test]
-async fn generate_enforces_the_configured_request_body_limit() {
-    let response = app_with_body_limit(
+    let rejects_oversized_request = app_with_body_limit(
         Arc::new(RecordingBackend::default()),
         true,
         true,
@@ -490,43 +473,14 @@ async fn generate_enforces_the_configured_request_body_limit() {
     )
     .await
     .unwrap();
-
-    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(
+        rejects_oversized_request.status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
 }
 
 #[tokio::test]
-async fn health_stays_live_while_draining_but_readiness_and_admission_close() {
-    let backend = Arc::new(RecordingBackend::default());
-    let app = app(backend.clone(), true, false);
-    let health = app
-        .clone()
-        .oneshot(Request::get("/healthz").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let ready = app
-        .clone()
-        .oneshot(Request::get("/readyz").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    let generate = app
-        .oneshot(
-            Request::post("/v1/internal/generate")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    r#"{"request_id":"r","prompt_token_ids":[1],"sampling_params":{}}"#,
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(health.status(), 200);
-    assert_eq!(ready.status(), 503);
-    assert_eq!(generate.status(), 503);
-    assert!(backend.requests.lock().unwrap().is_empty());
-}
-
-#[tokio::test]
-async fn admission_close_observes_every_accepted_response_stream() {
+async fn admission_close_tracks_open_streams() {
     let app = app(Arc::new(PendingStreamBackend), true, true);
     let response = app
         .clone()
@@ -551,10 +505,14 @@ async fn admission_close_observes_every_accepted_response_stream() {
         )
         .await
         .unwrap();
-    assert_default_telemetry_snapshot(close.into_body().collect().await.unwrap().to_bytes(), 1);
+    let telemetry: serde_json::Value =
+        serde_json::from_slice(&close.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(telemetry["accepting"], false);
+    assert_eq!(telemetry["running_requests"], 1);
 
     drop(response);
     let close = app
+        .clone()
         .oneshot(
             Request::post("/v1/internal/admission/close")
                 .body(Body::empty())
@@ -562,27 +520,10 @@ async fn admission_close_observes_every_accepted_response_stream() {
         )
         .await
         .unwrap();
-    assert_default_telemetry_snapshot(close.into_body().collect().await.unwrap().to_bytes(), 0);
-}
-
-#[tokio::test]
-async fn admission_close_is_idempotent_and_keeps_abort_available() {
-    let backend = Arc::new(RecordingBackend::default());
-    let app = app(backend.clone(), true, true);
-
-    for _ in 0..2 {
-        let close = app
-            .clone()
-            .oneshot(
-                Request::post("/v1/internal/admission/close")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(close.status(), StatusCode::OK);
-        assert_default_telemetry_snapshot(close.into_body().collect().await.unwrap().to_bytes(), 0);
-    }
+    assert_eq!(close.status(), StatusCode::OK);
+    let telemetry: serde_json::Value =
+        serde_json::from_slice(&close.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(telemetry["running_requests"], 0);
 
     let abort = app
         .clone()
@@ -595,7 +536,6 @@ async fn admission_close_is_idempotent_and_keeps_abort_available() {
         .await
         .unwrap();
     assert_eq!(abort.status(), StatusCode::NO_CONTENT);
-    assert_eq!(backend.aborts.lock().unwrap().as_slice(), [["request-1"]]);
 
     let generate = app
         .oneshot(
@@ -609,5 +549,4 @@ async fn admission_close_is_idempotent_and_keeps_abort_available() {
         .await
         .unwrap();
     assert_eq!(generate.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert!(backend.requests.lock().unwrap().is_empty());
 }

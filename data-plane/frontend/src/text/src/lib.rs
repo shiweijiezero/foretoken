@@ -173,5 +173,49 @@ pub enum TextBackendLoadError {
 }
 
 #[cfg(test)]
-#[path = "tests/hf_resolver.rs"]
-mod tests;
+mod tests {
+    use super::files_for_local_hf_resolver;
+    use hf_hub::api::Siblings;
+
+    #[test]
+    fn selects_the_remote_files_needed_by_vllms_local_resolver() {
+        let siblings = [
+            "README.md",
+            "tokenizer_config.json",
+            "config.json",
+            "generation_config.json",
+            "preprocessor_config.json",
+            "processor_config.json",
+            "chat_template.json",
+            "chat_template.jinja",
+            "custom-chat.jinja",
+            "tekken.json",
+            "tokenizer.json",
+            "tiktoken.model",
+            "special.tiktoken",
+        ]
+        .into_iter()
+        .map(|rfilename| Siblings {
+            rfilename: rfilename.into(),
+        })
+        .collect::<Vec<_>>();
+
+        assert_eq!(
+            files_for_local_hf_resolver(&siblings),
+            [
+                "chat_template.jinja",
+                "chat_template.json",
+                "config.json",
+                "custom-chat.jinja",
+                "generation_config.json",
+                "preprocessor_config.json",
+                "processor_config.json",
+                "special.tiktoken",
+                "tekken.json",
+                "tiktoken.model",
+                "tokenizer.json",
+                "tokenizer_config.json",
+            ]
+        );
+    }
+}

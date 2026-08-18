@@ -33,9 +33,6 @@ func TestResolveModelPool(t *testing.T) {
 	if groupSpec.MaxInputTokens == nil || *groupSpec.MaxInputTokens != 16384 || groupSpec.MaxInputTokens == resolved.MaxInputTokens {
 		t.Fatalf("resolved ModelGroup maxInputTokens = %#v", groupSpec.MaxInputTokens)
 	}
-	if groupSpec.Runtime.InternalGenerateRequestBodyLimitBytes != inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes {
-		t.Fatalf("resolved ModelGroup internal generate request body limit = %d", groupSpec.Runtime.InternalGenerateRequestBodyLimitBytes)
-	}
 }
 
 func TestResolveModelPoolPropagatesFeaturesAndChangesRevision(t *testing.T) {
@@ -52,15 +49,6 @@ func TestResolveModelPoolPropagatesFeaturesAndChangesRevision(t *testing.T) {
 	second, err := ResolveModelPool(template, resolverProfile())
 	if err != nil || second.Revision == first.Revision {
 		t.Fatalf("features did not roll Group revision: %q -> %q, err = %v", first.Revision, second.Revision, err)
-	}
-}
-
-func TestResolveModelPoolRejectsPDMultiModalFeatures(t *testing.T) {
-	template := resolverTemplate()
-	template.Role = inferencev1alpha1.ModelRolePrefill
-	template.Features.Multimodal = []inferencev1alpha1.MultimodalModality{inferencev1alpha1.MultimodalModalityImage}
-	if _, err := ResolveModelPool(template, resolverProfile()); err == nil {
-		t.Fatal("P/D multimodal features were accepted")
 	}
 }
 

@@ -20,47 +20,19 @@ pub(crate) async fn refresh_active_generation(generation: Arc<RuntimeGeneration>
 pub(crate) async fn watch_serving_snapshot(
     generation: Arc<RuntimeGeneration>,
     path: PathBuf,
-    mut installed_serving_snapshot: Option<Vec<u8>>,
+    mut last_processed_snapshot: Option<Vec<u8>>,
     builder: Arc<RuntimeBuilder>,
 ) {
     let mut read_failure_reported = false;
     loop {
         match std::fs::read(&path) {
-            Ok(bytes) if installed_serving_snapshot.as_ref() == Some(&bytes) => {
+            Ok(bytes) if last_processed_snapshot.as_ref() == Some(&bytes) => {
                 read_failure_reported = false;
             }
             Ok(bytes) => {
                 read_failure_reported = false;
-                let snapshot = match builder.parse(&bytes) {
-                    Ok(snapshot) => snapshot,
-                    Err(error) => {
-                        tracing::error!(%error, "could not parse serving snapshot candidate");
-                        tokio::time::sleep(Duration::from_secs(1)).await;
-                        continue;
-                    }
-                };
-                let candidate_version = snapshot.version;
-                if generation
-                    .active_version()
-                    .is_some_and(|active| active >= candidate_version)
-                {
-                    tracing::warn!(
-                        candidate_version,
-                        "ignoring stale serving snapshot candidate"
-                    );
-                    installed_serving_snapshot = Some(bytes);
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    continue;
-                }
-                match builder.build(snapshot).await {
-                    Ok(prepared) => {
-                        if prepared.publish(&generation) {
-                            installed_serving_snapshot = Some(bytes);
-                        }
-                    }
-                    Err(error) => {
-                        tracing::warn!(%error, "could not prepare serving snapshot candidate")
-                    }
+                if process_serving_snapshot(&generation, &bytes, &builder).await {
+                    last_processed_snapshot = Some(bytes);
                 }
             }
             Err(error) => {
@@ -74,8 +46,7 @@ pub(crate) async fn watch_serving_snapshot(
     }
 }
 
-#[cfg(test)]
-pub(crate) async fn install_serving_snapshot(
+async fn process_serving_snapshot(
     generation: &RuntimeGeneration,
     bytes: &[u8],
     builder: &RuntimeBuilder,
@@ -83,27 +54,30 @@ pub(crate) async fn install_serving_snapshot(
     let snapshot = match builder.parse(bytes) {
         Ok(snapshot) => snapshot,
         Err(error) => {
-            tracing::error!(%error, "could not parse serving snapshot");
+            tracing::error!(%error, "could not parse serving snapshot candidate");
             return false;
         }
     };
-    let version = snapshot.version;
+    let candidate_version = snapshot.version;
     if generation
         .active_version()
-        .is_some_and(|active| active >= version)
+        .is_some_and(|active| active >= candidate_version)
     {
-        tracing::warn!(version, "ignoring stale serving snapshot candidate");
-        return false;
+        tracing::warn!(
+            candidate_version,
+            "ignoring stale serving snapshot candidate"
+        );
+        return true;
     }
     match builder.build(snapshot).await {
         Ok(prepared) => prepared.publish(generation),
         Err(error) => {
-            tracing::warn!(%error, "could not prepare serving snapshot");
+            tracing::warn!(%error, "could not prepare serving snapshot candidate");
             false
         }
     }
 }
 
 #[cfg(test)]
-#[path = "tests/model_identities.rs"]
+#[path = "serving_snapshot_test.rs"]
 mod tests;

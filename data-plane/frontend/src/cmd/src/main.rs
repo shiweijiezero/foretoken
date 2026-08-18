@@ -6,10 +6,6 @@
 mod config;
 mod serving_snapshot;
 
-#[cfg(test)]
-#[path = "tests/config.rs"]
-mod config_tests;
-
 use std::sync::Arc;
 
 use config::{KvIndexKeyError, RuntimeConfig, kv_index_key};
@@ -49,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         builder,
     ));
     let model_generation = generation.clone();
-    let models = Arc::new(move || model_generation.models());
+    let models = Arc::new(move || model_generation.configured_models());
     let app = router(generation, models, config.stream_idle);
     axum::serve(listener, app).await?;
     Ok(())
