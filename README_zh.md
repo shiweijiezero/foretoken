@@ -10,7 +10,7 @@ Foretoken 把多个模型推理实例组织成一套集群服务，负责请求�
 
 ```text
 资源管理：ModelService → ModelPool → ModelGroup
-请求路径：Client → Gateway → FrontendService → ModelGroup → model-server / vLLM
+请求路径：Client → Gateway → FrontendService → ModelGroup → model-server → 推理引擎
 ```
 
 ## 什么时候需要 Foretoken
@@ -26,15 +26,15 @@ Foretoken 把多个模型推理实例组织成一套集群服务，负责请求�
 
 Foretoken 仍处于开发阶段，接口和部署配置可能继续调整。
 
-| 能力 | 说明 |
-|---|---|
-| 服务管理 | 根据 `ModelService` 创建并管理模型工作负载，支持扩缩、更新和排空 |
-| 请求路由 | 根据模型、健康状态和配置的路由策略选择可用的 `ModelGroup` |
-| 自动扩缩容 | 根据请求队列和正在执行的请求调整完整 `ModelGroup` 数量 |
-| 数据面 | 提供 OpenAI 兼容接口，处理请求、选择后端并返回流式或非流式响应 |
+| 能力 | 说明                                             |
+|---|------------------------------------------------|
+| 服务管理 | 加载并管理模型，支持扩缩、更新和排空                             |
+| 请求路由 | 根据模型、健康状态和配置的路由策略选择可用的模型服务                     |
+| 自动扩缩容 | 根据请求队列和正在执行的请求调整完整模型服务数量                       |
+| 数据面 | 提供 OpenAI 兼容接口，处理请求、选择后端并返回流式或非流式响应            |
 | [性能评测](benchmarks/README_zh.md) | 测试已有服务，或在 Kubernetes 中临时部署 Foretoken 服务后进行负载测试 |
-| 分布式推理 | 聚合式推理已实现；Prefill/Decode 分离仍在实验和验证中 |
-| 可观测性 | frontend 提供运行指标；仪表盘、分布式追踪和告警仍在规划中 |
+| 分布式推理 | 聚合式与 Encoder/Prefill/Decode 分离的部署方式            |
+| 可观测性 | 捕捉运行指标，展示用户仪表盘和告警，Profiling探测瓶颈                |
 
 ## 从源码部署
 
@@ -46,7 +46,7 @@ Foretoken 仍处于开发阶段，接口和部署配置可能继续调整。
 
 - 通过 Git 获取的 Foretoken 源码，以及 Docker、GNU Make、Helm 和 kubectl；
 - kubectl 已连接目标集群；
-- 能够访问 Git submodule、容器基础镜像，以及一张与当前源码兼容的 vLLM Python runtime 镜像。
+- 能够访问 Git submodule、容器基础镜像，以及一张兼容的推理引擎镜像。
 
 集群需要：
 
@@ -62,14 +62,14 @@ Quick Start 默认请求 4 个 CPU、48 GiB 内存和 1 个 GPU。资源不足�
 
 ### 1. 构建并推送镜像
 
-首次执行 data-plane 镜像构建命令时，Makefile 会自动准备 Foretoken 使用的 vLLM 源码。`VLLM_RUNTIME_IMAGE` 必须包含 Python 和 `vllm.entrypoints.cli.main`，并与当前源码兼容。
+model-server 镜像基于所选推理引擎镜像构建。请将 `INFERENCE_ENGINE_IMAGE` 设置为兼容镜像；当前 vLLM adapter 要求其中包含 Python 和 `vllm.entrypoints.cli.main`。
 
 ```bash
 REGISTRY=registry.example.com/foretoken
-VLLM_RUNTIME_IMAGE=registry.example.com/vllm/runtime:tag
+INFERENCE_ENGINE_IMAGE=registry.example.com/inference/engine:tag
 
 make image-frontend
-make image-model-server VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE}"
+make image-model-server INFERENCE_ENGINE_IMAGE="${INFERENCE_ENGINE_IMAGE}"
 docker build -f control-plane/Dockerfile -t foretoken-control-plane:dev .
 
 docker tag foretoken-control-plane:dev "${REGISTRY}/control-plane:dev"
@@ -188,7 +188,7 @@ kubectl delete crd \
 
 ## 相关项目
 
-Foretoken 当前使用 vLLM 作为推理后端。以下项目提供相关的生产推理和 Kubernetes 编排方案：
+Foretoken 当前使用 vLLM 作为推理引擎。以下项目提供相关的生产推理和 Kubernetes 编排方案：
 
 - [vLLM](https://github.com/vllm-project/vllm)
 - [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo)

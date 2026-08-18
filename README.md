@@ -10,7 +10,7 @@ We aim to turn an inference cluster into a token factory that continuously conve
 
 ```text
 Resource management: ModelService → ModelPool → ModelGroup
-Request path:       Client → Gateway → FrontendService → ModelGroup → model-server / vLLM
+Request path:       Client → Gateway → FrontendService → ModelGroup → model-server → inference engine
 ```
 
 ## When to Use Foretoken
@@ -46,7 +46,7 @@ The build machine needs:
 
 - a Git checkout of Foretoken, plus Docker, GNU Make, Helm, and kubectl;
 - kubectl configured for the target cluster;
-- access to the Git submodule, container base images, and a vLLM Python runtime image compatible with this source revision.
+- access to the Git submodule, container base images, and a compatible inference engine image.
 
 The cluster needs:
 
@@ -62,14 +62,14 @@ The Quick Start requests 4 CPUs, 48 GiB of memory, and one GPU by default. Adjus
 
 ### 1. Build and push the images
 
-The first data-plane image build prepares the vLLM source used by Foretoken. `VLLM_RUNTIME_IMAGE` must provide Python and `vllm.entrypoints.cli.main`, and it must be compatible with the current source revision.
+The model-server image is layered on the selected inference engine image. Set `INFERENCE_ENGINE_IMAGE` to a compatible image; the current vLLM adapter requires Python and `vllm.entrypoints.cli.main`.
 
 ```bash
 REGISTRY=registry.example.com/foretoken
-VLLM_RUNTIME_IMAGE=registry.example.com/vllm/runtime:tag
+INFERENCE_ENGINE_IMAGE=registry.example.com/inference/engine:tag
 
 make image-frontend
-make image-model-server VLLM_RUNTIME_IMAGE="${VLLM_RUNTIME_IMAGE}"
+make image-model-server INFERENCE_ENGINE_IMAGE="${INFERENCE_ENGINE_IMAGE}"
 docker build -f control-plane/Dockerfile -t foretoken-control-plane:dev .
 
 docker tag foretoken-control-plane:dev "${REGISTRY}/control-plane:dev"
@@ -188,7 +188,7 @@ kubectl delete crd \
 
 ## Related Projects
 
-Foretoken currently uses vLLM as its inference backend. The following projects provide related production-inference and Kubernetes-orchestration approaches:
+Foretoken currently uses vLLM as its inference engine. The following projects provide related production-inference and Kubernetes-orchestration approaches:
 
 - [vLLM](https://github.com/vllm-project/vllm)
 - [NVIDIA Dynamo](https://github.com/ai-dynamo/dynamo)

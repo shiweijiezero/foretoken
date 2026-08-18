@@ -13,7 +13,7 @@ __pycache__/
 # Local environment
 .env.local
 .claude/worktrees/
-third_party/vllm-rust/source
+/third_party/
 
 # Manually downloaded upstream references
 reference/

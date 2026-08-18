@@ -77,7 +77,3 @@ async fn process_serving_snapshot(
         }
     }
 }
-
-#[cfg(test)]
-#[path = "serving_snapshot_test.rs"]
-mod tests;

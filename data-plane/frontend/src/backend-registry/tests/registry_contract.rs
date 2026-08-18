@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
 use axum::{Json, Router, http::StatusCode, routing::get};
 use foretoken_backend_registry::{
     BackendRegistry, BackendRegistryBuild, ServingSnapshot, SnapshotEpdComponent,
@@ -9,9 +12,10 @@ use foretoken_backend_registry::{
 };
 use foretoken_llm_facade::LlmFacadeResolver;
 use foretoken_model_protocol::{
-    ModelServerRole, RouteStage, RuntimeMetadataResponse, RuntimeModelIdentity, TelemetryResponse,
+    CumulativeHistogram, CumulativeHistogramBucket, ModelServerRole, RouteStage,
+    RuntimeMetadataResponse, RuntimeModelIdentity, TelemetryResponse,
 };
-use foretoken_router::{RouteDecision, RouteInventory, RouteTargetId};
+use foretoken_router::{RouteDecision, RouteInventory, RouteTargetId, RouteTargetStatsReader};
 use tokio::net::TcpListener;
 use vllm_engine_core_client::protocol::dtype::ModelDtype;
 
@@ -137,13 +141,52 @@ fn runtime_metadata() -> RuntimeMetadataResponse {
         },
         model_dtype: ModelDtype::BFloat16,
         effective_max_model_len: 32_768,
-        vllm_version: "0.0.0".into(),
         ec_transfer: None,
         capabilities: ["chat".into()].into_iter().collect(),
     }
 }
 
+fn histogram(count: u64, sum_seconds: f64, first_bucket: u64) -> CumulativeHistogram {
+    CumulativeHistogram {
+        count,
+        sum_seconds,
+        buckets: vec![
+            CumulativeHistogramBucket {
+                le_seconds: 0.1,
+                count: first_bucket,
+            },
+            CumulativeHistogramBucket {
+                le_seconds: 0.5,
+                count,
+            },
+        ],
+    }
+}
+
+fn telemetry(at_ms: u64, tokens: u64, histogram: CumulativeHistogram) -> TelemetryResponse {
+    TelemetryResponse {
+        version: 2,
+        collected_at_unix_ms: at_ms,
+        accepting: true,
+        running_requests: 0,
+        max_concurrent_requests: 1,
+        scheduler_running_requests: Some(0),
+        scheduler_waiting_requests: Some(0),
+        kv_cache_usage: Some(0.0),
+        prompt_tokens_total: Some(tokens),
+        generation_tokens_total: Some(tokens / 2),
+        ttft_seconds: histogram.clone(),
+        tpot_seconds: histogram.clone(),
+        e2e_seconds: histogram,
+    }
+}
+
 async fn serve_model_server() -> String {
+    serve_model_server_with_telemetry(Arc::new(Mutex::new(telemetry(1, 0, Default::default()))))
+        .await
+}
+
+async fn serve_model_server_with_telemetry(telemetry: Arc<Mutex<TelemetryResponse>>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let metadata = runtime_metadata();
@@ -162,22 +205,9 @@ async fn serve_model_server() -> String {
         )
         .route(
             "/v1/internal/telemetry",
-            get(|| async {
-                Json(TelemetryResponse {
-                    version: 2,
-                    collected_at_unix_ms: 1,
-                    accepting: true,
-                    running_requests: 0,
-                    max_concurrent_requests: 1,
-                    scheduler_running_requests: Some(0),
-                    scheduler_waiting_requests: Some(0),
-                    kv_cache_usage: Some(0.0),
-                    prompt_tokens_total: Some(0),
-                    generation_tokens_total: Some(0),
-                    ttft_seconds: Default::default(),
-                    tpot_seconds: Default::default(),
-                    e2e_seconds: Default::default(),
-                })
+            get(move || {
+                let telemetry = telemetry.clone();
+                async move { Json(telemetry.lock().unwrap().clone()) }
             }),
         );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -231,6 +261,28 @@ async fn aggregate_readiness_preserves_frontend_owned_capabilities() {
         registry.effective_model_dtype("model"),
         Some(ModelDtype::BFloat16)
     );
+}
+
+#[tokio::test]
+async fn telemetry_history_derives_windows_and_rejects_counter_resets() {
+    let telemetry_state = Arc::new(Mutex::new(telemetry(1_000, 100, histogram(2, 0.2, 1))));
+    let endpoint = serve_model_server_with_telemetry(telemetry_state.clone()).await;
+    let registry = BackendRegistry::from_snapshot(aggregate_snapshot(endpoint)).unwrap();
+    let target = RouteTargetId::new("a");
+
+    registry.refresh_backend_readiness().await;
+    *telemetry_state.lock().unwrap() = telemetry(151_000, 400, histogram(4, 0.8, 2));
+    registry.refresh_backend_readiness().await;
+
+    let stats = registry.stats(&target, Duration::from_secs(150)).unwrap();
+    assert_eq!(stats.observed_window, Duration::from_secs(150));
+    assert_eq!(stats.prompt_tokens_per_second, Some(2.0));
+    assert_eq!(stats.generation_tokens_per_second, Some(1.0));
+    assert_eq!(stats.ttft.unwrap().p95_ms, Some(500.0));
+
+    *telemetry_state.lock().unwrap() = telemetry(302_000, 10, histogram(1, 0.1, 1));
+    registry.refresh_backend_readiness().await;
+    assert!(registry.stats(&target, Duration::from_secs(150)).is_none());
 }
 
 #[tokio::test]

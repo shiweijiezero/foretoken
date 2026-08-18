@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 #
-# Verifies the Rust frontend and Group-local model-server without models or GPUs.
+# Verifies the Rust data plane without models or GPUs.
 
 name: Data plane
 
@@ -9,8 +9,8 @@ on:
   pull_request:
     paths:
       - data-plane/**
-      - third_party/vllm-rust/**
-      - scripts/select-vllm-source.sh
+      - Makefile
+      - .gitmodules
       - rust-toolchain.toml
       - .github/workflows/data-plane.yaml
   push:
@@ -18,8 +18,8 @@ on:
       - main
     paths:
       - data-plane/**
-      - third_party/vllm-rust/**
-      - scripts/select-vllm-source.sh
+      - Makefile
+      - .gitmodules
       - rust-toolchain.toml
       - .github/workflows/data-plane.yaml
 
@@ -27,44 +27,18 @@ permissions:
   contents: read
 
 jobs:
-  frontend:
+  verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Checkout local vLLM build source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: vllm-project/vllm
-          path: .vllm-source
-      - name: Select local vLLM build source
-        run: FORETOKEN_VLLM_SOURCE="$GITHUB_WORKSPACE/.vllm-source" ./scripts/select-vllm-source.sh
-      - name: Verify frontend
-        working-directory: data-plane/frontend
-        run: |
-          cargo fmt --all -- --check
-          cargo check --workspace --locked
-          cargo test --workspace --locked
-          cargo clippy --workspace --all-targets --locked -- -D warnings
+          submodules: true
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libssl-dev perl pkg-config
+      - name: Install Rust lint components
+        run: rustup component add rustfmt clippy
+      - name: Verify data plane
+        run: make verify-data-plane
       - name: Build frontend image
-        run: docker build -f data-plane/frontend/Dockerfile -t foretoken-frontend:test .
-
-  model-server:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Checkout local vLLM build source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: vllm-project/vllm
-          path: .vllm-source
-      - name: Select local vLLM build source
-        run: FORETOKEN_VLLM_SOURCE="$GITHUB_WORKSPACE/.vllm-source" ./scripts/select-vllm-source.sh
-      - name: Verify model server
-        working-directory: data-plane/model-server
-        run: |
-          cargo fmt --all -- --check
-          cargo check --locked
-          cargo test --locked
-          cargo clippy --all-targets --locked -- -D warnings
+        run: make image-frontend

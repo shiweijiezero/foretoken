@@ -93,7 +93,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         model_dtype: client.model_dtype(),
         effective_max_model_len: client.max_model_len(),
-        vllm_version: client.vllm_version().into(),
         ec_transfer: config.launch.ec.runtime_metadata(),
         capabilities: if config.launch.ec.enabled() {
             ["ec_transfer".into()].into_iter().collect()

@@ -207,7 +207,6 @@ pub struct RuntimeMetadataResponse {
     pub model: RuntimeModelIdentity,
     pub model_dtype: ModelDtype,
     pub effective_max_model_len: u32,
-    pub vllm_version: String,
     pub ec_transfer: Option<RuntimeEcTransferMetadata>,
     #[serde(default)]
     pub capabilities: std::collections::BTreeSet<String>,
