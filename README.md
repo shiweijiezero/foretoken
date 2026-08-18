@@ -2,9 +2,9 @@
 
 English | [简体中文](README_zh.md)
 
-Foretoken is a Kubernetes-native GPU generative inference orchestration framework built for SLO/SLA targets.
+Foretoken is a generative model inference orchestration framework built for SLO/SLA targets.
 
-Foretoken organizes model-serving instances into one cluster service for request routing, autoscaling, rolling updates, graceful draining, and benchmarking. vLLM is the currently supported inference backend.
+Foretoken organizes model-serving instances into one cluster service for request routing, autoscaling, rolling updates, graceful draining, and benchmarking.
 
 We aim to turn an inference cluster into a token factory that continuously converts compute into tokens while meeting latency requirements.
 
@@ -17,7 +17,7 @@ Request path:       Client → Gateway → FrontendService → ModelGroup → mo
 
 - Manage one or more model services in a Kubernetes cluster.
 - Route requests using backend health, load, and opportunities to reuse KV cache.
-- When autoscaling is enabled, adjust model-serving capacity from queued and in-progress requests.
+- Use autoscaling to adjust model-serving capacity from queued and in-progress requests.
 - Explore aggregate inference, Prefill/Decode disaggregation, and parallelism strategies.
 
 If you only need to serve a single model on one GPU, using vLLM directly is usually enough.
