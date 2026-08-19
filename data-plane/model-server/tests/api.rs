@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+#[cfg(feature = "backend-vllm")]
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
+#[cfg(feature = "backend-vllm")]
+use foretoken_model_protocol::EngineExtensions;
 use foretoken_model_protocol::{
-    CumulativeHistogram, CumulativeHistogramBucket, EngineExtensions, FinishReason, GenerateInput,
-    ModelDtype, RuntimeMetadataResponse, RuntimeModelIdentity, SamplingParams, TokenEvent,
-    TokenOutput,
+    CumulativeHistogram, CumulativeHistogramBucket, FinishReason, GenerateInput, ModelDtype,
+    RuntimeMetadataResponse, RuntimeModelIdentity, SamplingParams, TokenEvent, TokenOutput,
 };
 use foretoken_model_server::core::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::engine::{
@@ -19,9 +21,11 @@ use foretoken_model_server::engine::{
 use futures::stream;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
+#[cfg(feature = "backend-vllm")]
 use vllm_engine_core_client::protocol::multimodal::{
     MmBatchedField, MmFeatureSpec, MmField, MmFieldElem, MmKwargValue, PlaceholderRange,
 };
+#[cfg(feature = "backend-vllm")]
 use vllm_engine_core_client::protocol::tensor::WireNdArray;
 
 struct RecordingBackend {
@@ -212,6 +216,7 @@ async fn generate_forwards_json_input_and_encodes_ndjson() {
     assert_eq!(requests[0].priority, -2);
 }
 
+#[cfg(feature = "backend-vllm")]
 #[tokio::test]
 async fn generate_accepts_msgpack_multimodal_tensors() {
     let backend = Arc::new(RecordingBackend::default());

@@ -3,10 +3,12 @@
 
 //! SGLang adapter contract tests using a mock loopback HTTP server.
 
+#![cfg(feature = "backend-sglang")]
+
 use axum::{Json, Router, routing::post};
 use foretoken_model_protocol::{FinishReason, GenerateInput, SamplingParams, TokenEvent};
+use foretoken_model_server::engine::Engine;
 use foretoken_model_server::engine::sglang::{SglangBackend, SglangLaunchPlan};
-use foretoken_model_server::engine::{Engine, EngineKind};
 use futures::StreamExt;
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
@@ -125,7 +127,6 @@ fn launch_plan_parses_and_defaults() {
         r#"{"version":1,"model":"Qwen/Qwen3-0.6B","port":30000,"startupSeconds":120,"drainSeconds":30}"#,
     )
     .unwrap();
-    assert_eq!(plan.kind, EngineKind::Sglang);
     assert_eq!(plan.tp, 1);
     assert_eq!(plan.dp, 1);
     assert!(

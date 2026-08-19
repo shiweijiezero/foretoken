@@ -1,45 +1,78 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Starts a managed local EngineCore child and serves the restricted internal API.
+//! Starts a managed inference engine child and serves the restricted internal API.
+//!
+//! The engine backend is fixed at build time by the `backend-vllm` or
+//! `backend-sglang` cargo feature; this binary never selects an engine at
+//! runtime.
 
 use std::future::IntoFuture;
 use std::sync::Arc;
 use std::time::Instant;
 
-use foretoken_model_protocol::{ModelDtype, RuntimeMetadataResponse, RuntimeModelIdentity};
+#[cfg(feature = "backend-sglang")]
+use foretoken_model_protocol::ModelDtype;
+use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity};
 use foretoken_model_server::core::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::core::config::RuntimeConfig;
+#[cfg(feature = "backend-vllm")]
 use foretoken_model_server::core::kv_events::KvEventAdapter;
+use foretoken_model_server::engine::Engine;
+#[cfg(feature = "backend-sglang")]
 use foretoken_model_server::engine::sglang::{SglangBackend, SglangLaunchPlan, SglangProcess};
+#[cfg(feature = "backend-vllm")]
 use foretoken_model_server::engine::vllm::{
     LaunchPlanV1, VllmBackend, VllmProcess, conversion::to_neutral_model_dtype,
 };
-use foretoken_model_server::engine::{Engine, EngineKind};
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
+#[cfg(feature = "backend-vllm")]
 use vllm_llm::Llm;
 
+#[cfg(feature = "backend-vllm")]
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
+#[cfg(feature = "backend-vllm")]
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
+#[cfg(feature = "backend-vllm")]
 const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    vllm_tracing::init_tracing("ForetokenModelServer");
+    init_tracing();
 
     // Resolve the controller-owned launch plan before starting any engine or network task.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
 
-    match config.launch.kind {
-        EngineKind::Vllm => run_vllm(config).await,
-        EngineKind::Sglang => run_sglang(config).await,
-    }
+    run(config).await
 }
 
+/// Runs the build-selected backend; exactly one `run_*` function is compiled.
+#[cfg(feature = "backend-vllm")]
+async fn run(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>> {
+    run_vllm(config).await
+}
+
+#[cfg(all(feature = "backend-sglang", not(feature = "backend-vllm")))]
+async fn run(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>> {
+    run_sglang(config).await
+}
+
+/// Installs the process-wide tracing subscriber for the build-selected backend.
+#[cfg(feature = "backend-vllm")]
+fn init_tracing() {
+    vllm_tracing::init_tracing("ForetokenModelServer");
+}
+
+#[cfg(feature = "backend-sglang")]
+fn init_tracing() {
+    tracing_subscriber::fmt::init();
+}
+
+#[cfg(feature = "backend-vllm")]
 async fn run_vllm(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let plan = LaunchPlanV1::parse(&config.launch.payload).map_err(std::io::Error::other)?;
+    let plan = LaunchPlanV1::parse(&config.launch_payload).map_err(std::io::Error::other)?;
 
     // Resolve optional KV projection state now; connect only after the engine publisher is ready.
     let kv_events = match kv_event_adapter(&plan) {
@@ -187,8 +220,9 @@ async fn run_vllm(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error
     }
 }
 
+#[cfg(feature = "backend-sglang")]
 async fn run_sglang(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let plan = SglangLaunchPlan::parse(&config.launch.payload).map_err(std::io::Error::other)?;
+    let plan = SglangLaunchPlan::parse(&config.launch_payload).map_err(std::io::Error::other)?;
 
     let health = Arc::new(RuntimeHealth::new());
     health.set_process_alive(true);
@@ -297,6 +331,7 @@ async fn run_sglang(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Err
 
 /// Polls the SGLang `/health` endpoint until it reports healthy or the budget
 /// expires.
+#[cfg(feature = "backend-sglang")]
 async fn wait_for_sglang_health(
     plan: &SglangLaunchPlan,
     budget_seconds: u64,
@@ -317,6 +352,7 @@ async fn wait_for_sglang_health(
     }
 }
 
+#[cfg(feature = "backend-vllm")]
 fn kv_event_adapter(
     plan: &LaunchPlanV1,
 ) -> Result<Arc<KvEventAdapter>, Box<dyn std::error::Error>> {
@@ -336,6 +372,7 @@ fn kv_event_adapter(
     ))
 }
 
+#[cfg(feature = "backend-vllm")]
 fn required_env(name: &str) -> Result<String, Box<dyn std::error::Error>> {
     std::env::var(name)
         .ok()

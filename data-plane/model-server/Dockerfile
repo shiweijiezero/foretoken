@@ -2,12 +2,13 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Build from the repository root so Cargo uses the data-plane workspace and
-# its engine adapters. The inference engine image must provide the Python
-# entrypoint required by the selected adapter; the current vLLM adapter uses
-# vllm.entrypoints.cli.main.
+# its engine adapters. ENGINE_FEATURES selects the inference backend compiled
+# into the binary (backend-vllm or backend-sglang), and INFERENCE_ENGINE_IMAGE
+# must provide the Python entrypoint required by that adapter.
 
 ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye
 ARG INFERENCE_ENGINE_IMAGE
+ARG ENGINE_FEATURES=backend-vllm
 
 FROM ${RUST_BUILDER_IMAGE} AS builder
 
@@ -20,6 +21,8 @@ RUN apt-get update \
 COPY data-plane/ ./data-plane/
 
 RUN cargo build --locked --release \
+    --no-default-features \
+    --features ${ENGINE_FEATURES} \
     --manifest-path data-plane/Cargo.toml \
     --package foretoken-model-server
 

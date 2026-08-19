@@ -11,7 +11,6 @@ use vllm_managed_engine::ManagedEngineConfig;
 
 use foretoken_model_protocol::RuntimeEcTransferMetadata;
 
-use crate::engine::EngineKind;
 use crate::runtime_transport::{KV_EVENT_ENDPOINT, KV_EVENT_TOPIC, LOOPBACK_HOST};
 
 const PYTHON: &str = "python3";
@@ -20,10 +19,6 @@ const PYTHON: &str = "python3";
 #[serde(deny_unknown_fields)]
 pub struct LaunchPlanV1 {
     pub version: u8,
-    /// Engine this plan renders for. Defaults to `vllm` so plans produced by
-    /// the current control plane (which omit the field) remain valid.
-    #[serde(rename = "kind", default)]
-    pub kind: EngineKind,
     /// Physical model nodes represented by this launch plan; v1 currently permits one.
     #[serde(rename = "nodeCount")]
     pub node_count: usize,
@@ -234,7 +229,7 @@ impl EcTransferPlan {
 impl LaunchPlanV1 {
     pub fn parse(input: &str) -> Result<Self, String> {
         let plan: Self = serde_json::from_str(input)
-            .map_err(|error| format!("invalid FORETOKEN_LAUNCH_PLAN: {error}"))?;
+            .map_err(|error| format!("invalid FORETOKEN_VLLM_LAUNCH_PLAN: {error}"))?;
         plan.validate()?;
         Ok(plan)
     }
@@ -242,12 +237,6 @@ impl LaunchPlanV1 {
     pub fn validate(&self) -> Result<(), String> {
         if self.version != 1 {
             return Err("launch plan version must be 1".into());
-        }
-        if self.kind != EngineKind::Vllm {
-            return Err(format!(
-                "launch plan kind {:?} is not supported (expected vllm)",
-                self.kind
-            ));
         }
         if self.node_count != 1 {
             return Err("launch plan currently supports exactly one model node".into());

@@ -11,12 +11,6 @@ use std::collections::HashSet;
 
 use serde::Deserialize;
 
-use crate::engine::EngineKind;
-
-fn default_kind() -> EngineKind {
-    EngineKind::Sglang
-}
-
 fn default_tp() -> usize {
     1
 }
@@ -33,9 +27,6 @@ fn default_body_limit() -> usize {
 #[serde(deny_unknown_fields)]
 pub struct SglangLaunchPlan {
     pub version: u8,
-    /// Engine this plan renders for. Defaults to `sglang`.
-    #[serde(rename = "kind", default = "default_kind")]
-    pub kind: EngineKind,
     /// Model repository or path served by SGLang.
     pub model: String,
     /// Optional model revision, forwarded to `--revision`.
@@ -72,7 +63,7 @@ pub struct SglangLaunchPlan {
 impl SglangLaunchPlan {
     pub fn parse(input: &str) -> Result<Self, String> {
         let plan: Self = serde_json::from_str(input)
-            .map_err(|error| format!("invalid FORETOKEN_LAUNCH_PLAN: {error}"))?;
+            .map_err(|error| format!("invalid FORETOKEN_SGLANG_LAUNCH_PLAN: {error}"))?;
         plan.validate()?;
         Ok(plan)
     }
@@ -80,12 +71,6 @@ impl SglangLaunchPlan {
     pub fn validate(&self) -> Result<(), String> {
         if self.version != 1 {
             return Err("launch plan version must be 1".into());
-        }
-        if self.kind != EngineKind::Sglang {
-            return Err(format!(
-                "launch plan kind {:?} is not supported (expected sglang)",
-                self.kind
-            ));
         }
         if self.model.is_empty() {
             return Err("launch plan model must be nonempty".into());
@@ -195,14 +180,11 @@ mod tests {
     }
 
     #[test]
-    fn defaults_and_rejects_unknown_kind() {
-        assert_eq!(plan().kind, EngineKind::Sglang);
+    fn defaults_body_limit() {
         assert_eq!(
             plan().internal_generate_request_body_limit_bytes,
             64 * 1024 * 1024
         );
-        let source = r#"{"version":1,"kind":"vllm","model":"m","tp":1,"dp":1,"port":30000,"startupSeconds":1,"drainSeconds":1}"#;
-        assert!(SglangLaunchPlan::parse(source).is_err());
     }
 
     #[test]

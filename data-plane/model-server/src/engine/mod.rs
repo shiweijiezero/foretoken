@@ -8,16 +8,16 @@
 //! core relies on. It never imports an inference-engine crate; vLLM, SGLang,
 //! and future engines implement [`Engine`] behind this boundary.
 
+#[cfg(feature = "backend-sglang")]
 pub mod sglang;
+#[cfg(feature = "backend-vllm")]
 pub mod vllm;
 
 use std::pin::Pin;
-use std::str::FromStr;
 
 use async_trait::async_trait;
 use foretoken_model_protocol::{CumulativeHistogram, GenerateInput, TokenErrorCode, TokenEvent};
 use futures::Stream;
-use serde::{Deserialize, Serialize};
 
 /// Stream of per-request token events produced by an engine.
 pub type TokenStream = Pin<Box<dyn Stream<Item = Result<TokenEvent, EngineError>> + Send>>;
@@ -43,36 +43,6 @@ impl EngineError {
             Self::Unavailable => TokenErrorCode::Unavailable,
             Self::Rejected | Self::InvalidRequest | Self::Protocol => TokenErrorCode::Protocol,
             Self::RequestFailed => TokenErrorCode::RequestFailed,
-        }
-    }
-}
-
-/// Engine discriminator carried by the launch plan envelope.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EngineKind {
-    #[default]
-    Vllm,
-    Sglang,
-}
-
-impl EngineKind {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Vllm => "vllm",
-            Self::Sglang => "sglang",
-        }
-    }
-}
-
-impl FromStr for EngineKind {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "vllm" => Ok(Self::Vllm),
-            "sglang" => Ok(Self::Sglang),
-            other => Err(format!("unsupported engine kind {other:?}")),
         }
     }
 }
