@@ -7,12 +7,13 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use foretoken_model_protocol::{
-    AbortInput, GenerateInput, TokenErrorCode, TokenEvent, TokenOutput,
+    AbortInput, FinishReason as ForetokenFinishReason, TokenErrorCode, TokenEvent,
 };
 use futures::StreamExt;
 use serde::Deserialize;
-use vllm_llm::{FinishReason, GenerateOutput, GeneratePromptInfo, GenerateRequest};
+use vllm_llm::{GenerateOutput, GenerateRequest};
 
+use crate::conversion::{to_generate_input, to_generate_output};
 use crate::{LlmFacade, LlmFacadeError, TokenStream};
 
 pub(crate) const MODEL_SERVER_REQUEST_START_TIMEOUT: Duration = Duration::from_secs(10);
@@ -47,7 +48,7 @@ impl HttpFacade {
         &self,
         request: GenerateRequest,
     ) -> Result<TokenStream, LlmFacadeError> {
-        let body = rmp_serde::to_vec_named(&GenerateInput::from(request))
+        let body = rmp_serde::to_vec_named(&to_generate_input(request)?)
             .map_err(|_| LlmFacadeError::RequestFailed)?;
         let response = tokio::time::timeout(
             self.request_start_timeout,
@@ -175,32 +176,14 @@ pub async fn bootstrap_engine_id(
 
 fn decode_event(line: &[u8]) -> Result<GenerateOutput, LlmFacadeError> {
     match serde_json::from_slice(line).map_err(|_| LlmFacadeError::Protocol)? {
-        TokenEvent::Token(output) if output.finish_reason == Some(FinishReason::Error) => {
+        TokenEvent::Token(output) if output.finish_reason == Some(ForetokenFinishReason::Error) => {
             Err(LlmFacadeError::RequestFailed)
         }
-        TokenEvent::Token(output) => Ok(generate_output(*output)),
+        TokenEvent::Token(output) => Ok(to_generate_output(*output)),
         TokenEvent::Error { code, .. } => Err(match code {
             TokenErrorCode::Unavailable => LlmFacadeError::Unavailable,
             TokenErrorCode::RequestFailed => LlmFacadeError::RequestFailed,
             TokenErrorCode::Protocol => LlmFacadeError::Protocol,
         }),
-    }
-}
-
-fn generate_output(output: TokenOutput) -> GenerateOutput {
-    GenerateOutput {
-        request_id: output.request_id,
-        prompt_info: output
-            .prompt_token_ids
-            .map(|prompt_token_ids| GeneratePromptInfo {
-                prompt_token_ids: prompt_token_ids.into(),
-                prompt_logprobs: output.prompt_logprobs,
-            }),
-        token_ids: output.token_ids,
-        logprobs: output.logprobs,
-        finish_reason: output.finish_reason,
-        cached_token_count: output.cached_token_count,
-        kv_transfer_params: output.kv_transfer_params,
-        ec_transfer_params: output.ec_transfer_params,
     }
 }

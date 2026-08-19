@@ -89,7 +89,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             model: config.launch.artifacts.model.clone(),
             revision: config.launch.artifacts.revision.clone(),
         },
-        model_dtype: client.model_dtype(),
+        model_dtype: foretoken_model_server::conversion::to_neutral_model_dtype(
+            client.model_dtype(),
+        ),
         effective_max_model_len: client.max_model_len(),
         ec_transfer: config.launch.ec.runtime_metadata(),
         capabilities: if config.launch.ec.enabled() {

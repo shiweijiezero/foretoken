@@ -8,7 +8,8 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use foretoken_model_protocol::{
-    CumulativeHistogram, CumulativeHistogramBucket, RuntimeMetadataResponse, RuntimeModelIdentity,
+    CumulativeHistogram, CumulativeHistogramBucket, EngineExtensions, FinishReason, ModelDtype,
+    RuntimeMetadataResponse, RuntimeModelIdentity, SamplingParams,
 };
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::{
@@ -17,11 +18,9 @@ use foretoken_model_server::backend::{
 use futures::stream;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
-use vllm_engine_core_client::protocol::dtype::ModelDtype;
 use vllm_engine_core_client::protocol::multimodal::{
     MmBatchedField, MmFeatureSpec, MmField, MmFieldElem, MmKwargValue, PlaceholderRange,
 };
-use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
 use vllm_engine_core_client::protocol::tensor::WireNdArray;
 
 struct RecordingBackend {
@@ -56,7 +55,7 @@ impl Backend for RecordingBackend {
                 token_ids: vec![42],
                 logprobs: None,
                 cached_token_count: 2,
-                finish_reason: Some(vllm_llm::FinishReason::stop_eos()),
+                finish_reason: Some(FinishReason::Stop(None)),
                 kv_transfer_params: None,
                 ec_transfer_params: None,
             },
@@ -161,7 +160,7 @@ async fn generate_forwards_json_input_and_encodes_ndjson() {
     let body = serde_json::json!({
         "request_id": "request-1",
         "prompt_token_ids": [1, 2],
-        "sampling_params": EngineCoreSamplingParams::default(),
+        "sampling_params": SamplingParams::default(),
         "priority": -2
     });
     let response = app(backend.clone(), true, true)
@@ -200,29 +199,32 @@ async fn generate_accepts_msgpack_multimodal_tensors() {
             field: MmField::Batched(MmBatchedField { keep_on_cpu: false }),
         },
     );
+    let mm_features = vec![MmFeatureSpec {
+        data: Some(data),
+        modality: "image".into(),
+        identifier: "image-1".into(),
+        mm_position: PlaceholderRange {
+            offset: 1,
+            length: 1,
+            is_embed: None,
+        },
+        mm_hash: None,
+    }];
     let body = rmp_serde::to_vec_named(&foretoken_model_protocol::GenerateInput {
         request_id: "request-mm".into(),
         prompt_token_ids: vec![1, 2],
-        mm_features: Some(vec![MmFeatureSpec {
-            data: Some(data),
-            modality: "image".into(),
-            identifier: "image-1".into(),
-            mm_position: PlaceholderRange {
-                offset: 1,
-                length: 1,
-                is_embed: None,
-            },
-            mm_hash: None,
-        }]),
-        sampling_params: EngineCoreSamplingParams::default(),
+        extensions: Some(EngineExtensions {
+            mm_features: Some(rmpv::ext::to_value(&mm_features).unwrap()),
+            lora_request: None,
+            reasoning_parser_kwargs: None,
+        }),
+        sampling_params: SamplingParams::default(),
         arrival_time: None,
         cache_salt: None,
         trace_headers: None,
         priority: 0,
         data_parallel_rank: None,
         session_id: Some("session-mm".into()),
-        reasoning_parser_kwargs: None,
-        lora_request: None,
     })
     .unwrap();
 
@@ -239,7 +241,15 @@ async fn generate_accepts_msgpack_multimodal_tensors() {
     assert_eq!(response.status(), StatusCode::OK);
     let requests = backend.requests.lock().unwrap();
     assert_eq!(requests[0].session_id.as_deref(), Some("session-mm"));
-    assert_eq!(requests[0].mm_features.as_ref().unwrap().len(), 1);
+    let recorded_mm_features: Vec<MmFeatureSpec> = rmpv::ext::from_value(
+        requests[0]
+            .extensions
+            .as_ref()
+            .and_then(|extensions| extensions.mm_features.clone())
+            .expect("mm_features extension present"),
+    )
+    .unwrap();
+    assert_eq!(recorded_mm_features.len(), 1);
 }
 
 #[tokio::test]

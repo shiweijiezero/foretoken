@@ -8,11 +8,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver, RouteStage};
-use foretoken_model_protocol::{RuntimeMetadataResponse, TelemetryResponse};
-
-use foretoken_model_protocol::ModelServerRole;
+use foretoken_model_protocol::{
+    ModelDtype, ModelServerRole, RuntimeMetadataResponse, TelemetryResponse,
+};
 use foretoken_router::{
     ModelRouteTable, RouteDecision, RouteInventory, RouteTarget, RouteTargetId, RouteTargetStats,
     RouteTargetStatsReader,

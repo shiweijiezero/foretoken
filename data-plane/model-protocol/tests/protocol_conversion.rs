@@ -3,6 +3,8 @@
 
 //! Wire-shape contract for normalized vLLM KV lifecycle events.
 
+use std::collections::BTreeMap;
+
 use foretoken_model_protocol::*;
 #[test]
 fn lifecycle_wire_shape_is_typed_and_hash_only_remove() {
@@ -100,37 +102,65 @@ fn kv_delta_query_requires_camel_case_data_parallel_rank() {
 }
 
 #[test]
-fn generate_input_preserves_session_id_across_vllm_conversions() {
-    let input = GenerateInput {
-        request_id: "request-1".into(),
-        prompt_token_ids: vec![1, 2],
-        sampling_params: Default::default(),
-        mm_features: None,
-        arrival_time: None,
-        cache_salt: None,
-        trace_headers: None,
-        priority: 0,
-        data_parallel_rank: Some(3),
-        session_id: Some("session-1".into()),
-        reasoning_parser_kwargs: None,
-        lora_request: None,
-    };
-
-    let vllm_request = vllm_llm::GenerateRequest::from(input);
-    assert_eq!(vllm_request.session_id.as_deref(), Some("session-1"));
-
-    let round_trip = GenerateInput::from(vllm_request);
-    assert_eq!(round_trip.session_id.as_deref(), Some("session-1"));
-}
-
-#[test]
-fn generate_input_defaults_session_id_for_older_payloads() {
+fn generate_input_defaults_extensions_and_session_id_for_older_payloads() {
     let input: GenerateInput = serde_json::from_value(serde_json::json!({
         "request_id": "request-1",
         "prompt_token_ids": [1, 2],
         "sampling_params": {},
     }))
-    .expect("payload without session_id remains valid");
+    .expect("payload without extensions and session_id remains valid");
 
     assert_eq!(input.session_id, None);
+    assert!(input.extensions.is_none());
+}
+
+#[test]
+fn generate_input_round_trips_engine_specific_extensions_as_msgpack() {
+    let mut extra = BTreeMap::new();
+    extra.insert("logit_bias".into(), serde_json::json!({"3": -0.5}));
+    let input = GenerateInput {
+        request_id: "request-ext".into(),
+        prompt_token_ids: vec![1, 2],
+        sampling_params: SamplingParams {
+            stop_token_ids: vec![151643],
+            extra_args: extra,
+            ..Default::default()
+        },
+        extensions: Some(EngineExtensions {
+            mm_features: Some(rmpv::Value::Array(vec![rmpv::Value::String(
+                "image".into(),
+            )])),
+            lora_request: None,
+            reasoning_parser_kwargs: None,
+        }),
+        arrival_time: None,
+        cache_salt: Some("salt".into()),
+        trace_headers: None,
+        priority: 0,
+        data_parallel_rank: Some(2),
+        session_id: Some("session".into()),
+    };
+
+    let encoded = rmp_serde::to_vec_named(&input).expect("encode generate input as msgpack");
+    let decoded: GenerateInput =
+        rmp_serde::from_slice(&encoded).expect("decode generate input from msgpack");
+
+    assert_eq!(decoded.request_id, "request-ext");
+    assert_eq!(decoded.prompt_token_ids, vec![1, 2]);
+    assert_eq!(decoded.sampling_params.stop_token_ids, vec![151643]);
+    assert_eq!(
+        decoded.sampling_params.extra_args["logit_bias"],
+        serde_json::json!({"3": -0.5})
+    );
+    assert_eq!(decoded.data_parallel_rank, Some(2));
+    assert_eq!(decoded.session_id.as_deref(), Some("session"));
+    assert_eq!(
+        decoded
+            .extensions
+            .as_ref()
+            .and_then(|e| e.mm_features.as_ref()),
+        Some(&rmpv::Value::Array(vec![rmpv::Value::String(
+            "image".into()
+        )]))
+    );
 }

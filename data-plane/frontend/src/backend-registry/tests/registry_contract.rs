@@ -10,11 +10,10 @@ use foretoken_backend_registry::{
     SnapshotEpdPipelineScope, SnapshotError, SnapshotGroup, SnapshotModel, SnapshotPdComponent,
     SnapshotPdPipelineScope,
 };
-use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_llm_facade::{LlmFacadeResolver, RouteStage};
 use foretoken_model_protocol::{
-    CumulativeHistogram, CumulativeHistogramBucket, ModelServerRole, RuntimeMetadataResponse,
-    RuntimeModelIdentity, TelemetryResponse,
+    CumulativeHistogram, CumulativeHistogramBucket, ModelDtype, ModelServerRole,
+    RuntimeMetadataResponse, RuntimeModelIdentity, TelemetryResponse,
 };
 use foretoken_router::{
     RouteDecision, RouteInventory, RouteTargetId, RouteTargetSet, RouteTargetStatsReader,

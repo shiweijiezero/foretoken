@@ -9,10 +9,11 @@ license.workspace = true
 description = "Typed internal protocol between Foretoken frontend and model-server"
 
 [dependencies]
+rmpv.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-vllm-engine-core-client.workspace = true
-vllm-llm.workspace = true
+serde_with.workspace = true
 
 [dev-dependencies]
+rmp-serde.workspace = true
 serde_json.workspace = true

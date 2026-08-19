@@ -10,7 +10,7 @@ use std::sync::Arc;
 use foretoken_chat::{
     ChatBackend, ChatRequestProcessor, DynChatBackend, HfChatBackend, LoadModelBackendsOptions,
 };
-use foretoken_engine_core_client::protocol::dtype::ModelDtype;
+use foretoken_model_protocol::ModelDtype;
 use foretoken_tokenizer::DynTokenizer;
 use hf_hub::api::tokio::ApiBuilder;
 use hf_hub::{Repo, RepoType, api::Siblings};
@@ -123,10 +123,18 @@ pub async fn load_hf_snapshot_runtime(
         tokenizer,
         chat_processor: Arc::new(ChatRequestProcessor::with_model_dtype(
             chat_backend,
-            model_dtype,
+            to_vllm_dtype(model_dtype),
         )),
         supports_multimodal,
     })
+}
+
+fn to_vllm_dtype(dtype: ModelDtype) -> foretoken_engine_core_client::protocol::dtype::ModelDtype {
+    match dtype {
+        ModelDtype::Float16 => foretoken_engine_core_client::protocol::dtype::ModelDtype::Float16,
+        ModelDtype::BFloat16 => foretoken_engine_core_client::protocol::dtype::ModelDtype::BFloat16,
+        ModelDtype::Float32 => foretoken_engine_core_client::protocol::dtype::ModelDtype::Float32,
+    }
 }
 
 fn files_for_local_hf_resolver(siblings: &[Siblings]) -> Vec<String> {

@@ -259,7 +259,12 @@ where
                         inflight.release();
                     }
                     output.request_id.clone_from(&request_id);
-                    (Ok(TokenEvent::Token(Box::new(output.into()))), terminal)
+                    (
+                        Ok(TokenEvent::Token(Box::new(
+                            crate::conversion::to_token_output(output),
+                        ))),
+                        terminal,
+                    )
                 }
                 Err(error) => {
                     inflight.release();
@@ -297,7 +302,7 @@ impl Backend for VllmBackend {
         let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
         let request_id = request.request_id.clone();
         let stream = llm
-            .generate(request.into())
+            .generate(crate::conversion::to_vllm_request(request)?)
             .await
             .map_err(BackendError::from_llm)?;
         Ok(tracked_stream(
