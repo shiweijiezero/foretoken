@@ -19,10 +19,11 @@ use bytes::Bytes;
 use futures::StreamExt;
 use serde::Serialize;
 
-use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
-use crate::kv_event_adapter::{KvDeltaError, KvEventAdapter};
+use crate::core::kv_events::{KvDeltaError, KvEventAdapter};
+use crate::engine::{Engine, EngineError};
 use foretoken_model_protocol::{
-    AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, TelemetryResponse,
+    AbortInput, GenerateInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse,
+    TelemetryResponse, TokenEvent,
 };
 
 // One atomic word linearizes admission close against request acceptance.
@@ -104,14 +105,14 @@ impl Drop for AdmissionPermit {
 /// Mutable process state shared by typed HTTP handlers.
 #[derive(Clone)]
 pub struct AppState {
-    backend: Arc<dyn Backend>,
+    backend: Arc<dyn Engine>,
     health: Arc<RuntimeHealth>,
     metadata: RuntimeMetadataResponse,
     kv_events: Option<Arc<KvEventAdapter>>,
 }
 impl AppState {
     pub fn new(
-        backend: Arc<dyn Backend>,
+        backend: Arc<dyn Engine>,
         health: Arc<RuntimeHealth>,
         metadata: RuntimeMetadataResponse,
     ) -> Self {
@@ -301,13 +302,13 @@ enum ApiError {
     RequestFailed,
 }
 impl ApiError {
-    fn backend(error: BackendError) -> Self {
+    fn backend(error: EngineError) -> Self {
         match error {
-            BackendError::InvalidRequest => Self::InvalidRequest,
-            BackendError::Unavailable => Self::Unavailable,
-            BackendError::Rejected => Self::Rejected,
-            BackendError::Protocol => Self::Protocol,
-            BackendError::RequestFailed => Self::RequestFailed,
+            EngineError::InvalidRequest => Self::InvalidRequest,
+            EngineError::Unavailable => Self::Unavailable,
+            EngineError::Rejected => Self::Rejected,
+            EngineError::Protocol => Self::Protocol,
+            EngineError::RequestFailed => Self::RequestFailed,
         }
     }
     const fn status(self) -> StatusCode {

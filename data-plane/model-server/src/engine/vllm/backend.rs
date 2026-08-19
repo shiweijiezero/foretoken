@@ -1,67 +1,40 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Engine-neutral HTTP-facing boundary and the thin vLLM EngineCore adapter.
+//! vLLM adapter that retains its public `Llm` facade rather than its wire protocol.
 
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
-use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
 use vllm_llm::{FinishReason, Llm};
 use vllm_metrics::EngineLabels;
 
-use crate::backend_telemetry::{BoundaryLatencyMetrics, read_vllm_metrics};
+use super::conversion::to_token_output;
+use super::telemetry::{BoundaryLatencyMetrics, read_vllm_metrics};
+use crate::engine::{Engine, EngineCapabilities, EngineError, EngineTelemetry, TokenStream};
+use foretoken_model_protocol::{GenerateInput, TokenErrorCode, TokenEvent};
 
-pub use foretoken_model_protocol::{
-    CumulativeHistogram, GenerateInput, TokenErrorCode, TokenEvent, TokenOutput,
-};
-
-/// Stream shape shared by production vLLM and deterministic test backends.
-pub type TokenStream = Pin<Box<dyn Stream<Item = Result<TokenEvent, BackendError>> + Send>>;
-
-/// Cumulative backend observations included in a telemetry snapshot.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct BackendTelemetry {
-    pub running_requests: u64,
-    pub max_concurrent_requests: u64,
-    pub scheduler_running_requests: Option<u64>,
-    pub scheduler_waiting_requests: Option<u64>,
-    pub kv_cache_usage: Option<f64>,
-    pub prompt_tokens_total: Option<u64>,
-    pub generation_tokens_total: Option<u64>,
-    pub ttft_seconds: CumulativeHistogram,
-    pub tpot_seconds: CumulativeHistogram,
-    pub e2e_seconds: CumulativeHistogram,
-}
-
-/// Backend failures classified without retaining vLLM's diagnostic text.
-#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
-pub enum BackendError {
+/// vLLM adapter failures. Classified without retaining vLLM's diagnostic text,
+/// then translated into the engine-neutral [`EngineError`] at the trait
+/// boundary.
+#[derive(Debug, thiserror::Error, Clone, Copy, PartialEq, Eq)]
+pub enum VllmError {
     #[error("request was rejected")]
     Rejected,
     #[error("request is invalid")]
     InvalidRequest,
-    #[error("backend is unavailable")]
+    #[error("vLLM is unavailable")]
     Unavailable,
-    #[error("backend protocol failed")]
+    #[error("vLLM protocol failed")]
     Protocol,
-    #[error("backend request failed")]
+    #[error("vLLM request failed")]
     RequestFailed,
 }
 
-impl BackendError {
-    pub const fn token_error_code(self) -> TokenErrorCode {
-        match self {
-            Self::Unavailable => TokenErrorCode::Unavailable,
-            Self::Rejected | Self::InvalidRequest | Self::Protocol => TokenErrorCode::Protocol,
-            Self::RequestFailed => TokenErrorCode::RequestFailed,
-        }
-    }
-
+impl VllmError {
     fn from_llm(error: vllm_llm::Error) -> Self {
         match error {
             vllm_llm::Error::EmptyPromptTokenIds { .. } => Self::InvalidRequest,
@@ -107,12 +80,16 @@ impl BackendError {
     }
 }
 
-/// Minimal EngineCore operations that this group-local server needs.
-#[async_trait]
-pub trait Backend: Send + Sync {
-    async fn generate(&self, request: GenerateInput) -> Result<TokenStream, BackendError>;
-    async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError>;
-    fn telemetry(&self) -> BackendTelemetry;
+impl From<VllmError> for EngineError {
+    fn from(error: VllmError) -> Self {
+        match error {
+            VllmError::Rejected => EngineError::Rejected,
+            VllmError::InvalidRequest => EngineError::InvalidRequest,
+            VllmError::Unavailable => EngineError::Unavailable,
+            VllmError::Protocol => EngineError::Protocol,
+            VllmError::RequestFailed => EngineError::RequestFailed,
+        }
+    }
 }
 
 /// vLLM adapter that retains its public `Llm` facade rather than its wire protocol.
@@ -143,14 +120,6 @@ impl VllmBackend {
             engine_labels,
             boundary_latency: Arc::new(Mutex::new(BoundaryLatencyMetrics::new())),
         }
-    }
-
-    /// Stop local client tasks without duplicating the EngineCore protocol.
-    pub async fn shutdown(&self) -> Result<(), BackendError> {
-        let Some(llm) = self.llm.write().await.take() else {
-            return Ok(());
-        };
-        llm.shutdown().await.map_err(BackendError::from_llm)
     }
 }
 
@@ -260,15 +229,13 @@ where
                     }
                     output.request_id.clone_from(&request_id);
                     (
-                        Ok(TokenEvent::Token(Box::new(
-                            crate::conversion::to_token_output(output),
-                        ))),
+                        Ok(TokenEvent::Token(Box::new(to_token_output(output)))),
                         terminal,
                     )
                 }
                 Err(error) => {
                     inflight.release();
-                    (Err(BackendError::from_llm(error)), true)
+                    (Err(VllmError::from_llm(error).into()), true)
                 }
             };
             match sender.try_send(event) {
@@ -295,16 +262,17 @@ where
 }
 
 #[async_trait]
-impl Backend for VllmBackend {
-    async fn generate(&self, request: GenerateInput) -> Result<TokenStream, BackendError> {
+impl Engine for VllmBackend {
+    async fn generate(&self, request: GenerateInput) -> Result<TokenStream, EngineError> {
         let started_at = Instant::now();
         let guard = self.llm.read().await;
-        let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
+        let llm = guard.as_ref().ok_or(EngineError::Unavailable)?;
         let request_id = request.request_id.clone();
         let stream = llm
-            .generate(crate::conversion::to_vllm_request(request)?)
+            .generate(super::conversion::to_vllm_request(request)?)
             .await
-            .map_err(BackendError::from_llm)?;
+            .map_err(VllmError::from_llm)
+            .map_err(EngineError::from)?;
         Ok(tracked_stream(
             stream,
             request_id,
@@ -314,13 +282,16 @@ impl Backend for VllmBackend {
         ))
     }
 
-    async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError> {
+    async fn abort(&self, request_ids: &[String]) -> Result<(), EngineError> {
         let guard = self.llm.read().await;
-        let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
-        llm.abort(request_ids).await.map_err(BackendError::from_llm)
+        let llm = guard.as_ref().ok_or(EngineError::Unavailable)?;
+        llm.abort(request_ids)
+            .await
+            .map_err(VllmError::from_llm)
+            .map_err(EngineError::from)
     }
 
-    fn telemetry(&self) -> BackendTelemetry {
+    fn telemetry(&self) -> EngineTelemetry {
         let vllm = read_vllm_metrics(&self.engine_labels);
         let (ttft_seconds, tpot_seconds, e2e_seconds) = self
             .boundary_latency
@@ -328,7 +299,7 @@ impl Backend for VllmBackend {
             .expect("boundary latency metrics lock poisoned")
             .snapshot();
 
-        BackendTelemetry {
+        EngineTelemetry {
             running_requests: self.running_requests.load(Ordering::Acquire),
             max_concurrent_requests: self.max_concurrent_requests,
             scheduler_running_requests: vllm.scheduler_running_requests,
@@ -340,5 +311,21 @@ impl Backend for VllmBackend {
             tpot_seconds,
             e2e_seconds,
         }
+    }
+
+    fn capabilities(&self) -> EngineCapabilities {
+        EngineCapabilities::default()
+    }
+
+    async fn cleanup(&self) -> Result<(), EngineError> {
+        // `take` makes cleanup idempotent and null-safe against a partially
+        // initialized backend.
+        let Some(llm) = self.llm.write().await.take() else {
+            return Ok(());
+        };
+        llm.shutdown()
+            .await
+            .map_err(VllmError::from_llm)
+            .map_err(EngineError::from)
     }
 }

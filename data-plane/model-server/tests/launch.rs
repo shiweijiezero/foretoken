@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-use foretoken_model_server::launch::LaunchPlanV1;
+use foretoken_model_server::engine::EngineKind;
+use foretoken_model_server::engine::vllm::LaunchPlanV1;
 
 fn plan() -> LaunchPlanV1 {
     LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"model":"model","revision":"rev","tokenizer":"tokenizer","tokenizerRevision":"tokenizer-rev"},"parallelism":{"tp":2,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":30,"drainSeconds":7},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":["--max-model-len=32768"]}"#).unwrap()
@@ -11,6 +12,17 @@ fn plan() -> LaunchPlanV1 {
 fn rejects_unknown_and_missing_wire_fields() {
     assert!(LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{},"parallelism":{},"kv":{"kind":"none","events":true},"lifecycle":{},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[],"unexpected":true}"#).is_err());
     assert!(LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":1,"drainSeconds":1}}"#).is_err());
+}
+
+#[test]
+fn defaults_kind_to_vllm_and_rejects_unknown_kind() {
+    // A plan without `kind` (as produced by the current control plane) is valid
+    // and defaults to vllm.
+    assert_eq!(plan().kind, EngineKind::Vllm);
+
+    // An explicitly unsupported engine is rejected.
+    let source = r#"{"version":1,"kind":"sglang","nodeCount":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#;
+    assert!(LaunchPlanV1::parse(source).is_err());
 }
 
 #[test]

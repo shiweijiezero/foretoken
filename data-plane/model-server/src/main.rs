@@ -8,17 +8,17 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity};
-use foretoken_model_server::api::{AppState, RuntimeHealth, router};
-use foretoken_model_server::backend::VllmBackend;
-use foretoken_model_server::config::RuntimeConfig;
-use foretoken_model_server::kv_event_adapter::KvEventAdapter;
-use foretoken_model_server::runtime_transport::LOOPBACK_HOST;
+use foretoken_model_server::core::api::{AppState, RuntimeHealth, router};
+use foretoken_model_server::core::config::RuntimeConfig;
+use foretoken_model_server::core::kv_events::KvEventAdapter;
+use foretoken_model_server::engine::vllm::{
+    LaunchPlanV1, VllmBackend, VllmProcess, conversion::to_neutral_model_dtype,
+};
+use foretoken_model_server::engine::{Engine, EngineKind};
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
-use vllm_engine_core_client::{EngineCoreClient, EngineCoreClientConfig, TransportMode};
 use vllm_llm::Llm;
-use vllm_managed_engine::{ManagedEngineHandle, allocate_handshake_port};
 
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
@@ -31,8 +31,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Resolve the controller-owned launch plan before starting any engine or network task.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
 
+    // Parse the launch-plan payload through the engine selected by `kind`.
+    let plan = match config.launch.kind {
+        EngineKind::Vllm => {
+            LaunchPlanV1::parse(&config.launch.payload).map_err(std::io::Error::other)?
+        }
+    };
+
     // Resolve optional KV projection state now; connect only after the engine publisher is ready.
-    let kv_events = match kv_event_adapter(&config) {
+    let kv_events = match kv_event_adapter(&plan) {
         Ok(adapter) => Some(adapter),
         Err(error) => {
             warn!(%error, "KV index configuration is unavailable; prefix scoring is disabled");
@@ -40,73 +47,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // The model-server owns one managed engine and the loopback handshake used by its client.
-    let handshake_port = allocate_handshake_port(LOOPBACK_HOST)?;
-    let engine = ManagedEngineHandle::spawn(
-        config
-            .launch
-            .managed_engine(handshake_port)
-            .map_err(std::io::Error::other)?,
-    )
-    .await?;
+    let mut process = VllmProcess::spawn(&plan).await?;
     let health = Arc::new(RuntimeHealth::new());
     health.set_process_alive(true);
 
-    let client_config = EngineCoreClientConfig {
-        transport_mode: TransportMode::HandshakeOwner {
-            handshake_address: format!("tcp://{LOOPBACK_HOST}:{handshake_port}"),
-            advertised_host: LOOPBACK_HOST.into(),
-            engine_count: config.launch.parallelism.dp,
-            ready_timeout: config.launch.startup_timeout(),
-            local_input_address: None,
-            local_output_address: None,
-        },
-        coordinator_mode: None,
-        model_name: config.launch.artifacts.model.clone(),
-        client_index: 0,
-    };
-    let client = tokio::select! {
-        result = EngineCoreClient::connect(client_config) => result.map_err(|error| std::io::Error::other(format!("could not connect to EngineCore: {error}"))),
-        status = engine.wait_for_exit() => Err(std::io::Error::other(format!("managed EngineCore exited during startup: {status}"))),
-    };
-    let client = match client {
-        Ok(client) => client,
-        Err(error) => {
-            let _ = engine.shutdown(config.launch.drain_timeout()).await;
-            return Err(error.into());
-        }
-    };
-
-    let mut client_health = client.subscribe_health();
-    let max_concurrent_requests = client
-        .ready_responses()
-        .into_iter()
-        .try_fold(0_u64, |total, ready| total.checked_add(ready.max_num_seqs))
-        .ok_or_else(|| std::io::Error::other("EngineCore max_num_seqs sum overflowed"))?;
+    let mut client_health = process.client().subscribe_health();
+    let max_concurrent_requests = process.max_concurrent_requests()?;
     let metadata = RuntimeMetadataResponse {
         version: 1,
         model: RuntimeModelIdentity {
-            model: config.launch.artifacts.model.clone(),
-            revision: config.launch.artifacts.revision.clone(),
+            model: plan.artifacts.model.clone(),
+            revision: plan.artifacts.revision.clone(),
         },
-        model_dtype: foretoken_model_server::conversion::to_neutral_model_dtype(
-            client.model_dtype(),
-        ),
-        effective_max_model_len: client.max_model_len(),
-        ec_transfer: config.launch.ec.runtime_metadata(),
-        capabilities: if config.launch.ec.enabled() {
+        model_dtype: to_neutral_model_dtype(process.client().model_dtype()),
+        effective_max_model_len: process.client().max_model_len(),
+        ec_transfer: plan.ec.runtime_metadata(),
+        capabilities: if plan.ec.enabled() {
             ["ec_transfer".into()].into_iter().collect()
         } else {
             Default::default()
         },
     };
     if !*client_health.borrow() {
-        let reason = client.health_error().map_or_else(
+        let reason = process.client().health_error().map_or_else(
             || "EngineCore client became unhealthy during startup".to_string(),
             |error| format!("EngineCore client became unhealthy during startup: {error}"),
         );
-        let _ = client.shutdown().await;
-        let _ = engine.shutdown(config.launch.drain_timeout()).await;
+        let _ = process.take_client().shutdown().await;
+        let _ = process.shutdown(plan.drain_timeout()).await;
         health.set_process_alive(false);
         return Err(std::io::Error::other(reason).into());
     }
@@ -124,7 +92,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     health.set_client_healthy(true);
     health.set_accepting(true);
-    let backend = Arc::new(VllmBackend::new(Llm::new(client), max_concurrent_requests));
+    let backend = Arc::new(VllmBackend::new(
+        Llm::new(process.take_client()),
+        max_concurrent_requests,
+    ));
 
     // Expose only the restricted group-local API after EngineCore is connected and healthy.
     let listener = match TcpListener::bind(config.listen_address).await {
@@ -132,8 +103,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(error) => {
             health.set_accepting(false);
             health.set_client_healthy(false);
-            let _ = backend.shutdown().await;
-            let _ = engine.shutdown(config.launch.drain_timeout()).await;
+            let _ = backend.cleanup().await;
+            let _ = process.shutdown(plan.drain_timeout()).await;
             return Err(error.into());
         }
     };
@@ -146,10 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut server = Box::pin(
         axum::serve(
             listener,
-            router(
-                app_state,
-                config.launch.internal_generate_request_body_limit_bytes,
-            ),
+            router(app_state, plan.internal_generate_request_body_limit_bytes),
         )
         .with_graceful_shutdown(async move { server_shutdown.notified().await })
         .into_future(),
@@ -171,7 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 unreachable!("EngineCore health only transitions to unhealthy")
             }
         },
-        status = engine.wait_for_exit() => Stop::ChildExited(format!("managed EngineCore exited unexpectedly: {status}")),
+        status = process.engine.wait_for_exit() => Stop::ChildExited(format!("managed EngineCore exited unexpectedly: {status}")),
         result = &mut server => Stop::Server(match result {
             Ok(()) => "HTTP server stopped unexpectedly".into(),
             Err(error) => format!("HTTP server failed: {error}"),
@@ -188,9 +156,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     health.set_accepting(false);
     health.set_client_healthy(false);
     shutdown.notify_waiters();
-    let deadline = Instant::now() + config.launch.drain_timeout();
+    let deadline = Instant::now() + plan.drain_timeout();
     if !matches!(&stop, Stop::Server(_)) {
-        match tokio::time::timeout(config.launch.drain_timeout(), server.as_mut()).await {
+        match tokio::time::timeout(plan.drain_timeout(), server.as_mut()).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => error!(%error, "HTTP server failed while draining"),
             Err(_) => {
@@ -199,11 +167,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    if let Err(error) = backend.shutdown().await {
+    if let Err(error) = backend.cleanup().await {
         warn!(%error, "could not shut down EngineCore client cleanly");
     }
     let remaining = deadline.saturating_duration_since(Instant::now());
-    if let Err(error) = engine.shutdown(remaining).await {
+    if let Err(error) = process.shutdown(remaining).await {
         warn!(%error, "could not shut down managed EngineCore cleanly");
     }
     health.set_process_alive(false);
@@ -217,7 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn kv_event_adapter(
-    config: &RuntimeConfig,
+    plan: &LaunchPlanV1,
 ) -> Result<Arc<KvEventAdapter>, Box<dyn std::error::Error>> {
     let bytes = std::fs::read(std::env::var(KV_KEY_PATH_ENV)?)?;
     let key: [u8; 32] = bytes
@@ -230,8 +198,8 @@ fn kv_event_adapter(
         key,
         scope_id,
         model_group_id,
-        config.launch.artifacts.revision.clone(),
-        config.launch.parallelism.dp.try_into()?,
+        plan.artifacts.revision.clone(),
+        plan.parallelism.dp.try_into()?,
     ))
 }
 

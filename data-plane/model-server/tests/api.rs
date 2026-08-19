@@ -8,12 +8,13 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use foretoken_model_protocol::{
-    CumulativeHistogram, CumulativeHistogramBucket, EngineExtensions, FinishReason, ModelDtype,
-    RuntimeMetadataResponse, RuntimeModelIdentity, SamplingParams,
+    CumulativeHistogram, CumulativeHistogramBucket, EngineExtensions, FinishReason, GenerateInput,
+    ModelDtype, RuntimeMetadataResponse, RuntimeModelIdentity, SamplingParams, TokenEvent,
+    TokenOutput,
 };
-use foretoken_model_server::api::{AppState, RuntimeHealth, router};
-use foretoken_model_server::backend::{
-    Backend, BackendError, BackendTelemetry, GenerateInput, TokenEvent, TokenOutput, TokenStream,
+use foretoken_model_server::core::api::{AppState, RuntimeHealth, router};
+use foretoken_model_server::engine::{
+    Engine, EngineCapabilities, EngineError, EngineTelemetry, TokenStream,
 };
 use futures::stream;
 use http_body_util::BodyExt;
@@ -26,7 +27,7 @@ use vllm_engine_core_client::protocol::tensor::WireNdArray;
 struct RecordingBackend {
     requests: Mutex<Vec<GenerateInput>>,
     aborts: Mutex<Vec<Vec<String>>>,
-    telemetry: BackendTelemetry,
+    telemetry: EngineTelemetry,
 }
 
 impl Default for RecordingBackend {
@@ -34,7 +35,7 @@ impl Default for RecordingBackend {
         Self {
             requests: Mutex::new(Vec::new()),
             aborts: Mutex::new(Vec::new()),
-            telemetry: BackendTelemetry {
+            telemetry: EngineTelemetry {
                 running_requests: 0,
                 max_concurrent_requests: 7,
                 ..Default::default()
@@ -44,8 +45,8 @@ impl Default for RecordingBackend {
 }
 
 #[async_trait]
-impl Backend for RecordingBackend {
-    async fn generate(&self, input: GenerateInput) -> Result<TokenStream, BackendError> {
+impl Engine for RecordingBackend {
+    async fn generate(&self, input: GenerateInput) -> Result<TokenStream, EngineError> {
         self.requests.lock().unwrap().push(input.clone());
         Ok(Box::pin(stream::iter([Ok(TokenEvent::Token(Box::new(
             TokenOutput {
@@ -62,13 +63,21 @@ impl Backend for RecordingBackend {
         )))])))
     }
 
-    async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError> {
+    async fn abort(&self, request_ids: &[String]) -> Result<(), EngineError> {
         self.aborts.lock().unwrap().push(request_ids.to_vec());
         Ok(())
     }
 
-    fn telemetry(&self) -> BackendTelemetry {
+    fn telemetry(&self) -> EngineTelemetry {
         self.telemetry.clone()
+    }
+
+    fn capabilities(&self) -> EngineCapabilities {
+        Default::default()
+    }
+
+    async fn cleanup(&self) -> Result<(), EngineError> {
+        Ok(())
     }
 }
 
@@ -86,12 +95,12 @@ fn metadata() -> RuntimeMetadataResponse {
     }
 }
 
-fn app(backend: Arc<dyn Backend>, healthy: bool, accepting: bool) -> axum::Router {
+fn app(backend: Arc<dyn Engine>, healthy: bool, accepting: bool) -> axum::Router {
     app_with_body_limit(backend, healthy, accepting, 64 * 1024 * 1024)
 }
 
 fn app_with_body_limit(
-    backend: Arc<dyn Backend>,
+    backend: Arc<dyn Engine>,
     healthy: bool,
     accepting: bool,
     body_limit: usize,
@@ -120,37 +129,53 @@ async fn kv_delta_is_unavailable_without_an_event_adapter() {
 struct PendingStreamBackend;
 
 #[async_trait]
-impl Backend for PendingStreamBackend {
-    async fn generate(&self, _: GenerateInput) -> Result<TokenStream, BackendError> {
+impl Engine for PendingStreamBackend {
+    async fn generate(&self, _: GenerateInput) -> Result<TokenStream, EngineError> {
         Ok(Box::pin(stream::pending()))
     }
 
-    async fn abort(&self, _: &[String]) -> Result<(), BackendError> {
+    async fn abort(&self, _: &[String]) -> Result<(), EngineError> {
         Ok(())
     }
 
-    fn telemetry(&self) -> BackendTelemetry {
-        BackendTelemetry {
+    fn telemetry(&self) -> EngineTelemetry {
+        EngineTelemetry {
             max_concurrent_requests: 7,
             ..Default::default()
         }
+    }
+
+    fn capabilities(&self) -> EngineCapabilities {
+        Default::default()
+    }
+
+    async fn cleanup(&self) -> Result<(), EngineError> {
+        Ok(())
     }
 }
 
 struct FailingStreamBackend;
 
 #[async_trait]
-impl Backend for FailingStreamBackend {
-    async fn generate(&self, _: GenerateInput) -> Result<TokenStream, BackendError> {
-        Ok(Box::pin(stream::iter([Err(BackendError::Unavailable)])))
+impl Engine for FailingStreamBackend {
+    async fn generate(&self, _: GenerateInput) -> Result<TokenStream, EngineError> {
+        Ok(Box::pin(stream::iter([Err(EngineError::Unavailable)])))
     }
 
-    async fn abort(&self, _: &[String]) -> Result<(), BackendError> {
+    async fn abort(&self, _: &[String]) -> Result<(), EngineError> {
         Ok(())
     }
 
-    fn telemetry(&self) -> BackendTelemetry {
+    fn telemetry(&self) -> EngineTelemetry {
         Default::default()
+    }
+
+    fn capabilities(&self) -> EngineCapabilities {
+        Default::default()
+    }
+
+    async fn cleanup(&self) -> Result<(), EngineError> {
+        Ok(())
     }
 }
 
@@ -347,7 +372,7 @@ async fn metadata_and_telemetry_expose_typed_runtime_snapshots() {
         }],
     };
     let backend = Arc::new(RecordingBackend {
-        telemetry: BackendTelemetry {
+        telemetry: EngineTelemetry {
             running_requests: 3,
             max_concurrent_requests: 7,
             scheduler_running_requests: Some(2),

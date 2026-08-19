@@ -21,7 +21,7 @@ use vllm_engine_core_client::protocol::{
 };
 use vllm_llm::{GenerateOutput, GenerateRequest};
 
-use crate::backend::BackendError;
+use super::backend::VllmError;
 
 /// Decoded engine-specific request extensions.
 type DecodedExtensions = (
@@ -46,9 +46,9 @@ const EXTRA_SKIP_READING_PREFIX_CACHE: &str = "skip_reading_prefix_cache";
 
 /// Translates a neutral [`GenerateInput`] into a vLLM [`GenerateRequest`].
 ///
-/// Fails with [`BackendError::InvalidRequest`] when an opaque extension or
+/// Fails with [`VllmError::InvalidRequest`] when an opaque extension or
 /// engine-specific sampling field cannot be decoded into its vLLM type.
-pub fn to_vllm_request(input: GenerateInput) -> Result<GenerateRequest, BackendError> {
+pub fn to_vllm_request(input: GenerateInput) -> Result<GenerateRequest, VllmError> {
     let sampling_params = to_vllm_sampling(input.sampling_params)?;
     let (mm_features, reasoning_parser_kwargs, lora_request) = decode_extensions(input.extensions)?;
 
@@ -90,7 +90,7 @@ pub fn to_token_output(output: GenerateOutput) -> TokenOutput {
     }
 }
 
-fn to_vllm_sampling(params: SamplingParams) -> Result<EngineCoreSamplingParams, BackendError> {
+fn to_vllm_sampling(params: SamplingParams) -> Result<EngineCoreSamplingParams, VllmError> {
     let mut extra = params.extra_args;
 
     let thinking_token_budget = take_optional(&mut extra, EXTRA_THINKING_TOKEN_BUDGET)?;
@@ -139,9 +139,7 @@ fn to_vllm_sampling(params: SamplingParams) -> Result<EngineCoreSamplingParams, 
     })
 }
 
-fn decode_extensions(
-    extensions: Option<EngineExtensions>,
-) -> Result<DecodedExtensions, BackendError> {
+fn decode_extensions(extensions: Option<EngineExtensions>) -> Result<DecodedExtensions, VllmError> {
     let Some(extensions) = extensions else {
         return Ok((None, None, None));
     };
@@ -149,28 +147,28 @@ fn decode_extensions(
         .mm_features
         .map(rmpv::ext::from_value)
         .transpose()
-        .map_err(|_| BackendError::InvalidRequest)?;
+        .map_err(|_| VllmError::InvalidRequest)?;
     let lora_request = extensions
         .lora_request
         .map(rmpv::ext::from_value)
         .transpose()
-        .map_err(|_| BackendError::InvalidRequest)?;
+        .map_err(|_| VllmError::InvalidRequest)?;
     let reasoning_parser_kwargs = extensions
         .reasoning_parser_kwargs
         .map(rmpv::ext::from_value)
         .transpose()
-        .map_err(|_| BackendError::InvalidRequest)?;
+        .map_err(|_| VllmError::InvalidRequest)?;
     Ok((mm_features, reasoning_parser_kwargs, lora_request))
 }
 
 fn take_optional<T: serde::de::DeserializeOwned>(
     extra: &mut BTreeMap<String, serde_json::Value>,
     key: &str,
-) -> Result<Option<T>, BackendError> {
+) -> Result<Option<T>, VllmError> {
     match extra.remove(key) {
         Some(value) => serde_json::from_value(value)
             .map(Some)
-            .map_err(|_| BackendError::InvalidRequest),
+            .map_err(|_| VllmError::InvalidRequest),
         None => Ok(None),
     }
 }
@@ -263,7 +261,7 @@ mod tests {
         };
         assert!(matches!(
             to_vllm_sampling(params),
-            Err(BackendError::InvalidRequest)
+            Err(VllmError::InvalidRequest)
         ));
     }
 
