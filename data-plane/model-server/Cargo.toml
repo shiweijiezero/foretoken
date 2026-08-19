@@ -21,6 +21,7 @@ foretoken-model-protocol.workspace = true
 futures.workspace = true
 rmp-serde.workspace = true
 rmpv.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -118,11 +118,14 @@ mod tests {
     fn parse_reads_explicit_kind() {
         let plan = LaunchPlan::parse(r#"{"kind":"vllm","version":1}"#).expect("vllm plan");
         assert_eq!(plan.kind, EngineKind::Vllm);
+
+        let plan = LaunchPlan::parse(r#"{"kind":"sglang","version":1}"#).expect("sglang plan");
+        assert_eq!(plan.kind, EngineKind::Sglang);
     }
 
     #[test]
     fn parse_rejects_unknown_kind() {
-        assert!(LaunchPlan::parse(r#"{"kind":"sglang","version":1}"#).is_err());
+        assert!(LaunchPlan::parse(r#"{"kind":"tensorrt","version":1}"#).is_err());
     }
 
     #[test]

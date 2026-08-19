@@ -8,6 +8,7 @@
 //! core relies on. It never imports an inference-engine crate; vLLM, SGLang,
 //! and future engines implement [`Engine`] behind this boundary.
 
+pub mod sglang;
 pub mod vllm;
 
 use std::pin::Pin;
@@ -52,12 +53,14 @@ impl EngineError {
 pub enum EngineKind {
     #[default]
     Vllm,
+    Sglang,
 }
 
 impl EngineKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Vllm => "vllm",
+            Self::Sglang => "sglang",
         }
     }
 }
@@ -68,6 +71,7 @@ impl FromStr for EngineKind {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "vllm" => Ok(Self::Vllm),
+            "sglang" => Ok(Self::Sglang),
             other => Err(format!("unsupported engine kind {other:?}")),
         }
     }

@@ -7,10 +7,11 @@ use std::future::IntoFuture;
 use std::sync::Arc;
 use std::time::Instant;
 
-use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity};
+use foretoken_model_protocol::{ModelDtype, RuntimeMetadataResponse, RuntimeModelIdentity};
 use foretoken_model_server::core::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::core::config::RuntimeConfig;
 use foretoken_model_server::core::kv_events::KvEventAdapter;
+use foretoken_model_server::engine::sglang::{SglangBackend, SglangLaunchPlan, SglangProcess};
 use foretoken_model_server::engine::vllm::{
     LaunchPlanV1, VllmBackend, VllmProcess, conversion::to_neutral_model_dtype,
 };
@@ -31,12 +32,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Resolve the controller-owned launch plan before starting any engine or network task.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
 
-    // Parse the launch-plan payload through the engine selected by `kind`.
-    let plan = match config.launch.kind {
-        EngineKind::Vllm => {
-            LaunchPlanV1::parse(&config.launch.payload).map_err(std::io::Error::other)?
-        }
-    };
+    match config.launch.kind {
+        EngineKind::Vllm => run_vllm(config).await,
+        EngineKind::Sglang => run_sglang(config).await,
+    }
+}
+
+async fn run_vllm(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let plan = LaunchPlanV1::parse(&config.launch.payload).map_err(std::io::Error::other)?;
 
     // Resolve optional KV projection state now; connect only after the engine publisher is ready.
     let kv_events = match kv_event_adapter(&plan) {
@@ -181,6 +184,136 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Stop::ClientUnhealthy(reason) | Stop::ChildExited(reason) | Stop::Server(reason) => {
             Err(std::io::Error::other(reason).into())
         }
+    }
+}
+
+async fn run_sglang(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let plan = SglangLaunchPlan::parse(&config.launch.payload).map_err(std::io::Error::other)?;
+
+    let health = Arc::new(RuntimeHealth::new());
+    health.set_process_alive(true);
+
+    let mut process = SglangProcess::spawn(&plan)?;
+
+    // Wait for the SGLang HTTP server to become healthy within the startup budget.
+    if let Err(reason) = wait_for_sglang_health(&plan, plan.startup_seconds).await {
+        health.set_process_alive(false);
+        let _ = process.shutdown(plan.drain_timeout()).await;
+        return Err(std::io::Error::other(reason).into());
+    }
+
+    let metadata = RuntimeMetadataResponse {
+        version: 1,
+        model: RuntimeModelIdentity {
+            model: plan.model.clone(),
+            revision: plan.revision.clone().unwrap_or_default(),
+        },
+        model_dtype: ModelDtype::BFloat16,
+        effective_max_model_len: 0,
+        ec_transfer: None,
+        capabilities: Default::default(),
+    };
+
+    health.set_client_healthy(true);
+    health.set_accepting(true);
+    let backend = Arc::new(SglangBackend::new(format!(
+        "http://127.0.0.1:{}",
+        plan.port
+    )));
+
+    let listener = match TcpListener::bind(config.listen_address).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            health.set_accepting(false);
+            health.set_client_healthy(false);
+            let _ = backend.cleanup().await;
+            let _ = process.shutdown(plan.drain_timeout()).await;
+            return Err(error.into());
+        }
+    };
+    let shutdown = Arc::new(Notify::new());
+    let server_shutdown = shutdown.clone();
+    let app_state = AppState::new(backend.clone(), health.clone(), metadata);
+    let mut server = Box::pin(
+        axum::serve(
+            listener,
+            router(app_state, plan.internal_generate_request_body_limit_bytes),
+        )
+        .with_graceful_shutdown(async move { server_shutdown.notified().await })
+        .into_future(),
+    );
+
+    enum Stop {
+        Signal,
+        ChildExited(String),
+        Server(String),
+    }
+    let stop = tokio::select! {
+        () = shutdown_signal() => Stop::Signal,
+        status = process.wait_for_exit() => Stop::ChildExited(match status {
+            Ok(status) => format!("sglang server exited unexpectedly: {status}"),
+            Err(error) => format!("sglang server wait failed: {error}"),
+        }),
+        result = &mut server => Stop::Server(match result {
+            Ok(()) => "HTTP server stopped unexpectedly".into(),
+            Err(error) => format!("HTTP server failed: {error}"),
+        }),
+    };
+    match &stop {
+        Stop::Signal => info!("received shutdown signal"),
+        Stop::ChildExited(reason) | Stop::Server(reason) => warn!(%reason),
+    }
+
+    health.set_accepting(false);
+    health.set_client_healthy(false);
+    shutdown.notify_waiters();
+    let deadline = Instant::now() + plan.drain_timeout();
+    if !matches!(&stop, Stop::Server(_)) {
+        match tokio::time::timeout(plan.drain_timeout(), server.as_mut()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => error!(%error, "HTTP server failed while draining"),
+            Err(_) => {
+                warn!("HTTP handlers did not drain before deadline");
+                drop(server);
+            }
+        }
+    }
+    if let Err(error) = backend.cleanup().await {
+        warn!(%error, "could not shut down SGLang backend cleanly");
+    }
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if let Err(error) = process.shutdown(remaining).await {
+        warn!(%error, "could not shut down SGLang server cleanly");
+    }
+    health.set_process_alive(false);
+
+    match stop {
+        Stop::Signal => Ok(()),
+        Stop::ChildExited(reason) | Stop::Server(reason) => {
+            Err(std::io::Error::other(reason).into())
+        }
+    }
+}
+
+/// Polls the SGLang `/health` endpoint until it reports healthy or the budget
+/// expires.
+async fn wait_for_sglang_health(
+    plan: &SglangLaunchPlan,
+    budget_seconds: u64,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{}/health", plan.port);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(budget_seconds);
+    loop {
+        match client.get(&url).send().await {
+            Ok(response) if response.status().is_success() => return Ok(()),
+            Ok(_) => {}
+            Err(_) => {}
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err("sglang server did not become healthy within the startup budget".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
 }
 
