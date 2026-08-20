@@ -16,7 +16,7 @@ class TargetConfig:
 
     url: str
     model: str
-    api_key: str = ""
+    api_key: str = "EMPTY"
     timeout: int = 300
     max_retries: int = 2
     headers: dict[str, str] = field(default_factory=dict)

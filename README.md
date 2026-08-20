@@ -31,12 +31,6 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ## Quick Start
 
-Install the Foretoken CLI from this checkout:
-
-```bash
-python -m pip install ./benchmarks
-```
-
 Choose one access mode when installing the Foretoken platform. The deployment and benchmark steps below are the same in both modes.
 
 ### 1. Install Foretoken
@@ -127,6 +121,12 @@ kubectl wait --for=condition=Ready \
 ```
 
 ### 4. Benchmark the project
+
+Install the Foretoken Benchmark CLI from this checkout:
+
+```bash
+python -m pip install ./benchmarks
+```
 
 After the project is deployed, the benchmark command discovers its endpoint and model automatically. With no workload options, it uses a short built-in prompt:
 

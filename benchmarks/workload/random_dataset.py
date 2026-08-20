@@ -60,7 +60,7 @@ def _build_perf_arguments(
     return Arguments.model_construct(
         model=config.target.model,
         url=config.target.url,
-        api_key=config.target.api_key or None,
+        api_key=config.target.api_key,
         dataset="random",
         tokenizer_path=tokenizer_path,
         number=config.load.number[0],

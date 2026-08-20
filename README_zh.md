@@ -31,12 +31,6 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-先从当前仓库安装 Foretoken CLI：
-
-```bash
-python -m pip install ./benchmarks
-```
-
 安装 Foretoken 平台时选择一种访问模式即可；后续部署与评测步骤相同。
 
 ### 1. 安装 Foretoken
@@ -127,6 +121,12 @@ kubectl wait --for=condition=Ready \
 ```
 
 ### 4. 评测项目
+
+先从当前仓库安装 Foretoken Benchmark CLI：
+
+```bash
+python -m pip install ./benchmarks
+```
 
 项目部署完成后，评测命令会自动发现访问地址和模型。未指定 workload 时使用一个简短的内置 prompt：
 

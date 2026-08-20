@@ -27,7 +27,7 @@ class _OpenAIHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _authorized(self) -> bool:
-        if self.headers.get("Authorization") == "Bearer test-secret":
+        if self.headers.get("Authorization") == "Bearer EMPTY":
             return True
         self.send_error(401)
         return False
@@ -165,8 +165,6 @@ def test_project_and_existing_endpoint_commands(tmp_path: Path, monkeypatch) -> 
             [
                 "bench",
                 str(project),
-                "--api-key",
-                "test-secret",
                 "--wait-timeout",
                 "5s",
                 "--number",
@@ -186,8 +184,6 @@ def test_project_and_existing_endpoint_commands(tmp_path: Path, monkeypatch) -> 
                 f"http://127.0.0.1:{port}/v1/chat/completions",
                 "--model",
                 _MODEL,
-                "--api-key",
-                "test-secret",
                 "--prompt",
                 "Hello",
                 "--number",

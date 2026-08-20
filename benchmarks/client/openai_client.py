@@ -48,7 +48,7 @@ class OpenAICompatClient:
         # same concurrency budget; the client is closed at end of each run.
         self.client = AsyncOpenAI(
             base_url=_base_url(url),
-            api_key=api_key or "EMPTY",
+            api_key=api_key,
             max_retries=max_retries,
             default_headers=headers,
             http_client=httpx.AsyncClient(
