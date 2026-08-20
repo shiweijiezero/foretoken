@@ -56,6 +56,7 @@ class Runner(ABC):
                 open_loop=load.open_loop,
             ),
             max_retries=target.max_retries,
+            headers=target.headers,
         )
 
     def make_writer(self) -> ResultWriter:
@@ -143,12 +144,13 @@ class Runner(ABC):
             if semaphore is not None:
                 await semaphore.acquire()
             try:
-                result = await client.generate_stream(
+                result = await client.generate(
                     prompt=request.get("prompt"),
                     messages=request.get("messages"),
                     tools=request.get("tools"),
                     max_tokens=max_tokens,
                     temperature=temperature,
+                    stream=generation.stream,
                 )
                 results[index] = result
                 if wandb_logger is not None and wandb_logger.enabled:

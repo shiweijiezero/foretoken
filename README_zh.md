@@ -31,13 +31,17 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-两种访问模式使用相同的部署、等待和卸载步骤，只需在安装 Foretoken 时选择一种模式。
+先从当前仓库安装 Foretoken CLI：
+
+```bash
+python -m pip install ./benchmarks
+```
+
+安装 Foretoken 平台时选择一种访问模式即可；后续部署与评测步骤相同。
 
 ### 1. 安装 Foretoken
 
 #### 本地模式
-
-本地模式通过 `LoadBalancer` 提供访问地址，集群需要支持 `LoadBalancer` Service：
 
 ```bash
 helm upgrade --install foretoken \
@@ -104,9 +108,9 @@ gateway-system   inference-gateway
 
 其中 `name` 对应 `NAME` 列，`namespace` 对应 `NAMESPACE` 列，`sectionName` 是该 Gateway 中目标 listener 的名称。该 Gateway 必须允许前端服务所在 namespace 的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
 
-### 2. 部署模型服务
+### 2. 部署 Quick Start 项目
 
-`examples/quickstart/kustomization.yaml` 是部署入口，统一组织前端服务和模型服务：
+项目目录包含前端与模型配置：
 
 ```bash
 kubectl apply --server-side -k examples/quickstart
@@ -122,45 +126,22 @@ kubectl wait --for=condition=Ready \
   modelservice/quickstart-qwen3-0.6b
 ```
 
-### 4. 发送生成请求进行测试
+### 4. 评测项目
 
-#### 本地模式
-
-读取前端服务的访问地址并发送请求：
+项目部署完成后，评测命令会自动发现访问地址和模型。未指定 workload 时使用一个简短的内置 prompt：
 
 ```bash
-kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' \
-  --namespace foretoken-demo \
-  --timeout=5m \
-  service/quickstart-frontend
-
-FORETOKEN_FRONTEND_ADDRESS=$(kubectl get service quickstart-frontend \
-  --namespace foretoken-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')
-
-curl --fail-with-body --no-buffer \
-  "http://${FORETOKEN_FRONTEND_ADDRESS}:8080/v1/chat/completions" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
+foretoken bench examples/quickstart
 ```
 
-#### 网关模式
-
-使用 Chart 创建的 HTTP 网关时，读取网关地址并携带配置的域名：
+如果要评测已经运行的 OpenAI-compatible 服务，则显式提供地址和模型：
 
 ```bash
-FORETOKEN_GATEWAY_ADDRESS=$(kubectl get gateway foretoken-gateway \
-  --namespace foretoken-platform \
-  -o jsonpath='{.status.addresses[0].value}')
-
-curl --fail-with-body --no-buffer \
-  "http://${FORETOKEN_GATEWAY_ADDRESS}/v1/chat/completions" \
-  -H "Host: foretoken.example.com" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen/Qwen3-0.6B \
+  --prompt "Hello"
 ```
-
-复用平台已有网关时，使用该网关实际配置的域名、端口和 TLS。
 
 ## 停止与卸载
 

@@ -31,13 +31,17 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ## Quick Start
 
-The deployment and cleanup steps are the same in both access modes. Choose one mode when installing Foretoken.
+Install the Foretoken CLI from this checkout:
+
+```bash
+python -m pip install ./benchmarks
+```
+
+Choose one access mode when installing the Foretoken platform. The deployment and benchmark steps below are the same in both modes.
 
 ### 1. Install Foretoken
 
 #### Local mode
-
-Local mode obtains an address from a `LoadBalancer` Service, so the cluster must support that Service type:
 
 ```bash
 helm upgrade --install foretoken \
@@ -104,9 +108,9 @@ Do not set `frontend.gateway.create=true`. Instead, use these values in the Fore
 
 `name` comes from the `NAME` column, `namespace` from `NAMESPACE`, and `sectionName` is the listener name selected from that Gateway. The Gateway must allow `HTTPRoute` resources from the frontend namespace; DNS and TLS remain owned by the platform Gateway.
 
-### 2. Deploy a model service
+### 2. Deploy the Quick Start project
 
-`examples/quickstart/kustomization.yaml` is the deployment entrypoint. It organizes the frontend and model services, while the Operator creates and manages the underlying resources.
+The project directory contains the frontend and model configuration:
 
 ```bash
 kubectl apply --server-side -k examples/quickstart
@@ -122,45 +126,22 @@ kubectl wait --for=condition=Ready \
   modelservice/quickstart-qwen3-0.6b
 ```
 
-### 4. Send a generation request
+### 4. Benchmark the project
 
-#### Local mode
-
-Read the frontend address and send the request:
+After the project is deployed, the benchmark command discovers its endpoint and model automatically. With no workload options, it uses a short built-in prompt:
 
 ```bash
-kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' \
-  --namespace foretoken-demo \
-  --timeout=5m \
-  service/quickstart-frontend
-
-FORETOKEN_FRONTEND_ADDRESS=$(kubectl get service quickstart-frontend \
-  --namespace foretoken-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')
-
-curl --fail-with-body --no-buffer \
-  "http://${FORETOKEN_FRONTEND_ADDRESS}:8080/v1/chat/completions" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+foretoken bench examples/quickstart
 ```
 
-#### Gateway mode
-
-For the Chart-created HTTP Gateway, read its address and send the configured hostname:
+To benchmark an already running OpenAI-compatible service instead:
 
 ```bash
-FORETOKEN_GATEWAY_ADDRESS=$(kubectl get gateway foretoken-gateway \
-  --namespace foretoken-platform \
-  -o jsonpath='{.status.addresses[0].value}')
-
-curl --fail-with-body --no-buffer \
-  "http://${FORETOKEN_GATEWAY_ADDRESS}/v1/chat/completions" \
-  -H "Host: foretoken.example.com" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen/Qwen3-0.6B \
+  --prompt "Hello"
 ```
-
-When reusing a platform Gateway, use that Gateway's configured hostname, port, and TLS settings.
 
 ## Stop and Uninstall
 

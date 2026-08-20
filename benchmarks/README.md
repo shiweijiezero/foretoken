@@ -4,7 +4,7 @@ English | [简体中文](README_zh.md)
 
 `benchmarks/` is the evaluation module for Foretoken.
 
-It sends requests to a deployed inference service, measures performance, compares configurations, and checks whether answer quality meets the bar. The goal is reproducible experiments that answer: can this service hold latency and throughput, and is the quality good enough?
+It can discover a deployed Foretoken project or connect to an existing OpenAI-compatible service, then measure performance, compare configurations, and check whether answer quality meets the bar. The goal is reproducible experiments that answer: can this service hold latency and throughput, and is the quality good enough?
 
 ## When to Use It
 
@@ -33,7 +33,13 @@ If you are only poking the API by hand, you usually do not need the full evaluat
 
 ## Examples
 
-Fixed prompt:
+Benchmark a Foretoken project that has already been deployed with Kubernetes. The project supplies the endpoint and model; the CLI uses a short built-in prompt when no workload is specified:
+
+```bash
+foretoken bench examples/quickstart
+```
+
+Benchmark an existing endpoint with a fixed prompt:
 
 ```bash
 foretoken bench \

@@ -12,13 +12,14 @@ from typing import Any, Optional
 
 @dataclass
 class TargetConfig:
-    """Inference service endpoint."""
+    """Inference service URL, model, and request options."""
 
     url: str
     model: str
     api_key: str = ""
     timeout: int = 300
     max_retries: int = 2
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -283,5 +284,7 @@ class BenchConfig:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Nested dict snapshot (e.g. param-sweep plan base config)."""
-        return asdict(self)
+        """Return the serializable benchmark config without credentials."""
+        config = asdict(self)
+        config["target"].pop("api_key", None)
+        return config

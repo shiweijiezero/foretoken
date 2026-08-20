@@ -1,3 +1,11 @@
+# Foretoken project
+
+Benchmark the deployed Quick Start project with its model and endpoint discovered automatically:
+
+```bash
+foretoken bench examples/quickstart
+```
+
 # Random dataset
 
 ```
