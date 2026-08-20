@@ -12,27 +12,11 @@ from collections.abc import Sequence
 from dataclasses import replace
 
 from benchmarks.arguments import BenchCommand, parse_arguments
+from benchmarks.console import configure_logging, print_target
 from benchmarks.deployment import DeploymentError, benchmark_deployment
 from benchmarks.runner.select_runner import select_runner
 
 logger = logging.getLogger(__name__)
-
-
-def _configure_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
-    )
-    # Keep request chatter off the console so tqdm can refresh one bar in place.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-
-
-def _print_target(endpoint_url: str, models: tuple[str, ...], hostname: str) -> None:
-    print(f"Endpoint: {endpoint_url}")
-    if hostname:
-        print(f"Hostname: {hostname}")
-    print(f"Models: {', '.join(models)}")
 
 
 def _run_benchmark(command: BenchCommand) -> None:
@@ -50,7 +34,7 @@ def _run_benchmark(command: BenchCommand) -> None:
             model=model,
             headers=endpoint.headers,
         )
-        _print_target(endpoint.url, endpoint.models, resources.hostname)
+        print_target(endpoint.url, endpoint.models, resources.hostname)
 
     config.validate()
     logger.info("%s", config.summary())
@@ -61,7 +45,7 @@ def _run_benchmark(command: BenchCommand) -> None:
 
 def main(argv: Sequence[str] | None = None) -> None:
     """Run a benchmark against a deployment or existing endpoint."""
-    _configure_logging()
+    configure_logging()
     try:
         _run_benchmark(parse_arguments(argv))
     except (DeploymentError, ValueError) as exc:
