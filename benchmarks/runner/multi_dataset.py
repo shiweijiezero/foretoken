@@ -45,7 +45,7 @@ class MultiDatasetRunner(Runner):
 
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         wandb_group = (
-            self.config.wandb.run_name or f"{self.config.target.model}_{stamp}"
+            self.config.wandb.run_name or f"{self.config.endpoint.model}_{stamp}"
         )
 
         raw_outputs: list[dict[str, Any]] = []

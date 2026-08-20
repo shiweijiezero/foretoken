@@ -56,11 +56,11 @@ def _build_perf_arguments(
 ) -> Arguments:
     """Map ``BenchConfig`` to EvalScope ``Arguments`` for random generation."""
     dataset = config.dataset
-    apply_chat = dataset.resolve_apply_chat_template(config.target.url)
+    apply_chat = dataset.resolve_apply_chat_template(config.endpoint.url)
     return Arguments.model_construct(
-        model=config.target.model,
-        url=config.target.url,
-        api_key=config.target.api_key,
+        model=config.endpoint.model,
+        url=config.endpoint.url,
+        api_key=config.endpoint.api_key,
         dataset="random",
         tokenizer_path=tokenizer_path,
         number=config.load.number[0],

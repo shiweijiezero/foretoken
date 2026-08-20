@@ -11,7 +11,7 @@ from typing import Any, Optional
 
 
 @dataclass
-class TargetConfig:
+class EndpointConfig:
     """Inference service URL, model, and request options."""
 
     url: str
@@ -196,7 +196,7 @@ class ParamSweepConfig:
 class BenchConfig:
     """Root benchmark configuration (framework contract)."""
 
-    target: TargetConfig
+    endpoint: EndpointConfig
     load: LoadConfig = field(default_factory=LoadConfig)
     generation: GenerationConfig = field(default_factory=GenerationConfig)
     dataset: DatasetConfig = field(default_factory=DatasetConfig)
@@ -273,8 +273,8 @@ class BenchConfig:
             " Foretoken Benchmark\n"
             "============================================\n"
             f"Configuration:\n"
-            f"  URL        : {self.target.url}\n"
-            f"  Model      : {self.target.model}\n"
+            f"  URL        : {self.endpoint.url}\n"
+            f"  Model      : {self.endpoint.model}\n"
             f"  Parallel   : {parallel_label}\n"
             f"  Number     : {self.load.number}\n"
             f"  Rate       : {rate_label}\n"
@@ -286,5 +286,5 @@ class BenchConfig:
     def to_dict(self) -> dict[str, Any]:
         """Return the serializable benchmark config without credentials."""
         config = asdict(self)
-        config["target"].pop("api_key", None)
+        config["endpoint"].pop("api_key", None)
         return config

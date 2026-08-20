@@ -95,7 +95,7 @@ class WandbLogger:
         os.environ["WANDB_SILENT"] = "true"
         os.environ["WANDB_DIR"] = output_dir
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base = group or wandb_config.run_name or f"{config.target.model}_{stamp}"
+        base = group or wandb_config.run_name or f"{config.endpoint.model}_{stamp}"
         name = f"{base}_{name_suffix}" if name_suffix else base
         init_kwargs: dict[str, Any] = {
             "project": wandb_config.project,

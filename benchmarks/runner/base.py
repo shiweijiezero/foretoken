@@ -42,8 +42,8 @@ class Runner(ABC):
         """Execute the benchmark and return a result dict."""
 
     def make_client(self) -> OpenAICompatClient:
-        """Build an OpenAI-compatible client from ``config.target`` / load."""
-        endpoint = self.config.target
+        """Build an OpenAI-compatible client from ``config.endpoint`` / load."""
+        endpoint = self.config.endpoint
         load = self.config.load
         return OpenAICompatClient(
             endpoint.url,
@@ -102,8 +102,8 @@ class Runner(ABC):
         config = self.config
         return {
             "mode": mode,
-            "model": config.target.model,
-            "url": config.target.url,
+            "model": config.endpoint.model,
+            "url": config.endpoint.url,
             "parallel": load["parallel"],
             "number": load["number"],
             "rate": load["rate"],

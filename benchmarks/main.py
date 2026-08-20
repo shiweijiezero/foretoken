@@ -29,11 +29,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             endpoint = discover_endpoint(
                 command.deployment,
                 command.wait_timeout,
-                requested_model=config.target.model,
-                api_key=config.target.api_key,
+                requested_model=config.endpoint.model,
+                api_key=config.endpoint.api_key,
             )
-            config.target = replace(
-                config.target,
+            config.endpoint = replace(
+                config.endpoint,
                 url=endpoint.url,
                 model=endpoint.model,
                 headers=endpoint.headers,

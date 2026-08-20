@@ -19,9 +19,10 @@ from benchmarks.config import (
     LoadConfig,
     OutputConfig,
     ParamSweepConfig,
-    TargetConfig,
+    EndpointConfig,
     WandbConfig,
 )
+
 
 @dataclass(frozen=True)
 class BenchCommand:
@@ -60,18 +61,18 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         help="Model name; inferred when the deployment contains one model",
     )
     parser.add_argument(
-        "--api-key", default=_default(TargetConfig, "api_key"), help="API key"
+        "--api-key", default=_default(EndpointConfig, "api_key"), help="API key"
     )
     parser.add_argument(
         "--timeout",
         type=int,
-        default=_default(TargetConfig, "timeout"),
+        default=_default(EndpointConfig, "timeout"),
         help="Request timeout seconds",
     )
     parser.add_argument(
         "--max-retries",
         type=int,
-        default=_default(TargetConfig, "max_retries"),
+        default=_default(EndpointConfig, "max_retries"),
         help="OpenAI client max retries on transient failures",
     )
     parser.add_argument(
@@ -300,7 +301,7 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
     return BenchConfig(
-        target=TargetConfig(
+        endpoint=EndpointConfig(
             url=namespace.url,
             model=namespace.model,
             api_key=namespace.api_key,
