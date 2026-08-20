@@ -45,8 +45,7 @@ class MultiDatasetRunner(Runner):
 
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         wandb_group = (
-            self.config.wandb.run_name
-            or f"{self.config.target.model}_{stamp}"
+            self.config.wandb.run_name or f"{self.config.target.model}_{stamp}"
         )
 
         raw_outputs: list[dict[str, Any]] = []
@@ -66,9 +65,7 @@ class MultiDatasetRunner(Runner):
                 source,
                 count,
             )
-            requests = load_requests(
-                self.config, source=source, number=count
-            )
+            requests = load_requests(self.config, source=source, number=count)
             child_name = _child_dir_name(index, source)
             child = writer.child(child_name)
             child_config = {
@@ -104,7 +101,6 @@ class MultiDatasetRunner(Runner):
                     parallel=load["parallel"],
                     rate=load["rate"],
                     open_loop=load["open_loop"],
-                    wandb_logger=wandb_logger,
                 )
                 metrics = self.aggregate_metrics(
                     raw_output,

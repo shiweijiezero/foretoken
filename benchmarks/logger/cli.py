@@ -19,7 +19,7 @@ def configure_logging() -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-def print_target(endpoint_url: str, models: tuple[str, ...], hostname: str) -> None:
+def print_endpoint(endpoint_url: str, models: tuple[str, ...], hostname: str) -> None:
     """Print the public endpoint selected for a deployment benchmark."""
     print(f"Endpoint: {endpoint_url}")
     if hostname:

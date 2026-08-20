@@ -43,20 +43,20 @@ class Runner(ABC):
 
     def make_client(self) -> OpenAICompatClient:
         """Build an OpenAI-compatible client from ``config.target`` / load."""
-        target = self.config.target
+        endpoint = self.config.target
         load = self.config.load
         return OpenAICompatClient(
-            target.url,
-            target.model,
-            timeout=target.timeout,
-            api_key=target.api_key,
+            endpoint.url,
+            endpoint.model,
+            timeout=endpoint.timeout,
+            api_key=endpoint.api_key,
             max_connections=derive_max_connections(
                 parallel=load.parallel[0],
                 number=load.number[0],
                 open_loop=load.open_loop,
             ),
-            max_retries=target.max_retries,
-            headers=target.headers,
+            max_retries=endpoint.max_retries,
+            headers=endpoint.headers,
         )
 
     def make_writer(self) -> ResultWriter:
@@ -124,7 +124,6 @@ class Runner(ABC):
         parallel: int,
         rate: float,
         open_loop: bool,
-        wandb_logger: Optional[WandbLogger] = None,
     ) -> dict[str, Any]:
         """Dispatch requests with closed/open-loop concurrency and optional rate pacing."""
         generation = self.config.generation
@@ -153,8 +152,6 @@ class Runner(ABC):
                     stream=generation.stream,
                 )
                 results[index] = result
-                if wandb_logger is not None and wandb_logger.enabled:
-                    await asyncio.to_thread(wandb_logger.log_result, result)
             finally:
                 if semaphore is not None:
                     semaphore.release()
@@ -169,9 +166,7 @@ class Runner(ABC):
                     delay = next_at - (time.perf_counter() - pacing_start)
                     if delay > 0:
                         await asyncio.sleep(delay)
-                    tasks.append(
-                        asyncio.create_task(dispatch_one(index, request))
-                    )
+                    tasks.append(asyncio.create_task(dispatch_one(index, request)))
                     # Poisson inter-arrival ~ Exp(rate)
                     next_at += random.expovariate(rate)
                 await asyncio.gather(*tasks)
@@ -222,11 +217,7 @@ class Runner(ABC):
     ) -> None:
         """Log summary and persist config / raw / metrics JSON artifacts."""
         log_summary(run_config, metrics)
-        base = (
-            config_snapshot
-            if config_snapshot is not None
-            else self.config.to_dict()
-        )
+        base = config_snapshot if config_snapshot is not None else self.config.to_dict()
         writer.save_json("config.json", {**base, **run_config})
         writer.save_json("raw_output.json", raw["results"])
         writer.save_json("metrics.json", metrics)

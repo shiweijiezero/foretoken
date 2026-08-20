@@ -12,8 +12,8 @@ from collections.abc import Sequence
 from dataclasses import replace
 
 from benchmarks.arguments import parse_arguments
-from benchmarks.deployment import DeploymentError, benchmark_deployment
-from benchmarks.logger.cli import configure_logging, print_target
+from benchmarks.deployment import DeploymentError, discover_endpoint
+from benchmarks.logger.cli import configure_logging, print_endpoint
 from benchmarks.runner.select_runner import select_runner
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         command = parse_arguments(argv)
         config = command.config
         if command.deployment:
-            target = benchmark_deployment(
+            endpoint = discover_endpoint(
                 command.deployment,
                 command.wait_timeout,
                 requested_model=config.target.model,
@@ -34,11 +34,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
             config.target = replace(
                 config.target,
-                url=target.url,
-                model=target.model,
-                headers=target.headers,
+                url=endpoint.url,
+                model=endpoint.model,
+                headers=endpoint.headers,
             )
-            print_target(target.url, target.models, target.hostname)
+            print_endpoint(endpoint.url, endpoint.models, endpoint.hostname)
             if not config.dataset.prompt and not config.dataset.dataset:
                 config.dataset = replace(config.dataset, prompt="Hello")
 

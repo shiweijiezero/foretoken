@@ -35,7 +35,6 @@ class RunBenchmark(Runner):
                 parallel=load["parallel"],
                 rate=load["rate"],
                 open_loop=load["open_loop"],
-                wandb_logger=wandb_logger,
             )
             metrics = self.aggregate_metrics(
                 raw_output,

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""Public model confirmation and benchmark target assembly."""
+"""Public endpoint and model discovery for deployment benchmarks."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ from benchmarks.deployment.manifest import (
 
 
 @dataclass(frozen=True)
-class BenchmarkTarget:
+class BenchmarkEndpoint:
     """Public request target discovered from a Foretoken deployment."""
 
     url: str
@@ -106,13 +106,13 @@ def _wait_for_models(
     raise DeploymentError(f"frontend did not become ready: {last_error}")
 
 
-def benchmark_deployment(
+def discover_endpoint(
     deployment: str,
     timeout: str,
     *,
     requested_model: str,
     api_key: str,
-) -> BenchmarkTarget:
+) -> BenchmarkEndpoint:
     """Find a deployed service endpoint and model for benchmarking."""
     wait_seconds = timeout_seconds(timeout)
     kubectl = Kubectl()
@@ -135,4 +135,4 @@ def benchmark_deployment(
             f"model {model!r} is not advertised by the frontend; "
             f"available models: {', '.join(models)}"
         )
-    return BenchmarkTarget(url, model, models, headers, resources.hostname)
+    return BenchmarkEndpoint(url, model, models, headers, resources.hostname)

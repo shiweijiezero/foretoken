@@ -2,15 +2,12 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""Thin Weights & Biases logger for progressive and final benchmark metrics."""
+"""Weights & Biases logging for final benchmark results."""
 
 from __future__ import annotations
 
 import logging
 import os
-import threading
-import time
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
 
@@ -20,11 +17,7 @@ from benchmarks.config import BenchConfig, WandbConfig
 
 logger = logging.getLogger(__name__)
 
-# Short benches (e.g. --dataset random) often finish under the W&B default
-# ~15s system-stats interval and get no System section; sample every 1s.
 _SYSTEM_STATS_INTERVAL_S = 1.0
-
-# Stable W&B chart keys (LLM subset).
 _TIME_TAKEN = "Test Duration (s)"
 _CONCURRENCY = "Concurrency"
 _REQUEST_RATE = "Request Rate (req/s)"
@@ -42,89 +35,9 @@ _AVERAGE_ITL = "Avg ITL (ms)"
 _AVERAGE_OUTPUT_TOKENS = "Avg Output Tokens"
 
 
-@dataclass
-class _RunningAverages:
-    """O(1) running averages for progressive W&B steps."""
-
-    concurrency: int = 0
-    rate: float = -1.0
-    start_time: float = field(default_factory=time.perf_counter)
-    total_count: int = 0
-    success_count: int = 0
-    failed_count: int = 0
-    total_latency: float = 0.0
-    total_ttft: float = 0.0
-    ttft_count: int = 0
-    total_tpot: float = 0.0
-    tpot_count: int = 0
-    total_input_tokens: int = 0
-    total_output_tokens: int = 0
-
-    def update(self, result: dict[str, Any]) -> dict[str, Any]:
-        self.total_count += 1
-        if not result["success"]:
-            self.failed_count += 1
-            return self.to_message()
-
-        self.success_count += 1
-        self.total_latency += float(result["latency"])
-        self.total_input_tokens += int(result["input_tokens"])
-        self.total_output_tokens += int(result["output_tokens"])
-        ttft = result["ttft"]
-        if ttft is not None:
-            self.total_ttft += float(ttft)
-            self.ttft_count += 1
-        tpot = result["tpot"]
-        if tpot is not None:
-            self.total_tpot += float(tpot)
-            self.tpot_count += 1
-        return self.to_message()
-
-    def to_message(self, ndigits: int = 4) -> dict[str, Any]:
-        elapsed = time.perf_counter() - self.start_time
-        message: dict[str, Any] = {
-            _TIME_TAKEN: round(elapsed, ndigits),
-            _CONCURRENCY: self.concurrency,
-            _REQUEST_RATE: self.rate,
-            _TOTAL_REQUESTS: self.total_count,
-            _SUCCEED_REQUESTS: self.success_count,
-            _FAILED_REQUESTS: self.failed_count,
-            _REQUEST_THROUGHPUT: round(self.total_count / elapsed, ndigits),
-            _OUTPUT_TOKEN_THROUGHPUT: round(
-                self.total_output_tokens / elapsed, ndigits
-            ),
-            _TOTAL_TOKEN_THROUGHPUT: round(
-                (self.total_input_tokens + self.total_output_tokens) / elapsed,
-                ndigits,
-            ),
-        }
-        if self.success_count:
-            success_count = self.success_count
-            message[_AVERAGE_LATENCY] = round(
-                self.total_latency / success_count, ndigits
-            )
-            message[_AVERAGE_INPUT_TOKENS] = round(
-                self.total_input_tokens / success_count, ndigits
-            )
-            message[_AVERAGE_OUTPUT_TOKENS] = round(
-                self.total_output_tokens / success_count, ndigits
-            )
-        if self.ttft_count:
-            message[_AVERAGE_TTFT] = round(self.total_ttft / self.ttft_count * 1000, 2)
-        if self.tpot_count:
-            avg_tpot_ms = round(self.total_tpot / self.tpot_count * 1000, 2)
-            message[_AVERAGE_TPOT] = avg_tpot_ms
-            message[_AVERAGE_ITL] = avg_tpot_ms
-        return message
-
-
 def metrics_to_wandb_message(metrics: dict[str, Any]) -> dict[str, Any]:
-    """Map Foretoken ``metrics.json`` to W&B chart keys."""
+    """Map final Foretoken metrics to stable W&B chart keys."""
     throughput = metrics["throughput"]
-    latency = metrics["latency"]
-    ttft = metrics["ttft"]
-    tpot = metrics["tpot"]
-
     message = {
         _TIME_TAKEN: round(float(metrics["benchmark_time"]), 4),
         _CONCURRENCY: int(metrics["parallel"]),
@@ -136,37 +49,33 @@ def metrics_to_wandb_message(metrics: dict[str, Any]) -> dict[str, Any]:
         _OUTPUT_TOKEN_THROUGHPUT: round(float(throughput["token/s"]), 4),
         _TOTAL_TOKEN_THROUGHPUT: round(float(throughput["total_token/s"]), 4),
     }
-
-    if metrics["avg_input_tokens"] is not None:
-        message[_AVERAGE_INPUT_TOKENS] = round(float(metrics["avg_input_tokens"]), 4)
-
-    if metrics["avg_output_tokens"] is not None:
-        message[_AVERAGE_OUTPUT_TOKENS] = round(float(metrics["avg_output_tokens"]), 4)
-
-    if latency["mean"] is not None:
-        message[_AVERAGE_LATENCY] = round(float(latency["mean"]), 4)
-
-    if ttft["mean"] is not None:
-        message[_AVERAGE_TTFT] = round(float(ttft["mean"]) * 1000, 2)
-
-    if tpot["mean"] is not None:
-        avg_tpot_ms = round(float(tpot["mean"]) * 1000, 2)
-        message[_AVERAGE_TPOT] = avg_tpot_ms
-        message[_AVERAGE_ITL] = avg_tpot_ms
-
+    optional = (
+        ("avg_input_tokens", _AVERAGE_INPUT_TOKENS, 1.0, 4),
+        ("avg_output_tokens", _AVERAGE_OUTPUT_TOKENS, 1.0, 4),
+        ("latency", _AVERAGE_LATENCY, 1.0, 4),
+        ("ttft", _AVERAGE_TTFT, 1000.0, 2),
+        ("tpot", _AVERAGE_TPOT, 1000.0, 2),
+    )
+    for source, destination, scale, digits in optional:
+        value = metrics[source]
+        if isinstance(value, dict):
+            value = value["mean"]
+        if value is not None:
+            message[destination] = round(float(value) * scale, digits)
+    if _AVERAGE_TPOT in message:
+        message[_AVERAGE_ITL] = message[_AVERAGE_TPOT]
     return message
 
 
 class WandbLogger:
-    """Optional W&B session: init, progressive log, final log, finish."""
+    """Optional W&B session that publishes one final benchmark summary."""
 
     def __init__(self) -> None:
-        self._running: Optional[_RunningAverages] = None
-        self._lock = threading.Lock()
+        self._active = False
 
     @property
     def enabled(self) -> bool:
-        return self._running is not None
+        return self._active
 
     def start(
         self,
@@ -178,13 +87,7 @@ class WandbLogger:
         name_suffix: Optional[str] = None,
         group: Optional[str] = None,
     ) -> None:
-        """Initialize W&B; no-op when ``config.wandb`` is off.
-
-        Default run name is ``{model}_{YYYYMMDD_HHMMSS}``. ``--wandb-run-name``
-        replaces that base when set. With ``group`` (multi-dataset experiment),
-        runs share the group and the name base is the group id; ``name_suffix``
-        then yields ``{group}_{suffix}`` per dataset run.
-        """
+        """Initialize W&B when enabled in the benchmark configuration."""
         wandb_config: WandbConfig = config.wandb
         if not wandb_config.enabled:
             return
@@ -208,34 +111,22 @@ class WandbLogger:
         if wandb_config.entity:
             init_kwargs["entity"] = wandb_config.entity
         wandb.init(**init_kwargs)
-        self._running = _RunningAverages(
-            concurrency=parallel,
-            rate=rate,
-        )
+        self._active = True
         logger.info(
-            "W&B logging enabled: project=%s name=%s group=%s",
+            "W&B logging enabled: project=%s name=%s group=%s concurrency=%s rate=%s",
             wandb_config.project,
             name,
             group or "-",
+            parallel,
+            rate,
         )
 
-    def log_result(self, result: dict[str, Any]) -> None:
-        """Log one request into the progressive W&B step series."""
-        if self._running is None:
-            return
-        with self._lock:
-            wandb.log(self._running.update(result))
-
     def log_metrics(self, metrics: dict[str, Any]) -> None:
-        """Final summary log using Foretoken aggregated metrics."""
-        if self._running is None:
-            return
-        with self._lock:
+        """Publish the final aggregated benchmark metrics."""
+        if self._active:
             wandb.log(metrics_to_wandb_message(metrics))
 
     def finish(self) -> None:
-        if self._running is None:
-            return
-        with self._lock:
+        if self._active:
             wandb.finish()
-            self._running = None
+            self._active = False
