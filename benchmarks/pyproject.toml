@@ -39,6 +39,8 @@ foretoken = "benchmarks.main:main"
 packages = [
     "benchmarks",
     "benchmarks.client",
+    "benchmarks.deployment",
+    "benchmarks.logger",
     "benchmarks.metrics",
     "benchmarks.report",
     "benchmarks.runner",

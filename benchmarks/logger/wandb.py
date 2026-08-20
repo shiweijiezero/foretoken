@@ -110,9 +110,7 @@ class _RunningAverages:
                 self.total_output_tokens / success_count, ndigits
             )
         if self.ttft_count:
-            message[_AVERAGE_TTFT] = round(
-                self.total_ttft / self.ttft_count * 1000, 2
-            )
+            message[_AVERAGE_TTFT] = round(self.total_ttft / self.ttft_count * 1000, 2)
         if self.tpot_count:
             avg_tpot_ms = round(self.total_tpot / self.tpot_count * 1000, 2)
             message[_AVERAGE_TPOT] = avg_tpot_ms
@@ -140,14 +138,10 @@ def metrics_to_wandb_message(metrics: dict[str, Any]) -> dict[str, Any]:
     }
 
     if metrics["avg_input_tokens"] is not None:
-        message[_AVERAGE_INPUT_TOKENS] = round(
-            float(metrics["avg_input_tokens"]), 4
-        )
+        message[_AVERAGE_INPUT_TOKENS] = round(float(metrics["avg_input_tokens"]), 4)
 
     if metrics["avg_output_tokens"] is not None:
-        message[_AVERAGE_OUTPUT_TOKENS] = round(
-            float(metrics["avg_output_tokens"]), 4
-        )
+        message[_AVERAGE_OUTPUT_TOKENS] = round(float(metrics["avg_output_tokens"]), 4)
 
     if latency["mean"] is not None:
         message[_AVERAGE_LATENCY] = round(float(latency["mean"]), 4)
@@ -167,13 +161,12 @@ class WandbLogger:
     """Optional W&B session: init, progressive log, final log, finish."""
 
     def __init__(self) -> None:
-        self._enabled = False
         self._running: Optional[_RunningAverages] = None
         self._lock = threading.Lock()
 
     @property
     def enabled(self) -> bool:
-        return self._enabled
+        return self._running is not None
 
     def start(
         self,
@@ -199,11 +192,7 @@ class WandbLogger:
         os.environ["WANDB_SILENT"] = "true"
         os.environ["WANDB_DIR"] = output_dir
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base = (
-            group
-            or wandb_config.run_name
-            or f"{config.target.model}_{stamp}"
-        )
+        base = group or wandb_config.run_name or f"{config.target.model}_{stamp}"
         name = f"{base}_{name_suffix}" if name_suffix else base
         init_kwargs: dict[str, Any] = {
             "project": wandb_config.project,
@@ -219,7 +208,6 @@ class WandbLogger:
         if wandb_config.entity:
             init_kwargs["entity"] = wandb_config.entity
         wandb.init(**init_kwargs)
-        self._enabled = True
         self._running = _RunningAverages(
             concurrency=parallel,
             rate=rate,
@@ -233,22 +221,21 @@ class WandbLogger:
 
     def log_result(self, result: dict[str, Any]) -> None:
         """Log one request into the progressive W&B step series."""
-        if not self._enabled or self._running is None:
+        if self._running is None:
             return
         with self._lock:
             wandb.log(self._running.update(result))
 
     def log_metrics(self, metrics: dict[str, Any]) -> None:
         """Final summary log using Foretoken aggregated metrics."""
-        if not self._enabled:
+        if self._running is None:
             return
         with self._lock:
             wandb.log(metrics_to_wandb_message(metrics))
 
     def finish(self) -> None:
-        if not self._enabled:
+        if self._running is None:
             return
         with self._lock:
             wandb.finish()
-            self._enabled = False
             self._running = None

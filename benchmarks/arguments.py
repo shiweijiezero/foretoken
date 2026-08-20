@@ -23,9 +23,6 @@ from benchmarks.config import (
     WandbConfig,
 )
 
-_DEFAULT_DEPLOYMENT_PROMPT = "Hello"
-
-
 @dataclass(frozen=True)
 class BenchCommand:
     """Run a benchmark against a deployment or existing endpoint."""
@@ -302,9 +299,6 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
-    prompt = namespace.prompt
-    if namespace.deployment and not prompt and not namespace.dataset:
-        prompt = _DEFAULT_DEPLOYMENT_PROMPT
     return BenchConfig(
         target=TargetConfig(
             url=namespace.url,
@@ -332,7 +326,7 @@ def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
             max_prompt_length=namespace.max_prompt_length,
             prefix_length=namespace.prefix_length,
             apply_chat_template=namespace.apply_chat_template,
-            prompt=prompt,
+            prompt=namespace.prompt,
             max_turns=namespace.max_turns,
         ),
         output=OutputConfig(

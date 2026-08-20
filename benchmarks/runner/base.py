@@ -25,7 +25,7 @@ from benchmarks.metrics.aggregator import (
     attach_user_throughput,
 )
 from benchmarks.report.summary import log_summary
-from benchmarks.report.wandb_logger import WandbLogger
+from benchmarks.logger.wandb import WandbLogger
 from benchmarks.storage.result_writer import ResultWriter
 
 logger = logging.getLogger(__name__)
