@@ -4,7 +4,7 @@
 
 `benchmarks/` 是 Foretoken 的评测模块。
 
-它可以发现已经部署的 Foretoken 项目，也可以连接已有的 OpenAI-compatible 服务，然后测性能、比配置，并检查回答质量是否达标。目标是用可复现的实验，回答「这个服务能不能稳住延迟和吞吐，质量够不够好」。
+它可以根据 Kustomize 配置找到已经部署的 Foretoken 服务，也可以连接已有的 OpenAI-compatible endpoint，然后测性能、比配置，并检查回答质量是否达标。目标是用可复现的实验，回答「这个服务能不能稳住延迟和吞吐，质量够不够好」。
 
 ## 什么时候需要它
 
@@ -33,7 +33,7 @@
 
 ## 示例
 
-评测已经通过 Kubernetes 部署的 Foretoken 项目。项目目录提供访问目标和模型；未指定 workload 时，CLI 使用一个简短的内置 prompt：
+评测已经通过 Kubernetes 部署的 Foretoken 服务。CLI 根据部署目录找到访问地址和模型；未指定 workload 时使用一个简短的内置 prompt：
 
 ```bash
 foretoken bench examples/quickstart

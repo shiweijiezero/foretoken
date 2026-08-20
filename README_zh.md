@@ -102,9 +102,9 @@ gateway-system   inference-gateway
 
 其中 `name` 对应 `NAME` 列，`namespace` 对应 `NAMESPACE` 列，`sectionName` 是该 Gateway 中目标 listener 的名称。该 Gateway 必须允许前端服务所在 namespace 的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
 
-### 2. 部署 Quick Start 项目
+### 2. 部署模型服务
 
-项目目录包含前端与模型配置：
+`examples/quickstart` 提供一套可直接使用的前端和模型服务配置：
 
 ```bash
 kubectl apply --server-side -k examples/quickstart
@@ -120,7 +120,7 @@ kubectl wait --for=condition=Ready \
   modelservice/quickstart-qwen3-0.6b
 ```
 
-### 4. 评测项目
+### 4. 评测模型服务
 
 先从当前仓库安装 Foretoken Benchmark CLI：
 
@@ -128,7 +128,7 @@ kubectl wait --for=condition=Ready \
 python -m pip install ./benchmarks
 ```
 
-项目部署完成后，评测命令会自动发现访问地址和模型。未指定 workload 时使用一个简短的内置 prompt：
+服务就绪后，以下命令会根据同一份部署配置自动找到访问地址和模型。未指定 workload 时使用一个简短的内置 prompt：
 
 ```bash
 foretoken bench examples/quickstart

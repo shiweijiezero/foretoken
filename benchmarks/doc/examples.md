@@ -1,6 +1,6 @@
-# Foretoken project
+# Foretoken deployment
 
-Benchmark the deployed Quick Start project with its model and endpoint discovered automatically:
+Benchmark the deployed Quick Start service with its model and endpoint discovered automatically:
 
 ```bash
 foretoken bench examples/quickstart

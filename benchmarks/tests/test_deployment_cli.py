@@ -133,14 +133,14 @@ esac
     return binary, log
 
 
-def _project(directory: Path) -> Path:
-    project = directory / "project"
-    project.mkdir()
-    (project / "kustomization.yaml").write_text(
+def _deployment(directory: Path) -> Path:
+    deployment = directory / "deployment"
+    deployment.mkdir()
+    (deployment / "kustomization.yaml").write_text(
         "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n",
         encoding="utf-8",
     )
-    return project
+    return deployment
 
 
 def _assert_result(output: Path) -> None:
@@ -152,29 +152,29 @@ def _assert_result(output: Path) -> None:
     assert "api_key" not in config["target"]
 
 
-def test_project_and_existing_endpoint_commands(tmp_path: Path, monkeypatch) -> None:
+def test_deployment_and_existing_endpoint_commands(tmp_path: Path, monkeypatch) -> None:
     server, thread = _start_server()
     try:
         port = server.server_address[1]
         _, kubectl_log = _fake_kubectl(tmp_path, port)
         monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
-        project = _project(tmp_path)
+        deployment = _deployment(tmp_path)
 
-        project_output = tmp_path / "project-results"
+        deployment_output = tmp_path / "deployment-results"
         main(
             [
                 "bench",
-                str(project),
+                str(deployment),
                 "--wait-timeout",
                 "5s",
                 "--number",
                 "1",
                 "--no-stream",
                 "--outputs-dir",
-                str(project_output),
+                str(deployment_output),
             ]
         )
-        _assert_result(project_output)
+        _assert_result(deployment_output)
 
         direct_output = tmp_path / "direct-results"
         main(

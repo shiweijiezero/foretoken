@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""Public benchmark target discovery from a Kustomize project."""
+"""Public benchmark target discovery from a Kustomize deployment."""
 
 from __future__ import annotations
 
@@ -21,13 +21,13 @@ import httpx
 import yaml
 
 
-class ProjectError(RuntimeError):
-    """A project cannot be rendered, deployed, or reached."""
+class DeploymentError(RuntimeError):
+    """A deployment configuration cannot identify a reachable service."""
 
 
 @dataclass(frozen=True)
-class ProjectResources:
-    """Public serving resources rendered from one project."""
+class DeploymentResources:
+    """Public serving resources rendered from one deployment configuration."""
 
     path: Path
     namespace: str
@@ -39,22 +39,22 @@ class ProjectResources:
         available = sorted(set(self.models.values()))
         if requested:
             if requested not in available:
-                raise ProjectError(
+                raise DeploymentError(
                     f"model {requested!r} is not declared by {self.path}; "
                     f"available models: {', '.join(available)}"
                 )
             return requested
         if len(available) != 1:
-            raise ProjectError(
-                "the project declares multiple models; pass --model with one of: "
+            raise DeploymentError(
+                "the deployment declares multiple models; pass --model with one of: "
                 + ", ".join(available)
             )
         return available[0]
 
 
 @dataclass(frozen=True)
-class ProjectEndpoint:
-    """Public endpoint and models exposed by a deployed project."""
+class DeploymentEndpoint:
+    """Public endpoint and models exposed by a deployed service."""
 
     url: str
     models: tuple[str, ...]
@@ -66,7 +66,9 @@ class Kubectl:
 
     def __init__(self) -> None:
         if shutil.which("kubectl") is None:
-            raise ProjectError("kubectl is required to run a Foretoken project")
+            raise DeploymentError(
+                "kubectl is required to inspect a Foretoken deployment"
+            )
 
     def run(self, args: Iterable[str]) -> subprocess.CompletedProcess[str]:
         command = ["kubectl", *args]
@@ -78,7 +80,7 @@ class Kubectl:
         )
         if completed.returncode:
             detail = completed.stderr.strip() or completed.stdout.strip()
-            raise ProjectError(f"{' '.join(command)} failed: {detail}")
+            raise DeploymentError(f"{' '.join(command)} failed: {detail}")
         return completed
 
     def json(self, args: Iterable[str]) -> dict[str, Any]:
@@ -86,38 +88,40 @@ class Kubectl:
         try:
             value = json.loads(output)
         except json.JSONDecodeError as exc:
-            raise ProjectError("kubectl returned invalid JSON") from exc
+            raise DeploymentError("kubectl returned invalid JSON") from exc
         if not isinstance(value, dict):
-            raise ProjectError("kubectl returned an unexpected JSON value")
+            raise DeploymentError("kubectl returned an unexpected JSON value")
         return value
 
 
 # Resource names, namespaces, and public model IDs come from the same
 # Kustomize output users deploy through the documented Kubernetes workflow.
-def load_project(path_value: str, kubectl: Kubectl) -> ProjectResources:
+def load_deployment(path_value: str, kubectl: Kubectl) -> DeploymentResources:
     path = Path(path_value).expanduser().resolve()
     if not path.is_dir():
-        raise ProjectError(f"project directory not found: {path}")
+        raise DeploymentError(f"deployment directory not found: {path}")
     if not any(
         (path / name).is_file()
         for name in ("kustomization.yaml", "kustomization.yml", "Kustomization")
     ):
-        raise ProjectError(f"project is not a Kustomize root: {path}")
+        raise DeploymentError(f"deployment directory is not a Kustomize root: {path}")
 
     rendered = kubectl.run(["kustomize", str(path)]).stdout
     try:
         documents = [item for item in yaml.safe_load_all(rendered) if item is not None]
     except yaml.YAMLError as exc:
-        raise ProjectError(f"project rendered invalid YAML: {exc}") from exc
+        raise DeploymentError(f"deployment rendered invalid YAML: {exc}") from exc
     if not documents:
-        raise ProjectError(f"project rendered no Kubernetes resources: {path}")
+        raise DeploymentError(f"deployment rendered no Kubernetes resources: {path}")
 
     frontends: list[dict[str, Any]] = []
     models: dict[str, str] = {}
     namespaces: set[str] = set()
     for index, document in enumerate(documents, start=1):
         if not isinstance(document, dict):
-            raise ProjectError(f"rendered document {index} is not a Kubernetes object")
+            raise DeploymentError(
+                f"rendered document {index} is not a Kubernetes object"
+            )
         metadata = document.get("metadata") or {}
         namespace = str(metadata.get("namespace") or "").strip()
         kind = document.get("kind")
@@ -129,17 +133,17 @@ def load_project(path_value: str, kubectl: Kubectl) -> ProjectResources:
             name = str(metadata.get("name") or "").strip()
             model = str((document.get("spec") or {}).get("model") or "").strip()
             if not name or not model:
-                raise ProjectError(
+                raise DeploymentError(
                     "each ModelService requires metadata.name and spec.model"
                 )
             models[name] = model
 
     if len(frontends) != 1:
-        raise ProjectError("a project must render exactly one FrontendService")
+        raise DeploymentError("a deployment must render exactly one FrontendService")
     if not models:
-        raise ProjectError("a project must render at least one ModelService")
+        raise DeploymentError("a deployment must render at least one ModelService")
     if len(namespaces) != 1:
-        raise ProjectError(
+        raise DeploymentError(
             "FrontendService and ModelService resources must share one namespace"
         )
 
@@ -147,9 +151,9 @@ def load_project(path_value: str, kubectl: Kubectl) -> ProjectResources:
     metadata = frontend.get("metadata") or {}
     name = str(metadata.get("name") or "").strip()
     if not name:
-        raise ProjectError("FrontendService requires metadata.name")
+        raise DeploymentError("FrontendService requires metadata.name")
     hostname = str((frontend.get("spec") or {}).get("hostname") or "").strip()
-    return ProjectResources(
+    return DeploymentResources(
         path=path,
         namespace=next(iter(namespaces)),
         frontend=name,
@@ -161,7 +165,7 @@ def load_project(path_value: str, kubectl: Kubectl) -> ProjectResources:
 def _timeout_seconds(value: str) -> float:
     parts = re.findall(r"(\d+)([smh])", value)
     if not parts or "".join(f"{amount}{unit}" for amount, unit in parts) != value:
-        raise ProjectError(
+        raise DeploymentError(
             "--wait-timeout must use Kubernetes duration syntax, such as 15m"
         )
     multipliers = {"s": 1, "m": 60, "h": 3600}
@@ -176,10 +180,10 @@ def _namespace_args(namespace: str) -> list[str]:
     return ["--namespace", namespace] if namespace else []
 
 
-def wait_for_project(
-    resources: ProjectResources, kubectl: Kubectl, timeout: str
+def wait_for_deployment(
+    resources: DeploymentResources, kubectl: Kubectl, timeout: str
 ) -> None:
-    """Wait for the deployed project's serving APIs to be Ready."""
+    """Wait for the deployed service APIs to be Ready."""
     _timeout_seconds(timeout)
     model_resources = [
         _resource_name("modelservice", name) for name in resources.models
@@ -230,12 +234,12 @@ def _wait_for_json(
         if ready(last):
             return last
         time.sleep(2)
-    raise ProjectError(f"timed out waiting for {description}")
+    raise DeploymentError(f"timed out waiting for {description}")
 
 
 def _load_balancer_target(
     service: dict[str, Any],
-    resources: ProjectResources,
+    resources: DeploymentResources,
     kubectl: Kubectl,
     timeout_seconds: float,
 ) -> tuple[str, dict[str, str]]:
@@ -259,7 +263,7 @@ def _load_balancer_target(
     ingress = service["status"]["loadBalancer"]["ingress"][0]
     address = str(ingress.get("ip") or ingress.get("hostname") or "").strip()
     if not address:
-        raise ProjectError(
+        raise DeploymentError(
             f"service/{resources.frontend} has an empty LoadBalancer address"
         )
     ports = (service.get("spec") or {}).get("ports") or []
@@ -268,17 +272,17 @@ def _load_balancer_target(
         ports[0] if ports else None,
     )
     if not http_port or not http_port.get("port"):
-        raise ProjectError(f"service/{resources.frontend} has no public HTTP port")
+        raise DeploymentError(f"service/{resources.frontend} has no public HTTP port")
     return _url("http", address, int(http_port["port"])), {}
 
 
 def _gateway_target(
-    resources: ProjectResources,
+    resources: DeploymentResources,
     kubectl: Kubectl,
     timeout_seconds: float,
 ) -> tuple[str, dict[str, str]]:
     if not resources.hostname:
-        raise ProjectError("gateway frontend does not declare spec.hostname")
+        raise DeploymentError("gateway frontend does not declare spec.hostname")
     route = kubectl.json(
         ["get", "httproute", resources.frontend, *_namespace_args(resources.namespace)]
     )
@@ -294,7 +298,7 @@ def _gateway_target(
         None,
     )
     if not parent or not parent.get("name"):
-        raise ProjectError(f"httproute/{resources.frontend} has no Gateway parent")
+        raise DeploymentError(f"httproute/{resources.frontend} has no Gateway parent")
     gateway_namespace = str(parent.get("namespace") or resources.namespace)
     gateway_name = str(parent["name"])
 
@@ -310,7 +314,7 @@ def _gateway_target(
     )
     address = str(gateway["status"]["addresses"][0].get("value") or "").strip()
     if not address:
-        raise ProjectError(f"gateway/{gateway_name} has an empty address")
+        raise DeploymentError(f"gateway/{gateway_name} has an empty address")
 
     listeners = (gateway.get("spec") or {}).get("listeners") or []
     section_name = str(parent.get("sectionName") or "")
@@ -323,7 +327,7 @@ def _gateway_target(
         None,
     )
     if not listener:
-        raise ProjectError(f"gateway/{gateway_name} has no matching listener")
+        raise DeploymentError(f"gateway/{gateway_name} has no matching listener")
     protocol = str(listener.get("protocol") or "HTTP").upper()
     scheme = "https" if protocol in {"HTTPS", "TLS"} else "http"
     port = int(listener.get("port") or (443 if scheme == "https" else 80))
@@ -332,8 +336,8 @@ def _gateway_target(
     return _url(scheme, address, port), {"Host": resources.hostname}
 
 
-def project_endpoint(
-    resources: ProjectResources,
+def deployment_endpoint(
+    resources: DeploymentResources,
     kubectl: Kubectl,
     timeout: str,
 ) -> tuple[str, dict[str, str]]:
@@ -391,22 +395,22 @@ def wait_for_endpoint(
             except (httpx.HTTPError, ValueError, KeyError) as exc:
                 last_error = str(exc)
             time.sleep(2)
-    raise ProjectError(f"frontend did not become ready: {last_error}")
+    raise DeploymentError(f"frontend did not become ready: {last_error}")
 
 
-def benchmark_project(
-    project: str,
+def benchmark_deployment(
+    deployment: str,
     timeout: str,
     *,
     requested_model: str = "",
     api_key: str = "",
-) -> tuple[ProjectResources, ProjectEndpoint, str]:
-    """Find a deployed project's endpoint and benchmark model."""
+) -> tuple[DeploymentResources, DeploymentEndpoint, str]:
+    """Find a deployed service endpoint and benchmark model."""
     kubectl = Kubectl()
-    resources = load_project(project, kubectl)
+    resources = load_deployment(deployment, kubectl)
     selected_model = resources.select_model(requested_model)
-    wait_for_project(resources, kubectl, timeout)
-    url, headers = project_endpoint(resources, kubectl, timeout)
+    wait_for_deployment(resources, kubectl, timeout)
+    url, headers = deployment_endpoint(resources, kubectl, timeout)
     models = wait_for_endpoint(
         url,
         headers,
@@ -414,9 +418,9 @@ def benchmark_project(
         resources.models.values(),
         api_key=api_key,
     )
-    endpoint = ProjectEndpoint(url, models, headers)
+    endpoint = DeploymentEndpoint(url, models, headers)
     if selected_model not in endpoint.models:
-        raise ProjectError(
+        raise DeploymentError(
             f"model {selected_model!r} is not advertised by the frontend; "
             f"available models: {', '.join(endpoint.models)}"
         )

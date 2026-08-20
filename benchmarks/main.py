@@ -12,7 +12,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 
 from benchmarks.arguments import BenchCommand, parse_arguments
-from benchmarks.project import ProjectError, benchmark_project
+from benchmarks.deployment import DeploymentError, benchmark_deployment
 from benchmarks.runner.select_runner import select_runner
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ def _configure_logging() -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-def _print_project(endpoint_url: str, models: tuple[str, ...], hostname: str) -> None:
+def _print_target(endpoint_url: str, models: tuple[str, ...], hostname: str) -> None:
     print(f"Endpoint: {endpoint_url}")
     if hostname:
         print(f"Hostname: {hostname}")
@@ -37,9 +37,9 @@ def _print_project(endpoint_url: str, models: tuple[str, ...], hostname: str) ->
 
 def _run_benchmark(command: BenchCommand) -> None:
     config = command.config
-    if command.project:
-        resources, endpoint, model = benchmark_project(
-            command.project,
+    if command.deployment:
+        resources, endpoint, model = benchmark_deployment(
+            command.deployment,
             command.wait_timeout,
             requested_model=config.target.model,
             api_key=config.target.api_key,
@@ -50,7 +50,7 @@ def _run_benchmark(command: BenchCommand) -> None:
             model=model,
             headers=endpoint.headers,
         )
-        _print_project(endpoint.url, endpoint.models, resources.hostname)
+        _print_target(endpoint.url, endpoint.models, resources.hostname)
 
     config.validate()
     logger.info("%s", config.summary())
@@ -60,11 +60,11 @@ def _run_benchmark(command: BenchCommand) -> None:
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Run a benchmark against a project or existing endpoint."""
+    """Run a benchmark against a deployment or existing endpoint."""
     _configure_logging()
     try:
         _run_benchmark(parse_arguments(argv))
-    except (ProjectError, ValueError) as exc:
+    except (DeploymentError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
 
 

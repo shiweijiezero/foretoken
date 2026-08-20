@@ -102,9 +102,9 @@ Do not set `frontend.gateway.create=true`. Instead, use these values in the Fore
 
 `name` comes from the `NAME` column, `namespace` from `NAMESPACE`, and `sectionName` is the listener name selected from that Gateway. The Gateway must allow `HTTPRoute` resources from the frontend namespace; DNS and TLS remain owned by the platform Gateway.
 
-### 2. Deploy the Quick Start project
+### 2. Deploy the model service
 
-The project directory contains the frontend and model configuration:
+`examples/quickstart` provides a ready-to-use frontend and model service configuration:
 
 ```bash
 kubectl apply --server-side -k examples/quickstart
@@ -120,7 +120,7 @@ kubectl wait --for=condition=Ready \
   modelservice/quickstart-qwen3-0.6b
 ```
 
-### 4. Benchmark the project
+### 4. Benchmark the model service
 
 Install the Foretoken Benchmark CLI from this checkout:
 
@@ -128,7 +128,7 @@ Install the Foretoken Benchmark CLI from this checkout:
 python -m pip install ./benchmarks
 ```
 
-After the project is deployed, the benchmark command discovers its endpoint and model automatically. With no workload options, it uses a short built-in prompt:
+After the service is ready, the command uses the same deployment configuration to find its endpoint and model. With no workload options, it uses a short built-in prompt:
 
 ```bash
 foretoken bench examples/quickstart

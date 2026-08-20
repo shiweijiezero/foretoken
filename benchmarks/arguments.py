@@ -23,14 +23,14 @@ from benchmarks.config import (
     WandbConfig,
 )
 
-_DEFAULT_PROJECT_PROMPT = "Hello"
+_DEFAULT_DEPLOYMENT_PROMPT = "Hello"
 
 
 @dataclass(frozen=True)
 class BenchCommand:
-    """Run a benchmark against a project or an existing endpoint."""
+    """Run a benchmark against a deployment or existing endpoint."""
 
-    project: str
+    deployment: str
     config: BenchConfig
     wait_timeout: str
 
@@ -47,20 +47,20 @@ def _default(cls: type, name: str) -> Any:
 def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     # Target
     parser.add_argument(
-        "project",
+        "deployment",
         nargs="?",
         default="",
-        help="Deployed Foretoken Kustomize project to benchmark",
+        help="Kustomize directory for a deployed Foretoken service",
     )
     parser.add_argument(
         "--url",
         default="",
-        help="Existing OpenAI-compatible API URL instead of a project",
+        help="Existing OpenAI-compatible API URL instead of deployment discovery",
     )
     parser.add_argument(
         "--model",
         default="",
-        help="Model name; inferred when a project contains one model",
+        help="Model name; inferred when the deployment contains one model",
     )
     parser.add_argument(
         "--api-key", default=_default(TargetConfig, "api_key"), help="API key"
@@ -80,7 +80,7 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--wait-timeout",
         default="15m",
-        help="Timeout for each project readiness stage",
+        help="Timeout for each deployment readiness stage",
     )
 
     # Load
@@ -303,8 +303,8 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
     prompt = namespace.prompt
-    if namespace.project and not prompt and not namespace.dataset:
-        prompt = _DEFAULT_PROJECT_PROMPT
+    if namespace.deployment and not prompt and not namespace.dataset:
+        prompt = _DEFAULT_DEPLOYMENT_PROMPT
     return BenchConfig(
         target=TargetConfig(
             url=namespace.url,
@@ -372,18 +372,18 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchCommand:
     subparsers = parser.add_subparsers(dest="command", required=True)
     bench = subparsers.add_parser(
         "bench",
-        help="Benchmark a deployed project or an existing endpoint",
+        help="Benchmark a deployed Foretoken service or an existing endpoint",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     _add_benchmark_arguments(bench)
 
     namespace = parser.parse_args(argv)
-    if bool(namespace.project) == bool(namespace.url):
-        bench.error("provide either PROJECT or --url, but not both")
+    if bool(namespace.deployment) == bool(namespace.url):
+        bench.error("provide either DEPLOYMENT or --url, but not both")
     if namespace.url and not namespace.model:
         bench.error("--model is required with --url")
     return BenchCommand(
-        project=namespace.project,
+        deployment=namespace.deployment,
         config=_bench_config(namespace),
         wait_timeout=namespace.wait_timeout,
     )
