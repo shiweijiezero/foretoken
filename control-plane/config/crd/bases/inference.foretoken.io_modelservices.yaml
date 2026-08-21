@@ -186,6 +186,7 @@ spec:
               backend:
                 enum:
                 - vllm
+                - sglang
                 type: string
               ecProfile:
                 description: ECProfile selects the platform-maintained EC runtime

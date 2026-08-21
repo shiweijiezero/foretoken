@@ -527,6 +527,7 @@ spec:
                   backend:
                     enum:
                     - vllm
+                    - sglang
                     type: string
                   image:
                     maxLength: 2048

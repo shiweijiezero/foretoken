@@ -81,7 +81,7 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MaxLength=256
 	TokenizerRevision string `json:"tokenizerRevision,omitempty"`
 
-	// +kubebuilder:validation:Enum=vllm
+	// +kubebuilder:validation:Enum=vllm;sglang
 	Backend string `json:"backend"`
 
 	Role ModelRole `json:"role"`
