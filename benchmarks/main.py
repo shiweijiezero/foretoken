@@ -28,7 +28,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     config = parse_arguments(argv)
     config.validate()
     logger.info("%s", config.summary())
-    asyncio.run(select_runner(config).run())
+    result = asyncio.run(select_runner(config).run())
+    if result["metrics"]["success_num"] == 0:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

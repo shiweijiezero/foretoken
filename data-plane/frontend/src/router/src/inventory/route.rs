@@ -72,6 +72,8 @@ pub struct RouteTarget {
     pub route_target_id: RouteTargetId,
     /// Control-plane target that owns the route target's capacity.
     pub target: ScalingTarget,
+    /// Complete capacity set that must admit a request using this route.
+    pub admission_targets: RouteTargetSet,
     /// Logical model served by the route target.
     pub model: String,
     /// Exact model revision served by the route target.
@@ -98,6 +100,8 @@ pub struct RouteTarget {
 pub struct RouteDecision {
     /// Stable identity of the selected routable ModelGroup.
     pub route_target_id: RouteTargetId,
+    /// Complete capacity set attributed to this request admission.
+    pub admission_targets: RouteTargetSet,
     /// Aggregate, Encoder, Prefill, or Decode stage selected for execution.
     pub role: ModelServerRole,
     /// Logical model selected for execution.

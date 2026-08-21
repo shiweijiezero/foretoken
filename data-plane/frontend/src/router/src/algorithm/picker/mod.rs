@@ -17,7 +17,7 @@ pub use round_robin_picker::RoundRobinPicker;
 /// `None` is valid only when that slice is empty. The router reports an out-of-range index or an
 /// empty result for a nonempty slice as a routing error.
 ///
-/// - `request`: model, optional revision, prompt tokens, sampling, multimodal, LoRA, and priority.
+/// - `request`: model, prompt tokens, sampling, multimodal, LoRA, and priority.
 /// - `scored_candidates`: current-stage candidates with route target metadata and `RouteScore` locality
 ///   and load values.
 /// - `customized_context`: user-defined `C`, created per request and shared by Prefill and Decode.

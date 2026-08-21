@@ -79,6 +79,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 (0..route.data_parallel_size).map(move |data_parallel_rank| RouteCandidate {
                     route_target_id: route.route_target_id.clone(),
                     target: route.target.clone(),
+                    admission_targets: route.admission_targets.clone(),
                     role: route.role,
                     model: route.model.clone(),
                     revision: route.revision.clone(),

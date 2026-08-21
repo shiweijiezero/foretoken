@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Verifies the Rust data plane without models or GPUs.
+
+name: Data plane
+
+on:
+  pull_request:
+    paths:
+      - data-plane/**
+      - Makefile
+      - .gitmodules
+      - rust-toolchain.toml
+      - .github/workflows/data-plane.yaml
+  push:
+    branches:
+      - main
+    paths:
+      - data-plane/**
+      - Makefile
+      - .gitmodules
+      - rust-toolchain.toml
+      - .github/workflows/data-plane.yaml
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: true
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y build-essential libssl-dev perl pkg-config
+      - name: Install Rust lint components
+        run: rustup component add rustfmt clippy
+      - name: Verify data plane
+        run: make verify-data-plane

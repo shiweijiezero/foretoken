@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+[package]
+name = "foretoken-engine-core-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+vllm-engine-core-client.workspace = true

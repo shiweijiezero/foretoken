@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Defines the controller-owned v1alpha1 ModelPool custom-resource API.
 
 package v1alpha1
@@ -21,16 +21,43 @@ type LocalObjectReference struct {
 
 // ModelRole identifies a ModelPool's role in the serving path.
 // +enum
-// +kubebuilder:validation:Enum=aggregate;prefill;decode
+// +kubebuilder:validation:Enum=aggregate;encoder;prefill;decode
 type ModelRole string
 
 const (
 	ModelRoleAggregate ModelRole = "aggregate"
+	ModelRoleEncoder   ModelRole = "encoder"
 	ModelRolePrefill   ModelRole = "prefill"
 	ModelRoleDecode    ModelRole = "decode"
 )
 
-// NormalizedPoolTemplate is the normalized contract produced from ModelService intent.
+// ManagedMooncakeStoreBinding pins a Ready Foretoken-owned KVService against ABA.
+type ManagedMooncakeStoreBinding struct {
+	Name            string `json:"name"`
+	UID             string `json:"uid"`
+	BindingRevision string `json:"bindingRevision"`
+	ConfigMapName   string `json:"configMapName"`
+	ConfigMapKey    string `json:"configMapKey"`
+	// RequesterBufferBytes is per-rank private Store memory included in the
+	// ModelGroup container memory budget; no hidden overhead is added.
+	RequesterBufferBytes int64 `json:"requesterBufferBytes"`
+}
+
+// NormalizedMooncakeStore is either an external profile or a pinned managed binding.
+// +kubebuilder:validation:XValidation:rule="has(self.profile) != has(self.managedBinding)",message="exactly one Store source is required"
+type NormalizedMooncakeStore struct {
+	Profile        string                       `json:"profile,omitempty"`
+	ManagedBinding *ManagedMooncakeStoreBinding `json:"managedBinding,omitempty"`
+}
+
+// NormalizedKVCache is the controller-owned cache configuration attached to ModelPool.
+// +kubebuilder:validation:XValidation:rule="(has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload) && has(self.mooncakeStore))",message="kvCache must select exactly one storage mode"
+type NormalizedKVCache struct {
+	Offload       *KVOffload               `json:"offload,omitempty"`
+	MooncakeStore *NormalizedMooncakeStore `json:"mooncakeStore,omitempty"`
+}
+
+// NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
 // Platform runtime and accelerator resolution may further constrain it before Groups are created.
 // +kubebuilder:validation:XValidation:rule="self.memberCount == self.nodeCount",message="memberCount must equal nodeCount in v1alpha1"
 // +kubebuilder:validation:XValidation:rule="self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp",message="accelerator capacity must equal the compiled worker rank count"
@@ -39,20 +66,48 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Model string `json:"model"`
 
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	ModelRevision string `json:"modelRevision,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Tokenizer string `json:"tokenizer,omitempty"`
+
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	TokenizerRevision string `json:"tokenizerRevision,omitempty"`
+
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`
 
 	Role ModelRole `json:"role"`
 
 	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=1
 	NodeCount int32 `json:"nodeCount"`
 
 	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=1
 	MemberCount int32 `json:"memberCount"`
 
 	Resources ModelResources `json:"resources"`
 
 	Parallelism CompiledParallelism `json:"parallelism"`
+
+	// MaxInputTokens is the immutable prompt admission limit for this Pool.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxInputTokens *int32 `json:"maxInputTokens,omitempty"`
+
+	// InternalGenerateRequestBodyLimitBytes is the resolved group-local generate
+	// request body limit.
+	// +kubebuilder:validation:Minimum=1048576
+	// +kubebuilder:validation:Maximum=268435456
+	InternalGenerateRequestBodyLimitBytes int64 `json:"internalGenerateRequestBodyLimitBytes"`
 
 	// +optional
 	// +kubebuilder:validation:MinLength=1
@@ -62,7 +117,18 @@ type NormalizedPoolTemplate struct {
 
 	Timeouts ModelTimeouts `json:"timeouts"`
 
-	// ExtraArgs are backend flags that the concrete adapter must validate before Group creation.
+	// KVCache is immutable resolved cache-placement intent.
+	// +optional
+	KVCache *NormalizedKVCache `json:"kvCache,omitempty"`
+
+	// Features is the normalized explicit capabilities for this Pool.
+	Features ModelFeatures `json:"features"`
+
+	// ECProfile is the controller-owned platform EC profile selected for encoder and prefill Pools.
+	// +optional
+	ECProfile string `json:"ecProfile,omitempty"`
+
+	// ExtraArgs are inference-engine flags that the concrete adapter must validate before Group creation.
 	// +optional
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=256
@@ -92,10 +158,10 @@ type ModelPoolStatus struct {
 	// +kubebuilder:validation:Minimum=0
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 
-	// ActiveRevision is the Group revision currently admitted to routing.
+	// PreparedRevision is the immutable Group revision whose requested capacity is ready for a service-level commit.
 	// +optional
 	// +kubebuilder:validation:MaxLength=63
-	ActiveRevision string `json:"activeRevision,omitempty"`
+	PreparedRevision string `json:"preparedRevision,omitempty"`
 
 	// +optional
 	// +listType=map

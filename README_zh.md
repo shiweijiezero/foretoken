@@ -31,71 +31,143 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
+两种访问模式使用相同的部署、等待和卸载步骤，只需在安装 Foretoken 时选择一种模式。
+
 ### 1. 安装 Foretoken
 
-通过 Helm 安装 Foretoken：
+#### 本地模式
+
+本地模式通过 `LoadBalancer` 提供访问地址，集群需要支持 `LoadBalancer` Service：
 
 ```bash
 helm upgrade --install foretoken \
   oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
   --namespace foretoken-platform \
   --create-namespace \
+  --set frontend.enabled=true \
+  --set frontend.mode=local \
   --wait
 ```
+
+#### 网关模式
+
+先在 `examples/quickstart/frontend.yaml` 的 `spec` 中填写对外域名：
+
+```yaml
+spec:
+  hostname: foretoken.example.com
+```
+
+网关模式需要 Gateway Controller。以下示例安装 Envoy Gateway：
+
+```bash
+helm upgrade --install envoy-gateway \
+  oci://docker.io/envoyproxy/gateway-helm \
+  --namespace envoy-gateway-system \
+  --create-namespace \
+  --wait
+```
+
+然后让 Foretoken Chart 创建专用的 `GatewayClass` 和 `Gateway`：
+
+```bash
+helm upgrade --install foretoken \
+  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
+  --namespace foretoken-platform \
+  --create-namespace \
+  --set frontend.enabled=true \
+  --set frontend.mode=gateway \
+  --set frontend.gateway.create=true \
+  --wait
+```
+
+如果平台已经有可用的 `Gateway`，可以先查看它的名称和 namespace：
+
+```bash
+kubectl get gateway -A
+```
+
+例如输出：
+
+```text
+NAMESPACE        NAME
+gateway-system   inference-gateway
+```
+
+此时不设置 `frontend.gateway.create=true`，而是在上述 Foretoken 安装命令中改用：
+
+```bash
+--set frontend.gateway.name=inference-gateway \
+--set frontend.gateway.namespace=gateway-system \
+--set frontend.gateway.sectionName=https
+```
+
+其中 `name` 对应 `NAME` 列，`namespace` 对应 `NAMESPACE` 列，`sectionName` 是该 Gateway 中目标 listener 的名称。该 Gateway 必须允许前端服务所在 namespace 的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
 
 ### 2. 部署模型服务
 
 `examples/quickstart/kustomization.yaml` 是部署入口，统一组织前端服务和模型服务：
 
 ```bash
-FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_DIR=examples/quickstart
-
-# 创建模型服务的 namespace；已存在时保持不变
-kubectl create namespace "${FORETOKEN_NAMESPACE}" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-# 提交模型服务配置，由 K8s Operator 创建并启动相关服务
-kubectl apply --server-side \
-  --namespace "${FORETOKEN_NAMESPACE}" \
-  -k "${FORETOKEN_SERVING_DIR}"
+kubectl apply --server-side -k examples/quickstart
 ```
 
 ### 3. 等待服务就绪
 
 ```bash
-FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_DIR=examples/quickstart
-
-# 等待 Kustomize 入口中的前端服务和模型服务全部就绪
-kubectl kustomize "${FORETOKEN_SERVING_DIR}" |
-  kubectl wait --for=condition=Ready \
-    --namespace "${FORETOKEN_NAMESPACE}" \
-    --timeout=15m \
-    -f -
+kubectl wait --for=condition=Ready \
+  --namespace foretoken-demo \
+  --timeout=15m \
+  frontendservice/quickstart-frontend \
+  modelservice/quickstart-qwen3-0.6b
 ```
 
 ### 4. 发送生成请求进行测试
 
+#### 本地模式
+
+读取前端服务的访问地址并发送请求：
+
 ```bash
+kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' \
+  --namespace foretoken-demo \
+  --timeout=5m \
+  service/quickstart-frontend
+
+FORETOKEN_FRONTEND_ADDRESS=$(kubectl get service quickstart-frontend \
+  --namespace foretoken-demo \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')
+
 curl --fail-with-body --no-buffer \
-  https://foretoken.example.com/v1/chat/completions \
+  "http://${FORETOKEN_FRONTEND_ADDRESS}:8080/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
 
-用户只需提交服务配置；底层资源由 Operator 管理，客户端通过 Gateway 访问模型服务。
+#### 网关模式
+
+使用 Chart 创建的 HTTP 网关时，读取网关地址并携带配置的域名：
+
+```bash
+FORETOKEN_GATEWAY_ADDRESS=$(kubectl get gateway foretoken-gateway \
+  --namespace foretoken-platform \
+  -o jsonpath='{.status.addresses[0].value}')
+
+curl --fail-with-body --no-buffer \
+  "http://${FORETOKEN_GATEWAY_ADDRESS}/v1/chat/completions" \
+  -H "Host: foretoken.example.com" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
+```
+
+复用平台已有网关时，使用该网关实际配置的域名、端口和 TLS。
 
 ## 停止与卸载
 
 ```bash
-FORETOKEN_NAMESPACE=foretoken-demo
-FORETOKEN_SERVING_DIR=examples/quickstart
-
 # 删除服务配置，停止服务并清理所辖资源：
 kubectl delete --wait=true --timeout=10m \
-  --namespace "${FORETOKEN_NAMESPACE}" \
-  -k "${FORETOKEN_SERVING_DIR}"
+  -k examples/quickstart
 
 # 服务资源清理完成后，再卸载 Foretoken：
 helm uninstall foretoken \
@@ -103,11 +175,26 @@ helm uninstall foretoken \
   --wait --timeout 5m
 ```
 
+通过 `frontend.gateway.create=true` 创建的 `GatewayClass` 和 `Gateway` 会随 Foretoken release 一起删除；复用的平台网关不会被删除。
+
+如果 Envoy Gateway 仅供本次 Foretoken 部署使用，可以继续卸载它：
+
+```bash
+helm uninstall envoy-gateway \
+  --namespace envoy-gateway-system \
+  --wait --timeout 5m
+```
+
+其他服务仍在使用 Envoy Gateway 时不要执行这一步。
+
 卸载 control plane 时会保留 Foretoken CRD 和自定义资源。只有在清理全部 Foretoken 资源后，才应显式删除 CRD：
 
 ```bash
 kubectl delete crd \
   frontendservices.inference.foretoken.io \
+  kvservices.inference.foretoken.io \
+  kvpools.inference.foretoken.io \
+  kvgroups.inference.foretoken.io \
   modelservices.inference.foretoken.io \
   modelpools.inference.foretoken.io \
   modelgroups.inference.foretoken.io
@@ -121,6 +208,8 @@ kubectl delete crd \
 helm upgrade --install foretoken ./deploy/charts/foretoken \
   --namespace foretoken-platform \
   --create-namespace \
+  --set frontend.enabled=true \
+  --set frontend.mode=local \
   --wait
 ```
 

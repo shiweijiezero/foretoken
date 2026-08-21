@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+[package]
+name = "foretoken-llm-facade"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-stream.workspace = true
+async-trait.workspace = true
+foretoken-model-protocol = { path = "../../../model-protocol" }
+foretoken-router = { path = "../router" }
+futures.workspace = true
+reqwest.workspace = true
+rmp-serde.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+vllm-llm.workspace = true
+
+[dev-dependencies]
+axum.workspace = true
+foretoken-engine-core-client = { path = "../engine-core-client" }
+futures.workspace = true
+tokio.workspace = true
+vllm-llm.workspace = true

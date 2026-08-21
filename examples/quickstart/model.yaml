@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Foretoken Quick Start model service configuration.
 
 apiVersion: inference.foretoken.io/v1alpha1
 kind: ModelService
 metadata:
-  name: quickstart-qwen3-0.6b # Kubernetes name and default API model alias.
+  name: quickstart-qwen3-0.6b # Kubernetes name of this model service.
 spec:
   model: Qwen/Qwen3-0.6B # Model artifact to serve, such as a Hugging Face repository or supported URI.
   backend: vllm # Inference backend selected for this model service.
@@ -15,15 +15,14 @@ spec:
   # ├── ModelGroup 1
   # └── ModelGroup N (N = replicas)
   replicas: 1 # Number of complete model replicas (ModelGroups).
-  nodes: 1 # Number of Kubernetes nodes used by each ModelGroup.
-  # Each ModelGroup uses nodes × resources.requests.gpu.count GPUs in total.
+  nodes: 1 # The current v1 runtime supports one Kubernetes node per ModelGroup.
+  # Each ModelGroup uses resources.requests.gpu.count GPUs on that node.
   resources: # Resources allocated to each ModelGroup runtime member Pod.
     requests:
       cpu: "4"
       memory: 48Gi
       gpu:
-        type: auto # Operator selects a compatible GPU type.
-        count: 1 # GPUs requested by each runtime member Pod.
+        count: 1 # Accelerator devices requested by each runtime member Pod.
     limits:
       cpu: "8"
       memory: 64Gi
@@ -37,7 +36,7 @@ spec:
     dcp: 1 # Decode-context-parallel size in each ModelGroup.
     # Qwen3-0.6B is a dense model, so EP is disabled. A MoE model can use:
     # ep:
-    #   size: 16 # Requires nodes × resources.requests.gpu.count = 16.
+    #   size: 16 # Requires resources.requests.gpu.count = 16.
     #   backend: allgather_reducescatter
     #   eplb: false
   # Backend arguments are listed last and override equivalent fields above.

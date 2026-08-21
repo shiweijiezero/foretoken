@@ -22,6 +22,9 @@ spec:
     - jsonPath: .spec.role
       name: Role
       type: string
+    - jsonPath: .spec.revision
+      name: Revision
+      type: string
     - jsonPath: .spec.memberCount
       name: Members
       type: integer
@@ -58,33 +61,202 @@ spec:
           metadata:
             type: object
           spec:
-            description: ModelGroupSpec is an immutable execution contract compiled
+            description: ModelGroupSpec is an immutable execution specification compiled
               by the Pool controller.
             properties:
               accelerator:
-                description: ModelGroupAccelerator defines accelerator capacity for
-                  each runtime member Pod.
+                description: ModelGroupAccelerator defines the resolved Kubernetes
+                  accelerator placement.
                 properties:
-                  countPerMember:
-                    description: CountPerMember is the number of accelerators assigned
-                      to one member Pod.
-                    format: int32
-                    minimum: 1
-                    type: integer
-                  type:
-                    description: Type is the resolved platform accelerator type.
-                    maxLength: 128
+                  deviceResourceName:
+                    description: DeviceResourceName is the Kubernetes extended resource
+                      requested by each member Pod.
+                    maxLength: 253
                     minLength: 1
-                    pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
+                    type: string
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    description: NodeSelector optionally constrains members to the
+                      resolved GPU profile.
+                    maxProperties: 16
+                    type: object
+                  runtimeClassName:
+                    description: RuntimeClassName selects the container runtime required
+                      by this accelerator profile.
+                    maxLength: 253
+                    minLength: 1
                     type: string
                 required:
-                - countPerMember
-                - type
+                - deviceResourceName
                 type: object
+              artifacts:
+                description: ModelGroupArtifacts identifies immutable model and tokenizer
+                  inputs.
+                properties:
+                  model:
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  modelRevision:
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                  tokenizer:
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  tokenizerRevision:
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                required:
+                - model
+                - modelRevision
+                - tokenizer
+                - tokenizerRevision
+                type: object
+              ecRuntime:
+                description: ECRuntime is the controller-owned resolved encoder/prefill
+                  transfer configuration.
+                properties:
+                  connector:
+                    enum:
+                    - ECExampleConnector
+                    type: string
+                  profileName:
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                  profileRevision:
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                  role:
+                    description: ECTransferRole is the fixed role assigned to a controller-owned
+                      EC runtime.
+                    enum:
+                    - producer
+                    - consumer
+                    type: string
+                  sharedStorageClaim:
+                    description: |-
+                      SharedStorageClaim is the platform-owned ReadWriteMany PVC used by the
+                      the local vLLM build source ECExampleConnector.
+                    maxLength: 253
+                    minLength: 1
+                    type: string
+                  sharedStoragePath:
+                    description: SharedStoragePath is the fixed in-container connector
+                      path.
+                    maxLength: 256
+                    pattern: ^/[^[:space:]]*$
+                    type: string
+                required:
+                - connector
+                - profileName
+                - profileRevision
+                - role
+                - sharedStorageClaim
+                - sharedStoragePath
+                type: object
+              features:
+                description: Features is the immutable capabilities advertised to
+                  routing clients.
+                properties:
+                  multimodal:
+                    items:
+                      description: MultimodalModality identifies one non-text input
+                        modality supported by a model.
+                      enum:
+                      - image
+                      type: string
+                    maxItems: 1
+                    type: array
+                    x-kubernetes-list-type: set
+                  reasoning:
+                    type: boolean
+                  structuredOutputs:
+                    items:
+                      description: StructuredOutputFormat identifies a structured
+                        response format supported by a model.
+                      enum:
+                      - jsonObject
+                      - jsonSchema
+                      type: string
+                    maxItems: 2
+                    type: array
+                    x-kubernetes-list-type: set
+                  tools:
+                    type: boolean
+                type: object
+              kvRuntime:
+                description: KVRuntime is the controller-owned resolved KV storage-mode
+                  configuration.
+                properties:
+                  mooncakeStore:
+                    description: ModelGroupMooncakeStoreRuntime defines the resolved
+                      external Store configuration.
+                    properties:
+                      configMapKey:
+                        minLength: 1
+                        type: string
+                      configMapName:
+                        minLength: 1
+                        type: string
+                      kvServiceUid:
+                        type: string
+                      profileName:
+                        minLength: 1
+                        type: string
+                      profileRevision:
+                        minLength: 1
+                        type: string
+                      pythonHashSeed:
+                        minLength: 1
+                        type: string
+                      requesterBufferBytes:
+                        description: |-
+                          RequesterBufferBytes is per-rank private Store memory included in the
+                          container memory budget, not additional runtime overhead.
+                        format: int64
+                        type: integer
+                    required:
+                    - configMapKey
+                    - configMapName
+                    - profileName
+                    - profileRevision
+                    - pythonHashSeed
+                    type: object
+                  offload:
+                    description: ModelGroupKVOffloadRuntime defines resolved local
+                      KV offload settings.
+                    properties:
+                      cpuBytes:
+                        format: int64
+                        minimum: 1
+                        type: integer
+                      filesystem:
+                        type: boolean
+                    required:
+                    - cpuBytes
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: kvRuntime must select exactly one KV storage mode
+                  rule: (has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload)
+                    && has(self.mooncakeStore))
+              maxInputTokens:
+                description: MaxInputTokens is the prompt admission limit advertised
+                  to routing clients.
+                format: int32
+                minimum: 1
+                type: integer
               memberCount:
                 description: MemberCount is the number of runtime member Pods in this
                   Group.
                 format: int32
+                maximum: 1
                 minimum: 1
                 type: integer
               modelPoolRef:
@@ -110,6 +282,7 @@ spec:
                 description: NodeCount is the number of physical Kubernetes Nodes
                   used by this Group.
                 format: int32
+                maximum: 1
                 minimum: 1
                 type: integer
               ordinal:
@@ -180,9 +353,144 @@ spec:
                     parallelism.pcp
                   rule: 'self.pcp == 1 ? self.tp % self.dcp == 0 : self.dcp == 1 ||
                     self.dcp == self.pcp || self.dcp == self.tp * self.pcp'
+              pdRuntime:
+                description: PDRuntime is the controller-owned P/D transport configuration.
+                properties:
+                  abortRequestTimeoutSeconds:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  bootstrapPort:
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  connector:
+                    enum:
+                    - MooncakeConnector
+                    type: string
+                  profileName:
+                    description: ProfileName and ProfileRevision are opaque platform-owned
+                      identifiers.
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                  profileRevision:
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                  protocol:
+                    enum:
+                    - rdma
+                    type: string
+                  rdmaDeviceName:
+                    description: RDMADeviceName selects the platform-verified HCA
+                      shared by both P/D roles.
+                    minLength: 1
+                    type: string
+                  rdmaResourceCount:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  rdmaResourceName:
+                    description: |-
+                      RDMAResourceName is the platform-owned Kubernetes extended resource
+                      whose device plugin injects the P/D transport devices.
+                    minLength: 1
+                    type: string
+                required:
+                - abortRequestTimeoutSeconds
+                - bootstrapPort
+                - connector
+                - profileName
+                - profileRevision
+                - protocol
+                - rdmaDeviceName
+                - rdmaResourceCount
+                - rdmaResourceName
+                type: object
+              resources:
+                description: ModelResources defines resources for one runtime member
+                  Pod.
+                properties:
+                  limits:
+                    description: ComputeResourceLimits defines optional CPU and memory
+                      limits for one Pod.
+                    properties:
+                      cpu:
+                        description: CPU is the maximum Kubernetes CPU quantity.
+                        maxLength: 64
+                        minLength: 1
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a valid non-negative Kubernetes resource
+                            quantity
+                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                            >= 0
+                      memory:
+                        description: Memory is the maximum Kubernetes memory quantity.
+                        maxLength: 64
+                        minLength: 1
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a valid non-negative Kubernetes resource
+                            quantity
+                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                            >= 0
+                    type: object
+                  requests:
+                    description: ModelResourceRequests defines resources requested
+                      by one runtime member Pod.
+                    properties:
+                      cpu:
+                        description: CPU is the requested Kubernetes CPU quantity.
+                        maxLength: 64
+                        minLength: 1
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a valid non-negative Kubernetes resource
+                            quantity
+                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                            >= 0
+                      gpu:
+                        description: GPURequest defines the accelerator request for
+                          one runtime member Pod.
+                        properties:
+                          count:
+                            default: 1
+                            description: Count is the number of accelerator devices
+                              requested by one runtime member Pod.
+                            format: int32
+                            minimum: 1
+                            type: integer
+                        type: object
+                      memory:
+                        description: Memory is the requested Kubernetes memory quantity.
+                        maxLength: 64
+                        minLength: 1
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a valid non-negative Kubernetes resource
+                            quantity
+                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                            >= 0
+                    required:
+                    - cpu
+                    - gpu
+                    - memory
+                    type: object
+                required:
+                - requests
+                type: object
+                x-kubernetes-validations:
+                - message: resources.requests.cpu must not exceed resources.limits.cpu
+                  rule: '!has(self.limits) || !has(self.limits.cpu) || quantity(self.requests.cpu).compareTo(quantity(self.limits.cpu))
+                    <= 0'
+                - message: resources.requests.memory must not exceed resources.limits.memory
+                  rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
+                    <= 0'
               revision:
-                description: Revision identifies the immutable Pool template revision
-                  this Group realizes.
+                description: Revision identifies one resolved Pool execution specification.
                 maxLength: 63
                 minLength: 1
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
@@ -192,18 +500,96 @@ spec:
                   path.
                 enum:
                 - aggregate
+                - encoder
                 - prefill
                 - decode
                 type: string
+              runtime:
+                description: ModelGroupRuntime defines the resolved inference-engine
+                  runtime.
+                properties:
+                  args:
+                    description: Args contains inference-engine flags not represented
+                      by the typed Group specification.
+                    items:
+                      description: |-
+                        BackendArg is one long-form CLI argument passed to the inference engine.
+                        The vLLM adapter accepts max-model-len, dtype, quantization, gpu-memory-utilization,
+                        max-num-seqs, max-num-batched-tokens, limit-mm-per-prompt, enforce-eager, and
+                        disable-log-stats. This schema rejects spaces, aliases, and positional arguments.
+                      maxLength: 4096
+                      minLength: 3
+                      pattern: ^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$
+                      type: string
+                    maxItems: 256
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  backend:
+                    enum:
+                    - vllm
+                    type: string
+                  image:
+                    maxLength: 2048
+                    minLength: 1
+                    type: string
+                  internalGenerateRequestBodyLimitBytes:
+                    description: |-
+                      InternalGenerateRequestBodyLimitBytes is the group-local generate request
+                      body limit resolved from the ModelService specification.
+                    format: int64
+                    maximum: 268435456
+                    minimum: 1048576
+                    type: integer
+                  port:
+                    description: Port is the internal Foretoken model-server transport
+                      port.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                required:
+                - backend
+                - image
+                - internalGenerateRequestBodyLimitBytes
+                - port
+                type: object
+              timeouts:
+                description: ModelTimeouts defines ModelService lifecycle budgets.
+                properties:
+                  drain:
+                    description: Duration is a positive Go-style duration.
+                    minLength: 2
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
+                  startup:
+                    description: Duration is a positive Go-style duration.
+                    minLength: 2
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
+                required:
+                - drain
+                - startup
+                type: object
             required:
             - accelerator
+            - artifacts
+            - features
             - memberCount
             - modelPoolRef
             - nodeCount
             - ordinal
             - parallelism
+            - resources
             - revision
             - role
+            - runtime
+            - timeouts
             type: object
             x-kubernetes-validations:
             - message: ModelGroup spec is immutable
@@ -211,8 +597,16 @@ spec:
             - message: memberCount must equal nodeCount in v1alpha1
               rule: self.memberCount == self.nodeCount
             - message: accelerator capacity must equal the compiled worker rank count
-              rule: self.nodeCount * self.accelerator.countPerMember == self.parallelism.pp
+              rule: self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp
                 * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp
+            - message: aggregate, encoder, prefill, and decode ModelGroups require
+                their fixed runtime configurations
+              rule: 'self.role == ''aggregate'' ? !has(self.pdRuntime) && !has(self.ecRuntime)
+                : self.role == ''encoder'' ? !has(self.pdRuntime) && has(self.ecRuntime)
+                && self.ecRuntime.role == ''producer'' : self.role == ''prefill''
+                ? has(self.pdRuntime) && (!has(self.ecRuntime) || self.ecRuntime.role
+                == ''consumer'') : self.role == ''decode'' ? has(self.pdRuntime) &&
+                !has(self.ecRuntime) : false'
           status:
             description: ModelGroupStatus defines the observed state of a ModelGroup.
             properties:
@@ -276,6 +670,11 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              drainStartedAt:
+                description: DrainStartedAt fixes the bounded deletion deadline across
+                  controller retries.
+                format: date-time
+                type: string
               phase:
                 description: ModelGroupPhase summarizes the Group lifecycle.
                 enum:

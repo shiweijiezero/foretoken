@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Copy this file and replace the image, Gateway, and GPU values with settings
+# that exist in your cluster. The registry must be reachable by workload nodes.
+image:
+  repository: registry.example.com/foretoken/control-plane
+  tag: dev
+
+# This Secret must exist in the Helm release namespace for the control-plane Pod.
+imagePullSecrets:
+  - name: registry-auth
+
+# The same Secret name must also exist in every namespace where Foretoken creates workloads.
+workload:
+  imagePullSecrets:
+    - name: registry-auth
+
+frontend:
+  enabled: true
+  mode: gateway
+  image: registry.example.com/foretoken/frontend:dev
+  gateway:
+    create: false
+    name: inference-gateway
+    namespace: gateway-system
+    sectionName: https
+
+runtime:
+  vllm:
+    image: registry.example.com/foretoken/model-server:dev
+    gpu:
+      # Extended resource advertised by the cluster's GPU device plugin.
+      resourceName: nvidia.com/gpu
+      # Set this when the cluster exposes GPUs through a RuntimeClass.
+      runtimeClassName: nvidia
+      # Vendor node labels distinguish card models that share one resource name.
+      nodeSelector:
+        key: nvidia.com/gpu.product
+        value: NVIDIA-H100-80GB-HBM3

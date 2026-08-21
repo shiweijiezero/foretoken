@@ -43,10 +43,6 @@ fn lifecycle_wire_shape_is_typed_and_hash_only_remove() {
         serde_json::to_value(ModelServerRole::Prefill).expect("serialize model-server role"),
         serde_json::json!("prefill")
     );
-    assert_eq!(
-        serde_json::to_value(RouteStage::Prefill).expect("serialize model-server route stage"),
-        serde_json::json!("prefill")
-    );
     let remove = KvDeltaEvent::BlockRemoved {
         block_hashes: vec![KvBlockHash("normalized".into())],
         placement,
@@ -106,7 +102,6 @@ fn kv_delta_query_requires_camel_case_data_parallel_rank() {
 #[test]
 fn generate_input_preserves_session_id_across_vllm_conversions() {
     let input = GenerateInput {
-        stage: RouteStage::Prefill,
         request_id: "request-1".into(),
         prompt_token_ids: vec![1, 2],
         sampling_params: Default::default(),

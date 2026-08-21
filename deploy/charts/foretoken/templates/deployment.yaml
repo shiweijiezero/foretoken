@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Deploys the control-plane manager and initializes its CRDs.
 
+{{- include "foretoken.validateValues" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -11,7 +12,7 @@ metadata:
   labels:
     {{- include "foretoken.labels" . | nindent 4 }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.controller.replicas }}
   selector:
     matchLabels:
       {{- include "foretoken.selectorLabels" . | nindent 6 }}
@@ -55,8 +56,67 @@ spec:
             - /manager
           args:
             - --leader-elect=true
+            - {{ printf "--autoscaling-telemetry-collection-timeout=%s" .Values.controller.autoscalingTelemetry.collectionTimeout | quote }}
+            - {{ printf "--autoscaling-telemetry-request-timeout=%s" .Values.controller.autoscalingTelemetry.requestTimeout | quote }}
+            - {{ printf "--autoscaling-telemetry-concurrency=%d" (int .Values.controller.autoscalingTelemetry.concurrency) | quote }}
             - --metrics-bind-address=0
             - --health-probe-bind-address=:8081
+            {{- range .Values.workload.imagePullSecrets }}
+            - {{ printf "--workload-image-pull-secret=%s" .name | quote }}
+            {{- end }}
+            {{- if .Values.frontend.enabled }}
+            - --frontend-enabled=true
+            - {{ printf "--frontend-mode=%s" .Values.frontend.mode | quote }}
+            - {{ printf "--frontend-image=%s" .Values.frontend.image | quote }}
+            - {{ printf "--frontend-port=%d" (int .Values.frontend.port) | quote }}
+            {{- if eq .Values.frontend.mode "gateway" }}
+            - {{ printf "--frontend-gateway-name=%s" (include "foretoken.frontendGatewayName" .) | quote }}
+            - {{ printf "--frontend-gateway-namespace=%s" (include "foretoken.frontendGatewayNamespace" .) | quote }}
+            - {{ printf "--frontend-gateway-section-name=%s" (include "foretoken.frontendGatewaySectionName" .) | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.runtime.vllm.image }}
+            - {{ printf "--inference-engine-profile-revision=%s" $.Values.runtime.vllm.profileRevision | quote }}
+            - {{ printf "--inference-engine-image=%s" . | quote }}
+            - {{ printf "--model-server-port=%d" (int $.Values.runtime.vllm.modelServerPort) | quote }}
+            - {{ printf "--gpu-resource-name=%s" $.Values.runtime.vllm.gpu.resourceName | quote }}
+            {{- with $.Values.runtime.vllm.gpu.runtimeClassName }}
+            - {{ printf "--runtime-class-name=%s" . | quote }}
+            {{- end }}
+            {{- with $.Values.runtime.vllm.gpu.nodeSelector.key }}
+            - {{ printf "--gpu-node-selector-key=%s" . | quote }}
+            - {{ printf "--gpu-node-selector-value=%s" $.Values.runtime.vllm.gpu.nodeSelector.value | quote }}
+            {{- end }}
+            {{- if $.Values.runtime.vllm.ec.profileName }}
+            - {{ printf "--vllm-ec-profile-name=%s" $.Values.runtime.vllm.ec.profileName | quote }}
+            - {{ printf "--vllm-ec-profile-revision=%s" $.Values.runtime.vllm.ec.profileRevision | quote }}
+            - {{ printf "--vllm-ec-connector=%s" $.Values.runtime.vllm.ec.connector | quote }}
+            - {{ printf "--vllm-ec-shared-storage-claim=%s" $.Values.runtime.vllm.ec.sharedStorageClaim | quote }}
+            - {{ printf "--vllm-ec-shared-storage-path=%s" $.Values.runtime.vllm.ec.sharedStoragePath | quote }}
+            {{- end }}
+            {{- if $.Values.runtime.vllm.pd.profileName }}
+            - {{ printf "--vllm-pd-profile-name=%s" $.Values.runtime.vllm.pd.profileName | quote }}
+            - {{ printf "--vllm-pd-profile-revision=%s" $.Values.runtime.vllm.pd.profileRevision | quote }}
+            - {{ printf "--vllm-pd-protocol=%s" $.Values.runtime.vllm.pd.protocol | quote }}
+            - {{ printf "--vllm-pd-bootstrap-port=%d" (int $.Values.runtime.vllm.pd.bootstrapPort) | quote }}
+            - {{ printf "--vllm-pd-abort-request-timeout-seconds=%d" (int $.Values.runtime.vllm.pd.abortRequestTimeoutSeconds) | quote }}
+            - {{ printf "--vllm-pd-rdma-device-name=%s" $.Values.runtime.vllm.pd.rdmaDeviceName | quote }}
+            - {{ printf "--vllm-pd-rdma-resource-name=%s" $.Values.runtime.vllm.pd.rdmaResourceName | quote }}
+            - {{ printf "--vllm-pd-rdma-resource-count=%d" (int $.Values.runtime.vllm.pd.rdmaResourceCount) | quote }}
+            {{- end }}
+            {{- if $.Values.runtime.vllm.mooncakeStore.profileName }}
+            - {{ printf "--vllm-mooncake-store-profile-name=%s" $.Values.runtime.vllm.mooncakeStore.profileName | quote }}
+            - {{ printf "--vllm-mooncake-store-profile-revision=%s" $.Values.runtime.vllm.mooncakeStore.profileRevision | quote }}
+            - {{ printf "--vllm-mooncake-store-config-map-name=%s" $.Values.runtime.vllm.mooncakeStore.configMapName | quote }}
+            - {{ printf "--vllm-mooncake-store-config-map-key=%s" $.Values.runtime.vllm.mooncakeStore.configMapKey | quote }}
+            - {{ printf "--vllm-mooncake-store-python-hash-seed=%s" $.Values.runtime.vllm.mooncakeStore.pythonHashSeed | quote }}
+            {{- end }}
+            {{- end }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - name: healthz
               containerPort: 8081

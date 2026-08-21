@@ -12,22 +12,15 @@ use foretoken_kv_indexer::{KvPrefixLookup, KvPrefixUnavailableReason};
 pub struct RouterRequest {
     /// Requested logical model name.
     pub model: String,
-    /// Requested model revision, or `None` when any ready revision may serve it.
-    pub revision: Option<String>,
     /// Tokenized vLLM request, including prompt tokens, sampling, multimodal, LoRA, and priority.
     pub generate_request: Arc<vllm_llm::GenerateRequest>,
 }
 
 impl RouterRequest {
     /// Creates a routing request from the selected model and tokenized generation request.
-    pub fn new(
-        model: impl Into<String>,
-        revision: Option<String>,
-        generate_request: Arc<vllm_llm::GenerateRequest>,
-    ) -> Self {
+    pub fn new(model: impl Into<String>, generate_request: Arc<vllm_llm::GenerateRequest>) -> Self {
         Self {
             model: model.into(),
-            revision,
             generate_request,
         }
     }

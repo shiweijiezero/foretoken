@@ -112,6 +112,7 @@ fn candidate(id: &str, role: ModelServerRole, load: u64) -> RouteCandidate {
     RouteCandidate {
         route_target_id: route.route_target_id,
         target: route.target,
+        admission_targets: route.admission_targets,
         role,
         model: route.model,
         revision: route.revision,

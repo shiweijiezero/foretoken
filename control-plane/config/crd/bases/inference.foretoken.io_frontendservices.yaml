@@ -58,8 +58,9 @@ spec:
               service.
             properties:
               hostname:
+                description: Hostname is required when the platform exposes frontends
+                  through a Gateway.
                 maxLength: 253
-                minLength: 1
                 pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$
                 type: string
               replicas:
@@ -134,21 +135,54 @@ spec:
                 - message: resources.requests.memory must not exceed resources.limits.memory
                   rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                     <= 0'
+              routerPipeline:
+                description: RouterPipeline selects each independently composable
+                  routing algorithm stage.
+                properties:
+                  filter:
+                    default: allow_all
+                    description: RouterFilterAlgorithm identifies a compiled Router
+                      Filter.
+                    enum:
+                    - allow_all
+                    type: string
+                  picker:
+                    default: round_robin
+                    description: RouterPickerAlgorithm identifies a compiled Router
+                      Picker.
+                    enum:
+                    - max
+                    - round_robin
+                    type: string
+                  scorer:
+                    default: kv_least_loaded
+                    description: RouterScorerAlgorithm identifies a compiled Router
+                      Scorer.
+                    enum:
+                    - uniform
+                    - least_loaded
+                    - kv_least_loaded
+                    type: string
+                type: object
               timeouts:
                 description: FrontendTimeouts defines client-facing request budgets.
                 properties:
                   request:
+                    allOf:
+                    - pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    - pattern: ^([0-9]+(s|m|h))+$
                     description: Duration is a positive Go-style duration.
                     minLength: 2
-                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
                     x-kubernetes-validations:
                     - message: must be a positive duration
                       rule: duration(self) > duration('0s')
                   streamIdle:
+                    allOf:
+                    - pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    - pattern: ^([0-9]+(s|m|h))+$
                     description: Duration is a positive Go-style duration.
                     minLength: 2
-                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
                     x-kubernetes-validations:
                     - message: must be a positive duration
@@ -161,7 +195,6 @@ spec:
                 - message: timeouts.streamIdle must not exceed timeouts.request
                   rule: duration(self.streamIdle) <= duration(self.request)
             required:
-            - hostname
             - resources
             - timeouts
             type: object
@@ -230,6 +263,12 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               observedGeneration:
+                format: int64
+                minimum: 0
+                type: integer
+              servingSnapshotVersion:
+                description: Last successfully persisted versioned routing configuration
+                  version. It survives ConfigMap recreation.
                 format: int64
                 minimum: 0
                 type: integer

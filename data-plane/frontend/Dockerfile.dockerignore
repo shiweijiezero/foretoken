@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# The Dockerfile builds one package from the repository-wide data-plane workspace.
+**
+!data-plane/
+!data-plane/**
+data-plane/target/
+data-plane/**/target/

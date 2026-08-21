@@ -3,7 +3,9 @@
 
 //! Source-stream synchronization and route-bound typed locality queries.
 use crate::*;
-use foretoken_model_protocol::{KvDeltaEvent, KvDeltaResponse, KvHashFormat, KvPlacement};
+use foretoken_model_protocol::{
+    KV_INDEX_DELTA_PATH, KvDeltaEvent, KvDeltaQuery, KvDeltaResponse, KvHashFormat, KvPlacement,
+};
 use futures::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -409,19 +411,20 @@ async fn fetch_delta(
     source: KvEventSourceConfig,
     cursor: Cursor,
 ) -> Result<KvDeltaResponse, KvIndexDegradedReason> {
-    let mut url = format!(
-        "{}/v1/internal/kv-index/delta?dpRank={}&limit=256",
+    let url = format!(
+        "{}{}",
         source.endpoint.trim_end_matches('/'),
-        source.dp_rank
+        KV_INDEX_DELTA_PATH
     );
-    if !cursor.epoch.is_empty() {
-        url.push_str(&format!("&epoch={}", cursor.epoch));
-    }
-    if let Some(after) = cursor.after {
-        url.push_str(&format!("&after={after}"));
-    }
+    let query = KvDeltaQuery {
+        dp_rank: source.dp_rank,
+        epoch: (!cursor.epoch.is_empty()).then_some(cursor.epoch),
+        after: cursor.after,
+        limit: Some(256),
+    };
     let response = client
         .get(url)
+        .query(&query)
         .send()
         .await
         .map_err(|_| KvIndexDegradedReason::DeltaTransport)?;

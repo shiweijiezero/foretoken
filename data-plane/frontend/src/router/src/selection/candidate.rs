@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use foretoken_model_protocol::ModelServerRole;
 
-use crate::{RouteTargetId, RouteTargetStats, ScalingTarget};
+use crate::{RouteTargetId, RouteTargetSet, RouteTargetStats, ScalingTarget};
 
 /// Position in the candidate slice passed to a routing algorithm.
 ///
@@ -23,6 +23,8 @@ pub struct RouteCandidate {
     pub route_target_id: RouteTargetId,
     /// Control-plane scaling target that owns this route target.
     pub target: ScalingTarget,
+    /// Complete capacity set attributed when this route is selected.
+    pub admission_targets: RouteTargetSet,
     /// Aggregate, Prefill, Decode, or Encoder execution role.
     pub role: ModelServerRole,
     /// Model served by this route target.
@@ -43,6 +45,7 @@ impl RouteCandidate {
     pub(crate) fn decision(&self) -> crate::RouteDecision {
         crate::RouteDecision {
             route_target_id: self.route_target_id.clone(),
+            admission_targets: self.admission_targets.clone(),
             role: self.role,
             model: self.model.clone(),
             revision: self.revision.clone(),

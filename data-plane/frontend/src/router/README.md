@@ -25,11 +25,11 @@ RouteDecision
 
 ### Route candidates
 
-The Router obtains route targets from the `RouteInventory`. A target becomes a candidate only when its model, revision, input limit, and request capabilities are compatible and the target is healthy. Its execution role remains part of the candidate for later stage selection.
+The Router obtains route targets from the `RouteInventory`. A target becomes a candidate only when its model, input limit, and request capabilities are compatible and the target is healthy. Its execution role remains part of the candidate for later stage selection.
 
 Dynamic capability-aware matching deeply inspects target node `capabilities` to satisfy advanced requests:
 
-- **Model & Basic Limits**: Strictly matches the request's `model` and `revision`, ensuring the request's token count does not exceed the node's `max_input_tokens`.
+- **Model & Basic Limits**: Strictly matches the request's `model` and ensures its token count does not exceed the node's `max_input_tokens`.
 - **LoRA & Reasoning**: Accurately identifies whether target nodes possess the corresponding `lora` or `reasoning` parsing capabilities.
 - **Multimodal**: Automatically extracts multimodal features from requests and strictly matches whether nodes support the corresponding sub-modalities.
 - **Structured Output**: Perceives and matches mandatory output constraints.
@@ -96,7 +96,7 @@ RouteDecision:
   data_parallel_rank: 1
 ```
 
-`route_target_id` is the stable routing identity supplied by the Model Server Registry. `RouteDecision` also returns the execution role, model, revision, and exact DP rank.
+`route_target_id` is the stable routing identity supplied by the Model Server Registry. `RouteDecision` also returns the execution role, model, and exact DP rank.
 
 ## Using KV prefix information
 

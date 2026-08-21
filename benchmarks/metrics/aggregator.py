@@ -11,7 +11,15 @@ from typing import Any, Optional
 import numpy as np
 
 
-def _percentile_stats(values: list[float]) -> dict[str, float]:
+def _percentile_stats(values: list[float]) -> dict[str, float | None]:
+    if not values:
+        return {
+            "mean": None,
+            "p50": None,
+            "p95": None,
+            "p99": None,
+        }
+
     array = np.asarray(values, dtype=float)
     return {
         "mean": float(np.mean(array)),
@@ -100,7 +108,7 @@ class MetricsAggregator:
             "request_num": len(results),
             "success_num": success_count,
             "failed_num": failed_count,
-            "success_rate": success_count / len(results),
+            "success_rate": success_count / len(results) if len(results) else 0.0,
             "latency": _percentile_stats(latencies),
             "ttft": _percentile_stats(ttfts),
             "tpot": _percentile_stats(tpots),
@@ -111,7 +119,11 @@ class MetricsAggregator:
                 "input_token/s": input_tokens / total_time,
                 "total_token/s": (input_tokens + output_tokens) / total_time,
             },
-            "avg_input_tokens": input_tokens / success_count,
-            "avg_output_tokens": output_tokens / success_count,
+            "avg_input_tokens": (
+                input_tokens / success_count if success_count else None
+            ),
+            "avg_output_tokens": (
+                output_tokens / success_count if success_count else None
+            ),
             "benchmark_time": total_time,
         }

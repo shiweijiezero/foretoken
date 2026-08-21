@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Model, revision, token-limit, and capability matching over route targets.
+//! Model, token-limit, and capability matching over route targets.
 
 use std::collections::BTreeSet;
 
-use vllm_engine_core_client::protocol::structured_outputs::StructuredOutputConstraint;
+use foretoken_engine_core_client::protocol::structured_outputs::StructuredOutputConstraint;
 
 use crate::{RouteTarget, RouterRequest};
 
-/// Immutable route targets matched by model, revision, and request requirements.
+/// Immutable route targets matched by model and request requirements.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelRouteTable {
     routes: Vec<RouteTarget>,
@@ -33,10 +33,6 @@ impl ModelRouteTable {
             .filter(|route| {
                 route.ready
                     && route.model == request.model
-                    && request
-                        .revision
-                        .as_deref()
-                        .is_none_or(|revision| route.revision == revision)
                     && route
                         .max_input_tokens
                         .is_none_or(|limit| request.token_count() <= limit)

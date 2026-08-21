@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-#
+
 # Foretoken frontend service configuration.
 
 apiVersion: inference.foretoken.io/v1alpha1
@@ -19,4 +19,7 @@ spec:
   timeouts:
     request: 10m # Maximum duration of a client request.
     streamIdle: 5m # Maximum time a stream may produce no response chunks.
-  hostname: foretoken.example.com # Hostname for the frontend service.
+  routerPipeline:
+    filter: allow_all
+    scorer: least_loaded
+    picker: round_robin

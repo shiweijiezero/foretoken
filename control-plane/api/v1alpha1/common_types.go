@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
+
 // Defines shared validated types used by the Foretoken custom resources.
 
 package v1alpha1
@@ -17,11 +17,51 @@ type ResourceQuantity string
 // +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="must be a positive duration"
 type Duration string
 
-// BackendArg is one backend command-line flag.
-// +kubebuilder:validation:MinLength=2
+// BackendArg is one long-form CLI argument passed to the inference engine.
+// The vLLM adapter accepts max-model-len, dtype, quantization, gpu-memory-utilization,
+// max-num-seqs, max-num-batched-tokens, limit-mm-per-prompt, enforce-eager, and
+// disable-log-stats. This schema rejects spaces, aliases, and positional arguments.
+// +kubebuilder:validation:MinLength=3
 // +kubebuilder:validation:MaxLength=4096
-// +kubebuilder:validation:Pattern="^--"
+// +kubebuilder:validation:Pattern="^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$"
 type BackendArg string
+
+// StructuredOutputFormat identifies a structured response format supported by a model.
+// +enum
+// +kubebuilder:validation:Enum=jsonObject;jsonSchema
+type StructuredOutputFormat string
+
+const (
+	StructuredOutputFormatJSONObject StructuredOutputFormat = "jsonObject"
+	StructuredOutputFormatJSONSchema StructuredOutputFormat = "jsonSchema"
+)
+
+// MultimodalModality identifies one non-text input modality supported by a model.
+// +enum
+// +kubebuilder:validation:Enum=image
+type MultimodalModality string
+
+const MultimodalModalityImage MultimodalModality = "image"
+
+// ModelFeatures declares opt-in model capabilities. Chat and text are always
+// available and therefore intentionally are not configurable here.
+type ModelFeatures struct {
+	// +optional
+	Tools bool `json:"tools,omitempty"`
+
+	// +optional
+	Reasoning bool `json:"reasoning,omitempty"`
+
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=2
+	StructuredOutputs []StructuredOutputFormat `json:"structuredOutputs,omitempty"`
+
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=1
+	Multimodal []MultimodalModality `json:"multimodal,omitempty"`
+}
 
 // CompiledParallelism defines an explicit execution topology compiled from user intent.
 // Unlike user input, DP is always present and may coexist with EP as its derived value.
@@ -79,17 +119,9 @@ type FrontendResources struct {
 	Limits *ComputeResourceLimits `json:"limits,omitempty"`
 }
 
-// GPURequest defines the logical GPU request for one runtime member Pod.
+// GPURequest defines the accelerator request for one runtime member Pod.
 type GPURequest struct {
-	// Type is a platform-registered GPU type or auto.
-	// +optional
-	// +kubebuilder:default=auto
-	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=128
-	// +kubebuilder:validation:Pattern="^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
-	Type string `json:"type,omitempty"`
-
-	// Count is the number of GPUs requested by one runtime member Pod.
+	// Count is the number of accelerator devices requested by one runtime member Pod.
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=1

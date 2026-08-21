@@ -25,11 +25,11 @@ RouteDecision
 
 ### 候选路由项
 
-Router 从 `RouteInventory` 获取路由目标。只有模型、revision、输入限制和请求能力兼容且当前健康的目标才会成为候选项。执行角色会保留在候选项中，供后续执行阶段筛选。
+Router 从 `RouteInventory` 获取路由目标。只有模型、输入限制和请求能力兼容且当前健康的目标才会成为候选项。执行角色会保留在候选项中，供后续执行阶段筛选。
 
 动态能力感知匹配会深度检查目标节点的 `capabilities` 以满足高级请求：
 
-- 模型与基础限制：严格匹配请求的 `model` 和 `revision`，确保请求的 Token 数不超过节点的 `max_input_tokens`。
+- 模型与基础限制：严格匹配请求的 `model`，并确保请求的 Token 数不超过节点的 `max_input_tokens`。
 - LoRA & 推理：精准识别目标节点是否具备对应的 `lora` 或 `reasoning` 解析能力。
 - 多模态：自动提取请求中的多模态特征，并严格匹配节点是否支持相应的子模态。
 - 结构化输出 (Structured Output)：感知并匹配强制输出约束。
@@ -96,7 +96,7 @@ RouteDecision：
   data_parallel_rank: 1
 ```
 
-`route_target_id` 是 Model Server Registry 提供的稳定路由身份。`RouteDecision` 还会返回执行角色、模型、revision 和精确 DP rank。
+`route_target_id` 是 Model Server Registry 提供的稳定路由身份。`RouteDecision` 还会返回执行角色、模型和精确 DP rank。
 
 ## 使用 KV 前缀信息
 

@@ -126,7 +126,8 @@ def metrics_to_wandb_message(metrics: dict[str, Any]) -> dict[str, Any]:
     latency = metrics["latency"]
     ttft = metrics["ttft"]
     tpot = metrics["tpot"]
-    return {
+
+    message = {
         _TIME_TAKEN: round(float(metrics["benchmark_time"]), 4),
         _CONCURRENCY: int(metrics["parallel"]),
         _REQUEST_RATE: float(metrics["rate"]),
@@ -134,15 +135,32 @@ def metrics_to_wandb_message(metrics: dict[str, Any]) -> dict[str, Any]:
         _SUCCEED_REQUESTS: int(metrics["success_num"]),
         _FAILED_REQUESTS: int(metrics["failed_num"]),
         _REQUEST_THROUGHPUT: round(float(throughput["request/s"]), 4),
-        _AVERAGE_LATENCY: round(float(latency["mean"]), 4),
-        _AVERAGE_INPUT_TOKENS: round(float(metrics["avg_input_tokens"]), 4),
         _OUTPUT_TOKEN_THROUGHPUT: round(float(throughput["token/s"]), 4),
         _TOTAL_TOKEN_THROUGHPUT: round(float(throughput["total_token/s"]), 4),
-        _AVERAGE_TTFT: round(float(ttft["mean"]) * 1000, 2),
-        _AVERAGE_TPOT: round(float(tpot["mean"]) * 1000, 2),
-        _AVERAGE_ITL: round(float(metrics["itl"]["mean"]) * 1000, 2),
-        _AVERAGE_OUTPUT_TOKENS: round(float(metrics["avg_output_tokens"]), 4),
     }
+
+    if metrics["avg_input_tokens"] is not None:
+        message[_AVERAGE_INPUT_TOKENS] = round(
+            float(metrics["avg_input_tokens"]), 4
+        )
+
+    if metrics["avg_output_tokens"] is not None:
+        message[_AVERAGE_OUTPUT_TOKENS] = round(
+            float(metrics["avg_output_tokens"]), 4
+        )
+
+    if latency["mean"] is not None:
+        message[_AVERAGE_LATENCY] = round(float(latency["mean"]), 4)
+
+    if ttft["mean"] is not None:
+        message[_AVERAGE_TTFT] = round(float(ttft["mean"]) * 1000, 2)
+
+    if tpot["mean"] is not None:
+        avg_tpot_ms = round(float(tpot["mean"]) * 1000, 2)
+        message[_AVERAGE_TPOT] = avg_tpot_ms
+        message[_AVERAGE_ITL] = avg_tpot_ms
+
+    return message
 
 
 def wandb_timestamp() -> str:

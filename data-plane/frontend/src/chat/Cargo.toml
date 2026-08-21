@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+[package]
+name = "foretoken-chat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+foretoken-parser = { path = "../parser" }
+vllm-chat.workspace = true

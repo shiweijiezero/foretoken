@@ -87,31 +87,156 @@ spec:
                 type: string
               template:
                 description: |-
-                  NormalizedPoolTemplate is the normalized contract produced from ModelService intent.
+                  NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
                   Platform runtime and accelerator resolution may further constrain it before Groups are created.
                 properties:
                   backend:
                     enum:
                     - vllm
                     type: string
+                  ecProfile:
+                    description: ECProfile is the controller-owned platform EC profile
+                      selected for encoder and prefill Pools.
+                    type: string
                   extraArgs:
-                    description: ExtraArgs are backend flags that the concrete adapter
-                      must validate before Group creation.
+                    description: ExtraArgs are inference-engine flags that the concrete
+                      adapter must validate before Group creation.
                     items:
-                      description: BackendArg is one backend command-line flag.
+                      description: |-
+                        BackendArg is one long-form CLI argument passed to the inference engine.
+                        The vLLM adapter accepts max-model-len, dtype, quantization, gpu-memory-utilization,
+                        max-num-seqs, max-num-batched-tokens, limit-mm-per-prompt, enforce-eager, and
+                        disable-log-stats. This schema rejects spaces, aliases, and positional arguments.
                       maxLength: 4096
-                      minLength: 2
-                      pattern: ^--
+                      minLength: 3
+                      pattern: ^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$
                       type: string
                     maxItems: 256
                     type: array
                     x-kubernetes-list-type: atomic
+                  features:
+                    description: Features is the normalized explicit capabilities
+                      for this Pool.
+                    properties:
+                      multimodal:
+                        items:
+                          description: MultimodalModality identifies one non-text
+                            input modality supported by a model.
+                          enum:
+                          - image
+                          type: string
+                        maxItems: 1
+                        type: array
+                        x-kubernetes-list-type: set
+                      reasoning:
+                        type: boolean
+                      structuredOutputs:
+                        items:
+                          description: StructuredOutputFormat identifies a structured
+                            response format supported by a model.
+                          enum:
+                          - jsonObject
+                          - jsonSchema
+                          type: string
+                        maxItems: 2
+                        type: array
+                        x-kubernetes-list-type: set
+                      tools:
+                        type: boolean
+                    type: object
+                  internalGenerateRequestBodyLimitBytes:
+                    description: |-
+                      InternalGenerateRequestBodyLimitBytes is the resolved group-local generate
+                      request body limit.
+                    format: int64
+                    maximum: 268435456
+                    minimum: 1048576
+                    type: integer
+                  kvCache:
+                    description: KVCache is immutable resolved cache-placement intent.
+                    properties:
+                      mooncakeStore:
+                        description: NormalizedMooncakeStore is either an external
+                          profile or a pinned managed binding.
+                        properties:
+                          managedBinding:
+                            description: ManagedMooncakeStoreBinding pins a Ready
+                              Foretoken-owned KVService against ABA.
+                            properties:
+                              bindingRevision:
+                                type: string
+                              configMapKey:
+                                type: string
+                              configMapName:
+                                type: string
+                              name:
+                                type: string
+                              requesterBufferBytes:
+                                description: |-
+                                  RequesterBufferBytes is per-rank private Store memory included in the
+                                  ModelGroup container memory budget; no hidden overhead is added.
+                                format: int64
+                                type: integer
+                              uid:
+                                type: string
+                            required:
+                            - bindingRevision
+                            - configMapKey
+                            - configMapName
+                            - name
+                            - requesterBufferBytes
+                            - uid
+                            type: object
+                          profile:
+                            type: string
+                        type: object
+                        x-kubernetes-validations:
+                        - message: exactly one Store source is required
+                          rule: has(self.profile) != has(self.managedBinding)
+                      offload:
+                        description: KVOffload defines local CPU and optionally filesystem-backed
+                          KV offload.
+                        properties:
+                          cpuCacheSize:
+                            allOf:
+                            - minLength: 1
+                            - minLength: 1
+                            description: CPUCacheSize is the CPU tier capacity available
+                              to vLLM.
+                            maxLength: 64
+                            type: string
+                            x-kubernetes-validations:
+                            - message: must be a valid non-negative Kubernetes resource
+                                quantity
+                              rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                                >= 0
+                          filesystem:
+                            type: boolean
+                        required:
+                        - cpuCacheSize
+                        type: object
+                    type: object
+                    x-kubernetes-validations:
+                    - message: kvCache must select exactly one storage mode
+                      rule: (has(self.offload) && !has(self.mooncakeStore)) || (!has(self.offload)
+                        && has(self.mooncakeStore))
+                  maxInputTokens:
+                    description: MaxInputTokens is the immutable prompt admission
+                      limit for this Pool.
+                    format: int32
+                    minimum: 1
+                    type: integer
                   memberCount:
                     format: int32
+                    maximum: 1
                     minimum: 1
                     type: integer
                   model:
                     maxLength: 1024
+                    minLength: 1
+                    type: string
+                  modelRevision:
+                    maxLength: 256
                     minLength: 1
                     type: string
                   network:
@@ -121,6 +246,7 @@ spec:
                     type: string
                   nodeCount:
                     format: int32
+                    maximum: 1
                     minimum: 1
                     type: integer
                   parallelism:
@@ -232,24 +358,16 @@ spec:
                               rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
                                 >= 0
                           gpu:
-                            description: GPURequest defines the logical GPU request
+                            description: GPURequest defines the accelerator request
                               for one runtime member Pod.
                             properties:
                               count:
                                 default: 1
-                                description: Count is the number of GPUs requested
-                                  by one runtime member Pod.
+                                description: Count is the number of accelerator devices
+                                  requested by one runtime member Pod.
                                 format: int32
                                 minimum: 1
                                 type: integer
-                              type:
-                                default: auto
-                                description: Type is a platform-registered GPU type
-                                  or auto.
-                                maxLength: 128
-                                minLength: 1
-                                pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
-                                type: string
                             type: object
                           memory:
                             description: Memory is the requested Kubernetes memory
@@ -282,6 +400,7 @@ spec:
                       path.
                     enum:
                     - aggregate
+                    - encoder
                     - prefill
                     - decode
                     type: string
@@ -308,8 +427,18 @@ spec:
                     - drain
                     - startup
                     type: object
+                  tokenizer:
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  tokenizerRevision:
+                    maxLength: 256
+                    minLength: 1
+                    type: string
                 required:
                 - backend
+                - features
+                - internalGenerateRequestBodyLimitBytes
                 - memberCount
                 - model
                 - nodeCount
@@ -334,11 +463,6 @@ spec:
           status:
             description: ModelPoolStatus defines the observed state of a ModelPool.
             properties:
-              activeRevision:
-                description: ActiveRevision is the Group revision currently admitted
-                  to routing.
-                maxLength: 63
-                type: string
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
@@ -403,6 +527,11 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
+              preparedRevision:
+                description: PreparedRevision is the immutable Group revision whose
+                  requested capacity is ready for a service-level commit.
+                maxLength: 63
+                type: string
             type: object
         required:
         - spec

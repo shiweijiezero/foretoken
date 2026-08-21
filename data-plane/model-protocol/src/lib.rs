@@ -12,7 +12,7 @@ use vllm_engine_core_client::protocol::lora::LoraRequest;
 use vllm_engine_core_client::protocol::multimodal::MmFeatures;
 use vllm_engine_core_client::protocol::request::ReasoningParserKwargs;
 use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
-use vllm_llm::{FinishReason, GenerateOutput, GeneratePromptInfo, GenerateRequest};
+use vllm_llm::{FinishReason, GenerateOutput, GenerateRequest};
 
 /// Execution responsibility of one routable ModelGroup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -25,28 +25,11 @@ pub enum ModelServerRole {
     Decode,
 }
 
-/// Model-server wire execution stage selected for a routed request.
-///
-/// This typed value is sent to the model-server HTTP endpoint. It is distinct from the Router's
-/// request-local routing state and from a route target's execution role.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RouteStage {
-    #[default]
-    Aggregate,
-    Encoder,
-    Prefill,
-    Decode,
-}
-
 /// Request accepted by the single model-server ingress owned by one routable ModelGroup.
 /// Its Pod placement is a runtime detail and does not create another routing identity.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GenerateInput {
-    /// Model-server execution stage selected by the router, not Router's per-request routing stage.
-    #[serde(default)]
-    pub stage: RouteStage,
     pub request_id: String,
     pub prompt_token_ids: Vec<u32>,
     pub sampling_params: EngineCoreSamplingParams,
@@ -72,7 +55,6 @@ pub struct GenerateInput {
 impl From<GenerateRequest> for GenerateInput {
     fn from(request: GenerateRequest) -> Self {
         Self {
-            stage: RouteStage::Aggregate,
             request_id: request.request_id,
             prompt_token_ids: request.prompt_token_ids,
             sampling_params: request.sampling_params,
@@ -86,23 +68,6 @@ impl From<GenerateRequest> for GenerateInput {
             reasoning_parser_kwargs: request.reasoning_parser_kwargs,
             lora_request: request.lora_request,
         }
-    }
-}
-impl GenerateInput {
-    /// Set the model-server stage after route selection.
-    pub fn with_stage(mut self, stage: RouteStage) -> Self {
-        self.stage = stage;
-        self
-    }
-
-    /// Attach the connector-owned EC descriptor to a trusted prefill request.
-    pub fn inject_ec_transfer_params(&mut self, params: serde_json::Value) -> Result<(), String> {
-        let extra_args = self.sampling_params.extra_args.get_or_insert_default();
-        if extra_args.contains_key("ec_transfer_params") {
-            return Err("ec_transfer_params is already set".into());
-        }
-        extra_args.insert("ec_transfer_params".into(), params);
-        Ok(())
     }
 }
 impl From<GenerateInput> for GenerateRequest {
@@ -167,26 +132,6 @@ impl From<GenerateOutput> for TokenOutput {
         }
     }
 }
-impl From<TokenOutput> for GenerateOutput {
-    fn from(output: TokenOutput) -> Self {
-        Self {
-            request_id: output.request_id,
-            prompt_info: output
-                .prompt_token_ids
-                .map(|prompt_token_ids| GeneratePromptInfo {
-                    prompt_token_ids: prompt_token_ids.into(),
-                    prompt_logprobs: output.prompt_logprobs,
-                }),
-            token_ids: output.token_ids,
-            logprobs: output.logprobs,
-            finish_reason: output.finish_reason,
-            cached_token_count: output.cached_token_count,
-            kv_transfer_params: output.kv_transfer_params,
-            ec_transfer_params: output.ec_transfer_params,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeModelIdentity {
@@ -207,7 +152,6 @@ pub struct RuntimeMetadataResponse {
     pub model: RuntimeModelIdentity,
     pub model_dtype: ModelDtype,
     pub effective_max_model_len: u32,
-    pub vllm_version: String,
     pub ec_transfer: Option<RuntimeEcTransferMetadata>,
     #[serde(default)]
     pub capabilities: std::collections::BTreeSet<String>,
@@ -242,6 +186,9 @@ pub struct TelemetryResponse {
     pub tpot_seconds: CumulativeHistogram,
     pub e2e_seconds: CumulativeHistogram,
 }
+
+/// Group-local route used by the frontend KV indexer to consume normalized deltas.
+pub const KV_INDEX_DELTA_PATH: &str = "/v1/internal/kv-index/delta";
 
 /// Cursor parameters for one source-local, zero-based delta stream. `None` means no event
 /// has been consumed; an empty page never advances `after`.

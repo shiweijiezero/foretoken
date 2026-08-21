@@ -24,7 +24,7 @@ pub use uniform_scorer::UniformScorer;
 /// lets a scorer express ranking without echoing candidate identity or metadata. The Router
 /// applies execution-stage and E/P/D route-set eligibility only after scores are available.
 ///
-/// - `request`: model, optional revision, prompt tokens, sampling, multimodal, LoRA, and priority.
+/// - `request`: model, prompt tokens, sampling, multimodal, LoRA, and priority.
 /// - `candidates`: Filter output with route metadata and the Router's immutable current-round
 ///   aggregate target observation, when telemetry is available.
 /// - `kv_prefix_indexer`: query local or offloaded matched prompt tokens for any candidate.

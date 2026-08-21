@@ -7,12 +7,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use foretoken_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
 use foretoken_model_protocol::ModelServerRole;
-use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
 
 use foretoken_router::{
-    ModelRouteTable, RouteInventory, RouteTarget, RouteTargetId, RouteTargetStats, RouterRequest,
-    ScalingTarget, ScalingTargetKind,
+    ModelRouteTable, RouteInventory, RouteTarget, RouteTargetId, RouteTargetSet, RouteTargetStats,
+    RouterRequest, ScalingTarget, ScalingTargetKind,
 };
 
 pub(super) type Stats = Arc<Mutex<BTreeMap<RouteTargetId, RouteTargetStats>>>;
@@ -49,14 +49,16 @@ impl foretoken_router::RouteTargetStatsReader for TestStatsReader {
 }
 
 pub(super) fn route(id: &str, role: ModelServerRole) -> RouteTarget {
+    let target = ScalingTarget {
+        service_uid: "service".into(),
+        name: id.into(),
+        uid: format!("{id}-uid"),
+        kind: ScalingTargetKind::Pool,
+    };
     RouteTarget {
         route_target_id: RouteTargetId::new(id),
-        target: ScalingTarget {
-            service_uid: "service".into(),
-            name: id.into(),
-            uid: format!("{id}-uid"),
-            kind: ScalingTargetKind::Pool,
-        },
+        admission_targets: RouteTargetSet::new(vec![target.clone()]),
+        target,
         model: "model".into(),
         revision: "r1".into(),
         capabilities: BTreeSet::new(),
@@ -75,7 +77,6 @@ pub(super) fn route(id: &str, role: ModelServerRole) -> RouteTarget {
 pub(super) fn request() -> RouterRequest {
     RouterRequest::new(
         "model",
-        Some("r1".into()),
         Arc::new(vllm_llm::GenerateRequest {
             request_id: "request".into(),
             prompt_token_ids: vec![1, 2],

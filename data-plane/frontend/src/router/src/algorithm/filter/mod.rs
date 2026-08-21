@@ -17,7 +17,7 @@ pub use allow_all_filter::AllowAllFilter;
 /// returning candidate identities or metadata. The Router applies execution-stage and E/P/D
 /// route-set eligibility after scoring.
 ///
-/// - `request`: model, optional revision, prompt tokens, sampling, multimodal, LoRA, and priority.
+/// - `request`: model, prompt tokens, sampling, multimodal, LoRA, and priority.
 /// - `candidates`: routable ModelGroups with route metadata and the Router's immutable current-round
 ///   aggregate target observation, when telemetry is available.
 /// - `kv_prefix_indexer`: query local or offloaded matched prompt tokens for any candidate.

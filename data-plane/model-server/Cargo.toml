@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Builds the group-local typed HTTP model server and its vLLM adapter.
+
+[package]
+name = "foretoken-model-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Group-local managed EngineCore and typed streaming API"
+
+[dependencies]
+async-stream.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+base64.workspace = true
+blake3.workspace = true
+bytes.workspace = true
+foretoken-model-protocol.workspace = true
+futures.workspace = true
+rmp-serde.workspace = true
+rmpv.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+zeromq.workspace = true
+vllm-engine-core-client.workspace = true
+vllm-llm.workspace = true
+vllm-managed-engine.workspace = true
+vllm-metrics.workspace = true
+vllm-tracing.workspace = true
+
+[dev-dependencies]
+http-body-util = "0.1.3"
+tower = { version = "0.5.3", features = ["util"] }

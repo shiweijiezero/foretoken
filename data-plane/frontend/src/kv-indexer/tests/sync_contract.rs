@@ -14,7 +14,7 @@ use foretoken_kv_indexer::{
     KvLocalityIndexImplementation, KvPrefixIndexer, KvPrefixLookup, KvPrefixQueryResult,
     KvPrefixUnavailableReason, KvRouteBinding, KvRuntimeConfig, KvRuntimeConfigError,
 };
-use foretoken_model_protocol::{KvDelta, KvDeltaEvent, KvDeltaResponse};
+use foretoken_model_protocol::{KV_INDEX_DELTA_PATH, KvDelta, KvDeltaEvent, KvDeltaResponse};
 use tokio::sync::Mutex;
 
 fn source(endpoint: String) -> KvEventSourceConfig {
@@ -78,7 +78,7 @@ async fn endpoint(pages: Vec<KvDeltaResponse>) -> (String, tokio::task::JoinHand
         .expect("bind local test server");
     let address = listener.local_addr().expect("read local test address");
     let app = Router::new()
-        .route("/v1/internal/kv-index/delta", get(delta))
+        .route(KV_INDEX_DELTA_PATH, get(delta))
         .with_state(Arc::new(Mutex::new(pages)));
     let task = tokio::spawn(async move {
         axum::serve(listener, app)
@@ -287,8 +287,8 @@ async fn hanging_source_is_timed_out_without_blocking_healthy_source_or_next_ref
         axum::serve(
             listener,
             Router::new()
-                .route("/hang/v1/internal/kv-index/delta", get(hang))
-                .route("/healthy/v1/internal/kv-index/delta", get(healthy)),
+                .route(&format!("/hang{KV_INDEX_DELTA_PATH}"), get(hang))
+                .route(&format!("/healthy{KV_INDEX_DELTA_PATH}"), get(healthy)),
         )
         .await
         .unwrap()

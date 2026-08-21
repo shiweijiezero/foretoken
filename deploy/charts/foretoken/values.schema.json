@@ -1,0 +1,388 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": [
+    "image",
+    "imagePullSecrets",
+    "controller",
+    "workload",
+    "frontend",
+    "runtime"
+  ],
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": [
+        "repository",
+        "tag",
+        "digest",
+        "pullPolicy"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "digest": {
+          "type": "string"
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "controller": {
+      "type": "object",
+      "required": [
+        "replicas",
+        "autoscalingTelemetry"
+      ],
+      "properties": {
+        "replicas": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "autoscalingTelemetry": {
+          "type": "object",
+          "required": [
+            "collectionTimeout",
+            "requestTimeout",
+            "concurrency"
+          ],
+          "properties": {
+            "collectionTimeout": {
+              "type": "string",
+              "minLength": 1
+            },
+            "requestTimeout": {
+              "type": "string",
+              "minLength": 1
+            },
+            "concurrency": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "workload": {
+      "type": "object",
+      "required": [
+        "imagePullSecrets"
+      ],
+      "properties": {
+        "imagePullSecrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "frontend": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "mode",
+        "image",
+        "port",
+        "gateway"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "local",
+            "gateway"
+          ]
+        },
+        "image": {
+          "type": "string"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "gateway": {
+          "type": "object",
+          "required": [
+            "create",
+            "controllerName",
+            "name",
+            "namespace",
+            "sectionName"
+          ],
+          "properties": {
+            "create": {
+              "type": "boolean"
+            },
+            "controllerName": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "namespace": {
+              "type": "string"
+            },
+            "sectionName": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "vllm"
+      ],
+      "properties": {
+        "vllm": {
+          "type": "object",
+          "required": [
+            "image",
+            "profileRevision",
+            "modelServerPort",
+            "gpu"
+          ],
+          "properties": {
+            "image": {
+              "type": "string"
+            },
+            "profileRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16,
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+            },
+            "modelServerPort": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "gpu": {
+              "type": "object",
+              "required": [
+                "resourceName",
+                "nodeSelector"
+              ],
+              "properties": {
+                "resourceName": {
+                  "type": "string"
+                },
+                "runtimeClassName": {
+                  "type": "string"
+                },
+                "nodeSelector": {
+                  "type": "object",
+                  "required": [
+                    "key",
+                    "value"
+                  ],
+                  "properties": {
+                    "key": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "frontend": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "frontend": {
+            "properties": {
+              "image": {
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "frontend": {
+            "properties": {
+              "enabled": {
+                "const": true
+              },
+              "mode": {
+                "const": "gateway"
+              },
+              "gateway": {
+                "properties": {
+                  "create": {
+                    "const": false
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "frontend": {
+            "properties": {
+              "gateway": {
+                "properties": {
+                  "name": {
+                    "minLength": 1
+                  },
+                  "namespace": {
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "frontend": {
+            "properties": {
+              "enabled": {
+                "const": true
+              },
+              "mode": {
+                "const": "gateway"
+              },
+              "gateway": {
+                "properties": {
+                  "create": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "frontend": {
+            "properties": {
+              "gateway": {
+                "properties": {
+                  "controllerName": {
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "vllm": {
+                "properties": {
+                  "image": {
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "vllm": {
+                "properties": {
+                  "gpu": {
+                    "properties": {
+                      "resourceName": {
+                        "minLength": 1
+                      },
+                      "nodeSelector": {
+                        "properties": {
+                          "key": {},
+                          "value": {}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

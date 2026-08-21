@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Creates an isolated GatewayClass for the optional chart-managed frontend Gateway.
+
+{{- if and .Values.frontend.enabled (eq .Values.frontend.mode "gateway") .Values.frontend.gateway.create }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: {{ include "foretoken.frontendGatewayClassName" . }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+spec:
+  controllerName: {{ .Values.frontend.gateway.controllerName | quote }}
+{{- end }}

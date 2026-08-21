@@ -56,22 +56,262 @@ spec:
           spec:
             description: ModelServiceSpec defines the desired state of a model service.
             properties:
+              autoscaling:
+                description: |-
+                  Autoscaling is evaluated by the ModelService controller. Algorithms remain
+                  side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.
+                properties:
+                  adjustment:
+                    description: |-
+                      Adjustment modifies a scaling desired capacity before platform decision resolution.
+                      Manual intent always uses direct adjustment.
+                    properties:
+                      algorithm:
+                        default: step
+                        description: AutoscalingAdjustmentAlgorithm selects how a
+                          desired capacity is adjusted before resolution.
+                        enum:
+                        - direct
+                        - step
+                        type: string
+                      maxScaleDownGroups:
+                        default: 1
+                        description: Zero disables the downward per-evaluation step
+                          limit.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                      maxScaleUpGroups:
+                        default: 1
+                        description: Zero disables the upward per-evaluation step
+                          limit.
+                        format: int32
+                        minimum: 0
+                        type: integer
+                    type: object
+                  algorithm:
+                    default: manual
+                    description: AutoscalingAlgorithm selects a statically linked
+                      autoscaling decision algorithm.
+                    enum:
+                    - manual
+                    - queue
+                    - threshold
+                    type: string
+                  maxGroups:
+                    description: MaxGroups is required for automatic autoscaling.
+                      When omitted, manual intent is unbounded.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  metricsMaxAge:
+                    default: 15s
+                    description: Duration is a positive Go-style duration.
+                    minLength: 2
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
+                  minGroups:
+                    default: 0
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  scaleUpQueue:
+                    default: 1
+                    description: ScaleUpQueue is the queue-depth threshold above which
+                      threshold adds one Group.
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  targetQueuePerRoutableGroup:
+                    default: 1
+                    format: int64
+                    minimum: 0
+                    type: integer
+                  trigger:
+                    description: |-
+                      Trigger controls when an automatic algorithm receives a fresh observation.
+                      It is ignored by manual autoscaling.
+                    properties:
+                      algorithm:
+                        default: periodic
+                        description: AutoscalingTriggerAlgorithm selects when an automatic
+                          scaling algorithm is evaluated.
+                        enum:
+                        - periodic
+                        - watermark
+                        type: string
+                      highQueuePerRoutableGroup:
+                        default: 1
+                        description: |-
+                          HighQueuePerRoutableGroup fires a watermark evaluation only when queue
+                          strictly exceeds this per-routable-Group level.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      interval:
+                        default: 5s
+                        description: Duration is a positive Go-style duration.
+                        minLength: 2
+                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a positive duration
+                          rule: duration(self) > duration('0s')
+                      lowQueuePerRoutableGroup:
+                        default: 0
+                        description: |-
+                          LowQueuePerRoutableGroup fires a watermark evaluation for idle capacity when
+                          queue is at or below this per-routable-Group level and no requests are active.
+                        format: int64
+                        minimum: 0
+                        type: integer
+                    type: object
+                    x-kubernetes-validations:
+                    - message: autoscaling trigger lowQueuePerRoutableGroup must not
+                        exceed highQueuePerRoutableGroup
+                      rule: '!has(self.lowQueuePerRoutableGroup) || !has(self.highQueuePerRoutableGroup)
+                        || self.lowQueuePerRoutableGroup <= self.highQueuePerRoutableGroup'
+                required:
+                - algorithm
+                type: object
+                x-kubernetes-validations:
+                - message: autoscaling minGroups must not exceed maxGroups
+                  rule: '!has(self.minGroups) || !has(self.maxGroups) || self.minGroups
+                    <= self.maxGroups'
+                - message: autoscaling maxGroups is required unless algorithm is manual
+                  rule: self.algorithm == 'manual' || has(self.maxGroups)
               backend:
                 enum:
                 - vllm
                 type: string
+              ecProfile:
+                description: ECProfile selects the platform-maintained EC runtime
+                  for a complete E/P/D topology.
+                properties:
+                  profile:
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                required:
+                - profile
+                type: object
               extraArgs:
-                description: ExtraArgs are backend CLI flags shared by every compiled
-                  Pool.
+                description: ExtraArgs are inference-engine CLI flags shared by every
+                  compiled Pool.
                 items:
-                  description: BackendArg is one backend command-line flag.
+                  description: |-
+                    BackendArg is one long-form CLI argument passed to the inference engine.
+                    The vLLM adapter accepts max-model-len, dtype, quantization, gpu-memory-utilization,
+                    max-num-seqs, max-num-batched-tokens, limit-mm-per-prompt, enforce-eager, and
+                    disable-log-stats. This schema rejects spaces, aliases, and positional arguments.
                   maxLength: 4096
-                  minLength: 2
-                  pattern: ^--
+                  minLength: 3
+                  pattern: ^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$
                   type: string
                 maxItems: 256
                 type: array
                 x-kubernetes-list-type: atomic
+              features:
+                description: Features declares explicit opt-in capabilities for the
+                  default Pool.
+                properties:
+                  multimodal:
+                    items:
+                      description: MultimodalModality identifies one non-text input
+                        modality supported by a model.
+                      enum:
+                      - image
+                      type: string
+                    maxItems: 1
+                    type: array
+                    x-kubernetes-list-type: set
+                  reasoning:
+                    type: boolean
+                  structuredOutputs:
+                    items:
+                      description: StructuredOutputFormat identifies a structured
+                        response format supported by a model.
+                      enum:
+                      - jsonObject
+                      - jsonSchema
+                      type: string
+                    maxItems: 2
+                    type: array
+                    x-kubernetes-list-type: set
+                  tools:
+                    type: boolean
+                type: object
+              internalGenerateRequestBodyLimitBytes:
+                default: 67108864
+                description: |-
+                  InternalGenerateRequestBodyLimitBytes is the maximum body size accepted by
+                  a group-local generate endpoint. It defaults to 64 MiB.
+                format: int64
+                maximum: 268435456
+                minimum: 1048576
+                type: integer
+              kvCache:
+                description: KVCache is the typed cache-placement intent for the Quick
+                  Start shorthand.
+                properties:
+                  mooncakeStore:
+                    description: MooncakeStore selects either an external platform
+                      profile or a Foretoken-owned KVService.
+                    properties:
+                      kvServiceRef:
+                        description: KVServiceReference identifies a same-namespace
+                          KVService by user-facing name only.
+                        properties:
+                          name:
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        type: object
+                      profile:
+                        maxLength: 256
+                        minLength: 1
+                        type: string
+                    type: object
+                    x-kubernetes-validations:
+                    - message: exactly one of profile or kvServiceRef is required
+                      rule: has(self.profile) != has(self.kvServiceRef)
+                  offload:
+                    description: KVOffload defines local CPU and optionally filesystem-backed
+                      KV offload.
+                    properties:
+                      cpuCacheSize:
+                        allOf:
+                        - minLength: 1
+                        - minLength: 1
+                        description: CPUCacheSize is the CPU tier capacity available
+                          to vLLM.
+                        maxLength: 64
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a valid non-negative Kubernetes resource
+                            quantity
+                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                            >= 0
+                      filesystem:
+                        type: boolean
+                    required:
+                    - cpuCacheSize
+                    type: object
+                type: object
+                x-kubernetes-validations:
+                - message: kvCache.offload and kvCache.mooncakeStore are mutually
+                    exclusive
+                  rule: '!(has(self.offload) && has(self.mooncakeStore))'
+              maxInputTokens:
+                description: MaxInputTokens is the prompt admission limit for requests
+                  routed to the default Pool.
+                format: int32
+                minimum: 1
+                type: integer
               model:
                 maxLength: 1024
                 minLength: 1
@@ -85,6 +325,95 @@ spec:
                     of ModelGroups sharing the same role, network, resources, and parallelism.
                     The controller instantiates it as a ModelPool owned by the ModelService.
                   properties:
+                    features:
+                      description: Features declares explicit opt-in capabilities
+                        for this Pool.
+                      properties:
+                        multimodal:
+                          items:
+                            description: MultimodalModality identifies one non-text
+                              input modality supported by a model.
+                            enum:
+                            - image
+                            type: string
+                          maxItems: 1
+                          type: array
+                          x-kubernetes-list-type: set
+                        reasoning:
+                          type: boolean
+                        structuredOutputs:
+                          items:
+                            description: StructuredOutputFormat identifies a structured
+                              response format supported by a model.
+                            enum:
+                            - jsonObject
+                            - jsonSchema
+                            type: string
+                          maxItems: 2
+                          type: array
+                          x-kubernetes-list-type: set
+                        tools:
+                          type: boolean
+                      type: object
+                    kvCache:
+                      description: KVCache defines typed KV-cache placement intent
+                        for one execution Pool.
+                      properties:
+                        mooncakeStore:
+                          description: MooncakeStore selects either an external platform
+                            profile or a Foretoken-owned KVService.
+                          properties:
+                            kvServiceRef:
+                              description: KVServiceReference identifies a same-namespace
+                                KVService by user-facing name only.
+                              properties:
+                                name:
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - name
+                              type: object
+                            profile:
+                              maxLength: 256
+                              minLength: 1
+                              type: string
+                          type: object
+                          x-kubernetes-validations:
+                          - message: exactly one of profile or kvServiceRef is required
+                            rule: has(self.profile) != has(self.kvServiceRef)
+                        offload:
+                          description: KVOffload defines local CPU and optionally
+                            filesystem-backed KV offload.
+                          properties:
+                            cpuCacheSize:
+                              allOf:
+                              - minLength: 1
+                              - minLength: 1
+                              description: CPUCacheSize is the CPU tier capacity available
+                                to vLLM.
+                              maxLength: 64
+                              type: string
+                              x-kubernetes-validations:
+                              - message: must be a valid non-negative Kubernetes resource
+                                  quantity
+                                rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                                  >= 0
+                            filesystem:
+                              type: boolean
+                          required:
+                          - cpuCacheSize
+                          type: object
+                      type: object
+                      x-kubernetes-validations:
+                      - message: kvCache.offload and kvCache.mooncakeStore are mutually
+                          exclusive
+                        rule: '!(has(self.offload) && has(self.mooncakeStore))'
+                    maxInputTokens:
+                      description: MaxInputTokens is the prompt admission limit for
+                        requests routed to this Pool.
+                      format: int32
+                      minimum: 1
+                      type: integer
                     name:
                       description: Name is the stable identity of this Pool within
                         one ModelService.
@@ -102,6 +431,7 @@ spec:
                       description: Nodes is the number of physical Kubernetes Nodes
                         used by each ModelGroup.
                       format: int32
+                      maximum: 1
                       minimum: 1
                       type: integer
                     parallelism:
@@ -221,24 +551,16 @@ spec:
                                 rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
                                   >= 0
                             gpu:
-                              description: GPURequest defines the logical GPU request
+                              description: GPURequest defines the accelerator request
                                 for one runtime member Pod.
                               properties:
                                 count:
                                   default: 1
-                                  description: Count is the number of GPUs requested
-                                    by one runtime member Pod.
+                                  description: Count is the number of accelerator
+                                    devices requested by one runtime member Pod.
                                   format: int32
                                   minimum: 1
                                   type: integer
-                                type:
-                                  default: auto
-                                  description: Type is a platform-registered GPU type
-                                    or auto.
-                                  maxLength: 128
-                                  minLength: 1
-                                  pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
-                                  type: string
                               type: object
                             memory:
                               description: Memory is the requested Kubernetes memory
@@ -272,6 +594,7 @@ spec:
                         serving path.
                       enum:
                       - aggregate
+                      - encoder
                       - prefill
                       - decode
                       type: string
@@ -297,6 +620,7 @@ spec:
                 description: Nodes is the number of physical Kubernetes Nodes used
                   by each ModelGroup; the compiler defaults it to 1.
                 format: int32
+                maximum: 1
                 minimum: 1
                 type: integer
               parallelism:
@@ -412,24 +736,16 @@ spec:
                           rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
                             >= 0
                       gpu:
-                        description: GPURequest defines the logical GPU request for
+                        description: GPURequest defines the accelerator request for
                           one runtime member Pod.
                         properties:
                           count:
                             default: 1
-                            description: Count is the number of GPUs requested by
-                              one runtime member Pod.
+                            description: Count is the number of accelerator devices
+                              requested by one runtime member Pod.
                             format: int32
                             minimum: 1
                             type: integer
-                          type:
-                            default: auto
-                            description: Type is a platform-registered GPU type or
-                              auto.
-                            maxLength: 128
-                            minLength: 1
-                            pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
-                            type: string
                         type: object
                       memory:
                         description: Memory is the requested Kubernetes memory quantity.
@@ -479,6 +795,11 @@ spec:
                 - drain
                 - startup
                 type: object
+              tokenizer:
+                description: Tokenizer defaults to model when omitted.
+                maxLength: 1024
+                minLength: 1
+                type: string
             required:
             - backend
             - model
@@ -486,9 +807,10 @@ spec:
             type: object
             x-kubernetes-validations:
             - message: spec.modelPools is mutually exclusive with top-level replicas,
-                nodes, resources, and parallelism
+                nodes, resources, parallelism, maxInputTokens, kvCache, and features
               rule: '!has(self.modelPools) || !(has(self.replicas) || has(self.nodes)
-                || has(self.resources) || has(self.parallelism))'
+                || has(self.resources) || has(self.parallelism) || has(self.maxInputTokens)
+                || has(self.kvCache) || has(self.features))'
             - message: top-level resources and parallelism are required when spec.modelPools
                 is omitted
               rule: has(self.modelPools) || (has(self.resources) && has(self.parallelism))
@@ -502,10 +824,149 @@ spec:
                 == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size
                 : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp
                 * (has(self.parallelism.dp) ? self.parallelism.dp : 1)))'
+            - message: modelPools must be aggregate-only, complete P/D, or complete
+                E/P/D without aggregate pools
+              rule: '!has(self.modelPools) || self.modelPools.all(pool, !has(pool.role)
+                || pool.role == ''aggregate'') || (self.modelPools.exists(pool, has(pool.role)
+                && pool.role == ''prefill'') && self.modelPools.exists(pool, has(pool.role)
+                && pool.role == ''decode'') && self.modelPools.all(pool, has(pool.role)
+                && (pool.role == ''prefill'' || pool.role == ''decode''))) || (has(self.ecProfile)
+                && self.modelPools.exists(pool, has(pool.role) && pool.role == ''encoder'')
+                && self.modelPools.exists(pool, has(pool.role) && pool.role == ''prefill'')
+                && self.modelPools.exists(pool, has(pool.role) && pool.role == ''decode'')
+                && self.modelPools.all(pool, has(pool.role) && (pool.role == ''encoder''
+                || pool.role == ''prefill'' || pool.role == ''decode'')))'
+            - message: ecProfile requires complete E/P/D modelPools
+              rule: '!has(self.ecProfile) || (has(self.modelPools) && self.modelPools.exists(pool,
+                has(pool.role) && pool.role == ''encoder'') && self.modelPools.exists(pool,
+                has(pool.role) && pool.role == ''prefill'') && self.modelPools.exists(pool,
+                has(pool.role) && pool.role == ''decode'') && self.modelPools.all(pool,
+                has(pool.role) && (pool.role == ''encoder'' || pool.role == ''prefill''
+                || pool.role == ''decode'')))'
+            - message: E/P/D modelPools must contain exactly one encoder, prefill,
+                and decode Pool
+              rule: '!has(self.modelPools) || !self.modelPools.exists(pool, has(pool.role)
+                && pool.role == ''encoder'') || (size(self.modelPools.filter(pool,
+                has(pool.role) && pool.role == ''encoder'')) == 1 && size(self.modelPools.filter(pool,
+                has(pool.role) && pool.role == ''prefill'')) == 1 && size(self.modelPools.filter(pool,
+                has(pool.role) && pool.role == ''decode'')) == 1)'
+            - message: E/P/D modelPools must have equal encoder, prefill, and decode
+                replica counts
+              rule: '!has(self.modelPools) || !self.modelPools.exists(pool, has(pool.role)
+                && pool.role == ''encoder'') || self.modelPools.filter(pool, has(pool.role)
+                && pool.role == ''encoder'').all(e, self.modelPools.filter(pool, has(pool.role)
+                && pool.role == ''prefill'').all(p, (has(e.replicas) ? e.replicas
+                : 1) == (has(p.replicas) ? p.replicas : 1)) && self.modelPools.filter(pool,
+                has(pool.role) && pool.role == ''decode'').all(d, (has(e.replicas)
+                ? e.replicas : 1) == (has(d.replicas) ? d.replicas : 1)))'
           status:
             description: ModelServiceStatus defines the observed state of a model
               service.
             properties:
+              autoscaling:
+                description: Autoscaling contains the latest decision for each Pool
+                  or linked E/P/D processing unit.
+                items:
+                  description: AutoscalingTargetStatus records the latest auditable
+                    decision for one scaling target.
+                  properties:
+                    adjustedGroups:
+                      description: AdjustedGroups is the capacity proposed by the
+                        adjustment decision.
+                      format: int32
+                      type: integer
+                    adjustmentAlgorithm:
+                      type: string
+                    adjustmentMessage:
+                      type: string
+                    adjustmentReason:
+                      description: AdjustmentReason and AdjustmentMessage explain
+                        desired-capacity adjustment.
+                      type: string
+                    algorithm:
+                      type: string
+                    appliedGroups:
+                      description: |-
+                        AppliedGroups is the platform-resolved target successfully written to all
+                        ModelPools represented by this status entry.
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    desiredGroups:
+                      description: DesiredGroups is the capacity calculated by the
+                        scaling decision algorithm.
+                      format: int32
+                      type: integer
+                    direction:
+                      type: string
+                    disposition:
+                      type: string
+                    id:
+                      minLength: 1
+                      type: string
+                    kind:
+                      enum:
+                      - Pool
+                      - EPDPipelineScope
+                      type: string
+                    message:
+                      type: string
+                    observationState:
+                      type: string
+                    observedAt:
+                      format: date-time
+                      type: string
+                    readyGroups:
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    reason:
+                      type: string
+                    role:
+                      enum:
+                      - Aggregate
+                      - Encoder
+                      - Prefill
+                      - Decode
+                      - EPD
+                      type: string
+                    routableGroups:
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    snapshotID:
+                      type: string
+                    triggerAlgorithm:
+                      type: string
+                    triggerDisposition:
+                      type: string
+                    triggerMessage:
+                      type: string
+                    triggerReason:
+                      type: string
+                  required:
+                  - adjustedGroups
+                  - adjustmentAlgorithm
+                  - algorithm
+                  - appliedGroups
+                  - desiredGroups
+                  - direction
+                  - disposition
+                  - id
+                  - kind
+                  - observationState
+                  - observedAt
+                  - readyGroups
+                  - reason
+                  - role
+                  - routableGroups
+                  - snapshotID
+                  type: object
+                maxItems: 32
+                type: array
+                x-kubernetes-list-map-keys:
+                - id
+                x-kubernetes-list-type: map
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current
@@ -570,6 +1031,40 @@ spec:
                 format: int64
                 minimum: 0
                 type: integer
+              servingGeneration:
+                description: ServingGeneration is the ModelService generation whose
+                  complete Pool revision set is admitted to routing.
+                format: int64
+                minimum: 0
+                type: integer
+              servingPoolRevisions:
+                description: ServingPoolRevisions is replaced atomically after every
+                  required Pool has prepared a compatible cohort.
+                items:
+                  description: ServingPoolRevision selects one prepared ModelPool
+                    cohort for the active service generation.
+                  properties:
+                    poolName:
+                      maxLength: 63
+                      minLength: 1
+                      type: string
+                    poolUID:
+                      minLength: 1
+                      type: string
+                    revision:
+                      maxLength: 63
+                      minLength: 1
+                      type: string
+                  required:
+                  - poolName
+                  - poolUID
+                  - revision
+                  type: object
+                maxItems: 32
+                type: array
+                x-kubernetes-list-map-keys:
+                - poolName
+                x-kubernetes-list-type: map
             type: object
         required:
         - spec

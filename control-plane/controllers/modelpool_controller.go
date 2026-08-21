@@ -1,34 +1,43 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-//
-// Reconciles ModelPool resources into immutable, ordinal ModelGroups.
+
+// Reconciles ModelPool resources into controller-owned ModelGroups.
 
 package controllers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
+	conditionResolved           = "Resolved"
 	conditionGroupsMaterialized = "GroupsMaterialized"
-	conditionCapacityReady      = "CapacityReady"
 	conditionRolloutPending     = "RolloutPending"
-	conditionPoolReady          = "Ready"
 )
 
-// ModelPoolReconciler owns the immutable ModelGroups created for one ModelPool.
+// ModelPoolTemplateResolver selects platform runtime settings and resolves one Group template.
+type ModelPoolTemplateResolver interface {
+	Resolve(inferencev1alpha1.NormalizedPoolTemplate) (resolver.ModelGroupTemplate, error)
+}
+
+// ModelPoolReconciler resolves Pool templates and owns ModelGroup specs.
 type ModelPoolReconciler struct {
 	client.Client
+	TemplateResolver ModelPoolTemplateResolver
 }
 
 // SetupWithManager registers the ModelPool controller and its owned Groups.
@@ -36,130 +45,279 @@ func (reconciler *ModelPoolReconciler) SetupWithManager(manager ctrl.Manager) er
 	return ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelPool{}).
 		Owns(&inferencev1alpha1.ModelGroup{}).
+		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForService)).
 		Complete(reconciler)
+}
+
+func (reconciler *ModelPoolReconciler) poolsForService(ctx context.Context, object client.Object) []reconcile.Request {
+	var pools inferencev1alpha1.ModelPoolList
+	if err := reconciler.List(ctx, &pools, client.InNamespace(object.GetNamespace())); err != nil {
+		return nil
+	}
+	requests := make([]reconcile.Request, 0)
+	for index := range pools.Items {
+		pool := &pools.Items[index]
+		if pool.Spec.ModelServiceRef.Name == object.GetName() && pool.Spec.ModelServiceRef.UID == string(object.GetUID()) {
+			requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(pool)})
+		}
+	}
+	return requests
 }
 
 // +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelpools,verbs=get;list;watch
 // +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelpools/status,verbs=get;patch;update
 // +kubebuilder:rbac:groups=inference.foretoken.io,resources=modelgroups,verbs=get;list;watch;create;delete
 
-// Reconcile creates a target revision before publishing it, then retires the old revision.
+// Reconcile materializes the desired Group revision and aggregates Group readiness.
 func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	pool := new(inferencev1alpha1.ModelPool)
 	if err := reconciler.Get(ctx, request.NamespacedName, pool); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-
-	groups, err := reconciler.ownedGroups(ctx, pool)
+	if !pool.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
+	service, err := reconciler.validateModelServiceOwnership(ctx, pool)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	targetRevision := reconciler.targetRevision(pool, groups)
-	if err := reconciler.reconcileGroups(ctx, pool, groups, targetRevision); err != nil {
-		return ctrl.Result{}, err
+	if reconciler.TemplateResolver == nil {
+		return ctrl.Result{}, fmt.Errorf("ModelPool template resolver is not configured")
 	}
-
-	// Re-list after changes so readiness only reflects objects that actually exist.
-	groups, err = reconciler.ownedGroups(ctx, pool)
+	template, err := reconciler.TemplateResolver.Resolve(pool.Spec.Template)
+	if err != nil {
+		state, stateErr := reconciler.currentActiveState(ctx, pool, serviceServingRevision(service, pool))
+		state.Reason, state.Message = "ResolutionFailed", "The target Pool execution config could not be resolved"
+		statusErr := reconciler.updateStatus(ctx, pool, metav1.ConditionFalse, "ResolutionFailed", err.Error(), state)
+		return ctrl.Result{}, errors.Join(stateErr, statusErr)
+	}
+	servingRevision := serviceServingRevision(service, pool)
+	template.Revision, err = reconciler.targetRevision(ctx, pool, template, servingRevision)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	targetMaterialized := revisionMaterialized(groups, targetRevision, pool.Spec.DesiredGroups)
-	targetCapacityReady := revisionReady(groups, targetRevision, pool.Spec.DesiredGroups)
-	activeRevision := pool.Status.ActiveRevision
-
-	// Cutover is deliberately a separate reconciliation step: this status write publishes
-	// the ready target before the next pass deletes previously active Groups.
-	if activeRevision != targetRevision && targetCapacityReady {
-		activeRevision = targetRevision
-	} else if activeRevision == targetRevision {
-		if err := reconciler.deleteSupersededGroups(ctx, pool, groups, targetRevision); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-
-	groups, err = reconciler.ownedGroups(ctx, pool)
+	state, err := reconciler.reconcileGroups(ctx, pool, template, servingRevision)
 	if err != nil {
+		active, stateErr := reconciler.currentActiveState(ctx, pool, serviceServingRevision(service, pool))
+		active.Reason, active.Message = "ApplyFailed", "ModelGroups were not fully materialized"
+		statusErr := reconciler.updateStatus(ctx, pool, metav1.ConditionTrue, "Resolved", "Pool execution config was resolved", active)
+		return ctrl.Result{}, errors.Join(err, stateErr, statusErr)
+	}
+	if err := reconciler.updateStatus(ctx, pool, metav1.ConditionTrue, "Resolved", "Pool execution config was resolved", state); err != nil {
 		return ctrl.Result{}, err
 	}
-	activeReady := revisionHasReadyGroup(groups, activeRevision)
-	rolloutPending := !targetCapacityReady || activeRevision != targetRevision || hasSupersededGroups(groups, activeRevision, pool.Spec.DesiredGroups)
-	return ctrl.Result{}, reconciler.updateStatus(ctx, pool, activeRevision, targetRevision, targetMaterialized, targetCapacityReady, rolloutPending, activeReady)
+	return ctrl.Result{}, nil
 }
 
-// targetRevision keeps the active revision while its Group specs still match the Pool.
-func (reconciler *ModelPoolReconciler) targetRevision(pool *inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup) string {
-	active := pool.Status.ActiveRevision
-	if active != "" {
+func (reconciler *ModelPoolReconciler) validateModelServiceOwnership(ctx context.Context, pool *inferencev1alpha1.ModelPool) (*inferencev1alpha1.ModelService, error) {
+	service := new(inferencev1alpha1.ModelService)
+	key := client.ObjectKey{Namespace: pool.Namespace, Name: pool.Spec.ModelServiceRef.Name}
+	if err := reconciler.Get(ctx, key, service); err != nil {
+		return nil, fmt.Errorf("get owning ModelService: %w", err)
+	}
+	if pool.Spec.ModelServiceRef.UID != string(service.UID) || !metav1.IsControlledBy(pool, service) {
+		return nil, fmt.Errorf("ModelPool %q is not owned by its referenced ModelService", pool.Name)
+	}
+	return service, nil
+}
+
+func (reconciler *ModelPoolReconciler) targetRevision(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate, servingRevision string) (string, error) {
+	// Reuse a prepared or serving cohort when its immutable template still matches. This lets
+	// retries and pure scale changes converge without minting a disruptive new revision.
+	groups, err := reconciler.ownedGroups(ctx, pool)
+	if err != nil {
+		return "", err
+	}
+	for _, revision := range []string{pool.Status.PreparedRevision, servingRevision} {
+		if revision == "" {
+			continue
+		}
 		for index := range groups {
 			group := &groups[index]
-			if group.Spec.Revision == active && groupMatchesPool(group, pool, active) {
-				return active
+			if group.Spec.Revision == revision && groupMatchesTemplate(group, pool, template) {
+				return revision, nil
 			}
 		}
 	}
-	return fmt.Sprintf("revision-%d", pool.Generation)
+	return fmt.Sprintf("revision-%d-%s", pool.Generation, template.Revision), nil
 }
 
-// reconcileGroups creates missing target ordinals and removes ordinals above desired capacity.
-func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, revision string) error {
+func groupMatchesTemplate(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate) bool {
+	template.Revision = group.Spec.Revision
+	return reflect.DeepEqual(group.Spec, template.Spec(pool, group.Spec.Ordinal))
+}
+
+type groupState struct {
+	Materialized         bool
+	Ready                bool
+	CapacityReady        bool
+	RolloutPending       bool
+	InsufficientCapacity bool
+	PreparedRevision     string
+	Reason               string
+	Message              string
+}
+
+func (reconciler *ModelPoolReconciler) currentActiveState(ctx context.Context, pool *inferencev1alpha1.ModelPool, servingRevision string) (groupState, error) {
+	groups, err := reconciler.ownedGroups(ctx, pool)
+	if err != nil {
+		return groupState{PreparedRevision: pool.Status.PreparedRevision}, err
+	}
+	return groupState{
+		Ready:            revisionServingReady(groups, servingRevision),
+		RolloutPending:   pool.Status.PreparedRevision != servingRevision,
+		PreparedRevision: pool.Status.PreparedRevision,
+	}, nil
+}
+
+func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate, servingRevision string) (groupState, error) {
+	groups, err := reconciler.ownedGroups(ctx, pool)
+	if err != nil {
+		return groupState{}, err
+	}
 	current := make(map[int32]*inferencev1alpha1.ModelGroup, len(groups))
 	for index := range groups {
 		group := &groups[index]
-		if group.Spec.Ordinal >= pool.Spec.DesiredGroups {
-			if err := reconciler.Delete(ctx, group); err != nil && !apierrors.IsNotFound(err) {
-				return fmt.Errorf("delete surplus ModelGroup %q: %w", group.Name, err)
-			}
+		if group.Spec.Revision != template.Revision {
 			continue
 		}
-		if group.Spec.Revision != revision {
-			continue
-		}
-		if existing := current[group.Spec.Ordinal]; existing != nil {
-			return fmt.Errorf("ModelPool owns duplicate ModelGroups for revision %q ordinal %d", revision, group.Spec.Ordinal)
+		if previous := current[group.Spec.Ordinal]; previous != nil {
+			return groupState{}, fmt.Errorf("ModelPool owns duplicate ModelGroups for revision %q ordinal %d", template.Revision, group.Spec.Ordinal)
 		}
 		current[group.Spec.Ordinal] = group
 	}
 
+	scalePending := false
+	for ordinal, group := range current {
+		if ordinal < pool.Spec.DesiredGroups {
+			continue
+		}
+		scalePending = true
+		if err := reconciler.Delete(ctx, group); err != nil && !apierrors.IsNotFound(err) {
+			return groupState{}, fmt.Errorf("delete excess ModelGroup %q: %w", group.Name, err)
+		}
+		delete(current, ordinal)
+	}
+
 	for ordinal := int32(0); ordinal < pool.Spec.DesiredGroups; ordinal++ {
-		if group := current[ordinal]; group != nil {
-			if !groupMatchesPool(group, pool, revision) {
-				return fmt.Errorf("ModelGroup %q conflicts with target revision %q ordinal %d", group.Name, revision, ordinal)
+		spec := template.Spec(pool, ordinal)
+		if existing := current[ordinal]; existing != nil {
+			if !reflect.DeepEqual(existing.Spec, spec) {
+				return groupState{}, fmt.Errorf("ModelGroup %q has an unexpected immutable spec", existing.Name)
 			}
 			continue
 		}
-		group := &inferencev1alpha1.ModelGroup{
-			ObjectMeta: metav1.ObjectMeta{
-				Namespace: pool.Namespace,
-				Name:      modelGroupName(pool.Name, revision, ordinal),
-			},
-			Spec: modelGroupSpec(pool, revision, ordinal),
-		}
+		group := &inferencev1alpha1.ModelGroup{ObjectMeta: metav1.ObjectMeta{Namespace: pool.Namespace}, Spec: spec}
+		setGroupName(group, pool.Name, template.Revision, ordinal)
 		if err := controllerutil.SetControllerReference(pool, group, reconciler.Scheme()); err != nil {
-			return fmt.Errorf("set ModelGroup %q owner: %w", group.Name, err)
+			return groupState{}, fmt.Errorf("set ModelGroup owner: %w", err)
 		}
 		if err := reconciler.Create(ctx, group); err != nil {
-			return fmt.Errorf("create ModelGroup ordinal %d: %w", ordinal, err)
+			return groupState{}, fmt.Errorf("create ModelGroup ordinal %d: %w", ordinal, err)
 		}
+		current[ordinal] = group
 	}
-	return nil
-}
 
-// deleteSupersededGroups retires old revisions only after the target revision is active.
-func (reconciler *ModelPoolReconciler) deleteSupersededGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, activeRevision string) error {
+	materialized := int32(len(current)) == pool.Spec.DesiredGroups
+	targetReady := materialized && pool.Spec.DesiredGroups > 0 && groupsReady(current, pool.Spec.DesiredGroups)
+	targetInsufficientCapacity := materialized && groupsInsufficientCapacity(current, pool.Spec.DesiredGroups)
+	preparedRevision := pool.Status.PreparedRevision
+	if targetReady {
+		preparedRevision = template.Revision
+	} else if preparedRevision == template.Revision {
+		preparedRevision = ""
+	}
+	if pool.Spec.DesiredGroups == 0 {
+		preparedRevision = ""
+	}
+	ready := pool.Spec.DesiredGroups > 0 && revisionServingReady(groups, servingRevision)
+	rolloutPending := preparedRevision != template.Revision || servingRevision != template.Revision || !targetReady
+
+	// The Pool keeps both its target cohort and the service-selected serving cohort.
+	// Other revisions are no longer reachable and can enter their normal drain finalizer.
 	for index := range groups {
 		group := &groups[index]
-		if group.Spec.Revision == activeRevision && group.Spec.Ordinal < pool.Spec.DesiredGroups {
+		if (pool.Spec.DesiredGroups > 0 && group.Spec.Revision == template.Revision) || group.Spec.Revision == servingRevision {
 			continue
 		}
+		rolloutPending = true
 		if err := reconciler.Delete(ctx, group); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("delete superseded ModelGroup %q: %w", group.Name, err)
+			return groupState{}, fmt.Errorf("delete superseded ModelGroup %q: %w", group.Name, err)
 		}
 	}
-	return nil
+
+	state := groupState{
+		Materialized:         materialized,
+		Ready:                ready,
+		CapacityReady:        targetReady,
+		RolloutPending:       rolloutPending || scalePending,
+		InsufficientCapacity: !targetReady && targetInsufficientCapacity,
+		PreparedRevision:     preparedRevision,
+		Reason:               "Applied",
+		Message:              "All requested ModelGroups were materialized",
+	}
+	if state.RolloutPending {
+		state.Reason = "RolloutPending"
+		state.Message = "Requested Group capacity is converging or superseded Groups are being retired"
+	}
+	return state, nil
 }
 
-// ownedGroups accepts Groups only when their stable reference and owner reference agree.
+func groupsReady(groups map[int32]*inferencev1alpha1.ModelGroup, desired int32) bool {
+	for ordinal := int32(0); ordinal < desired; ordinal++ {
+		if !modelGroupReady(groups[ordinal]) {
+			return false
+		}
+	}
+	return true
+}
+
+func groupsInsufficientCapacity(groups map[int32]*inferencev1alpha1.ModelGroup, desired int32) bool {
+	for ordinal := int32(0); ordinal < desired; ordinal++ {
+		group := groups[ordinal]
+		if group == nil {
+			continue
+		}
+		condition := meta.FindStatusCondition(group.Status.Conditions, conditionSchedulingCapacity)
+		if condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == "InsufficientCapacity" && condition.ObservedGeneration == group.Generation {
+			return true
+		}
+	}
+	return false
+}
+
+// revisionServingReady reports whether an active revision still has a routable Group.
+func revisionServingReady(groups []inferencev1alpha1.ModelGroup, revision string) bool {
+	if revision == "" {
+		return false
+	}
+	for index := range groups {
+		group := &groups[index]
+		if group.Spec.Revision == revision && modelGroupReady(group) {
+			return true
+		}
+	}
+	return false
+}
+
+func modelGroupReady(group *inferencev1alpha1.ModelGroup) bool {
+	if group == nil || !group.DeletionTimestamp.IsZero() {
+		return false
+	}
+	condition := meta.FindStatusCondition(group.Status.Conditions, conditionReady)
+	return condition != nil &&
+		condition.Status == metav1.ConditionTrue &&
+		condition.ObservedGeneration == group.Generation
+}
+
+func setGroupName(group *inferencev1alpha1.ModelGroup, poolName, revision string, ordinal int32) {
+	suffix := fmt.Sprintf("-%s-%d", revision, ordinal)
+	if len(poolName)+len(suffix) > 63 {
+		poolName = poolName[:63-len(suffix)]
+	}
+	group.Name = poolName + suffix
+}
+
 func (reconciler *ModelPoolReconciler) ownedGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool) ([]inferencev1alpha1.ModelGroup, error) {
 	var list inferencev1alpha1.ModelGroupList
 	if err := reconciler.List(ctx, &list, client.InNamespace(pool.Namespace)); err != nil {
@@ -180,39 +338,19 @@ func (reconciler *ModelPoolReconciler) ownedGroups(ctx context.Context, pool *in
 	return owned, nil
 }
 
-// updateStatus publishes target capacity, rollout progress, and serving readiness.
-func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *inferencev1alpha1.ModelPool, activeRevision, targetRevision string, targetMaterialized, targetCapacityReady, rolloutPending, activeReady bool) error {
+func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *inferencev1alpha1.ModelPool, resolvedStatus metav1.ConditionStatus, resolvedReason, resolvedMessage string, state groupState) error {
+	if state.Reason == "" {
+		state.Reason = "NotMaterialized"
+		state.Message = "ModelGroups were not materialized"
+	}
 	base := pool.DeepCopy()
 	pool.Status.ObservedGeneration = pool.Generation
-	pool.Status.ActiveRevision = activeRevision
-	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{
-		Type:               conditionGroupsMaterialized,
-		Status:             boolCondition(targetMaterialized),
-		Reason:             materializedReason(targetMaterialized),
-		Message:            materializedMessage(targetMaterialized),
-		ObservedGeneration: pool.Generation,
-	})
-	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{
-		Type:               conditionCapacityReady,
-		Status:             boolCondition(targetCapacityReady),
-		Reason:             capacityReadyReason(targetCapacityReady),
-		Message:            capacityReadyMessage(targetCapacityReady),
-		ObservedGeneration: pool.Generation,
-	})
-	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{
-		Type:               conditionRolloutPending,
-		Status:             boolCondition(rolloutPending),
-		Reason:             rolloutPendingReason(rolloutPending),
-		Message:            rolloutPendingMessage(rolloutPending),
-		ObservedGeneration: pool.Generation,
-	})
-	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{
-		Type:               conditionPoolReady,
-		Status:             boolCondition(activeReady),
-		Reason:             readyReason(activeReady, activeRevision, targetRevision),
-		Message:            readyMessage(activeReady, activeRevision, targetRevision),
-		ObservedGeneration: pool.Generation,
-	})
+	pool.Status.PreparedRevision = state.PreparedRevision
+	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionResolved, Status: resolvedStatus, Reason: resolvedReason, Message: resolvedMessage, ObservedGeneration: pool.Generation})
+	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionGroupsMaterialized, Status: conditionStatus(state.Materialized), Reason: state.Reason, Message: state.Message, ObservedGeneration: pool.Generation})
+	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionRolloutPending, Status: conditionStatus(state.RolloutPending), Reason: rolloutReason(state), Message: rolloutMessage(state), ObservedGeneration: pool.Generation})
+	readyReason, readyMessage := poolReadyReasonMessage(pool.Spec.DesiredGroups, state.Ready, state.CapacityReady)
+	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionReady, Status: conditionStatus(state.Ready), Reason: readyReason, Message: readyMessage, ObservedGeneration: pool.Generation})
 	if reflect.DeepEqual(base.Status, pool.Status) {
 		return nil
 	}
@@ -222,163 +360,42 @@ func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *i
 	return nil
 }
 
-// modelGroupName preserves the revision and ordinal suffix within the DNS label limit.
-func modelGroupName(poolName, revision string, ordinal int32) string {
-	suffix := fmt.Sprintf("-%s-%d", revision, ordinal)
-	if len(poolName)+len(suffix) <= 63 {
-		return poolName + suffix
+func poolReadyReasonMessage(desiredGroups int32, ready, capacityReady bool) (string, string) {
+	if ready && !capacityReady {
+		return "ServingRevisionReady", "The service-selected revision remains ready while requested capacity is converging"
 	}
-	return poolName[:63-len(suffix)] + suffix
+	if ready {
+		return "Ready", "All requested ModelGroups are ready"
+	}
+	if desiredGroups == 0 {
+		return "ScaledToZero", "ModelPool has no requested serving capacity"
+	}
+	return "GroupsNotReady", "One or more requested ModelGroups are not ready"
 }
 
-// modelGroupSpec projects the normalized Pool template into one immutable Group contract.
-func modelGroupSpec(pool *inferencev1alpha1.ModelPool, revision string, ordinal int32) inferencev1alpha1.ModelGroupSpec {
-	template := pool.Spec.Template
-	return inferencev1alpha1.ModelGroupSpec{
-		ModelPoolRef: inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
-		Revision:     revision,
-		Ordinal:      ordinal,
-		Role:         template.Role,
-		NodeCount:    template.NodeCount,
-		MemberCount:  template.MemberCount,
-		Parallelism:  template.Parallelism,
-		Accelerator: inferencev1alpha1.ModelGroupAccelerator{
-			Type:           template.Resources.Requests.GPU.Type,
-			CountPerMember: template.Resources.Requests.GPU.Count,
-		},
-		Network: template.Network,
-	}
-}
-
-// groupMatchesPool checks whether an immutable Group still realizes the current Pool template.
-func groupMatchesPool(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, revision string) bool {
-	desired := modelGroupSpec(pool, revision, group.Spec.Ordinal)
-	return reflect.DeepEqual(group.Spec, desired)
-}
-
-// revisionMaterialized requires every desired ordinal for a revision to exist.
-func revisionMaterialized(groups []inferencev1alpha1.ModelGroup, revision string, desired int32) bool {
-	if revision == "" {
-		return desired == 0
-	}
-	byOrdinal := make(map[int32]struct{}, desired)
-	for index := range groups {
-		group := &groups[index]
-		if group.Spec.Revision == revision && group.Spec.Ordinal < desired {
-			byOrdinal[group.Spec.Ordinal] = struct{}{}
-		}
-	}
-	return int32(len(byOrdinal)) == desired
-}
-
-// revisionReady requires every desired ordinal for a revision to be fully ready.
-func revisionReady(groups []inferencev1alpha1.ModelGroup, revision string, desired int32) bool {
-	if !revisionMaterialized(groups, revision, desired) {
-		return false
-	}
-	for index := range groups {
-		group := &groups[index]
-		if group.Spec.Revision == revision && group.Spec.Ordinal < desired && !groupReady(group) {
-			return false
-		}
-	}
-	return true
-}
-
-// revisionHasReadyGroup keeps an active revision admitted while its replacement rolls out.
-func revisionHasReadyGroup(groups []inferencev1alpha1.ModelGroup, revision string) bool {
-	for index := range groups {
-		group := &groups[index]
-		if group.Spec.Revision == revision && groupReady(group) {
-			return true
-		}
-	}
-	return false
-}
-
-// groupReady requires every declared member to report ready.
-func groupReady(group *inferencev1alpha1.ModelGroup) bool {
-	return group.Status.Phase == inferencev1alpha1.ModelGroupPhaseReady &&
-		group.Status.ReadyMembers == group.Spec.MemberCount &&
-		group.Status.TotalMembers == group.Spec.MemberCount
-}
-
-// hasSupersededGroups reports whether old revisions or excess ordinals still need cleanup.
-func hasSupersededGroups(groups []inferencev1alpha1.ModelGroup, activeRevision string, desired int32) bool {
-	for index := range groups {
-		group := &groups[index]
-		if group.Spec.Revision != activeRevision || group.Spec.Ordinal >= desired {
-			return true
-		}
-	}
-	return false
-}
-
-func boolCondition(value bool) metav1.ConditionStatus {
+func conditionStatus(value bool) metav1.ConditionStatus {
 	if value {
 		return metav1.ConditionTrue
 	}
 	return metav1.ConditionFalse
 }
 
-func materializedReason(materialized bool) string {
-	if materialized {
-		return "TargetRevisionMaterialized"
+func rolloutReason(state groupState) string {
+	if state.InsufficientCapacity {
+		return "InsufficientCapacity"
 	}
-	return "TargetRevisionPending"
+	if state.RolloutPending {
+		return "Converging"
+	}
+	return "Current"
 }
 
-func materializedMessage(materialized bool) string {
-	if materialized {
-		return "Every desired ordinal in the target revision exists"
+func rolloutMessage(state groupState) string {
+	if state.InsufficientCapacity {
+		return "The target Group revision is Unschedulable; the active revision remains serving"
 	}
-	return "Waiting for every desired ordinal in the target revision to exist"
-}
-
-func capacityReadyReason(ready bool) string {
-	if ready {
-		return "TargetCapacityReady"
+	if state.RolloutPending {
+		return "Requested Group capacity is converging or superseded Groups are being retired"
 	}
-	return "TargetCapacityPending"
-}
-
-func capacityReadyMessage(ready bool) string {
-	if ready {
-		return "Every desired ordinal in the target revision is ready"
-	}
-	return "Waiting for every desired ordinal in the target revision to become ready"
-}
-
-func rolloutPendingReason(pending bool) string {
-	if pending {
-		return "RolloutInProgress"
-	}
-	return "RolloutComplete"
-}
-
-func rolloutPendingMessage(pending bool) string {
-	if pending {
-		return "Waiting for target capacity, active revision cutover, or superseded Group cleanup"
-	}
-	return "Target capacity is active and no superseded Groups remain"
-}
-
-func readyReason(ready bool, activeRevision, targetRevision string) string {
-	if ready && activeRevision != targetRevision {
-		return "ActiveRevisionReady"
-	}
-	if ready {
-		return "RevisionReady"
-	}
-	return "ActiveRevisionPending"
-}
-
-func readyMessage(ready bool, activeRevision, targetRevision string) string {
-	if ready && activeRevision != targetRevision {
-		return "The active revision remains ready while the target revision is pending"
-	}
-	if ready {
-		return "Every desired ordinal in the active revision is ready"
-	}
-	return "Waiting for every desired ordinal in the active revision to become ready"
+	return "No previous Group revision is pending rollout"
 }

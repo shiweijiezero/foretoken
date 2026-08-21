@@ -27,19 +27,26 @@ func TestLoadGeneratedCRDs(t *testing.T) {
 	}
 	want := []string{
 		"frontendservices.inference.foretoken.io",
-		"modelservices.inference.foretoken.io",
-		"modelpools.inference.foretoken.io",
+		"kvgroups.inference.foretoken.io",
+		"kvpools.inference.foretoken.io",
+		"kvservices.inference.foretoken.io",
 		"modelgroups.inference.foretoken.io",
+		"modelpools.inference.foretoken.io",
+		"modelservices.inference.foretoken.io",
 	}
 	if len(crds) != len(want) {
 		t.Fatalf("loaded %d CRDs, want %d", len(crds), len(want))
 	}
-	for index, crd := range crds {
-		if crd.Name != want[index] {
-			t.Fatalf("CRD %d = %q, want %q", index, crd.Name, want[index])
-		}
+	loaded := make(map[string]struct{}, len(crds))
+	for _, crd := range crds {
+		loaded[crd.Name] = struct{}{}
 		if len(crd.Spec.Versions) == 0 {
 			t.Fatalf("loaded CRD %q without versions", crd.Name)
+		}
+	}
+	for _, name := range want {
+		if _, ok := loaded[name]; !ok {
+			t.Fatalf("CRD %q was not loaded", name)
 		}
 	}
 }
@@ -90,8 +97,14 @@ func TestGeneratedCRDContracts(t *testing.T) {
 	if !hasValidationRule(modelGroupSpec, "self.memberCount == self.nodeCount") {
 		t.Fatal("ModelGroup spec does not enforce one member per node")
 	}
-	if !hasValidationRule(modelGroupSpec, "self.nodeCount * self.accelerator.countPerMember == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp") {
+	if !hasValidationRule(modelGroupSpec, "self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp") {
 		t.Fatal("ModelGroup spec does not enforce compiled rank capacity")
+	}
+	accelerator := schemaProperty(t, modelGroupSpec, "accelerator")
+	for _, required := range accelerator.Required {
+		if required == "nodeSelector" {
+			t.Fatal("ModelGroup accelerator requires a node selector even though the default GPU profile omits one")
+		}
 	}
 }
 
