@@ -13,6 +13,7 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
+	sglangconfig "github.com/shiweijiezero/foretoken/control-plane/internal/sglang"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 )
 
@@ -46,10 +47,11 @@ type ECProfile struct {
 	SharedStoragePath  string
 }
 
-// RuntimeProfile contains platform-owned values for the initial vLLM runtime profile.
+// RuntimeProfile contains platform-owned values for the initial inference
+// engine runtime profile. vLLM and SGLang image settings are independent.
 type RuntimeProfile struct {
 	Revision           string
-	Image              string
+	VllmImage          string
 	ModelServerPort    int32
 	DeviceResourceName string
 	RuntimeClassName   string
@@ -58,6 +60,7 @@ type RuntimeProfile struct {
 	MooncakePD         *MooncakePDProfile
 	EC                 *ECProfile
 	MooncakeStore      *MooncakeStoreProfile
+	SglangImage        string
 }
 
 // StaticModelPoolResolver resolves every Pool with one platform runtime profile.
@@ -90,19 +93,18 @@ type ModelGroupTemplate struct {
 	Network        string
 }
 
-// ResolveModelPool resolves one supported vLLM execution profile into a Group contract.
+// ResolveModelPool resolves one supported inference-engine execution profile into
+// a Group contract. The engine-specific compile, topology, and storage resolution
+// are dispatched on the template backend.
 func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
 	if template.Role != inferencev1alpha1.ModelRoleAggregate && template.Role != inferencev1alpha1.ModelRoleEncoder && template.Role != inferencev1alpha1.ModelRolePrefill && template.Role != inferencev1alpha1.ModelRoleDecode {
 		return ModelGroupTemplate{}, fmt.Errorf("ModelPool role %q is not supported", template.Role)
 	}
 	if template.NodeCount != 1 || template.MemberCount != 1 {
-		return ModelGroupTemplate{}, fmt.Errorf("only single-member vLLM Groups are currently supported")
+		return ModelGroupTemplate{}, fmt.Errorf("only single-member inference-engine Groups are currently supported")
 	}
 	if errors := validation.IsDNS1123Label(profile.Revision); len(errors) > 0 || len(profile.Revision) > 16 {
 		return ModelGroupTemplate{}, fmt.Errorf("inference engine profile revision must be a DNS label of at most 16 characters")
-	}
-	if profile.Image == "" {
-		return ModelGroupTemplate{}, fmt.Errorf("inference engine image is not configured")
 	}
 	if profile.ModelServerPort < 1 || profile.ModelServerPort > 65535 {
 		return ModelGroupTemplate{}, fmt.Errorf("model-server port must be between 1 and 65535")
@@ -113,28 +115,12 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if (profile.NodeSelectorKey == "") != (profile.NodeSelectorValue == "") {
 		return ModelGroupTemplate{}, fmt.Errorf("GPU node selector key and value must be configured together")
 	}
-	effective, err := vllmconfig.Compile(template)
+
+	engine, err := compileEngine(template, profile)
 	if err != nil {
 		return ModelGroupTemplate{}, err
 	}
-	if effective.Revision == "" {
-		return ModelGroupTemplate{}, fmt.Errorf("vLLM --revision is required before ModelGroup creation")
-	}
-	pdRuntime, err := resolvePDRuntime(template, effective.Parallelism, profile.MooncakePD)
-	if err != nil {
-		return ModelGroupTemplate{}, err
-	}
-	ecRuntime, err := resolveECRuntime(template, effective.Parallelism, profile.EC)
-	if err != nil {
-		return ModelGroupTemplate{}, err
-	}
-	kvRuntime, err := resolveKVRuntime(template, profile.MooncakeStore)
-	if err != nil {
-		return ModelGroupTemplate{}, err
-	}
-	if pdRuntime != nil && kvRuntime != nil && kvRuntime.Offload != nil {
-		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D does not support local KV offload")
-	}
+
 	resources := *template.Resources.DeepCopy()
 
 	nodeSelector := map[string]string(nil)
@@ -143,28 +129,23 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	}
 
 	resolved := ModelGroupTemplate{
-		Role: template.Role,
-		Artifacts: inferencev1alpha1.ModelGroupArtifacts{
-			Model:             effective.Model,
-			ModelRevision:     effective.Revision,
-			Tokenizer:         effective.Tokenizer,
-			TokenizerRevision: effective.TokenizerRevision,
-		},
+		Role:      template.Role,
+		Artifacts: engine.artifacts,
 		Runtime: inferencev1alpha1.ModelGroupRuntime{
 			Backend:                               template.Backend,
-			Image:                                 profile.Image,
+			Image:                                 engine.image,
 			Port:                                  profile.ModelServerPort,
-			Args:                                  append([]inferencev1alpha1.BackendArg(nil), effective.ExtraArgs...),
+			Args:                                  engine.args,
 			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,
 		},
-		PDRuntime:      pdRuntime,
-		ECRuntime:      ecRuntime,
-		KVRuntime:      kvRuntime,
+		PDRuntime:      engine.pdRuntime,
+		ECRuntime:      engine.ecRuntime,
+		KVRuntime:      engine.kvRuntime,
 		Resources:      resources,
 		Timeouts:       template.Timeouts,
 		NodeCount:      template.NodeCount,
 		MemberCount:    template.MemberCount,
-		Parallelism:    effective.Parallelism,
+		Parallelism:    engine.parallelism,
 		MaxInputTokens: copyInt32(template.MaxInputTokens),
 		Features:       *template.Features.DeepCopy(),
 		Accelerator: inferencev1alpha1.ModelGroupAccelerator{
@@ -176,6 +157,92 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	}
 	resolved.Revision = profile.Revision
 	return resolved, nil
+}
+
+// compiledEngine carries the engine-specific resolved values consumed by the
+// shared ModelGroupTemplate construction.
+type compiledEngine struct {
+	artifacts   inferencev1alpha1.ModelGroupArtifacts
+	args        []inferencev1alpha1.BackendArg
+	parallelism inferencev1alpha1.CompiledParallelism
+	image       string
+	pdRuntime   *inferencev1alpha1.ModelGroupPDRuntimeConfig
+	ecRuntime   *inferencev1alpha1.ModelGroupECRuntimeConfig
+	kvRuntime   *inferencev1alpha1.ModelGroupKVRuntimeConfig
+}
+
+func compileEngine(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (compiledEngine, error) {
+	switch template.Backend {
+	case "sglang":
+		return compileSglang(template, profile)
+	default:
+		return compileVllm(template, profile)
+	}
+}
+
+func compileVllm(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (compiledEngine, error) {
+	if profile.VllmImage == "" {
+		return compiledEngine{}, fmt.Errorf("inference engine image is not configured")
+	}
+	effective, err := vllmconfig.Compile(template)
+	if err != nil {
+		return compiledEngine{}, err
+	}
+	if effective.Revision == "" {
+		return compiledEngine{}, fmt.Errorf("vLLM --revision is required before ModelGroup creation")
+	}
+	pdRuntime, err := resolvePDRuntime(template, effective.Parallelism, profile.MooncakePD)
+	if err != nil {
+		return compiledEngine{}, err
+	}
+	ecRuntime, err := resolveECRuntime(template, effective.Parallelism, profile.EC)
+	if err != nil {
+		return compiledEngine{}, err
+	}
+	kvRuntime, err := resolveKVRuntime(template, profile.MooncakeStore)
+	if err != nil {
+		return compiledEngine{}, err
+	}
+	if pdRuntime != nil && kvRuntime != nil && kvRuntime.Offload != nil {
+		return compiledEngine{}, fmt.Errorf("Mooncake P/D does not support local KV offload")
+	}
+	return compiledEngine{
+		artifacts: inferencev1alpha1.ModelGroupArtifacts{
+			Model:             effective.Model,
+			ModelRevision:     effective.Revision,
+			Tokenizer:         effective.Tokenizer,
+			TokenizerRevision: effective.TokenizerRevision,
+		},
+		args:        effective.ExtraArgs,
+		parallelism: effective.Parallelism,
+		image:       profile.VllmImage,
+		pdRuntime:   pdRuntime,
+		ecRuntime:   ecRuntime,
+		kvRuntime:   kvRuntime,
+	}, nil
+}
+
+func compileSglang(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (compiledEngine, error) {
+	if profile.SglangImage == "" {
+		return compiledEngine{}, fmt.Errorf("sglang inference engine image is not configured")
+	}
+	effective, err := sglangconfig.Compile(template)
+	if err != nil {
+		return compiledEngine{}, err
+	}
+	return compiledEngine{
+		artifacts: inferencev1alpha1.ModelGroupArtifacts{
+			Model:             effective.Model,
+			ModelRevision:     effective.Revision,
+			Tokenizer:         effective.Model,
+			TokenizerRevision: effective.Revision,
+		},
+		args: effective.ExtraArgs,
+		parallelism: inferencev1alpha1.CompiledParallelism{
+			TP: effective.TP, PP: 1, DP: effective.DP, PCP: 1, DCP: 1,
+		},
+		image: profile.SglangImage,
+	}, nil
 }
 
 func resolveKVRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile *MooncakeStoreProfile) (*inferencev1alpha1.ModelGroupKVRuntimeConfig, error) {

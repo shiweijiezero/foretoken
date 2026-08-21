@@ -58,7 +58,7 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 		service := modelService("rollout", 1)
 		pool := modelPool(service, "rollout-default", 1)
 		c := controllerClient(t, service, pool)
-		r := &controllers.ModelPoolReconciler{Client: c, TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: resolver.RuntimeProfile{Revision: "default", Image: "vllm:test", ModelServerPort: 9000, DeviceResourceName: "nvidia.com/gpu", NodeSelectorKey: "nvidia.com/gpu.product", NodeSelectorValue: "NVIDIA-H100-80GB-HBM3"}}}
+		r := &controllers.ModelPoolReconciler{Client: c, TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: resolver.RuntimeProfile{Revision: "default", VllmImage: "vllm:test", ModelServerPort: 9000, DeviceResourceName: "nvidia.com/gpu", NodeSelectorKey: "nvidia.com/gpu.product", NodeSelectorValue: "NVIDIA-H100-80GB-HBM3"}}}
 		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(pool)}
 		for range 2 {
 			if _, err := r.Reconcile(ctx, request); err != nil {

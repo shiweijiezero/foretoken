@@ -271,7 +271,7 @@ func main() {
 		Client: manager.GetClient(),
 		TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: resolver.RuntimeProfile{
 			Revision:           inferenceEngineProfileRevision,
-			Image:              inferenceEngineImage,
+			VllmImage:          inferenceEngineImage,
 			ModelServerPort:    int32(modelServerPort),
 			DeviceResourceName: gpuResourceName,
 			RuntimeClassName:   runtimeClassName,
