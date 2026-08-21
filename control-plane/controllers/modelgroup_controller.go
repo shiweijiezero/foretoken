@@ -16,6 +16,7 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	sglangconfig "github.com/shiweijiezero/foretoken/control-plane/internal/sglang"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -169,14 +170,56 @@ func modelGroupLabels(group *inferencev1alpha1.ModelGroup) map[string]string {
 	return labels
 }
 
-func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference) (*appsv1.Deployment, error) {
-	launchPlan, err := vllmconfig.BuildLaunchPlan(group.Spec)
-	if err != nil {
-		return nil, fmt.Errorf("build vLLM launch plan: %w", err)
+// groupLaunchInfo carries the engine-specific launch contract and lifecycle used
+// by the shared Deployment construction.
+type groupLaunchInfo struct {
+	launchJSON     string
+	launchPlanEnv  string
+	startupSeconds int64
+	drainSeconds   int64
+}
+
+// buildGroupLaunch renders the controller-owned launch plan for the selected
+// inference backend. Each backend reads its own controller-injected env.
+func buildGroupLaunch(group *inferencev1alpha1.ModelGroup) (groupLaunchInfo, error) {
+	switch group.Spec.Runtime.Backend {
+	case "sglang":
+		plan, err := sglangconfig.BuildLaunchPlan(group.Spec)
+		if err != nil {
+			return groupLaunchInfo{}, fmt.Errorf("build SGLang launch plan: %w", err)
+		}
+		launchJSON, err := plan.JSON()
+		if err != nil {
+			return groupLaunchInfo{}, fmt.Errorf("marshal SGLang launch plan: %w", err)
+		}
+		return groupLaunchInfo{
+			launchJSON:     launchJSON,
+			launchPlanEnv:  "FORETOKEN_SGLANG_LAUNCH_PLAN",
+			startupSeconds: plan.StartupSeconds,
+			drainSeconds:   plan.DrainSeconds,
+		}, nil
+	default: // vllm
+		plan, err := vllmconfig.BuildLaunchPlan(group.Spec)
+		if err != nil {
+			return groupLaunchInfo{}, fmt.Errorf("build vLLM launch plan: %w", err)
+		}
+		launchJSON, err := plan.JSON()
+		if err != nil {
+			return groupLaunchInfo{}, fmt.Errorf("marshal vLLM launch plan: %w", err)
+		}
+		return groupLaunchInfo{
+			launchJSON:     launchJSON,
+			launchPlanEnv:  "FORETOKEN_VLLM_LAUNCH_PLAN",
+			startupSeconds: plan.Lifecycle.StartupSeconds,
+			drainSeconds:   plan.Lifecycle.DrainSeconds,
+		}, nil
 	}
-	launchJSON, err := launchPlan.JSON()
+}
+
+func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference) (*appsv1.Deployment, error) {
+	launch, err := buildGroupLaunch(group)
 	if err != nil {
-		return nil, fmt.Errorf("marshal vLLM launch plan: %w", err)
+		return nil, err
 	}
 	labels := modelGroupLabels(group)
 	var annotations map[string]string
@@ -185,7 +228,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	}
 	replicas := int32(1)
 	revisionHistoryLimit := int32(10)
-	progressDeadlineSeconds := int32(launchPlan.Lifecycle.StartupSeconds)
+	progressDeadlineSeconds := int32(launch.startupSeconds)
 	automountToken := false
 	enableServiceLinks := true
 	allowPrivilegeEscalation := false
@@ -195,12 +238,12 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		// without making the model container privileged.
 		capabilities.Add = []corev1.Capability{"IPC_LOCK"}
 	}
-	// vLLM managed-engine reserves at least five seconds for process-group shutdown.
-	terminationGracePeriodSeconds := launchPlan.Lifecycle.DrainSeconds + 5
-	startupFailureThreshold := int32(math.Ceil(float64(launchPlan.Lifecycle.StartupSeconds) / 10))
+	// Inference engines reserve at least five seconds for process-group shutdown.
+	terminationGracePeriodSeconds := launch.drainSeconds + 5
+	startupFailureThreshold := int32(math.Ceil(float64(launch.startupSeconds) / 10))
 	ports := []corev1.ContainerPort{{Name: "model-server", ContainerPort: group.Spec.Runtime.Port, Protocol: corev1.ProtocolTCP}}
 	env := []corev1.EnvVar{
-		{Name: "FORETOKEN_VLLM_LAUNCH_PLAN", Value: launchJSON},
+		{Name: launch.launchPlanEnv, Value: launch.launchJSON},
 		{Name: "FORETOKEN_INTERNAL_LISTEN", Value: fmt.Sprintf("0.0.0.0:%d", group.Spec.Runtime.Port)},
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
 		{Name: "FORETOKEN_KV_SCOPE_ID", Value: kvScopeID(group)},

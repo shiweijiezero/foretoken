@@ -72,6 +72,11 @@ runtime:
       configMapName: ""
       configMapKey: ""
       pythonHashSeed: ""
+  # SGLang aggregate Groups reuse the model-server image built with the
+  # backend-sglang feature. SGLang currently supports aggregate Groups only.
+  sglang:
+    image: ghcr.io/shiweijiezero/foretoken/model-server-sglang:0.0.1
+    profileRevision: default
 
 # Resource sizing is workload- and cluster-dependent; measure before setting it.
 resources: {}

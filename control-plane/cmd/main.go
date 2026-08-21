@@ -45,7 +45,8 @@ func main() {
 	var frontendGatewayNamespace string
 	var frontendGatewaySectionName string
 	var inferenceEngineProfileRevision string
-	var inferenceEngineImage string
+	var vllmEngineImage string
+	var sglangEngineImage string
 	var modelServerPort int
 	var gpuResourceName string
 	var runtimeClassName string
@@ -96,7 +97,8 @@ func main() {
 		return nil
 	})
 	flag.StringVar(&inferenceEngineProfileRevision, "inference-engine-profile-revision", "default", "Opaque revision of the configured inference engine profile.")
-	flag.StringVar(&inferenceEngineImage, "inference-engine-image", "", "Inference engine image containing the Foretoken model-server adapter.")
+	flag.StringVar(&vllmEngineImage, "vllm-engine-image", "", "vLLM inference engine image containing the Foretoken model-server adapter.")
+	flag.StringVar(&sglangEngineImage, "sglang-engine-image", "", "SGLang inference engine image containing the Foretoken model-server adapter.")
 	flag.IntVar(&modelServerPort, "model-server-port", 9000, "Internal model-server HTTP port.")
 	flag.StringVar(&gpuResourceName, "gpu-resource-name", "nvidia.com/gpu", "Kubernetes extended resource used for accelerator devices.")
 	flag.StringVar(&runtimeClassName, "runtime-class-name", "", "Optional RuntimeClass for inference engine Pods.")
@@ -271,7 +273,8 @@ func main() {
 		Client: manager.GetClient(),
 		TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: resolver.RuntimeProfile{
 			Revision:           inferenceEngineProfileRevision,
-			VllmImage:          inferenceEngineImage,
+			VllmImage:          vllmEngineImage,
+			SglangImage:        sglangEngineImage,
 			ModelServerPort:    int32(modelServerPort),
 			DeviceResourceName: gpuResourceName,
 			RuntimeClassName:   runtimeClassName,

@@ -234,6 +234,24 @@
               }
             }
           }
+        },
+        "sglang": {
+          "type": "object",
+          "required": [
+            "image",
+            "profileRevision"
+          ],
+          "properties": {
+            "image": {
+              "type": "string"
+            },
+            "profileRevision": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 16,
+              "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+            }
+          }
         }
       }
     }
