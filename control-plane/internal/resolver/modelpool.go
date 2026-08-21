@@ -173,10 +173,12 @@ type compiledEngine struct {
 
 func compileEngine(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (compiledEngine, error) {
 	switch template.Backend {
+	case "vllm":
+		return compileVllm(template, profile)
 	case "sglang":
 		return compileSglang(template, profile)
 	default:
-		return compileVllm(template, profile)
+		return compiledEngine{}, fmt.Errorf("unsupported inference backend %q", template.Backend)
 	}
 }
 

@@ -36,7 +36,7 @@ frontend:
     namespace: ""
     sectionName: ""
 
-# The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
+# The runtime image must contain Foretoken model-server, its Python launcher, and a compatible inference-engine runtime.
 runtime:
   vllm:
     image: ghcr.io/shiweijiezero/foretoken/model-server:0.0.1

@@ -198,7 +198,7 @@ func buildGroupLaunch(group *inferencev1alpha1.ModelGroup) (groupLaunchInfo, err
 			startupSeconds: plan.StartupSeconds,
 			drainSeconds:   plan.DrainSeconds,
 		}, nil
-	default: // vllm
+	case "vllm":
 		plan, err := vllmconfig.BuildLaunchPlan(group.Spec)
 		if err != nil {
 			return groupLaunchInfo{}, fmt.Errorf("build vLLM launch plan: %w", err)
@@ -213,6 +213,8 @@ func buildGroupLaunch(group *inferencev1alpha1.ModelGroup) (groupLaunchInfo, err
 			startupSeconds: plan.Lifecycle.StartupSeconds,
 			drainSeconds:   plan.Lifecycle.DrainSeconds,
 		}, nil
+	default:
+		return groupLaunchInfo{}, fmt.Errorf("unsupported inference backend %q", group.Spec.Runtime.Backend)
 	}
 }
 
@@ -595,7 +597,7 @@ func availabilityMessage(available bool) string {
 
 func readinessMessage(ready bool) string {
 	if ready {
-		return "The group-local model server and vLLM EngineCore are ready"
+		return "The group-local model server and inference engine are ready"
 	}
-	return "The group-local model server or vLLM EngineCore is not yet ready"
+	return "The group-local model server or inference engine is not yet ready"
 }

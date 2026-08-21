@@ -38,3 +38,8 @@ runtime:
       nodeSelector:
         key: nvidia.com/gpu.product
         value: NVIDIA-H100-80GB-HBM3
+  # Optional: SGLang aggregate Groups use a model-server image built with the
+  # backend-sglang feature.
+  sglang:
+    image: registry.example.com/foretoken/model-server-sglang:dev
+    profileRevision: default
