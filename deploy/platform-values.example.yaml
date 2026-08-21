@@ -28,7 +28,7 @@ frontend:
 
 runtime:
   vllm:
-    image: registry.example.com/foretoken/model-server:dev
+    image: registry.example.com/foretoken/model-server-vllm:dev
     gpu:
       # Extended resource advertised by the cluster's GPU device plugin.
       resourceName: nvidia.com/gpu
@@ -43,3 +43,9 @@ runtime:
   sglang:
     image: registry.example.com/foretoken/model-server-sglang:dev
     profileRevision: default
+    gpu:
+      resourceName: nvidia.com/gpu
+      runtimeClassName: nvidia
+      nodeSelector:
+        key: nvidia.com/gpu.product
+        value: NVIDIA-H100-80GB-HBM3

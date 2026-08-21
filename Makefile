@@ -21,8 +21,17 @@ DATA_PLANE_PACKAGES := \
 	foretoken-tracing
 DATA_PLANE_FMT_PACKAGES := $(foreach package,$(DATA_PLANE_PACKAGES),--package $(package))
 
+# Inference backend compiled into the model-server binary. Defaults to vLLM;
+# pass ENGINE_FEATURES=backend-sglang to build the SGLang adapter.
+ENGINE_FEATURES ?= backend-vllm
+
+# Base inference-engine images. Must be set explicitly to pin a reproducible
+# engine version; there is intentionally no `latest` default.
+VLLM_ENGINE_IMAGE ?=
+SGLANG_ENGINE_IMAGE ?=
+
 .PHONY: vllm-source build-data-plane verify-data-plane \
-	image-frontend image-model-server image-benchmark
+	image-frontend image-model-server image-model-server-vllm image-model-server-sglang image-benchmark
 
 vllm-source:
 	@test -f data-plane/third_party/vllm/rust/Cargo.toml || \
@@ -51,7 +60,26 @@ image-model-server: vllm-source
 	@test -n "$(INFERENCE_ENGINE_IMAGE)" || \
 		(printf '%s\n' 'Set INFERENCE_ENGINE_IMAGE to a compatible inference engine image.' >&2; exit 1)
 	docker build --build-arg INFERENCE_ENGINE_IMAGE="$(INFERENCE_ENGINE_IMAGE)" \
-		-f data-plane/model-server/Dockerfile -t foretoken-model-server:dev .
+		--build-arg ENGINE_FEATURES="$(ENGINE_FEATURES)" \
+		-f data-plane/model-server/Dockerfile \
+		-t foretoken-model-server-$(ENGINE_FEATURES:backend-%=%):dev .
+
+image-model-server-vllm:
+	@test -n "$(VLLM_ENGINE_IMAGE)" || \
+		(printf '%s\n' 'Set VLLM_ENGINE_IMAGE to a vLLM base image (e.g. vllm/vllm-openai:<version>).' >&2; exit 1)
+	$(MAKE) image-model-server \
+		INFERENCE_ENGINE_IMAGE="$(VLLM_ENGINE_IMAGE)" \
+		ENGINE_FEATURES=backend-vllm
+
+# SGLang builds still depend on vllm-source: the data-plane workspace resolves
+# the vllm submodule path dependencies when Cargo parses, even though
+# backend-sglang compiles no vLLM FFI.
+image-model-server-sglang:
+	@test -n "$(SGLANG_ENGINE_IMAGE)" || \
+		(printf '%s\n' 'Set SGLANG_ENGINE_IMAGE to an SGLang base image (e.g. lmsysorg/sglang:<version>).' >&2; exit 1)
+	$(MAKE) image-model-server \
+		INFERENCE_ENGINE_IMAGE="$(SGLANG_ENGINE_IMAGE)" \
+		ENGINE_FEATURES=backend-sglang
 
 image-benchmark:
 	docker build -f benchmarks/Dockerfile -t foretoken-benchmark:dev .
