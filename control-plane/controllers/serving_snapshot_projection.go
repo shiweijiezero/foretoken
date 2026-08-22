@@ -296,7 +296,7 @@ func (reconciler *FrontendServiceReconciler) projectableRouting(ctx context.Cont
 				if !routingGroupOwnedBy(group, pool) || group.Spec.Revision != serviceServingRevision(service, pool) || !routingGroupReady(group) || group.Spec.Role != inferencev1alpha1.ModelRoleAggregate {
 					continue
 				}
-				groups = append(groups, routingGroupForService(service, group))
+				groups = append(groups, routingGroupForService(service, pool, group))
 			}
 		}
 	}
@@ -319,6 +319,15 @@ func ownedRoutingPools(service *inferencev1alpha1.ModelService, pools []inferenc
 		}
 	}
 	return owned
+}
+
+func routingPoolName(pools []*inferencev1alpha1.ModelPool, group *inferencev1alpha1.ModelGroup) string {
+	for _, pool := range pools {
+		if string(pool.UID) == group.Spec.ModelPoolRef.UID {
+			return pool.Spec.PoolName
+		}
+	}
+	return ""
 }
 
 func serviceDeclaresEPD(service *inferencev1alpha1.ModelService) bool {
@@ -381,11 +390,11 @@ func projectServicePDComponents(service *inferencev1alpha1.ModelService, pools [
 	components := make([]servingSnapshotPDComponent, 0, len(prefills)+len(decodes))
 	pipelineScope := servingSnapshotPDPipelineScope{PipelineScopeID: pipelineScopeID}
 	for _, group := range prefills {
-		components = append(components, routingPDComponent(service, group, pipelineScopeID))
+		components = append(components, routingPDComponent(service, group, routingPoolName(pools, group), pipelineScopeID))
 		pipelineScope.PrefillRouteTargetIDs = append(pipelineScope.PrefillRouteTargetIDs, string(group.UID))
 	}
 	for _, group := range decodes {
-		components = append(components, routingPDComponent(service, group, pipelineScopeID))
+		components = append(components, routingPDComponent(service, group, routingPoolName(pools, group), pipelineScopeID))
 		pipelineScope.DecodeRouteTargetIDs = append(pipelineScope.DecodeRouteTargetIDs, string(group.UID))
 	}
 	slices.Sort(pipelineScope.PrefillRouteTargetIDs)
@@ -432,7 +441,7 @@ func projectServiceEPDComponents(service *inferencev1alpha1.ModelService, pools 
 			continue
 		}
 		pipelineScopeID := fmt.Sprintf("epd:%s:%d", service.UID, ordinal)
-		components = append(components, routingEPDComponent(service, encoder, pipelineScopeID), routingEPDComponent(service, prefill, pipelineScopeID), routingEPDComponent(service, decode, pipelineScopeID))
+		components = append(components, routingEPDComponent(service, encoder, routingPoolName(pools, encoder), pipelineScopeID), routingEPDComponent(service, prefill, routingPoolName(pools, prefill), pipelineScopeID), routingEPDComponent(service, decode, routingPoolName(pools, decode), pipelineScopeID))
 		pipelineScopes = append(pipelineScopes, servingSnapshotEPDPipelineScope{PipelineScopeID: pipelineScopeID, EncoderRouteTargetID: string(encoder.UID), PrefillRouteTargetID: string(prefill.UID), DecodeRouteTargetID: string(decode.UID)})
 	}
 	if len(pipelineScopes) == 0 {
@@ -451,12 +460,12 @@ func matchingECRuntime(left, right *inferencev1alpha1.ModelGroupECRuntimeConfig)
 	return left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision && left.Connector == right.Connector && left.SharedStorageClaim == right.SharedStorageClaim && left.SharedStoragePath == right.SharedStoragePath
 }
 
-func routingEPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, pipelineScopeID string) servingSnapshotEPDComponent {
+func routingEPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, poolName, pipelineScopeID string) servingSnapshotEPDComponent {
 	features := group.Spec.Features
 	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill || group.Spec.Role == inferencev1alpha1.ModelRoleDecode {
 		features.Multimodal = nil
 	}
-	component := servingSnapshotEPDComponent{RouteTargetID: string(group.UID), ServiceUID: string(service.UID), PoolUID: group.Spec.ModelPoolRef.UID, PoolName: group.Spec.ModelPoolRef.Name, Role: string(group.Spec.Role), PipelineScopeID: pipelineScopeID, Model: group.Spec.Artifacts.Model, Revision: group.Spec.Artifacts.ModelRevision, Tokenizer: group.Spec.Artifacts.Tokenizer, TokenizerRevision: group.Spec.Artifacts.TokenizerRevision, MaxInputTokens: copyOptionalInt32(group.Spec.MaxInputTokens), Capabilities: routingCapabilities(features), Endpoint: modelGroupEndpoint(group, group.Spec.Runtime.Port), KVScopeID: kvScopeID(group), DataParallelSize: group.Spec.Parallelism.DP}
+	component := servingSnapshotEPDComponent{RouteTargetID: string(group.UID), ServiceUID: string(service.UID), PoolUID: group.Spec.ModelPoolRef.UID, PoolName: poolName, Role: string(group.Spec.Role), PipelineScopeID: pipelineScopeID, Model: group.Spec.Artifacts.Model, Revision: group.Spec.Artifacts.ModelRevision, Tokenizer: group.Spec.Artifacts.Tokenizer, TokenizerRevision: group.Spec.Artifacts.TokenizerRevision, MaxInputTokens: copyOptionalInt32(group.Spec.MaxInputTokens), Capabilities: routingCapabilities(features), Endpoint: modelGroupEndpoint(group, group.Spec.Runtime.Port), KVScopeID: kvScopeID(group), DataParallelSize: group.Spec.Parallelism.DP}
 	if pd := group.Spec.PDRuntime; pd != nil {
 		component.ProfileName, component.ProfileRevision = pd.ProfileName, pd.ProfileRevision
 		component.Connector, component.Protocol = pd.Connector, pd.Protocol
@@ -522,9 +531,9 @@ func (err *pdRoutingProjectionError) Error() string {
 func routingGroup(group *inferencev1alpha1.ModelGroup) servingSnapshotGroup {
 	return servingSnapshotGroup{RouteTargetID: string(group.UID), Model: group.Spec.Artifacts.Model, Revision: group.Spec.Artifacts.ModelRevision, Tokenizer: group.Spec.Artifacts.Tokenizer, TokenizerRevision: group.Spec.Artifacts.TokenizerRevision, MaxInputTokens: copyOptionalInt32(group.Spec.MaxInputTokens), Capabilities: routingCapabilities(group.Spec.Features), Endpoint: modelGroupEndpoint(group, group.Spec.Runtime.Port), KVScopeID: kvScopeID(group), DataParallelSize: group.Spec.Parallelism.DP}
 }
-func routingGroupForService(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup) servingSnapshotGroup {
+func routingGroupForService(service *inferencev1alpha1.ModelService, pool *inferencev1alpha1.ModelPool, group *inferencev1alpha1.ModelGroup) servingSnapshotGroup {
 	route := routingGroup(group)
-	route.ServiceUID, route.PoolUID, route.PoolName = string(service.UID), group.Spec.ModelPoolRef.UID, group.Spec.ModelPoolRef.Name
+	route.ServiceUID, route.PoolUID, route.PoolName = string(service.UID), group.Spec.ModelPoolRef.UID, pool.Spec.PoolName
 	return route
 }
 
@@ -572,13 +581,13 @@ func matchingPDRuntime(left, right *inferencev1alpha1.ModelGroupPDRuntimeConfig)
 	return completePDRuntime(left) && completePDRuntime(right) && left.ProfileName == right.ProfileName && left.ProfileRevision == right.ProfileRevision && left.Connector == right.Connector && left.Protocol == right.Protocol && left.BootstrapPort == right.BootstrapPort && left.AbortRequestTimeoutSeconds == right.AbortRequestTimeoutSeconds && left.RDMADeviceName == right.RDMADeviceName && left.RDMAResourceName == right.RDMAResourceName && left.RDMAResourceCount == right.RDMAResourceCount
 }
 
-func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, pipelineScopeID string) servingSnapshotPDComponent {
+func routingPDComponent(service *inferencev1alpha1.ModelService, group *inferencev1alpha1.ModelGroup, poolName, pipelineScopeID string) servingSnapshotPDComponent {
 	pd := group.Spec.PDRuntime
 	features := group.Spec.Features
 	// No P/D runtime profile currently verifies multimodal support. Never publish
 	// it from P/D routes, including objects created before API validation existed.
 	features.Multimodal = nil
-	component := servingSnapshotPDComponent{RouteTargetID: string(group.UID), ServiceUID: string(service.UID), PoolUID: group.Spec.ModelPoolRef.UID, PoolName: group.Spec.ModelPoolRef.Name, Role: string(group.Spec.Role), PipelineScopeID: pipelineScopeID, Model: group.Spec.Artifacts.Model, Revision: group.Spec.Artifacts.ModelRevision, Tokenizer: group.Spec.Artifacts.Tokenizer, TokenizerRevision: group.Spec.Artifacts.TokenizerRevision, MaxInputTokens: copyOptionalInt32(group.Spec.MaxInputTokens), ProfileName: pd.ProfileName, ProfileRevision: pd.ProfileRevision, Connector: pd.Connector, Protocol: pd.Protocol, Capabilities: routingCapabilities(features), Endpoint: modelGroupEndpoint(group, group.Spec.Runtime.Port), KVScopeID: kvScopeID(group), DataParallelSize: group.Spec.Parallelism.DP}
+	component := servingSnapshotPDComponent{RouteTargetID: string(group.UID), ServiceUID: string(service.UID), PoolUID: group.Spec.ModelPoolRef.UID, PoolName: poolName, Role: string(group.Spec.Role), PipelineScopeID: pipelineScopeID, Model: group.Spec.Artifacts.Model, Revision: group.Spec.Artifacts.ModelRevision, Tokenizer: group.Spec.Artifacts.Tokenizer, TokenizerRevision: group.Spec.Artifacts.TokenizerRevision, MaxInputTokens: copyOptionalInt32(group.Spec.MaxInputTokens), ProfileName: pd.ProfileName, ProfileRevision: pd.ProfileRevision, Connector: pd.Connector, Protocol: pd.Protocol, Capabilities: routingCapabilities(features), Endpoint: modelGroupEndpoint(group, group.Spec.Runtime.Port), KVScopeID: kvScopeID(group), DataParallelSize: group.Spec.Parallelism.DP}
 	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill {
 		component.PrefillBootstrapEndpoint = modelGroupEndpoint(group, pd.BootstrapPort)
 	}

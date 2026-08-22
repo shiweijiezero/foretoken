@@ -260,7 +260,7 @@ func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Co
 				for index := range groups.Items {
 					group := &groups.Items[index]
 					if routingGroupOwnedBy(group, pool) && group.Spec.Revision == revision && routingGroupReady(group) && group.Spec.Role == inferencev1alpha1.ModelRoleAggregate {
-						routes = append(routes, routingGroupForService(candidate, group))
+						routes = append(routes, routingGroupForService(candidate, pool, group))
 					}
 				}
 			}

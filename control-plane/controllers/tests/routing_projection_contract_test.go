@@ -68,6 +68,7 @@ func TestInvalidPDRouteWithdrawsOnlyItsService(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertRoutingCounts(t, ctx, c, frontend.Namespace, 1, 2)
+	assertSnapshotPoolTargets(t, ctx, c, frontend.Namespace)
 	assertAdmissionSetSizes(t, ctx, c, frontend.Namespace, map[string][]int{aggregate.Spec.Model: {1}, pd.Spec.Model: {2}})
 	assertSnapshotModelCapability(t, ctx, c, frontend.Namespace, aggregate.Spec.Model, "tool_calling")
 	assertSnapshotGroupEndpoint(t, ctx, c, frontend.Namespace, aggregateGroup)
@@ -165,6 +166,45 @@ func assertSnapshotGroupEndpoint(t *testing.T, ctx context.Context, c client.Cli
 		return
 	}
 	t.Fatalf("routing endpoint for Group %q was not published", group.Name)
+}
+
+func assertSnapshotPoolTargets(t *testing.T, ctx context.Context, c client.Client, namespace string) {
+	t.Helper()
+	var decoded struct {
+		Models []struct {
+			AdmissionTargetSets [][]struct {
+				Name string `json:"name"`
+				UID  string `json:"uid"`
+			} `json:"admission_target_sets"`
+		} `json:"models"`
+		Groups []struct {
+			PoolName string `json:"pool_name"`
+			PoolUID  string `json:"pool_uid"`
+		} `json:"groups"`
+		PDComponents []struct {
+			PoolName string `json:"pool_name"`
+			PoolUID  string `json:"pool_uid"`
+		} `json:"pd_components"`
+	}
+	if err := json.Unmarshal([]byte(servingSnapshotPayload(t, ctx, c, namespace)), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	targets := make(map[string]map[string]struct{})
+	for _, model := range decoded.Models {
+		for _, set := range model.AdmissionTargetSets {
+			for _, target := range set {
+				if targets[target.UID] == nil {
+					targets[target.UID] = make(map[string]struct{})
+				}
+				targets[target.UID][target.Name] = struct{}{}
+			}
+		}
+	}
+	for _, route := range append(decoded.Groups, decoded.PDComponents...) {
+		if _, exists := targets[route.PoolUID][route.PoolName]; !exists {
+			t.Fatalf("route Pool target %q/%q is absent from admission target sets", route.PoolUID, route.PoolName)
+		}
+	}
 }
 
 func assertAdmissionSetSizes(t *testing.T, ctx context.Context, c client.Client, namespace string, expected map[string][]int) {
