@@ -7,6 +7,8 @@
 
 k3d 在 Docker container 中运行轻量 Kubernetes 发行版 k3s。它适合在一台共享 GPU 服务器上创建独立、可删除的 Foretoken cluster，同时继续使用标准 Helm、CRD 和 Kubernetes API。k3d cluster 的节点位于同一台 Docker 主机；跨物理机器部署使用 k3s 或 Kubernetes。
 
+如需使用 `make dev-deploy` 构建并部署修改后的 Foretoken 源码，请参阅 [从自定义源码部署 Foretoken](custom-deployment_zh.md)。
+
 ## k3d 如何限定物理 GPU
 
 标准 Kubernetes Pod 请求的是 GPU 类型和数量：

@@ -1,0 +1,34 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: foretoken
+image: docker.io/rancher/k3s:v1.31.5-k3s1
+servers: 1
+agents: 0
+options:
+  k3d:
+    wait: true
+    timeout: 3m
+  k3s:
+    extraArgs:
+      - arg: --default-runtime=nvidia
+        nodeFilters:
+          - server:0
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:0
+      - arg: --kubelet-arg=eviction-hard=memory.available<100Mi,nodefs.available<1%,nodefs.inodesFree<1%,imagefs.available<1%,imagefs.inodesFree<1%
+        nodeFilters:
+          - server:0
+      - arg: --kubelet-arg=image-gc-high-threshold=99
+        nodeFilters:
+          - server:0
+      - arg: --kubelet-arg=image-gc-low-threshold=98
+        nodeFilters:
+          - server:0
+  kubeconfig:
+    updateDefaultKubeconfig: true
+    switchCurrentContext: true

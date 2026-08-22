@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
@@ -7,7 +8,7 @@
 # vllm.entrypoints.cli.main.
 
 ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye
-ARG INFERENCE_ENGINE_IMAGE
+ARG INFERENCE_ENGINE_IMAGE=ghcr.io/shiweijiezero/foretoken/model-server:0.0.1
 
 FROM ${RUST_BUILDER_IMAGE} AS builder
 
@@ -19,13 +20,21 @@ RUN apt-get update \
 
 COPY data-plane/ ./data-plane/
 
-RUN cargo build --locked --release \
-    --manifest-path data-plane/Cargo.toml \
-    --package foretoken-model-server
+RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=foretoken-cargo-target,target=/workspace/data-plane/target,sharing=locked \
+    cargo build --locked --release \
+      --manifest-path data-plane/Cargo.toml \
+      --package foretoken-model-server \
+    && install -Dm755 \
+      data-plane/target/release/foretoken-model-server \
+      /out/foretoken-model-server
 
 FROM ${INFERENCE_ENGINE_IMAGE}
 
-COPY --from=builder /workspace/data-plane/target/release/foretoken-model-server /usr/local/bin/foretoken-model-server
+LABEL org.opencontainers.image.source="https://github.com/shiweijiezero/foretoken"
+
+COPY --from=builder /out/foretoken-model-server /usr/local/bin/foretoken-model-server
 
 # Preserve the inference engine image's runtime user and environment. The workload owns its
 # security context, cache environment, and writable volume mounts.

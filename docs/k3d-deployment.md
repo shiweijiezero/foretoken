@@ -7,6 +7,8 @@
 
 k3d runs the lightweight k3s Kubernetes distribution in Docker containers. It is well suited to creating an isolated, disposable Foretoken cluster on a shared GPU server while retaining standard Helm, CRDs, and Kubernetes APIs. All k3d cluster nodes run on one Docker host; use k3s or Kubernetes for deployments across physical machines.
 
+To build and deploy modified Foretoken source with `make dev-deploy`, see [Deploy Foretoken from Custom Source](custom-deployment.md).
+
 ## How k3d restricts physical GPUs
 
 A standard Kubernetes Pod requests a GPU type and count:
