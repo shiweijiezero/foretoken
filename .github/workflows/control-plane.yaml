@@ -10,6 +10,7 @@ on:
     paths:
       - control-plane/**
       - deploy/charts/foretoken/**
+      - deploy/platform-values.example.yaml
       - .dockerignore
       - LICENSE
       - .github/workflows/control-plane.yaml
@@ -19,6 +20,7 @@ on:
     paths:
       - control-plane/**
       - deploy/charts/foretoken/**
+      - deploy/platform-values.example.yaml
       - .dockerignore
       - LICENSE
       - .github/workflows/control-plane.yaml
@@ -50,15 +52,29 @@ jobs:
           cluster_name: foretoken
       - name: Validate Helm chart
         run: |
-          helm lint deploy/charts/foretoken --kube-version 1.36.3
-          helm template foretoken deploy/charts/foretoken --kube-version 1.36.3 > /tmp/foretoken.yaml
+          helm lint deploy/charts/foretoken \
+            --kube-version 1.36.3 \
+            --set image.repository=foretoken-control-plane \
+            --set image.tag=test
+          helm template foretoken deploy/charts/foretoken \
+            --kube-version 1.36.3 \
+            --set image.repository=foretoken-control-plane \
+            --set image.tag=test > /tmp/foretoken.yaml
           grep -q '^kind: Deployment' /tmp/foretoken.yaml
           grep -q '^kind: ClusterRole' /tmp/foretoken.yaml
+          if grep -q '^kind: ServiceMonitor' /tmp/foretoken.yaml; then
+            exit 1
+          fi
+          if grep -q -- '--metrics-scrape-namespace=' /tmp/foretoken.yaml; then
+            exit 1
+          fi
           if grep -q '^kind: CustomResourceDefinition' /tmp/foretoken.yaml; then
             exit 1
           fi
           helm template foretoken deploy/charts/foretoken \
             --kube-version 1.36.3 \
+            --set image.repository=foretoken-control-plane \
+            --set image.tag=test \
             --set frontend.enabled=true \
             --set frontend.image=foretoken-frontend:test \
             --set frontend.gateway.name=foretoken-gateway \
@@ -68,6 +84,21 @@ jobs:
           grep -q -- '--frontend-image=foretoken-frontend:test' /tmp/foretoken-frontend.yaml
           grep -q 'frontendservices/status' /tmp/foretoken-frontend.yaml
           grep -q 'httproutes' /tmp/foretoken-frontend.yaml
+          helm lint deploy/charts/foretoken \
+            --kube-version 1.36.3 \
+            --values deploy/platform-values.example.yaml
+          helm template foretoken deploy/charts/foretoken \
+            --kube-version 1.36.3 \
+            --values deploy/platform-values.example.yaml \
+            --set observability.serviceMonitor.enabled=true > /tmp/foretoken-observability.yaml
+          test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability.yaml)" = "2"
+          grep -q 'port: http' /tmp/foretoken-observability.yaml
+          grep -q 'port: model-server' /tmp/foretoken-observability.yaml
+          grep -q 'inference.foretoken.io/frontend-service' /tmp/foretoken-observability.yaml
+          grep -q 'inference.foretoken.io/model-group' /tmp/foretoken-observability.yaml
+          test "$(grep -c 'path: /metrics' /tmp/foretoken-observability.yaml)" = "2"
+          grep -q 'release: kube-prometheus' /tmp/foretoken-observability.yaml
+          grep -q -- '--metrics-scrape-namespace=monitoring' /tmp/foretoken-observability.yaml
       - name: Validate operator materialization lifecycle
         run: |
           diagnostics() {

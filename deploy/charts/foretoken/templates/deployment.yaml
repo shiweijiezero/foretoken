@@ -58,6 +58,9 @@ spec:
             - --leader-elect=true
             - --metrics-bind-address=0
             - --health-probe-bind-address=:8081
+            {{- if .Values.observability.serviceMonitor.enabled }}
+            - {{ printf "--metrics-scrape-namespace=%s" .Values.observability.prometheus.namespace | quote }}
+            {{- end }}
             {{- if .Values.frontend.enabled }}
             - --frontend-enabled=true
             - {{ printf "--frontend-image=%s" .Values.frontend.image | quote }}

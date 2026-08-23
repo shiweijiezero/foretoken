@@ -47,9 +47,10 @@ const (
 // ModelGroupReconciler owns the Kubernetes workload for one execution Group.
 type ModelGroupReconciler struct {
 	client.Client
-	DrainClient           ModelGroupDrainClient
-	Now                   func() time.Time
-	ControlPlaneNamespace string
+	DrainClient            ModelGroupDrainClient
+	Now                    func() time.Time
+	ControlPlaneNamespace  string
+	MetricsScrapeNamespace string
 }
 
 // SetupWithManager registers the ModelGroup controller and its owned resources.
@@ -396,6 +397,13 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 		},
 		Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &modelServerPort}},
 	}}
+	if reconciler.MetricsScrapeNamespace != "" {
+		ingress[0].From = append(ingress[0].From, networkingv1.NetworkPolicyPeer{
+			NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+				"kubernetes.io/metadata.name": reconciler.MetricsScrapeNamespace,
+			}},
+		})
+	}
 	if group.Spec.PDRuntime != nil {
 		// Mooncake opens bidirectional runtime side channels on dynamic ports
 		// after bootstrap. Restrict them to the same controller-owned P/D linked processing unit.

@@ -57,6 +57,11 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- fail "frontend.gateway.namespace is required when frontend.enabled=true" -}}
 {{- end -}}
 {{- end -}}
+{{- if .Values.observability.serviceMonitor.enabled -}}
+{{- if eq (trim .Values.observability.prometheus.namespace) "" -}}
+{{- fail "observability.prometheus.namespace is required when observability.serviceMonitor.enabled=true" -}}
+{{- end -}}
+{{- end -}}
 {{- if ne (trim .Values.runtime.vllm.image) "" -}}
 {{- if eq (trim .Values.runtime.vllm.accelerator.type) "" -}}
 {{- fail "runtime.vllm.accelerator.type is required when runtime.vllm.image is set" -}}

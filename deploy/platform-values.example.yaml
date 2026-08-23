@@ -15,6 +15,17 @@ frontend:
     namespace: gateway-system
     sectionName: https
 
+# Foretoken connects to the platform's existing Prometheus Operator.
+observability:
+  serviceMonitor:
+    # Enable only when the cluster already provides the Prometheus Operator CRDs.
+    enabled: false
+    additionalLabels:
+      # Match the platform Prometheus serviceMonitorSelector.
+      release: kube-prometheus
+  prometheus:
+    namespace: monitoring
+
 runtime:
   vllm:
     image: registry.example.com/foretoken/model-server:dev

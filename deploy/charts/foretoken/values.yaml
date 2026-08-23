@@ -22,6 +22,17 @@ frontend:
     namespace: ""
     sectionName: ""
 
+# Integrates Foretoken metric endpoints with an existing Prometheus Operator.
+observability:
+  serviceMonitor:
+    enabled: false
+    additionalLabels: {}
+    interval: 30s
+    scrapeTimeout: 10s
+  prometheus:
+    # Namespace containing the Prometheus server Pods.
+    namespace: ""
+
 # The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
 runtime:
   vllm:

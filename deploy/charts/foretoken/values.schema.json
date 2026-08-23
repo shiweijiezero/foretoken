@@ -4,6 +4,7 @@
   "required": [
     "image",
     "frontend",
+    "observability",
     "runtime"
   ],
   "properties": {
@@ -87,6 +88,54 @@
               "type": "string"
             },
             "sectionName": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "required": [
+        "serviceMonitor",
+        "prometheus"
+      ],
+      "properties": {
+        "serviceMonitor": {
+          "type": "object",
+          "required": [
+            "enabled",
+            "additionalLabels",
+            "interval",
+            "scrapeTimeout"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "additionalLabels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "interval": {
+              "type": "string",
+              "minLength": 1
+            },
+            "scrapeTimeout": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "prometheus": {
+          "type": "object",
+          "required": [
+            "namespace"
+          ],
+          "properties": {
+            "namespace": {
               "type": "string"
             }
           }
@@ -230,6 +279,38 @@
                         }
                       }
                     }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "observability": {
+            "properties": {
+              "serviceMonitor": {
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "observability": {
+            "properties": {
+              "prometheus": {
+                "properties": {
+                  "namespace": {
+                    "minLength": 1
                   }
                 }
               }

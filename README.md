@@ -34,7 +34,7 @@ Foretoken is under active development. Its APIs and deployment configuration may
 | Data plane | Provide an OpenAI-compatible API with request processing, backend selection, and streaming or non-streaming responses |
 | [Benchmarking](benchmarks/README.md) | Test an existing service or temporarily deploy Foretoken services in Kubernetes for a load test |
 | Distributed inference | Aggregate inference is implemented; Prefill/Decode disaggregation remains experimental |
-| Observability | The frontend exposes runtime metrics; dashboards, distributed tracing, and alerts are planned |
+| [Observability](observability/README.md) | Frontend and model-server expose OpenMetrics; the Helm chart can connect them to an existing Prometheus Operator |
 
 ## Deploy from Source
 
@@ -95,6 +95,9 @@ Set:
 - the control-plane, frontend, and model-server image references;
 - the Gateway name and namespace, plus `sectionName` when a specific listener must be selected;
 - the GPU type, Kubernetes GPU resource name, and node selector.
+
+When the cluster already runs Prometheus Operator, optionally enable the
+ServiceMonitors described in [Observability](observability/README.md).
 
 If `kubectl get runtimeclass` lists a GPU RuntimeClass such as `nvidia`, set `runtime.vllm.accelerator.runtimeClassName` to that name. Leave it empty when the cluster provides GPUs without a RuntimeClass.
 

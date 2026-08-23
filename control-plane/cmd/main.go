@@ -31,6 +31,7 @@ func main() {
 	var metricsAddress string
 	var probeAddress string
 	var leaderElection bool
+	var metricsScrapeNamespace string
 	var frontendEnabled bool
 	var frontendImage string
 	var frontendPort int
@@ -67,6 +68,7 @@ func main() {
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "Health probe bind address.")
 	flag.BoolVar(&leaderElection, "leader-elect", false, "Enable leader election.")
+	flag.StringVar(&metricsScrapeNamespace, "metrics-scrape-namespace", "", "Namespace allowed to scrape model-server metrics; empty disables scrape access.")
 	flag.BoolVar(&frontendEnabled, "frontend-enabled", false, "Enable FrontendService workload and HTTPRoute reconciliation.")
 	flag.StringVar(&frontendImage, "frontend-image", "", "Frontend runtime image.")
 	flag.IntVar(&frontendPort, "frontend-port", 8080, "Frontend runtime HTTP port.")
@@ -238,7 +240,11 @@ func main() {
 		ctrl.Log.Error(errors.New("POD_NAMESPACE is required"), "unable to configure ModelGroup drain networking")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.ModelGroupReconciler{
+		Client:                 manager.GetClient(),
+		ControlPlaneNamespace:  controlPlaneNamespace,
+		MetricsScrapeNamespace: metricsScrapeNamespace,
+	}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelGroup controller")
 		os.Exit(1)
 	}

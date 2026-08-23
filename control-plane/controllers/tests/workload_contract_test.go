@@ -39,7 +39,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 			t.Fatalf("deployment contract = %#v", deployment.Spec)
 		}
 		serviceObject := get(t, ctx, c, request.NamespacedName, new(corev1.Service))
-		if !metav1.IsControlledBy(serviceObject, group) || serviceObject.Spec.Selector["inference.foretoken.io/model-group"] != group.Name {
+		if !metav1.IsControlledBy(serviceObject, group) || serviceObject.Spec.Selector["inference.foretoken.io/model-group"] != group.Name || len(serviceObject.Spec.Ports) != 1 || serviceObject.Spec.Ports[0].Name != "model-server" {
 			t.Fatalf("service contract = %#v", serviceObject)
 		}
 		policy := get(t, ctx, c, request.NamespacedName, new(networkingv1.NetworkPolicy))
@@ -49,6 +49,31 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		current := get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.ModelGroup))
 		if condition := meta.FindStatusCondition(current.Status.Conditions, "WorkloadMaterialized"); condition == nil || condition.Status != metav1.ConditionTrue {
 			t.Fatalf("group status = %#v", current.Status)
+		}
+	})
+	t.Run("metrics scrape namespace is allowed on the model-server port", func(t *testing.T) {
+		service := modelService("metrics", 1)
+		pool := modelPool(service, "metrics-default", 1)
+		group := modelGroup(pool, "metrics-r1-0", 0)
+		c := controllerClient(t, service, pool, group)
+		r := &controllers.ModelGroupReconciler{
+			Client:                 c,
+			ControlPlaneNamespace:  "foretoken-system",
+			MetricsScrapeNamespace: "monitoring",
+		}
+		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(group)}
+		for range 2 {
+			if _, err := r.Reconcile(ctx, request); err != nil {
+				t.Fatal(err)
+			}
+		}
+		policy := get(t, ctx, c, request.NamespacedName, new(networkingv1.NetworkPolicy))
+		if len(policy.Spec.Ingress) != 1 || len(policy.Spec.Ingress[0].From) != 3 || len(policy.Spec.Ingress[0].Ports) != 1 || policy.Spec.Ingress[0].Ports[0].Port == nil || policy.Spec.Ingress[0].Ports[0].Port.StrVal != "model-server" {
+			t.Fatalf("network policy = %#v", policy.Spec)
+		}
+		monitoringPeer := policy.Spec.Ingress[0].From[2]
+		if monitoringPeer.NamespaceSelector == nil || monitoringPeer.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] != "monitoring" {
+			t.Fatalf("monitoring peer = %#v", monitoringPeer)
 		}
 	})
 	t.Run("prefill workload includes PD runtime network and RDMA contract", func(t *testing.T) {

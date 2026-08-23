@@ -34,7 +34,7 @@ Foretoken 仍处于开发阶段，接口和部署配置可能继续调整。
 | 数据面 | 提供 OpenAI 兼容接口，处理请求、选择后端并返回流式或非流式响应            |
 | [性能评测](benchmarks/README_zh.md) | 测试已有服务，或在 Kubernetes 中临时部署 Foretoken 服务后进行负载测试 |
 | 分布式推理 | 聚合式与 Encoder/Prefill/Decode 分离的部署方式            |
-| 可观测性 | 捕捉运行指标，展示用户仪表盘和告警，Profiling探测瓶颈                |
+| [可观测性](observability/README.md) | Frontend 与 model-server 暴露 OpenMetrics；Helm Chart 可接入已有的 Prometheus Operator |
 
 ## 从源码部署
 
@@ -95,6 +95,8 @@ ${EDITOR:-vi} /tmp/foretoken-platform-values.yaml
 - control-plane、frontend 和 model-server 的镜像地址；
 - Gateway 的名称、namespace，以及需要指定具体 listener 时使用的 `sectionName`；
 - GPU 类型、Kubernetes GPU resource name 和 node selector。
+
+如果集群已经运行 Prometheus Operator，可以按[可观测性接入说明](observability/README.md)选择性启用 ServiceMonitor。
 
 如果 `kubectl get runtimeclass` 能看到 `nvidia` 等 GPU RuntimeClass，请将 `runtime.vllm.accelerator.runtimeClassName` 设置为对应名称；如果集群不依赖 RuntimeClass 提供 GPU，则保持为空。
 
