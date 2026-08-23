@@ -23,6 +23,7 @@ use vllm_engine_core_client::protocol::multimodal::{
 };
 use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
 use vllm_engine_core_client::protocol::tensor::WireNdArray;
+use vllm_metrics::{HttpRequestLabels, METRICS};
 
 struct RecordingBackend {
     requests: Mutex<Vec<GenerateInput>>,
@@ -102,6 +103,36 @@ fn app_with_body_limit(
     health.set_client_healthy(healthy);
     health.set_accepting(accepting);
     router(AppState::new(backend, health, metadata()), body_limit)
+}
+
+#[tokio::test]
+async fn metrics_exposes_vllm_openmetrics_when_not_ready() {
+    let marker = "/model-server-metrics-contract";
+    METRICS
+        .api_server
+        .http_requests
+        .get_or_create(&HttpRequestLabels {
+            method: "GET".into(),
+            status: "2xx",
+            handler: marker.into(),
+        })
+        .inc();
+
+    let response = app(Arc::new(RecordingBackend::default()), false, false)
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "application/openmetrics-text; version=1.0.0; charset=utf-8"
+    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body = std::str::from_utf8(&body).unwrap();
+    assert!(body.contains("http_requests_total"));
+    assert!(body.contains(marker));
+    assert!(body.ends_with("# EOF\n"));
 }
 
 #[tokio::test]
