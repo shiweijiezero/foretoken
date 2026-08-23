@@ -2,6 +2,28 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+build_dev_images() {
+  export DOCKER_BUILDKIT=1
+
+  docker build \
+    -f control-plane/Dockerfile \
+    -t "$CONTROL_PLANE_IMAGE" \
+    .
+
+  make vllm-source
+
+  docker build \
+    -f data-plane/frontend/Dockerfile \
+    -t "$FRONTEND_IMAGE" \
+    .
+
+  docker build \
+    --build-arg INFERENCE_ENGINE_IMAGE="$INFERENCE_ENGINE_IMAGE" \
+    -f data-plane/model-server/Dockerfile \
+    -t "$MODEL_SERVER_IMAGE" \
+    .
+}
+
 create_k3d_cluster() {
   [[ -n "${GPU_INDICES:-}" ]] || {
     printf 'set GPU_INDICES to create k3d cluster %s\n' "$CLUSTER" >&2

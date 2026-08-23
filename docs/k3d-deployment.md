@@ -7,7 +7,7 @@
 
 k3d runs the lightweight k3s Kubernetes distribution in Docker containers. It is well suited to creating an isolated, disposable Foretoken cluster on a shared GPU server while retaining standard Helm, CRDs, and Kubernetes APIs. All k3d cluster nodes run on one Docker host; use k3s or Kubernetes for deployments across physical machines.
 
-To build and deploy modified Foretoken source with `make dev-deploy`, see [Deploy Foretoken from Custom Source](custom-deployment.md).
+After creating the k3d cluster, run `make dev-deploy` from the repository root. The script builds the source and imports changed local images into the current cluster; the Helm deployment, Ready wait, and request verification remain the same as for any other Kubernetes cluster.
 
 ## How k3d restricts physical GPUs
 
@@ -153,9 +153,14 @@ Change to the Foretoken project directory:
 cd /path/to/your/foretoken
 ```
 
-### Local mode
+### 4.1 Choose a deployment method
 
-Install Foretoken and deploy the Quick Start:
+- **Use release images**: continue with [section 4.2: Local mode](#42-local-mode) or [section 4.3: Gateway mode](#43-gateway-mode).
+- **Deploy from source**: complete [section 2.1: Import local images directly](custom-deployment.md#21-import-local-images-directly), [section 4: Deploy the Quick Start](custom-deployment.md#4-deploy-the-quick-start-optional), and [section 5: Send a request](custom-deployment.md#5-send-a-request-optional).
+
+### 4.2 Local mode
+
+Install Foretoken from release images and deploy the Quick Start:
 
 ```bash
 helm upgrade --install foretoken \
@@ -164,7 +169,8 @@ helm upgrade --install foretoken \
   --create-namespace \
   --set frontend.enabled=true \
   --set frontend.mode=local \
-  --wait
+  --wait \
+  --debug
 
 kubectl apply --server-side -k examples/quickstart
 
@@ -184,7 +190,7 @@ export FRONTEND_HOST="$(kubectl get service quickstart-frontend \
 export FRONTEND_URL="http://$FRONTEND_HOST:8080"
 ```
 
-### Gateway mode
+### 4.3 Gateway mode
 
 First, set the public hostname in `examples/quickstart/frontend.yaml`:
 
@@ -193,14 +199,15 @@ spec:
   hostname: foretoken.example.com
 ```
 
-Install Envoy Gateway, Foretoken, and the Quick Start:
+Install Envoy Gateway, then deploy Foretoken and the Quick Start from release images:
 
 ```bash
 helm upgrade --install envoy-gateway \
   oci://docker.io/envoyproxy/gateway-helm \
   --namespace envoy-gateway-system \
   --create-namespace \
-  --wait
+  --wait \
+  --debug
 
 helm upgrade --install foretoken \
   oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
@@ -209,7 +216,8 @@ helm upgrade --install foretoken \
   --set frontend.enabled=true \
   --set frontend.mode=gateway \
   --set frontend.gateway.create=true \
-  --wait
+  --wait \
+  --debug
 
 kubectl apply --server-side -k examples/quickstart
 
@@ -226,7 +234,7 @@ Use the configured hostname:
 export FRONTEND_URL=https://foretoken.example.com
 ```
 
-### Send an OpenAI API-compatible request
+### 4.4 Send an OpenAI API-compatible request
 
 ```bash
 curl "$FRONTEND_URL/v1/chat/completions" \

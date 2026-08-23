@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=dev-deploy-lib.sh
+source "$ROOT/deploy/dev-deploy-lib.sh"
+cd "$ROOT"
+
+TAG=${TAG:-latest}
+LOCAL_IMAGE_PREFIX=${LOCAL_IMAGE_PREFIX:-foretoken-dev}
+INFERENCE_ENGINE_IMAGE=${INFERENCE_ENGINE_IMAGE:-ghcr.io/shiweijiezero/foretoken/model-server:0.0.1}
+
+CONTROL_PLANE_IMAGE="$LOCAL_IMAGE_PREFIX-control-plane:$TAG"
+FRONTEND_IMAGE="$LOCAL_IMAGE_PREFIX-frontend:$TAG"
+MODEL_SERVER_IMAGE="$LOCAL_IMAGE_PREFIX-model-server:$TAG"
+
+for command in docker make; do
+  command -v "$command" >/dev/null || {
+    printf 'missing required command: %s\n' "$command" >&2
+    exit 1
+  }
+done
+
+build_dev_images
+
+printf 'Built images:\n'
+printf '  %s\n' "$CONTROL_PLANE_IMAGE" "$FRONTEND_IMAGE" "$MODEL_SERVER_IMAGE"

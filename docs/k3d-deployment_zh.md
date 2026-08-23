@@ -7,7 +7,7 @@
 
 k3d 在 Docker container 中运行轻量 Kubernetes 发行版 k3s。它适合在一台共享 GPU 服务器上创建独立、可删除的 Foretoken cluster，同时继续使用标准 Helm、CRD 和 Kubernetes API。k3d cluster 的节点位于同一台 Docker 主机；跨物理机器部署使用 k3s 或 Kubernetes。
 
-如需使用 `make dev-deploy` 构建并部署修改后的 Foretoken 源码，请参阅 [从自定义源码部署 Foretoken](custom-deployment_zh.md)。
+创建 k3d cluster 后，在仓库根目录运行 `make dev-deploy`。脚本会构建源码并将发生变化的本地镜像导入当前 cluster；后续 Helm 部署、Ready 等待和请求验证与其他 Kubernetes 集群相同。
 
 ## k3d 如何限定物理 GPU
 
@@ -153,9 +153,14 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 cd /path/to/your/foretoken
 ```
 
-### 本地模式
+### 4.1 选择部署方式
 
-安装 Foretoken 并部署 Quick Start：
+- **使用发布镜像**：继续执行 [第 4.2 节：本地模式](#42-本地模式) 或 [第 4.3 节：网关模式](#43-网关模式)。
+- **从源码部署**：依次完成 [第 2.1 节：直接导入本地镜像](custom-deployment_zh.md#21-直接导入本地镜像)、[第 4 节：部署 Quick Start](custom-deployment_zh.md#4-部署-quick-start可选) 和 [第 5 节：发送请求](custom-deployment_zh.md#5-发送请求可选)。
+
+### 4.2 本地模式
+
+使用发布镜像安装 Foretoken 并部署 Quick Start：
 
 ```bash
 helm upgrade --install foretoken \
@@ -164,7 +169,8 @@ helm upgrade --install foretoken \
   --create-namespace \
   --set frontend.enabled=true \
   --set frontend.mode=local \
-  --wait
+  --wait \
+  --debug
 
 kubectl apply --server-side -k examples/quickstart
 
@@ -184,7 +190,7 @@ export FRONTEND_HOST="$(kubectl get service quickstart-frontend \
 export FRONTEND_URL="http://$FRONTEND_HOST:8080"
 ```
 
-### 网关模式
+### 4.3 网关模式
 
 先在 `examples/quickstart/frontend.yaml` 中设置对外域名：
 
@@ -193,14 +199,15 @@ spec:
   hostname: foretoken.example.com
 ```
 
-安装 Envoy Gateway、Foretoken 和 Quick Start：
+安装 Envoy Gateway，并使用发布镜像部署 Foretoken 和 Quick Start：
 
 ```bash
 helm upgrade --install envoy-gateway \
   oci://docker.io/envoyproxy/gateway-helm \
   --namespace envoy-gateway-system \
   --create-namespace \
-  --wait
+  --wait \
+  --debug
 
 helm upgrade --install foretoken \
   oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
@@ -209,7 +216,8 @@ helm upgrade --install foretoken \
   --set frontend.enabled=true \
   --set frontend.mode=gateway \
   --set frontend.gateway.create=true \
-  --wait
+  --wait \
+  --debug
 
 kubectl apply --server-side -k examples/quickstart
 
@@ -226,7 +234,7 @@ kubectl wait --for=condition=Ready \
 export FRONTEND_URL=https://foretoken.example.com
 ```
 
-### 发送 OpenAI API 兼容格式的请求
+### 4.4 发送 OpenAI API 兼容格式的请求
 
 ```bash
 curl "$FRONTEND_URL/v1/chat/completions" \
