@@ -134,6 +134,7 @@ fn validate_extra_args(args: &[String]) -> Result<(), String> {
         "--chunked-prefill-size",
         "--schedule-policy",
         "--attention-backend",
+        "--max-model-len",
     ];
     const BOOL_FLAGS: &[&str] = &["--disable-radix-cache", "--enable-torch-compile"];
     let mut seen = HashSet::new();
@@ -196,6 +197,18 @@ mod tests {
         assert!(args.contains(&"--port=30000".to_string()));
         assert!(args.contains(&"--tp=1".to_string()));
         assert!(args.contains(&"--dp=1".to_string()));
+    }
+
+    #[test]
+    fn accepts_max_model_len() {
+        let mut good = plan();
+        good.extra_args = vec!["--max-model-len=8192".into()];
+        assert!(
+            good.validate().is_ok(),
+            "--max-model-len was rejected"
+        );
+        let args = good.render_args().unwrap();
+        assert!(args.contains(&"--max-model-len=8192".to_string()));
     }
 
     #[test]
