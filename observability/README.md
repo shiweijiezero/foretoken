@@ -26,6 +26,10 @@ observability:
     enabled: true
     additionalLabels:
       release: kube-prometheus
+  grafanaDashboard:
+    enabled: true
+    additionalLabels:
+      grafana_dashboard: "1"
   prometheus:
     namespace: monitoring
 ```
@@ -81,6 +85,31 @@ latency histograms are intentionally left out of this first rule set until their
 measurement boundaries are validated for each API and workflow, or
 Foretoken-owned stream-boundary metrics are exposed.
 
+## Grafana overview dashboard
+
+The optional dashboard ConfigMap is selected by an existing Grafana sidecar.
+The default `grafana_dashboard: "1"` label matches kube-prometheus-stack. If the
+platform uses another selector, replace `grafanaDashboard.additionalLabels`.
+The sidecar must watch the Foretoken Helm release namespace; the chart does not
+install Grafana or create a Prometheus datasource.
+
+The dashboard uses a Prometheus datasource variable instead of a hard-coded
+datasource UID. It provides namespace, Frontend service, model role, and model
+group filters over six panels:
+
+| Panel | Meaning |
+| --- | --- |
+| Prometheus scrape targets | Raw `up` state for Frontend and model-server endpoints; not request readiness |
+| Frontend HTTP response starts | Response objects started per second, split by bounded route and status labels |
+| HTTP response-start 5xx ratio | Per-Frontend 5xx fraction; not an inference failure SLO |
+| Engine tokens processed | Prompt and generation tokens per model-server stage; P/D roles are not combined |
+| vLLM scheduler stage requests | Running and waiting stage requests; not users or the Frontend admission queue |
+| Hottest engine KV-cache usage | Maximum recorded KV-cache ratio, not a fleet average |
+
+Missing samples remain `No data`; the dashboard does not turn missing
+model-server series into zero. Latency, user success, GPU, autoscaling, and
+tenant panels are excluded until reliable producers exist for those signals.
+
 ## Verify the integration
 
 First verify that the Foretoken monitor objects were installed. The active
@@ -95,6 +124,9 @@ kubectl get servicemonitor -A \
 
 kubectl get prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane -o wide
+
+kubectl get configmap -A -l grafana_dashboard=1 \
+  -o custom-columns=NAMESPACE:.metadata.namespace,NAME:.metadata.name
 ```
 
 Then inspect the active Prometheus targets. Adjust the namespace and Service
@@ -138,6 +170,14 @@ promtool check rules \
 
 promtool test rules \
   observability/tests/recording-rules.test.yaml
+
+observability/tests/validate-grafana-dashboard.sh
+
+jq -f observability/tests/grafana-dashboard-promql.jq \
+  deploy/charts/foretoken/files/grafana/foretoken-overview.json \
+  > /tmp/foretoken-grafana-promql.json
+
+promtool check rules /tmp/foretoken-grafana-promql.json
 ```
 
 An `UP` target means Prometheus successfully scraped `/metrics`; it is not the

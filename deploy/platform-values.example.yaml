@@ -29,6 +29,12 @@ observability:
     additionalLabels:
       # Match the platform Prometheus ruleSelector.
       release: kube-prometheus
+  grafanaDashboard:
+    # Enable after the platform Grafana sidecar watches this namespace.
+    enabled: false
+    additionalLabels:
+      # Match the kube-prometheus-stack Grafana dashboard sidecar selector.
+      grafana_dashboard: "1"
   prometheus:
     namespace: monitoring
 

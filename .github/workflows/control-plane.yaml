@@ -61,6 +61,18 @@ jobs:
             --entrypoint /bin/promtool \
             quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
             test rules observability/tests/recording-rules.test.yaml
+      - name: Validate Grafana dashboard
+        run: |
+          observability/tests/validate-grafana-dashboard.sh
+          jq -f observability/tests/grafana-dashboard-promql.jq \
+            deploy/charts/foretoken/files/grafana/foretoken-overview.json \
+            > /tmp/foretoken-grafana-promql.json
+          test "$(jq '.groups[0].rules | length' /tmp/foretoken-grafana-promql.json)" = "13"
+          docker run --rm \
+            --volume "/tmp/foretoken-grafana-promql.json:/dashboard-rules.json:ro" \
+            --entrypoint /bin/promtool \
+            quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
+            check rules /dashboard-rules.json
       - name: Create test cluster
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
@@ -82,6 +94,9 @@ jobs:
             exit 1
           fi
           if grep -q '^kind: PrometheusRule' /tmp/foretoken.yaml; then
+            exit 1
+          fi
+          if grep -q 'grafana_dashboard:' /tmp/foretoken.yaml; then
             exit 1
           fi
           if grep -q -- '--metrics-scrape-namespace=' /tmp/foretoken.yaml; then
@@ -110,9 +125,11 @@ jobs:
             --kube-version 1.36.3 \
             --values deploy/platform-values.example.yaml \
             --set observability.serviceMonitor.enabled=true \
-            --set observability.prometheusRule.enabled=true > /tmp/foretoken-observability.yaml
+            --set observability.prometheusRule.enabled=true \
+            --set observability.grafanaDashboard.enabled=true > /tmp/foretoken-observability.yaml
           test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability.yaml)" = "2"
           test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability.yaml)" = "1"
+          test "$(grep -c 'grafana_dashboard: "1"' /tmp/foretoken-observability.yaml)" = "1"
           grep -q 'port: http' /tmp/foretoken-observability.yaml
           grep -q 'port: model-server' /tmp/foretoken-observability.yaml
           grep -q 'inference.foretoken.io/frontend-service' /tmp/foretoken-observability.yaml
@@ -121,6 +138,9 @@ jobs:
           grep -q 'release: kube-prometheus' /tmp/foretoken-observability.yaml
           grep -q 'foretoken:frontend_http_response_starts:rate5m' /tmp/foretoken-observability.yaml
           grep -q 'foretoken:model_server_requests_waiting:sum' /tmp/foretoken-observability.yaml
+          grep -q 'foretoken-overview.json: |-' /tmp/foretoken-observability.yaml
+          grep -q '"uid": "foretoken-overview"' /tmp/foretoken-observability.yaml
+          grep -q '"title": "Foretoken / Overview"' /tmp/foretoken-observability.yaml
           grep -q -- '--metrics-scrape-namespace=monitoring' /tmp/foretoken-observability.yaml
       - name: Validate operator materialization lifecycle
         run: |

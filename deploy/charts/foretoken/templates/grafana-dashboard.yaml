@@ -1,0 +1,20 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
+
+{{/* Publishes the Foretoken overview dashboard for an existing Grafana sidecar. */}}
+
+{{- if and .Values.observability.grafanaDashboard .Values.observability.grafanaDashboard.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "foretoken.compactName" (printf "%s-grafana-dashboard" (include "foretoken.fullname" .)) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+    {{- with .Values.observability.grafanaDashboard.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+data:
+  foretoken-overview.json: |-
+{{ .Files.Get "files/grafana/foretoken-overview.json" | nindent 4 }}
+{{- end }}

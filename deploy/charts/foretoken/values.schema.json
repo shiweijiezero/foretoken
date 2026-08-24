@@ -148,6 +148,24 @@
             }
           }
         },
+        "grafanaDashboard": {
+          "type": "object",
+          "required": [
+            "enabled",
+            "additionalLabels"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "additionalLabels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
         "prometheus": {
           "type": "object",
           "required": [

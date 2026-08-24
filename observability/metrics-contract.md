@@ -14,9 +14,10 @@ come from platform exporters.
 
 Prometheus is an observability dependency, not part of the autoscaling control
 loop. Autoscaling continues to use the existing versioned JSON telemetry APIs.
-ServiceMonitors and the initial recording-rule query layer are implemented as
-optional Helm resources. Dashboards, alerts, notification delivery, tracing,
-Torch Profiler, and Nsight are separate follow-up changes.
+ServiceMonitors, the initial recording-rule query layer, and the Grafana
+overview dashboard are implemented as optional Helm resources. Alerts,
+notification delivery, tracing, Torch Profiler, and Nsight are separate
+follow-up changes.
 
 ## Measurement boundaries
 
@@ -128,7 +129,9 @@ and Alertmanager. The repository does not deploy another monitoring stack. The
 optional ServiceMonitors discover Frontend and model-server Services, and the
 model-server NetworkPolicy admits the configured monitoring namespace on the
 existing internal port. The optional PrometheusRule provides the first stable,
-low-cardinality query layer over those raw series.
+low-cardinality query layer over those raw series. The optional dashboard
+ConfigMap exposes a six-panel overview to an existing Grafana sidecar; it does
+not install Grafana or create a datasource.
 
 ## Model-server producer PR acceptance criteria
 
