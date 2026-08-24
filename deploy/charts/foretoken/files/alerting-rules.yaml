@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Defines the initial, conservative Foretoken alert policy.
+
+groups:
+  - name: foretoken.alerting
+    rules:
+      - alert: ForetokenMetricsTargetDown
+        expr: |
+          (
+            up{
+              endpoint="http",
+              inference_foretoken_io_frontend_service!=""
+            } == 0
+          )
+          or
+          (
+            up{
+              endpoint="model-server",
+              inference_foretoken_io_model_group!=""
+            } == 0
+          )
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Foretoken metrics target {{ $labels.endpoint }} cannot be scraped'
+          description: 'Prometheus has failed to scrape {{ $labels.endpoint }} at {{ $labels.instance }} in namespace {{ $labels.namespace }} for 5 minutes. This checks metrics reachability, not request readiness or a confirmed user outage.'
+          runbook_url: https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md
+
+      - alert: ForetokenFrontendHTTPResponseStart5xxRatioHigh
+        expr: |
+          (
+            foretoken:frontend_http_response_start_5xx_ratio:rate5m > 0.05
+          )
+          and on (namespace, frontend_service)
+          (
+            sum by (namespace, frontend_service) (
+              foretoken:frontend_http_response_starts:rate5m
+            ) >= 0.1
+          )
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Frontend {{ $labels.frontend_service }} has elevated response-start 5xx errors'
+          description: 'More than 5% of HTTP response starts for Frontend {{ $labels.frontend_service }} have been 5xx for 10 minutes with at least 0.1 response starts per second. Errors after a stream starts are not counted, so this is not an inference failure SLO.'
+          runbook_url: https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md
+
+      - alert: ForetokenModelServerSchedulerBacklog
+        expr: foretoken:model_server_requests_waiting:sum > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'vLLM scheduler backlog persists for model group {{ $labels.model_group }}'
+          description: 'The vLLM scheduler for {{ $labels.model_group }}/{{ $labels.model_role }} has continuously had waiting stage requests for 10 minutes. This is not a user count or the Frontend admission queue.'
+          runbook_url: https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md
+
+      - alert: ForetokenModelServerKVCachePressureHigh
+        expr: foretoken:model_server_kv_cache_usage_ratio:max >= 0.95
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'KV-cache pressure is high for model group {{ $labels.model_group }}'
+          description: 'The maximum KV-cache usage across vLLM engines in {{ $labels.model_group }}/{{ $labels.model_role }} has stayed at or above 95% for 10 minutes. The engine contributing the maximum can change between evaluations.'
+          runbook_url: https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md

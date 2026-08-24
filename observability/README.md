@@ -26,6 +26,10 @@ observability:
     enabled: true
     additionalLabels:
       release: kube-prometheus
+  alertingRule:
+    enabled: true
+    additionalLabels:
+      release: kube-prometheus
   grafanaDashboard:
     enabled: true
     additionalLabels:
@@ -42,10 +46,11 @@ model-server NetworkPolicy. That rule trusts the namespace rather than a
 specific Prometheus Pod selector, so only trusted monitoring workloads should
 run in that namespace.
 
-The `prometheusRule.additionalLabels` value independently matches the platform
-Prometheus `ruleSelector`; its `ruleNamespaceSelector` must select the Helm
-release namespace. Both resources are disabled by default, so a cluster without
-the Prometheus Operator CRDs can still install the chart.
+The `prometheusRule.additionalLabels` and `alertingRule.additionalLabels` values
+independently match the platform Prometheus `ruleSelector`; its
+`ruleNamespaceSelector` must select the Helm release namespace. All Operator
+resources are disabled by default, so a cluster without the Prometheus Operator
+CRDs can still install the chart.
 
 The existing versioned JSON telemetry endpoints remain the autoscaler's data
 source; Prometheus is not part of the autoscaling control loop.
@@ -110,6 +115,29 @@ Missing samples remain `No data`; the dashboard does not turn missing
 model-server series into zero. Latency, user success, GPU, autoscaling, and
 tenant panels are excluded until reliable producers exist for those signals.
 
+## Alert rules
+
+The optional alerting PrometheusRule adds four conservative warnings. It
+creates alert events in the platform Prometheus; it does not install or modify
+Alertmanager, configure a receiver, send a webhook, or store a Lark/DingTalk
+secret.
+
+| Alert | Condition | Pending window | Boundary |
+| --- | --- | --- | --- |
+| `ForetokenMetricsTargetDown` | A discovered Foretoken target has `up == 0` | 5 minutes | Prometheus scrape reachability, not request readiness |
+| `ForetokenFrontendHTTPResponseStart5xxRatioHigh` | Response-start 5xx ratio is above 5% with at least 0.1 response starts/s | 10 minutes | HTTP response starts, not streaming terminal failures |
+| `ForetokenModelServerSchedulerBacklog` | Aggregated vLLM waiting requests remain above zero | 10 minutes | Stage scheduler queue, not users or Frontend admission |
+| `ForetokenModelServerKVCachePressureHigh` | Hottest-engine KV-cache ratio is at least 95% | 10 minutes | Group maximum, not fleet average |
+
+All four begin at `warning` severity. The thresholds are an initial policy to
+tune from production baselines. The three workload alerts consume the optional
+recording rules, so normal deployments enable both `prometheusRule` and
+`alertingRule`. Missing model-server metrics remain unavailable rather than
+being converted to zero. A target that disappears completely from discovery
+cannot be detected by `up == 0`; the runbook documents that limitation.
+
+See [the alert runbooks](runbooks/alerts.md) for checks and signal boundaries.
+
 ## Verify the integration
 
 First verify that the Foretoken monitor objects were installed. The active
@@ -160,6 +188,9 @@ curl -sS -G http://127.0.0.1:9090/api/v1/query \
 
 curl -sS -G http://127.0.0.1:9090/api/v1/query \
   --data-urlencode 'query=foretoken:model_server_requests_running:sum{namespace="<workload-namespace>"}' | jq
+
+curl -sS -G http://127.0.0.1:9090/api/v1/query \
+  --data-urlencode 'query=ALERTS{alertname=~"Foretoken.*"}' | jq
 ```
 
 Validate rule syntax and calculations before deploying changes:
@@ -170,6 +201,12 @@ promtool check rules \
 
 promtool test rules \
   observability/tests/recording-rules.test.yaml
+
+promtool check rules \
+  deploy/charts/foretoken/files/alerting-rules.yaml
+
+promtool test rules \
+  observability/tests/alerting-rules.test.yaml
 
 observability/tests/validate-grafana-dashboard.sh
 

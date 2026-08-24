@@ -1,0 +1,213 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Exercises pending, firing, recovery, and suppression behavior for alerts.
+
+rule_files:
+  - ../../deploy/charts/foretoken/files/alerting-rules.yaml
+
+evaluation_interval: 1m
+group_eval_order:
+  - foretoken.alerting
+
+tests:
+  - name: metrics target down becomes pending, fires, and recovers
+    interval: 1m
+    input_series:
+      - series: 'up{namespace="foretoken-demo",endpoint="model-server",instance="10.0.0.1:9000",inference_foretoken_io_model_group="quickstart-aggregate",pod="model-a"}'
+        values: '0x5 1'
+      # An unrelated target without a Foretoken discovery label must be ignored.
+      - series: 'up{namespace="other",endpoint="http",instance="10.0.0.2:8080",pod="other-a"}'
+        values: '0x6'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: ForetokenMetricsTargetDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: ForetokenMetricsTargetDown
+        exp_alerts:
+          - exp_labels:
+              endpoint: model-server
+              inference_foretoken_io_model_group: quickstart-aggregate
+              instance: 10.0.0.1:9000
+              namespace: foretoken-demo
+              pod: model-a
+              severity: warning
+            exp_annotations:
+              summary: Foretoken metrics target model-server cannot be scraped
+              description: Prometheus has failed to scrape model-server at 10.0.0.1:9000 in namespace foretoken-demo for 5 minutes. This checks metrics reachability, not request readiness or a confirmed user outage.
+              runbook_url: https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md
+      - eval_time: 6m
+        alertname: ForetokenMetricsTargetDown
+        exp_alerts: []
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="ForetokenMetricsTargetDown",alertstate="pending"}'
+        eval_time: 4m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ForetokenMetricsTargetDown",alertstate="pending",namespace="foretoken-demo",endpoint="model-server",instance="10.0.0.1:9000",inference_foretoken_io_model_group="quickstart-aggregate",pod="model-a",severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="ForetokenMetricsTargetDown",alertstate="firing"}'
+        eval_time: 5m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ForetokenMetricsTargetDown",alertstate="firing",namespace="foretoken-demo",endpoint="model-server",instance="10.0.0.1:9000",inference_foretoken_io_model_group="quickstart-aggregate",pod="model-a",severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="ForetokenMetricsTargetDown"}'
+        eval_time: 6m
+        exp_samples: []
+
+  - name: metrics target down includes the frontend discovery branch
+    interval: 1m
+    input_series:
+      - series: 'up{namespace="foretoken-demo",endpoint="http",instance="10.0.0.3:8080",inference_foretoken_io_frontend_service="quickstart",pod="frontend-a"}'
+        values: '0x5'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ForetokenMetricsTargetDown
+        exp_alerts:
+          - exp_labels:
+              endpoint: http
+              inference_foretoken_io_frontend_service: quickstart
+              instance: 10.0.0.3:8080
+              namespace: foretoken-demo
+              pod: frontend-a
+              severity: warning
+            exp_annotations:
+              summary: Foretoken metrics target http cannot be scraped
+              description: Prometheus has failed to scrape http at 10.0.0.3:8080 in namespace foretoken-demo for 5 minutes. This checks metrics reachability, not request readiness or a confirmed user outage.
+              runbook_url: https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md
+
+  - name: frontend response-start 5xx alert ignores low traffic and recovers
+    interval: 1m
+    input_series:
+      - series: 'foretoken:frontend_http_response_start_5xx_ratio:rate5m{namespace="foretoken-demo",frontend_service="quickstart"}'
+        values: '0.10x10 0.01'
+      - series: 'foretoken:frontend_http_response_starts:rate5m{namespace="foretoken-demo",frontend_service="quickstart",method="POST",handler="/v1/chat/completions",status="2xx"}'
+        values: '0.10x11'
+      # A high ratio at less than 0.1 response starts/s is intentionally suppressed.
+      - series: 'foretoken:frontend_http_response_start_5xx_ratio:rate5m{namespace="foretoken-demo",frontend_service="low-traffic"}'
+        values: '0.50x11'
+      - series: 'foretoken:frontend_http_response_starts:rate5m{namespace="foretoken-demo",frontend_service="low-traffic",method="POST",handler="/v1/chat/completions",status="2xx"}'
+        values: '0.05x11'
+      # Exactly 5% remains below the strict ratio threshold.
+      - series: 'foretoken:frontend_http_response_start_5xx_ratio:rate5m{namespace="foretoken-demo",frontend_service="ratio-boundary"}'
+        values: '0.05x11'
+      - series: 'foretoken:frontend_http_response_starts:rate5m{namespace="foretoken-demo",frontend_service="ratio-boundary",method="POST",handler="/v1/chat/completions",status="2xx"}'
+        values: '0.20x11'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: ForetokenFrontendHTTPResponseStart5xxRatioHigh
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ForetokenFrontendHTTPResponseStart5xxRatioHigh
+        exp_alerts:
+          - exp_labels:
+              frontend_service: quickstart
+              namespace: foretoken-demo
+              severity: warning
+            exp_annotations:
+              summary: Frontend quickstart has elevated response-start 5xx errors
+              description: More than 5% of HTTP response starts for Frontend quickstart have been 5xx for 10 minutes with at least 0.1 response starts per second. Errors after a stream starts are not counted, so this is not an inference failure SLO.
+              runbook_url: https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md
+      - eval_time: 11m
+        alertname: ForetokenFrontendHTTPResponseStart5xxRatioHigh
+        exp_alerts: []
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="ForetokenFrontendHTTPResponseStart5xxRatioHigh",alertstate="pending"}'
+        eval_time: 9m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ForetokenFrontendHTTPResponseStart5xxRatioHigh",alertstate="pending",namespace="foretoken-demo",frontend_service="quickstart",severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="ForetokenFrontendHTTPResponseStart5xxRatioHigh",alertstate="firing"}'
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ForetokenFrontendHTTPResponseStart5xxRatioHigh",alertstate="firing",namespace="foretoken-demo",frontend_service="quickstart",severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="ForetokenFrontendHTTPResponseStart5xxRatioHigh"}'
+        eval_time: 11m
+        exp_samples: []
+
+  - name: scheduler backlog becomes pending, fires, and recovers
+    interval: 1m
+    input_series:
+      - series: 'foretoken:model_server_requests_waiting:sum{namespace="foretoken-demo",model_group="quickstart-decode",model_role="decode",pd_pipeline_scope="quickstart-pd",model_name="Qwen/Qwen3-0.6B"}'
+        values: '3x10 0'
+      - series: 'foretoken:model_server_requests_waiting:sum{namespace="foretoken-demo",model_group="idle",model_role="aggregate",model_name="Qwen/Qwen3-0.6B"}'
+        values: '0x11'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: ForetokenModelServerSchedulerBacklog
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ForetokenModelServerSchedulerBacklog
+        exp_alerts:
+          - exp_labels:
+              model_group: quickstart-decode
+              model_name: Qwen/Qwen3-0.6B
+              model_role: decode
+              namespace: foretoken-demo
+              pd_pipeline_scope: quickstart-pd
+              severity: warning
+            exp_annotations:
+              summary: vLLM scheduler backlog persists for model group quickstart-decode
+              description: The vLLM scheduler for quickstart-decode/decode has continuously had waiting stage requests for 10 minutes. This is not a user count or the Frontend admission queue.
+              runbook_url: https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md
+      - eval_time: 11m
+        alertname: ForetokenModelServerSchedulerBacklog
+        exp_alerts: []
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="ForetokenModelServerSchedulerBacklog",alertstate="pending"}'
+        eval_time: 9m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ForetokenModelServerSchedulerBacklog",alertstate="pending",namespace="foretoken-demo",model_group="quickstart-decode",model_role="decode",pd_pipeline_scope="quickstart-pd",model_name="Qwen/Qwen3-0.6B",severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="ForetokenModelServerSchedulerBacklog",alertstate="firing"}'
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ForetokenModelServerSchedulerBacklog",alertstate="firing",namespace="foretoken-demo",model_group="quickstart-decode",model_role="decode",pd_pipeline_scope="quickstart-pd",model_name="Qwen/Qwen3-0.6B",severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="ForetokenModelServerSchedulerBacklog"}'
+        eval_time: 11m
+        exp_samples: []
+
+  - name: kv-cache pressure becomes pending, fires at 95 percent, and recovers
+    interval: 1m
+    input_series:
+      - series: 'foretoken:model_server_kv_cache_usage_ratio:max{namespace="foretoken-demo",model_group="quickstart-decode",model_role="decode",pd_pipeline_scope="quickstart-pd",model_name="Qwen/Qwen3-0.6B"}'
+        values: '0.95x10 0.50'
+      - series: 'foretoken:model_server_kv_cache_usage_ratio:max{namespace="foretoken-demo",model_group="below-threshold",model_role="aggregate",model_name="Qwen/Qwen3-0.6B"}'
+        values: '0.949x11'
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: ForetokenModelServerKVCachePressureHigh
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ForetokenModelServerKVCachePressureHigh
+        exp_alerts:
+          - exp_labels:
+              model_group: quickstart-decode
+              model_name: Qwen/Qwen3-0.6B
+              model_role: decode
+              namespace: foretoken-demo
+              pd_pipeline_scope: quickstart-pd
+              severity: warning
+            exp_annotations:
+              summary: KV-cache pressure is high for model group quickstart-decode
+              description: The maximum KV-cache usage across vLLM engines in quickstart-decode/decode has stayed at or above 95% for 10 minutes. The engine contributing the maximum can change between evaluations.
+              runbook_url: https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md
+      - eval_time: 11m
+        alertname: ForetokenModelServerKVCachePressureHigh
+        exp_alerts: []
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="ForetokenModelServerKVCachePressureHigh",alertstate="pending"}'
+        eval_time: 9m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ForetokenModelServerKVCachePressureHigh",alertstate="pending",namespace="foretoken-demo",model_group="quickstart-decode",model_role="decode",pd_pipeline_scope="quickstart-pd",model_name="Qwen/Qwen3-0.6B",severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="ForetokenModelServerKVCachePressureHigh",alertstate="firing"}'
+        eval_time: 10m
+        exp_samples:
+          - labels: 'ALERTS{alertname="ForetokenModelServerKVCachePressureHigh",alertstate="firing",namespace="foretoken-demo",model_group="quickstart-decode",model_role="decode",pd_pipeline_scope="quickstart-pd",model_name="Qwen/Qwen3-0.6B",severity="warning"}'
+            value: 1
+      - expr: 'ALERTS{alertname="ForetokenModelServerKVCachePressureHigh"}'
+        eval_time: 11m
+        exp_samples: []

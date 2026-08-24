@@ -32,6 +32,9 @@ observability:
   prometheusRule:
     enabled: false
     additionalLabels: {}
+  alertingRule:
+    enabled: false
+    additionalLabels: {}
   grafanaDashboard:
     enabled: false
     additionalLabels:

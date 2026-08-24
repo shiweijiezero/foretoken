@@ -1,0 +1,19 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
+
+{{/* Installs Foretoken alert rules into an existing Prometheus Operator. */}}
+
+{{- if and .Values.observability.alertingRule .Values.observability.alertingRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "foretoken.compactName" (printf "%s-alerting-rules" (include "foretoken.fullname" .)) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+    {{- with .Values.observability.alertingRule.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+{{ .Files.Get "files/alerting-rules.yaml" | nindent 2 }}
+{{- end }}

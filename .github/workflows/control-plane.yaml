@@ -61,6 +61,20 @@ jobs:
             --entrypoint /bin/promtool \
             quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
             test rules observability/tests/recording-rules.test.yaml
+      - name: Validate Prometheus alerting rules
+        run: |
+          docker run --rm \
+            --volume "${PWD}:/workspace:ro" \
+            --workdir /workspace \
+            --entrypoint /bin/promtool \
+            quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
+            check rules deploy/charts/foretoken/files/alerting-rules.yaml
+          docker run --rm \
+            --volume "${PWD}:/workspace:ro" \
+            --workdir /workspace \
+            --entrypoint /bin/promtool \
+            quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
+            test rules observability/tests/alerting-rules.test.yaml
       - name: Validate Grafana dashboard
         run: |
           observability/tests/validate-grafana-dashboard.sh
@@ -126,9 +140,10 @@ jobs:
             --values deploy/platform-values.example.yaml \
             --set observability.serviceMonitor.enabled=true \
             --set observability.prometheusRule.enabled=true \
+            --set observability.alertingRule.enabled=true \
             --set observability.grafanaDashboard.enabled=true > /tmp/foretoken-observability.yaml
           test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability.yaml)" = "2"
-          test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability.yaml)" = "1"
+          test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability.yaml)" = "2"
           test "$(grep -c 'grafana_dashboard: "1"' /tmp/foretoken-observability.yaml)" = "1"
           grep -q 'port: http' /tmp/foretoken-observability.yaml
           grep -q 'port: model-server' /tmp/foretoken-observability.yaml
@@ -138,6 +153,11 @@ jobs:
           grep -q 'release: kube-prometheus' /tmp/foretoken-observability.yaml
           grep -q 'foretoken:frontend_http_response_starts:rate5m' /tmp/foretoken-observability.yaml
           grep -q 'foretoken:model_server_requests_waiting:sum' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenMetricsTargetDown' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenFrontendHTTPResponseStart5xxRatioHigh' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenModelServerSchedulerBacklog' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenModelServerKVCachePressureHigh' /tmp/foretoken-observability.yaml
+          grep -q 'observability/runbooks/alerts.md' /tmp/foretoken-observability.yaml
           grep -q 'foretoken-overview.json: |-' /tmp/foretoken-observability.yaml
           grep -q '"uid": "foretoken-overview"' /tmp/foretoken-observability.yaml
           grep -q '"title": "Foretoken / Overview"' /tmp/foretoken-observability.yaml
