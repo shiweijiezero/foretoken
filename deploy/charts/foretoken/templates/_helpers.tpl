@@ -47,6 +47,24 @@
 {{- end -}}
 {{- end }}
 
+{{/* Enables Prometheus Operator resources explicitly or when both required APIs are discoverable. */}}
+{{- define "foretoken.observabilityEnabled" -}}
+{{- if eq .Values.observability.mode "enabled" -}}
+true
+{{- else if and (eq .Values.observability.mode "auto") (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/ServiceMonitor") (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1/PrometheusRule") -}}
+true
+{{- else -}}
+false
+{{- end -}}
+{{- end }}
+
+{{- define "foretoken.observabilityLabels" -}}
+{{ include "foretoken.labels" . }}
+{{- with .Values.observability.additionalLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
 {{- define "foretoken.selectorLabels" -}}
 app.kubernetes.io/name: foretoken-control-plane
 app.kubernetes.io/instance: {{ .Release.Name }}

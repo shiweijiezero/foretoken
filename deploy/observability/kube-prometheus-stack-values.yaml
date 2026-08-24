@@ -11,3 +11,10 @@ prometheus:
     serviceMonitorNamespaceSelector:
       matchLabels:
         kubernetes.io/metadata.name: foretoken-platform
+    ruleSelectorNilUsesHelmValues: false
+    ruleSelector:
+      matchLabels:
+        app.kubernetes.io/name: foretoken-control-plane
+    ruleNamespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: foretoken-platform

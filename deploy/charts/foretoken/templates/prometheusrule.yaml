@@ -1,0 +1,16 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
+
+{{/* Installs Foretoken recording rules into an existing Prometheus Operator. */}}
+
+{{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "foretoken.compactName" (printf "%s-recording-rules" (include "foretoken.fullname" .)) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.observabilityLabels" . | nindent 4 }}
+spec:
+{{ .Files.Get "files/recording-rules.yaml" | nindent 2 }}
+{{- end }}

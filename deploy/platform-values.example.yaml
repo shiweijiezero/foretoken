@@ -26,10 +26,9 @@ frontend:
     namespace: gateway-system
     sectionName: https
 
-# Enable only when the cluster already provides the Prometheus Operator CRDs.
+# auto enables integration when the cluster provides the Prometheus Operator CRDs.
 observability:
-  serviceMonitor:
-    enabled: false
+  mode: auto
 
 runtime:
   vllm:

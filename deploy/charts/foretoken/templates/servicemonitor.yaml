@@ -1,7 +1,7 @@
 {{/* SPDX-License-Identifier: Apache-2.0 */}}
 {{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
 
-{{- if .Values.observability.serviceMonitor.enabled }}
+{{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
 {{- if .Values.frontend.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
@@ -9,7 +9,7 @@ metadata:
   name: {{ include "foretoken.compactName" (printf "%s-frontend" (include "foretoken.fullname" .)) }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "foretoken.labels" . | nindent 4 }}
+    {{- include "foretoken.observabilityLabels" . | nindent 4 }}
 spec:
   namespaceSelector:
     any: true
@@ -20,10 +20,10 @@ spec:
   endpoints:
     - port: http
       path: /metrics
-      {{- with $.Values.observability.serviceMonitor.interval }}
+      {{- with $.Values.observability.interval }}
       interval: {{ . | quote }}
       {{- end }}
-      {{- with $.Values.observability.serviceMonitor.scrapeTimeout }}
+      {{- with $.Values.observability.scrapeTimeout }}
       scrapeTimeout: {{ . | quote }}
       {{- end }}
   targetLabels:
@@ -36,7 +36,7 @@ metadata:
   name: {{ include "foretoken.compactName" (printf "%s-model-server" (include "foretoken.fullname" .)) }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "foretoken.labels" . | nindent 4 }}
+    {{- include "foretoken.observabilityLabels" . | nindent 4 }}
 spec:
   namespaceSelector:
     any: true
@@ -47,10 +47,10 @@ spec:
   endpoints:
     - port: model-server
       path: /metrics
-      {{- with $.Values.observability.serviceMonitor.interval }}
+      {{- with $.Values.observability.interval }}
       interval: {{ . | quote }}
       {{- end }}
-      {{- with $.Values.observability.serviceMonitor.scrapeTimeout }}
+      {{- with $.Values.observability.scrapeTimeout }}
       scrapeTimeout: {{ . | quote }}
       {{- end }}
   targetLabels:

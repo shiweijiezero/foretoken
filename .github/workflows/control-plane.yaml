@@ -47,6 +47,20 @@ jobs:
         run: make -C control-plane verify
       - name: Validate operator image
         run: docker build -f control-plane/Dockerfile -t foretoken-control-plane:test .
+      - name: Validate Prometheus recording rules
+        run: |
+          docker run --rm \
+            --volume "${PWD}:/workspace:ro" \
+            --workdir /workspace \
+            --entrypoint /bin/promtool \
+            quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
+            check rules deploy/charts/foretoken/files/recording-rules.yaml
+          docker run --rm \
+            --volume "${PWD}:/workspace:ro" \
+            --workdir /workspace \
+            --entrypoint /bin/promtool \
+            quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
+            test rules observability/tests/recording-rules.test.yaml
       - name: Create test cluster
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
@@ -58,7 +72,7 @@ jobs:
           helm template foretoken deploy/charts/foretoken --kube-version 1.36.3 > /tmp/foretoken.yaml
           grep -q '^kind: Deployment' /tmp/foretoken.yaml
           grep -q '^kind: ClusterRole' /tmp/foretoken.yaml
-          if grep -q '^kind: ServiceMonitor' /tmp/foretoken.yaml; then
+          if grep -Eq '^kind: (ServiceMonitor|PrometheusRule)' /tmp/foretoken.yaml; then
             exit 1
           fi
           if grep -q '^kind: CustomResourceDefinition' /tmp/foretoken.yaml; then
@@ -67,14 +81,27 @@ jobs:
           helm template foretoken deploy/charts/foretoken \
             --kube-version 1.36.3 \
             --set frontend.enabled=true \
-            --set observability.serviceMonitor.enabled=true \
-            --set observability.serviceMonitor.interval=30s \
-            --set observability.serviceMonitor.scrapeTimeout=10s \
+            --set observability.mode=enabled \
+            --set-string observability.additionalLabels.release=kube-prometheus-stack \
+            --set observability.interval=30s \
+            --set observability.scrapeTimeout=10s \
             > /tmp/foretoken-observability.yaml
           test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability.yaml)" = "2"
+          test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability.yaml)" = "1"
           test "$(grep -c 'path: /metrics' /tmp/foretoken-observability.yaml)" = "2"
           test "$(grep -c 'interval: \"30s\"' /tmp/foretoken-observability.yaml)" = "2"
           test "$(grep -c 'scrapeTimeout: \"10s\"' /tmp/foretoken-observability.yaml)" = "2"
+          test "$(grep -c 'release: kube-prometheus-stack' /tmp/foretoken-observability.yaml)" = "3"
+          grep -q 'foretoken:frontend_http_response_starts:rate5m' /tmp/foretoken-observability.yaml
+          grep -q 'foretoken:model_server_requests_waiting:sum' /tmp/foretoken-observability.yaml
+          helm template foretoken deploy/charts/foretoken \
+            --kube-version 1.36.3 \
+            --api-versions monitoring.coreos.com/v1/ServiceMonitor \
+            --api-versions monitoring.coreos.com/v1/PrometheusRule \
+            --set frontend.enabled=true \
+            > /tmp/foretoken-observability-auto.yaml
+          test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability-auto.yaml)" = "2"
+          test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability-auto.yaml)" = "1"
       - name: Validate operator lifecycle
         run: |
           kind load docker-image foretoken-control-plane:test --name foretoken

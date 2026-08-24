@@ -15,7 +15,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 启用指标采集
 
-集群需要 Prometheus Operator。已经有 Prometheus Operator 时直接复用；没有时，可以使用仓库提供的 values 配置文件安装 kube-prometheus-stack：
+Frontend 和 model-server 无需 Prometheus 即可提供 `/metrics`。如需采集这些指标并计算记录规则，可以复用已有 Prometheus Operator，也可以安装 kube-prometheus-stack：
 
 ```bash
 helm repo add prometheus-community \
@@ -30,36 +30,105 @@ helm upgrade --install kube-prometheus-stack \
   --wait
 ```
 
-允许 monitoring 命名空间访问 model-server 指标端口：
+为实际运行 Prometheus Pod 的命名空间添加标签，使其可以访问 model-server 指标：
 
 ```bash
-kubectl label namespace monitoring \
+PROMETHEUS_NAMESPACE=monitoring
+kubectl label namespace "${PROMETHEUS_NAMESPACE}" \
   inference.foretoken.io/metrics-scraper=true \
   --overwrite
 ```
 
-安装 Foretoken 时启用 ServiceMonitor：
+Operator CRD 建立后，在线安装 Foretoken 时，默认的 `auto` 模式会创建 ServiceMonitor 和 PrometheusRule：
+
+```bash
+helm upgrade --install foretoken \
+  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
+  --namespace foretoken-platform \
+  --create-namespace \
+  --set frontend.enabled=true \
+  --wait
+```
+
+对于已经安装的 Foretoken release，通过拥有该 release 的 Helm 生命周期启用接入：
+
+```bash
+helm upgrade foretoken \
+  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
+  --namespace foretoken-platform \
+  --reuse-values \
+  --set observability.mode=enabled \
+  --wait
+```
+
+在同一命令中使用 `disabled` 可删除 Chart 管理的监控资源。`--reuse-values` 只适用于已经使用 `observability.mode` 的 release；旧 release 必须先在 values 文件中替换 `observability.serviceMonitor`，再执行升级。
+
+`auto` 只在集群同时提供 `ServiceMonitor` 和 `PrometheusRule` API 时创建两种资源。离线渲染和 GitOps 应使用 `enabled`，并先安装 Operator CRD。只有需要覆盖 Prometheus 默认值时才设置 `interval` 或 `scrapeTimeout`。
+
+仓库提供的 kube-prometheus-stack values 配置文件默认从 `foretoken-platform` 命名空间选择 Foretoken 资源。复用其他 Prometheus 安装时，其 ServiceMonitor 与规则命名空间选择器必须包含 Foretoken release 所在命名空间。如果对象选择器要求平台自定义标签，可以为全部 Foretoken 监控资源统一添加：
 
 ```yaml
 observability:
-  serviceMonitor:
-    enabled: true
+  mode: enabled
+  additionalLabels:
+    release: your-prometheus-release
 ```
-
-ServiceMonitor 默认继承 Prometheus 的抓取间隔和超时。只有需要单独覆盖时才设置 `interval` 或 `scrapeTimeout`。
-
-仓库提供的 kube-prometheus-stack values 配置文件默认从 `foretoken-platform` 命名空间查找 Foretoken ServiceMonitor。平台使用其他命名空间时，请复制该文件并修改 `serviceMonitorNamespaceSelector`。
 
 ## 确认采集已启用
 
-```bash
-kubectl get pods --namespace monitoring
+先确认 Kubernetes 中存在预期资源：
 
-kubectl get servicemonitor -A \
+```bash
+kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
 ```
 
-Prometheus、Grafana 和 Alertmanager Pod 应处于 `Running`，并且启用的 Foretoken 组件应有对应的 ServiceMonitor。指标没有出现时，再检查 ServiceMonitor、Service 标签、命名端口和 Pod 的 `/metrics`，这些属于排障步骤，不是正常使用流程。
+使用仓库提供的 kube-prometheus-stack 安装时，将 Prometheus 转发到本机：
+
+```bash
+kubectl port-forward \
+  --namespace monitoring \
+  service/kube-prometheus-stack-prometheus \
+  9090:9090
+```
+
+在 Prometheus 的 <http://127.0.0.1:9090/targets> 确认 Foretoken target 为 `UP`，并在 <http://127.0.0.1:9090/rules> 确认 `foretoken.recording` 已加载。服务收到请求后，可以查询记录指标：
+
+```bash
+curl --get http://127.0.0.1:9090/api/v1/query \
+  --data-urlencode 'query=foretoken:model_server_requests_running:sum'
+```
+
+仅看到 Kubernetes 对象并不能证明 Prometheus 已选择 Monitor 或加载规则。复用平台已有 Prometheus 时，使用该平台原有的访问方式执行相同的 target、rule 和查询检查。
+
+## 关闭或移除接入
+
+设置 `observability.mode=disabled` 或卸载 Foretoken，只会删除 Foretoken release 管理的 ServiceMonitor 和 PrometheusRule，不会卸载 Prometheus、Prometheus Operator、Grafana 或 Alertmanager。没有其他 Foretoken workload 需要该 Prometheus 安装时，可以移除命名空间标签：
+
+```bash
+kubectl label namespace monitoring \
+  inference.foretoken.io/metrics-scraper-
+```
+
+Prometheus 运行在其他命名空间时，替换命令中的 `monitoring`。
+
+## 记录规则
+
+可选的 PrometheusRule 在 Frontend 和 model-server 原始指标之上提供稳定、低基数的查询：
+
+| 记录规则 | 含义 |
+| --- | --- |
+| `foretoken:frontend_http_response_starts:rate5m` | 按 method、handler 和状态类别区分的 Frontend HTTP 响应开始速率 |
+| `foretoken:frontend_http_response_start_5xx_ratio:rate5m` | Frontend 响应开始时的 5xx 比例；不是推理失败率 |
+| `foretoken:model_server_prompt_tokens:rate5m` | 每秒处理的输入 token 数 |
+| `foretoken:model_server_generation_tokens:rate5m` | 每秒生成的输出 token 数 |
+| `foretoken:model_server_requests_running:sum` | 当前运行中的请求数 |
+| `foretoken:model_server_requests_waiting:sum` | vLLM 调度器中当前等待的请求数 |
+| `foretoken:model_server_kv_cache_usage_ratio:max` | 最高 KV Cache 使用比例 |
+
+规则保留 namespace、Frontend 服务、模型组与角色、模型名称和可选的 Prefill/Decode pipeline scope。计数器先按原始序列计算可处理重置的五分钟速率，再执行聚合。model-server 样本缺失时结果保持缺失，实际观测到的 gauge 零值仍保持为零。
+
+Frontend HTTP 状态在响应开始时记录。后续流式传输失败时状态仍可能是 `2xx`，因此响应开始时的 5xx 比例不能作为面向用户的推理成功率 SLO。
 
 ## 指标来源
 
