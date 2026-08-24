@@ -29,6 +29,9 @@ observability:
     additionalLabels: {}
     interval: 30s
     scrapeTimeout: 10s
+  prometheusRule:
+    enabled: false
+    additionalLabels: {}
   prometheus:
     # Namespace containing the Prometheus server Pods.
     namespace: ""

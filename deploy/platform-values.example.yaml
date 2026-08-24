@@ -23,6 +23,12 @@ observability:
     additionalLabels:
       # Match the platform Prometheus serviceMonitorSelector.
       release: kube-prometheus
+  prometheusRule:
+    # Enable with serviceMonitor after the platform Prometheus selects this namespace.
+    enabled: false
+    additionalLabels:
+      # Match the platform Prometheus ruleSelector.
+      release: kube-prometheus
   prometheus:
     namespace: monitoring
 

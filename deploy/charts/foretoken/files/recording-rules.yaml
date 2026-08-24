@@ -1,0 +1,151 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Defines the stable, low-cardinality Prometheus query layer for Foretoken.
+
+groups:
+  - name: foretoken.recording
+    rules:
+      - record: foretoken:frontend_http_response_starts:rate5m
+        expr: |
+          sum by (namespace, frontend_service, method, handler, status) (
+            label_replace(
+              rate(http_requests_total{
+                endpoint="http",
+                inference_foretoken_io_frontend_service!=""
+              }[5m]),
+              "frontend_service", "$1",
+              "inference_foretoken_io_frontend_service", "(.+)"
+            )
+          )
+
+      # This is the HTTP response-start 5xx ratio, not an inference failure ratio.
+      - record: foretoken:frontend_http_response_start_5xx_ratio:rate5m
+        expr: |
+          (
+            sum by (namespace, frontend_service) (
+              foretoken:frontend_http_response_starts:rate5m{status="5xx"}
+            )
+            or
+            0 * sum by (namespace, frontend_service) (
+              foretoken:frontend_http_response_starts:rate5m
+            )
+          )
+          /
+          sum by (namespace, frontend_service) (
+            foretoken:frontend_http_response_starts:rate5m
+          )
+          and
+          sum by (namespace, frontend_service) (
+            foretoken:frontend_http_response_starts:rate5m
+          ) > 0
+
+      - record: foretoken:model_server_prompt_tokens:rate5m
+        expr: |
+          sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name) (
+            label_replace(
+              label_replace(
+                label_replace(
+                  rate(vllm:prompt_tokens_total{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1",
+                  "inference_foretoken_io_model_group", "(.+)"
+                ),
+                "model_role", "$1",
+                "inference_foretoken_io_model_role", "(.+)"
+              ),
+              "pd_pipeline_scope", "$1",
+              "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_generation_tokens:rate5m
+        expr: |
+          sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name) (
+            label_replace(
+              label_replace(
+                label_replace(
+                  rate(vllm:generation_tokens_total{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1",
+                  "inference_foretoken_io_model_group", "(.+)"
+                ),
+                "model_role", "$1",
+                "inference_foretoken_io_model_role", "(.+)"
+              ),
+              "pd_pipeline_scope", "$1",
+              "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_requests_running:sum
+        expr: |
+          sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name) (
+            label_replace(
+              label_replace(
+                label_replace(
+                  vllm:num_requests_running{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  },
+                  "model_group", "$1",
+                  "inference_foretoken_io_model_group", "(.+)"
+                ),
+                "model_role", "$1",
+                "inference_foretoken_io_model_role", "(.+)"
+              ),
+              "pd_pipeline_scope", "$1",
+              "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_requests_waiting:sum
+        expr: |
+          sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name) (
+            label_replace(
+              label_replace(
+                label_replace(
+                  vllm:num_requests_waiting{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  },
+                  "model_group", "$1",
+                  "inference_foretoken_io_model_group", "(.+)"
+                ),
+                "model_role", "$1",
+                "inference_foretoken_io_model_role", "(.+)"
+              ),
+              "pd_pipeline_scope", "$1",
+              "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_kv_cache_usage_ratio:max
+        expr: |
+          max by (namespace, model_group, model_role, pd_pipeline_scope, model_name) (
+            label_replace(
+              label_replace(
+                label_replace(
+                  vllm:kv_cache_usage_perc{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  },
+                  "model_group", "$1",
+                  "inference_foretoken_io_model_group", "(.+)"
+                ),
+                "model_role", "$1",
+                "inference_foretoken_io_model_role", "(.+)"
+              ),
+              "pd_pipeline_scope", "$1",
+              "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )

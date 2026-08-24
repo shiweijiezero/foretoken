@@ -11,6 +11,7 @@ on:
       - control-plane/**
       - deploy/charts/foretoken/**
       - deploy/platform-values.example.yaml
+      - observability/**
       - .dockerignore
       - LICENSE
       - .github/workflows/control-plane.yaml
@@ -21,6 +22,7 @@ on:
       - control-plane/**
       - deploy/charts/foretoken/**
       - deploy/platform-values.example.yaml
+      - observability/**
       - .dockerignore
       - LICENSE
       - .github/workflows/control-plane.yaml
@@ -45,6 +47,20 @@ jobs:
         run: make -C control-plane verify
       - name: Validate operator image
         run: docker build -f control-plane/Dockerfile -t foretoken-control-plane:test .
+      - name: Validate Prometheus recording rules
+        run: |
+          docker run --rm \
+            --volume "${PWD}:/workspace:ro" \
+            --workdir /workspace \
+            --entrypoint /bin/promtool \
+            quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
+            check rules deploy/charts/foretoken/files/recording-rules.yaml
+          docker run --rm \
+            --volume "${PWD}:/workspace:ro" \
+            --workdir /workspace \
+            --entrypoint /bin/promtool \
+            quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
+            test rules observability/tests/recording-rules.test.yaml
       - name: Create test cluster
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
         with:
@@ -63,6 +79,9 @@ jobs:
           grep -q '^kind: Deployment' /tmp/foretoken.yaml
           grep -q '^kind: ClusterRole' /tmp/foretoken.yaml
           if grep -q '^kind: ServiceMonitor' /tmp/foretoken.yaml; then
+            exit 1
+          fi
+          if grep -q '^kind: PrometheusRule' /tmp/foretoken.yaml; then
             exit 1
           fi
           if grep -q -- '--metrics-scrape-namespace=' /tmp/foretoken.yaml; then
@@ -90,14 +109,18 @@ jobs:
           helm template foretoken deploy/charts/foretoken \
             --kube-version 1.36.3 \
             --values deploy/platform-values.example.yaml \
-            --set observability.serviceMonitor.enabled=true > /tmp/foretoken-observability.yaml
+            --set observability.serviceMonitor.enabled=true \
+            --set observability.prometheusRule.enabled=true > /tmp/foretoken-observability.yaml
           test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability.yaml)" = "2"
+          test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability.yaml)" = "1"
           grep -q 'port: http' /tmp/foretoken-observability.yaml
           grep -q 'port: model-server' /tmp/foretoken-observability.yaml
           grep -q 'inference.foretoken.io/frontend-service' /tmp/foretoken-observability.yaml
           grep -q 'inference.foretoken.io/model-group' /tmp/foretoken-observability.yaml
           test "$(grep -c 'path: /metrics' /tmp/foretoken-observability.yaml)" = "2"
           grep -q 'release: kube-prometheus' /tmp/foretoken-observability.yaml
+          grep -q 'foretoken:frontend_http_response_starts:rate5m' /tmp/foretoken-observability.yaml
+          grep -q 'foretoken:model_server_requests_waiting:sum' /tmp/foretoken-observability.yaml
           grep -q -- '--metrics-scrape-namespace=monitoring' /tmp/foretoken-observability.yaml
       - name: Validate operator materialization lifecycle
         run: |

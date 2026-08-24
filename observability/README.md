@@ -22,6 +22,10 @@ observability:
       release: kube-prometheus
     interval: 30s
     scrapeTimeout: 10s
+  prometheusRule:
+    enabled: true
+    additionalLabels:
+      release: kube-prometheus
   prometheus:
     namespace: monitoring
 ```
@@ -34,8 +38,48 @@ model-server NetworkPolicy. That rule trusts the namespace rather than a
 specific Prometheus Pod selector, so only trusted monitoring workloads should
 run in that namespace.
 
+The `prometheusRule.additionalLabels` value independently matches the platform
+Prometheus `ruleSelector`; its `ruleNamespaceSelector` must select the Helm
+release namespace. Both resources are disabled by default, so a cluster without
+the Prometheus Operator CRDs can still install the chart.
+
 The existing versioned JSON telemetry endpoints remain the autoscaler's data
 source; Prometheus is not part of the autoscaling control loop.
+
+## Recording rules
+
+The optional PrometheusRule turns raw producer series into a stable query layer.
+It removes Pod and engine identity while retaining bounded workload dimensions:
+
+| Recording rule | Meaning |
+| --- | --- |
+| `foretoken:frontend_http_response_starts:rate5m` | Frontend HTTP responses started per second, split by method, handler, and status class |
+| `foretoken:frontend_http_response_start_5xx_ratio:rate5m` | Frontend HTTP response-start 5xx fraction; not an inference failure ratio |
+| `foretoken:model_server_prompt_tokens:rate5m` | Prompt tokens processed per second across replicas and engines |
+| `foretoken:model_server_generation_tokens:rate5m` | Generation tokens processed per second across replicas and engines |
+| `foretoken:model_server_requests_running:sum` | Requests currently running across replicas and engines |
+| `foretoken:model_server_requests_waiting:sum` | Requests currently waiting in the vLLM scheduler |
+| `foretoken:model_server_kv_cache_usage_ratio:max` | Highest KV-cache usage ratio across replicas and engines |
+
+The rules normalize Kubernetes discovery labels to `frontend_service`,
+`model_group`, `model_role`, and optional `pd_pipeline_scope`. The scope keeps
+the prefill and decode groups of one P/D pipeline correlatable. Counter rules
+use a reset-aware five-minute `rate()`. Missing model-server samples remain
+missing instead of being converted to zero.
+
+Token counters are rated per raw Pod/engine series before aggregation, so a
+single process reset cannot create a negative fleet rate. A new counter series
+needs at least two samples; one missed scrape can still be evaluated from the
+remaining five-minute window. Real gauge zero remains zero, while an entirely
+missing input remains absent. Target liveness continues to use the raw `up`
+series.
+
+Frontend HTTP status and duration are observed when the response object starts.
+A later streaming failure can still have status `2xx`, so the response-start
+5xx ratio must not be used as a user-visible inference success SLO. Native vLLM
+latency histograms are intentionally left out of this first rule set until their
+measurement boundaries are validated for each API and workflow, or
+Foretoken-owned stream-boundary metrics are exposed.
 
 ## Verify the integration
 
@@ -48,6 +92,9 @@ kubectl get servicemonitor -A \
 
 kubectl get servicemonitor -A \
   -l release=kube-prometheus -o wide
+
+kubectl get prometheusrule -A \
+  -l app.kubernetes.io/name=foretoken-control-plane -o wide
 ```
 
 Then inspect the active Prometheus targets. Adjust the namespace and Service
@@ -77,10 +124,20 @@ curl -sS -G http://127.0.0.1:9090/api/v1/query \
   --data-urlencode 'query=up{namespace="<workload-namespace>",endpoint=~"http|model-server"}' | jq
 
 curl -sS -G http://127.0.0.1:9090/api/v1/query \
-  --data-urlencode 'query=sum by (pod) (rate(http_requests_total{namespace="<workload-namespace>",endpoint="http"}[5m]))' | jq
+  --data-urlencode 'query=foretoken:frontend_http_response_starts:rate5m{namespace="<workload-namespace>"}' | jq
 
 curl -sS -G http://127.0.0.1:9090/api/v1/query \
-  --data-urlencode 'query=sum by (pod) (vllm:num_requests_running{namespace="<workload-namespace>",endpoint="model-server"})' | jq
+  --data-urlencode 'query=foretoken:model_server_requests_running:sum{namespace="<workload-namespace>"}' | jq
+```
+
+Validate rule syntax and calculations before deploying changes:
+
+```bash
+promtool check rules \
+  deploy/charts/foretoken/files/recording-rules.yaml
+
+promtool test rules \
+  observability/tests/recording-rules.test.yaml
 ```
 
 An `UP` target means Prometheus successfully scraped `/metrics`; it is not the

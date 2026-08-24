@@ -1,6 +1,6 @@
 # Foretoken Metrics Contract
 
-Status: MVP implementation draft
+Status: MVP implemented; evolving contract
 
 This document records Foretoken metric boundaries and the initial
 implementation defaults. The contract can evolve through code review and
@@ -14,8 +14,9 @@ come from platform exporters.
 
 Prometheus is an observability dependency, not part of the autoscaling control
 loop. Autoscaling continues to use the existing versioned JSON telemetry APIs.
-Dashboards, alerts, notification delivery, tracing, Torch Profiler, and Nsight
-are separate follow-up changes.
+ServiceMonitors and the initial recording-rule query layer are implemented as
+optional Helm resources. Dashboards, alerts, notification delivery, tracing,
+Torch Profiler, and Nsight are separate follow-up changes.
 
 ## Measurement boundaries
 
@@ -120,14 +121,16 @@ Dashboard queries must handle multiple replicas, rollouts, and stale targets.
 ## Platform integration
 
 The MVP exposes `/metrics` on the existing model-server internal listener. It
-does not add a separate port or broaden the Service's external exposure.
+does not add a separate port or publish the path through the external Gateway.
 
 Foretoken integrates with the platform's existing Prometheus Operator, Grafana,
-and Alertmanager. The repository does not deploy another monitoring stack. A
-later PR can add ServiceMonitor or PodMonitor resources and adjust NetworkPolicy
-or the metrics listener if deployment experience requires it.
+and Alertmanager. The repository does not deploy another monitoring stack. The
+optional ServiceMonitors discover Frontend and model-server Services, and the
+model-server NetworkPolicy admits the configured monitoring namespace on the
+existing internal port. The optional PrometheusRule provides the first stable,
+low-cardinality query layer over those raw series.
 
-## First code PR acceptance criteria
+## Model-server producer PR acceptance criteria
 
 - `/metrics` is available whenever the existing model-server HTTP server is
   running, independent of admission open or closed state.
@@ -140,7 +143,6 @@ or the metrics listener if deployment experience requires it.
 
 ## Non-blocking follow-up decisions
 
-- Select stable Kubernetes labels for ServiceMonitor or PodMonitor queries.
 - Decide whether operational experience warrants a native-family allowlist.
 - Decide which Foretoken-owned admission and stage metrics should be registered.
 - Define Frontend TTFT, stream E2E, and terminal outcomes before implementing

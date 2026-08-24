@@ -98,6 +98,7 @@
       "type": "object",
       "required": [
         "serviceMonitor",
+        "prometheusRule",
         "prometheus"
       ],
       "properties": {
@@ -126,6 +127,24 @@
             "scrapeTimeout": {
               "type": "string",
               "minLength": 1
+            }
+          }
+        },
+        "prometheusRule": {
+          "type": "object",
+          "required": [
+            "enabled",
+            "additionalLabels"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "additionalLabels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
             }
           }
         },
