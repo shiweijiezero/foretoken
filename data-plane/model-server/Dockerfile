@@ -8,9 +8,10 @@
 
 ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye
 ARG INFERENCE_ENGINE_IMAGE
-ARG ENGINE_FEATURES=backend-vllm
 
 FROM ${RUST_BUILDER_IMAGE} AS builder
+
+ARG ENGINE_FEATURES=backend-vllm
 
 WORKDIR /workspace
 

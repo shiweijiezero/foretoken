@@ -203,10 +203,7 @@ mod tests {
     fn accepts_max_model_len() {
         let mut good = plan();
         good.extra_args = vec!["--max-model-len=8192".into()];
-        assert!(
-            good.validate().is_ok(),
-            "--max-model-len was rejected"
-        );
+        assert!(good.validate().is_ok(), "--max-model-len was rejected");
         let args = good.render_args().unwrap();
         assert!(args.contains(&"--max-model-len=8192".to_string()));
     }
