@@ -115,7 +115,7 @@ helm upgrade --install foretoken \
 
 ### 2. 部署模型服务
 
-`examples/quickstart` 提供一套可直接使用的前端和模型服务配置：
+`examples/quickstart` 提供一套可直接使用的 frontend 和单模型配置。如需运行双模型并验证 queue autoscaling，请参阅 [多模型 Quick Start](examples/multi-model-quickstart/README_zh.md)。
 
 ```bash
 kubectl apply --server-side -k examples/quickstart

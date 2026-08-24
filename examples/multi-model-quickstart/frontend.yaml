@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Frontend shared by both model services.
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: FrontendService
+metadata:
+  name: multi-model-frontend
+spec:
+  replicas: 2
+  resources:
+    requests:
+      cpu: "2"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  timeouts:
+    request: 10m
+    streamIdle: 5m
+  routerPipeline:
+    filter: allow_all
+    scorer: least_loaded
+    picker: round_robin

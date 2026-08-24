@@ -115,7 +115,7 @@ helm upgrade --install foretoken \
 
 ### 2. Deploy the model service
 
-`examples/quickstart` provides a ready-to-use frontend and model service configuration:
+`examples/quickstart` provides a ready-to-use frontend and single-model configuration. For two models with queue-based autoscaling, see [Multi-Model Quick Start](examples/multi-model-quickstart/README.md).
 
 ```bash
 kubectl apply --server-side -k examples/quickstart
