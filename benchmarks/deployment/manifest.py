@@ -21,7 +21,6 @@ class DeploymentError(RuntimeError):
 class DeploymentResources:
     """Public serving resources rendered from one deployment configuration."""
 
-    path: Path
     namespace: str
     frontend: str
     hostname: str
@@ -87,7 +86,6 @@ def parse_deployment(path: Path, rendered: str) -> DeploymentResources:
         raise DeploymentError("FrontendService requires metadata.name")
     hostname = str((frontend.get("spec") or {}).get("hostname") or "").strip()
     return DeploymentResources(
-        path=path,
         namespace=next(iter(namespaces)),
         frontend=name,
         hostname=hostname,
