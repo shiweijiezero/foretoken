@@ -21,7 +21,7 @@ DATA_PLANE_PACKAGES := \
 	foretoken-tracing
 DATA_PLANE_FMT_PACKAGES := $(foreach package,$(DATA_PLANE_PACKAGES),--package $(package))
 
-.PHONY: vllm-source build-data-plane verify-data-plane \
+.PHONY: vllm-source build-data-plane verify-data-plane dev-build dev-deploy \
 	image-frontend image-model-server image-benchmark
 
 vllm-source:
@@ -43,6 +43,12 @@ verify-data-plane: vllm-source
 	cargo check --manifest-path data-plane/Cargo.toml --workspace --locked
 	cargo test --manifest-path data-plane/Cargo.toml --workspace --locked
 	cargo clippy --manifest-path data-plane/Cargo.toml --workspace --all-targets --locked -- -D warnings
+
+dev-build:
+	./deploy/dev-build
+
+dev-deploy:
+	./deploy/dev-deploy
 
 image-frontend: vllm-source
 	docker build -f data-plane/frontend/Dockerfile -t foretoken-frontend:dev .

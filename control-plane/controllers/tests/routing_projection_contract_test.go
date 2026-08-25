@@ -6,7 +6,9 @@ package tests
 import (
 	"context"
 	"encoding/json"
+	"net/url"
 	"slices"
+	"strings"
 	"testing"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -14,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kubevalidation "k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -32,7 +35,7 @@ func TestInvalidPDRouteWithdrawsOnlyItsService(t *testing.T) {
 	aggregate := modelService("aggregate", 1)
 	aggregatePool := modelPool(aggregate, "aggregate-pool", 1)
 	aggregatePool.Spec.Template.Features.Tools = true
-	aggregateGroup := modelGroup(aggregatePool, "aggregate-r1-0", 0)
+	aggregateGroup := modelGroup(aggregatePool, "quickstart-qwen3-0.6b-default-revision-1-default-0", 0)
 	aggregateGroup.Spec.Features.Tools = true
 	markPoolRoutingReady(aggregatePool, "r1")
 	markServiceRoutingReady(aggregate, aggregatePool)
@@ -65,8 +68,10 @@ func TestInvalidPDRouteWithdrawsOnlyItsService(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertRoutingCounts(t, ctx, c, frontend.Namespace, 1, 2)
+	assertSnapshotPoolTargets(t, ctx, c, frontend.Namespace)
 	assertAdmissionSetSizes(t, ctx, c, frontend.Namespace, map[string][]int{aggregate.Spec.Model: {1}, pd.Spec.Model: {2}})
 	assertSnapshotModelCapability(t, ctx, c, frontend.Namespace, aggregate.Spec.Model, "tool_calling")
+	assertSnapshotGroupEndpoint(t, ctx, c, frontend.Namespace, aggregateGroup)
 
 	// A new split-role spec must not reinterpret the previously committed aggregate cohort.
 	currentAggregate := get(t, ctx, c, client.ObjectKeyFromObject(aggregate), new(inferencev1alpha1.ModelService))
@@ -132,6 +137,73 @@ func assertRoutingCounts(t *testing.T, ctx context.Context, c client.Client, nam
 	}
 	if len(decoded.Groups) != groups || len(decoded.PDComponents) != pdComponents {
 		t.Fatalf("routing counts = groups:%d pd:%d; snapshot = %s", len(decoded.Groups), len(decoded.PDComponents), payload)
+	}
+}
+
+func assertSnapshotGroupEndpoint(t *testing.T, ctx context.Context, c client.Client, namespace string, group *inferencev1alpha1.ModelGroup) {
+	t.Helper()
+	var decoded struct {
+		Groups []struct {
+			RouteTargetID string `json:"route_target_id"`
+			Endpoint      string `json:"endpoint"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal([]byte(servingSnapshotPayload(t, ctx, c, namespace)), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range decoded.Groups {
+		if entry.RouteTargetID != string(group.UID) {
+			continue
+		}
+		endpoint, err := url.Parse(entry.Endpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		serviceName := strings.Split(endpoint.Hostname(), ".")[0]
+		if errors := kubevalidation.IsDNS1035Label(serviceName); len(errors) != 0 || serviceName == group.Name {
+			t.Fatalf("routing endpoint %q does not use a DNS-1035 Service name: %v", entry.Endpoint, errors)
+		}
+		return
+	}
+	t.Fatalf("routing endpoint for Group %q was not published", group.Name)
+}
+
+func assertSnapshotPoolTargets(t *testing.T, ctx context.Context, c client.Client, namespace string) {
+	t.Helper()
+	var decoded struct {
+		Models []struct {
+			AdmissionTargetSets [][]struct {
+				Name string `json:"name"`
+				UID  string `json:"uid"`
+			} `json:"admission_target_sets"`
+		} `json:"models"`
+		Groups []struct {
+			PoolName string `json:"pool_name"`
+			PoolUID  string `json:"pool_uid"`
+		} `json:"groups"`
+		PDComponents []struct {
+			PoolName string `json:"pool_name"`
+			PoolUID  string `json:"pool_uid"`
+		} `json:"pd_components"`
+	}
+	if err := json.Unmarshal([]byte(servingSnapshotPayload(t, ctx, c, namespace)), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	targets := make(map[string]map[string]struct{})
+	for _, model := range decoded.Models {
+		for _, set := range model.AdmissionTargetSets {
+			for _, target := range set {
+				if targets[target.UID] == nil {
+					targets[target.UID] = make(map[string]struct{})
+				}
+				targets[target.UID][target.Name] = struct{}{}
+			}
+		}
+	}
+	for _, route := range append(decoded.Groups, decoded.PDComponents...) {
+		if _, exists := targets[route.PoolUID][route.PoolName]; !exists {
+			t.Fatalf("route Pool target %q/%q is absent from admission target sets", route.PoolUID, route.PoolName)
+		}
 	}
 }
 

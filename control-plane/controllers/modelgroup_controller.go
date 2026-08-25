@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -25,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	kubevalidation "k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -315,11 +317,41 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	}, nil
 }
 
+func dns1035NamePart(value string) string {
+	return strings.Trim(strings.Map(func(character rune) rune {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' {
+			return character
+		}
+		return '-'
+	}, strings.ToLower(value)), "-")
+}
+
+func modelGroupServiceName(group *inferencev1alpha1.ModelGroup) string {
+	if len(kubevalidation.IsDNS1035Label(group.Name)) == 0 {
+		return group.Name
+	}
+
+	prefix := dns1035NamePart(group.Name)
+	if prefix == "" {
+		prefix = "group"
+	}
+	identity := strings.ReplaceAll(dns1035NamePart(string(group.UID)), "-", "")
+	if identity == "" {
+		identity = "group"
+	}
+	const serviceNamePrefix = "mg-"
+	prefixLimit := kubevalidation.DNS1035LabelMaxLength - len(serviceNamePrefix) - len(identity) - 1
+	if len(prefix) > prefixLimit {
+		prefix = strings.TrimRight(prefix[:prefixLimit], "-")
+	}
+	return serviceNamePrefix + prefix + "-" + identity
+}
+
 func (reconciler *ModelGroupReconciler) reconcileService(ctx context.Context, group *inferencev1alpha1.ModelGroup) error {
 	labels := modelGroupLabels(group)
 	desired := &corev1.Service{
 		TypeMeta:   metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "Service"},
-		ObjectMeta: metav1.ObjectMeta{Name: group.Name, Namespace: group.Namespace, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: modelGroupServiceName(group), Namespace: group.Namespace, Labels: labels},
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeClusterIP,
 			Selector: labels,

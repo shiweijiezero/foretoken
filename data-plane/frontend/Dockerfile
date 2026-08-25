@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
@@ -17,11 +18,19 @@ RUN apt-get update \
 
 COPY data-plane/ ./data-plane/
 
-RUN cargo build --locked --release \
-    --manifest-path data-plane/Cargo.toml \
-    --package foretoken-frontend
+RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=foretoken-cargo-target,target=/workspace/data-plane/target,sharing=locked \
+    cargo build --locked --release \
+      --manifest-path data-plane/Cargo.toml \
+      --package foretoken-frontend \
+    && install -Dm755 \
+      data-plane/target/release/foretoken-frontend \
+      /out/foretoken-frontend
 
 FROM ${RUNTIME_IMAGE}
+
+LABEL org.opencontainers.image.source="https://github.com/shiweijiezero/foretoken"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates ffmpeg libssl1.1 \
@@ -30,7 +39,7 @@ RUN apt-get update \
     && mkdir -p /var/cache/foretoken \
     && chown -R 65532:65532 /var/cache/foretoken
 
-COPY --from=builder /workspace/data-plane/target/release/foretoken-frontend /usr/local/bin/foretoken-frontend
+COPY --from=builder /out/foretoken-frontend /usr/local/bin/foretoken-frontend
 
 ENV HF_HOME=/var/cache/foretoken/huggingface
 

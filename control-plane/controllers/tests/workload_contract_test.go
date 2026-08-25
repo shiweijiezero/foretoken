@@ -14,6 +14,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kubevalidation "k8s.io/apimachinery/pkg/util/validation"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -52,6 +53,45 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		current := get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.ModelGroup))
 		if condition := meta.FindStatusCondition(current.Status.Conditions, "WorkloadMaterialized"); condition == nil || condition.Status != metav1.ConditionTrue {
 			t.Fatalf("group status = %#v", current.Status)
+		}
+	})
+	t.Run("service name accepts model group names containing dots", func(t *testing.T) {
+		service := modelService("quickstart-qwen3-0.6b", 1)
+		pool := modelPool(service, "quickstart-qwen3-0.6b-default", 1)
+		group := modelGroup(pool, "quickstart-qwen3-0.6b-default-revision-1-default-0", 0)
+		c := controllerClient(t, service, pool, group)
+		r := &controllers.ModelGroupReconciler{Client: c, ControlPlaneNamespace: "foretoken-system"}
+		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(group)}
+		for range 2 {
+			if _, err := r.Reconcile(ctx, request); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		deployment := get(t, ctx, c, request.NamespacedName, new(appsv1.Deployment))
+		if deployment.Name != group.Name {
+			t.Fatalf("deployment name = %q, want %q", deployment.Name, group.Name)
+		}
+		var services corev1.ServiceList
+		if err := c.List(ctx, &services, client.InNamespace(group.Namespace), client.MatchingLabels{"inference.foretoken.io/model-group": group.Name}); err != nil {
+			t.Fatal(err)
+		}
+		if len(services.Items) != 1 {
+			t.Fatalf("services = %#v", services.Items)
+		}
+		serviceName := services.Items[0].Name
+		if errors := kubevalidation.IsDNS1035Label(serviceName); len(errors) != 0 || serviceName == group.Name {
+			t.Fatalf("service name %q is not a DNS-1035 fallback: %v", serviceName, errors)
+		}
+		if _, err := r.Reconcile(ctx, request); err != nil {
+			t.Fatal(err)
+		}
+		var current corev1.ServiceList
+		if err := c.List(ctx, &current, client.InNamespace(group.Namespace), client.MatchingLabels{"inference.foretoken.io/model-group": group.Name}); err != nil {
+			t.Fatal(err)
+		}
+		if len(current.Items) != 1 || current.Items[0].Name != serviceName {
+			t.Fatalf("service name changed after reconcile: %#v", current.Items)
 		}
 	})
 	t.Run("prefill workload includes PD runtime network and RDMA contract", func(t *testing.T) {

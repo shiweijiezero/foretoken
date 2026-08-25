@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Queue-autoscaled Qwen model service.
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: multi-model-qwen3-0.6b
+spec:
+  model: Qwen/Qwen3-0.6B
+  backend: vllm
+  replicas: 1
+  autoscaling:
+    algorithm: queue
+    minGroups: 1
+    maxGroups: 3
+    targetQueuePerRoutableGroup: 0
+    trigger:
+      algorithm: periodic
+      interval: 5s
+    adjustment:
+      algorithm: step
+      maxScaleUpGroups: 1
+      maxScaleDownGroups: 1
+  nodes: 1
+  resources:
+    requests:
+      cpu: "4"
+      memory: 48Gi
+      gpu:
+        count: 1
+    limits:
+      cpu: "8"
+      memory: 64Gi
+  timeouts:
+    startup: 10m
+    drain: 2m
+  parallelism:
+    tp: 1
+    pp: 1
+    pcp: 1
+    dcp: 1
+  extraArgs:
+    - --max-model-len=32768

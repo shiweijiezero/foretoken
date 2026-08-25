@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# shellcheck source=dev-deploy-lib.sh
+source "$ROOT/deploy/dev-deploy-lib.sh"
+cd "$ROOT"
+
+TAG=${TAG:-latest}
+CLUSTER=${CLUSTER:-}
+KIND_CLUSTER=${KIND_CLUSTER:-}
+KIND_CONFIG=${KIND_CONFIG:-}
+REGISTRY=${REGISTRY:-}
+RELEASE=${RELEASE:-foretoken}
+PLATFORM_NAMESPACE=${PLATFORM_NAMESPACE:-foretoken-platform}
+WORKLOAD_NAMESPACE=${WORKLOAD_NAMESPACE:-foretoken-demo}
+FRONTEND_MODE=${FRONTEND_MODE:-local}
+DEV_TIMEOUT=${DEV_TIMEOUT:-15m}
+INFERENCE_ENGINE_IMAGE=${INFERENCE_ENGINE_IMAGE:-ghcr.io/shiweijiezero/foretoken/model-server:0.0.1}
+IMAGE_PULL_SECRET=${IMAGE_PULL_SECRET:-}
+LOCAL_IMAGE_PREFIX=${LOCAL_IMAGE_PREFIX:-foretoken-dev}
+K3D_CONFIG=${K3D_CONFIG:-$ROOT/deploy/k3d/config.yaml}
+
+for command in docker helm kubectl make; do
+  command -v "$command" >/dev/null || {
+    printf 'missing required command: %s\n' "$command" >&2
+    exit 1
+  }
+done
+KUBECONFIG_TMP=
+cleanup() {
+  if [[ -n "$KUBECONFIG_TMP" ]]; then
+    rm -f "$KUBECONFIG_TMP"
+  fi
+}
+trap cleanup EXIT
+
+if [[ -n "$CLUSTER" && -n "$KIND_CLUSTER" ]]; then
+  printf 'set either CLUSTER or KIND_CLUSTER, not both\n' >&2
+  exit 1
+fi
+
+if [[ -z "$CLUSTER" && -z "$KIND_CLUSTER" ]]; then
+  current_context=$(kubectl config current-context 2>/dev/null || true)
+  if [[ "$current_context" == kind-* ]]; then
+    KIND_CLUSTER=${current_context#kind-}
+  elif [[ "$current_context" == k3d-* ]]; then
+    CLUSTER=${current_context#k3d-}
+  fi
+fi
+
+LOCAL_CLUSTER=
+CLUSTER_CREATED=false
+if [[ -n "$KIND_CLUSTER" ]]; then
+  command -v kind >/dev/null || {
+    printf 'missing required command: kind\n' >&2
+    exit 1
+  }
+  if ! kind get clusters 2>/dev/null | grep -Fxq "$KIND_CLUSTER"; then
+    kind_args=(create cluster --name "$KIND_CLUSTER")
+    if [[ -n "$KIND_CONFIG" ]]; then
+      [[ -f "$KIND_CONFIG" ]] || {
+        printf 'kind config not found: %s\n' "$KIND_CONFIG" >&2
+        exit 1
+      }
+      kind_args+=(--config "$KIND_CONFIG")
+    fi
+    kind "${kind_args[@]}"
+  fi
+  KUBECONFIG_TMP=$(mktemp)
+  kind get kubeconfig --name "$KIND_CLUSTER" >"$KUBECONFIG_TMP"
+  export KUBECONFIG=$KUBECONFIG_TMP
+  LOCAL_CLUSTER=kind
+elif [[ -n "$CLUSTER" ]]; then
+  command -v k3d >/dev/null || {
+    printf 'missing required command: k3d\n' >&2
+    exit 1
+  }
+  if ! k3d cluster get "$CLUSTER" >/dev/null 2>&1; then
+    create_k3d_cluster
+  fi
+  KUBECONFIG_TMP=$(mktemp)
+  k3d kubeconfig get "$CLUSTER" >"$KUBECONFIG_TMP"
+  export KUBECONFIG=$KUBECONFIG_TMP
+  if [[ "$CLUSTER_CREATED" == true ]]; then
+    kubectl apply -f \
+      https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.4/deployments/static/nvidia-device-plugin.yml
+    kubectl set env daemonset/nvidia-device-plugin-daemonset \
+      --namespace kube-system \
+      NVIDIA_VISIBLE_DEVICES="$GPU_INDICES"
+    kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
+      --namespace kube-system \
+      --timeout 3m
+  fi
+  LOCAL_CLUSTER=k3d
+else
+  [[ -n "$REGISTRY" ]] || {
+    printf 'set REGISTRY for the Kubernetes deployment\n' >&2
+    exit 1
+  }
+fi
+
+if [[ -n "$REGISTRY" ]]; then
+  REGISTRY=${REGISTRY%/}
+  IMAGE_MODE=registry
+else
+  IMAGE_MODE=import
+fi
+
+CONTROL_PLANE_IMAGE="$LOCAL_IMAGE_PREFIX-control-plane:$TAG"
+FRONTEND_IMAGE="$LOCAL_IMAGE_PREFIX-frontend:$TAG"
+MODEL_SERVER_IMAGE="$LOCAL_IMAGE_PREFIX-model-server:$TAG"
+
+CONTROL_PLANE_BEFORE=$(image_id "$CONTROL_PLANE_IMAGE")
+FRONTEND_BEFORE=$(image_id "$FRONTEND_IMAGE")
+MODEL_SERVER_BEFORE=$(image_id "$MODEL_SERVER_IMAGE")
+
+build_dev_images
+
+CONTROL_PLANE_AFTER=$(image_id "$CONTROL_PLANE_IMAGE")
+FRONTEND_AFTER=$(image_id "$FRONTEND_IMAGE")
+MODEL_SERVER_AFTER=$(image_id "$MODEL_SERVER_IMAGE")
+
+CONTROL_PLANE_CHANGED=false
+FRONTEND_CHANGED=false
+MODEL_SERVER_CHANGED=false
+[[ "$CONTROL_PLANE_BEFORE" != "$CONTROL_PLANE_AFTER" ]] && CONTROL_PLANE_CHANGED=true
+[[ "$FRONTEND_BEFORE" != "$FRONTEND_AFTER" ]] && FRONTEND_CHANGED=true
+[[ "$MODEL_SERVER_BEFORE" != "$MODEL_SERVER_AFTER" ]] && MODEL_SERVER_CHANGED=true
+
+RELEASE_EXISTS=false
+if helm status "$RELEASE" --namespace "$PLATFORM_NAMESPACE" >/dev/null 2>&1; then
+  RELEASE_EXISTS=true
+else
+  CONTROL_PLANE_CHANGED=true
+  FRONTEND_CHANGED=true
+  MODEL_SERVER_CHANGED=true
+fi
+
+if [[ "$RELEASE_EXISTS" == true ]]; then
+  CURRENT_CONTROL_PLANE_IMAGE=$(deployment_image "$PLATFORM_NAMESPACE" "app.kubernetes.io/instance=$RELEASE,app.kubernetes.io/name=foretoken-control-plane")
+  CURRENT_FRONTEND_IMAGE=$(deployment_image "$WORKLOAD_NAMESPACE" "inference.foretoken.io/frontend-service")
+  CURRENT_MODEL_SERVER_IMAGE=$(deployment_image "$WORKLOAD_NAMESPACE" "inference.foretoken.io/model-group")
+  if [[ "$IMAGE_MODE" == import ]]; then
+    [[ "$CURRENT_CONTROL_PLANE_IMAGE" != "$CONTROL_PLANE_IMAGE" ]] && CONTROL_PLANE_CHANGED=true
+    if [[ -n "$CURRENT_FRONTEND_IMAGE" ]]; then
+      [[ "$CURRENT_FRONTEND_IMAGE" != "$FRONTEND_IMAGE" ]] && FRONTEND_CHANGED=true
+    fi
+    if [[ -n "$CURRENT_MODEL_SERVER_IMAGE" ]]; then
+      [[ "$CURRENT_MODEL_SERVER_IMAGE" != "$MODEL_SERVER_IMAGE" ]] && MODEL_SERVER_CHANGED=true
+    fi
+  else
+    [[ "$CURRENT_CONTROL_PLANE_IMAGE" != "$REGISTRY/control-plane:"* ]] && CONTROL_PLANE_CHANGED=true
+    if [[ -n "$CURRENT_FRONTEND_IMAGE" ]]; then
+      [[ "$CURRENT_FRONTEND_IMAGE" != "$REGISTRY/frontend:"* ]] && FRONTEND_CHANGED=true
+    fi
+    if [[ -n "$CURRENT_MODEL_SERVER_IMAGE" ]]; then
+      [[ "$CURRENT_MODEL_SERVER_IMAGE" != "$REGISTRY/model-server:"* ]] && MODEL_SERVER_CHANGED=true
+    fi
+  fi
+fi
+
+CONTROL_PLANE_DEPLOY_IMAGE=$CONTROL_PLANE_IMAGE
+FRONTEND_DEPLOY_IMAGE=$FRONTEND_IMAGE
+MODEL_SERVER_DEPLOY_IMAGE=$MODEL_SERVER_IMAGE
+
+if [[ "$IMAGE_MODE" == import ]]; then
+  changed_images=()
+  [[ "$CONTROL_PLANE_CHANGED" == true ]] && changed_images+=("$CONTROL_PLANE_IMAGE")
+  [[ "$FRONTEND_CHANGED" == true ]] && changed_images+=("$FRONTEND_IMAGE")
+  [[ "$MODEL_SERVER_CHANGED" == true ]] && changed_images+=("$MODEL_SERVER_IMAGE")
+  if ((${#changed_images[@]} > 0)); then
+    if [[ "$LOCAL_CLUSTER" == kind ]]; then
+      kind load docker-image --name "$KIND_CLUSTER" "${changed_images[@]}"
+    else
+      k3d image import --cluster "$CLUSTER" "${changed_images[@]}"
+    fi
+  fi
+else
+  DEPLOY_HOST=$(hostname -s | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_.-')
+  DEPLOY_HOST=${DEPLOY_HOST:-host}
+  DEPLOY_TAG=${DEPLOY_TAG:-dev-$(date +%Y%m%d%H%M%S)-$DEPLOY_HOST-$BASHPID}
+  if [[ "$CONTROL_PLANE_CHANGED" == true ]]; then
+    CONTROL_PLANE_DEPLOY_IMAGE="$REGISTRY/control-plane:$DEPLOY_TAG"
+    docker tag "$CONTROL_PLANE_IMAGE" "$CONTROL_PLANE_DEPLOY_IMAGE"
+    docker push "$CONTROL_PLANE_DEPLOY_IMAGE"
+  fi
+  if [[ "$FRONTEND_CHANGED" == true ]]; then
+    FRONTEND_DEPLOY_IMAGE="$REGISTRY/frontend:$DEPLOY_TAG"
+    docker tag "$FRONTEND_IMAGE" "$FRONTEND_DEPLOY_IMAGE"
+    docker push "$FRONTEND_DEPLOY_IMAGE"
+  fi
+  if [[ "$MODEL_SERVER_CHANGED" == true ]]; then
+    MODEL_SERVER_DEPLOY_IMAGE="$REGISTRY/model-server:$DEPLOY_TAG"
+    docker tag "$MODEL_SERVER_IMAGE" "$MODEL_SERVER_DEPLOY_IMAGE"
+    docker push "$MODEL_SERVER_DEPLOY_IMAGE"
+  fi
+fi
+
+helm_args=(
+  upgrade --install "$RELEASE" "$ROOT/deploy/charts/foretoken"
+  --namespace "$PLATFORM_NAMESPACE"
+  --wait --timeout "$DEV_TIMEOUT"
+  --debug
+)
+
+if [[ "$RELEASE_EXISTS" == true ]]; then
+  helm_args+=(--reuse-values)
+else
+  helm_args+=(--create-namespace)
+fi
+helm_args+=(
+  --set frontend.enabled=true
+  --set "frontend.mode=$FRONTEND_MODE"
+)
+if [[ "$FRONTEND_MODE" == gateway ]]; then
+  helm_args+=(--set frontend.gateway.create=true)
+fi
+if [[ -n "$IMAGE_PULL_SECRET" ]]; then
+  helm_args+=(
+    --set "imagePullSecrets[0].name=$IMAGE_PULL_SECRET"
+    --set "workload.imagePullSecrets[0].name=$IMAGE_PULL_SECRET"
+  )
+fi
+
+if [[ "$IMAGE_MODE" == import ]]; then
+  helm_args+=(
+    --set "image.repository=${CONTROL_PLANE_DEPLOY_IMAGE%:*}"
+    --set "image.tag=$TAG"
+    --set image.pullPolicy=Never
+    --set "frontend.image=$FRONTEND_DEPLOY_IMAGE"
+    --set "runtime.vllm.image=$MODEL_SERVER_DEPLOY_IMAGE"
+  )
+else
+  if [[ "$CONTROL_PLANE_CHANGED" == true ]]; then
+    helm_args+=(
+      --set "image.repository=${CONTROL_PLANE_DEPLOY_IMAGE%:*}"
+      --set "image.tag=${CONTROL_PLANE_DEPLOY_IMAGE##*:}"
+      --set image.pullPolicy=IfNotPresent
+    )
+  fi
+  [[ "$FRONTEND_CHANGED" == true ]] && helm_args+=(--set "frontend.image=$FRONTEND_DEPLOY_IMAGE")
+  [[ "$MODEL_SERVER_CHANGED" == true ]] && helm_args+=(--set "runtime.vllm.image=$MODEL_SERVER_DEPLOY_IMAGE")
+fi
+
+helm "${helm_args[@]}"
+
+if [[ "$IMAGE_MODE" == import && "$RELEASE_EXISTS" == true && "$CONTROL_PLANE_CHANGED" == true ]]; then
+  restart_deployments "$PLATFORM_NAMESPACE" "app.kubernetes.io/instance=$RELEASE,app.kubernetes.io/name=foretoken-control-plane"
+fi
+
+if [[ "$RELEASE_EXISTS" == true ]]; then
+  if [[ "$IMAGE_MODE" == import ]]; then
+    [[ "$FRONTEND_CHANGED" == true ]] && restart_deployments "$WORKLOAD_NAMESPACE" "inference.foretoken.io/frontend-service"
+    [[ "$MODEL_SERVER_CHANGED" == true ]] && restart_deployments "$WORKLOAD_NAMESPACE" "inference.foretoken.io/model-group"
+  else
+    [[ "$FRONTEND_CHANGED" == true ]] && wait_for_deployment_image "$WORKLOAD_NAMESPACE" "inference.foretoken.io/frontend-service" "$FRONTEND_DEPLOY_IMAGE"
+    [[ "$MODEL_SERVER_CHANGED" == true ]] && wait_for_deployment_image "$WORKLOAD_NAMESPACE" "inference.foretoken.io/model-group" "$MODEL_SERVER_DEPLOY_IMAGE"
+  fi
+fi
+
+printf 'Foretoken deployment completed.\n'
+printf 'Changed images: control-plane=%s frontend=%s model-server=%s\n' \
+  "$CONTROL_PLANE_CHANGED" "$FRONTEND_CHANGED" "$MODEL_SERVER_CHANGED"

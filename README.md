@@ -31,7 +31,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ## Quick Start
 
-Choose one access mode when installing the Foretoken platform. The deployment and benchmark steps below are the same in both modes.
+Foretoken supports local and gateway access modes. Local mode exposes the frontend directly through a `LoadBalancer` Service and suits local or lab clusters. Gateway mode provides a shared hostname through the Gateway API and suits clusters that already use Kubernetes Gateway or need centralized ingress management. After choosing a mode, the service deployment and benchmark steps are the same.
 
 ### 1. Install Foretoken
 
@@ -44,7 +44,8 @@ helm upgrade --install foretoken \
   --create-namespace \
   --set frontend.enabled=true \
   --set frontend.mode=local \
-  --wait
+  --wait \
+  --debug
 ```
 
 #### Gateway mode
@@ -63,7 +64,8 @@ helm upgrade --install envoy-gateway \
   oci://docker.io/envoyproxy/gateway-helm \
   --namespace envoy-gateway-system \
   --create-namespace \
-  --wait
+  --wait \
+  --debug
 ```
 
 Then let the Foretoken Chart create a dedicated `GatewayClass` and `Gateway`:
@@ -76,7 +78,8 @@ helm upgrade --install foretoken \
   --set frontend.enabled=true \
   --set frontend.mode=gateway \
   --set frontend.gateway.create=true \
-  --wait
+  --wait \
+  --debug
 ```
 
 If the platform already has a suitable `Gateway`, first list its name and namespace:
@@ -92,19 +95,27 @@ NAMESPACE        NAME
 gateway-system   inference-gateway
 ```
 
-Do not set `frontend.gateway.create=true`. Instead, use these values in the Foretoken installation command above:
+To reuse this Gateway, install Foretoken with the complete command below:
 
 ```bash
---set frontend.gateway.name=inference-gateway \
---set frontend.gateway.namespace=gateway-system \
---set frontend.gateway.sectionName=https
+helm upgrade --install foretoken \
+  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
+  --namespace foretoken-platform \
+  --create-namespace \
+  --set frontend.enabled=true \
+  --set frontend.mode=gateway \
+  --set frontend.gateway.name=inference-gateway \
+  --set frontend.gateway.namespace=gateway-system \
+  --set frontend.gateway.sectionName=https \
+  --wait \
+  --debug
 ```
 
 `name` comes from the `NAME` column, `namespace` from `NAMESPACE`, and `sectionName` is the listener name selected from that Gateway. The Gateway must allow `HTTPRoute` resources from the frontend namespace; DNS and TLS remain owned by the platform Gateway.
 
 ### 2. Deploy the model service
 
-`examples/quickstart` provides a ready-to-use frontend and model service configuration:
+`examples/quickstart` provides a ready-to-use frontend and single-model configuration. For two models with queue-based autoscaling, see [Multi-Model Quick Start](examples/multi-model-quickstart/README.md).
 
 ```bash
 kubectl apply --server-side -k examples/quickstart
@@ -120,9 +131,49 @@ kubectl wait --for=condition=Ready \
   modelservice/quickstart-qwen3-0.6b
 ```
 
-### 4. Benchmark the model service
+### 4. Send a generation request
 
-Install the Foretoken Benchmark CLI from this checkout:
+#### Local mode
+
+Read the frontend address and send the request:
+
+```bash
+kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' \
+  --namespace foretoken-demo \
+  --timeout=5m \
+  service/quickstart-frontend
+
+FORETOKEN_FRONTEND_ADDRESS=$(kubectl get service quickstart-frontend \
+  --namespace foretoken-demo \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')
+
+curl --fail-with-body --no-buffer \
+  "http://${FORETOKEN_FRONTEND_ADDRESS}:8080/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+```
+
+#### Gateway mode
+
+For the Chart-created HTTP Gateway, read its address and send the configured hostname:
+
+```bash
+FORETOKEN_GATEWAY_ADDRESS=$(kubectl get gateway foretoken-gateway \
+  --namespace foretoken-platform \
+  -o jsonpath='{.status.addresses[0].value}')
+
+curl --fail-with-body --no-buffer \
+  "http://${FORETOKEN_GATEWAY_ADDRESS}/v1/chat/completions" \
+  -H "Host: foretoken.example.com" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+```
+
+When reusing a platform Gateway, use that Gateway's configured hostname, port, and TLS settings.
+
+### 5. Benchmark service throughput
+
+Install the Foretoken Benchmark CLI from this project path:
 
 ```bash
 python -m pip install ./benchmarks
@@ -185,18 +236,40 @@ kubectl delete crd \
   modelgroups.inference.foretoken.io
 ```
 
-## Install from Source
+## Deploy from Source
 
-Use the local Chart from a source checkout:
+To validate local source changes or build and manage your own Foretoken images, choose one of the following image distribution methods. `make dev-deploy` builds the source images and installs or updates the Foretoken platform; deploy the Quick Start with separate commands. See [Deploy Foretoken from Source](docs/custom-deployment.md) for complete instructions.
+
+### Import local images directly
+
+Use Kind to create the cluster, import the images, and deploy the platform when validating the control plane, CRDs, frontend, and scheduling behavior:
 
 ```bash
-helm upgrade --install foretoken ./deploy/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=local \
-  --wait
+KIND_CLUSTER=foretoken-local make dev-deploy
 ```
+
+To run a GPU model service, select the available GPUs as described in [Deploy Foretoken with k3d](docs/k3d-deployment.md), then run:
+
+```bash
+CLUSTER=foretoken-local GPU_INDICES=0 make dev-deploy
+```
+
+### Distribute through an OCI registry
+
+An OCI registry can distribute locally built images to Kubernetes nodes:
+
+```bash
+export GITHUB_USER=your-github-user
+export REGISTRY="ghcr.io/$GITHUB_USER/foretoken-dev"
+docker login ghcr.io
+REGISTRY="$REGISTRY" make dev-deploy
+```
+
+After the platform deployment completes, explicitly run the Quick Start commands under “Deploy the model service” and “Wait for serving to become ready” to start the example frontend and model service.
+
+## Deploy with k3d
+
+To create an isolated single-machine cluster for development and testing with a selected set of GPUs, see [Deploy Foretoken with k3d](docs/k3d-deployment.md).
 
 ## Related Projects
 

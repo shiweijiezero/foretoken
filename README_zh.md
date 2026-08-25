@@ -31,7 +31,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-安装 Foretoken 平台时选择一种访问模式即可；后续部署与评测步骤相同。
+Foretoken 支持本地模式和网关模式。本地模式通过 `LoadBalancer` Service 直接提供 frontend 地址，适合本地集群或实验室环境；网关模式通过 Gateway API 和域名提供统一入口，适合已经使用 Kubernetes Gateway 或需要统一管理对外流量的集群。选择一种模式安装后，后续服务部署和评测步骤相同。
 
 ### 1. 安装 Foretoken
 
@@ -44,7 +44,8 @@ helm upgrade --install foretoken \
   --create-namespace \
   --set frontend.enabled=true \
   --set frontend.mode=local \
-  --wait
+  --wait \
+  --debug
 ```
 
 #### 网关模式
@@ -63,7 +64,8 @@ helm upgrade --install envoy-gateway \
   oci://docker.io/envoyproxy/gateway-helm \
   --namespace envoy-gateway-system \
   --create-namespace \
-  --wait
+  --wait \
+  --debug
 ```
 
 然后让 Foretoken Chart 创建专用的 `GatewayClass` 和 `Gateway`：
@@ -76,7 +78,8 @@ helm upgrade --install foretoken \
   --set frontend.enabled=true \
   --set frontend.mode=gateway \
   --set frontend.gateway.create=true \
-  --wait
+  --wait \
+  --debug
 ```
 
 如果平台已经有可用的 `Gateway`，可以先查看它的名称和 namespace：
@@ -92,19 +95,27 @@ NAMESPACE        NAME
 gateway-system   inference-gateway
 ```
 
-此时不设置 `frontend.gateway.create=true`，而是在上述 Foretoken 安装命令中改用：
+如果复用这个 Gateway，使用以下完整命令安装 Foretoken：
 
 ```bash
---set frontend.gateway.name=inference-gateway \
---set frontend.gateway.namespace=gateway-system \
---set frontend.gateway.sectionName=https
+helm upgrade --install foretoken \
+  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
+  --namespace foretoken-platform \
+  --create-namespace \
+  --set frontend.enabled=true \
+  --set frontend.mode=gateway \
+  --set frontend.gateway.name=inference-gateway \
+  --set frontend.gateway.namespace=gateway-system \
+  --set frontend.gateway.sectionName=https \
+  --wait \
+  --debug
 ```
 
 其中 `name` 对应 `NAME` 列，`namespace` 对应 `NAMESPACE` 列，`sectionName` 是该 Gateway 中目标 listener 的名称。该 Gateway 必须允许前端服务所在 namespace 的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
 
 ### 2. 部署模型服务
 
-`examples/quickstart` 提供一套可直接使用的前端和模型服务配置：
+`examples/quickstart` 提供一套可直接使用的 frontend 和单模型配置。如需运行双模型并验证 queue autoscaling，请参阅 [多模型 Quick Start](examples/multi-model-quickstart/README_zh.md)。
 
 ```bash
 kubectl apply --server-side -k examples/quickstart
@@ -120,9 +131,49 @@ kubectl wait --for=condition=Ready \
   modelservice/quickstart-qwen3-0.6b
 ```
 
-### 4. 评测模型服务
+### 4. 发送生成请求进行测试
 
-先从当前仓库安装 Foretoken Benchmark CLI：
+#### 本地模式
+
+读取前端服务的访问地址并发送请求：
+
+```bash
+kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' \
+  --namespace foretoken-demo \
+  --timeout=5m \
+  service/quickstart-frontend
+
+FORETOKEN_FRONTEND_ADDRESS=$(kubectl get service quickstart-frontend \
+  --namespace foretoken-demo \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')
+
+curl --fail-with-body --no-buffer \
+  "http://${FORETOKEN_FRONTEND_ADDRESS}:8080/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
+```
+
+#### 网关模式
+
+使用 Chart 创建的 HTTP 网关时，读取网关地址并携带配置的域名：
+
+```bash
+FORETOKEN_GATEWAY_ADDRESS=$(kubectl get gateway foretoken-gateway \
+  --namespace foretoken-platform \
+  -o jsonpath='{.status.addresses[0].value}')
+
+curl --fail-with-body --no-buffer \
+  "http://${FORETOKEN_GATEWAY_ADDRESS}/v1/chat/completions" \
+  -H "Host: foretoken.example.com" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
+```
+
+复用平台已有网关时，使用该网关实际配置的域名、端口和 TLS。
+
+### 5. 评测服务吞吐
+
+先从当前项目路径安装 Foretoken Benchmark CLI：
 
 ```bash
 python -m pip install ./benchmarks
@@ -134,7 +185,7 @@ python -m pip install ./benchmarks
 foretoken bench examples/quickstart
 ```
 
-如果要评测已经运行的 OpenAI-compatible 服务，则显式提供地址和模型：
+如果要评测已经运行的 OpenAI API 兼容服务，则显式提供地址和模型：
 
 ```bash
 foretoken bench \
@@ -181,18 +232,40 @@ kubectl delete crd \
   modelgroups.inference.foretoken.io
 ```
 
-## 从源码安装
+## 从源码部署
 
-使用源码目录中的本地 Chart：
+需要验证本地源码修改，或希望自行构建和管理 Foretoken 镜像时，可以选择以下镜像分发方式。`make dev-deploy` 构建源码镜像并安装或更新 Foretoken 平台；Quick Start 使用独立命令部署。完整说明参见 [从源码部署 Foretoken](docs/custom-deployment_zh.md)。
+
+### 直接导入本地镜像
+
+使用 Kind 验证 control-plane、CRD、frontend 和调度逻辑时，创建 cluster、导入镜像并部署平台：
 
 ```bash
-helm upgrade --install foretoken ./deploy/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=local \
-  --wait
+KIND_CLUSTER=foretoken-local make dev-deploy
 ```
+
+需要运行 GPU 模型服务时，按 [使用 k3d 部署 Foretoken](docs/k3d-deployment_zh.md) 指定可用 GPU，然后运行：
+
+```bash
+CLUSTER=foretoken-local GPU_INDICES=0 make dev-deploy
+```
+
+### 通过 OCI registry 分发
+
+OCI registry 可以将本地构建的镜像分发给 Kubernetes 节点：
+
+```bash
+export GITHUB_USER=your-github-user
+export REGISTRY="ghcr.io/$GITHUB_USER/foretoken-dev"
+docker login ghcr.io
+REGISTRY="$REGISTRY" make dev-deploy
+```
+
+平台部署完成后，如需启动示例 frontend 和模型服务，显式执行上方 Quick Start 中的“部署模型服务”和“等待服务就绪”命令。
+
+## 使用 k3d 部署
+
+希望在一台机器上为开发测试快速创建独立 cluster，并限定该 cluster 可以使用的 GPU 时，请参阅 [使用 k3d 部署 Foretoken](docs/k3d-deployment_zh.md)。
 
 ## 相关项目
 
