@@ -46,7 +46,7 @@ func TestCompileRejectsUnsupportedTopologies(t *testing.T) {
 
 func TestCompileExtraArgsBoundary(t *testing.T) {
 	template := testTemplate()
-	template.ExtraArgs = []inferencev1alpha1.BackendArg{"--max-total-tokens=8192", "--disable-radix-cache", "--max-model-len=32768"}
+	template.ExtraArgs = []inferencev1alpha1.BackendArg{"--max-total-tokens=8192", "--disable-radix-cache", "--context-length=32768"}
 	if config, err := Compile(template); err != nil || len(config.ExtraArgs) != 3 {
 		t.Fatalf("valid extraArgs = %#v, err = %v", config.ExtraArgs, err)
 	}
@@ -57,7 +57,7 @@ func TestCompileExtraArgsBoundary(t *testing.T) {
 		{"--max-total-tokens=1", "--max-total-tokens=2"},
 		{"--disable-radix-cache=1"},
 		{"--max-total-tokens"},
-		{"--max-model-len"},
+		{"--max-model-len=32768"},
 	} {
 		template.ExtraArgs = args
 		if _, err := Compile(template); err == nil {

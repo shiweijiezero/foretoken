@@ -57,7 +57,6 @@ var sglangValueArgs = map[string]bool{
 	"--chunked-prefill-size": true,
 	"--schedule-policy":      true,
 	"--attention-backend":    true,
-	"--max-model-len":        true,
 }
 
 var sglangBoolArgs = map[string]bool{

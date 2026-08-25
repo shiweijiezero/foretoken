@@ -38,7 +38,7 @@ pub struct SglangLaunchPlan {
     /// Data-parallel size.
     #[serde(default = "default_dp")]
     pub dp: usize,
-    /// GPU memory fraction, forwarded to `--mem-fraction`.
+    /// GPU memory fraction, forwarded to `--mem-fraction-static`.
     #[serde(rename = "memFraction", default)]
     pub mem_fraction: Option<f64>,
     /// Loopback HTTP port for the SGLang server.
@@ -112,14 +112,14 @@ impl SglangLaunchPlan {
             format!("--model-path={}", self.model),
             "--host=127.0.0.1".to_string(),
             format!("--port={}", self.port),
-            format!("--tp={}", self.tp),
-            format!("--dp={}", self.dp),
+            format!("--tp-size={}", self.tp),
+            format!("--dp-size={}", self.dp),
         ];
         if let Some(revision) = &self.revision {
             args.push(format!("--revision={revision}"));
         }
         if let Some(fraction) = self.mem_fraction {
-            args.push(format!("--mem-fraction={fraction}"));
+            args.push(format!("--mem-fraction-static={fraction}"));
         }
         args.extend(self.extra_args.iter().cloned());
         Ok(args)
@@ -134,7 +134,6 @@ fn validate_extra_args(args: &[String]) -> Result<(), String> {
         "--chunked-prefill-size",
         "--schedule-policy",
         "--attention-backend",
-        "--max-model-len",
     ];
     const BOOL_FLAGS: &[&str] = &["--disable-radix-cache", "--enable-torch-compile"];
     let mut seen = HashSet::new();
@@ -195,22 +194,27 @@ mod tests {
         assert!(args.contains(&"--model-path=Qwen/Qwen3-0.6B".to_string()));
         assert!(args.contains(&"--host=127.0.0.1".to_string()));
         assert!(args.contains(&"--port=30000".to_string()));
-        assert!(args.contains(&"--tp=1".to_string()));
-        assert!(args.contains(&"--dp=1".to_string()));
+        assert!(args.contains(&"--tp-size=1".to_string()));
+        assert!(args.contains(&"--dp-size=1".to_string()));
     }
 
     #[test]
-    fn accepts_max_model_len() {
+    fn accepts_context_length() {
         let mut good = plan();
-        good.extra_args = vec!["--max-model-len=8192".into()];
-        assert!(good.validate().is_ok(), "--max-model-len was rejected");
+        good.extra_args = vec!["--context-length=8192".into()];
+        assert!(good.validate().is_ok(), "--context-length was rejected");
         let args = good.render_args().unwrap();
-        assert!(args.contains(&"--max-model-len=8192".to_string()));
+        assert!(args.contains(&"--context-length=8192".to_string()));
     }
 
     #[test]
     fn rejects_invalid_extra_args() {
-        for argument in ["--unknown=1", "--max-total-tokens", "--max_total_tokens=1"] {
+        for argument in [
+            "--unknown=1",
+            "--max-total-tokens",
+            "--max_total_tokens=1",
+            "--max-model-len=8192",
+        ] {
             let mut bad = plan();
             bad.extra_args = vec![argument.into()];
             assert!(bad.validate().is_err(), "{argument} was accepted");
