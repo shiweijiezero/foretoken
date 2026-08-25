@@ -53,6 +53,12 @@ verify-data-plane: vllm-source
 	cargo test --manifest-path data-plane/Cargo.toml --workspace --locked
 	cargo clippy --manifest-path data-plane/Cargo.toml --workspace --all-targets --locked -- -D warnings
 
+dev-build:
+	./deploy/dev-build
+
+dev-deploy:
+	./deploy/dev-deploy
+
 image-frontend: vllm-source
 	docker build -f data-plane/frontend/Dockerfile -t foretoken-frontend:dev .
 
