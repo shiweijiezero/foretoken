@@ -39,6 +39,16 @@ Benchmark a Foretoken service that has already been deployed with Kubernetes. Th
 foretoken bench examples/quickstart
 ```
 
+Sampling options follow `vllm bench serve`. Use the common flags directly and `--extra-body` for any other request fields supported by the endpoint:
+
+```bash
+foretoken bench examples/quickstart \
+  --temperature 0 \
+  --top-p 1 \
+  --top-k 0 \
+  --extra-body '{"seed":7,"min_tokens":8}'
+```
+
 Benchmark an existing endpoint with a fixed prompt:
 
 ```bash

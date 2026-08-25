@@ -128,7 +128,7 @@ class Runner(ABC):
         """Dispatch requests with closed/open-loop concurrency and optional rate pacing."""
         generation = self.config.generation
         max_tokens = generation.max_tokens
-        temperature = generation.temperature
+        extra_body = generation.request_overrides()
 
         request_count = len(requests)
         has_pacing = rate != -1 and rate > 0
@@ -148,8 +148,8 @@ class Runner(ABC):
                     messages=request.get("messages"),
                     tools=request.get("tools"),
                     max_tokens=max_tokens,
-                    temperature=temperature,
                     stream=generation.stream,
+                    extra_body=extra_body,
                 )
                 results[index] = result
             finally:

@@ -96,11 +96,34 @@ class LoadConfig:
 
 @dataclass
 class GenerationConfig:
-    """Sampling / generation parameters."""
+    """Sampling and generation parameters for each request."""
 
     max_tokens: int = 128
-    temperature: float = 0.0
     stream: bool = True
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    min_p: Optional[float] = None
+    temperature: Optional[float] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    repetition_penalty: Optional[float] = None
+    extra_body: dict[str, Any] = field(default_factory=dict)
+
+    def request_overrides(self) -> dict[str, Any]:
+        """Return vLLM-compatible request fields with ``extra_body`` applied last."""
+        sampling = {
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "min_p": self.min_p,
+            "temperature": self.temperature,
+            "frequency_penalty": self.frequency_penalty,
+            "presence_penalty": self.presence_penalty,
+            "repetition_penalty": self.repetition_penalty,
+        }
+        return {
+            **{key: value for key, value in sampling.items() if value is not None},
+            **self.extra_body,
+        }
 
 
 def allocate_dataset_counts(total: int, n: int) -> list[int]:

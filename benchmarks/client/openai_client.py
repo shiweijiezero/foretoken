@@ -66,9 +66,9 @@ class OpenAICompatClient:
     async def generate(
         self,
         max_tokens: int,
-        temperature: float,
         *,
         stream: bool,
+        extra_body: dict[str, Any],
         prompt: Optional[str] = None,
         messages: Optional[list[dict[str, Any]]] = None,
         tools: Optional[list[dict[str, Any]]] = None,
@@ -81,10 +81,11 @@ class OpenAICompatClient:
         kwargs: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": stream,
         }
+        if extra_body:
+            kwargs["extra_body"] = extra_body
         if stream:
             kwargs["stream_options"] = {"include_usage": True}
         if tools:

@@ -39,6 +39,16 @@
 foretoken bench examples/quickstart
 ```
 
+采样参数与 `vllm bench serve` 保持一致。常用参数直接使用对应选项，服务支持的其他请求字段通过 `--extra-body` 传入：
+
+```bash
+foretoken bench examples/quickstart \
+  --temperature 0 \
+  --top-p 1 \
+  --top-k 0 \
+  --extra-body '{"seed":7,"min_tokens":8}'
+```
+
 使用固定 prompt 评测已有服务：
 
 ```bash

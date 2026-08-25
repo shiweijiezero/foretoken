@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from collections.abc import Sequence
 from dataclasses import MISSING, dataclass, fields
 from typing import Any
@@ -126,11 +127,54 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         default=_default(GenerationConfig, "max_tokens"),
         help="Max generation tokens",
     )
-    parser.add_argument(
+    sampling = parser.add_argument_group("sampling parameters")
+    sampling.add_argument(
+        "--top-p",
+        type=float,
+        default=_default(GenerationConfig, "top_p"),
+        help="Top-p sampling parameter",
+    )
+    sampling.add_argument(
+        "--top-k",
+        type=int,
+        default=_default(GenerationConfig, "top_k"),
+        help="Top-k sampling parameter",
+    )
+    sampling.add_argument(
+        "--min-p",
+        type=float,
+        default=_default(GenerationConfig, "min_p"),
+        help="Min-p sampling parameter",
+    )
+    sampling.add_argument(
         "--temperature",
         type=float,
         default=_default(GenerationConfig, "temperature"),
-        help="Sampling temperature",
+        help="Temperature sampling parameter",
+    )
+    sampling.add_argument(
+        "--frequency-penalty",
+        type=float,
+        default=_default(GenerationConfig, "frequency_penalty"),
+        help="Frequency penalty sampling parameter",
+    )
+    sampling.add_argument(
+        "--presence-penalty",
+        type=float,
+        default=_default(GenerationConfig, "presence_penalty"),
+        help="Presence penalty sampling parameter",
+    )
+    sampling.add_argument(
+        "--repetition-penalty",
+        type=float,
+        default=_default(GenerationConfig, "repetition_penalty"),
+        help="Repetition penalty sampling parameter",
+    )
+    parser.add_argument(
+        "--extra-body",
+        type=json.loads,
+        default=_default(GenerationConfig, "extra_body"),
+        help="JSON object of extra body parameters included in each request",
     )
     parser.add_argument(
         "--stream",
@@ -316,8 +360,15 @@ def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
         ),
         generation=GenerationConfig(
             max_tokens=namespace.max_tokens,
-            temperature=namespace.temperature,
             stream=namespace.stream,
+            top_p=namespace.top_p,
+            top_k=namespace.top_k,
+            min_p=namespace.min_p,
+            temperature=namespace.temperature,
+            frequency_penalty=namespace.frequency_penalty,
+            presence_penalty=namespace.presence_penalty,
+            repetition_penalty=namespace.repetition_penalty,
+            extra_body=namespace.extra_body,
         ),
         dataset=DatasetConfig(
             dataset=namespace.dataset,
