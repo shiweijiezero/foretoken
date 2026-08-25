@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Foretoken Quick Start SGLang model service configuration.
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: quickstart-qwen3-0.6b-sglang # Kubernetes name of this model service.
+spec:
+  model: Qwen/Qwen3-0.6B # Same Hugging Face repository as the vLLM quick start.
+  backend: sglang # Inference backend selected for this model service.
+  replicas: 1 # Number of complete model replicas (ModelGroups).
+  nodes: 1 # SGLang currently requires a single node and member.
+  resources: # Resources allocated to each ModelGroup runtime member Pod.
+    requests:
+      cpu: "4"
+      memory: 48Gi
+      gpu:
+        count: 1 # Accelerator devices requested by each runtime member Pod.
+    limits:
+      cpu: "8"
+      memory: 64Gi
+  timeouts:
+    startup: 10m # Maximum time allowed for model loading and backend initialization.
+    drain: 2m # Maximum time allowed for accepted requests to finish during shutdown.
+  parallelism:
+    tp: 1 # SGLang currently requires TP=1 and PP=PCP=DCP=1 without expert parallelism.
+    pp: 1
+    pcp: 1
+    dcp: 1
+  extraArgs:
+    - --context-length=32768 # SGLang's equivalent of vLLM's --max-model-len.
