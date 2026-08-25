@@ -39,7 +39,7 @@ Benchmark a Foretoken service that has already been deployed with Kubernetes. Th
 foretoken bench examples/quickstart
 ```
 
-Use the common sampling options directly and `--extra-body` for other request fields supported by the endpoint:
+Use the common sampling options directly and pass other OpenAI-compatible or backend-specific request fields through `--extra-body`:
 
 ```bash
 foretoken bench examples/quickstart \

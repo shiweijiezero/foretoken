@@ -39,7 +39,7 @@
 foretoken bench examples/quickstart
 ```
 
-常用采样参数可以直接指定，服务支持的其他请求字段通过 `--extra-body` 传入：
+常用采样参数可以直接指定，其他 OpenAI-compatible 或后端扩展请求字段通过 `--extra-body` 传入：
 
 ```bash
 foretoken bench examples/quickstart \
