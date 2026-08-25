@@ -108,7 +108,8 @@ class MultiDatasetRunner(Runner):
                     number=count,
                     resolved_parallel=load["resolved_parallel"],
                 )
-                log_summary(child_config, metrics)
+                if not self.config.output.includes("quiet"):
+                    log_summary(child_config, metrics)
                 child.save_json(
                     "config.json",
                     {**per_dataset_config.to_dict(), **child_config},

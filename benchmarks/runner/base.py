@@ -60,8 +60,11 @@ class Runner(ABC):
         )
 
     def make_writer(self) -> ResultWriter:
-        """Create a timestamped result writer under ``config.output``."""
-        return ResultWriter(root_dir=self.config.output.outputs_dir)
+        """Create the local JSON writer selected for this benchmark."""
+        return ResultWriter(
+            root_dir=self.config.output.output_dir,
+            enabled=self.config.output.includes("local"),
+        )
 
     def make_wandb_logger(
         self,
@@ -72,7 +75,7 @@ class Runner(ABC):
         group: Optional[str] = None,
         config: Optional[BenchConfig] = None,
     ) -> WandbLogger:
-        """Start W&B logging when ``config.wandb.enabled``."""
+        """Start W&B when selected as a result destination."""
         wandb_logger = WandbLogger()
         wandb_logger.start(
             config if config is not None else self.config,
@@ -137,7 +140,11 @@ class Runner(ABC):
         )
         results: list[Optional[dict[str, Any]]] = [None] * request_count
         start_time = time.perf_counter()
-        progress_bar = tqdm_asyncio(total=request_count, desc="Benchmarking")
+        progress_bar = tqdm_asyncio(
+            total=request_count,
+            desc="Benchmarking",
+            disable=self.config.output.includes("quiet"),
+        )
 
         async def dispatch_one(index: int, request: dict[str, Any]) -> None:
             if semaphore is not None:
@@ -215,8 +222,9 @@ class Runner(ABC):
         wandb_logger: Optional[WandbLogger] = None,
         config_snapshot: Optional[dict[str, Any]] = None,
     ) -> None:
-        """Log summary and persist config / raw / metrics JSON artifacts."""
-        log_summary(run_config, metrics)
+        """Publish the selected console, JSON, and W&B results."""
+        if not self.config.output.includes("quiet"):
+            log_summary(run_config, metrics)
         base = config_snapshot if config_snapshot is not None else self.config.to_dict()
         writer.save_json("config.json", {**base, **run_config})
         writer.save_json("raw_output.json", raw["results"])
@@ -226,4 +234,5 @@ class Runner(ABC):
                 wandb_logger.log_metrics(metrics)
             finally:
                 wandb_logger.finish()
-        logger.info("Results saved: %s", writer.output_dir)
+        if writer.enabled:
+            logger.info("Results saved: %s", writer.output_dir)

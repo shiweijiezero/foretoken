@@ -13,8 +13,6 @@
 - 想确认模型不只是快，回答和工具调用也对。
 - 想在给定延迟/吞吐要求下，找合适的负载点或容量方案。
 
-如果只是临时手动调一下接口，通常不需要走完整评测流程。
-
 ## 主要功能
 
 | 功能 | 说明 |
@@ -31,9 +29,11 @@
 - 本地保存的配置、原始结果和指标，方便事后复查
 - 可选的 Weights & Biases（W&B）实验记录与图表，方便跨 run 对比和选配置
 
+默认显示控制台汇总。使用 `--output local` 保存本地产物，使用 `--output wandb` 发布到 W&B，也可以用逗号组合；加入 `quiet` 可关闭控制台输出。本地文件写入 `--output-dir`。
+
 ## 示例
 
-评测 Foretoken Kubernetes deployment。服务已经存在时直接复用；尚未部署时，CLI 会创建渲染后的资源，并在评测结束后只清理本次创建的资源。未指定 workload 时使用一个简短的内置 prompt：
+评测 Foretoken Kubernetes deployment。服务已经存在时直接复用；尚未部署时，CLI 会创建渲染后的资源，并在评测结束后只清理本次创建的资源。未指定 `--prompt` 或 `--dataset` 时，使用一个简短的内置 prompt：
 
 ```bash
 foretoken bench --deploy examples/quickstart
@@ -69,7 +69,7 @@ foretoken bench \
   --dataset foretoken/conversation.jsonl \
   --parallel 4 \
   --number 20 \
-  --wandb
+  --output local,wandb
 ```
 
 随机数据压测（需指定 tokenizer）：
@@ -83,7 +83,7 @@ foretoken bench \
   --min-prompt-length 128 --max-prompt-length 512 \
   --parallel 4 --number 20 --max-tokens 64 \
   --rate 5 \
-  --wandb
+  --output local,wandb
 ```
 
 HuggingFace 数据集（行格式：`messages` / `prompt` / `user`[+`system`]）：
@@ -95,11 +95,10 @@ foretoken bench \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
   --parallel 4 \
   --number 20 \
-  --wandb
+  --output local,wandb
 ```
 
-多个 JSONL / HuggingFace 数据源（逗号分隔）。`--number` 是**所有数据集的合计**
-请求数（尽量均分）；各数据源顺序压测，再合并 raw 并重算指标。开启 `--wandb` 时，
+多个 JSONL / HuggingFace 数据源（逗号分隔）。`--number` 是所有数据源的请求总数，按顺序平均分配；不能整除时，前面的数据源各多分配一个请求。各数据源顺序压测，再合并 raw 并重算指标。选择 `wandb` 时，
 一次实验对应一个 W&B **group**，每个数据集各自一个 **run**：
 
 ```bash
@@ -109,5 +108,5 @@ foretoken bench \
   --dataset /path/a.jsonl,org/name:train,/path/b.jsonl \
   --parallel 4 \
   --number 30 \
-  --wandb
+  --output local,wandb
 ```

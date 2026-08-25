@@ -43,6 +43,10 @@ def _default(cls: type, name: str) -> Any:
     raise KeyError(name)
 
 
+def _output_destinations(value: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     # Service source
     service_source = parser.add_mutually_exclusive_group(required=True)
@@ -261,18 +265,18 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         help="Correctness suite: none | general | tool | both",
     )
     parser.add_argument(
-        "--outputs-dir",
-        default=_default(OutputConfig, "outputs_dir"),
-        help="Results root directory",
+        "--output",
+        type=_output_destinations,
+        default=_default(OutputConfig, "destinations"),
+        help="Comma-separated outputs: local, wandb, and quiet",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=_default(OutputConfig, "output_dir"),
+        help="Directory for JSON and W&B artifacts",
     )
 
-    # WandB
-    parser.add_argument(
-        "--wandb",
-        action=argparse.BooleanOptionalAction,
-        default=_default(WandbConfig, "enabled"),
-        help="Enable Weights & Biases logging",
-    )
+    # W&B
     parser.add_argument(
         "--wandb-project",
         default=_default(WandbConfig, "project"),
@@ -339,7 +343,7 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--experiment-name",
         default=_default(ParamSweepConfig, "experiment_name"),
-        help="Param-sweep experiment subdir under --outputs-dir",
+        help="Param-sweep experiment subdir under --output-dir",
     )
 
 
@@ -382,13 +386,13 @@ def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
             max_turns=namespace.max_turns,
         ),
         output=OutputConfig(
-            outputs_dir=namespace.outputs_dir,
+            destinations=namespace.output,
+            output_dir=namespace.output_dir,
             gpu_count=namespace.gpu_count,
             eval_suite=namespace.eval_suite,
             sla_auto_tune=namespace.sla_auto_tune,
         ),
         wandb=WandbConfig(
-            enabled=namespace.wandb,
             project=namespace.wandb_project,
             entity=namespace.wandb_entity,
             run_name=namespace.wandb_run_name,

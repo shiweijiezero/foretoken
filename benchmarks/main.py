@@ -22,10 +22,17 @@ logger = logging.getLogger(__name__)
 
 def main(argv: Sequence[str] | None = None) -> None:
     """Run a benchmark against a deployment or existing endpoint."""
-    configure_logging()
     try:
         command = parse_arguments(argv)
         config = command.config
+        if (
+            command.deploy
+            and not config.dataset.prompt
+            and not config.dataset.dataset
+        ):
+            config.dataset = replace(config.dataset, prompt="Hello")
+        config.validate()
+        configure_logging(not config.output.includes("quiet"))
         service_context = (
             benchmark_deployment(
                 command.deploy,
@@ -44,11 +51,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                     model=endpoint.model,
                     headers=endpoint.headers,
                 )
-                print_endpoint(endpoint.url, endpoint.models, endpoint.hostname)
-                if not config.dataset.prompt and not config.dataset.dataset:
-                    config.dataset = replace(config.dataset, prompt="Hello")
+                if not config.output.includes("quiet"):
+                    print_endpoint(endpoint.url, endpoint.models, endpoint.hostname)
 
-            config.validate()
             logger.info("%s", config.summary())
             result = asyncio.run(select_runner(config).run())
             if result["metrics"]["success_num"] == 0:

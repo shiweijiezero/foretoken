@@ -17,7 +17,7 @@ foretoken bench \
   --min-prompt-length 128 --max-prompt-length 512 \
   --parallel 4 --number 20 --max-tokens 64 \
   --rate 5 \
-  --wandb
+  --output local,wandb
 ```
 
 ![Random dataset benchmark output](imgs/random-dataset-benchmark-output.png)
@@ -33,7 +33,7 @@ foretoken bench \
   --dataset weijiezz/foretoken-trace:conversation \
   --parallel 4 \
   --number 20 \
-  --wandb
+  --output local,wandb
 ```
 
 ![Hugging Face dataset benchmark output](imgs/huggingface-dataset-benchmark-output.png)
@@ -49,7 +49,7 @@ foretoken bench \
   --dataset /home/wshiah/code/zhuting/foretoken/conversation.jsonl \
   --parallel 4 \
   --number 20 \
-  --wandb
+  --output local,wandb
 ```
 
 ![Local dataset benchmark output](imgs/local-dataset-benchmark-output.png)
@@ -65,7 +65,7 @@ foretoken bench \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train,ianncity/GLM-5.2-Conversation:train \
   --parallel 4 \
   --number 20 \
-  --wandb
+  --output local,wandb
 ```
 
 ![Multi-dataset W&B comparison](imgs/multi-dataset-wandb-comparison.png)

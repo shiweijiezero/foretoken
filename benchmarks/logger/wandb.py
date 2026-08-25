@@ -87,11 +87,12 @@ class WandbLogger:
         name_suffix: Optional[str] = None,
         group: Optional[str] = None,
     ) -> None:
-        """Initialize W&B when enabled in the benchmark configuration."""
+        """Initialize W&B when selected as a result destination."""
         wandb_config: WandbConfig = config.wandb
-        if not wandb_config.enabled:
+        if not config.output.includes("wandb"):
             return
 
+        os.makedirs(output_dir, exist_ok=True)
         os.environ["WANDB_SILENT"] = "true"
         os.environ["WANDB_DIR"] = output_dir
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")

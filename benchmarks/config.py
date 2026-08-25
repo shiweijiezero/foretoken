@@ -172,19 +172,29 @@ class DatasetConfig:
 
 @dataclass
 class OutputConfig:
-    """Result location and analysis knobs."""
+    """Result destinations, location, and analysis knobs."""
 
-    outputs_dir: str = "results"
+    destinations: tuple[str, ...] = ()
+    output_dir: str = "results"
     gpu_count: int = 1
     eval_suite: str = "none"
     sla_auto_tune: bool = False
 
+    def includes(self, destination: str) -> bool:
+        return destination in self.destinations
+
+    def validate(self) -> None:
+        allowed = {"local", "wandb", "quiet"}
+        unknown = set(self.destinations) - allowed
+        if unknown:
+            names = ", ".join(sorted(unknown))
+            raise ValueError(f"unknown --output destination: {names}")
+
 
 @dataclass
 class WandbConfig:
-    """Weights & Biases logging."""
+    """Weights & Biases connection settings."""
 
-    enabled: bool = False
     project: str = "foretoken-bench"
     entity: str = ""
     run_name: str = ""
@@ -231,6 +241,7 @@ class BenchConfig:
     def validate(self) -> None:
         """Validate nested configs before a run starts."""
         self.load.validate()
+        self.output.validate()
         dataset = self.dataset
         if not dataset.prompt and not dataset.dataset:
             raise ValueError(

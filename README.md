@@ -179,11 +179,13 @@ Install the Foretoken Benchmark CLI from this project path:
 python -m pip install ./benchmarks
 ```
 
-After the service is ready, the command uses the same deployment configuration to find its endpoint and model. With no workload options, it uses a short built-in prompt:
+The deployment command reuses an existing Quick Start service. If the service is absent, it deploys the configuration and removes only the resources it created after the benchmark. When neither `--prompt` nor `--dataset` is specified, it uses a short built-in prompt:
 
 ```bash
 foretoken bench --deploy examples/quickstart
 ```
+
+Results are shown in the console by default. Use `--output local` to save local artifacts, `--output wandb` to publish the run, or combine them.
 
 To benchmark an already running OpenAI-compatible service instead:
 

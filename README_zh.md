@@ -179,11 +179,13 @@ curl --fail-with-body --no-buffer \
 python -m pip install ./benchmarks
 ```
 
-服务就绪后，以下命令会根据同一份部署配置自动找到访问地址和模型。未指定 workload 时使用一个简短的内置 prompt：
+以下命令会复用已经运行的 Quick Start 服务；服务尚未部署时，CLI 会创建配置中的资源，并在评测结束后只清理本次创建的资源。未指定 `--prompt` 或 `--dataset` 时，使用一个简短的内置 prompt：
 
 ```bash
 foretoken bench --deploy examples/quickstart
 ```
+
+默认只在控制台显示结果。使用 `--output local` 保存本地产物，使用 `--output wandb` 发布到 W&B，也可以组合使用。
 
 如果要评测已经运行的 OpenAI API 兼容服务，则显式提供地址和模型：
 
