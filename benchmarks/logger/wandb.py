@@ -18,20 +18,20 @@ from benchmarks.config import BenchConfig, WandbConfig
 logger = logging.getLogger(__name__)
 
 _SYSTEM_STATS_INTERVAL_S = 1.0
-_TIME_TAKEN = "Test Duration (s)"
+_TIME_TAKEN = "Test Duration"
 _CONCURRENCY = "Concurrency"
-_REQUEST_RATE = "Request Rate (req/s)"
+_REQUEST_RATE = "Request Rate"
 _TOTAL_REQUESTS = "Total Requests"
 _SUCCEED_REQUESTS = "Success Requests"
 _FAILED_REQUESTS = "Failed Requests"
-_REQUEST_THROUGHPUT = "Req Throughput (req/s)"
-_AVERAGE_LATENCY = "Avg Latency (s)"
+_REQUEST_THROUGHPUT = "Request Throughput"
+_AVERAGE_LATENCY = "Avg Latency"
 _AVERAGE_INPUT_TOKENS = "Avg Input Tokens"
-_OUTPUT_TOKEN_THROUGHPUT = "Output Throughput (tok/s)"
-_TOTAL_TOKEN_THROUGHPUT = "Total Throughput (tok/s)"
-_AVERAGE_TTFT = "Avg TTFT (ms)"
-_AVERAGE_TPOT = "Avg TPOT (ms)"
-_AVERAGE_ITL = "Avg ITL (ms)"
+_OUTPUT_TOKEN_THROUGHPUT = "Output Throughput"
+_TOTAL_TOKEN_THROUGHPUT = "Total Throughput"
+_AVERAGE_TTFT = "Avg TTFT"
+_AVERAGE_TPOT = "Avg TPOT"
+_AVERAGE_ITL = "Avg ITL"
 _AVERAGE_OUTPUT_TOKENS = "Avg Output Tokens"
 
 
