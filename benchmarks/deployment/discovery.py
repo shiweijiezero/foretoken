@@ -20,11 +20,7 @@ from benchmarks.deployment.cluster import (
     timeout_seconds,
     wait_for_deployment,
 )
-from benchmarks.deployment.manifest import (
-    DeploymentError,
-    deployment_path,
-    parse_deployment,
-)
+from benchmarks.deployment.manifest import DeploymentError, DeploymentResources
 
 
 @dataclass(frozen=True)
@@ -107,17 +103,15 @@ def _wait_for_models(
 
 
 def discover_endpoint(
-    deployment: str,
+    resources: DeploymentResources,
+    kubectl: Kubectl,
     timeout: str,
     *,
     requested_model: str,
     api_key: str,
 ) -> BenchmarkEndpoint:
-    """Find a deployed service endpoint and model for benchmarking."""
+    """Find the endpoint and model for rendered Foretoken resources."""
     wait_seconds = timeout_seconds(timeout)
-    kubectl = Kubectl()
-    path = deployment_path(deployment)
-    resources = parse_deployment(path, kubectl.kustomize(path))
     model = _select_model(resources.models.values(), requested_model)
     wait_for_deployment(resources, kubectl, timeout)
     address = find_address(resources, kubectl, wait_seconds)

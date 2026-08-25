@@ -33,16 +33,16 @@ If you are only poking the API by hand, you usually do not need the full evaluat
 
 ## Examples
 
-Benchmark a Foretoken service that has already been deployed with Kubernetes. The deployment directory identifies its endpoint and model; the CLI uses a short built-in prompt when no workload is specified:
+Benchmark a Foretoken Kubernetes deployment. The CLI reuses it when already present; otherwise it deploys the rendered resources and removes only those resources after the benchmark. With no workload options, it uses a short built-in prompt:
 
 ```bash
-foretoken bench examples/quickstart
+foretoken bench --deploy examples/quickstart
 ```
 
 Use the common sampling options directly and pass other OpenAI-compatible or backend-specific request fields through `--extra-body`:
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken bench --deploy examples/quickstart \
   --temperature 0 \
   --top-p 1 \
   --top-k 0 \

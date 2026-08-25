@@ -38,10 +38,13 @@ class Kubectl:
                 "kubectl is required to inspect a Foretoken deployment"
             )
 
-    def run(self, args: Iterable[str]) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, args: Iterable[str], *, input_text: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
         command = ["kubectl", *args]
         completed = subprocess.run(
             command,
+            input=input_text,
             text=True,
             capture_output=True,
             check=False,
@@ -53,6 +56,27 @@ class Kubectl:
 
     def kustomize(self, path: Path) -> str:
         return self.run(["kustomize", str(path)]).stdout
+
+    def apply_kustomize(self, path: Path) -> None:
+        self.run(["apply", "--server-side", "-k", str(path)])
+
+    def exists(self, kind: str, name: str, namespace: str = "") -> bool:
+        args = ["get", kind, name, "--ignore-not-found", "-o", "name"]
+        if namespace:
+            args.extend(["--namespace", namespace])
+        return bool(self.run(args).stdout.strip())
+
+    def delete_yaml(self, rendered: str, timeout: str) -> None:
+        self.run(
+            [
+                "delete",
+                "--filename=-",
+                "--ignore-not-found",
+                "--wait=true",
+                f"--timeout={timeout}",
+            ],
+            input_text=rendered,
+        )
 
     def get(self, kind: str, name: str, namespace: str = "") -> dict[str, Any]:
         args = ["get", kind, name]

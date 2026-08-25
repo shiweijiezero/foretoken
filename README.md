@@ -182,7 +182,7 @@ python -m pip install ./benchmarks
 After the service is ready, the command uses the same deployment configuration to find its endpoint and model. With no workload options, it uses a short built-in prompt:
 
 ```bash
-foretoken bench examples/quickstart
+foretoken bench --deploy examples/quickstart
 ```
 
 To benchmark an already running OpenAI-compatible service instead:

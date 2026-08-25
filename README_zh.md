@@ -182,7 +182,7 @@ python -m pip install ./benchmarks
 服务就绪后，以下命令会根据同一份部署配置自动找到访问地址和模型。未指定 workload 时使用一个简短的内置 prompt：
 
 ```bash
-foretoken bench examples/quickstart
+foretoken bench --deploy examples/quickstart
 ```
 
 如果要评测已经运行的 OpenAI API 兼容服务，则显式提供地址和模型：

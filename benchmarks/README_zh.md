@@ -33,16 +33,16 @@
 
 ## 示例
 
-评测已经通过 Kubernetes 部署的 Foretoken 服务。CLI 根据部署目录找到访问地址和模型；未指定 workload 时使用一个简短的内置 prompt：
+评测 Foretoken Kubernetes deployment。服务已经存在时直接复用；尚未部署时，CLI 会创建渲染后的资源，并在评测结束后只清理本次创建的资源。未指定 workload 时使用一个简短的内置 prompt：
 
 ```bash
-foretoken bench examples/quickstart
+foretoken bench --deploy examples/quickstart
 ```
 
 常用采样参数可以直接指定，其他 OpenAI-compatible 或后端扩展请求字段通过 `--extra-body` 传入：
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken bench --deploy examples/quickstart \
   --temperature 0 \
   --top-p 1 \
   --top-k 0 \

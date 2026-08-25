@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""Discover benchmark endpoints from deployed Foretoken services."""
+"""Manage Foretoken services used by deployment benchmarks."""
 
-from benchmarks.deployment.discovery import discover_endpoint
+from benchmarks.deployment.lifecycle import benchmark_deployment
 from benchmarks.deployment.manifest import DeploymentError
 
-__all__ = ["DeploymentError", "discover_endpoint"]
+__all__ = ["DeploymentError", "benchmark_deployment"]

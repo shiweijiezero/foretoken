@@ -29,7 +29,7 @@ from benchmarks.config import (
 class BenchCommand:
     """Run a benchmark against a deployment or existing endpoint."""
 
-    deployment: str
+    deploy: str
     config: BenchConfig
     wait_timeout: str
 
@@ -44,17 +44,17 @@ def _default(cls: type, name: str) -> Any:
 
 
 def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
-    # Target
-    parser.add_argument(
-        "deployment",
-        nargs="?",
+    # Service source
+    service_source = parser.add_mutually_exclusive_group(required=True)
+    service_source.add_argument(
+        "--deploy",
         default="",
-        help="Kustomize directory for a deployed Foretoken service",
+        help="Kustomize directory to deploy or reuse for this benchmark",
     )
-    parser.add_argument(
+    service_source.add_argument(
         "--url",
         default="",
-        help="Existing OpenAI-compatible API URL instead of deployment discovery",
+        help="Existing OpenAI-compatible API URL",
     )
     parser.add_argument(
         "--model",
@@ -424,12 +424,10 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchCommand:
     _add_benchmark_arguments(bench)
 
     namespace = parser.parse_args(argv)
-    if bool(namespace.deployment) == bool(namespace.url):
-        bench.error("provide either DEPLOYMENT or --url, but not both")
     if namespace.url and not namespace.model:
         bench.error("--model is required with --url")
     return BenchCommand(
-        deployment=namespace.deployment,
+        deploy=namespace.deploy,
         config=_bench_config(namespace),
         wait_timeout=namespace.wait_timeout,
     )

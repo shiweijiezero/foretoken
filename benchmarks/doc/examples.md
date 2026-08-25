@@ -1,9 +1,9 @@
 # Foretoken deployment
 
-Benchmark the deployed Quick Start service with its model and endpoint discovered automatically:
+Deploy or reuse the Quick Start service, discover its model and endpoint, and clean up resources created for the benchmark:
 
 ```bash
-foretoken bench examples/quickstart
+foretoken bench --deploy examples/quickstart
 ```
 
 # Random dataset

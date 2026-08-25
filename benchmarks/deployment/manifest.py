@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""Kustomize deployment parsing for benchmark target discovery."""
+"""Kustomize parsing for Foretoken benchmark service discovery."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ class DeploymentResources:
     frontend: str
     hostname: str
     models: dict[str, str]
+    objects: tuple[dict[str, Any], ...]
 
 
 def deployment_path(path_value: str) -> Path:
@@ -90,4 +91,5 @@ def parse_deployment(path: Path, rendered: str) -> DeploymentResources:
         frontend=name,
         hostname=hostname,
         models=models,
+        objects=tuple(documents),
     )
