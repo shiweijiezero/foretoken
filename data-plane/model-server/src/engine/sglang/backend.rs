@@ -92,6 +92,12 @@ impl SglangBackend {
         format!("{}{path}", self.endpoint)
     }
 
+    /// Builds SGLang's native sampling params from the neutral typed fields
+    /// only. Engine-specific keys carried by [`SamplingParams::extra_args`]
+    /// are never forwarded: the current frontend fills that map with vLLM
+    /// field names, and SGLang rejects them (see ADR-0001). SGLang's own
+    /// native extension channel (`custom_params`) will be wired up when the
+    /// neutral protocol stops being vLLM-centric.
     fn sampling_json(params: &SamplingParams) -> serde_json::Value {
         let mut json = serde_json::json!({
             "temperature": params.temperature,
@@ -106,10 +112,6 @@ impl SglangBackend {
         }
         if !params.stop_token_ids.is_empty() {
             json["stop_token_ids"] = serde_json::json!(params.stop_token_ids);
-        }
-        // Forward engine-specific sampling overrides unchanged.
-        for (key, value) in &params.extra_args {
-            json[key] = value.clone();
         }
         json
     }
@@ -237,5 +239,53 @@ struct RunningGuard {
 impl Drop for RunningGuard {
     fn drop(&mut self) {
         self.running_requests.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn sampling_json_drops_vllm_specific_extra_args() {
+        let mut extra = BTreeMap::new();
+        extra.insert(
+            "all_stop_token_ids".into(),
+            serde_json::json!([151643, 151645]),
+        );
+        extra.insert("structured_outputs".into(), serde_json::json!({}));
+        extra.insert("logit_bias".into(), serde_json::json!({}));
+        let params = SamplingParams {
+            temperature: 0.5,
+            max_tokens: 32,
+            stop_token_ids: vec![7],
+            extra_args: extra,
+            ..Default::default()
+        };
+        let json = SglangBackend::sampling_json(&params);
+        assert!(json.get("all_stop_token_ids").is_none());
+        assert!(json.get("structured_outputs").is_none());
+        assert!(json.get("logit_bias").is_none());
+    }
+
+    #[test]
+    fn sampling_json_keeps_neutral_fields() {
+        let params = SamplingParams {
+            temperature: 0.7,
+            top_p: 0.9,
+            top_k: 40,
+            seed: Some(42),
+            max_tokens: 128,
+            stop_token_ids: vec![151643],
+            ..Default::default()
+        };
+        let json = SglangBackend::sampling_json(&params);
+        assert_eq!(json["temperature"].as_f64().unwrap() as f32, 0.7);
+        assert_eq!(json["top_p"].as_f64().unwrap() as f32, 0.9);
+        assert_eq!(json["top_k"], 40);
+        assert_eq!(json["seed"], 42);
+        assert_eq!(json["max_new_tokens"], 128);
+        assert_eq!(json["stop_token_ids"], serde_json::json!([151643]));
     }
 }
