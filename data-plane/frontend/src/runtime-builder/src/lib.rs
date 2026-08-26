@@ -215,11 +215,7 @@ async fn model_runtimes(
                 "no healthy runtime metadata for model {model}"
             ))
         })?;
-        let model_dtype = registry.effective_model_dtype(&model).ok_or_else(|| {
-            RuntimeBuildError::ModelRuntime(format!(
-                "no consistent runtime dtype for model {model}"
-            ))
-        })?;
+        let model_dtype = registry.effective_model_dtype(&model);
         let HfSnapshotRuntime {
             text_processor,
             tokenizer,

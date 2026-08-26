@@ -88,7 +88,8 @@ pub struct RuntimeEcTransferMetadata {
 pub struct RuntimeMetadataResponse {
     pub version: u8,
     pub model: RuntimeModelIdentity,
-    pub model_dtype: ModelDtype,
+    #[serde(default)]
+    pub model_dtype: Option<ModelDtype>,
     pub effective_max_model_len: u32,
     pub ec_transfer: Option<RuntimeEcTransferMetadata>,
     #[serde(default)]

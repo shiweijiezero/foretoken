@@ -101,7 +101,7 @@ pub async fn load_hf_snapshot_runtime(
     model_id: &str,
     revision: &str,
     max_model_len: u32,
-    model_dtype: ModelDtype,
+    model_dtype: Option<ModelDtype>,
 ) -> std::result::Result<HfSnapshotRuntime, TextBackendLoadError> {
     let text_backend = load_hf_text_backend(model_id, revision).await?;
     let tokenizer = text_backend.tokenizer();
@@ -118,13 +118,14 @@ pub async fn load_hf_snapshot_runtime(
     let supports_multimodal = chat_backend.multimodal_model_info().is_some();
     let text_backend: DynTextBackend = Arc::new(text_backend);
     let chat_backend: DynChatBackend = Arc::new(chat_backend);
+    let chat_processor = match model_dtype {
+        Some(dtype) => ChatRequestProcessor::with_model_dtype(chat_backend, to_vllm_dtype(dtype)),
+        None => ChatRequestProcessor::render_only(chat_backend),
+    };
     Ok(HfSnapshotRuntime {
         text_processor: Arc::new(TextRequestProcessor::new(text_backend, max_model_len)),
         tokenizer,
-        chat_processor: Arc::new(ChatRequestProcessor::with_model_dtype(
-            chat_backend,
-            to_vllm_dtype(model_dtype),
-        )),
+        chat_processor: Arc::new(chat_processor),
         supports_multimodal,
     })
 }

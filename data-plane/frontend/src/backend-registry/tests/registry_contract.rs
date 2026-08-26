@@ -169,7 +169,7 @@ fn runtime_metadata() -> RuntimeMetadataResponse {
             model: "model".into(),
             revision: "r1".into(),
         },
-        model_dtype: ModelDtype::BFloat16,
+        model_dtype: Some(ModelDtype::BFloat16),
         effective_max_model_len: 32_768,
         ec_transfer: None,
         capabilities: ["chat".into()].into_iter().collect(),

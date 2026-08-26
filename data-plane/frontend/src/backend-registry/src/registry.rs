@@ -160,6 +160,8 @@ impl BackendRegistry {
     }
 
     /// Returns one consistent engine-reported dtype across healthy components.
+    /// Routes that do not advertise a dtype (`None`) are skipped; if no healthy
+    /// route advertises a dtype, the result is `None`.
     pub fn effective_model_dtype(&self, model: &str) -> Option<ModelDtype> {
         let mut dtypes = self
             .table
@@ -169,7 +171,7 @@ impl BackendRegistry {
                 route.model == model && self.is_route_target_healthy(&route.route_target_id)
             })
             .filter_map(|route| self.metadata(&route.route_target_id))
-            .map(|metadata| metadata.model_dtype);
+            .filter_map(|metadata| metadata.model_dtype);
         let dtype = dtypes.next()?;
         dtypes.all(|candidate| candidate == dtype).then_some(dtype)
     }

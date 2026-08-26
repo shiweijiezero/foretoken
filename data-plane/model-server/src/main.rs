@@ -11,8 +11,6 @@ use std::future::IntoFuture;
 use std::sync::Arc;
 use std::time::Instant;
 
-#[cfg(feature = "backend-sglang")]
-use foretoken_model_protocol::ModelDtype;
 use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity};
 use foretoken_model_server::core::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::core::config::RuntimeConfig;
@@ -95,7 +93,7 @@ async fn run_vllm(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error
             model: plan.artifacts.model.clone(),
             revision: plan.artifacts.revision.clone(),
         },
-        model_dtype: to_neutral_model_dtype(process.client().model_dtype()),
+        model_dtype: Some(to_neutral_model_dtype(process.client().model_dtype())),
         effective_max_model_len: process.client().max_model_len(),
         ec_transfer: plan.ec.runtime_metadata(),
         capabilities: if plan.ec.enabled() {
@@ -236,14 +234,17 @@ async fn run_sglang(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Err
         return Err(std::io::Error::other(reason).into());
     }
 
-    // Report the engine's real context limit and dtype so the frontend can
-    // tokenize and validate requests. Fall back to the previous hardcoded
-    // values (and a warning) if the metadata query fails.
-    let (reported_len, model_dtype) = match sglang_model_info(plan.port).await {
-        Ok((len, dtype)) => (len, dtype),
+    // Report the engine's real context limit so the frontend can tokenize and
+    // validate requests. Fall back to the previous hardcoded value (and a
+    // warning) if the metadata query fails. The dtype stays unknown (`None`):
+    // SGLang's `/get_server_info` reports `dtype` as `auto` and does not expose
+    // the resolved precision, so the frontend falls back to a render-only
+    // (text, non-multimodal) processor.
+    let reported_len = match sglang_context_len(plan.port).await {
+        Ok(len) => len,
         Err(error) => {
             warn!(%error, "could not query SGLang model info; using fallback metadata");
-            (0, ModelDtype::BFloat16)
+            0
         }
     };
 
@@ -253,7 +254,7 @@ async fn run_sglang(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Err
             model: plan.model.clone(),
             revision: plan.revision.clone().unwrap_or_default(),
         },
-        model_dtype,
+        model_dtype: None,
         effective_max_model_len: u32::try_from(reported_len).unwrap_or(0),
         ec_transfer: None,
         capabilities: Default::default(),
@@ -363,49 +364,41 @@ async fn wait_for_sglang_health(
     }
 }
 
-/// Queries the SGLang server's `/get_model_info` for its effective context
-/// length and model dtype.
+/// Queries the SGLang server's `/get_server_info` for its effective context
+/// length.
 #[cfg(feature = "backend-sglang")]
-async fn sglang_model_info(port: u16) -> Result<(i64, ModelDtype), String> {
-    let url = format!("http://127.0.0.1:{port}/get_model_info");
+async fn sglang_context_len(port: u16) -> Result<i64, String> {
+    let url = format!("http://127.0.0.1:{port}/get_server_info");
     let info: serde_json::Value = reqwest::Client::new()
         .get(&url)
         .send()
         .await
-        .map_err(|error| format!("sglang get_model_info request failed: {error}"))?
+        .map_err(|error| format!("sglang get_server_info request failed: {error}"))?
         .error_for_status()
-        .map_err(|error| format!("sglang get_model_info returned an error: {error}"))?
+        .map_err(|error| format!("sglang get_server_info returned an error: {error}"))?
         .json()
         .await
-        .map_err(|error| format!("sglang get_model_info response is not valid JSON: {error}"))?;
+        .map_err(|error| format!("sglang get_server_info response is not valid JSON: {error}"))?;
 
-    let context_len = info
-        .get("context_len")
+    // Prefer the configured context length; fall back to the scheduler's
+    // resolved max input length when `--context-length` was not set.
+    if let Some(len) = info
+        .get("context_length")
         .and_then(serde_json::Value::as_i64)
-        .ok_or_else(|| format!("sglang get_model_info is missing context_len: {info}"))?;
-    let dtype = info
-        .get("model_dtype")
-        .and_then(serde_json::Value::as_str)
-        .map(sglang_model_dtype)
-        .unwrap_or(ModelDtype::BFloat16);
-    Ok((context_len, dtype))
-}
-
-/// Maps an SGLang `model_dtype` string (e.g. `torch.bfloat16`) to the neutral
-/// dtype. `bfloat16` is checked before `float16` because the former contains
-/// the latter as a substring.
-#[cfg(feature = "backend-sglang")]
-fn sglang_model_dtype(value: &str) -> ModelDtype {
-    let value = value.to_ascii_lowercase();
-    if value.contains("bfloat16") {
-        ModelDtype::BFloat16
-    } else if value.contains("float16") {
-        ModelDtype::Float16
-    } else if value.contains("float32") {
-        ModelDtype::Float32
-    } else {
-        ModelDtype::BFloat16
+    {
+        if len > 0 {
+            return Ok(len);
+        }
     }
+    if let Some(len) = info
+        .get("max_req_input_len")
+        .and_then(serde_json::Value::as_i64)
+    {
+        if len > 0 {
+            return Ok(len);
+        }
+    }
+    Err("sglang get_server_info has no context length".into())
 }
 
 #[cfg(feature = "backend-vllm")]
@@ -461,15 +454,10 @@ mod tests {
     use serde_json::json;
     use tokio::net::TcpListener;
 
-    async fn mock_model_info_server() -> (u16, tokio::task::JoinHandle<()>) {
+    async fn mock_server_info(extra: serde_json::Value) -> (u16, tokio::task::JoinHandle<()>) {
         let app = Router::new().route(
-            "/get_model_info",
-            get(|| async {
-                axum::Json(json!({
-                    "context_len": 32768,
-                    "model_dtype": "torch.bfloat16",
-                }))
-            }),
+            "/get_server_info",
+            get(move || async move { axum::Json(extra) }),
         );
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -480,24 +468,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn model_dtype_mapping() {
-        assert_eq!(sglang_model_dtype("torch.bfloat16"), ModelDtype::BFloat16);
-        assert_eq!(sglang_model_dtype("bfloat16"), ModelDtype::BFloat16);
-        assert_eq!(sglang_model_dtype("torch.float16"), ModelDtype::Float16);
-        assert_eq!(sglang_model_dtype("float32"), ModelDtype::Float32);
-        assert_eq!(sglang_model_dtype("unknown"), ModelDtype::BFloat16);
+    async fn context_len_prefers_configured_value() {
+        let (port, _handle) = mock_server_info(json!({
+            "context_length": 32768,
+            "max_req_input_len": 32762,
+        }))
+        .await;
+        assert_eq!(sglang_context_len(port).await.unwrap(), 32768);
     }
 
     #[tokio::test]
-    async fn model_info_queries_context_and_dtype() {
-        let (port, _handle) = mock_model_info_server().await;
-        let (len, dtype) = sglang_model_info(port).await.unwrap();
-        assert_eq!(len, 32768);
-        assert_eq!(dtype, ModelDtype::BFloat16);
+    async fn context_len_falls_back_to_resolved_input_len() {
+        let (port, _handle) = mock_server_info(json!({
+            "context_length": null,
+            "max_req_input_len": 32762,
+        }))
+        .await;
+        assert_eq!(sglang_context_len(port).await.unwrap(), 32762);
     }
 
     #[tokio::test]
-    async fn model_info_fails_cleanly() {
-        assert!(sglang_model_info(1).await.is_err());
+    async fn context_len_fails_cleanly() {
+        let (port, _handle) = mock_server_info(json!({})).await;
+        assert!(sglang_context_len(port).await.is_err());
+        assert!(sglang_context_len(1).await.is_err());
     }
 }

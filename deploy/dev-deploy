@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)  # 进入当前路径的父目录并打印路径
 # shellcheck source=dev-deploy-lib.sh
 source "$ROOT/deploy/dev-deploy-lib.sh"
 cd "$ROOT"
