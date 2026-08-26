@@ -27,7 +27,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
 | 分布式推理 | 聚合部署、Prefill/Decode 分离和 WideEP 并行策略 | 研究中 |
 | 控制面 | 模型服务、实例组、扩缩容、更新和故障恢复 | 规划中 |
-| [可观测性](observability/README_zh.md) | 通过 Prometheus 采集 Frontend、模型服务和集群运行指标 | 开发中 |
+| [可观测性](observability/README_zh.md) | 采集运行指标、评估告警并分析 CPU/GPU 性能瓶颈 | 开发中 |
 
 ## 快速开始
 

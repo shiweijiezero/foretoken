@@ -7,13 +7,19 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Foretoken exposes `/metrics` from the Frontend and model services so operators can inspect request traffic, queues, routing, backend execution, and cache behavior. Production deployments should connect these endpoints to Prometheus.
+Observability helps operators determine whether a service is healthy, why requests are slow, whether capacity is sufficient, and which layer is responsible for a problem. Foretoken observability covers continuous monitoring, alerting, and on-demand performance diagnosis.
 
-## Choose a deployment
+- **Continuous monitoring**: Prometheus collects Frontend, model-server, GPU, and Kubernetes metrics, while Grafana provides queries and dashboards.
+- **Alerting**: Prometheus evaluates alert rules, and Alertmanager groups, suppresses, and delivers notifications.
+- **Profiling**: PyTorch Profiler, Nsight Systems, and Nsight Compute diagnose operator, kernel, communication, and CPU/GPU bottlenecks on demand.
 
-### Recommended deployment
+Continuous monitoring and alerting require Prometheus Operator in the cluster. kube-prometheus-stack is one optional installation method; an existing Prometheus Operator can be reused.
 
-If the cluster does not have a monitoring stack, install kube-prometheus-stack. The included values select only the ServiceMonitors created by the Foretoken platform release:
+## Prepare Prometheus
+
+If the cluster already runs Prometheus Operator, skip the installation and continue with Foretoken metric collection.
+
+Otherwise, install kube-prometheus-stack with the values included in this repository:
 
 ```bash
 helm repo add prometheus-community \
@@ -22,10 +28,6 @@ helm repo update
 
 kubectl create namespace monitoring \
   --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl label namespace monitoring \
-  inference.foretoken.io/metrics-scraper=true \
-  --overwrite
 
 helm upgrade --install kube-prometheus-stack \
   prometheus-community/kube-prometheus-stack \
@@ -37,7 +39,19 @@ helm upgrade --install kube-prometheus-stack \
 
 The example values look for Foretoken ServiceMonitors in the `foretoken-platform` namespace. If the platform uses another namespace, copy the file and update `serviceMonitorNamespaceSelector`.
 
-Enable ServiceMonitors when installing Foretoken:
+Label the namespace that runs Prometheus. This is a one-time cluster setting:
+
+```bash
+kubectl label namespace monitoring \
+  inference.foretoken.io/metrics-scraper=true \
+  --overwrite
+```
+
+The label allows that namespace to reach the model-server's internal HTTP port. NetworkPolicy cannot allow only the `/metrics` path, so a labeled namespace must contain only trusted monitoring services.
+
+## Enable Foretoken metric collection
+
+Enable ServiceMonitors in the Foretoken values:
 
 ```yaml
 observability:
@@ -45,29 +59,14 @@ observability:
     enabled: true
 ```
 
-When the cluster already runs Prometheus Operator, do not install another kube-prometheus-stack. Ensure that the platform Prometheus:
+The ServiceMonitors discover labeled Frontend and model-server Services across workload namespaces. The platform Prometheus must:
 
-- selects `app.kubernetes.io/name=foretoken-control-plane`;
-- searches the Foretoken control-plane namespace for ServiceMonitors;
-- runs in a namespace labeled `inference.foretoken.io/metrics-scraper=true`.
+- search the Foretoken control-plane namespace for ServiceMonitors;
+- select ServiceMonitors labeled `app.kubernetes.io/name=foretoken-control-plane`.
 
-These are one-time platform settings and are not repeated for each model service.
+The included kube-prometheus-stack values configure both selectors. When reusing an existing Prometheus installation, a platform administrator configures them once; model services do not repeat this setup.
 
-### Minimal deployment
-
-For local development, Kind validation, or deployments that do not need centralized monitoring, leave ServiceMonitors disabled:
-
-```yaml
-observability:
-  serviceMonitor:
-    enabled: false
-```
-
-The Frontend and model-server still expose `/metrics`, and Foretoken routing and autoscaling continue to use their internal JSON snapshot. The Helm chart simply does not create Prometheus discovery resources.
-
-## Optional scrape settings
-
-ServiceMonitors inherit the platform Prometheus scrape interval and timeout. Add overrides only when Foretoken needs different values:
+ServiceMonitors inherit the Prometheus scrape interval and timeout. Add overrides only when Foretoken needs different values:
 
 ```yaml
 observability:
@@ -77,7 +76,7 @@ observability:
     scrapeTimeout: 10s
 ```
 
-## Verify the integration
+## Verify metric collection
 
 Confirm that the Foretoken ServiceMonitors exist:
 
@@ -124,3 +123,9 @@ GPU and Kubernetes state come from existing platform data sources:
 | Other accelerator hardware | The vendor's accelerator exporter |
 | Container CPU, memory, filesystem, and network | kubelet/cAdvisor |
 | Kubernetes object state | kube-state-metrics or the owning controller |
+
+## Alerts and profiling
+
+Prometheus evaluates alert rules and sends notifications through Alertmanager. Alerts use the time series collected from `/metrics`; they do not read the internal Foretoken telemetry endpoint.
+
+Profiling diagnoses a specific experiment or incident rather than providing continuous monitoring. PyTorch Profiler analyzes model execution and operator time, Nsight Systems analyzes process, kernel, and communication timelines, and Nsight Compute performs detailed analysis of individual GPU kernels. Store profiling results with the corresponding benchmark model, concurrency, hardware, and runtime parameters.

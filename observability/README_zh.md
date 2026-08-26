@@ -7,13 +7,19 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken 的 Frontend 和模型服务都提供 `/metrics`，用于查看请求、排队、路由、推理后端和缓存等运行状态。正式部署建议接入 Prometheus。
+可观测性用于判断服务是否健康、请求为什么变慢、容量是否充足，以及问题发生在哪一层。Foretoken 的可观测性包括持续监控、告警和按需性能诊断。
 
-## 选择部署方式
+- **持续监控**：Prometheus 采集 Frontend、model-server、GPU 和 Kubernetes 指标，Grafana 用于查询和展示。
+- **告警**：Prometheus 根据告警规则判断异常，Alertmanager 负责分组、抑制和发送通知。
+- **Profiling**：PyTorch Profiler、Nsight Systems 和 Nsight Compute 用于按需分析算子、kernel、通信和 CPU/GPU 瓶颈。
 
-### 推荐部署
+持续监控和告警依赖集群中的 Prometheus Operator。kube-prometheus-stack 是一种可选安装方式；集群已有 Prometheus Operator 时可以直接复用。
 
-如果集群还没有监控系统，可以安装 kube-prometheus-stack。仓库提供的 values 会让 Prometheus 只选择 Foretoken 创建的 ServiceMonitor：
+## 准备 Prometheus
+
+如果集群已经运行 Prometheus Operator，跳过安装步骤，继续配置 Foretoken 指标采集。
+
+如果集群尚未安装监控系统，可以使用仓库提供的 values 安装 kube-prometheus-stack：
 
 ```bash
 helm repo add prometheus-community \
@@ -22,10 +28,6 @@ helm repo update
 
 kubectl create namespace monitoring \
   --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl label namespace monitoring \
-  inference.foretoken.io/metrics-scraper=true \
-  --overwrite
 
 helm upgrade --install kube-prometheus-stack \
   prometheus-community/kube-prometheus-stack \
@@ -37,7 +39,19 @@ helm upgrade --install kube-prometheus-stack \
 
 示例 values 默认从 `foretoken-platform` namespace 查找 Foretoken ServiceMonitor。平台使用其他 namespace 时，复制该文件并修改 `serviceMonitorNamespaceSelector`。
 
-安装 Foretoken 时启用 ServiceMonitor：
+为运行 Prometheus 的 namespace 添加可信标记。每个集群只需设置一次：
+
+```bash
+kubectl label namespace monitoring \
+  inference.foretoken.io/metrics-scraper=true \
+  --overwrite
+```
+
+该标记允许这个 namespace 访问 model-server 的内部 HTTP 端口。NetworkPolicy 无法只放行其中的 `/metrics`，因此被标记的 namespace 中只能运行可信监控服务。
+
+## 启用 Foretoken 指标采集
+
+在 Foretoken values 中启用 ServiceMonitor：
 
 ```yaml
 observability:
@@ -45,29 +59,14 @@ observability:
     enabled: true
 ```
 
-集群已经运行 Prometheus Operator 时，不需要重复安装 kube-prometheus-stack。只需确保：
+Chart 创建的 ServiceMonitor 会跨 workload namespace 查找带 Foretoken label 的 Frontend 和 model-server Service。平台 Prometheus 需要：
 
-- Prometheus 会选择 `app.kubernetes.io/name=foretoken-control-plane`；
-- Prometheus 会从 Foretoken control-plane namespace 查找 ServiceMonitor；
-- 运行 Prometheus 的 namespace 带有 `inference.foretoken.io/metrics-scraper=true` label。
+- 在 Foretoken control-plane namespace 中查找 ServiceMonitor；
+- 选择带 `app.kubernetes.io/name=foretoken-control-plane` label 的 ServiceMonitor。
 
-这些是平台一次性配置，不需要为每个模型服务重复填写。
+仓库提供的 kube-prometheus-stack values 已包含这两项配置。使用现有 Prometheus 时，由平台管理员一次性配置，不需要为每个模型服务重复填写。
 
-### 最小部署
-
-本地开发、Kind 验证或不需要集中监控时，不启用 ServiceMonitor：
-
-```yaml
-observability:
-  serviceMonitor:
-    enabled: false
-```
-
-Frontend 和 model-server 仍提供 `/metrics`，Foretoken 的路由和自动扩缩容也继续使用内部 JSON 快照；只是 Helm Chart 不会创建 Prometheus 服务发现。
-
-## 可选抓取参数
-
-ServiceMonitor 默认继承平台 Prometheus 的抓取间隔和超时。只有需要单独覆盖时才设置：
+ServiceMonitor 默认继承 Prometheus 的抓取间隔和超时。只有需要单独覆盖时才设置：
 
 ```yaml
 observability:
@@ -77,7 +76,7 @@ observability:
     scrapeTimeout: 10s
 ```
 
-## 验证接入
+## 验证指标采集
 
 确认 Foretoken ServiceMonitor 已创建：
 
@@ -124,3 +123,9 @@ GPU 和 Kubernetes 状态来自集群已有的标准数据源：
 | 其他 accelerator 硬件 | 对应厂商的 accelerator exporter |
 | Container CPU、内存、文件系统和网络 | kubelet/cAdvisor |
 | Kubernetes object 状态 | kube-state-metrics 或对应 controller |
+
+## 告警和 Profiling
+
+告警规则由 Prometheus 评估，并交给 Alertmanager 发送通知。告警应使用 `/metrics` 中持续采集的时间序列，不读取 Foretoken 内部 telemetry 接口。
+
+Profiling 用于一次具体实验或故障分析，不属于持续指标采集。PyTorch Profiler 适合分析模型执行与算子时间；Nsight Systems 适合分析进程、kernel 和通信时间线；Nsight Compute 适合深入分析单个 GPU kernel。Profiling 结果应与对应 Benchmark 的模型、并发、硬件和运行参数一起保存。
