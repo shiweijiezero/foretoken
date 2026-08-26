@@ -236,14 +236,25 @@ async fn run_sglang(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Err
         return Err(std::io::Error::other(reason).into());
     }
 
+    // Report the engine's real context limit and dtype so the frontend can
+    // tokenize and validate requests. Fall back to the previous hardcoded
+    // values (and a warning) if the metadata query fails.
+    let (reported_len, model_dtype) = match sglang_model_info(plan.port).await {
+        Ok((len, dtype)) => (len, dtype),
+        Err(error) => {
+            warn!(%error, "could not query SGLang model info; using fallback metadata");
+            (0, ModelDtype::BFloat16)
+        }
+    };
+
     let metadata = RuntimeMetadataResponse {
         version: 1,
         model: RuntimeModelIdentity {
             model: plan.model.clone(),
             revision: plan.revision.clone().unwrap_or_default(),
         },
-        model_dtype: ModelDtype::BFloat16,
-        effective_max_model_len: 0,
+        model_dtype,
+        effective_max_model_len: u32::try_from(reported_len).unwrap_or(0),
         ec_transfer: None,
         capabilities: Default::default(),
     };
@@ -352,6 +363,51 @@ async fn wait_for_sglang_health(
     }
 }
 
+/// Queries the SGLang server's `/get_model_info` for its effective context
+/// length and model dtype.
+#[cfg(feature = "backend-sglang")]
+async fn sglang_model_info(port: u16) -> Result<(i64, ModelDtype), String> {
+    let url = format!("http://127.0.0.1:{port}/get_model_info");
+    let info: serde_json::Value = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|error| format!("sglang get_model_info request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("sglang get_model_info returned an error: {error}"))?
+        .json()
+        .await
+        .map_err(|error| format!("sglang get_model_info response is not valid JSON: {error}"))?;
+
+    let context_len = info
+        .get("context_len")
+        .and_then(serde_json::Value::as_i64)
+        .ok_or_else(|| format!("sglang get_model_info is missing context_len: {info}"))?;
+    let dtype = info
+        .get("model_dtype")
+        .and_then(serde_json::Value::as_str)
+        .map(sglang_model_dtype)
+        .unwrap_or(ModelDtype::BFloat16);
+    Ok((context_len, dtype))
+}
+
+/// Maps an SGLang `model_dtype` string (e.g. `torch.bfloat16`) to the neutral
+/// dtype. `bfloat16` is checked before `float16` because the former contains
+/// the latter as a substring.
+#[cfg(feature = "backend-sglang")]
+fn sglang_model_dtype(value: &str) -> ModelDtype {
+    let value = value.to_ascii_lowercase();
+    if value.contains("bfloat16") {
+        ModelDtype::BFloat16
+    } else if value.contains("float16") {
+        ModelDtype::Float16
+    } else if value.contains("float32") {
+        ModelDtype::Float32
+    } else {
+        ModelDtype::BFloat16
+    }
+}
+
 #[cfg(feature = "backend-vllm")]
 fn kv_event_adapter(
     plan: &LaunchPlanV1,
@@ -396,4 +452,52 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
     tokio::select! { () = ctrl_c => {}, () = terminate => {} }
+}
+
+#[cfg(all(test, feature = "backend-sglang"))]
+mod tests {
+    use super::*;
+    use axum::{Router, routing::get};
+    use serde_json::json;
+    use tokio::net::TcpListener;
+
+    async fn mock_model_info_server() -> (u16, tokio::task::JoinHandle<()>) {
+        let app = Router::new().route(
+            "/get_model_info",
+            get(|| async {
+                axum::Json(json!({
+                    "context_len": 32768,
+                    "model_dtype": "torch.bfloat16",
+                }))
+            }),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (port, handle)
+    }
+
+    #[tokio::test]
+    async fn model_dtype_mapping() {
+        assert_eq!(sglang_model_dtype("torch.bfloat16"), ModelDtype::BFloat16);
+        assert_eq!(sglang_model_dtype("bfloat16"), ModelDtype::BFloat16);
+        assert_eq!(sglang_model_dtype("torch.float16"), ModelDtype::Float16);
+        assert_eq!(sglang_model_dtype("float32"), ModelDtype::Float32);
+        assert_eq!(sglang_model_dtype("unknown"), ModelDtype::BFloat16);
+    }
+
+    #[tokio::test]
+    async fn model_info_queries_context_and_dtype() {
+        let (port, _handle) = mock_model_info_server().await;
+        let (len, dtype) = sglang_model_info(port).await.unwrap();
+        assert_eq!(len, 32768);
+        assert_eq!(dtype, ModelDtype::BFloat16);
+    }
+
+    #[tokio::test]
+    async fn model_info_fails_cleanly() {
+        assert!(sglang_model_info(1).await.is_err());
+    }
 }
