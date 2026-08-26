@@ -36,6 +36,13 @@ frontend:
     namespace: ""
     sectionName: ""
 
+# Integrates Foretoken metric endpoints with an existing Prometheus Operator.
+observability:
+  serviceMonitor:
+    enabled: false
+    interval: ""
+    scrapeTimeout: ""
+
 # The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
 runtime:
   vllm:

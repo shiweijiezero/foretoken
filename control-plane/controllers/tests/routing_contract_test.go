@@ -41,6 +41,10 @@ func TestFrontendRoutingSnapshotAndReadinessContract(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	frontendService := get(t, ctx, c, request.NamespacedName, new(corev1.Service))
+	if frontendService.Labels["inference.foretoken.io/frontend-service"] != frontend.Name || len(frontendService.Spec.Ports) != 1 || frontendService.Spec.Ports[0].Name != "http" {
+		t.Fatalf("frontend service discovery contract = %#v", frontendService)
+	}
 	var deployments appsv1.DeploymentList
 	if err := c.List(ctx, &deployments, client.InNamespace(frontend.Namespace)); err != nil {
 		t.Fatal(err)

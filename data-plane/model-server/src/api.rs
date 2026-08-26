@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -28,6 +28,7 @@ use foretoken_model_protocol::{
 // One atomic word linearizes admission close against request acceptance.
 const ADMISSION_OPEN: u64 = 1 << 63;
 const RUNNING_REQUESTS_MASK: u64 = !ADMISSION_OPEN;
+const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 
 /// Engine state used for API health and admission only; process ownership stays upstream.
 #[derive(Default)]
@@ -133,6 +134,7 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/metrics", get(metrics))
         .route("/v1/internal/metadata", get(metadata))
         .route("/v1/internal/telemetry", get(telemetry))
         .route("/v1/internal/admission/close", post(close_admission))
@@ -149,6 +151,20 @@ async fn healthz(State(state): State<AppState>) -> StatusCode {
 }
 async fn readyz(State(state): State<AppState>) -> StatusCode {
     status(state.health.ready())
+}
+
+async fn metrics(State(state): State<AppState>) -> Response {
+    match state.backend.render_openmetrics() {
+        Ok(body) => (
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(OPENMETRICS_CONTENT_TYPE),
+            )],
+            body,
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 async fn metadata(State(state): State<AppState>) -> Json<RuntimeMetadataResponse> {

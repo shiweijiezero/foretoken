@@ -27,7 +27,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
 | Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP parallelism | Research |
 | Control plane | Model services, instance groups, autoscaling, updates, and failure recovery | Planned |
-| Deployment and observability | Kubernetes deployment, metrics, dashboards, and alerts | Planned |
+| [Observability](observability/README.md) | Collect Frontend, model-service, and cluster runtime metrics with Prometheus | In development |
 
 ## Quick Start
 

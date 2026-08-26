@@ -12,7 +12,7 @@ use std::time::Instant;
 use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
 use vllm_llm::{FinishReason, Llm};
-use vllm_metrics::EngineLabels;
+use vllm_metrics::{EngineLabels, METRICS};
 
 use crate::backend_telemetry::{BoundaryLatencyMetrics, read_vllm_metrics};
 
@@ -52,6 +52,11 @@ pub enum BackendError {
     #[error("backend request failed")]
     RequestFailed,
 }
+
+/// Backend-neutral failure to encode the active inference engine's metrics.
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
+#[error("backend metrics rendering failed")]
+pub struct MetricsError;
 
 impl BackendError {
     pub const fn token_error_code(self) -> TokenErrorCode {
@@ -107,12 +112,13 @@ impl BackendError {
     }
 }
 
-/// Minimal EngineCore operations that this group-local server needs.
+/// Minimal inference backend operations that this group-local server needs.
 #[async_trait]
 pub trait Backend: Send + Sync {
     async fn generate(&self, request: GenerateInput) -> Result<TokenStream, BackendError>;
     async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError>;
     fn telemetry(&self) -> BackendTelemetry;
+    fn render_openmetrics(&self) -> Result<String, MetricsError>;
 }
 
 /// vLLM adapter that retains its public `Llm` facade rather than its wire protocol.
@@ -335,5 +341,9 @@ impl Backend for VllmBackend {
             tpot_seconds,
             e2e_seconds,
         }
+    }
+
+    fn render_openmetrics(&self) -> Result<String, MetricsError> {
+        METRICS.render().map_err(|_| MetricsError)
     }
 }

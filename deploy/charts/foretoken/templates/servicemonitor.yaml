@@ -1,0 +1,60 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
+
+{{- if .Values.observability.serviceMonitor.enabled }}
+{{- if .Values.frontend.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "foretoken.compactName" (printf "%s-frontend" (include "foretoken.fullname" .)) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+spec:
+  namespaceSelector:
+    any: true
+  selector:
+    matchExpressions:
+      - key: inference.foretoken.io/frontend-service
+        operator: Exists
+  endpoints:
+    - port: http
+      path: /metrics
+      {{- with $.Values.observability.serviceMonitor.interval }}
+      interval: {{ . | quote }}
+      {{- end }}
+      {{- with $.Values.observability.serviceMonitor.scrapeTimeout }}
+      scrapeTimeout: {{ . | quote }}
+      {{- end }}
+  targetLabels:
+    - inference.foretoken.io/frontend-service
+---
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "foretoken.compactName" (printf "%s-model-server" (include "foretoken.fullname" .)) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+spec:
+  namespaceSelector:
+    any: true
+  selector:
+    matchExpressions:
+      - key: inference.foretoken.io/model-group
+        operator: Exists
+  endpoints:
+    - port: model-server
+      path: /metrics
+      {{- with $.Values.observability.serviceMonitor.interval }}
+      interval: {{ . | quote }}
+      {{- end }}
+      {{- with $.Values.observability.serviceMonitor.scrapeTimeout }}
+      scrapeTimeout: {{ . | quote }}
+      {{- end }}
+  targetLabels:
+    - inference.foretoken.io/model-group
+    - inference.foretoken.io/model-role
+    - inference.foretoken.io/pd-pipeline-scope
+{{- end }}

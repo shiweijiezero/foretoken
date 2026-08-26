@@ -7,6 +7,7 @@
     "controller",
     "workload",
     "frontend",
+    "observability",
     "runtime"
   ],
   "properties": {
@@ -168,6 +169,31 @@
               "type": "string"
             },
             "sectionName": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "required": [
+        "serviceMonitor"
+      ],
+      "properties": {
+        "serviceMonitor": {
+          "type": "object",
+          "required": [
+            "enabled"
+          ],
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "interval": {
+              "type": "string"
+            },
+            "scrapeTimeout": {
               "type": "string"
             }
           }

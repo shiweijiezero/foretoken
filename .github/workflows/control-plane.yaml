@@ -10,6 +10,8 @@ on:
     paths:
       - control-plane/**
       - deploy/charts/foretoken/**
+      - deploy/observability/**
+      - deploy/platform-values.example.yaml
       - .dockerignore
       - LICENSE
       - .github/workflows/control-plane.yaml
@@ -19,6 +21,8 @@ on:
     paths:
       - control-plane/**
       - deploy/charts/foretoken/**
+      - deploy/observability/**
+      - deploy/platform-values.example.yaml
       - .dockerignore
       - LICENSE
       - .github/workflows/control-plane.yaml
@@ -54,7 +58,18 @@ jobs:
           helm template foretoken deploy/charts/foretoken --kube-version 1.36.3 > /tmp/foretoken.yaml
           grep -q '^kind: Deployment' /tmp/foretoken.yaml
           grep -q '^kind: ClusterRole' /tmp/foretoken.yaml
+          ! grep -q '^kind: ServiceMonitor' /tmp/foretoken.yaml
           ! grep -q '^kind: CustomResourceDefinition' /tmp/foretoken.yaml
+          helm template foretoken deploy/charts/foretoken \
+            --kube-version 1.36.3 \
+            --set observability.serviceMonitor.enabled=true \
+            --set observability.serviceMonitor.interval=30s \
+            --set observability.serviceMonitor.scrapeTimeout=10s \
+            > /tmp/foretoken-observability.yaml
+          test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability.yaml)" = "2"
+          test "$(grep -c 'path: /metrics' /tmp/foretoken-observability.yaml)" = "2"
+          test "$(grep -c 'interval: \"30s\"' /tmp/foretoken-observability.yaml)" = "2"
+          test "$(grep -c 'scrapeTimeout: \"10s\"' /tmp/foretoken-observability.yaml)" = "2"
       - name: Validate operator lifecycle
         run: |
           kind load docker-image foretoken-control-plane:test --name foretoken

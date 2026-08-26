@@ -12,7 +12,8 @@ use foretoken_model_protocol::{
 };
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::{
-    Backend, BackendError, BackendTelemetry, GenerateInput, TokenEvent, TokenOutput, TokenStream,
+    Backend, BackendError, BackendTelemetry, GenerateInput, MetricsError, TokenEvent, TokenOutput,
+    TokenStream,
 };
 use futures::stream;
 use http_body_util::BodyExt;
@@ -24,10 +25,18 @@ use vllm_engine_core_client::protocol::multimodal::{
 use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
 use vllm_engine_core_client::protocol::tensor::WireNdArray;
 
+const OPENMETRICS_FIXTURE: &str = concat!(
+    "# HELP fake_backend_up Whether the fake backend is available.\n",
+    "# TYPE fake_backend_up gauge\n",
+    "fake_backend_up 1\n",
+    "# EOF\n",
+);
+
 struct RecordingBackend {
     requests: Mutex<Vec<GenerateInput>>,
     aborts: Mutex<Vec<Vec<String>>>,
     telemetry: BackendTelemetry,
+    metrics: Result<&'static str, MetricsError>,
 }
 
 impl Default for RecordingBackend {
@@ -40,6 +49,7 @@ impl Default for RecordingBackend {
                 max_concurrent_requests: 7,
                 ..Default::default()
             },
+            metrics: Ok(OPENMETRICS_FIXTURE),
         }
     }
 }
@@ -70,6 +80,10 @@ impl Backend for RecordingBackend {
 
     fn telemetry(&self) -> BackendTelemetry {
         self.telemetry.clone()
+    }
+
+    fn render_openmetrics(&self) -> Result<String, MetricsError> {
+        self.metrics.map(str::to_owned)
     }
 }
 
@@ -105,6 +119,37 @@ fn app_with_body_limit(
 }
 
 #[tokio::test]
+async fn metrics_returns_backend_openmetrics_when_not_ready() {
+    let response = app(Arc::new(RecordingBackend::default()), false, false)
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "application/openmetrics-text; version=1.0.0; charset=utf-8"
+    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body = std::str::from_utf8(&body).unwrap();
+    assert_eq!(body, OPENMETRICS_FIXTURE);
+}
+
+#[tokio::test]
+async fn metrics_returns_internal_server_error_when_backend_render_fails() {
+    let backend = RecordingBackend {
+        metrics: Err(MetricsError),
+        ..Default::default()
+    };
+    let response = app(Arc::new(backend), true, true)
+        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+#[tokio::test]
 async fn kv_delta_is_unavailable_without_an_event_adapter() {
     let response = app(Arc::new(RecordingBackend::default()), true, true)
         .oneshot(
@@ -136,6 +181,10 @@ impl Backend for PendingStreamBackend {
             ..Default::default()
         }
     }
+
+    fn render_openmetrics(&self) -> Result<String, MetricsError> {
+        Ok(OPENMETRICS_FIXTURE.to_owned())
+    }
 }
 
 struct FailingStreamBackend;
@@ -152,6 +201,10 @@ impl Backend for FailingStreamBackend {
 
     fn telemetry(&self) -> BackendTelemetry {
         Default::default()
+    }
+
+    fn render_openmetrics(&self) -> Result<String, MetricsError> {
+        Ok(OPENMETRICS_FIXTURE.to_owned())
     }
 }
 

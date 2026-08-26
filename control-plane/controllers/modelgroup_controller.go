@@ -45,6 +45,8 @@ const (
 	modelGroupFieldOwner           = "foretoken-modelgroup-controller"
 	controlPlanePodLabel           = "app.kubernetes.io/name"
 	controlPlanePodLabelValue      = "foretoken-control-plane"
+	metricsScraperNamespaceLabel   = "inference.foretoken.io/metrics-scraper"
+	metricsScraperNamespaceValue   = "true"
 )
 
 // ModelGroupReconciler owns the Kubernetes workload for one execution Group.
@@ -420,6 +422,11 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 		},
 		Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &modelServerPort}},
 	}}
+	ingress[0].From = append(ingress[0].From, networkingv1.NetworkPolicyPeer{
+		NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
+			metricsScraperNamespaceLabel: metricsScraperNamespaceValue,
+		}},
+	})
 	if group.Spec.PDRuntime != nil {
 		// Mooncake opens bidirectional runtime side channels on dynamic ports
 		// after bootstrap. Restrict them to the same controller-owned P/D linked processing unit.

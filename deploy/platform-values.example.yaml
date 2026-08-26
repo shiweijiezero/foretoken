@@ -26,6 +26,11 @@ frontend:
     namespace: gateway-system
     sectionName: https
 
+# Enable only when the cluster already provides the Prometheus Operator CRDs.
+observability:
+  serviceMonitor:
+    enabled: false
+
 runtime:
   vllm:
     image: registry.example.com/foretoken/model-server:dev
