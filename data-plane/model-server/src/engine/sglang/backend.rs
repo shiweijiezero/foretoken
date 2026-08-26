@@ -72,6 +72,21 @@ fn parse_sglang_finish_reason(reason: &str) -> FinishReason {
     }
 }
 
+/// Parses one line of SGLang's streaming `/generate` response (Server-Sent
+/// Events) into a chunk.
+///
+/// Each payload line looks like `data: {json}`. Lines that carry no payload
+/// (blank lines, comment/heartbeat lines, and the `[DONE]` terminator) yield
+/// `Ok(None)`; a malformed `data:` payload yields `Err(())`.
+fn parse_sse_chunk(line: &[u8]) -> Result<Option<GenerateChunk>, ()> {
+    let line = std::str::from_utf8(line).map_err(|_| ())?.trim();
+    if line.is_empty() || line.starts_with(':') || line == "[DONE]" {
+        return Ok(None);
+    }
+    let line = line.strip_prefix("data:").unwrap_or(line).trim();
+    serde_json::from_str(line).map(Some).map_err(|_| ())
+}
+
 /// HTTP-backed SGLang engine.
 pub struct SglangBackend {
     client: reqwest::Client,
@@ -167,13 +182,10 @@ impl Engine for SglangBackend {
                 pending.extend_from_slice(&chunk);
                 while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
                     let line: Vec<u8> = pending.drain(..=newline).collect();
-                    let line = &line[..line.len() - 1];
-                    if line.is_empty() {
-                        continue;
-                    }
-                    let chunk: GenerateChunk = match serde_json::from_slice(line) {
-                        Ok(chunk) => chunk,
-                        Err(_) => {
+                    let chunk = match parse_sse_chunk(&line[..line.len() - 1]) {
+                        Ok(Some(chunk)) => chunk,
+                        Ok(None) => continue,
+                        Err(()) => {
                             yield Err(EngineError::from(SglangError::Protocol));
                             return;
                         }
@@ -287,5 +299,29 @@ mod tests {
         assert_eq!(json["seed"], 42);
         assert_eq!(json["max_new_tokens"], 128);
         assert_eq!(json["stop_token_ids"], serde_json::json!([151643]));
+    }
+
+    #[test]
+    fn parse_sse_chunk_strips_data_prefix() {
+        let chunk = parse_sse_chunk(
+            br#"data: {"text":", I","output_ids":[11,358],"meta_info":{"finish_reason":null}}"#,
+        )
+        .expect("valid SSE payload")
+        .expect("some chunk");
+        assert_eq!(chunk.output_ids, vec![11, 358]);
+        assert!(chunk.meta_info.is_some());
+    }
+
+    #[test]
+    fn parse_sse_chunk_skips_framing_lines() {
+        assert!(parse_sse_chunk(b"").unwrap().is_none());
+        assert!(parse_sse_chunk(b" ").unwrap().is_none());
+        assert!(parse_sse_chunk(b": ping").unwrap().is_none());
+        assert!(parse_sse_chunk(b"[DONE]").unwrap().is_none());
+    }
+
+    #[test]
+    fn parse_sse_chunk_rejects_malformed_payload() {
+        assert!(parse_sse_chunk(b"data: {not-json").is_err());
     }
 }
