@@ -9,7 +9,7 @@ k3d 在 Docker container 中运行轻量 Kubernetes 发行版 k3s。它适合在
 
 创建 k3d cluster 后，在仓库根目录运行 `make dev-deploy`。脚本会构建源码并将发生变化的本地镜像导入当前 cluster；后续 Helm 部署、Ready 等待和请求验证与其他 Kubernetes 集群相同。
 
-## k3d 如何限定物理 GPU
+## k3d 如何选择并登记 GPU
 
 标准 Kubernetes Pod 请求的是 GPU 类型和数量：
 
@@ -19,7 +19,7 @@ resources:
     nvidia.com/gpu: 1
 ```
 
-Pod 不指定宿主机 index。k3d 可以在创建 Kubernetes node container 时先限制 Docker 可见设备：
+Pod 不指定宿主机 index。在这套开发配置中，Docker `--gpus` 与一致的 device-plugin 配置用来选择目标宿主机设备，并向 Kubernetes 登记它们的数量：
 
 ```text
 宿主机物理 GPU 6、7
@@ -28,6 +28,10 @@ Pod 不指定宿主机 index。k3d 可以在创建 Kubernetes node container 时
 → k3s NVIDIA device plugin
 → Foretoken Pod
 ```
+
+这是调度与设备选择机制，不是多租户安全隔离边界。k3d server 是 privileged Docker container；受宿主机 NVIDIA runtime 行为影响，node 内进程仍可能枚举到选定集合之外的设备。Node 报告 `nvidia.com/gpu: 2` 只表示 Kubernetes 可以调度两份标准 GPU 资源，不表示这个嵌套 node 在物理上无法访问其他宿主机 GPU。
+
+在共享服务器上只应运行可信的开发 workload。推理 Pod 必须请求 `nvidia.com/gpu`，并由 runtime 和 device plugin 负责设备选择；不要把 `NVIDIA_VISIBLE_DEVICES` 当作权限控制。不可信租户需要硬件隔离时，请使用独立宿主机、VM 或按常规方式隔离的 Kubernetes node。
 
 ## 前置条件
 
@@ -54,7 +58,7 @@ export GPU_INDICES=6,7
 export CLUSTER=foretoken-qwen-test
 ```
 
-## 2. 创建限定 GPU 的 k3d cluster
+## 2. 创建选定 GPU 的 k3d cluster
 
 下面的 Bash 代码读取 NVIDIA runtime、配置和依赖库所在位置，并为 k3d 生成 mount 参数：
 
@@ -144,6 +148,15 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
   --namespace kube-system \
   --timeout=3m
 ```
+
+显式验证 Kubernetes 可调度数量：
+
+```bash
+kubectl get nodes \
+  --output jsonpath='{range .items[*]}{.metadata.name}{" capacity="}{.status.capacity.nvidia\.com/gpu}{" allocatable="}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'
+```
+
+对于 `GPU_INDICES=6,7`，两个值都应为 `2`。这只验证 device plugin 的资源登记，不改变上面的隔离警告。
 
 ## 4. 安装并访问 Foretoken
 
@@ -248,10 +261,13 @@ curl "$FRONTEND_URL/v1/chat/completions" \
 printf '\n'
 ```
 
-Foretoken YAML 继续请求标准 `nvidia.com/gpu` 资源；宿主机 GPU 的选择在创建 k3d cluster 时完成。
+Foretoken YAML 继续请求标准 `nvidia.com/gpu` 资源。k3d 与 device-plugin 配置为调度选择目标宿主机 GPU 集合；需要确认准确物理映射时，请用 UUID 与 `nvidia-smi` 对照。
 
+## 5. 继续配置可观测性
 
-## 5. 清理
+验证推理服务后，可以按照[监控 NVIDIA GPU](gpu-observability_zh.md)增加 DCGM Exporter、Prometheus discovery 和中文 Grafana GPU Dashboard。该指南中的 k3d 命令会为 exporter 显式选择同一组可信 GPU，但不占用 Kubernetes GPU 配额。
+
+## 6. 清理
 
 删除 cluster：
 

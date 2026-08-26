@@ -1,0 +1,1251 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Foretoken 的 NVIDIA GPU 基础硬件状态。数据来自 NVIDIA DCGM Exporter；缺少指标表示当前硬件或软件组合未报告，不能解释为数值 0。",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "当前至少报告温度、利用率或显存指标的 GPU 数量。按 Prometheus target、GPU index 和 UUID 去重。该数值仅表示 inventory，不代表 GPU 健康，也不判断数量是否符合预期。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "blue",
+            "mode": "fixed"
+          },
+          "noValue": "未采集",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "count(group by (instance, gpu, UUID) (DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"} or DCGM_FI_DEV_GPU_UTIL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"} or DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}))",
+          "instant": true,
+          "legendFormat": "GPU",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "已报告 GPU 数量",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所有选中 DCGM Exporter target 都正常时为“正常”；任一 target 抓取失败即为“异常”。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "red",
+                  "text": "异常"
+                },
+                "1": {
+                  "color": "green",
+                  "text": "正常"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "noValue": "未发现",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "min(up{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"})",
+          "instant": true,
+          "legendFormat": "状态",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "全部 DCGM targets 可抓取",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所选 GPU 当前核心温度的最高值。70°C 和 85°C 颜色仅为通用可视化提示，不是告警阈值；请按 GPU 型号、机型散热和 NVIDIA 建议校准。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "未采集",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 85
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max(DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "instant": true,
+          "legendFormat": "最高温度",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "当前最高 GPU 核心温度",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "未采集",
+          "unit": "gibibytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(max by (instance, gpu, UUID) (DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})) / 1024",
+          "instant": true,
+          "legendFormat": "已用显存",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "选定 GPU 显存已用合计",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "noValue": "未采集",
+          "unit": "watt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "sum(max by (instance, gpu, UUID) (DCGM_FI_DEV_POWER_USAGE{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}))",
+          "instant": true,
+          "legendFormat": "总功耗",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "选定 GPU 当前功耗合计",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 15,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "max": 100,
+          "min": 0,
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "id": 6,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_GPU_UTIL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "GPU 利用率",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 12,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "unit": "gibibytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}) / 1024",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 已用",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_FB_FREE{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}) / 1024",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 空闲",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "GPU 显存",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 核心",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_MEMORY_TEMP{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 显存",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "GPU 与显存温度",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "unit": "watt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_POWER_USAGE{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "GPU 功耗",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "max": 100,
+          "min": 0,
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_MEM_COPY_UTIL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "显存复制引擎利用率",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "非零 XID 表示 NVIDIA 驱动报告了硬件或执行错误。查询无 series 时 Grafana 显示 No data，不能解释为没有错误；“未报告”只是已返回 field 值为空时的 fallback。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "green",
+                  "text": "0（当前未报告 XID）"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "noValue": "未报告",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 20
+      },
+      "id": 11,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_XID_ERRORS{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "instant": true,
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "最近 XID 错误代码",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "过去 5 分钟内 PCIe replay counter 的增量。增长通常表示链路重传，需要结合节点日志排查。1 和 10 的颜色仅为通用可视化提示，不是告警阈值；请按 GPU 型号、PCIe 拓扑和基线校准。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "未报告",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 20
+      },
+      "id": 12,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_PCIE_REPLAY_COUNTER{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
+          "instant": true,
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "近 5 分钟 PCIe replay 增量",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "过去 5 分钟内各类 GPU 限速累计时长。单位由 DCGM 的纳秒 counter 换算为秒。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 28
+      },
+      "id": 13,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_POWER_VIOLATION{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m])) / 1e9",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 功耗",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_THERMAL_VIOLATION{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m])) / 1e9",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 温度",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_BOARD_LIMIT_VIOLATION{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m])) / 1e9",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 板卡限制",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_RELIABILITY_VIOLATION{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m])) / 1e9",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 可靠性",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "近 5 分钟 GPU 限速时间",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "DCGM 报告的易失和累计 ECC 错误总数。缺少 series 表示未报告，不能解释为 0。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 28
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_ECC_SBE_VOL_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · SBE 易失",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_ECC_DBE_VOL_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · DBE 易失",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_ECC_SBE_AGG_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · SBE 累计",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_ECC_DBE_AGG_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · DBE 累计",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "ECC 错误",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "unit": "hertz"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 36
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_SM_CLOCK{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}) * 1e6",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · SM",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_MEM_CLOCK{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}) * 1e6",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 显存",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "GPU 时钟频率",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "过去 5 分钟内 DCGM 报告的 NVLink CRC、replay 和 recovery 错误增量。缺少 series 表示未报告。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 36
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · FLIT CRC",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · DATA CRC",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · Replay",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "editorMode": "code",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
+          "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · Recovery",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "近 5 分钟 NVLink 错误",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 41,
+  "tags": [
+    "Foretoken",
+    "GPU",
+    "DCGM"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "label": "Prometheus 数据源",
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "type": "datasource"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(up{foretoken_observability_source=\"dcgm\"}, instance)",
+        "includeAll": true,
+        "label": "采集实例",
+        "multi": true,
+        "name": "instance",
+        "options": [],
+        "query": {
+          "query": "label_values(up{foretoken_observability_source=\"dcgm\"}, instance)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "query_result(group by (gpu) (DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"} or DCGM_FI_DEV_GPU_UTIL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"} or DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"}))",
+        "includeAll": true,
+        "label": "GPU",
+        "multi": true,
+        "name": "gpu",
+        "options": [],
+        "query": {
+          "query": "query_result(group by (gpu) (DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"} or DCGM_FI_DEV_GPU_UTIL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"} or DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"}))",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "/gpu=\"([^\"]+)\"/",
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Foretoken GPU 运行状态",
+  "uid": "foretoken-gpu-overview",
+  "version": 1,
+  "weekStart": ""
+}

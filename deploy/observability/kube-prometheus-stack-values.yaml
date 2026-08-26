@@ -1,13 +1,19 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Select the ServiceMonitors created by the Foretoken platform release.
+# Discover ServiceMonitors only from namespaces owned by the monitoring stack,
+# the Foretoken platform, or the GPU monitoring add-on. An empty object selects
+# every ServiceMonitor inside this namespace allowlist, including the monitors
+# created by kube-prometheus-stack itself.
 prometheus:
   prometheusSpec:
     serviceMonitorSelectorNilUsesHelmValues: false
-    serviceMonitorSelector:
-      matchLabels:
-        app.kubernetes.io/name: foretoken-control-plane
+    serviceMonitorSelector: {}
     serviceMonitorNamespaceSelector:
-      matchLabels:
-        kubernetes.io/metadata.name: foretoken-platform
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - monitoring
+            - foretoken-platform
+            - gpu-monitoring

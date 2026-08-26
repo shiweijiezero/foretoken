@@ -9,7 +9,7 @@ k3d runs the lightweight k3s Kubernetes distribution in Docker containers. It is
 
 After creating the k3d cluster, run `make dev-deploy` from the repository root. The script builds the source and imports changed local images into the current cluster; the Helm deployment, Ready wait, and request verification remain the same as for any other Kubernetes cluster.
 
-## How k3d restricts physical GPUs
+## How k3d selects and advertises GPUs
 
 A standard Kubernetes Pod requests a GPU type and count:
 
@@ -19,7 +19,7 @@ resources:
     nvidia.com/gpu: 1
 ```
 
-Pods do not specify host GPU indices. When creating Kubernetes node containers, k3d can first limit which devices Docker exposes:
+Pods do not specify host GPU indices. In this development setup, Docker `--gpus` and the matching device-plugin configuration select the intended host devices and advertise their count to Kubernetes:
 
 ```text
 Host physical GPUs 6 and 7
@@ -28,6 +28,10 @@ Host physical GPUs 6 and 7
 → k3s NVIDIA device plugin
 → Foretoken Pod
 ```
+
+This is a scheduling and device-selection mechanism, not a multi-tenant security boundary. The k3d server is a privileged Docker container; depending on the host NVIDIA runtime, processes inside that node can still enumerate devices outside the selected set. A node reporting `nvidia.com/gpu: 2` means Kubernetes can schedule two standard GPU resources, not that the nested node is physically incapable of accessing every other host GPU.
+
+Use this configuration only for trusted development workloads on a shared server. Require inference Pods to request `nvidia.com/gpu`, keep their NVIDIA device selection under the runtime and device plugin, and do not treat `NVIDIA_VISIBLE_DEVICES` as access control. Use separate hosts, VMs, or a conventionally isolated Kubernetes node when untrusted tenants require hardware isolation.
 
 ## Prerequisites
 
@@ -54,7 +58,7 @@ export GPU_INDICES=6,7
 export CLUSTER=foretoken-qwen-test
 ```
 
-## 2. Create a GPU-restricted k3d cluster
+## 2. Create a GPU-selected k3d cluster
 
 The following Bash code finds the NVIDIA runtime, configuration, and dependent libraries, then prepares mount arguments for k3d:
 
@@ -144,6 +148,15 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
   --namespace kube-system \
   --timeout=3m
 ```
+
+Verify the schedulable count explicitly:
+
+```bash
+kubectl get nodes \
+  --output jsonpath='{range .items[*]}{.metadata.name}{" capacity="}{.status.capacity.nvidia\.com/gpu}{" allocatable="}{.status.allocatable.nvidia\.com/gpu}{"\n"}{end}'
+```
+
+For `GPU_INDICES=6,7`, both values should be `2`. This verifies device-plugin registration only; it does not change the isolation warning above.
 
 ## 4. Install and access Foretoken
 
@@ -248,10 +261,13 @@ curl "$FRONTEND_URL/v1/chat/completions" \
 printf '\n'
 ```
 
-Foretoken YAML continues to request standard `nvidia.com/gpu` resources; host GPU selection occurs when the k3d cluster is created.
+Foretoken YAML continues to request standard `nvidia.com/gpu` resources. The k3d and device-plugin settings select the intended host GPU set for scheduling; compare UUIDs with `nvidia-smi` when the exact physical mapping matters.
 
+## 5. Continue with observability
 
-## 5. Clean up
+After verifying inference, follow [Monitor NVIDIA GPUs](gpu-observability.md) to add DCGM Exporter, Prometheus discovery, and the Chinese Grafana GPU dashboard. The k3d command in that guide explicitly selects the same trusted GPU set for the exporter without consuming a Kubernetes GPU allocation.
+
+## 6. Clean up
 
 Delete the cluster:
 

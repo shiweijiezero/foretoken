@@ -24,6 +24,7 @@ helm repo update
 
 helm upgrade --install kube-prometheus-stack \
   prometheus-community/kube-prometheus-stack \
+  --version 88.5.4 \
   --namespace monitoring \
   --create-namespace \
   --values deploy/observability/kube-prometheus-stack-values.yaml \
@@ -49,7 +50,9 @@ observability:
 
 ServiceMonitor 默认继承 Prometheus 的抓取间隔和超时。只有需要单独覆盖时才设置 `interval` 或 `scrapeTimeout`。
 
-仓库提供的 kube-prometheus-stack values 默认从 `foretoken-platform` namespace 查找 Foretoken ServiceMonitor。平台使用其他 namespace 时，请复制该文件并修改 `serviceMonitorNamespaceSelector`。
+仓库提供的 kube-prometheus-stack values 只从 `monitoring`、`foretoken-platform` 和 `gpu-monitoring` namespace 发现 ServiceMonitor，包括 monitoring stack 自身、Foretoken 以及可选 NVIDIA GPU addon 的 monitors。平台使用其他 namespace 时，请复制该文件并修改 `serviceMonitorNamespaceSelector`。
+
+Foretoken ServiceMonitor 注册在 `foretoken-platform`，随后跨 workload namespace 发现匹配的 Frontend 和 model-server Service。上面的 namespace 列表限制 Prometheus 在哪里发现 ServiceMonitor object，不会把 Foretoken monitor 限制在单个 workload namespace。
 
 ## 确认采集已启用
 
@@ -71,6 +74,8 @@ Prometheus、Grafana 和 Alertmanager Pod 应处于 `Running`，并且启用的 
 | DCGM Exporter | NVIDIA GPU 利用率、显存、功耗、温度和硬件错误 |
 | kubelet/cAdvisor | Container CPU、内存、文件系统和网络 |
 | kube-state-metrics | Kubernetes object 状态 |
+
+DCGM Exporter 是可选的 cluster addon，不由 Foretoken chart 自动安装。请按照[监控 NVIDIA GPU](../docs/gpu-observability_zh.md)安装或复用 exporter、限制 exporter 指标端口的访问，并加载中文 `Foretoken GPU 运行状态` Grafana Dashboard。
 
 model-server 不会重命名或过滤推理后端的原生指标。对于当前 vLLM adapter，指标名称、单位和 label 以 `/metrics` 响应中的 `HELP` 和 `TYPE` 为准。
 

@@ -1,0 +1,93 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Validated with the NVIDIA dcgm-exporter Helm chart 4.8.2. The long image
+# tag is pinned so that exporter and bundled DCGM upgrades remain explicit and
+# version-matched. The upstream chart does not expose a separate image digest.
+image:
+  repository: nvcr.io/nvidia/k8s/dcgm-exporter
+  tag: 4.5.3-4.8.2-distroless
+  pullPolicy: IfNotPresent
+
+# Foretoken does not attribute these baseline hardware samples to Kubernetes
+# Pods. The explicit CLI flag takes precedence over the chart's hard-coded
+# DCGM_EXPORTER_KUBERNETES=true environment variable and avoids polling the
+# kubelet pod-resources socket. Chart 4.8.2 still renders that socket as a
+# read-only hostPath; see the documented upstream-chart limitation.
+arguments:
+  - -f
+  - /etc/dcgm-exporter/default-counters.csv
+  - --kubernetes=false
+
+# The pinned image defaults NVIDIA_VISIBLE_DEVICES to all, which is correct on
+# a standard GPU node. A nested k3d runtime must explicitly select the same
+# trusted host GPU set as its device plugin; this is selection, not a tenant
+# isolation boundary. See docs/gpu-observability*.md.
+
+# The upstream chart defaults to system-node-critical. Hardware monitoring is
+# optional and must not receive a priority that can preempt inference Pods.
+priorityClassName: ""
+
+# Prometheus Operator must be installed before this chart is rendered in a
+# cluster. The ServiceMonitor remains in the dcgm-exporter release namespace.
+serviceMonitor:
+  enabled: true
+  interval: 30s
+  scrapeTimeout: 10s
+  relabelings:
+    - targetLabel: foretoken_observability_source
+      replacement: dcgm
+
+# Base hardware telemetry does not require DCGM profiling privileges. Keeping
+# the exporter non-root and dropping every capability also avoids interfering
+# with Nsight or another profiler running on the same GPU.
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  allowPrivilegeEscalation: false
+  capabilities:
+    add: []
+    drop:
+      - ALL
+
+# customMetrics replaces the chart's complete default list. Profiling fields
+# (DCGM_FI_PROF_*) are intentionally excluded because chart 4.8.2 grants
+# SYS_ADMIN for them. Unsupported hardware fields may be absent at runtime.
+customMetrics: |
+  DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency in MHz.
+  DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency in MHz.
+  DCGM_FI_DEV_MEMORY_TEMP, gauge, Memory temperature in C.
+  DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature in C.
+  DCGM_FI_DEV_POWER_USAGE, gauge, Power draw in W.
+  DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Total energy consumption since boot in mJ.
+  DCGM_FI_DEV_PCIE_TX_THROUGHPUT, counter, PCIe transmit throughput in KB.
+  DCGM_FI_DEV_PCIE_RX_THROUGHPUT, counter, PCIe receive throughput in KB.
+  DCGM_FI_DEV_PCIE_REPLAY_COUNTER, counter, Total number of PCIe retries.
+  DCGM_FI_DEV_GPU_UTIL, gauge, GPU utilization in percent.
+  DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory copy utilization in percent.
+  DCGM_FI_DEV_ENC_UTIL, gauge, Encoder utilization in percent.
+  DCGM_FI_DEV_DEC_UTIL, gauge, Decoder utilization in percent.
+  DCGM_FI_DEV_XID_ERRORS, gauge, Last XID error encountered.
+  DCGM_FI_DEV_POWER_VIOLATION, counter, Throttling duration due to power constraints in ns.
+  DCGM_FI_DEV_THERMAL_VIOLATION, counter, Throttling duration due to thermal constraints in ns.
+  DCGM_FI_DEV_SYNC_BOOST_VIOLATION, counter, Throttling duration due to sync boost constraints in ns.
+  DCGM_FI_DEV_BOARD_LIMIT_VIOLATION, counter, Throttling duration due to board limits in ns.
+  DCGM_FI_DEV_LOW_UTIL_VIOLATION, counter, Throttling duration due to low utilization in ns.
+  DCGM_FI_DEV_RELIABILITY_VIOLATION, counter, Throttling duration due to reliability constraints in ns.
+  DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free in MiB.
+  DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used in MiB.
+  DCGM_FI_DEV_ECC_SBE_VOL_TOTAL, counter, Volatile single bit ECC errors.
+  DCGM_FI_DEV_ECC_DBE_VOL_TOTAL, counter, Volatile double bit ECC errors.
+  DCGM_FI_DEV_ECC_SBE_AGG_TOTAL, counter, Persistent single bit ECC errors.
+  DCGM_FI_DEV_ECC_DBE_AGG_TOTAL, counter, Persistent double bit ECC errors.
+  DCGM_FI_DEV_RETIRED_SBE, counter, Pages retired due to single bit errors.
+  DCGM_FI_DEV_RETIRED_DBE, counter, Pages retired due to double bit errors.
+  DCGM_FI_DEV_RETIRED_PENDING, counter, Pages pending retirement.
+  DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL, counter, NVLink flow control CRC errors.
+  DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL, counter, NVLink data CRC errors.
+  DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL, counter, NVLink retries.
+  DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL, counter, NVLink recovery errors.
+  DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL, counter, NVLink bandwidth counter for all lanes.
+  DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, counter, Remapped rows for uncorrectable errors.
+  DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS, counter, Remapped rows for correctable errors.
+  DCGM_FI_DEV_ROW_REMAP_FAILURE, gauge, Whether row remapping has failed.
