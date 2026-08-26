@@ -181,7 +181,7 @@ jobs:
             '.templating.list | map(.name) == ["DS_PROMETHEUS", "instance", "gpu"]' \
             deploy/observability/grafana/dashboards/foretoken-gpu-dashboard.json
           jq -e \
-            '[.panels[]?.targets[]?.expr] | length > 0 and all(contains("foretoken_observability_source=\\"dcgm\\""))' \
+            '[.panels[]?.targets[]?.expr] | length > 0 and all(contains("foretoken_observability_source=\"dcgm\""))' \
             deploy/observability/grafana/dashboards/foretoken-gpu-dashboard.json
           kubectl kustomize deploy/observability/grafana \
             > /tmp/foretoken-gpu-dashboard.yaml
