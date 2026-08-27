@@ -112,6 +112,8 @@ Report only commands and environments that actually ran. State important skipped
 
 Keep each PR focused on one responsibility. Confirm its base before review, especially for stacked work. Do not include unrelated formatting, generated drift, local caches, experiment output, personal absolute paths, credentials, private infrastructure, or untracked reference trees.
 
+External contributors use forks. When acting with maintainer write access and explicitly asked to open a PR, use one short-lived branch in the main repository for that PR. Do not create bridge or refresh branches. Delete the head branch after the PR is merged or closed. Other branches in the main repository are reserved for explicit long-term development efforts spanning multiple related PRs.
+
 Use [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md) or its [Chinese version](.github/PULL_REQUEST_TEMPLATE_zh.md). Keep only the sections that apply.
 
 ## Directory-specific instructions

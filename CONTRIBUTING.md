@@ -49,6 +49,8 @@ Keep module-level unit tests next to their source. Do not use a root `tests/` di
 
 ## Pull Requests
 
+External contributors should open pull requests from a fork. Maintainers with write access may use one short-lived branch in the main repository for each pull request. Do not create additional bridge or refresh branches; delete the head branch when the pull request is merged or closed. Other branches in the main repository are reserved for explicit long-term development efforts that span multiple related pull requests.
+
 Use the repository [pull request template](.github/PULL_REQUEST_TEMPLATE.md). Keep the PR focused on one responsibility and remove unrelated formatting, generated drift, local artifacts, and obsolete paths from its final diff.
 
 When user-visible behavior, commands, configuration, or status changes, update the relevant English and Chinese documentation and examples. Keep the PR in Draft status until it is ready for full review.
