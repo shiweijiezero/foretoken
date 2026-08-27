@@ -201,7 +201,6 @@ helm_args=(
   upgrade --install "$RELEASE" "$ROOT/deploy/charts/foretoken"
   --namespace "$PLATFORM_NAMESPACE"
   --wait --timeout "$DEV_TIMEOUT"
-  --debug
 )
 
 if [[ "$RELEASE_EXISTS" == true ]]; then
