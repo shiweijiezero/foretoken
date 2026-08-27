@@ -47,7 +47,7 @@ YAML should be easy to read and modify:
 - Use specific domain names that explain what a field controls. Avoid broad names such as `target`, `policy`, `owner`, `extra`, or `config` when a precise name exists.
 - Put advanced choices in a clearly owned nested block instead of mixing them into the common path.
 - Do not provide two fields or files for the same decision.
-- Keep `values.yaml`, its schema, canonical examples, and user documentation synchronized.
+- Keep `values.yaml`, its schema, maintained examples, and user documentation synchronized.
 - Show the smallest useful configuration in user examples, not every optional field.
 
 ## Errors, limits, and guardrails
@@ -122,7 +122,7 @@ Write documentation for the person who will use or maintain the final system, no
 
 Before adding or substantially rewriting user documentation:
 
-1. verify the current code, CLI help, Helm values, schema, and canonical examples;
+1. verify the current code, CLI help, Helm values, schema, and maintained examples;
 2. read the latest documentation from at least two mature projects with a similar responsibility;
 3. compare their reader path, terminology, examples, prerequisites, and troubleshooting depth before choosing the Foretoken structure.
 
