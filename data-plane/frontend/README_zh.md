@@ -12,7 +12,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 ## 主要能力
 
 - 提供 OpenAI 兼容的 Completion 和 Chat Completion API；
-- 在同一个 frontend 中对外提供多个模型；
+- 通过同一个前端服务对外提供多个模型；
 - 根据模型、请求能力、实例健康状态、负载和 KV cache 复用机会选择推理实例；
 - 支持聚合部署、Prefill/Decode 分离和 Encoder/Prefill/Decode 分离；
 - 同时支持 SSE 流式响应和普通 JSON 响应；
@@ -36,15 +36,15 @@ foretoken-frontend
 模型服务
 ```
 
-客户端通过请求中的 `model` 选择模型。Frontend 只会把请求发送到满足该模型能力并且当前可用的实例；一个模型暂时不可用时，不会影响其他健康模型继续服务，也不会自动把请求转发到不同模型。
+客户端通过请求中的 `model` 选择模型。前端服务只会把请求发送到满足该模型能力并且当前可用的实例；一个模型暂时不可用时，不会影响其他健康模型继续服务，也不会自动把请求转发到不同模型。
 
-当运行中的模型实例或路由发生变化时，Frontend 会在新配置准备完成后再启用它。无效或尚未就绪的更新不会替换当前可用配置，也不会主动中断正在进行的请求。
+当运行中的模型实例或路由发生变化时，前端服务会在新配置准备完成后再启用它。无效或尚未就绪的更新不会替换当前可用配置，也不会主动中断正在进行的请求。
 
 ## 访问方式
 
 ### 本地模式
 
-本地模式通过 `LoadBalancer` Service 提供访问地址。具体访问命令见仓库根目录的 Quick Start。
+本地模式通过 `LoadBalancer` Service 提供访问地址。具体访问命令见仓库根目录的“快速开始”章节。
 
 ### 网关模式
 
@@ -63,12 +63,12 @@ foretoken-frontend
 - `GET /readyz`
 - `GET /metrics`
 
-流式和非流式请求使用相同的生成语义。图片输入目前接受有大小限制的 base64 `data:` 内容，不接受远程媒体 URL。
+流式和非流式请求使用相同的生成语义。图片输入目前接受大小受限的 base64 `data:` 内容，不接受远程媒体 URL。
 
 ## 健康与就绪状态
 
-- `/healthz` 表示 frontend 进程能够正常工作；
+- `/healthz` 表示前端服务进程能够正常工作；
 - `/readyz` 表示至少已有可用的模型路由，可以接收推理请求；
 - `/v1/models` 只返回当前具有健康推理路径的模型。
 
-Frontend 通常由 Foretoken Controller 创建和配置，用户不需要单独启动或维护它。
+前端服务通常由 Foretoken 控制器创建和配置，用户不需要单独启动或维护它。

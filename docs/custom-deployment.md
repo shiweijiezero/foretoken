@@ -165,8 +165,7 @@ helm upgrade --install foretoken \
   --set frontend.image=foretoken-dev-frontend:latest \
   --set runtime.vllm.image=foretoken-dev-model-server:latest \
   --wait \
-  --timeout=15m \
-  --debug
+  --timeout=15m
 ```
 
 ### 2.2 Build and deploy through an OCI registry

@@ -5,9 +5,9 @@
 
 [English](k3d-deployment.md) | [中文](k3d-deployment_zh.md)
 
-k3d 在 Docker container 中运行轻量 Kubernetes 发行版 k3s。它适合在一台共享 GPU 服务器上创建独立、可删除的 Foretoken cluster，同时继续使用标准 Helm、CRD 和 Kubernetes API。k3d cluster 的节点位于同一台 Docker 主机；跨物理机器部署使用 k3s 或 Kubernetes。
+k3d 在 Docker 容器中运行轻量级 Kubernetes 发行版 k3s。它适合在一台共享 GPU 服务器上创建相互隔离、可随时删除的 Foretoken 集群，同时继续使用标准 Helm、CRD 和 Kubernetes API。k3d 集群的节点位于同一台 Docker 主机；跨物理机器部署使用 k3s 或 Kubernetes。
 
-创建 k3d cluster 后，在仓库根目录运行 `make dev-deploy`。脚本会构建源码并将发生变化的本地镜像导入当前 cluster；后续 Helm 部署、Ready 等待和请求验证与其他 Kubernetes 集群相同。
+创建 k3d 集群后，在仓库根目录运行 `make dev-deploy`。脚本会构建源码并将发生变化的本地镜像导入当前集群；后续的 Helm 部署、等待就绪和请求验证与其他 Kubernetes 集群相同。
 
 ## k3d 如何限定物理 GPU
 
@@ -19,13 +19,13 @@ resources:
     nvidia.com/gpu: 1
 ```
 
-Pod 不指定宿主机 index。k3d 可以在创建 Kubernetes node container 时先限制 Docker 可见设备：
+Pod 不指定宿主机 GPU 编号。k3d 可以在创建 Kubernetes 节点容器时先限制 Docker 可见设备：
 
 ```text
 宿主机物理 GPU 6、7
 → Docker --gpus '"device=6,7"'
-→ k3d node container
-→ k3s NVIDIA device plugin
+→ k3d 节点容器
+→ k3s NVIDIA 设备插件
 → Foretoken Pod
 ```
 
@@ -34,12 +34,12 @@ Pod 不指定宿主机 index。k3d 可以在创建 Kubernetes node container 时
 主机需要：
 
 - Linux；
-- NVIDIA driver；
+- NVIDIA 驱动程序；
 - NVIDIA Container Toolkit；
-- 可使用 NVIDIA runtime 的 Docker；
+- 可使用 NVIDIA 运行时的 Docker；
 - k3d、kubectl 和 Helm。
 
-## 1. 选择 GPU 并命名 cluster
+## 1. 选择 GPU 并命名集群
 
 查看 GPU：
 
@@ -47,16 +47,16 @@ Pod 不指定宿主机 index。k3d 可以在创建 Kubernetes node container 时
 nvidia-smi
 ```
 
-以下示例选择 GPU 6、7，并将 cluster 命名为 `foretoken-qwen-test`：
+以下示例选择 GPU 6、7，并将集群命名为 `foretoken-qwen-test`：
 
 ```bash
 export GPU_INDICES=6,7
 export CLUSTER=foretoken-qwen-test
 ```
 
-## 2. 创建限定 GPU 的 k3d cluster
+## 2. 创建限定 GPU 的 k3d 集群
 
-下面的 Bash 代码读取 NVIDIA runtime、配置和依赖库所在位置，并为 k3d 生成 mount 参数：
+下面的 Bash 代码读取 NVIDIA 运行时、配置和依赖库的位置，并为 k3d 生成挂载参数：
 
 ```bash
 declare -a K3D_VOLUME_ARGS=()
@@ -107,7 +107,7 @@ for LDCONFIG_PATH in \
 done
 ```
 
-创建单 server cluster：
+创建包含单个 server 节点的集群：
 
 ```bash
 if k3d cluster get "$CLUSTER" >/dev/null 2>&1; then
@@ -120,20 +120,20 @@ k3d cluster create "$CLUSTER" \
   "${K3D_VOLUME_ARGS[@]}"
 ```
 
-查看创建后的 node：
+查看创建后的节点：
 
 ```bash
 kubectl get nodes
 ```
 
-## 3. 安装 NVIDIA device plugin
+## 3. 安装 NVIDIA 设备插件
 
 ```bash
 kubectl apply -f \
   https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.17.4/deployments/static/nvidia-device-plugin.yml
 ```
 
-内层 NVIDIA runtime 使用与外层 k3d 相同的宿主机 GPU 列表：
+内层 NVIDIA 运行时使用与外层 k3d 相同的宿主机 GPU 列表：
 
 ```bash
 kubectl set env daemonset/nvidia-device-plugin-daemonset \
@@ -156,11 +156,11 @@ cd /path/to/your/foretoken
 ### 4.1 选择部署方式
 
 - **使用发布镜像**：继续执行 [第 4.2 节：本地模式](#42-本地模式) 或 [第 4.3 节：网关模式](#43-网关模式)。
-- **从源码部署**：依次完成 [第 2.1 节：直接导入本地镜像](custom-deployment_zh.md#21-直接导入本地镜像)、[第 4 节：部署 Quick Start](custom-deployment_zh.md#4-部署-quick-start可选) 和 [第 5 节：发送请求](custom-deployment_zh.md#5-发送请求可选)。
+- **从源码部署**：依次完成[第 2.1 节：直接导入本地镜像](custom-deployment_zh.md#21-直接导入本地镜像)、[第 4 节：部署快速开始示例](custom-deployment_zh.md#4-部署快速开始示例可选)和[第 5 节：发送请求](custom-deployment_zh.md#5-发送请求可选)。
 
 ### 4.2 本地模式
 
-使用发布镜像安装 Foretoken 并部署 Quick Start：
+使用发布镜像安装 Foretoken 并部署快速开始示例：
 
 ```bash
 helm upgrade --install foretoken \
@@ -169,8 +169,7 @@ helm upgrade --install foretoken \
   --create-namespace \
   --set frontend.enabled=true \
   --set frontend.mode=local \
-  --wait \
-  --debug
+  --wait
 
 kubectl apply --server-side -k examples/quickstart
 
@@ -181,7 +180,7 @@ kubectl wait --for=condition=Ready \
   modelservice/quickstart-qwen3-0.6b
 ```
 
-读取 k3s ServiceLB 为 frontend 分配的地址：
+读取 k3s ServiceLB 为前端服务分配的地址：
 
 ```bash
 export FRONTEND_HOST="$(kubectl get service quickstart-frontend \
@@ -199,15 +198,14 @@ spec:
   hostname: foretoken.example.com
 ```
 
-安装 Envoy Gateway，并使用发布镜像部署 Foretoken 和 Quick Start：
+安装 Envoy Gateway，并使用发布镜像部署 Foretoken 和快速开始示例：
 
 ```bash
 helm upgrade --install envoy-gateway \
   oci://docker.io/envoyproxy/gateway-helm \
   --namespace envoy-gateway-system \
   --create-namespace \
-  --wait \
-  --debug
+  --wait
 
 helm upgrade --install foretoken \
   oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
@@ -216,8 +214,7 @@ helm upgrade --install foretoken \
   --set frontend.enabled=true \
   --set frontend.mode=gateway \
   --set frontend.gateway.create=true \
-  --wait \
-  --debug
+  --wait
 
 kubectl apply --server-side -k examples/quickstart
 
@@ -248,15 +245,15 @@ curl "$FRONTEND_URL/v1/chat/completions" \
 printf '\n'
 ```
 
-Foretoken YAML 继续请求标准 `nvidia.com/gpu` 资源；宿主机 GPU 的选择在创建 k3d cluster 时完成。
+Foretoken 的 YAML 仍声明标准的 `nvidia.com/gpu` 资源；创建 k3d 集群时选择宿主机 GPU。
 
 
 ## 5. 清理
 
-删除 cluster：
+删除集群：
 
 ```bash
 k3d cluster delete "$CLUSTER"
 ```
 
-删除 cluster 会停止其中所有 Pod、删除 cluster 内 Kubernetes 资源，并释放传给 k3d node container 的 GPU。
+删除集群会停止其中所有 Pod、删除集群内的 Kubernetes 资源，并释放分配给 k3d 节点容器的 GPU。

@@ -18,13 +18,13 @@ kubectl get nodes
 
 ## 2. 构建并部署源码
 
-Kubernetes 节点需要能够获得源码构建出的镜像。可以直接导入本地镜像，也可以通过 OCI registry 分发。
+Kubernetes 节点需要能够获得源码构建出的镜像。可以直接导入本地镜像，也可以通过 OCI 镜像仓库分发。
 
 ### 2.1 直接导入本地镜像
 
 #### 2.1.1 导入本地镜像
 
-**选项 1：导入 Kind cluster。** 使用 Kind 验证 control-plane、CRD、frontend 和调度逻辑时，可以直接创建 cluster。需要运行 GPU 模型服务时，使用选项 2 的 k3d，并按 [使用 k3d 部署 Foretoken](k3d-deployment_zh.md) 指定可用 GPU。先安装 Kind：
+**选项 1：导入 Kind 集群。** 使用 Kind 验证控制平面、CRD、前端服务和调度逻辑时，可以直接创建集群。需要运行 GPU 模型服务时，使用选项 2 的 k3d，并按 [使用 k3d 部署 Foretoken](k3d-deployment_zh.md) 指定可用 GPU。先安装 Kind：
 
 ```bash
 export KIND_VERSION=v0.32.0
@@ -37,7 +37,7 @@ export PATH="$PWD/tmp/bin:$PATH"
 kind version
 ```
 
-创建单节点 cluster：
+创建单节点集群：
 
 ```bash
 # 预计执行时间：约 20 秒
@@ -45,7 +45,7 @@ export KIND_CLUSTER=foretoken-local
 kind create cluster --name "$KIND_CLUSTER"
 ```
 
-若需要在同一台机器上模拟多节点拓扑，使用项目提供的 Kind config。
+若需要在同一台机器上模拟多节点拓扑，使用项目提供的 Kind 配置文件。
 
 ```bash
 # 预计执行时间：约 30 秒
@@ -55,7 +55,7 @@ kind create cluster \
   --config deploy/kind/multi-node.yaml
 ```
 
-创建 cluster 后，构建并导入本地镜像。
+创建集群后，构建并导入本地镜像。
 
 ```bash
 # 预计执行时间：约 8 分钟
@@ -74,14 +74,14 @@ export KUBECONFIG="$PWD/tmp/kubeconfig-$KIND_CLUSTER.yaml"
 kubectl get nodes
 ```
 
-**选项 2：导入 k3d cluster。** 先查看当前机器上的 cluster，并将 `CLUSTER` 设置为实际名称：
+**选项 2：导入 k3d 集群。** 先查看当前机器上的集群，并将 `CLUSTER` 设置为实际名称：
 
 ```bash
 k3d cluster list
 export CLUSTER=your-cluster-name
 ```
 
-如果目标 cluster 尚未创建，请先完成 [使用 k3d 部署 Foretoken](k3d-deployment_zh.md) 中的 cluster 创建步骤。然后在仓库根目录构建并导入本地镜像。
+如果目标集群尚未创建，请先完成[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)中的集群创建步骤。然后在仓库根目录构建并导入本地镜像。
 
 ```bash
 # 预计执行时间：约 6 分钟
@@ -99,9 +99,9 @@ export KUBECONFIG="$PWD/tmp/kubeconfig-$CLUSTER.yaml"
 kubectl get nodes
 ```
 
-`--namespace k8s.io` 表示 Kubernetes 使用的 containerd 镜像空间。选项 3 和选项 4 由节点管理员执行。
+`--namespace k8s.io` 表示 Kubernetes 使用的 containerd 镜像命名空间。选项 3 和选项 4 由节点管理员执行。
 
-**选项 3：导入单节点 containerd。** Kubernetes 节点与开发机是同一台机器时，在仓库根目录构建镜像包并导入 Kubernetes containerd namespace。
+**选项 3：导入单节点上的 containerd。** Kubernetes 节点与开发机是同一台机器时，在仓库根目录构建镜像包并导入 Kubernetes 使用的 containerd 镜像命名空间。
 
 ```bash
 make dev-build
@@ -117,7 +117,7 @@ sudo ctr --namespace k8s.io images import ./tmp/foretoken-dev-images.tar
 rm ./tmp/foretoken-dev-images.tar
 ```
 
-**选项 4：导入多节点 containerd。** 针对使用 containerd 的离线多节点 Kubernetes，在开发机上构建镜像包。
+**选项 4：导入多节点 containerd。** 针对使用 containerd 的离线多节点 Kubernetes 集群，在开发机上构建镜像包。
 
 ```bash
 make dev-build
@@ -130,7 +130,7 @@ docker save \
   --output ./tmp/foretoken-dev-images.tar
 ```
 
-将 `node-a` 和 `node-b` 替换为实际节点的 SSH 地址，然后导入每个可能运行 Foretoken workload 的节点。
+将 `node-a` 和 `node-b` 替换为实际节点的 SSH 地址，然后导入每个可能运行 Foretoken 工作负载的节点。
 
 ```bash
 for NODE in node-a node-b; do
@@ -149,7 +149,7 @@ done
 
 #### 2.1.2 安装 Foretoken 平台
 
-镜像导入完成后，确认当前 Kubernetes context 指向目标集群，然后执行一次 Helm 命令。
+镜像导入完成后，确认当前 Kubernetes 上下文指向目标集群，然后执行 Helm 命令。
 
 ```bash
 # 预计执行时间：约 30 秒
@@ -165,13 +165,12 @@ helm upgrade --install foretoken \
   --set frontend.image=foretoken-dev-frontend:latest \
   --set runtime.vllm.image=foretoken-dev-model-server:latest \
   --wait \
-  --timeout=15m \
-  --debug
+  --timeout=15m
 ```
 
-### 2.2 通过 OCI registry 构建并部署
+### 2.2 通过 OCI 镜像仓库构建并部署
 
-OCI registry 可以将开发机构建的镜像分发给 Kubernetes 节点。以下示例使用 GHCR。
+OCI 镜像仓库可以将开发机构建的镜像分发给 Kubernetes 节点。以下示例使用 GHCR。
 
 ```bash
 export GITHUB_USER=your-github-user
@@ -190,7 +189,7 @@ ghcr.io/your-github-user/foretoken-dev/frontend:<tag>
 ghcr.io/your-github-user/foretoken-dev/model-server:<tag>
 ```
 
-使用 private registry 时，通过 `IMAGE_PULL_SECRET` 提供 Kubernetes 镜像拉取 Secret：
+使用私有镜像仓库时，通过 `IMAGE_PULL_SECRET` 提供 Kubernetes 镜像拉取 Secret：
 
 ```bash
 REGISTRY="$REGISTRY" \
@@ -200,18 +199,18 @@ make dev-deploy
 
 ## 3. 确认平台部署完成
 
-脚本会通过 Helm 安装或更新 Foretoken，并等待 control-plane rollout。看到下面的输出且命令成功退出后，平台部署完成：
+脚本会通过 Helm 安装或更新 Foretoken，并等待控制平面完成滚动更新。命令成功退出并显示以下输出后，平台部署完成：
 
 ```text
 Foretoken deployment completed.
 Changed images: control-plane=false frontend=true model-server=false
 ```
 
-## 4. 部署 Quick Start（可选）
+## 4. 部署快速开始示例（可选）
 
-Quick Start 需要目标 Kubernetes 集群提供 GPU 资源。使用 k3d 时，先按 [使用 k3d 部署 Foretoken](k3d-deployment_zh.md) 完成 GPU 配置，并确认当前 Kubernetes context 指向目标 k3d cluster。
+快速开始示例需要目标 Kubernetes 集群提供 GPU 资源。使用 k3d 时，先按[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)完成 GPU 配置，并确认当前 Kubernetes 上下文指向目标 k3d 集群。
 
-需要启动示例 frontend 和 `Qwen/Qwen3-0.6B` 模型服务时，执行。
+需要启动示例前端服务和 `Qwen/Qwen3-0.6B` 模型服务时，执行以下命令。
 
 ```bash
 kubectl apply --server-side -k examples/quickstart
@@ -223,11 +222,11 @@ kubectl wait --for=condition=Ready \
   modelservice/quickstart-qwen3-0.6b
 ```
 
-等待命令成功退出后，Quick Start 可以接受请求。
+等待命令成功退出后，快速开始示例即可接受请求。
 
 ## 5. 发送请求（可选）
 
-完成 [第 4 节：部署 Quick Start](#4-部署-quick-start可选) 并等待服务 Ready 后，可以发送请求验证服务。默认的 `local` frontend mode 使用 `LoadBalancer` Service，先读取集群分配的地址：
+完成[第 4 节：部署快速开始示例](#4-部署快速开始示例可选)并等待服务就绪后，可以发送请求验证服务。默认的 `local` 前端模式使用 `LoadBalancer` Service，先读取集群分配的地址：
 
 ```bash
 export FRONTEND_HOST="$(kubectl get service quickstart-frontend \
@@ -236,7 +235,7 @@ export FRONTEND_HOST="$(kubectl get service quickstart-frontend \
 export FRONTEND_URL="http://$FRONTEND_HOST:8080"
 ```
 
-先确认 frontend 和模型路由可用：
+先确认前端服务和模型路由可用：
 
 ```bash
 curl --fail "$FRONTEND_URL/healthz"
@@ -265,10 +264,10 @@ printf '\n'
 make dev-deploy
 ```
 
-使用 registry 时运行：
+使用镜像仓库时运行：
 
 ```bash
 REGISTRY="$REGISTRY" make dev-deploy
 ```
 
-BuildKit 会复用编译缓存。脚本只导入或推送构建结果发生变化的镜像，并只滚动更新对应的 workload。看到 `Foretoken deployment completed.` 后，平台更新完成。
+BuildKit 会复用编译缓存。脚本只导入或推送构建结果发生变化的镜像，并只滚动更新对应的工作负载。看到 `Foretoken deployment completed.` 后，平台更新完成。

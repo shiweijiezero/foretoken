@@ -1,20 +1,20 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# 多模型 Quick Start
+# 多模型快速开始
 
 [English](README.md) | [中文](README_zh.md)
 
-如需最小的单模型部署，请参阅 [单模型 Quick Start](../quickstart/README_zh.md)。
+如需最小的单模型部署，请参阅[单模型快速开始](../quickstart/README_zh.md)。
 
-本示例通过同一个 frontend 提供两个模型：
+本示例通过同一个前端服务提供两个模型：
 
 - `Qwen/Qwen3-0.6B`：根据请求队列在 1–3 个副本之间自动扩缩；
 - `unsloth/Llama-3.2-1B-Instruct`：固定 1 个副本。
 
 每个副本使用 1 张 GPU，因此集群需要 2–4 张可调度 GPU。准备 4 张 GPU 可以覆盖完整扩缩容范围。
 
-## Queue autoscaling
+## 基于队列的自动扩缩容
 
 Qwen 服务每 5 秒评估一次队列：
 

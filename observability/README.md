@@ -27,8 +27,7 @@ helm upgrade --install kube-prometheus-stack \
   --namespace monitoring \
   --create-namespace \
   --values deploy/observability/kube-prometheus-stack-values.yaml \
-  --wait \
-  --debug
+  --wait
 ```
 
 Allow the monitoring namespace to reach the model-server metrics port:

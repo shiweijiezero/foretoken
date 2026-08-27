@@ -169,8 +169,7 @@ helm upgrade --install foretoken \
   --create-namespace \
   --set frontend.enabled=true \
   --set frontend.mode=local \
-  --wait \
-  --debug
+  --wait
 
 kubectl apply --server-side -k examples/quickstart
 
@@ -206,8 +205,7 @@ helm upgrade --install envoy-gateway \
   oci://docker.io/envoyproxy/gateway-helm \
   --namespace envoy-gateway-system \
   --create-namespace \
-  --wait \
-  --debug
+  --wait
 
 helm upgrade --install foretoken \
   oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
@@ -216,8 +214,7 @@ helm upgrade --install foretoken \
   --set frontend.enabled=true \
   --set frontend.mode=gateway \
   --set frontend.gateway.create=true \
-  --wait \
-  --debug
+  --wait
 
 kubectl apply --server-side -k examples/quickstart
 

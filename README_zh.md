@@ -5,7 +5,7 @@
 Foretoken 是一个面向 SLO/SLA 与异构硬件的生成式推理编排框架。
 
 Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成一套集群服务，负责请求路由、自动扩缩容、实例管理和性能评测。
-我们希望将推理集群转化为 Token 工厂，把算力持续转化为满足延迟和质量要求的 token。
+我们希望将推理集群转化为 Token 工厂，把算力持续转化为满足延迟和质量要求的 Token。
 
 ## 什么时候需要 Foretoken
 
@@ -22,7 +22,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 | 功能 | 说明 | 状态 |
 |---|---|---|
 | 评测 | 性能压测与参数扫描、正确性评测和 SLO 仿真 | 开发中 |
-| Profiling | PyTorch Profiler 和 Nsight 定位计算、通信及 CPU/GPU 性能瓶颈 | 规划中 |
+| 性能剖析 | PyTorch Profiler 和 Nsight 定位计算、通信及 CPU/GPU 性能瓶颈 | 规划中 |
 | 硬件适配 | 统一设备能力、运行时、通信和指标接口 | 开发中 |
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
 | 分布式推理 | 聚合部署、Prefill/Decode 分离和 WideEP 并行策略 | 研究中 |
@@ -31,7 +31,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-Foretoken 支持本地模式和网关模式。本地模式通过 `LoadBalancer` Service 直接提供 frontend 地址，适合本地集群或实验室环境；网关模式通过 Gateway API 和域名提供统一入口，适合已经使用 Kubernetes Gateway 或需要统一管理对外流量的集群。选择一种模式安装后，后续服务部署和评测步骤相同。
+Foretoken 支持本地模式和网关模式。本地模式通过 `LoadBalancer` Service 直接提供前端服务地址，适合本地集群或实验室环境；网关模式通过 Gateway API 和域名提供统一入口，适合已经使用 Kubernetes Gateway 或需要统一管理对外流量的集群。安装时选择其中一种模式，后续的服务部署和评测步骤相同。
 
 ### 1. 安装 Foretoken
 
@@ -44,8 +44,7 @@ helm upgrade --install foretoken \
   --create-namespace \
   --set frontend.enabled=true \
   --set frontend.mode=local \
-  --wait \
-  --debug
+  --wait
 ```
 
 #### 网关模式
@@ -57,18 +56,17 @@ spec:
   hostname: foretoken.example.com
 ```
 
-网关模式需要 Gateway Controller。以下示例安装 Envoy Gateway：
+网关模式需要网关控制器。以下示例安装 Envoy Gateway：
 
 ```bash
 helm upgrade --install envoy-gateway \
   oci://docker.io/envoyproxy/gateway-helm \
   --namespace envoy-gateway-system \
   --create-namespace \
-  --wait \
-  --debug
+  --wait
 ```
 
-然后让 Foretoken Chart 创建专用的 `GatewayClass` 和 `Gateway`：
+然后使用 Foretoken Chart 创建专用的 `GatewayClass` 和 `Gateway`：
 
 ```bash
 helm upgrade --install foretoken \
@@ -78,11 +76,10 @@ helm upgrade --install foretoken \
   --set frontend.enabled=true \
   --set frontend.mode=gateway \
   --set frontend.gateway.create=true \
-  --wait \
-  --debug
+  --wait
 ```
 
-如果平台已经有可用的 `Gateway`，可以先查看它的名称和 namespace：
+如果平台已经有可用的 `Gateway`，可以先查看其名称和命名空间：
 
 ```bash
 kubectl get gateway -A
@@ -107,15 +104,14 @@ helm upgrade --install foretoken \
   --set frontend.gateway.name=inference-gateway \
   --set frontend.gateway.namespace=gateway-system \
   --set frontend.gateway.sectionName=https \
-  --wait \
-  --debug
+  --wait
 ```
 
-其中 `name` 对应 `NAME` 列，`namespace` 对应 `NAMESPACE` 列，`sectionName` 是该 Gateway 中目标 listener 的名称。该 Gateway 必须允许前端服务所在 namespace 的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
+其中 `name` 对应 `NAME` 列，`namespace` 对应 `NAMESPACE` 列，`sectionName` 是该 Gateway 中目标监听器的名称。该 Gateway 必须允许前端服务所在命名空间的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
 
 ### 2. 部署模型服务
 
-`examples/quickstart` 提供一套可直接使用的 frontend 和单模型配置。如需运行双模型并验证 queue autoscaling，请参阅 [多模型 Quick Start](examples/multi-model-quickstart/README_zh.md)。
+`examples/quickstart` 提供一套可直接使用的前端服务和单模型配置。如需运行双模型并验证基于队列的自动扩缩容，请参阅[多模型快速开始](examples/multi-model-quickstart/README_zh.md)。
 
 ```bash
 kubectl apply --server-side -k examples/quickstart
@@ -155,7 +151,7 @@ curl --fail-with-body --no-buffer \
 
 #### 网关模式
 
-使用 Chart 创建的 HTTP 网关时，读取网关地址并携带配置的域名：
+使用由 Chart 创建的 HTTP 网关时，读取网关地址并携带配置的域名：
 
 ```bash
 FORETOKEN_GATEWAY_ADDRESS=$(kubectl get gateway foretoken-gateway \
@@ -173,19 +169,19 @@ curl --fail-with-body --no-buffer \
 
 ### 5. 评测服务吞吐
 
-先从当前项目路径安装 Foretoken Benchmark CLI：
+先在当前项目目录中安装 Foretoken 评测 CLI：
 
 ```bash
 python -m pip install ./benchmarks
 ```
 
-以下命令会复用已经运行的 Quick Start 服务；服务尚未部署时，CLI 会创建配置中的资源，并在评测结束后只清理本次创建的资源。未指定 `--prompt` 或 `--dataset` 时，使用一个简短的内置 prompt：
+以下命令会复用已经运行的快速开始服务；服务尚未部署时，CLI 会创建配置中的资源，并在评测结束后只清理本次创建的资源。未指定 `--prompt` 或 `--dataset` 时，使用一个简短的内置提示词：
 
 ```bash
 foretoken bench --deploy examples/quickstart
 ```
 
-默认只在控制台显示结果。使用 `--output local` 保存本地产物，使用 `--output wandb` 发布到 W&B，也可以组合使用。
+默认仅在控制台显示结果。使用 `--output local` 将结果保存到本地，使用 `--output wandb` 发布到 W&B；两者也可同时使用。
 
 如果要评测已经运行的 OpenAI API 兼容服务，则显式提供地址和模型：
 
@@ -209,7 +205,7 @@ helm uninstall foretoken \
   --wait --timeout 5m
 ```
 
-通过 `frontend.gateway.create=true` 创建的 `GatewayClass` 和 `Gateway` 会随 Foretoken release 一起删除；复用的平台网关不会被删除。
+通过 `frontend.gateway.create=true` 创建的 `GatewayClass` 和 `Gateway` 会随 Foretoken 的 Helm 发布实例一同删除；复用的平台网关不会被删除。
 
 如果 Envoy Gateway 仅供本次 Foretoken 部署使用，可以继续卸载它：
 
@@ -221,7 +217,7 @@ helm uninstall envoy-gateway \
 
 其他服务仍在使用 Envoy Gateway 时不要执行这一步。
 
-卸载 control plane 时会保留 Foretoken CRD 和自定义资源。只有在清理全部 Foretoken 资源后，才应显式删除 CRD：
+卸载控制平面时会保留 Foretoken CRD 和自定义资源。只有在清理全部 Foretoken 资源后，才应显式删除 CRD：
 
 ```bash
 kubectl delete crd \
@@ -234,40 +230,11 @@ kubectl delete crd \
   modelgroups.inference.foretoken.io
 ```
 
-## 从源码部署
+## 开发部署
 
-需要验证本地源码修改，或希望自行构建和管理 Foretoken 镜像时，可以选择以下镜像分发方式。`make dev-deploy` 构建源码镜像并安装或更新 Foretoken 平台；Quick Start 使用独立命令部署。完整说明参见 [从源码部署 Foretoken](docs/custom-deployment_zh.md)。
+如需构建和部署本地源码修改、向集群导入镜像，或通过 OCI 镜像仓库分发开发镜像，请参阅[从源码部署 Foretoken](docs/custom-deployment_zh.md)。
 
-### 直接导入本地镜像
-
-使用 Kind 验证 control-plane、CRD、frontend 和调度逻辑时，创建 cluster、导入镜像并部署平台：
-
-```bash
-KIND_CLUSTER=foretoken-local make dev-deploy
-```
-
-需要运行 GPU 模型服务时，按 [使用 k3d 部署 Foretoken](docs/k3d-deployment_zh.md) 指定可用 GPU，然后运行：
-
-```bash
-CLUSTER=foretoken-local GPU_INDICES=0 make dev-deploy
-```
-
-### 通过 OCI registry 分发
-
-OCI registry 可以将本地构建的镜像分发给 Kubernetes 节点：
-
-```bash
-export GITHUB_USER=your-github-user
-export REGISTRY="ghcr.io/$GITHUB_USER/foretoken-dev"
-docker login ghcr.io
-REGISTRY="$REGISTRY" make dev-deploy
-```
-
-平台部署完成后，如需启动示例 frontend 和模型服务，显式执行上方 Quick Start 中的“部署模型服务”和“等待服务就绪”命令。
-
-## 使用 k3d 部署
-
-希望在一台机器上为开发测试快速创建独立 cluster，并限定该 cluster 可以使用的 GPU 时，请参阅 [使用 k3d 部署 Foretoken](docs/k3d-deployment_zh.md)。
+如需在单台机器上创建相互隔离的 Kubernetes 集群并指定可用 GPU，请参阅[使用 k3d 部署 Foretoken](docs/k3d-deployment_zh.md)。
 
 ## 相关项目
 
@@ -279,7 +246,7 @@ REGISTRY="$REGISTRY" make dev-deploy
 
 ## 贡献
 
-欢迎贡献部署基线、硬件适配、Benchmark、路由算法、扩缩容算法、测试和文档。
+欢迎贡献部署基线、硬件适配、性能评测、路由算法、扩缩容算法、测试和文档。
 性能相关变更需要附上测试条件、原始结果和可重复执行的命令。
 开发原则、协作约定和 Pull Request 流程见 [《为 Foretoken 做贡献》](CONTRIBUTING_zh.md)。
 

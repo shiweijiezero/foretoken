@@ -1,13 +1,13 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# 单模型 Quick Start
+# 单模型快速开始
 
 [English](README.md) | [中文](README_zh.md)
 
-如需运行双模型并验证自动扩缩容，请参阅 [多模型 Quick Start](../multi-model-quickstart/README_zh.md)。
+如需运行双模型并验证自动扩缩容，请参阅[多模型快速开始](../multi-model-quickstart/README_zh.md)。
 
-本示例部署一个 frontend 和一个 `Qwen/Qwen3-0.6B` 模型副本，使用 1 张 GPU。
+本示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本，使用 1 张 GPU。
 
 ## 部署
 
@@ -25,7 +25,7 @@ kubectl wait --for=condition=Ready \
 
 ## 发送请求
 
-读取 `LoadBalancer` Service 地址：
+读取 `LoadBalancer` Service 的地址：
 
 ```bash
 export FRONTEND_HOST="$(kubectl get service quickstart-frontend \
