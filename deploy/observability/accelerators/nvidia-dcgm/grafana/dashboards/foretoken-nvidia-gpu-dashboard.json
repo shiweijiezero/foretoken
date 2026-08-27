@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Foretoken 的 NVIDIA GPU 基础硬件状态。数据来自 NVIDIA DCGM Exporter；缺少指标表示当前硬件或软件组合未报告，不能解释为数值 0。",
+  "description": "Foretoken NVIDIA DCGM 加速器适配器提供的 GPU 基础硬件状态。缺少指标表示当前硬件或软件组合未报告，不能解释为数值 0。",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -59,7 +59,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "count(group by (instance, gpu, UUID) (DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"} or DCGM_FI_DEV_GPU_UTIL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"} or DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}))",
+          "expr": "count(group by (instance, gpu, UUID) (DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"} or DCGM_FI_DEV_GPU_UTIL{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"} or DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}))",
           "instant": true,
           "legendFormat": "GPU",
           "range": false,
@@ -137,7 +137,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "min(up{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"})",
+          "expr": "min(up{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\"})",
           "instant": true,
           "legendFormat": "状态",
           "range": false,
@@ -205,7 +205,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max(DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "expr": "max(DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
           "instant": true,
           "legendFormat": "最高温度",
           "range": false,
@@ -255,7 +255,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(max by (instance, gpu, UUID) (DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})) / 1024",
+          "expr": "sum(max by (instance, gpu, UUID) (DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})) / 1024",
           "instant": true,
           "legendFormat": "已用显存",
           "range": false,
@@ -305,7 +305,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "sum(max by (instance, gpu, UUID) (DCGM_FI_DEV_POWER_USAGE{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}))",
+          "expr": "sum(max by (instance, gpu, UUID) (DCGM_FI_DEV_POWER_USAGE{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}))",
           "instant": true,
           "legendFormat": "总功耗",
           "range": false,
@@ -376,7 +376,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_GPU_UTIL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_GPU_UTIL{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}}",
           "range": true,
           "refId": "A"
@@ -444,14 +444,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}) / 1024",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}) / 1024",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 已用",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_FB_FREE{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}) / 1024",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_FB_FREE{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}) / 1024",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 空闲",
           "range": true,
           "refId": "B"
@@ -519,14 +519,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 核心",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_MEMORY_TEMP{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_MEMORY_TEMP{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 显存",
           "range": true,
           "refId": "B"
@@ -595,7 +595,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_POWER_USAGE{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_POWER_USAGE{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}}",
           "range": true,
           "refId": "A"
@@ -665,7 +665,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_MEM_COPY_UTIL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_MEM_COPY_UTIL{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}}",
           "range": true,
           "refId": "A"
@@ -738,7 +738,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_XID_ERRORS{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_XID_ERRORS{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
           "instant": true,
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}}",
           "range": false,
@@ -805,7 +805,7 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_PCIE_REPLAY_COUNTER{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_PCIE_REPLAY_COUNTER{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
           "instant": true,
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}}",
           "range": false,
@@ -876,28 +876,28 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_POWER_VIOLATION{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m])) / 1e9",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_POWER_VIOLATION{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m])) / 1e9",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 功耗",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_THERMAL_VIOLATION{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m])) / 1e9",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_THERMAL_VIOLATION{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m])) / 1e9",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 温度",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_BOARD_LIMIT_VIOLATION{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m])) / 1e9",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_BOARD_LIMIT_VIOLATION{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m])) / 1e9",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 板卡限制",
           "range": true,
           "refId": "C"
         },
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_RELIABILITY_VIOLATION{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m])) / 1e9",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_RELIABILITY_VIOLATION{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m])) / 1e9",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 可靠性",
           "range": true,
           "refId": "D"
@@ -967,28 +967,28 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_ECC_SBE_VOL_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_ECC_SBE_VOL_TOTAL{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · SBE 易失",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_ECC_DBE_VOL_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_ECC_DBE_VOL_TOTAL{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · DBE 易失",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_ECC_SBE_AGG_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_ECC_SBE_AGG_TOTAL{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · SBE 累计",
           "range": true,
           "refId": "C"
         },
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_ECC_DBE_AGG_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_ECC_DBE_AGG_TOTAL{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"})",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · DBE 累计",
           "range": true,
           "refId": "D"
@@ -1057,14 +1057,14 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_SM_CLOCK{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}) * 1e6",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_SM_CLOCK{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}) * 1e6",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · SM",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_MEM_CLOCK{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}) * 1e6",
+          "expr": "max by (instance, gpu, UUID) (DCGM_FI_DEV_MEM_CLOCK{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}) * 1e6",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · 显存",
           "range": true,
           "refId": "B"
@@ -1134,28 +1134,28 @@
       "targets": [
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · FLIT CRC",
           "range": true,
           "refId": "A"
         },
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · DATA CRC",
           "range": true,
           "refId": "B"
         },
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · Replay",
           "range": true,
           "refId": "C"
         },
         {
           "editorMode": "code",
-          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
+          "expr": "max by (instance, gpu, UUID) (increase(DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\",gpu=~\"${gpu:regex}\"}[5m]))",
           "legendFormat": "{{instance}} · GPU {{gpu}} · {{UUID}} · Recovery",
           "range": true,
           "refId": "D"
@@ -1195,14 +1195,14 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "label_values(up{foretoken_observability_source=\"dcgm\"}, instance)",
+        "definition": "label_values(up{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\"}, instance)",
         "includeAll": true,
         "label": "采集实例",
         "multi": true,
         "name": "instance",
         "options": [],
         "query": {
-          "query": "label_values(up{foretoken_observability_source=\"dcgm\"}, instance)",
+          "query": "label_values(up{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\"}, instance)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -1221,14 +1221,14 @@
           "type": "prometheus",
           "uid": "${DS_PROMETHEUS}"
         },
-        "definition": "query_result(group by (gpu) (DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"} or DCGM_FI_DEV_GPU_UTIL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"} or DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"}))",
+        "definition": "query_result(group by (gpu) (DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\"} or DCGM_FI_DEV_GPU_UTIL{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\"} or DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\"}))",
         "includeAll": true,
         "label": "GPU",
         "multi": true,
         "name": "gpu",
         "options": [],
         "query": {
-          "query": "query_result(group by (gpu) (DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"} or DCGM_FI_DEV_GPU_UTIL{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"} or DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"dcgm\",instance=~\"${instance:regex}\"}))",
+          "query": "query_result(group by (gpu) (DCGM_FI_DEV_GPU_TEMP{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\"} or DCGM_FI_DEV_GPU_UTIL{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\"} or DCGM_FI_DEV_FB_USED{foretoken_observability_source=\"accelerator\",foretoken_accelerator_vendor=\"nvidia\",foretoken_accelerator_exporter=\"dcgm\",instance=~\"${instance:regex}\"}))",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
@@ -1244,8 +1244,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Foretoken GPU 运行状态",
-  "uid": "foretoken-gpu-overview",
+  "title": "Foretoken NVIDIA GPU 运行状态",
+  "uid": "foretoken-nvidia-gpu-overview",
   "version": 1,
   "weekStart": ""
 }

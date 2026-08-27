@@ -11,7 +11,7 @@ Observability helps operators understand whether a service is healthy, why reque
 
 - **Metrics and dashboards**: Prometheus collects runtime metrics continuously, and Grafana provides queries and dashboards.
 - **Alerts**: Prometheus detects sustained abnormal conditions, while Alertmanager handles notification, grouping, and silencing.
-- **Profiling**: PyTorch Profiler and Nsight diagnose CPU, GPU, kernel, and communication bottlenecks while reproducing a problem.
+- **Profiling**: PyTorch Profiler and vendor tools diagnose CPU, accelerator, kernel, and communication bottlenecks while reproducing a problem. NVIDIA environments can use Nsight.
 
 ## Enable metric collection
 
@@ -50,7 +50,7 @@ observability:
 
 ServiceMonitors inherit the Prometheus scrape interval and timeout. Set `interval` or `scrapeTimeout` only when Foretoken needs an override.
 
-The included kube-prometheus-stack values discover ServiceMonitors only in the `monitoring`, `foretoken-platform`, and `gpu-monitoring` namespaces. This includes monitors owned by the stack itself, Foretoken, and the optional NVIDIA GPU add-on. If the platform uses other namespaces, copy the file and update `serviceMonitorNamespaceSelector`.
+The included kube-prometheus-stack values discover ServiceMonitors only in the `monitoring`, `foretoken-platform`, and `accelerator-monitoring` namespaces. This includes monitors owned by the stack itself, Foretoken, and optional accelerator adapters. If the platform uses other namespaces, copy the file and update `serviceMonitorNamespaceSelector`.
 
 Foretoken ServiceMonitors are registered in `foretoken-platform`, then discover matching Frontend and model-server Services across workload namespaces. The namespace list above limits where Prometheus discovers ServiceMonitor objects; it does not limit those Foretoken monitors to one workload namespace.
 
@@ -71,11 +71,11 @@ The Prometheus, Grafana, and Alertmanager Pods should be `Running`, and Foretoke
 | --- | --- |
 | Frontend `/metrics` | HTTP requests, admission queues, routing, and Frontend runtime state |
 | model-server `/metrics` | Complete native metrics from the active inference backend |
-| DCGM Exporter | NVIDIA GPU utilization, memory, power, temperature, and hardware errors |
+| Accelerator exporter | Vendor-native utilization, memory, power, temperature, interconnect, and hardware errors |
 | kubelet/cAdvisor | Container CPU, memory, filesystem, and network |
 | kube-state-metrics | Kubernetes object state |
 
-DCGM Exporter is an optional cluster add-on and is not installed by the Foretoken chart. Follow [Monitor NVIDIA GPUs](../docs/gpu-observability.md) to install or reuse it, restrict access to its metrics port, and load the Chinese `Foretoken GPU 运行状态` Grafana dashboard.
+Accelerator exporters are optional cluster add-ons and are not installed by the Foretoken chart. [Accelerator observability](../docs/accelerator-observability.md) defines the common discovery and security boundary. The current repository provides an [NVIDIA DCGM adapter](../docs/accelerators/nvidia-dcgm.md). Other vendors are not currently supported and require separate adapters that retain their native metric semantics.
 
 The model-server does not rename or filter backend-native metrics. For the current vLLM adapter, use the `HELP` and `TYPE` metadata in the `/metrics` response as the source of truth for metric names, units, and labels.
 
@@ -91,6 +91,6 @@ Profiling diagnoses a specific experiment or incident rather than providing cont
 
 - PyTorch Profiler analyzes model execution, operator time, and memory;
 - Nsight Systems analyzes process, kernel, and communication timelines;
-- Nsight Compute performs detailed analysis of individual GPU kernels.
+- Vendor profilers perform detailed analysis of individual accelerator kernels; NVIDIA environments can use Nsight Compute.
 
 Profiling affects inference performance. Send only a small reproducible workload and store the results with the model, concurrency, hardware, and runtime parameters.

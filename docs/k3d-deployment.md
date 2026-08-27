@@ -265,7 +265,7 @@ Foretoken YAML continues to request standard `nvidia.com/gpu` resources. The k3d
 
 ## 5. Continue with observability
 
-After verifying inference, follow [Monitor NVIDIA GPUs](gpu-observability.md) to add DCGM Exporter, Prometheus discovery, and the Chinese Grafana GPU dashboard. The k3d command in that guide explicitly selects the same trusted GPU set for the exporter without consuming a Kubernetes GPU allocation.
+After verifying inference, follow [Accelerator observability](accelerator-observability.md) and select the [NVIDIA DCGM adapter](accelerators/nvidia-dcgm.md). Its k3d overlay explicitly selects the same trusted GPU set for the exporter without consuming a Kubernetes GPU allocation.
 
 ## 6. Clean up
 

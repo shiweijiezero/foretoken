@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Discover ServiceMonitors only from namespaces owned by the monitoring stack,
-# the Foretoken platform, or the GPU monitoring add-on. An empty object selects
+# the Foretoken platform, or accelerator adapters. An empty object selects
 # every ServiceMonitor inside this namespace allowlist, including the monitors
 # created by kube-prometheus-stack itself.
 prometheus:
@@ -16,4 +16,4 @@ prometheus:
           values:
             - monitoring
             - foretoken-platform
-            - gpu-monitoring
+            - accelerator-monitoring

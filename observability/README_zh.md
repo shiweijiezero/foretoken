@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 - **指标与 Dashboard**：Prometheus 持续采集运行指标，Grafana 用于查询和展示。
 - **告警**：Prometheus 判断持续异常，Alertmanager 负责通知、分组和静默。
-- **Profiling**：PyTorch Profiler 和 Nsight 用于复现问题时分析 CPU、GPU、kernel 和通信瓶颈。
+- **Profiling**：PyTorch Profiler 和厂商工具用于复现问题时分析 CPU、加速器、kernel 和通信瓶颈；NVIDIA 环境可以使用 Nsight。
 
 ## 启用指标采集
 
@@ -50,7 +50,7 @@ observability:
 
 ServiceMonitor 默认继承 Prometheus 的抓取间隔和超时。只有需要单独覆盖时才设置 `interval` 或 `scrapeTimeout`。
 
-仓库提供的 kube-prometheus-stack values 只从 `monitoring`、`foretoken-platform` 和 `gpu-monitoring` namespace 发现 ServiceMonitor，包括 monitoring stack 自身、Foretoken 以及可选 NVIDIA GPU addon 的 monitors。平台使用其他 namespace 时，请复制该文件并修改 `serviceMonitorNamespaceSelector`。
+仓库提供的 kube-prometheus-stack values 只从 `monitoring`、`foretoken-platform` 和 `accelerator-monitoring` namespace 发现 ServiceMonitor，包括 monitoring stack 自身、Foretoken 以及可选加速器适配器的 monitor。平台使用其他 namespace 时，请复制该文件并修改 `serviceMonitorNamespaceSelector`。
 
 Foretoken ServiceMonitor 注册在 `foretoken-platform`，随后跨 workload namespace 发现匹配的 Frontend 和 model-server Service。上面的 namespace 列表限制 Prometheus 在哪里发现 ServiceMonitor object，不会把 Foretoken monitor 限制在单个 workload namespace。
 
@@ -71,11 +71,11 @@ Prometheus、Grafana 和 Alertmanager Pod 应处于 `Running`，并且启用的 
 | --- | --- |
 | Frontend `/metrics` | HTTP 请求、准入队列、路由及 Frontend 运行状态 |
 | model-server `/metrics` | 当前推理后端提供的完整原生指标 |
-| DCGM Exporter | NVIDIA GPU 利用率、显存、功耗、温度和硬件错误 |
+| 加速器 exporter | 厂商原生利用率、设备内存、功耗、温度、互连和硬件错误 |
 | kubelet/cAdvisor | Container CPU、内存、文件系统和网络 |
 | kube-state-metrics | Kubernetes object 状态 |
 
-DCGM Exporter 是可选的 cluster addon，不由 Foretoken chart 自动安装。请按照[监控 NVIDIA GPU](../docs/gpu-observability_zh.md)安装或复用 exporter、限制 exporter 指标端口的访问，并加载中文 `Foretoken GPU 运行状态` Grafana Dashboard。
+加速器 exporter 是可选的 cluster addon，不由 Foretoken chart 自动安装。[加速器可观测性](../docs/accelerator-observability_zh.md)定义通用 discovery 和安全边界。当前仓库提供 [NVIDIA DCGM 适配器](../docs/accelerators/nvidia-dcgm_zh.md)。其他厂商目前尚未受支持，需要使用保留自身原生指标语义的独立适配器。
 
 model-server 不会重命名或过滤推理后端的原生指标。对于当前 vLLM adapter，指标名称、单位和 label 以 `/metrics` 响应中的 `HELP` 和 `TYPE` 为准。
 
@@ -91,6 +91,6 @@ Profiling 用于一次具体实验或故障分析，不是持续监控，也不�
 
 - PyTorch Profiler：分析模型执行、算子时间和内存；
 - Nsight Systems：分析进程、kernel 和通信时间线；
-- Nsight Compute：深入分析单个 GPU kernel。
+- 厂商 profiler：深入分析单个加速器 kernel；NVIDIA 环境可以使用 Nsight Compute。
 
 Profiling 会影响推理性能。采集时只发送少量可复现请求，并将结果与模型、并发、硬件和运行参数一起保存。

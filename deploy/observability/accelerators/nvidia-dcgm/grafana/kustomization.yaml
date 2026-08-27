@@ -6,9 +6,9 @@ kind: Kustomization
 generatorOptions:
   disableNameSuffixHash: true
   labels:
-    app.kubernetes.io/name: foretoken-gpu-dashboard
+    app.kubernetes.io/name: foretoken-nvidia-gpu-dashboard
     grafana_dashboard: "1"
 configMapGenerator:
-  - name: foretoken-gpu-dashboard
+  - name: foretoken-nvidia-gpu-dashboard
     files:
-      - foretoken-gpu-dashboard.json=dashboards/foretoken-gpu-dashboard.json
+      - foretoken-nvidia-gpu-dashboard.json=dashboards/foretoken-nvidia-gpu-dashboard.json

@@ -265,7 +265,7 @@ Foretoken YAML 继续请求标准 `nvidia.com/gpu` 资源。k3d 与 device-plugi
 
 ## 5. 继续配置可观测性
 
-验证推理服务后，可以按照[监控 NVIDIA GPU](gpu-observability_zh.md)增加 DCGM Exporter、Prometheus discovery 和中文 Grafana GPU Dashboard。该指南中的 k3d 命令会为 exporter 显式选择同一组可信 GPU，但不占用 Kubernetes GPU 配额。
+验证推理服务后，可以按照[加速器可观测性](accelerator-observability_zh.md)选择 [NVIDIA DCGM 适配器](accelerators/nvidia-dcgm_zh.md)。它的 k3d overlay 会为 exporter 显式选择同一组可信 GPU，但不占用 Kubernetes GPU 配额。
 
 ## 6. 清理
 

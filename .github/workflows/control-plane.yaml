@@ -12,7 +12,8 @@ on:
       - deploy/charts/foretoken/**
       - deploy/observability/**
       - observability/**
-      - docs/gpu-observability*.md
+      - docs/accelerator-observability*.md
+      - docs/accelerators/**
       - deploy/platform-values.example.yaml
       - .dockerignore
       - LICENSE
@@ -25,7 +26,8 @@ on:
       - deploy/charts/foretoken/**
       - deploy/observability/**
       - observability/**
-      - docs/gpu-observability*.md
+      - docs/accelerator-observability*.md
+      - docs/accelerators/**
       - deploy/platform-values.example.yaml
       - .dockerignore
       - LICENSE
@@ -81,6 +83,8 @@ jobs:
           test "$(grep -c 'scrapeTimeout: \"10s\"' /tmp/foretoken-observability.yaml)" = "2"
       - name: Validate observability assets
         run: |
+          NVIDIA_ADAPTER=deploy/observability/accelerators/nvidia-dcgm
+          NVIDIA_DASHBOARD="$NVIDIA_ADAPTER/grafana/dashboards/foretoken-nvidia-gpu-dashboard.json"
           helm repo add prometheus-community \
             https://prometheus-community.github.io/helm-charts
           helm repo add gpu-helm-charts \
@@ -96,14 +100,14 @@ jobs:
           grep -q 'serviceMonitorSelector: {}' /tmp/kube-prometheus-stack.yaml
           grep -q -- '- monitoring' /tmp/kube-prometheus-stack.yaml
           grep -q -- '- foretoken-platform' /tmp/kube-prometheus-stack.yaml
-          grep -q -- '- gpu-monitoring' /tmp/kube-prometheus-stack.yaml
+          grep -q -- '- accelerator-monitoring' /tmp/kube-prometheus-stack.yaml
           test "$(grep -Ec '^[[:space:]]+- [a-z0-9-]+$' \
             deploy/observability/kube-prometheus-stack-values.yaml)" = "3"
           helm template dcgm-exporter \
             gpu-helm-charts/dcgm-exporter \
             --version 4.8.2 \
-            --namespace gpu-monitoring \
-            --values deploy/observability/dcgm-exporter-values.yaml \
+            --namespace accelerator-monitoring \
+            --values "$NVIDIA_ADAPTER/values.yaml" \
             > /tmp/dcgm-exporter.yaml
           grep -q '^kind: DaemonSet' /tmp/dcgm-exporter.yaml
           grep -q '^kind: ServiceMonitor' /tmp/dcgm-exporter.yaml
@@ -114,7 +118,15 @@ jobs:
           grep -q -- '- ALL' /tmp/dcgm-exporter.yaml
           grep -q 'targetLabel: foretoken_observability_source' \
             /tmp/dcgm-exporter.yaml
+          grep -q 'replacement: accelerator' /tmp/dcgm-exporter.yaml
+          grep -q 'targetLabel: foretoken_accelerator_vendor' \
+            /tmp/dcgm-exporter.yaml
+          grep -q 'replacement: nvidia' /tmp/dcgm-exporter.yaml
+          grep -q 'targetLabel: foretoken_accelerator_exporter' \
+            /tmp/dcgm-exporter.yaml
           grep -q 'replacement: dcgm' /tmp/dcgm-exporter.yaml
+          grep -Fq 'nvcr.io/nvidia/k8s/dcgm-exporter:4.5.3-4.8.2-distroless' \
+            /tmp/dcgm-exporter.yaml
           grep -q -- '- --kubernetes=false' /tmp/dcgm-exporter.yaml
           if grep -q 'priorityClassName:' /tmp/dcgm-exporter.yaml; then
             exit 1
@@ -134,21 +146,20 @@ jobs:
           helm template dcgm-exporter \
             gpu-helm-charts/dcgm-exporter \
             --version 4.8.2 \
-            --namespace gpu-monitoring \
-            --values deploy/observability/dcgm-exporter-values.yaml \
-            --set-json \
-              'extraEnv=[{"name":"NVIDIA_VISIBLE_DEVICES","value":"1,3"}]' \
+            --namespace accelerator-monitoring \
+            --values "$NVIDIA_ADAPTER/values.yaml" \
+            --values "$NVIDIA_ADAPTER/k3d-values.example.yaml" \
             > /tmp/dcgm-exporter-k3d.yaml
           grep -q 'name: NVIDIA_VISIBLE_DEVICES' \
             /tmp/dcgm-exporter-k3d.yaml
-          grep -q 'value: 1,3' /tmp/dcgm-exporter-k3d.yaml
+          grep -q 'value: 6,7' /tmp/dcgm-exporter-k3d.yaml
           kubectl apply --dry-run=client \
-            --filename deploy/observability/dcgm-exporter-network-policy.yaml
+            --filename "$NVIDIA_ADAPTER/network-policy.yaml"
           helm template dcgm-exporter \
             gpu-helm-charts/dcgm-exporter \
             --version 4.8.2 \
-            --namespace gpu-monitoring \
-            --values deploy/observability/dcgm-exporter-values.yaml \
+            --namespace accelerator-monitoring \
+            --values "$NVIDIA_ADAPTER/values.yaml" \
             --show-only templates/daemonset.yaml \
             > /tmp/dcgm-exporter-daemonset.yaml
           kubectl create --dry-run=client \
@@ -156,39 +167,64 @@ jobs:
             --output json \
             > /tmp/dcgm-exporter-daemonset.json
           kubectl create --dry-run=client \
-            --filename deploy/observability/dcgm-exporter-network-policy.yaml \
+            --filename "$NVIDIA_ADAPTER/network-policy.yaml" \
             --output json \
             > /tmp/dcgm-exporter-network-policy.json
           jq -e --slurpfile daemonset /tmp/dcgm-exporter-daemonset.json \
-            '.spec.podSelector.matchLabels | to_entries | all(. as $entry | $daemonset[0].spec.template.metadata.labels[$entry.key] == $entry.value)' \
+            '.spec.podSelector.matchLabels
+              | to_entries
+              | all(. as $entry
+                | $daemonset[0].spec.template.metadata.labels[$entry.key]
+                  == $entry.value)' \
             /tmp/dcgm-exporter-network-policy.json
-          jq -e \
-            '.spec.ingress == [{"from":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}],"ports":[{"port":9400,"protocol":"TCP"}]}]' \
+          jq -e '
+            .spec.ingress == [{
+              "from": [{
+                "namespaceSelector": {
+                  "matchLabels": {
+                    "inference.foretoken.io/metrics-scraper": "true"
+                  }
+                }
+              }],
+              "ports": [{"port": 9400, "protocol": "TCP"}]
+            }]' \
             /tmp/dcgm-exporter-network-policy.json
           grep -q 'app.kubernetes.io/name: dcgm-exporter' \
-            deploy/observability/dcgm-exporter-network-policy.yaml
+            "$NVIDIA_ADAPTER/network-policy.yaml"
           grep -q 'app.kubernetes.io/component: dcgm-exporter' \
-            deploy/observability/dcgm-exporter-network-policy.yaml
+            "$NVIDIA_ADAPTER/network-policy.yaml"
           if grep -q 'app.kubernetes.io/instance:' \
-            deploy/observability/dcgm-exporter-network-policy.yaml; then
+            "$NVIDIA_ADAPTER/network-policy.yaml"; then
             exit 1
           fi
           grep -q 'port: 9400' \
-            deploy/observability/dcgm-exporter-network-policy.yaml
-          jq empty \
-            deploy/observability/grafana/dashboards/foretoken-gpu-dashboard.json
+            "$NVIDIA_ADAPTER/network-policy.yaml"
+          jq empty "$NVIDIA_DASHBOARD"
           jq -e \
             '.templating.list | map(.name) == ["DS_PROMETHEUS", "instance", "gpu"]' \
-            deploy/observability/grafana/dashboards/foretoken-gpu-dashboard.json
-          jq -e \
-            '[.panels[]?.targets[]?.expr] | length > 0 and all(contains("foretoken_observability_source=\"dcgm\""))' \
-            deploy/observability/grafana/dashboards/foretoken-gpu-dashboard.json
-          kubectl kustomize deploy/observability/grafana \
+            "$NVIDIA_DASHBOARD"
+          jq -e '
+            [.panels[]?.targets[]?.expr]
+            | length > 0
+              and all(
+                contains("foretoken_observability_source=\"accelerator\"")
+                and contains("foretoken_accelerator_vendor=\"nvidia\"")
+                and contains("foretoken_accelerator_exporter=\"dcgm\"")
+              )' "$NVIDIA_DASHBOARD"
+          grep -oE 'DCGM_FI_[A-Z0-9_]+' "$NVIDIA_DASHBOARD" \
+            | sort -u > /tmp/dcgm-dashboard-metrics.txt
+          grep -oE 'DCGM_FI_[A-Z0-9_]+' "$NVIDIA_ADAPTER/values.yaml" \
+            | sort -u > /tmp/dcgm-collector-metrics.txt
+          test -z "$(comm -23 \
+            /tmp/dcgm-dashboard-metrics.txt \
+            /tmp/dcgm-collector-metrics.txt)"
+          kubectl kustomize \
+            "$NVIDIA_ADAPTER/grafana" \
             > /tmp/foretoken-gpu-dashboard.yaml
           grep -q '^kind: ConfigMap' /tmp/foretoken-gpu-dashboard.yaml
           grep -q 'grafana_dashboard: "1"' \
             /tmp/foretoken-gpu-dashboard.yaml
-          grep -q 'Foretoken GPU 运行状态' \
+          grep -q 'Foretoken NVIDIA GPU 运行状态' \
             /tmp/foretoken-gpu-dashboard.yaml
       - name: Validate operator lifecycle
         run: |

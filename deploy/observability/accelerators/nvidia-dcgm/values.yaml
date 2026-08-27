@@ -1,46 +1,33 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Validated with the NVIDIA dcgm-exporter Helm chart 4.8.2. The long image
-# tag is pinned so that exporter and bundled DCGM upgrades remain explicit and
-# version-matched. The upstream chart does not expose a separate image digest.
-image:
-  repository: nvcr.io/nvidia/k8s/dcgm-exporter
-  tag: 4.5.3-4.8.2-distroless
-  pullPolicy: IfNotPresent
+# NVIDIA DCGM Exporter adapter for Foretoken accelerator observability.
+# Validated with chart 4.8.2, whose AppVersion pins image
+# 4.5.3-4.8.2-distroless. Keep the chart version fixed in install commands.
 
-# Foretoken does not attribute these baseline hardware samples to Kubernetes
-# Pods. The explicit CLI flag takes precedence over the chart's hard-coded
-# DCGM_EXPORTER_KUBERNETES=true environment variable and avoids polling the
-# kubelet pod-resources socket. Chart 4.8.2 still renders that socket as a
-# read-only hostPath; see the documented upstream-chart limitation.
+# Hardware samples are node-scoped. Disable Kubernetes Pod attribution and
+# avoid polling the kubelet pod-resources socket.
 arguments:
   - -f
   - /etc/dcgm-exporter/default-counters.csv
   - --kubernetes=false
 
-# The pinned image defaults NVIDIA_VISIBLE_DEVICES to all, which is correct on
-# a standard GPU node. A nested k3d runtime must explicitly select the same
-# trusted host GPU set as its device plugin; this is selection, not a tenant
-# isolation boundary. See docs/gpu-observability*.md.
-
-# The upstream chart defaults to system-node-critical. Hardware monitoring is
-# optional and must not receive a priority that can preempt inference Pods.
+# Hardware monitoring must not preempt inference Pods.
 priorityClassName: ""
 
-# Prometheus Operator must be installed before this chart is rendered in a
-# cluster. The ServiceMonitor remains in the dcgm-exporter release namespace.
+# These target labels are the Foretoken accelerator adapter contract. Raw DCGM
+# metric names, units, and device labels remain unchanged.
 serviceMonitor:
   enabled: true
-  interval: 30s
-  scrapeTimeout: 10s
   relabelings:
     - targetLabel: foretoken_observability_source
+      replacement: accelerator
+    - targetLabel: foretoken_accelerator_vendor
+      replacement: nvidia
+    - targetLabel: foretoken_accelerator_exporter
       replacement: dcgm
 
-# Base hardware telemetry does not require DCGM profiling privileges. Keeping
-# the exporter non-root and dropping every capability also avoids interfering
-# with Nsight or another profiler running on the same GPU.
+# Base hardware telemetry does not require DCGM profiling privileges.
 securityContext:
   runAsNonRoot: true
   runAsUser: 1000
@@ -50,9 +37,9 @@ securityContext:
     drop:
       - ALL
 
-# customMetrics replaces the chart's complete default list. Profiling fields
-# (DCGM_FI_PROF_*) are intentionally excluded because chart 4.8.2 grants
-# SYS_ADMIN for them. Unsupported hardware fields may be absent at runtime.
+# This is one adapter-owned collector definition, not a set of user-facing
+# parameters. It replaces the upstream list because that list enables profiling
+# fields that require SYS_ADMIN. Unsupported fields may be absent at runtime.
 customMetrics: |
   DCGM_FI_DEV_SM_CLOCK, gauge, SM clock frequency in MHz.
   DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency in MHz.
@@ -60,8 +47,6 @@ customMetrics: |
   DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature in C.
   DCGM_FI_DEV_POWER_USAGE, gauge, Power draw in W.
   DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Total energy consumption since boot in mJ.
-  DCGM_FI_DEV_PCIE_TX_THROUGHPUT, counter, PCIe transmit throughput in KB.
-  DCGM_FI_DEV_PCIE_RX_THROUGHPUT, counter, PCIe receive throughput in KB.
   DCGM_FI_DEV_PCIE_REPLAY_COUNTER, counter, Total number of PCIe retries.
   DCGM_FI_DEV_GPU_UTIL, gauge, GPU utilization in percent.
   DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory copy utilization in percent.

@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Copy this file and use the same trusted host GPU indices selected for k3d.
+# This selects devices for a controlled development cluster; it is not a
+# tenant-isolation boundary.
+extraEnv:
+  - name: NVIDIA_VISIBLE_DEVICES
+    value: "6,7"
