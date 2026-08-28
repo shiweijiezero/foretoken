@@ -15,6 +15,9 @@ pub(crate) struct RouteTargetStatsHistory {
 }
 
 impl RouteTargetStatsHistory {
+    /// Creates empty telemetry history retained for at most `retention`.
+    ///
+    /// `BackendRegistry` owns the history for one physical route target and appends successful probes.
     pub(crate) fn new(retention: Duration) -> Self {
         Self {
             retention,
@@ -22,6 +25,9 @@ impl RouteTargetStatsHistory {
         }
     }
 
+    /// Records one cumulative telemetry snapshot and evicts expired or reset history.
+    ///
+    /// Backend readiness refresh supplies the snapshot, which is stored in this bounded history.
     pub(crate) fn push(&mut self, snapshot: TelemetryResponse) {
         if self.snapshots.back().is_some_and(|previous| {
             snapshot.collected_at_unix_ms <= previous.collected_at_unix_ms
@@ -41,6 +47,9 @@ impl RouteTargetStatsHistory {
         }
     }
 
+    /// Derives route-target statistics for a requested observation window.
+    ///
+    /// The registry exposes the returned snapshot to Router scorers; history ownership remains local.
     pub(crate) fn stats(&self, window: Duration) -> Option<RouteTargetStats> {
         let current = self.snapshots.back()?;
         let window_ms = u64::try_from(window.as_millis()).ok()?;
@@ -87,6 +96,8 @@ fn rate(previous: Option<u64>, current: Option<u64>, seconds: f64) -> Option<f64
     Some(current?.checked_sub(previous?)? as f64 / seconds)
 }
 
+// Derives one window-local mean and bucket p95 from cumulative telemetry, rejecting resets or
+// incompatible bucket layouts rather than combining observations from different histogram epochs.
 fn latency(
     previous: &CumulativeHistogram,
     current: &CumulativeHistogram,

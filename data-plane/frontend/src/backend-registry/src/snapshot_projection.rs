@@ -16,6 +16,9 @@ use std::sync::Arc;
 use crate::registry::Component;
 use crate::snapshot::{ServingSnapshot, SnapshotError};
 
+/// Projects prompt-side KV event sources and route bindings from a serving snapshot.
+///
+/// `BackendRegistryBuild` consumes this derived runtime configuration while the snapshot remains controller-owned.
 pub(crate) fn project_kv_runtime(
     snapshot: &ServingSnapshot,
 ) -> Result<KvRuntimeConfig, SnapshotError> {
@@ -109,6 +112,9 @@ fn pool_target(service_uid: String, pool_uid: String, pool_name: String) -> Scal
     }
 }
 
+/// Projects validated snapshot topology into the router's route table and backend components.
+///
+/// `BackendRegistry::from_snapshot` takes ownership of both outputs; this function consumes the snapshot.
 pub(crate) fn project_registry(
     snapshot: ServingSnapshot,
 ) -> Result<(ModelRouteTable, BTreeMap<RouteTargetId, Component>), SnapshotError> {

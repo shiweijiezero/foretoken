@@ -379,6 +379,11 @@ fn decoded(generated: Generated) -> impl foretoken_text::TextOutputStream {
     )
 }
 
+/// Applies the HTTP stream-idle budget to decoded backend output.
+///
+/// Streaming and collected response adapters wrap their output with this function. It returns a
+/// stream that preserves decoded events until the idle budget expires, then yields one terminal
+/// error so dropping the wrapper cancels the underlying backend request.
 pub(crate) fn idle_timed(
     stream: impl foretoken_text::TextOutputStream,
     idle: Duration,
@@ -444,6 +449,10 @@ fn chat_finish_reason(
     }
 }
 
+/// Converts one routed chat stream into the OpenAI SSE response consumed by HTTP clients.
+///
+/// The chat handler returns this response immediately; its event stream owns backend output until
+/// terminal completion, client disconnect, or the configured idle timeout.
 pub(crate) fn chat_stream_with_options(
     generated: GeneratedChat,
     idle: Duration,
@@ -783,6 +792,10 @@ pub(crate) fn text_stream_many(
     Sse::new(events).into_response()
 }
 
+/// Collects one routed chat stream into the OpenAI JSON response used for non-streaming requests.
+///
+/// The chat handler awaits this response through terminal output or idle timeout; any stream error
+/// becomes the same typed HTTP error used for failures before collection.
 pub(crate) async fn chat_collected(generated: GeneratedChat, idle: Duration) -> Response {
     let metadata = ResponseMetadata::from_generated(&generated.generated);
     let (include_reasoning, stream) = match chat_events(generated, idle) {

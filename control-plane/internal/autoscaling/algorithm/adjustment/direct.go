@@ -9,7 +9,10 @@ import (
 
 type Direct struct{}
 
+// Name identifies the direct adjustment algorithm for registry consumers.
 func (Direct) Name() string { return "direct" }
+
+// Adjust clamps the desired capacity to the configured hard bounds.
 func (Direct) Adjust(input core.AdjustmentInput) (core.ScalingAdjustment, error) {
 	return core.ScalingAdjustment{AdjustedGroups: clip(input.DesiredGroups, input.Bounds.MinGroups, input.Bounds.MaxGroups), Reason: core.AdjustmentReasonDirect, Message: "desired capacity is applied directly"}, nil
 }

@@ -52,6 +52,7 @@ type HTTPPoolMetricsProvider struct {
 	now               func() time.Time
 }
 
+// NewHTTPPoolMetricsProvider constructs the frontend and model-server telemetry collector used by autoscaling.
 func NewHTTPPoolMetricsProvider(kubeClient client.Client, options AutoscalingTelemetryOptions) *HTTPPoolMetricsProvider {
 	return &HTTPPoolMetricsProvider{
 		client:            kubeClient,
@@ -62,6 +63,7 @@ func NewHTTPPoolMetricsProvider(kubeClient client.Client, options AutoscalingTel
 	}
 }
 
+// Observation aggregates fresh queue and active-request demand for one scaling target.
 func (provider *HTTPPoolMetricsProvider) Observation(ctx context.Context, target core.TargetID) (core.DemandObservation, error) {
 	if provider == nil || provider.client == nil || provider.httpClient == nil {
 		return core.DemandObservation{}, fmt.Errorf("pool metrics provider is not configured")
@@ -105,6 +107,7 @@ func (provider *HTTPPoolMetricsProvider) Observation(ctx context.Context, target
 	}, nil
 }
 
+// frontendQueue sums target-attributed queue samples from ready frontend Pods.
 func (provider *HTTPPoolMetricsProvider) frontendQueue(ctx context.Context, target core.TargetID) (uint64, int64, time.Time, error) {
 	var pods corev1.PodList
 	if err := provider.client.List(ctx, &pods, client.InNamespace(target.ServiceNamespace)); err != nil {
@@ -157,6 +160,7 @@ func (provider *HTTPPoolMetricsProvider) frontendQueue(ctx context.Context, targ
 	return total, samples, oldest, nil
 }
 
+// activeRequests sums active requests from routable model servers for one target.
 func (provider *HTTPPoolMetricsProvider) activeRequests(ctx context.Context, target core.TargetID) (uint64, int64, error) {
 	service := new(inferencev1alpha1.ModelService)
 	if err := provider.client.Get(ctx, client.ObjectKey{Namespace: target.ServiceNamespace, Name: target.ServiceName}, service); err != nil {
@@ -229,6 +233,7 @@ func (provider *HTTPPoolMetricsProvider) activeRequests(ctx context.Context, tar
 	return total, samples, nil
 }
 
+// getFrontendTelemetry reads and validates one frontend autoscaling telemetry response.
 func (provider *HTTPPoolMetricsProvider) getFrontendTelemetry(ctx context.Context, endpoint string) (frontendAutoscalingTelemetry, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/internal/autoscaling/telemetry", nil)
 	if err != nil {
@@ -255,6 +260,7 @@ func (provider *HTTPPoolMetricsProvider) getFrontendTelemetry(ctx context.Contex
 	return telemetry, nil
 }
 
+// getModelTelemetry reads and validates one model-server telemetry response.
 func (provider *HTTPPoolMetricsProvider) getModelTelemetry(ctx context.Context, endpoint string) (drainTelemetry, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/v1/internal/telemetry", nil)
 	if err != nil {

@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
+// reconcileServingSnapshot publishes the versioned routing and scaling snapshot consumed by frontend Pods.
 func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx context.Context, frontend *inferencev1alpha1.FrontendService) (bool, error) {
 	models, err := reconciler.projectScalingModels(ctx, frontend.Namespace)
 	if err != nil {
@@ -100,6 +101,7 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 	return len(models) > 0 || len(groups) > 0 || len(pdComponents) > 0 || len(epdComponents) > 0, nil
 }
 
+// projectScalingModels builds the frontend scaling catalog from configured ModelServices.
 func (reconciler *FrontendServiceReconciler) projectScalingModels(ctx context.Context, namespace string) ([]servingSnapshotModel, error) {
 	var services inferencev1alpha1.ModelServiceList
 	if err := reconciler.List(ctx, &services, client.InNamespace(namespace)); err != nil {
@@ -184,6 +186,7 @@ func (reconciler *FrontendServiceReconciler) projectScalingModels(ctx context.Co
 	return models, nil
 }
 
+// admissionTargetSetsForService selects autoscaling targets that admit each service request.
 func admissionTargetSetsForService(service *inferencev1alpha1.ModelService, pools []*inferencev1alpha1.ModelPool) [][]servingSnapshotScalingTarget {
 	if poolsHaveEPD(pools) || len(pools) == 0 && serviceDeclaresEPD(service) {
 		return [][]servingSnapshotScalingTarget{{{ServiceUID: string(service.UID), Name: "epd", UID: string(service.UID), Kind: string(core.TargetEPDPipelineScope)}}}
@@ -354,6 +357,7 @@ func poolsHavePD(pools []*inferencev1alpha1.ModelPool) bool {
 	})
 }
 
+// projectServicePDComponents publishes compatible ready prefill and decode components for one service.
 func projectServicePDComponents(service *inferencev1alpha1.ModelService, pools []*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup) ([]servingSnapshotPDComponent, servingSnapshotPDPipelineScope, error) {
 	var prefills, decodes []*inferencev1alpha1.ModelGroup
 	for _, pool := range pools {
@@ -402,6 +406,7 @@ func projectServicePDComponents(service *inferencev1alpha1.ModelService, pools [
 	return components, pipelineScope, nil
 }
 
+// projectServiceEPDComponents publishes complete compatible encoder, prefill, and decode triplets.
 func projectServiceEPDComponents(service *inferencev1alpha1.ModelService, pools []*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup) ([]servingSnapshotEPDComponent, []servingSnapshotEPDPipelineScope, error) {
 	// Publish only ordinal-aligned 1E:1P:1D triplets. An incomplete ordinal is withheld
 	// without removing another complete triplet from the same Service.
@@ -515,12 +520,14 @@ func routingGroupReady(group *inferencev1alpha1.ModelGroup) bool {
 
 type incompatibleRoutingGroupsError struct{ first, second, model string }
 
+// Error describes the conflicting ModelGroup identities that prevent route publication.
 func (err *incompatibleRoutingGroupsError) Error() string {
 	return fmt.Sprintf("incompatible ModelGroups for public model %q: %q and %q must have identical modelRevision, tokenizer, and tokenizerRevision", err.model, err.first, err.second)
 }
 
 type pdRoutingProjectionError struct{ service, reason string }
 
+// Error describes a service-local P/D or E/P/D routing projection failure.
 func (err *pdRoutingProjectionError) Error() string {
 	if err.service == "" {
 		return "P/D routing projection: " + err.reason
@@ -598,6 +605,7 @@ func modelGroupEndpoint(group *inferencev1alpha1.ModelGroup, port int32) string 
 	return fmt.Sprintf("http://%s.%s.svc:%d", modelGroupServiceName(group), group.Namespace, port)
 }
 
+// validateRoutingIdentities rejects aggregate/P/D/E/P/D overlap and conflicting aggregate or P/D artifacts before snapshot publication.
 func validateRoutingIdentities(groups []servingSnapshotGroup, components []servingSnapshotPDComponent, epdComponents []servingSnapshotEPDComponent) error {
 	// One public model must have unambiguous stage semantics. Reject identity conflicts and
 	// overlap between aggregate, P/D, and E/P/D before the snapshot reaches any frontend.

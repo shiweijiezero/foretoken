@@ -61,10 +61,15 @@ pub struct KvPrefixMatch {
 }
 
 pub trait KvLocalityIndex: Send {
+    /// Applies one source-scoped delta event to index-owned locality facts.
     fn apply(&mut self, source: KvEventSourceId, event: KvIndexEvent, now: Instant);
+    /// Removes facts for one exact source epoch and data-parallel rank.
     fn clear_source(&mut self, source: &KvEventSourceId);
+    /// Removes facts across all epochs and ranks of one event-source identity.
     fn clear_event_source(&mut self, id: &str);
+    /// Refreshes fact liveness for a source after a successful empty delta response.
     fn touch_source(&mut self, source: &KvEventSourceId, now: Instant);
+    /// Returns this index's prefix-locality matches without transferring ownership of its facts.
     fn query(
         &mut self,
         source: &KvEventSourceId,
@@ -80,6 +85,9 @@ pub enum KvLocalityIndexes {
 }
 
 impl KvLocalityIndexes {
+    /// Creates the resolved source-local index with the supplied fact retention lifetime.
+    ///
+    /// `KvIndexer` owns the result and applies source delta events to it for its lifetime.
     pub fn new(implementation: KvLocalityIndexResolvedImplementation, ttl: Duration) -> Self {
         match implementation {
             KvLocalityIndexResolvedImplementation::PositionalHash => {
@@ -135,6 +143,9 @@ impl KvLocalityIndex for KvLocalityIndexes {
     }
 }
 
+/// Derives the protocol's keyed, partition-scoped block identity for both index implementations.
+///
+/// Positional and radix indexes consume the returned value for matching; callers retain the key and input partition.
 pub(super) fn normalized_block_hash(
     key: &[u8; 32],
     parent: &KvBlockHash,

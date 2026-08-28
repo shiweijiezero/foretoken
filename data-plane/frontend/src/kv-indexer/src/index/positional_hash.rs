@@ -21,6 +21,9 @@ pub struct PositionalHashIndex {
 }
 
 impl PositionalHashIndex {
+    /// Creates an empty complete-block index that expires observations after `ttl`.
+    ///
+    /// `KvLocalityIndexes` owns the index and feeds it source-scoped delta events.
     pub fn new(ttl: Duration) -> Self {
         Self {
             ttl,
@@ -28,6 +31,8 @@ impl PositionalHashIndex {
         }
     }
 
+    // Computes the transitive descendants of removed blocks so a branch invalidation cannot leave
+    // descendants whose stored ancestry is no longer valid.
     fn descendants(entries: &[Entry], roots: &BTreeSet<KvBlockHash>) -> BTreeSet<KvBlockHash> {
         let mut removed = roots.clone();
         loop {
@@ -52,6 +57,7 @@ impl PositionalHashIndex {
         });
     }
 
+    // Expires stale roots together with their descendants, preserving valid ancestry in each source.
     fn prune(&mut self, now: Instant) {
         self.entries_by_source.retain(|_, entries| {
             let expired = entries

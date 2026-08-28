@@ -45,6 +45,9 @@ pub struct RadixTreeIndex {
 }
 
 impl RadixTreeIndex {
+    /// Creates an empty source-scoped radix index that expires observations after `ttl`.
+    ///
+    /// `KvLocalityIndexes` owns the index and feeds it source-scoped delta events.
     pub fn new(ttl: Duration) -> Self {
         Self {
             ttl,
@@ -81,6 +84,8 @@ impl RadixTreeIndex {
         !parent.0.is_empty()
     }
 
+    // Materializes blocks with known ancestry and holds out-of-order children until their parent
+    // arrives; a pending cycle resets only the affected group tree.
     fn store_block(tree: &mut GroupTree, block: KvStoredBlock, now: Instant) {
         if let Some(path) = tree.paths_by_hash.get(&block.block_hash) {
             if let Some(entry) = tree.entries_by_path.get_mut(path) {
@@ -143,6 +148,7 @@ impl RadixTreeIndex {
         tree.pending_by_parent.remove(root);
     }
 
+    // Drops stale materialized subtrees and pending children while retaining fresh late-parent work.
     fn prune(&mut self, now: Instant) {
         self.trees_by_source.retain(|_, source_tree| {
             source_tree.trees_by_placement.retain(|_, placement_tree| {

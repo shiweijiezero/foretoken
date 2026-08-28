@@ -41,7 +41,16 @@ pub enum LlmFacadeError {
 }
 #[async_trait]
 pub trait LlmFacade: Send + Sync {
+    /// Starts one backend generation for the execution workflow.
+    ///
+    /// Returns a live token stream owned by the caller until terminal output or drop; failures
+    /// before stream creation describe a request that never entered streaming.
     async fn generate(&self, request: GenerateRequest) -> Result<TokenStream, LlmFacadeError>;
+
+    /// Requests cleanup of backend work whose consuming workflow has ended early.
+    ///
+    /// Drop guards call this best-effort operation for admitted request IDs. Success only confirms
+    /// that the abort request was accepted; the backend owns final request termination.
     async fn abort(&self, request_ids: &[String]) -> Result<(), LlmFacadeError>;
 }
 
@@ -141,6 +150,10 @@ impl Default for MultiStageCleanup {
 }
 
 impl MultiStageCleanup {
+    /// Starts cleanup ownership for workflow stages that may outlive a failed handoff.
+    ///
+    /// The E/P/D workflow registers child requests on the returned guard, which aborts them when
+    /// dropped unless terminal output transfers or disarms that ownership.
     pub fn new() -> Self {
         Self {
             stages: Vec::new(),
@@ -148,10 +161,18 @@ impl MultiStageCleanup {
         }
     }
 
+    /// Adds an admitted child request to this workflow's cleanup set.
+    ///
+    /// Stage executors call this before awaiting generation so a later failure aborts the request;
+    /// it produces no handle because this guard retains ownership until completion.
     pub fn register(&mut self, facade: Arc<dyn LlmFacade>, request_id: String) {
         self.stages.push((facade, request_id));
     }
 
+    /// Transfers cleanup ownership to the final backend stream returned to HTTP response handling.
+    ///
+    /// Returns a wrapped stream that retains registered stages until terminal output, then disarms
+    /// them; an early drop or stream failure aborts every remaining stage.
     pub fn with_stream(self, stream: TokenStream) -> TokenStream {
         Box::pin(CleanupStream {
             stream,
@@ -226,5 +247,10 @@ pub trait LlmFacadeResolver: Send + Sync {
         decision: &RouteDecision,
         stage: RouteStage,
     ) -> Option<Arc<dyn LlmFacade>>;
+
+    /// Returns the live prefill bootstrap endpoint for P/D request construction.
+    ///
+    /// The workflow reads it immediately before starting prefill and passes it to the decode
+    /// connector; `None` prevents the workflow from admitting that staged request.
     fn bootstrap_endpoint(&self, prefill: &RouteDecision) -> Option<String>;
 }

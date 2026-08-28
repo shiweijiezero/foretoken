@@ -85,6 +85,7 @@ pub struct KvEventAdapter {
 }
 
 impl KvEventAdapter {
+    /// Creates a model-server-local adapter with independent KV event state for every data-parallel rank.
     pub fn new(
         key: [u8; 32],
         scope_id: String,
@@ -117,6 +118,9 @@ impl KvEventAdapter {
         inner.available = false;
     }
 
+    /// Returns bounded rank-local deltas for the internal KV index endpoint.
+    ///
+    /// The adapter retains cursor state; this response owns its cloned events or signals a reset.
     pub fn delta(
         &self,
         dp_rank: u32,
@@ -233,7 +237,9 @@ impl KvEventAdapter {
         true
     }
 
-    /// Accepts vLLM's msgspec array payload: timestamp, tagged events, and optional DP rank.
+    /// Ingests one vLLM msgspec event payload from the subscriber task into adapter-owned state.
+    ///
+    /// It publishes normalized deltas to later HTTP readers and retains no borrowed payload bytes.
     pub fn ingest_msgpack(&self, bytes: &[u8]) {
         let Ok(Value::Array(batch)) = rmp_serde::from_slice::<Value>(bytes) else {
             self.fail_stream("event_protocol_violation");
@@ -276,6 +282,8 @@ impl KvEventAdapter {
         inner.available = true;
     }
 
+    // Decode one raw vLLM event into the rank's normalized cache view. Invalid input returns false
+    // so the frame stage can clear retained state and end the subscriber lifecycle consistently.
     fn ingest_event(&self, dp_rank: u32, event: Value) -> bool {
         let Value::Map(fields) = event else {
             return false;
@@ -301,6 +309,8 @@ impl KvEventAdapter {
         self.store_blocks(dp_rank, raw_hashes, &fields)
     }
 
+    // Remove matching raw entries and publish grouped normalized removals. Ambiguous hashes are
+    // intentionally left untouched because the publisher did not identify their cache group.
     fn remove_blocks(&self, dp_rank: u32, raw_hashes: &[Value], fields: &[(Value, Value)]) -> bool {
         let event_placement = placement(field(fields, "medium"), field(fields, "locality"));
         let event_group_idx = optional_u32(field(fields, "group_idx"));
@@ -346,6 +356,8 @@ impl KvEventAdapter {
         true
     }
 
+    // Convert contiguous token blocks into keyed public identities before retaining their raw lookup
+    // keys. The ring publishes only normalized blocks, while raw hashes remain adapter-private.
     fn store_blocks(&self, dp_rank: u32, raw_hashes: &[Value], fields: &[(Value, Value)]) -> bool {
         let Some(placement) = placement(field(fields, "medium"), field(fields, "locality")) else {
             return true;
@@ -441,6 +453,9 @@ impl KvEventAdapter {
         true
     }
 
+    /// Runs the owned ZMQ subscriber task started by model-server bootstrap.
+    ///
+    /// `ready` publishes connection status once; this task retains its adapter until stream failure.
     pub async fn serve(self: Arc<Self>, ready: tokio::sync::oneshot::Sender<bool>) {
         let mut socket = SubSocket::new();
         if socket.connect(KV_EVENT_ENDPOINT).await.is_err()

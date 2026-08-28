@@ -26,6 +26,10 @@ pub(crate) struct RuntimeConfig {
 }
 
 impl RuntimeConfig {
+    /// Loads the controller-owned frontend settings once during process startup.
+    ///
+    /// `main` consumes the returned configuration to construct the listener and generation loops;
+    /// invalid or absent required values prevent the process from starting.
     pub(crate) fn from_env() -> Result<Self, String> {
         Ok(Self {
             serving_snapshot: required_path(SERVING_SNAPSHOT_ENV)?,
@@ -37,6 +41,10 @@ impl RuntimeConfig {
     }
 }
 
+/// Resolves the router pipeline selected for this frontend process.
+///
+/// Startup calls this through [`RuntimeConfig::from_env`]; it returns a validated configuration
+/// that is retained by the runtime builder for every snapshot generation.
 pub(crate) fn router_pipeline_from_env(
     get_env: impl Fn(&str) -> Result<String, env::VarError>,
 ) -> Result<RouterPipelineConfig, String> {
@@ -85,7 +93,10 @@ pub(crate) enum KvIndexKeyError {
     InvalidLength,
 }
 
-// KV indexing remains a soft hint, but a configured credential must never fail silently.
+/// Loads the optional KV-index credential for runtime-builder startup.
+///
+/// The frontend process converts the result into enabled, disabled, or degraded routing state;
+/// unreadable configured credentials remain visible as errors rather than silently disabling KV hints.
 pub(crate) fn kv_index_key() -> Result<Option<[u8; 32]>, KvIndexKeyError> {
     let Ok(path) = env::var(KV_INDEX_KEY_PATH_ENV) else {
         return Ok(None);

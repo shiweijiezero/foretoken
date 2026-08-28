@@ -33,6 +33,10 @@ pub struct RuntimeBuilder {
 }
 
 impl RuntimeBuilder {
+    /// Creates the snapshot builder retained by the frontend watcher for successive updates.
+    ///
+    /// The watcher reuses the returned builder to parse and prepare generations with this routing
+    /// pipeline and KV credential for its lifetime.
     pub fn new(router_pipeline: RouterPipelineConfig, kv_credential: KvIndexCredential) -> Self {
         Self {
             router_pipeline,
@@ -40,10 +44,16 @@ impl RuntimeBuilder {
         }
     }
 
+    /// Decodes controller-provided bytes into a serving snapshot candidate for [`Self::build`].
     pub fn parse(&self, bytes: &[u8]) -> Result<ServingSnapshot, RuntimeBuildError> {
         Ok(serde_json::from_slice(bytes)?)
     }
 
+    /// Prepares one publishable runtime generation from a decoded snapshot.
+    ///
+    /// The snapshot watcher calls this before publication. It returns a fully probed runtime whose
+    /// ownership transfers to [`PreparedRuntime::publish`], or an error while the active runtime
+    /// remains unchanged.
     // Build one publishable generation in stages: validate projection, construct routing and
     // KV state, probe backends, load per-model processors, re-probe, then seal PreparedRuntime.
     pub async fn build(
@@ -142,6 +152,10 @@ pub struct PreparedRuntime {
 }
 
 impl PreparedRuntime {
+    /// Atomically hands this prepared candidate to the long-lived serving generation.
+    ///
+    /// Snapshot watchers consume the candidate exactly once. Returns whether its version replaced
+    /// the active state; stale candidates are dropped without affecting request handling.
     pub fn publish(self, generation: &RuntimeGeneration) -> bool {
         generation.replace_state(self.version, self.state, self.control)
     }

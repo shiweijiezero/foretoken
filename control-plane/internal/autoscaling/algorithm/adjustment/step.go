@@ -9,7 +9,10 @@ import (
 
 type Step struct{}
 
+// Name identifies the step adjustment algorithm for registry consumers.
 func (Step) Name() string { return "step" }
+
+// Adjust clamps the desired capacity and limits each scale direction to its configured step.
 func (Step) Adjust(input core.AdjustmentInput) (core.ScalingAdjustment, error) {
 	desired := clip(input.DesiredGroups, input.Bounds.MinGroups, input.Bounds.MaxGroups)
 	reason := core.AdjustmentReasonHold

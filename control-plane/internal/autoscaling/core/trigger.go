@@ -36,6 +36,7 @@ type TriggerConfig struct {
 	HighQueuePerRoutableGroup int64
 }
 
+// ObservationTriggerDecision converts unavailable, stale, or incomplete demand into an insufficient-data trigger result consumed by the scaling pipeline.
 func ObservationTriggerDecision(snapshot ScalingSnapshot) (TriggerDecision, bool) {
 	switch snapshot.Observation.State {
 	case ObservationUnavailable:

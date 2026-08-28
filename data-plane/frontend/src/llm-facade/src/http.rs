@@ -24,6 +24,10 @@ pub struct HttpFacade {
     request_start_timeout: Duration,
 }
 impl HttpFacade {
+    /// Creates the transport resolved by the backend registry for one model-server endpoint.
+    ///
+    /// Returns a validated facade that lives with its registry entry, or a configuration error
+    /// before that endpoint can enter a serving generation.
     pub fn new(endpoint: String) -> Result<Self, LlmFacadeError> {
         Self::with_request_start_timeout(endpoint, MODEL_SERVER_REQUEST_START_TIMEOUT)
     }
@@ -41,8 +45,10 @@ impl HttpFacade {
         format!("{}{path}", self.endpoint)
     }
 
-    // Send one MessagePack generation request under the response-start timeout, then decode
-    // the NDJSON body incrementally into the shared token stream without buffering completion.
+    /// Starts one model-server request and exposes its NDJSON output as the shared token stream.
+    ///
+    /// The `LlmFacade` adapter calls this for an admitted workflow stage. The returned stream owns
+    /// incremental decoding until terminal output or cancellation; response-start failures return first.
     pub(crate) async fn generate(
         &self,
         request: GenerateRequest,
@@ -78,6 +84,10 @@ impl HttpFacade {
             if !pending.is_empty() { yield decode_event(&pending); }
         }))
     }
+    /// Asks this model server to cancel admitted work after its consumer ends early.
+    ///
+    /// Stream cleanup guards call this best-effort operation. A successful result ends the HTTP
+    /// abort exchange; the backend retains responsibility for final request termination.
     pub(crate) async fn abort(&self, request_ids: &[String]) -> Result<(), LlmFacadeError> {
         let response = tokio::time::timeout(
             self.request_start_timeout,
@@ -110,6 +120,10 @@ impl LlmFacade for HttpFacade {
     }
 }
 
+/// Validates and normalizes a model-server base URL before facade construction.
+///
+/// [`HttpFacade::new`] consumes the returned trailing-slash-free endpoint for the facade lifetime;
+/// invalid endpoints fail before the registry can publish a route to them.
 pub(crate) fn validate_endpoint(endpoint: String) -> Result<String, LlmFacadeError> {
     let endpoint = endpoint.trim_end_matches('/').to_owned();
     let url = reqwest::Url::parse(&endpoint).map_err(|_| LlmFacadeError::Configuration)?;

@@ -170,6 +170,9 @@ pub struct KvIndexer {
     client: reqwest::Client,
 }
 impl KvIndexer {
+    /// Validates runtime bindings and creates the frontend-owned KV locality indexer.
+    ///
+    /// Frontend startup retains the indexer and calls `refresh`; a missing key yields a disabled, query-safe indexer.
     pub fn new(
         config: KvRuntimeConfig,
         key: Option<[u8; 32]>,
@@ -244,6 +247,9 @@ impl KvIndexer {
             client: kv_http_client(),
         })
     }
+    /// Creates an indexer that reports an unrecoverable initialization failure.
+    ///
+    /// Frontend startup retains this status-only fallback so routing can treat locality facts as unavailable.
     pub fn degraded(config: KvRuntimeConfig, reason: KvIndexDegradedReason) -> Self {
         let resolved = config
             .requested_implementation
@@ -263,6 +269,9 @@ impl KvIndexer {
         }
     }
 
+    /// Returns a point-in-time health and implementation report for telemetry consumers.
+    ///
+    /// The result is derived from indexer-owned state and does not grant access to cached locality facts.
     pub fn status(&self) -> KvIndexStatus {
         let h = self.health.lock().unwrap();
         KvIndexStatus {
@@ -347,6 +356,9 @@ impl KvIndexer {
         });
         KvPrefixQueryResult::Matches(KvPrefixMatches::new(matches))
     }
+    /// Refreshes every configured source and updates index-owned locality facts and health.
+    ///
+    /// The frontend refresh loop calls this method; queries observe only the resulting cached state.
     pub async fn refresh(&self) {
         let Some(state) = &self.state else { return };
         let _lock = state.refresh.lock().await;
@@ -443,6 +455,8 @@ impl KvPrefixIndexer for KvIndexer {
         self.query(lookup)
     }
 }
+// Validates source identity and cursor continuity, applies the delta, then advances the
+// source-owned cursor; invalid input clears only that source's cached locality facts.
 fn apply(
     state: &State,
     s: &KvEventSourceConfig,

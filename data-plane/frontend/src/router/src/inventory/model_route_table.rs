@@ -27,6 +27,9 @@ impl ModelRouteTable {
         &self.routes
     }
 
+    /// Returns static routes whose model and input limit match one router request.
+    ///
+    /// `PipelineRouter` further applies dynamic health and capability checks; references remain owned by this table.
     pub(crate) fn candidates(&self, request: &RouterRequest) -> Vec<&RouteTarget> {
         self.routes
             .iter()
@@ -41,6 +44,9 @@ impl ModelRouteTable {
     }
 }
 
+/// Checks whether a route target's trusted capabilities cover the request's optional features.
+///
+/// `PipelineRouter` consumes the boolean during candidate construction; neither input is retained.
 pub(crate) fn supports_request(capabilities: &BTreeSet<String>, request: &RouterRequest) -> bool {
     (request.generate_request.lora_request.is_none() || capabilities.contains("lora"))
         && (request.generate_request.reasoning_parser_kwargs.is_none()

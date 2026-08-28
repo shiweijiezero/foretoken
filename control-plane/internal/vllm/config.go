@@ -179,6 +179,7 @@ func (plan LaunchPlanV1) JSON() (string, error) {
 	return string(bytes), err
 }
 
+// buildKVPlan projects the ModelGroup cache runtime into the closed vLLM KV launch plan.
 func buildKVPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchKVPlan, error) {
 	role := "kv_both"
 	if group.Role == inferencev1alpha1.ModelRolePrefill {
@@ -219,6 +220,7 @@ func buildKVPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchKVPlan, error) {
 	return LaunchKVPlan{}, fmt.Errorf("vLLM KV runtime must select a backend")
 }
 
+// buildECPlan validates and projects EC runtime settings into the vLLM launch plan.
 func buildECPlan(group inferencev1alpha1.ModelGroupSpec) (*LaunchECPlan, error) {
 	if group.ECRuntime == nil {
 		return nil, nil
@@ -286,6 +288,7 @@ func validateParallelism(parallelism inferencev1alpha1.CompiledParallelism) erro
 
 var allowedExtraArgs = map[string]bool{"--max-model-len": true, "--dtype": true, "--quantization": true, "--gpu-memory-utilization": true, "--max-num-seqs": true, "--max-num-batched-tokens": true, "--limit-mm-per-prompt": true, "--enforce-eager": true, "--disable-log-stats": true}
 
+// validateExtraArgs accepts only non-overriding vLLM flags supported by the launch contract.
 func validateExtraArgs(args []inferencev1alpha1.BackendArg) error {
 	seen := map[string]bool{}
 	for _, raw := range args {

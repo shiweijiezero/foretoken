@@ -18,6 +18,7 @@ type ScalingDecision struct {
 }
 type Resolver struct{ AllowDuringTransition bool }
 
+// Hold preserves requested capacity for a non-firing trigger while enforcing hard bounds.
 func (resolver Resolver) Hold(snapshot ScalingSnapshot, trigger TriggerDecision, decisionName, adjustmentName string, adjustment ScalingAdjustment) (ScalingDecision, error) {
 	if err := validateSnapshot(snapshot); err != nil {
 		return ScalingDecision{}, err
@@ -37,6 +38,8 @@ func (resolver Resolver) Hold(snapshot ScalingSnapshot, trigger TriggerDecision,
 	}
 	return ScalingDecision{Target: snapshot.Target, DecisionAlgorithm: decisionName, AdjustmentAlgorithm: adjustmentName, Adjustment: adjustment, AppliedGroups: applied, Direction: direction(current, applied), Constraint: constraint, Message: message, Trigger: trigger}, nil
 }
+
+// Resolve applies an adjusted decision subject to bounds and in-progress transitions.
 func (resolver Resolver) Resolve(snapshot ScalingSnapshot, decisionName string, desiredCapacity DesiredCapacity, adjustmentName string, adjusted ScalingAdjustment) (ScalingDecision, error) {
 	if err := validateSnapshot(snapshot); err != nil {
 		return ScalingDecision{}, err
@@ -61,6 +64,8 @@ func (resolver Resolver) Resolve(snapshot ScalingSnapshot, decisionName string, 
 	}
 	return ScalingDecision{Target: snapshot.Target, DecisionAlgorithm: decisionName, AdjustmentAlgorithm: adjustmentName, DesiredCapacity: desiredCapacity, Adjustment: adjusted, AppliedGroups: desired, Direction: direction(current, desired), Constraint: constraint, Message: message}, nil
 }
+
+// validateSnapshot verifies the capacity bounds required by the resolution stage.
 func validateSnapshot(snapshot ScalingSnapshot) error {
 	if snapshot.Limits.MinGroups < 0 || snapshot.Limits.MaxGroups < snapshot.Limits.MinGroups {
 		return fmt.Errorf("autoscaling bounds for target %q are invalid", snapshot.Target.Name)

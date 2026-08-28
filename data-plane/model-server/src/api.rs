@@ -39,15 +39,22 @@ pub struct RuntimeHealth {
 }
 
 impl RuntimeHealth {
+    /// Creates closed health and admission state for the model-server supervisor.
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Publishes managed-engine process liveness to probe handlers; the supervisor owns updates.
     pub fn set_process_alive(&self, value: bool) {
         self.process_alive.store(value, Ordering::Release);
     }
+
+    /// Publishes EngineCore client health to probe handlers; the supervisor owns updates.
     pub fn set_client_healthy(&self, value: bool) {
         self.client_healthy.store(value, Ordering::Release);
     }
+
+    /// Opens or closes new HTTP admission for lifecycle coordination; accepted streams retain permits.
     pub fn set_accepting(&self, value: bool) {
         if value {
             self.admission.fetch_or(ADMISSION_OPEN, Ordering::AcqRel);
@@ -56,15 +63,24 @@ impl RuntimeHealth {
                 .fetch_and(RUNNING_REQUESTS_MASK, Ordering::AcqRel);
         }
     }
+    /// Returns process-and-client health for the `/healthz` probe without changing lifecycle state.
     pub fn healthy(&self) -> bool {
         self.process_alive.load(Ordering::Acquire) && self.client_healthy.load(Ordering::Acquire)
     }
+
+    /// Returns readiness for the `/readyz` probe; it currently shares the health lifecycle signal.
     pub fn ready(&self) -> bool {
         self.healthy()
     }
+
+    /// Returns whether new requests may enter for telemetry and admission consumers.
+    ///
+    /// Existing stream permits remain owned by their handlers after this signal closes.
     pub fn accepting(&self) -> bool {
         self.admission.load(Ordering::Acquire) & ADMISSION_OPEN != 0
     }
+    // Reserve admission and transfer the slot to a permit held by the response stream. Closing
+    // admission clears only the open bit, so existing requests can drain without a race.
     fn try_admit(self: &Arc<Self>) -> Option<AdmissionPermit> {
         let mut current = self.admission.load(Ordering::Acquire);
         loop {
@@ -111,6 +127,7 @@ pub struct AppState {
     kv_events: Option<Arc<KvEventAdapter>>,
 }
 impl AppState {
+    /// Builds state consumed by internal HTTP handlers; the server owns the supplied backend state.
     pub fn new(
         backend: Arc<dyn Backend>,
         health: Arc<RuntimeHealth>,
@@ -123,13 +140,18 @@ impl AppState {
             kv_events: None,
         }
     }
+    /// Attaches the shared KV delta source used by the index endpoint and returns updated state.
+    ///
+    /// The router owns this state while its handlers retain cloned adapter references.
     pub fn with_kv_events(mut self, adapter: Arc<KvEventAdapter>) -> Self {
         self.kv_events = Some(adapter);
         self
     }
 }
 
-/// Construct only the group-local API; this is not an OpenAI-compatible router.
+/// Constructs the group-local API consumed by the Pod-local frontend, not an OpenAI router.
+///
+/// Server bootstrap moves `state` into the returned router, which owns it for all handler lifetimes.
 pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
@@ -175,6 +197,8 @@ async fn telemetry(State(state): State<AppState>) -> Json<TelemetryResponse> {
     Json(telemetry_response(&state))
 }
 
+// The shutdown coordinator closes admission before draining. Return the post-close telemetry
+// snapshot so its caller can observe remaining requests without owning server state.
 async fn close_admission(State(state): State<AppState>) -> Json<TelemetryResponse> {
     state.health.set_accepting(false);
     Json(telemetry_response(&state))
@@ -271,6 +295,8 @@ async fn abort(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// Translate one frontend cursor into a bounded rank-local delta response. The adapter retains
+// cursor history; this handler only publishes a cloned wire response or its reset signal.
 async fn kv_index_delta(
     State(state): State<AppState>,
     Query(query): Query<KvDeltaQuery>,

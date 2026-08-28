@@ -49,6 +49,7 @@ func (reconciler *ModelPoolReconciler) SetupWithManager(manager ctrl.Manager) er
 		Complete(reconciler)
 }
 
+// poolsForService maps a ModelService update to its owned ModelPools.
 func (reconciler *ModelPoolReconciler) poolsForService(ctx context.Context, object client.Object) []reconcile.Request {
 	var pools inferencev1alpha1.ModelPoolList
 	if err := reconciler.List(ctx, &pools, client.InNamespace(object.GetNamespace())); err != nil {
@@ -109,6 +110,7 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 	return ctrl.Result{}, nil
 }
 
+// validateModelServiceOwnership verifies that the referenced ModelService controls the ModelPool.
 func (reconciler *ModelPoolReconciler) validateModelServiceOwnership(ctx context.Context, pool *inferencev1alpha1.ModelPool) (*inferencev1alpha1.ModelService, error) {
 	service := new(inferencev1alpha1.ModelService)
 	key := client.ObjectKey{Namespace: pool.Namespace, Name: pool.Spec.ModelServiceRef.Name}
@@ -121,6 +123,7 @@ func (reconciler *ModelPoolReconciler) validateModelServiceOwnership(ctx context
 	return service, nil
 }
 
+// targetRevision reuses a matching prepared cohort or allocates the next immutable revision.
 func (reconciler *ModelPoolReconciler) targetRevision(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate, servingRevision string) (string, error) {
 	// Reuse a prepared or serving cohort when its immutable template still matches. This lets
 	// retries and pure scale changes converge without minting a disruptive new revision.
@@ -158,6 +161,7 @@ type groupState struct {
 	Message              string
 }
 
+// currentActiveState derives serving readiness while a target revision is being reconciled.
 func (reconciler *ModelPoolReconciler) currentActiveState(ctx context.Context, pool *inferencev1alpha1.ModelPool, servingRevision string) (groupState, error) {
 	groups, err := reconciler.ownedGroups(ctx, pool)
 	if err != nil {
@@ -170,6 +174,7 @@ func (reconciler *ModelPoolReconciler) currentActiveState(ctx context.Context, p
 	}, nil
 }
 
+// reconcileGroups converges target and serving ModelGroup cohorts for one ModelPool.
 func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate, servingRevision string) (groupState, error) {
 	groups, err := reconciler.ownedGroups(ctx, pool)
 	if err != nil {
@@ -318,6 +323,7 @@ func setGroupName(group *inferencev1alpha1.ModelGroup, poolName, revision string
 	group.Name = poolName + suffix
 }
 
+// ownedGroups returns ModelGroups whose reference and controller owner both identify the ModelPool.
 func (reconciler *ModelPoolReconciler) ownedGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool) ([]inferencev1alpha1.ModelGroup, error) {
 	var list inferencev1alpha1.ModelGroupList
 	if err := reconciler.List(ctx, &list, client.InNamespace(pool.Namespace)); err != nil {
@@ -338,6 +344,7 @@ func (reconciler *ModelPoolReconciler) ownedGroups(ctx context.Context, pool *in
 	return owned, nil
 }
 
+// updateStatus publishes resolution, rollout, capacity, and serving readiness for the ModelPool.
 func (reconciler *ModelPoolReconciler) updateStatus(ctx context.Context, pool *inferencev1alpha1.ModelPool, resolvedStatus metav1.ConditionStatus, resolvedReason, resolvedMessage string, state groupState) error {
 	if state.Reason == "" {
 		state.Reason = "NotMaterialized"

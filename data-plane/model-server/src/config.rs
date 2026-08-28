@@ -17,6 +17,9 @@ pub struct RuntimeConfig {
 }
 
 impl RuntimeConfig {
+    /// Reads the controller-projected launch and listen settings for model-server bootstrap.
+    ///
+    /// Startup receives an owned configuration; environment values are not retained after parsing.
     pub fn from_env() -> Result<Self, String> {
         let launch = LaunchPlanV1::parse(&required_env(LAUNCH_PLAN_ENV)?)?;
         let listen_address = required_env(LISTEN_ENV)?

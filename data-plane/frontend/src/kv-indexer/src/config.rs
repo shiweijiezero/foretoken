@@ -37,6 +37,9 @@ pub(crate) struct KvLocalityTopology {
     pub(crate) has_readable_tier_continuation: bool,
 }
 impl KvLocalityTopology {
+    /// Identifies the topology fact that determines automatic index selection.
+    ///
+    /// `KvIndexer::new` exposes this derived reason in status; topology remains internal to configuration resolution.
     pub(crate) fn resolution_reason(&self) -> KvAutoResolutionReason {
         if self.event_source_count == 0 {
             KvAutoResolutionReason::NoEventSources
@@ -54,6 +57,9 @@ impl KvLocalityTopology {
     }
 }
 impl KvLocalityIndexImplementation {
+    /// Resolves a requested implementation against the observed KV source topology.
+    ///
+    /// `KvIndexer` owns the selected implementation for its lifetime; explicit requests bypass Auto selection.
     pub(crate) fn resolve(self, t: &KvLocalityTopology) -> KvLocalityIndexResolvedImplementation {
         match self {
             Self::RadixTree => KvLocalityIndexResolvedImplementation::RadixTree,

@@ -11,7 +11,10 @@ import (
 
 type Threshold struct{ ScaleUpQueue int64 }
 
+// Name identifies the threshold decision algorithm for registry consumers.
 func (Threshold) Name() string { return "threshold" }
+
+// CalculateDesiredCapacity adjusts one group when observed queue pressure crosses the configured threshold.
 func (threshold Threshold) CalculateDesiredCapacity(_ context.Context, s core.ScalingSnapshot) (core.DesiredCapacity, error) {
 	current := s.Capacity.RequestedGroups
 	switch s.Observation.State {

@@ -11,7 +11,10 @@ import (
 
 type Manual struct{}
 
+// Name identifies the manual decision algorithm for registry consumers.
 func (Manual) Name() string { return "manual" }
+
+// CalculateDesiredCapacity returns the caller-compiled baseline for manual capacity control.
 func (Manual) CalculateDesiredCapacity(_ context.Context, snapshot core.ScalingSnapshot) (core.DesiredCapacity, error) {
 	return core.DesiredCapacity{Disposition: core.DesiredCapacityApply, Groups: snapshot.Capacity.BaselineGroups, Reason: core.DesiredCapacityReasonManualIntent, Message: "capacity follows ModelService replicas"}, nil
 }

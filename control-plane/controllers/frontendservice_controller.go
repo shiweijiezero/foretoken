@@ -92,6 +92,7 @@ func (reconciler *FrontendServiceReconciler) SetupWithManager(manager ctrl.Manag
 		Complete(reconciler)
 }
 
+// frontendsInNamespace maps model lifecycle changes to every frontend in the same namespace.
 func (reconciler *FrontendServiceReconciler) frontendsInNamespace(ctx context.Context, object client.Object) []reconcile.Request {
 	var frontends inferencev1alpha1.FrontendServiceList
 	if err := reconciler.List(ctx, &frontends, client.InNamespace(object.GetNamespace())); err != nil {
@@ -186,6 +187,7 @@ func (profile FrontendRuntimeProfile) validate() error {
 	return nil
 }
 
+// applyOwned server-side applies a FrontendService-owned resource after checking ownership.
 func (reconciler *FrontendServiceReconciler) applyOwned(ctx context.Context, owner *inferencev1alpha1.FrontendService, desired client.Object) error {
 	current := desired.DeepCopyObject().(client.Object)
 	err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current)
@@ -201,6 +203,7 @@ func (reconciler *FrontendServiceReconciler) applyOwned(ctx context.Context, own
 	return nil
 }
 
+// deleteOwnedHTTPRoute removes the FrontendService route when local exposure no longer needs it.
 func (reconciler *FrontendServiceReconciler) deleteOwnedHTTPRoute(ctx context.Context, frontend *inferencev1alpha1.FrontendService) error {
 	reader := reconciler.APIReader
 	if reader == nil {
@@ -233,6 +236,7 @@ type frontendState struct {
 	FailureMessage string
 }
 
+// updateStatus publishes workload, route, and serving-snapshot readiness for the frontend.
 func (reconciler *FrontendServiceReconciler) updateStatus(ctx context.Context, frontend *inferencev1alpha1.FrontendService, state frontendState) error {
 	base := frontend.DeepCopy()
 	frontend.Status.ObservedGeneration = frontend.Generation

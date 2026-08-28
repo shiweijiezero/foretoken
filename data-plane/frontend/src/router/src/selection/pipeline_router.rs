@@ -53,6 +53,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
         self
     }
 
+    // Builds the immutable, rank-expanded candidate snapshot for one selection round. Dynamic
+    // health, capabilities, and aggregate telemetry are captured before algorithms observe it.
     fn candidates(&self, request: &RouterRequest) -> Vec<RouteCandidate> {
         self.inventory
             .model_routes()
@@ -92,6 +94,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
             .collect()
     }
 
+    // Runs the complete Filter-Scorer-Picker stage, validating extension-produced indexes and
+    // delaying stage-specific eligibility until every candidate has been scored.
     fn select(
         &self,
         request: &RouterRequest,

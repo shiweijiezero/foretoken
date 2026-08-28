@@ -67,6 +67,9 @@ impl Component {
     }
 }
 impl BackendRegistry {
+    /// Builds the frontend-owned route inventory and component clients from a serving snapshot.
+    ///
+    /// Startup retains the registry for routing, readiness refresh, and facade resolution; the input snapshot is consumed.
     pub fn from_snapshot(snapshot: ServingSnapshot) -> Result<Self, SnapshotError> {
         let configured_models = snapshot.admission_target_sets()?.into_keys().collect();
         let (model_routes, components) = crate::snapshot_projection::project_registry(snapshot)?;
@@ -87,10 +90,12 @@ impl BackendRegistry {
                 .expect("static client"),
         })
     }
+    /// Returns an owned list of logical model names declared by the current snapshot.
     pub fn configured_models(&self) -> Vec<String> {
         self.configured_models.iter().cloned().collect()
     }
 
+    /// Reports whether the current snapshot declares at least one logical model.
     pub fn is_configured(&self) -> bool {
         !self.configured_models.is_empty()
     }
@@ -99,6 +104,7 @@ impl BackendRegistry {
         self.metadata.lock().ok()?.get(id).cloned()
     }
 
+    /// Reports whether any configured model currently has an executable backend path.
     pub fn is_ready(&self) -> bool {
         !self.healthy_models().is_empty()
     }
@@ -143,10 +149,12 @@ impl BackendRegistry {
         dtypes.all(|candidate| candidate == dtype).then_some(dtype)
     }
 
+    /// Reports whether one logical model currently has an executable backend path.
     pub fn is_model_ready(&self, model: &str) -> bool {
         self.healthy_models().iter().any(|healthy| healthy == model)
     }
 
+    /// Lists models with a currently executable aggregate route or complete split pipeline.
     pub fn healthy_models(&self) -> Vec<String> {
         // Aggregate routes are independently serviceable. A split scope is healthy only with
         // P+D, or E+P+D when that scope includes an encoder.

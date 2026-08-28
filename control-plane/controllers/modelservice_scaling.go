@@ -25,6 +25,7 @@ type modelScalingConfig struct {
 	MetricsMaxAge   time.Duration
 }
 
+// scalingConfig resolves one ModelService autoscaling configuration into runtime algorithms and limits.
 func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alpha1.ModelService) (modelScalingConfig, error) {
 	config := modelScalingConfig{
 		Autoscaler:      defaultAutoscaler,
@@ -157,6 +158,7 @@ func durationOrDefault(value inferencev1alpha1.Duration, fallback time.Duration)
 	return duration, nil
 }
 
+// applyScaling evaluates autoscaling targets and returns compiled pools with applied capacity.
 func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) ([]compiler.ModelPool, []inferencev1alpha1.AutoscalingTargetStatus, error) {
 	owned, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
@@ -317,6 +319,7 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 	return resolved, statuses, nil
 }
 
+// scalingSnapshot builds one capacity and demand input for the autoscaling pipeline.
 func (reconciler *ModelServiceReconciler) scalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, target core.TargetID, evaluatedAt metav1.Time, capacity core.CapacityState, scaling modelScalingConfig) core.ScalingSnapshot {
 	observation := core.DemandObservation{State: core.ObservationUnavailable}
 	if scaling.Autoscaler.Automatic() {
@@ -353,6 +356,7 @@ func (reconciler *ModelServiceReconciler) demandObservation(ctx context.Context,
 	return observation
 }
 
+// epdScalingSnapshot builds the shared autoscaling input for an E/P/D triplet.
 func (reconciler *ModelServiceReconciler) epdScalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, pools []compiler.ModelPool, indexes []int, owned map[string]*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, evaluatedAt metav1.Time, scaling modelScalingConfig) (core.ScalingSnapshot, error) {
 	if len(indexes) != 3 {
 		return core.ScalingSnapshot{}, fmt.Errorf("E/P/D scaling requires exactly one encoder, prefill, and decode Pool")

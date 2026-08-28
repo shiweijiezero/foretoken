@@ -178,6 +178,8 @@ impl EcRole {
 }
 
 impl EcTransferPlan {
+    // Reject incomplete controller projections before they reach a child process, where EC connector
+    // failures would otherwise appear only after launch.
     fn validate(&self) -> Result<(), String> {
         if !self.enabled() {
             if self.profile_name.is_empty()
@@ -200,6 +202,8 @@ impl EcTransferPlan {
         Ok(())
     }
 
+    // Translate the controller-owned EC fields into vLLM's child-process JSON boundary. The
+    // temporary value is consumed by argv rendering and never published by this module.
     fn transfer_config(&self) -> Option<serde_json::Value> {
         let role = self.role?;
         Some(json!({
@@ -211,10 +215,14 @@ impl EcTransferPlan {
         }))
     }
 
+    /// Reports whether this launch plan configures an EC connector.
     pub fn enabled(&self) -> bool {
         !self.connector.is_empty()
     }
 
+    /// Builds EC transfer identity published to runtime metadata consumers.
+    ///
+    /// The response owns cloned plan values and is absent when no valid role is configured.
     pub fn runtime_metadata(&self) -> Option<RuntimeEcTransferMetadata> {
         Some(RuntimeEcTransferMetadata {
             role: self.role?.as_str().into(),
@@ -225,6 +233,9 @@ impl EcTransferPlan {
 }
 
 impl LaunchPlanV1 {
+    /// Decodes the controller-projected launch plan used by model-server startup.
+    ///
+    /// Returns an owned, validated plan or a configuration error without retaining the input.
     pub fn parse(input: &str) -> Result<Self, String> {
         let plan: Self = serde_json::from_str(input)
             .map_err(|error| format!("invalid FORETOKEN_VLLM_LAUNCH_PLAN: {error}"))?;
@@ -232,6 +243,9 @@ impl LaunchPlanV1 {
         Ok(plan)
     }
 
+    /// Verifies constraints required by the engine launcher and argv renderer.
+    ///
+    /// Callers retain the plan; success publishes no state, while failure reports the invalid field.
     pub fn validate(&self) -> Result<(), String> {
         if self.version != 1 {
             return Err("launch plan version must be 1".into());
@@ -311,15 +325,23 @@ impl LaunchPlanV1 {
         self.ec.validate()
     }
 
+    /// Returns the EngineCore connection deadline consumed during model-server startup.
+    ///
+    /// The duration is derived from the retained controller-owned lifecycle plan.
     pub fn startup_timeout(&self) -> Duration {
         Duration::from_secs(self.lifecycle.startup_seconds)
     }
+
+    /// Returns the shutdown drain deadline consumed by HTTP and managed-engine teardown.
+    ///
+    /// The duration is derived from the retained controller-owned lifecycle plan.
     pub fn drain_timeout(&self) -> Duration {
         Duration::from_secs(self.lifecycle.drain_seconds)
     }
 
-    // ManagedEngineConfig owns positional model, headless mode, loopback handshake,
-    // and data-parallel wiring; this plan contributes only its rendered vLLM flags.
+    /// Builds the owned managed-engine configuration consumed by model-server startup.
+    ///
+    /// The process handle takes this configuration; the plan only contributes validated vLLM flags.
     pub fn managed_engine(&self, handshake_port: u16) -> Result<ManagedEngineConfig, String> {
         Ok(ManagedEngineConfig {
             python: PYTHON.into(),
@@ -331,6 +353,9 @@ impl LaunchPlanV1 {
         })
     }
 
+    /// Renders the owned vLLM arguments consumed by the managed-engine child process.
+    ///
+    /// Validation runs before rendering; the returned vector does not borrow the launch plan.
     pub fn render_vllm_args(&self) -> Result<Vec<String>, String> {
         self.validate()?;
         let p = &self.parallelism;
@@ -384,6 +409,8 @@ impl KvPlan {
             | Self::MultiConnector { events, .. } => *events,
         }
     }
+    // Map each validated KV plan to the vLLM child-process contract. The rendered value is owned
+    // by argv construction, keeping controller plan fields separate from backend-specific JSON.
     fn transfer_config(&self) -> Option<serde_json::Value> {
         let pd = |role: KvRole, protocol: MooncakeProtocol, device_name: &str| json!({"kv_connector":"MooncakeConnector","kv_role":role.as_str(),"kv_connector_extra_config":{"mooncake_protocol":protocol.as_str(),"device_name":device_name}});
         match self {

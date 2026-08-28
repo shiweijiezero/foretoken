@@ -44,6 +44,7 @@ type kvServiceStatus struct {
 	ready          kvServiceCondition
 }
 
+// SetupWithManager registers KVService reconciliation for master infrastructure and KVPools.
 func (reconciler *KVServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.KVService{}).
@@ -55,6 +56,7 @@ func (reconciler *KVServiceReconciler) SetupWithManager(manager ctrl.Manager) er
 		Complete(reconciler)
 }
 
+// Reconcile materializes KVService infrastructure and publishes its dependency readiness.
 func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	service := new(inferencev1alpha1.KVService)
 	if err := reconciler.Get(ctx, request.NamespacedName, service); err != nil {
@@ -112,6 +114,7 @@ func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ct
 	})
 }
 
+// reconcileInfrastructure applies the master resources and maintains their requester configuration lifecycle.
 func (reconciler *KVServiceReconciler) reconcileInfrastructure(ctx context.Context, service *inferencev1alpha1.KVService) error {
 	config, requesterConfig, deployment, kubeService, pvc, err := desiredKVMasterResources(service)
 	if err != nil {
@@ -135,6 +138,7 @@ func (reconciler *KVServiceReconciler) reconcileInfrastructure(ctx context.Conte
 	return nil
 }
 
+// removeStaleRequesterConfigs deletes unreferenced requester ConfigMaps still owned by the KVService.
 func (reconciler *KVServiceReconciler) removeStaleRequesterConfigs(ctx context.Context, service *inferencev1alpha1.KVService, currentName string) error {
 	referenced := map[string]struct{}{currentName: {}}
 	pools := new(inferencev1alpha1.ModelPoolList)
@@ -177,6 +181,7 @@ func (reconciler *KVServiceReconciler) removeStaleRequesterConfigs(ctx context.C
 	return nil
 }
 
+// reconcileSnapshotRemoval releases or deletes the snapshot PVC after snapshot storage is removed.
 func (reconciler *KVServiceReconciler) reconcileSnapshotRemoval(ctx context.Context, service *inferencev1alpha1.KVService) error {
 	_, _, pvcName, _ := kvMasterNames(service)
 	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: pvcName, Namespace: service.Namespace}}
@@ -193,6 +198,7 @@ func (reconciler *KVServiceReconciler) reconcileSnapshotRemoval(ctx context.Cont
 	return err
 }
 
+// applyOwned creates or updates one KVService-owned resource while retaining allocated fields.
 func (reconciler *KVServiceReconciler) applyOwned(ctx context.Context, owner *inferencev1alpha1.KVService, desired client.Object) error {
 	current := desired.DeepCopyObject().(client.Object)
 	key := client.ObjectKeyFromObject(desired)
@@ -229,6 +235,7 @@ func (reconciler *KVServiceReconciler) applyOwned(ctx context.Context, owner *in
 	return reconciler.Update(ctx, desired)
 }
 
+// reconcilePools converges the KVService storage-pool intent into owned KVPools.
 func (reconciler *KVServiceReconciler) reconcilePools(ctx context.Context, service *inferencev1alpha1.KVService) error {
 	owned, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
@@ -310,6 +317,7 @@ func poolObjectName(service *inferencev1alpha1.KVService, poolName string) strin
 	return kvChildName(service.Name+"-"+poolName, string(service.UID)+":"+poolName)
 }
 
+// ownedPools returns KVPools whose reference and controller owner both identify the KVService.
 func (reconciler *KVServiceReconciler) ownedPools(ctx context.Context, service *inferencev1alpha1.KVService) ([]inferencev1alpha1.KVPool, error) {
 	var list inferencev1alpha1.KVPoolList
 	if err := reconciler.List(ctx, &list, client.InNamespace(service.Namespace)); err != nil {
@@ -330,6 +338,7 @@ func (reconciler *KVServiceReconciler) ownedPools(ctx context.Context, service *
 	return owned, nil
 }
 
+// infrastructureReady reads the persisted master Deployment availability.
 func (reconciler *KVServiceReconciler) infrastructureReady(ctx context.Context, service *inferencev1alpha1.KVService) (bool, error) {
 	master, _, _, _ := kvMasterNames(service)
 	deployment := new(appsv1.Deployment)
@@ -342,6 +351,7 @@ func (reconciler *KVServiceReconciler) infrastructureReady(ctx context.Context, 
 	return frontendDeploymentAvailable(deployment), nil
 }
 
+// poolState aggregates materialization and readiness across the KVService KVPools.
 func (reconciler *KVServiceReconciler) poolState(ctx context.Context, service *inferencev1alpha1.KVService) (bool, bool, error) {
 	pools, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
@@ -528,6 +538,7 @@ func poolsCondition(ready bool) kvServiceCondition {
 	return kvServiceCondition{reason: "Reconciling", message: "KVPools are not fully materialized"}
 }
 
+// hasConsumers reports whether live model resources still bind the KVService.
 func (reconciler *KVServiceReconciler) hasConsumers(ctx context.Context, service *inferencev1alpha1.KVService) (bool, error) {
 	var services inferencev1alpha1.ModelServiceList
 	if err := reconciler.List(ctx, &services, client.InNamespace(service.Namespace)); err != nil {

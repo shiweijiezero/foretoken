@@ -36,6 +36,7 @@ const (
 
 type KVGroupReconciler struct{ client.Client }
 
+// SetupWithManager registers KVGroup reconciliation for its owned client infrastructure.
 func (reconciler *KVGroupReconciler) SetupWithManager(manager ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.KVGroup{}).
@@ -46,6 +47,7 @@ func (reconciler *KVGroupReconciler) SetupWithManager(manager ctrl.Manager) erro
 		Complete(reconciler)
 }
 
+// Reconcile materializes one KVGroup client workload and publishes its readiness.
 func (reconciler *KVGroupReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	group := new(inferencev1alpha1.KVGroup)
 	if err := reconciler.Get(ctx, request.NamespacedName, group); err != nil {
@@ -167,6 +169,7 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup) (*appsv1.Deployme
 	return deployment, service, pvc, networkPolicy, nil
 }
 
+// applyOwned creates or updates one KVGroup-owned resource while preserving provider-assigned fields.
 func (reconciler *KVGroupReconciler) applyOwned(ctx context.Context, group *inferencev1alpha1.KVGroup, desired client.Object) error {
 	current := desired.DeepCopyObject().(client.Object)
 	err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current)
@@ -250,6 +253,8 @@ func (reconciler *KVGroupReconciler) deleteIfPresent(ctx context.Context, object
 	}
 	return true, nil
 }
+
+// releaseDiskPVC removes KVGroup ownership from a retained offload PVC.
 func (reconciler *KVGroupReconciler) releaseDiskPVC(ctx context.Context, group *inferencev1alpha1.KVGroup, pvc *corev1.PersistentVolumeClaim) error {
 	base := pvc.DeepCopy()
 	owners := pvc.OwnerReferences[:0]
@@ -265,6 +270,7 @@ func (reconciler *KVGroupReconciler) releaseDiskPVC(ctx context.Context, group *
 	return reconciler.Patch(ctx, pvc, client.MergeFrom(base))
 }
 
+// updateStatus publishes the observed client workload phase and readiness conditions.
 func (reconciler *KVGroupReconciler) updateStatus(ctx context.Context, group *inferencev1alpha1.KVGroup, phase inferencev1alpha1.KVGroupPhase, ready bool, reason, message string) error {
 	base := group.DeepCopy()
 	group.Status.ObservedGeneration = group.Generation

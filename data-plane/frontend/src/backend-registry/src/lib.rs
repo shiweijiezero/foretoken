@@ -23,6 +23,7 @@ pub struct BackendRegistryBuild {
 }
 
 impl BackendRegistryBuild {
+    /// Projects a serving snapshot into the routing registry and matching KV runtime configuration.
     pub fn from_snapshot(snapshot: ServingSnapshot) -> Result<Self, SnapshotError> {
         let kv_runtime_config = snapshot_projection::project_kv_runtime(&snapshot)?;
         let registry = BackendRegistry::from_snapshot(snapshot)?;

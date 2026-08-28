@@ -66,6 +66,7 @@ type StaticModelPoolResolver struct {
 	RuntimeProfile RuntimeProfile
 }
 
+// Resolve applies the resolver runtime profile to one normalized ModelPool template.
 func (resolver StaticModelPoolResolver) Resolve(template inferencev1alpha1.NormalizedPoolTemplate) (ModelGroupTemplate, error) {
 	return ResolveModelPool(template, resolver.RuntimeProfile)
 }
@@ -178,6 +179,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	return resolved, nil
 }
 
+// resolveKVRuntime binds the selected cache mode to a validated ModelGroup runtime contract.
 func resolveKVRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile *MooncakeStoreProfile) (*inferencev1alpha1.ModelGroupKVRuntimeConfig, error) {
 	if template.KVCache == nil {
 		return nil, nil
@@ -215,6 +217,7 @@ func resolveKVRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	return &inferencev1alpha1.ModelGroupKVRuntimeConfig{MooncakeStore: &inferencev1alpha1.ModelGroupMooncakeStoreRuntime{ProfileName: profile.Name, ProfileRevision: profile.Revision, ConfigMapName: profile.ConfigMapName, ConfigMapKey: profile.ConfigMapKey, PythonHashSeed: profile.PythonHashSeed}}, nil
 }
 
+// resolveECRuntime resolves the platform EC profile for encoder and prefill roles.
 func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, parallelism inferencev1alpha1.CompiledParallelism, profile *ECProfile) (*inferencev1alpha1.ModelGroupECRuntimeConfig, error) {
 	if template.Role != inferencev1alpha1.ModelRoleEncoder && template.Role != inferencev1alpha1.ModelRolePrefill {
 		return nil, nil
@@ -247,6 +250,7 @@ func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, paralle
 	}, nil
 }
 
+// resolvePDRuntime resolves the platform Mooncake P/D profile for split serving roles.
 func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, parallelism inferencev1alpha1.CompiledParallelism, profile *MooncakePDProfile) (*inferencev1alpha1.ModelGroupPDRuntimeConfig, error) {
 	if template.Role == inferencev1alpha1.ModelRoleAggregate || template.Role == inferencev1alpha1.ModelRoleEncoder {
 		return nil, nil

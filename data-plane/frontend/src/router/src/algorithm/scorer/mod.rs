@@ -41,6 +41,9 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
     ) -> Vec<RouteScore>;
 }
 
+/// Returns a candidate's current running-request count as a score-safe integer.
+///
+/// Built-in load scorers consume this derived value; the candidate retains its telemetry snapshot.
 pub(crate) fn load(candidate: &RouteCandidate) -> i64 {
     candidate
         .route_target_stats

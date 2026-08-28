@@ -59,6 +59,9 @@ pub enum BackendError {
 pub struct MetricsError;
 
 impl BackendError {
+    /// Maps a boundary failure to the terminal token code emitted to internal stream consumers.
+    ///
+    /// The returned wire value carries no borrowed backend diagnostics.
     pub const fn token_error_code(self) -> TokenErrorCode {
         match self {
             Self::Unavailable => TokenErrorCode::Unavailable,
@@ -115,9 +118,16 @@ impl BackendError {
 /// Minimal inference backend operations that this group-local server needs.
 #[async_trait]
 pub trait Backend: Send + Sync {
+    /// Starts one request for the generate handler and returns its owned terminal-event stream.
     async fn generate(&self, request: GenerateInput) -> Result<TokenStream, BackendError>;
+
+    /// Cancels request IDs supplied by the abort handler; backend ownership remains unchanged.
     async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError>;
+
+    /// Returns a snapshot published by telemetry handlers without transferring backend ownership.
     fn telemetry(&self) -> BackendTelemetry;
+
+    /// Renders the OpenMetrics payload published by the metrics handler as an owned response body.
     fn render_openmetrics(&self) -> Result<String, MetricsError>;
 }
 
@@ -131,6 +141,7 @@ pub struct VllmBackend {
 }
 
 impl VllmBackend {
+    /// Creates the model-server adapter and retains the provided vLLM `Llm` facade until shutdown.
     pub fn new(llm: Llm, max_concurrent_requests: u64) -> Self {
         let client = llm.engine_core_client();
         let model_name = client.model_name().to_string();
@@ -151,7 +162,7 @@ impl VllmBackend {
         }
     }
 
-    /// Stop local client tasks without duplicating the EngineCore protocol.
+    /// Takes and shuts down the owned vLLM `Llm` facade during model-server teardown.
     pub async fn shutdown(&self) -> Result<(), BackendError> {
         let Some(llm) = self.llm.write().await.take() else {
             return Ok(());
@@ -199,8 +210,8 @@ where
     S: Stream<Item = Result<vllm_llm::GenerateOutput, vllm_llm::Error>> + Send + 'static,
 {
     let inflight = InflightGuard::accepted(running_requests);
-    // Buffer one output while keeping response memory bounded. Once the producer blocks on that
-    // buffer, later latency samples are omitted instead of including response-consumer delay.
+    // Relay vLLM output through a bounded task so the returned HTTP stream owns cancellation while
+    // the adapter records only engine-boundary latency, not downstream consumer backpressure.
     let (sender, mut receiver) = mpsc::channel(1);
     tokio::spawn(async move {
         let mut first_token_at = None;

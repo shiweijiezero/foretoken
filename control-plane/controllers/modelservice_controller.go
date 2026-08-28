@@ -140,6 +140,7 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 	return ctrl.Result{}, nil
 }
 
+// reconcilePools converges compiled ModelPool contracts and retains service-selected serving pools.
 func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) error {
 	owned, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
@@ -207,6 +208,7 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 	return nil
 }
 
+// commitServingGeneration atomically selects only fully prepared ModelPool revisions for frontend routing.
 func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (bool, error) {
 	// Keep routing on the last complete cohort until every nonzero Pool has prepared a
 	// compatible revision. The final status patch is the service-level atomic commit point.
@@ -281,6 +283,7 @@ func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Co
 	return true, nil
 }
 
+// serviceReadiness verifies that the selected serving generation remains routable.
 func (reconciler *ModelServiceReconciler) serviceReadiness(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) (bool, string, string, error) {
 	pools, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
@@ -386,6 +389,7 @@ func modelPoolTransitioning(pool *inferencev1alpha1.ModelPool) bool {
 	return condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == pool.Generation
 }
 
+// reconcileDelete removes owned ModelPools before releasing the ModelService finalizer.
 func (reconciler *ModelServiceReconciler) reconcileDelete(ctx context.Context, service *inferencev1alpha1.ModelService) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(service, modelServiceFinalizer) {
 		return ctrl.Result{}, nil
@@ -411,6 +415,7 @@ func (reconciler *ModelServiceReconciler) reconcileDelete(ctx context.Context, s
 	return ctrl.Result{}, nil
 }
 
+// ownedPools returns ModelPools whose reference and controller owner both identify the ModelService.
 func (reconciler *ModelServiceReconciler) ownedPools(ctx context.Context, service *inferencev1alpha1.ModelService) ([]inferencev1alpha1.ModelPool, error) {
 	var list inferencev1alpha1.ModelPoolList
 	if err := reconciler.List(ctx, &list, client.InNamespace(service.Namespace)); err != nil {
@@ -444,6 +449,7 @@ type modelServiceState struct {
 	autoscaling *[]inferencev1alpha1.AutoscalingTargetStatus
 }
 
+// updateStatus publishes compilation, pool, readiness, and autoscaling results for the ModelService.
 func (reconciler *ModelServiceReconciler) updateStatus(ctx context.Context, service *inferencev1alpha1.ModelService, state modelServiceState) error {
 	base := service.DeepCopy()
 	service.Status.ObservedGeneration = service.Generation
@@ -502,6 +508,7 @@ func modelServicePoolStore(service *inferencev1alpha1.ModelService, name string)
 	return nil
 }
 
+// modelServicesForKVService maps a KVService update to ModelServices that reference it.
 func (reconciler *ModelServiceReconciler) modelServicesForKVService(ctx context.Context, object client.Object) []reconcile.Request {
 	var services inferencev1alpha1.ModelServiceList
 	if err := reconciler.List(ctx, &services, client.InNamespace(object.GetNamespace())); err != nil {

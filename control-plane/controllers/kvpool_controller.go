@@ -27,6 +27,7 @@ const kvPoolFinalizer = "inference.foretoken.io/kvpool-protection"
 
 type KVPoolReconciler struct{ client.Client }
 
+// SetupWithManager registers KVPool reconciliation and KVGroup ownership watches.
 func (reconciler *KVPoolReconciler) SetupWithManager(manager ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.KVPool{}).
@@ -34,6 +35,7 @@ func (reconciler *KVPoolReconciler) SetupWithManager(manager ctrl.Manager) error
 		Complete(reconciler)
 }
 
+// Reconcile converges a KVPool into its requested immutable KVGroup revision.
 func (reconciler *KVPoolReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	pool := new(inferencev1alpha1.KVPool)
 	if err := reconciler.Get(ctx, request.NamespacedName, pool); err != nil {
@@ -157,6 +159,7 @@ func (reconciler *KVPoolReconciler) reconcileGroups(ctx context.Context, pool *i
 	return kvGroupState{materialized: materialized, ready: ready, reason: "Applied", message: message}, nil
 }
 
+// desiredKVGroupSpec binds one KVPool ordinal to the current KVService master endpoint.
 func desiredKVGroupSpec(pool *inferencev1alpha1.KVPool, service *inferencev1alpha1.KVService, ordinal int32) (inferencev1alpha1.KVGroupSpec, error) {
 	client := pool.Spec.Template.Client
 	if client.Disk == nil {
@@ -191,6 +194,7 @@ func kvGroupObjectName(pool *inferencev1alpha1.KVPool, revision string, ordinal 
 	return kvChildName(pool.Name+"-"+revision+"-"+strconv.Itoa(int(ordinal)), string(pool.UID)+":"+revision+":"+strconv.Itoa(int(ordinal)))
 }
 
+// ownedGroups returns KVGroups whose reference and controller owner both identify the KVPool.
 func (reconciler *KVPoolReconciler) ownedGroups(ctx context.Context, pool *inferencev1alpha1.KVPool) ([]inferencev1alpha1.KVGroup, error) {
 	var list inferencev1alpha1.KVGroupList
 	if err := reconciler.List(ctx, &list, client.InNamespace(pool.Namespace)); err != nil {
@@ -219,6 +223,7 @@ func kvGroupReady(group *inferencev1alpha1.KVGroup) bool {
 	return condition != nil && condition.Status == metav1.ConditionTrue && condition.ObservedGeneration == group.Generation
 }
 
+// reconcileDelete removes owned KVGroups before releasing the KVPool finalizer.
 func (reconciler *KVPoolReconciler) reconcileDelete(ctx context.Context, pool *inferencev1alpha1.KVPool) (ctrl.Result, error) {
 	if !controllerutil.ContainsFinalizer(pool, kvPoolFinalizer) {
 		return ctrl.Result{}, nil
@@ -240,6 +245,7 @@ func (reconciler *KVPoolReconciler) reconcileDelete(ctx context.Context, pool *i
 	return ctrl.Result{}, reconciler.Patch(ctx, pool, client.MergeFrom(base))
 }
 
+// updateStatus publishes KVGroup materialization and readiness for the KVPool.
 func (reconciler *KVPoolReconciler) updateStatus(ctx context.Context, pool *inferencev1alpha1.KVPool, phase inferencev1alpha1.KVPoolPhase, materialized, ready bool, reason, message string) error {
 	base := pool.DeepCopy()
 	pool.Status.ObservedGeneration = pool.Generation

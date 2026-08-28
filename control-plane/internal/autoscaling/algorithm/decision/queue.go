@@ -11,7 +11,10 @@ import (
 
 type Queue struct{ TargetQueuePerRoutableGroup int64 }
 
+// Name identifies the queue decision algorithm for registry consumers.
 func (Queue) Name() string { return "queue" }
+
+// CalculateDesiredCapacity adjusts one group when queue pressure exceeds routable capacity or becomes idle.
 func (queue Queue) CalculateDesiredCapacity(_ context.Context, s core.ScalingSnapshot) (core.DesiredCapacity, error) {
 	current := s.Capacity.RequestedGroups
 	switch s.Observation.State {

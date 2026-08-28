@@ -13,7 +13,10 @@ type Watermark struct {
 	HighQueuePerRoutableGroup int64
 }
 
+// Name identifies the watermark trigger algorithm for registry consumers.
 func (Watermark) Name() string { return "watermark" }
+
+// Decide fires outside the configured queue watermark band and holds within it.
 func (watermark Watermark) Decide(snapshot core.ScalingSnapshot) core.TriggerDecision {
 	if decision, available := core.ObservationTriggerDecision(snapshot); !available {
 		return decision

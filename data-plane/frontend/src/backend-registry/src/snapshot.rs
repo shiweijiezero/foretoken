@@ -148,6 +148,9 @@ pub struct ModelIdentity {
     pub capabilities: BTreeSet<String>,
 }
 impl ServingSnapshot {
+    /// Returns each model's deterministically ordered, controller-owned admission target sets.
+    ///
+    /// Registry projection consumes these sets to attribute request admission; malformed or conflicting ownership is rejected.
     // Prefer the controller-projected logical targets in `models`. Model-less snapshots fall
     // back to topology-derived targets, then all sets are ordered and deduplicated consistently.
     pub fn admission_target_sets(
@@ -223,6 +226,9 @@ impl ServingSnapshot {
         Ok(targets)
     }
 
+    /// Returns the consistent model identity declared across all snapshot topology records.
+    ///
+    /// Registry projection uses this validation before materializing routes; the returned map is derived for the caller.
     pub fn model_identities(&self) -> Result<BTreeMap<String, ModelIdentity>, SnapshotError> {
         let mut identities = BTreeMap::new();
         for (model, revision, tokenizer, tokenizer_revision, capabilities) in self

@@ -12,6 +12,10 @@ use foretoken_router::{RouteDecision, RouteError};
 
 use super::GenerationError;
 
+/// Executes the route-selected generation workflow and returns its client-visible stream.
+///
+/// Runtime dispatch calls this once after initial routing. It owns intermediate stages until the
+/// final stream takes cleanup ownership, or returns a pre-stream error for the HTTP adapter.
 pub(crate) async fn execute_workflow(
     resolver: &dyn LlmFacadeResolver,
     session: &mut dyn foretoken_router::RouteSession,
@@ -79,6 +83,8 @@ async fn execute_aggregate(
     Ok((decision, abort_on_drop(facade, request_id, stream)))
 }
 
+// Encoder is a completion barrier rather than a client-visible stream. Keep its cleanup guard
+// alive after extracting the descriptor so a failure in later P/D stages can cancel it.
 async fn execute_encoder(
     resolver: &dyn LlmFacadeResolver,
     decision: RouteDecision,
@@ -98,6 +104,8 @@ async fn execute_encoder(
     Ok((descriptor, cleanup))
 }
 
+// Prefill must complete before the same session selects Decode. The cleanup guard bridges that
+// handoff and becomes stream-owned only after Decode has been admitted.
 async fn execute_pd(
     resolver: &dyn LlmFacadeResolver,
     session: &mut dyn foretoken_router::RouteSession,

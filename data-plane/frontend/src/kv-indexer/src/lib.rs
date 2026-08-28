@@ -72,6 +72,9 @@ pub enum KvPrefixUnavailableReason {
     RankMismatch,
 }
 pub trait KvPrefixIndexer: Send + Sync {
+    /// Looks up confirmed prefix-locality facts for one route target and data-parallel rank.
+    ///
+    /// Router filters and scorers consume the derived result; implementations retain ownership of their index state.
     fn prefix_matches(&self, lookup: KvPrefixLookup<'_>) -> KvPrefixQueryResult;
 }
 pub struct NoopKvPrefixIndexer;

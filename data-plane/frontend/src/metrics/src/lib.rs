@@ -80,6 +80,9 @@ pub struct QueueGuard {
     targets: Vec<QueuedTarget>,
 }
 impl QueueGuard {
+    /// Begins queue attribution for a request waiting on every required scaling target.
+    ///
+    /// The admission path owns the guard while the request remains queued; dropping it removes the request from telemetry.
     pub fn new(targets: &RouteTargetSet) -> Self {
         let targets = targets
             .targets()
@@ -104,6 +107,9 @@ impl Drop for QueueGuard {
     }
 }
 
+/// Snapshots frontend-owned admission queue counts for autoscaling consumers.
+///
+/// The telemetry endpoint serializes the returned value; it is a derived report and does not retain a lock or request ownership.
 pub fn autoscaling_telemetry() -> AutoscalingTelemetry {
     let targets = queued_lock()
         .iter()
@@ -125,9 +131,14 @@ pub fn autoscaling_telemetry() -> AutoscalingTelemetry {
     }
 }
 
+/// Renders the frontend's OpenMetrics response without KV-index status for callers that do not expose index diagnostics.
 pub async fn scrape() -> Response {
     render(None)
 }
+
+/// Renders the OpenMetrics response with a caller-provided KV-index status snapshot.
+///
+/// The KV-aware metrics route supplies the status values; their ownership remains with the indexer.
 pub async fn scrape_with_kv_index(
     state: &str,
     reason: Option<&str>,
@@ -137,6 +148,8 @@ pub async fn scrape_with_kv_index(
     render(Some((state, reason, sources_healthy, sources_total)))
 }
 
+// Renders upstream metrics first, then appends Foretoken-owned admission and optional KV-index
+// families before restoring the single OpenMetrics EOF marker.
 fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
     match METRICS.render() {
         Ok(mut body) => {
@@ -178,6 +191,9 @@ fn escape_label(value: &str) -> String {
         .replace('"', "\\\"")
 }
 
+/// Records one non-metrics HTTP request after its handler completes.
+///
+/// The Axum middleware stack consumes the unchanged response while this function updates frontend-owned vLLM-compatible counters.
 pub async fn track_http_metrics(request: Request, next: Next) -> Response {
     let method = request.method().as_str().to_owned();
     let handler = request

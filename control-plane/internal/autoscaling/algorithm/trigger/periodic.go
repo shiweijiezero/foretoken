@@ -9,7 +9,10 @@ import (
 
 type Periodic struct{}
 
+// Name identifies the periodic trigger algorithm for registry consumers.
 func (Periodic) Name() string { return "periodic" }
+
+// Decide fires every complete fresh observation window.
 func (Periodic) Decide(snapshot core.ScalingSnapshot) core.TriggerDecision {
 	if decision, available := core.ObservationTriggerDecision(snapshot); !available {
 		return decision

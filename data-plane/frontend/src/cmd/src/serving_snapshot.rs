@@ -10,6 +10,10 @@ use std::time::Duration;
 use foretoken_runtime_builder::RuntimeBuilder;
 use foretoken_server::RuntimeGeneration;
 
+/// Periodically refreshes backend readiness for the active generation.
+///
+/// `main` spawns this loop for the frontend process lifetime. It updates control state in place so
+/// readiness can recover without replacing the immutable request-processing generation.
 pub(crate) async fn refresh_active_generation(generation: Arc<RuntimeGeneration>) {
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -17,6 +21,10 @@ pub(crate) async fn refresh_active_generation(generation: Arc<RuntimeGeneration>
     }
 }
 
+/// Watches controller snapshots and publishes each newly prepared runtime generation.
+///
+/// `main` spawns this loop for process lifetime. Failed candidates stay retryable while the
+/// currently active generation continues serving, and accepted candidates replace it atomically.
 pub(crate) async fn watch_serving_snapshot(
     generation: Arc<RuntimeGeneration>,
     path: PathBuf,

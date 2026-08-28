@@ -72,6 +72,7 @@ pub(crate) struct BoundaryLatencyMetrics {
 }
 
 impl BoundaryLatencyMetrics {
+    /// Creates empty latency accumulators owned by the vLLM backend adapter.
     pub(crate) fn new() -> Self {
         Self {
             ttft: BoundaryHistogram::new(TTFT_BUCKETS_SECONDS),
@@ -80,18 +81,22 @@ impl BoundaryLatencyMetrics {
         }
     }
 
+    /// Records one engine-boundary TTFT sample for the stream adapter's telemetry snapshot.
     pub(crate) fn observe_ttft(&mut self, seconds: f64) {
         self.ttft.observe(seconds);
     }
 
+    /// Records one engine-boundary TPOT sample for the stream adapter's telemetry snapshot.
     pub(crate) fn observe_tpot(&mut self, seconds: f64) {
         self.tpot.observe(seconds);
     }
 
+    /// Records one engine-boundary end-to-end sample for the stream adapter's telemetry snapshot.
     pub(crate) fn observe_e2e(&mut self, seconds: f64) {
         self.e2e.observe(seconds);
     }
 
+    /// Returns owned cumulative histograms for the backend telemetry publisher without resetting them.
     pub(crate) fn snapshot(
         &self,
     ) -> (
@@ -115,6 +120,9 @@ pub(crate) struct VllmMetricsSnapshot {
     pub(crate) generation_tokens_total: Option<u64>,
 }
 
+/// Reads the selected EngineCore metrics for `VllmBackend::telemetry` without retaining labels.
+///
+/// Returns one owned aggregate snapshot for the internal telemetry endpoint.
 pub(crate) fn read_vllm_metrics(engine_labels: &[EngineLabels]) -> VllmMetricsSnapshot {
     VllmMetricsSnapshot {
         scheduler_running_requests: sum_engine_metric(engine_labels, |labels| {

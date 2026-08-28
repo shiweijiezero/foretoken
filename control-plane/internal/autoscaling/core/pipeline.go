@@ -15,6 +15,7 @@ type Pipeline struct {
 	Automatic           bool
 }
 
+// Plan evaluates each target through trigger, decision, adjustment, and resolution stages.
 func (pipeline Pipeline) Plan(ctx context.Context, snapshots []ScalingSnapshot) ([]ScalingDecision, error) {
 	if pipeline.DecisionAlgorithm == nil || pipeline.AdjustmentAlgorithm == nil {
 		return nil, fmt.Errorf("autoscaler decision and adjustment algorithms are required")

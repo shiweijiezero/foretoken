@@ -214,6 +214,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+// Build the adapter only from controller-projected identity and keyed material. Startup owns the
+// returned `Arc` until it either launches the subscriber task or omits the KV index endpoint.
 fn kv_event_adapter(
     config: &RuntimeConfig,
 ) -> Result<Arc<KvEventAdapter>, Box<dyn std::error::Error>> {
