@@ -8,12 +8,12 @@ use foretoken_llm_facade::HttpFacade;
 use foretoken_model_protocol::ModelServerRole;
 use foretoken_model_protocol::{KvCacheLocality, KvPlacement, KvStorageTier};
 use foretoken_router::{
-    RouteTarget, RouteTargetId, RouteTargetSet, ScalingTarget, ScalingTargetKind,
+    ModelRouteTable, RouteTarget, RouteTargetId, RouteTargetSet, ScalingTarget, ScalingTargetKind,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::registry::{Component, RouteTable};
+use crate::registry::Component;
 use crate::snapshot::{ServingSnapshot, SnapshotError};
 
 pub(crate) fn project_kv_runtime(
@@ -109,18 +109,9 @@ fn pool_target(service_uid: String, pool_uid: String, pool_name: String) -> Scal
     }
 }
 
-fn epd_pipeline_scope_target(service_uid: String) -> ScalingTarget {
-    ScalingTarget {
-        uid: service_uid.clone(),
-        service_uid,
-        name: "epd".into(),
-        kind: ScalingTargetKind::EPDPipelineScope,
-    }
-}
-
 pub(crate) fn project_registry(
     snapshot: ServingSnapshot,
-) -> Result<(RouteTable, BTreeMap<RouteTargetId, Component>), SnapshotError> {
+) -> Result<(ModelRouteTable, BTreeMap<RouteTargetId, Component>), SnapshotError> {
     // Validate snapshot-wide identity and admission ownership before consuming topology
     // vectors so every emitted route receives one unambiguous scaling target set.
     if snapshot.version == 0 {
@@ -429,7 +420,12 @@ pub(crate) fn project_registry(
     // Only fully validated triplets are materialized into executable components and
     // service-scoped admission targets.
     for component in snapshot.epd_components {
-        let target = epd_pipeline_scope_target(component.service_uid.clone());
+        let target = ScalingTarget {
+            uid: component.service_uid.clone(),
+            service_uid: component.service_uid.clone(),
+            name: "epd".into(),
+            kind: ScalingTargetKind::EPDPipelineScope,
+        };
         let route = RouteTarget {
             route_target_id: component.route_target_id.clone(),
             admission_targets: admission_targets(&target)?,
@@ -466,5 +462,5 @@ pub(crate) fn project_registry(
         }
         routes.push(route);
     }
-    Ok((RouteTable::new(snapshot.version, routes), components))
+    Ok((ModelRouteTable::new(routes), components))
 }

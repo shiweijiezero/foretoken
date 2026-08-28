@@ -40,7 +40,6 @@ build-data-plane: vllm-source
 
 verify-data-plane: vllm-source
 	cargo fmt --manifest-path data-plane/Cargo.toml $(DATA_PLANE_FMT_PACKAGES) -- --check
-	cargo check --manifest-path data-plane/Cargo.toml --workspace --locked
 	cargo test --manifest-path data-plane/Cargo.toml --workspace --locked
 	cargo clippy --manifest-path data-plane/Cargo.toml --workspace --all-targets --locked -- -D warnings
 

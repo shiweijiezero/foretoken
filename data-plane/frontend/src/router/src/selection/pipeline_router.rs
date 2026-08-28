@@ -11,9 +11,10 @@ use foretoken_kv_indexer::{KvPrefixIndexer, NoopKvPrefixIndexer};
 use foretoken_model_protocol::ModelServerRole;
 
 use crate::inventory::supports_request;
+use crate::route_target_stats::NoopRouteTargetStatsReader;
 use crate::{
-    NoopRouteTargetStatsReader, RouteCandidate, RouteDecision, RouteError, RouteInventory,
-    RouteSession, RouteTargetStatsReader, Router, RouterPipeline, RouterRequest, ScoredCandidate,
+    RouteCandidate, RouteDecision, RouteError, RouteInventory, RouteSession,
+    RouteTargetStatsReader, Router, RouterPipeline, RouterRequest, ScoredCandidate,
 };
 
 /// Observation window used for every route target in one routing round.

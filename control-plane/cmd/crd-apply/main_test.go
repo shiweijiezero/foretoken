@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+// TestLoadGeneratedCRDs protects the packaged CRD set from missing or unreadable generated manifests.
 func TestLoadGeneratedCRDs(t *testing.T) {
 	crds, err := loadCRDs(filepath.Join(moduleRoot(t), "config", "crd", "bases"))
 	if err != nil {
@@ -71,6 +72,7 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
+// TestGeneratedCRDContracts protects the API validation rules shipped in the generated CRD schemas.
 func TestGeneratedCRDContracts(t *testing.T) {
 	crds, err := loadCRDs(filepath.Join(moduleRoot(t), "config", "crd", "bases"))
 	if err != nil {
@@ -134,6 +136,7 @@ func hasValidationRule(schema *apiextensionsv1.JSONSchemaProps, rule string) boo
 	return false
 }
 
+// TestEstablishedRejectsInvalidNames protects installation from accepting a CRD whose names were rejected by the API server.
 func TestEstablishedRejectsInvalidNames(t *testing.T) {
 	crd := &apiextensionsv1.CustomResourceDefinition{
 		ObjectMeta: metav1.ObjectMeta{Name: "examples.inference.foretoken.io"},
@@ -149,6 +152,7 @@ func TestEstablishedRejectsInvalidNames(t *testing.T) {
 	}
 }
 
+// TestApplyCRDTimeoutCoversPatch protects the apply timeout from expiring before a slow server-side patch returns.
 func TestApplyCRDTimeoutCoversPatch(t *testing.T) {
 	crd := &apiextensionsv1.CustomResourceDefinition{
 		TypeMeta:   metav1.TypeMeta{APIVersion: apiextensionsv1.SchemeGroupVersion.String(), Kind: "CustomResourceDefinition"},
@@ -161,6 +165,7 @@ func TestApplyCRDTimeoutCoversPatch(t *testing.T) {
 	}
 }
 
+// TestApplyCRDUsesServerSideApply protects the field manager, patch type, and status-free CRD apply contract.
 func TestApplyCRDUsesServerSideApply(t *testing.T) {
 	client := &recordingClient{}
 	crd := &apiextensionsv1.CustomResourceDefinition{

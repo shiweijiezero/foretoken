@@ -30,14 +30,14 @@ pub enum KvAutoResolutionReason {
 }
 /// Observed ownership and capability facts used by Auto; it carries no tuning thresholds.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct KvLocalityTopology {
-    pub event_source_count: usize,
-    pub has_scope_with_distinct_sources: bool,
-    pub has_non_primary_data_parallel_rank: bool,
-    pub has_readable_tier_continuation: bool,
+pub(crate) struct KvLocalityTopology {
+    pub(crate) event_source_count: usize,
+    pub(crate) has_scope_with_distinct_sources: bool,
+    pub(crate) has_non_primary_data_parallel_rank: bool,
+    pub(crate) has_readable_tier_continuation: bool,
 }
 impl KvLocalityTopology {
-    pub fn resolution_reason(&self) -> KvAutoResolutionReason {
+    pub(crate) fn resolution_reason(&self) -> KvAutoResolutionReason {
         if self.event_source_count == 0 {
             KvAutoResolutionReason::NoEventSources
         } else if self.has_non_primary_data_parallel_rank {
@@ -54,7 +54,7 @@ impl KvLocalityTopology {
     }
 }
 impl KvLocalityIndexImplementation {
-    pub fn resolve(self, t: &KvLocalityTopology) -> KvLocalityIndexResolvedImplementation {
+    pub(crate) fn resolve(self, t: &KvLocalityTopology) -> KvLocalityIndexResolvedImplementation {
         match self {
             Self::RadixTree => KvLocalityIndexResolvedImplementation::RadixTree,
             Self::PositionalHash => KvLocalityIndexResolvedImplementation::PositionalHash,

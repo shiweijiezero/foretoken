@@ -9,6 +9,7 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
 
+// TestCompileExtraArgsBoundary protects controller-owned vLLM arguments from user extraArgs overrides.
 func TestCompileExtraArgsBoundary(t *testing.T) {
 	template := testVLLMTemplate(1)
 	template.ExtraArgs = []inferencev1alpha1.BackendArg{"--max-model-len=32768", "--enforce-eager"}
@@ -28,6 +29,7 @@ func TestCompileExtraArgsBoundary(t *testing.T) {
 	}
 }
 
+// TestBuildLaunchPlanRuntimeVariants protects the Go producer shape for aggregate, P/D, E/P/D, KV, and EC launch variants.
 func TestBuildLaunchPlanRuntimeVariants(t *testing.T) {
 	cases := []struct {
 		name, kind, role string
@@ -69,6 +71,7 @@ func TestBuildLaunchPlanRuntimeVariants(t *testing.T) {
 	}
 }
 
+// TestBuildLaunchPlanRejectsStartupTimeoutOverflow protects Kubernetes progress-deadline conversion from integer overflow.
 func TestBuildLaunchPlanRejectsStartupTimeoutOverflow(t *testing.T) {
 	group := testGroup()
 	group.Timeouts.Startup = "2147483648s"

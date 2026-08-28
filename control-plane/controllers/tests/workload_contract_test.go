@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// TestModelGroupWorkloadContract protects Deployment, Service, networking, and role-specific ModelGroup materialization.
 func TestModelGroupWorkloadContract(t *testing.T) {
 	ctx := context.Background()
 	t.Run("aggregate workload owns isolated serving resources", func(t *testing.T) {

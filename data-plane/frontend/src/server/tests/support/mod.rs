@@ -9,31 +9,9 @@ use foretoken_chat::{
 };
 use foretoken_server::{ModelRuntime, RuntimeBundle};
 use foretoken_text::{Prompt, TextBackend, TextRequestProcessor};
-use foretoken_tokenizer::{DynTokenizer, Result as TokenizerResult, Tokenizer};
+use foretoken_tokenizer::DynTokenizer;
 
-struct TestTokenizer;
-
-impl Tokenizer for TestTokenizer {
-    fn encode(&self, text: &str, _: bool) -> TokenizerResult<Vec<u32>> {
-        Ok(text.bytes().map(u32::from).collect())
-    }
-
-    fn encode_ordinary(&self, text: &str) -> TokenizerResult<Vec<u32>> {
-        self.encode(text, false)
-    }
-
-    fn decode(&self, ids: &[u32], _: bool) -> TokenizerResult<String> {
-        Ok(ids.iter().filter_map(|&id| char::from_u32(id)).collect())
-    }
-
-    fn token_to_id(&self, _: &str) -> Option<u32> {
-        None
-    }
-
-    fn id_to_token(&self, id: u32) -> Option<String> {
-        char::from_u32(id).map(|value| value.to_string())
-    }
-}
+use crate::test_tokenizer::TestTokenizer;
 
 struct TestTextBackend(DynTokenizer);
 

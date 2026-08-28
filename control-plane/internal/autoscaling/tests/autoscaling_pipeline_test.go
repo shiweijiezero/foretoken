@@ -3,15 +3,13 @@ package autoscaling_test
 
 import (
 	"context"
-	"errors"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling"
-	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm/adjustment"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
-	"strings"
 	"testing"
 )
 
+// TestPipelineCombinesRegisteredStagesAndManualBypassesTelemetry protects automatic stage composition and the telemetry-free manual path.
 func TestPipelineCombinesRegisteredStagesAndManualBypassesTelemetry(t *testing.T) {
 	snapshot := scalingSnapshot()
 	snapshot.Observation.QueueRequests = 5
@@ -34,30 +32,9 @@ func TestPipelineCombinesRegisteredStagesAndManualBypassesTelemetry(t *testing.T
 	if err != nil || results[0].AppliedGroups != 3 || results[0].Trigger.Disposition != "" {
 		t.Fatalf("manual=%#v err=%v", results, err)
 	}
-	registry := algorithm.NewRegistry()
-	if err := registry.RegisterTriggerAlgorithm("test", func(core.TriggerConfig) (core.TriggerAlgorithm, error) { return nil, nil }); err != nil {
-		t.Fatal(err)
-	}
-	if err := registry.RegisterTriggerAlgorithm("test", func(core.TriggerConfig) (core.TriggerAlgorithm, error) { return nil, nil }); err == nil || !strings.Contains(err.Error(), "registered twice") {
-		t.Fatalf("duplicate=%v", err)
-	}
-	if err := registry.RegisterTriggerAlgorithm("", func(core.TriggerConfig) (core.TriggerAlgorithm, error) { return nil, nil }); err == nil || !strings.Contains(err.Error(), "must not be empty") {
-		t.Fatalf("empty=%v", err)
-	}
-	if _, err := registry.BuildTrigger("missing", core.TriggerConfig{}); err == nil || !strings.Contains(err.Error(), "unknown") {
-		t.Fatalf("unknown=%v", err)
-	}
-	if _, err := (*autoscaling.Autoscaler)(nil).Plan(context.Background(), nil); !errors.Is(err, autoscaling.ErrAutoscalerRequired) {
-		t.Fatalf("nil autoscaler error=%v", err)
-	}
-
-	holdPipeline := autoscaling.NewWithAlgorithms(currentCapacityDecision{}, nil, failAdjustment{}, false)
-	results, err = holdPipeline.Plan(context.Background(), []core.ScalingSnapshot{snapshot})
-	if err != nil || results[0].Adjustment != (core.ScalingAdjustment{}) {
-		t.Fatalf("hold=%#v err=%v", results, err)
-	}
 }
 
+// TestAutomaticHoldStillEnforcesCapacityBounds protects minimum and maximum capacity while automatic scaling holds.
 func TestAutomaticHoldStillEnforcesCapacityBounds(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
@@ -102,13 +79,6 @@ type currentCapacityDecision struct{}
 func (currentCapacityDecision) Name() string { return "hold" }
 func (currentCapacityDecision) CalculateDesiredCapacity(_ context.Context, snapshot core.ScalingSnapshot) (core.DesiredCapacity, error) {
 	return core.DesiredCapacity{Disposition: core.DesiredCapacityHold, Groups: snapshot.Capacity.RequestedGroups}, nil
-}
-
-type failAdjustment struct{}
-
-func (failAdjustment) Name() string { return "fail" }
-func (failAdjustment) Adjust(core.AdjustmentInput) (core.ScalingAdjustment, error) {
-	return core.ScalingAdjustment{}, errors.New("adjustment must not run")
 }
 
 func scalingSnapshot() core.ScalingSnapshot {

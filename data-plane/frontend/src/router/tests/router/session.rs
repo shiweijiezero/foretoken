@@ -31,6 +31,7 @@ fn target_stats(running_requests: u64) -> RouteTargetStats {
     }
 }
 
+// Protects aggregate routing identity, explicit rank zero, and stage ordering.
 #[test]
 fn single_rank_route_returns_an_explicit_rank_zero_decision() {
     let router = PipelineRouter::new(inventory(vec![route("a", ModelServerRole::Aggregate)]));
@@ -46,6 +47,7 @@ fn single_rank_route_returns_an_explicit_rank_zero_decision() {
     );
 }
 
+// Protects P/D routing from starting work without a serviceable Decode stage.
 #[test]
 fn prefill_is_not_selected_without_an_available_decode() {
     let router = PipelineRouter::new(inventory(vec![route("p", ModelServerRole::Prefill)]));
@@ -57,6 +59,7 @@ fn prefill_is_not_selected_without_an_available_decode() {
     ));
 }
 
+// Protects E/P/D stage selection from crossing pipeline scopes or skipping the encoder.
 #[test]
 fn encoder_prefill_decode_stays_in_its_pipeline_scope_and_never_falls_back_without_encoder() {
     let router = PipelineRouter::new(inventory(vec![
@@ -94,6 +97,7 @@ fn encoder_prefill_decode_stays_in_its_pipeline_scope_and_never_falls_back_witho
     ));
 }
 
+// Protects Decode selection from stale observations or premature binding.
 #[test]
 fn decode_uses_fresh_candidate_stats_and_is_not_bound_during_prefill_selection() {
     let stat_values = stats();

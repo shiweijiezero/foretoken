@@ -88,6 +88,7 @@ impl RouteScorer for InvalidScorer {
     }
 }
 
+// Protects extension algorithms from corrupting routing with invalid indexes or score counts.
 #[test]
 fn malformed_algorithm_outputs_are_explicit_errors() {
     let make_router = |filter: Arc<dyn RouteFilter>, scorer: Arc<dyn RouteScorer>, picker| {

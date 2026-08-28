@@ -48,7 +48,7 @@ Keep control-plane ownership and data-plane execution separate. API clients own 
 - Keep user configuration minimal. Derive values from model identifiers, Kubernetes resources, Helm releases, namespaces, and other authoritative inputs when possible.
 - Do not add validation, limits, retries, fallbacks, hashes, baselines, or process gates by default. Prefer direct code, types, versions, keys, transactions, unique constraints, and ordinary validation at the owning boundary.
 - Catch only errors a caller can handle. Do not hide programming errors or broken invariants behind empty results, broad exceptions, or silent defaults.
-- Comments explain ownership, ordering, external constraints, and failure semantics. Do not narrate the code, the PR, or the implementation history.
+- Every first-party public production function needs a concise doc comment stating its purpose, intended caller or consumer, output, and important ownership or lifecycle. Apply the same rule to private functions that own a complete stage or are not self-explanatory. Comment large blocks, multi-stage flows, non-obvious algorithms, and critical boundaries. Do not narrate the code, the PR, or the implementation history.
 
 ## Testing
 
@@ -59,7 +59,7 @@ Do not add tests by default. A human contributor must first review the motivatio
 - why an existing integration test, end-to-end execution, or direct measurement is insufficient;
 - why the maintenance cost is justified.
 
-If those questions have no clear answer, do not add the test. Prefer extending one substantial integration or cross-module contract test. Do not test getters, field forwarding, constant mappings, branch-free wrappers, framework wiring, private helpers, or behavior already owned by upstream.
+If those questions have no clear answer, do not add the test. Every retained non-trivial test needs a descriptive name and a short preceding comment stating the protected contract, concrete failure, or reason it exists. Prefer extending one substantial integration or cross-module contract test. Do not test getters, field forwarding, constant mappings, branch-free wrappers, framework wiring, private helpers, or behavior already owned by upstream.
 
 Code tests do not replace model-quality evaluation, GPU measurement, performance benchmarks, Kubernetes execution, or OCI deployment when the change affects those behaviors.
 

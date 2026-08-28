@@ -78,7 +78,11 @@ Comments explain information the code cannot express clearly:
 - which external contract constrains the implementation;
 - what remains true after failure or cleanup.
 
-Do not comment getters, field forwarding, constant mappings, obvious loops, or each line of a function. Do not record modification history, review replies, temporary plans, or the implementer's reasoning process in code comments. Substantial multi-stage flows should have a small number of block comments that let maintainers understand the execution structure before reading details.
+Every first-party public production function must have a concise doc comment stating what it does, who calls or consumes it, what it returns or publishes, and any ownership or lifecycle responsibility that matters. Private functions that own a complete stage or are not self-explanatory need the same context. Generated code and third-party sources follow their owning project.
+
+Large code blocks, multi-stage flows, non-obvious algorithms, and critical boundaries must have a small number of structural comments that let maintainers understand the execution before reading details.
+
+Do not comment getters, field forwarding, constant mappings, obvious loops, or each line of a function. Do not record modification history, review replies, temporary plans, or the implementer's reasoning process in code comments.
 
 ## Language and repository tools
 
@@ -99,6 +103,7 @@ Do not add tests by default. Before writing test code, a human contributor must 
 Test code is maintained code and can expand quickly. Use the smallest set that protects behavior maintainers and users actually rely on.
 
 - Prefer end-to-end, integration, and cross-module contract tests that cover substantial real behavior.
+- Give every retained non-trivial test a descriptive name and a short preceding comment that states the protected contract, concrete failure, or reason the test exists. Document the structure of large fixtures and multi-stage scenarios.
 - Extend an existing scenario, fixture, or contract test before creating a new test module.
 - Add focused tests for important algorithms, concurrency, state transitions, recovery paths, or regressions that have occurred and can recur.
 - Test stable observable outcomes such as API responses, CRD status, protocol events, metrics, resource lifecycle, and generated deployment behavior.

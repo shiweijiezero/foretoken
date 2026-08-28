@@ -229,8 +229,7 @@ fn validate_descriptors() -> Result<(), RouterPipelineConfigError> {
     )
 }
 
-/// Validates descriptor names deterministically; exposed for extension-test duplicate coverage.
-pub fn validate_descriptor_names<'a>(
+fn validate_descriptor_names<'a>(
     category: &'static str,
     names: impl IntoIterator<Item = &'a str>,
 ) -> Result<(), RouterPipelineConfigError> {

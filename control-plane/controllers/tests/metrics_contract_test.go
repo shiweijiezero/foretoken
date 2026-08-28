@@ -26,6 +26,7 @@ func (metrics *fixedPoolMetrics) Observation(_ context.Context, target core.Targ
 	return metrics.observation, nil
 }
 
+// TestStaleSourceMetricsStillEnforceMaximumCapacity protects hard capacity limits when telemetry becomes stale.
 func TestStaleSourceMetricsStillEnforceMaximumCapacity(t *testing.T) {
 	ctx := context.Background()
 	service := modelService("bounded", 5)
@@ -64,6 +65,7 @@ func TestStaleSourceMetricsStillEnforceMaximumCapacity(t *testing.T) {
 	}
 }
 
+// TestMetricsAggregationDrivesPoolScalingContract protects frontend telemetry aggregation through the ModelPool scaling result.
 func TestMetricsAggregationDrivesPoolScalingContract(t *testing.T) {
 	ctx := context.Background()
 	service := modelService("autoscaled", 0)

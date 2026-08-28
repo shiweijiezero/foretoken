@@ -8,7 +8,6 @@ mod response;
 mod runtime;
 
 pub use http::router;
-pub use response::token_stream;
 pub use runtime::{
     Generated, GeneratedChat, Generation, GenerationError, GenerationRequest, KvIndexDiagnostics,
     ModelRuntime, RoutedGenerate, RoutedRequest, RuntimeBundle, RuntimeControl, RuntimeDiagnostics,

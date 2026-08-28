@@ -56,7 +56,7 @@ pub trait RouteTargetStatsReader: Send + Sync {
 }
 
 /// Route Target-statistics reader used when telemetry is not configured.
-pub struct NoopRouteTargetStatsReader;
+pub(crate) struct NoopRouteTargetStatsReader;
 
 impl RouteTargetStatsReader for NoopRouteTargetStatsReader {
     #[allow(unused_variables)]

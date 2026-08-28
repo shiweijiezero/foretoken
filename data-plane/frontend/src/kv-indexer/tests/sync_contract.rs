@@ -88,6 +88,7 @@ async fn endpoint(pages: Vec<KvDeltaResponse>) -> (String, tokio::task::JoinHand
     (format!("http://{address}"), task)
 }
 
+// Protects exact route bindings and diagnostic reporting for automatic index selection.
 #[test]
 fn route_binding_is_exact_and_auto_status_reports_observed_topology() {
     let config = runtime("http://unused".into());
@@ -118,6 +119,7 @@ fn route_binding_is_exact_and_auto_status_reports_observed_topology() {
     ));
 }
 
+// Protects automatic index selection from ignoring owner scope or readable storage tiers.
 #[test]
 fn auto_resolution_uses_owner_scope_and_readable_tier_capability() {
     let primary = source("http://unused".into());
@@ -179,11 +181,9 @@ fn auto_resolution_uses_owner_scope_and_readable_tier_capability() {
     );
 }
 
+// Protects delta synchronization from duplicate, missing, reordered, and invalid reset cursors.
 #[tokio::test]
 async fn zero_based_cursor_rejects_duplicate_gap_reorder_and_invalid_epoch_reset() {
-    let response = page(0, "one");
-    let encoded = serde_json::to_value(&response).expect("serialize test response");
-    serde_json::from_value::<KvDeltaResponse>(encoded).expect("deserialize test response");
     for (pages, reason) in [
         (
             vec![page(0, "one"), page(0, "one")],
@@ -224,6 +224,7 @@ async fn zero_based_cursor_rejects_duplicate_gap_reorder_and_invalid_epoch_reset
     }
 }
 
+// Protects multi-rank routes from silently selecting the wrong event source.
 #[test]
 fn multi_rank_route_binding_requires_an_explicit_exact_rank() {
     let rank0 = source("http://unused".into());
@@ -264,6 +265,7 @@ fn multi_rank_route_binding_requires_an_explicit_exact_rank() {
     );
 }
 
+// Protects refresh progress when one KV event source hangs.
 #[tokio::test]
 async fn hanging_source_is_timed_out_without_blocking_healthy_source_or_next_refresh() {
     async fn hang() -> axum::response::Response {

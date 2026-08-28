@@ -19,6 +19,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
+// TestFrontendRoutingSnapshotAndReadinessContract protects Gateway routing publication and readiness as one frontend lifecycle.
 func TestFrontendRoutingSnapshotAndReadinessContract(t *testing.T) {
 	ctx := context.Background()
 	frontend := &inferencev1alpha1.FrontendService{
@@ -98,6 +99,7 @@ func TestFrontendRoutingSnapshotAndReadinessContract(t *testing.T) {
 	}
 }
 
+// TestFrontendLocalModeNeedsNoGateway protects local LoadBalancer readiness from depending on Gateway resources.
 func TestFrontendLocalModeNeedsNoGateway(t *testing.T) {
 	ctx := context.Background()
 	frontend := &inferencev1alpha1.FrontendService{

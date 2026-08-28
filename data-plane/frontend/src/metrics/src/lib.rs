@@ -75,13 +75,6 @@ fn queued_lock() -> MutexGuard<'static, BTreeMap<QueuedTarget, u64>> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-pub fn register_targets(targets: &RouteTargetSet) {
-    let mut values = queued_lock();
-    for target in targets.targets() {
-        values.entry(target.into()).or_default();
-    }
-}
-
 /// RAII ownership of one request waiting for admission to a fixed target set.
 pub struct QueueGuard {
     targets: Vec<QueuedTarget>,

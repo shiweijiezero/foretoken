@@ -12,11 +12,10 @@ use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use foretoken_chat::{AssistantBlockKind, AssistantMessageExt as _, ChatEvent, FinishReason};
 use foretoken_engine_core_client::protocol::output::StopReason;
-use foretoken_llm_facade::{LlmFacadeError, TokenStream};
 use foretoken_text::output::decoded_text_event_stream;
 use foretoken_text::{DecodedLogprobs, DecodedPositionLogprobs};
 use foretoken_text::{DecodedTextEvent, TextOutputStreamExt};
-use futures::{StreamExt, stream};
+use futures::StreamExt;
 use serde::Serialize;
 use vllm_llm::FinishReason as VllmFinishReason;
 
@@ -859,9 +858,4 @@ pub(crate) async fn chat_collected(generated: GeneratedChat, idle: Duration) -> 
         }
     }
     openai_error(GenerationError::RequestFailed)
-}
-
-/// A small helper for model-free tests and embeddings.
-pub fn token_stream(events: Vec<Result<vllm_llm::GenerateOutput, LlmFacadeError>>) -> TokenStream {
-    Box::pin(stream::iter(events))
 }

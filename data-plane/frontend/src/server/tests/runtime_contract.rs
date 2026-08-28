@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 mod support;
+#[path = "support/test_tokenizer.rs"]
+mod test_tokenizer;
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -66,6 +68,7 @@ fn get(uri: &str) -> Request<Body> {
     Request::builder().uri(uri).body(Body::empty()).unwrap()
 }
 
+// Protects runtime generation swaps from exposing partial state or false readiness.
 #[tokio::test]
 async fn runtime_publication_is_atomic_and_drives_readiness() {
     let generation = Arc::new(RuntimeGeneration::new(std::time::Duration::from_secs(1)));

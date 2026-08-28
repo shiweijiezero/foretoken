@@ -77,7 +77,6 @@ fn pd_snapshot() -> ServingSnapshot {
             tokenizer: "tokenizer".into(),
             tokenizer_revision: "r1".into(),
             capabilities: ["chat".into()].into_iter().collect(),
-            max_input_tokens: None,
             admission_target_sets: vec![admission_targets],
         }],
         groups: vec![],
@@ -288,6 +287,7 @@ fn aggregate_snapshot(endpoint: String) -> ServingSnapshot {
     }
 }
 
+// Protects frontend-owned capabilities while runtime metadata gates backend-owned capabilities.
 #[tokio::test]
 async fn aggregate_readiness_preserves_frontend_owned_capabilities() {
     let registry =
@@ -296,10 +296,6 @@ async fn aggregate_readiness_preserves_frontend_owned_capabilities() {
     registry.refresh_backend_readiness().await;
 
     assert!(registry.is_route_target_healthy(&RouteTargetId::new("a")));
-    assert_eq!(
-        registry.metadata(&RouteTargetId::new("a")),
-        Some(runtime_metadata())
-    );
     assert_eq!(
         registry.effective_capabilities(&RouteTargetId::new("a")),
         ["chat".into(), "multimodal".into()].into_iter().collect()
@@ -311,6 +307,7 @@ async fn aggregate_readiness_preserves_frontend_owned_capabilities() {
     );
 }
 
+// Protects routing from a process that is alive but reports missing or mismatched model metadata.
 #[tokio::test]
 async fn readiness_requires_runtime_metadata() {
     let registry =
@@ -320,8 +317,6 @@ async fn readiness_requires_runtime_metadata() {
     registry.refresh_backend_readiness().await;
 
     assert!(!registry.is_route_target_healthy(&RouteTargetId::new("a")));
-    assert_eq!(registry.metadata(&RouteTargetId::new("a")), None);
-
     let mut mismatched = aggregate_snapshot(serve_model_server().await);
     mismatched.groups[0].model = "different-model".into();
     let registry = BackendRegistry::from_snapshot(mismatched).unwrap();
@@ -329,6 +324,7 @@ async fn readiness_requires_runtime_metadata() {
     assert!(!registry.is_route_target_healthy(&RouteTargetId::new("a")));
 }
 
+// Protects rate windows, histogram aggregation, and counter-reset invalidation.
 #[tokio::test]
 async fn telemetry_history_derives_windows_and_rejects_counter_resets() {
     let telemetry_state = Arc::new(Mutex::new(telemetry(1_000, 100, histogram(2, 0.2, 1))));
@@ -353,9 +349,9 @@ async fn telemetry_history_derives_windows_and_rejects_counter_resets() {
     telemetry_state.lock().unwrap().accepting = false;
     registry.refresh_backend_readiness().await;
     assert!(!registry.is_route_target_healthy(&target));
-    assert!(registry.metadata(&target).is_none());
 }
 
+// Protects one P/D snapshot projection across routing, readiness, admission, and KV bindings.
 #[tokio::test]
 async fn pd_snapshot_projects_routing_readiness_and_kv_contracts() {
     let mut partial = pd_snapshot();
@@ -370,35 +366,17 @@ async fn pd_snapshot_projects_routing_readiness_and_kv_contracts() {
     snapshot.pd_components[0].endpoint = serve_model_server().await;
     snapshot.pd_components[0].prefill_bootstrap_endpoint =
         Some(snapshot.pd_components[0].endpoint.clone());
-    snapshot.pd_components[0].max_input_tokens = Some(4096);
     snapshot.pd_components[1].endpoint = serve_model_server().await;
-    snapshot.pd_components[1].max_input_tokens = Some(8192);
     let build = BackendRegistryBuild::from_snapshot(snapshot).unwrap();
     let registry = build.registry;
     registry.refresh_backend_readiness().await;
 
-    let routes = registry.route_table().routes();
+    let routes = registry.model_routes().routes();
     assert_eq!(routes.len(), 2);
     assert!(
         routes
             .iter()
             .all(|route| route.admission_targets.targets().len() == 2)
-    );
-    assert_eq!(
-        routes
-            .iter()
-            .find(|route| route.role == ModelServerRole::Prefill)
-            .unwrap()
-            .max_input_tokens,
-        Some(4096)
-    );
-    assert_eq!(
-        routes
-            .iter()
-            .find(|route| route.role == ModelServerRole::Decode)
-            .unwrap()
-            .max_input_tokens,
-        Some(8192)
     );
     assert!(registry.is_ready());
     assert_eq!(registry.healthy_models(), vec!["model"]);
@@ -431,10 +409,11 @@ async fn pd_snapshot_projects_routing_readiness_and_kv_contracts() {
     );
 }
 
+// Protects E/P/D triplet projection and prefill-only KV event ownership.
 #[test]
 fn epd_snapshot_projects_one_static_triplet_and_prefill_kv_source() {
     let build = BackendRegistryBuild::from_snapshot(epd_snapshot()).unwrap();
-    let routes = build.registry.route_table().routes();
+    let routes = build.registry.model_routes().routes();
     assert_eq!(routes.len(), 3);
     assert!(
         routes
@@ -451,6 +430,7 @@ fn epd_snapshot_projects_one_static_triplet_and_prefill_kv_source() {
     assert!(build.kv_runtime_config.route_bindings.contains_key("p"));
 }
 
+// Protects atomic route withdrawal when the controller publishes an empty snapshot.
 #[test]
 fn empty_snapshot_withdraws_all_routes() {
     let build = BackendRegistryBuild::from_snapshot(ServingSnapshot {
@@ -464,10 +444,11 @@ fn empty_snapshot_withdraws_all_routes() {
     })
     .unwrap();
 
-    assert!(build.registry.route_table().routes().is_empty());
+    assert!(build.registry.model_routes().routes().is_empty());
     assert!(build.registry.configured_models().is_empty());
 }
 
+// Protects snapshot rejection for incomplete ownership and cross-component pipeline identities.
 #[test]
 fn invalid_scaling_identity_or_pipeline_scope_is_rejected() {
     let mut pd = pd_snapshot();

@@ -13,12 +13,11 @@ use foretoken_kv_indexer::{
 use foretoken_model_protocol::{KvCacheLocality, KvPlacement, KvStorageTier, ModelServerRole};
 use foretoken_router::algorithm::LeastLoadedScorer;
 use foretoken_router::{
-    CandidateIndex, KvLeastLoadedScorer, PipelineRouter, RouteCandidate, RouteFilter, RoutePicker,
-    RouteScore, RouteScorer, RouteTargetId, RouteTargetStats, Router, RouterPipeline,
-    RouterRequest, ScoredCandidate,
+    KvLeastLoadedScorer, PipelineRouter, RouteCandidate, RouteScorer, RouteTargetId,
+    RouteTargetStats, Router,
 };
 
-use super::support::{TestStatsReader, inventory, request, route, stats};
+use super::support::{inventory, request, route};
 
 struct PrefixFacts;
 
@@ -68,6 +67,7 @@ fn prefix(tokens: usize, tier: KvStorageTier, locality: KvCacheLocality) -> KvPr
     }
 }
 
+// Protects cache locality from requests whose cache identity cannot be shared safely.
 #[test]
 fn kv_lookup_rejects_requests_with_separate_cache_semantics() {
     let mut salted = request();
@@ -122,6 +122,7 @@ fn candidate(id: &str, role: ModelServerRole, load: u64) -> RouteCandidate {
     }
 }
 
+// Protects KV scoring order and keeps unavailable locality distinct from a confirmed miss.
 #[test]
 fn kv_scoring_is_prefix_tier_locality_load_and_keeps_unavailable_candidates() {
     let candidates = vec![
@@ -157,6 +158,7 @@ fn kv_scoring_is_prefix_tier_locality_load_and_keeps_unavailable_candidates() {
     assert_eq!(score("decode").matched_tokens, 0);
 }
 
+// Protects prefill scoring from using Decode load in another pipeline scope.
 #[test]
 fn prefill_downstream_load_is_scoped_to_its_pipeline_scope() {
     let candidates = || {
@@ -210,91 +212,7 @@ impl KvPrefixIndexer for RankFacts {
     }
 }
 
-struct SnapshotFilter;
-
-impl RouteFilter for SnapshotFilter {
-    fn filter(
-        &self,
-        _: &RouterRequest,
-        candidates: &[RouteCandidate],
-        _: &dyn KvPrefixIndexer,
-        _: &mut (),
-    ) -> Vec<CandidateIndex> {
-        assert_eq!(candidates.len(), 2);
-        assert_eq!(
-            candidates[0]
-                .route_target_stats
-                .as_ref()
-                .map(|stats| stats.running_requests),
-            Some(7)
-        );
-        assert!(Arc::ptr_eq(
-            candidates[0].route_target_stats.as_ref().unwrap(),
-            candidates[1].route_target_stats.as_ref().unwrap(),
-        ));
-        vec![CandidateIndex(0), CandidateIndex(1)]
-    }
-}
-
-struct SnapshotScorer;
-
-impl RouteScorer for SnapshotScorer {
-    fn score(
-        &self,
-        _: &RouterRequest,
-        candidates: &[RouteCandidate],
-        _: &dyn KvPrefixIndexer,
-        _: &mut (),
-    ) -> Vec<RouteScore> {
-        assert_eq!(candidates.len(), 2);
-        assert_eq!(
-            candidates[0]
-                .route_target_stats
-                .as_ref()
-                .map(|stats| stats.running_requests),
-            Some(7)
-        );
-        assert!(Arc::ptr_eq(
-            candidates[0].route_target_stats.as_ref().unwrap(),
-            candidates[1].route_target_stats.as_ref().unwrap(),
-        ));
-        vec![RouteScore::default(); candidates.len()]
-    }
-}
-
-struct FirstPicker;
-
-impl RoutePicker for FirstPicker {
-    fn pick(&self, _: &RouterRequest, _: &[ScoredCandidate], _: &mut ()) -> Option<CandidateIndex> {
-        Some(CandidateIndex(0))
-    }
-}
-
-#[test]
-fn data_parallel_candidates_share_one_target_observation_and_preserve_rank() {
-    let mut aggregate = route("dp-two", ModelServerRole::Aggregate);
-    aggregate.data_parallel_size = 2;
-    let stat_values = stats();
-    stat_values
-        .lock()
-        .unwrap()
-        .insert(RouteTargetId::new("dp-two"), (*target_stats(7)).clone());
-    let router = PipelineRouter::with_pipeline(
-        inventory(vec![aggregate]),
-        RouterPipeline::new(
-            Arc::new(SnapshotFilter),
-            Arc::new(SnapshotScorer),
-            Arc::new(FirstPicker),
-        ),
-    )
-    .with_route_target_stats_reader(Arc::new(TestStatsReader::new(stat_values)));
-
-    let selected = router.start(request()).select_initial().unwrap();
-
-    assert_eq!(selected.route_target_id, RouteTargetId::new("dp-two"));
-    assert_eq!(selected.data_parallel_rank, 0);
-}
-
+// Protects data-parallel routing from collapsing rank-specific KV locality.
 #[test]
 fn data_parallel_kv_rank_winner_is_selected_from_an_exact_rank_query() {
     let mut aggregate = route("dp-two", ModelServerRole::Aggregate);

@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 mod support;
+#[path = "support/test_tokenizer.rs"]
+mod test_tokenizer;
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
@@ -212,6 +214,7 @@ async fn bootstrap_endpoint() -> (String, tokio::task::JoinHandle<()>) {
     )
 }
 
+// Protects multi-stage cleanup when Decode admission fails after earlier stages start.
 #[tokio::test]
 async fn runtime_workflow_aborts_every_started_stage_after_decode_admission_fails() {
     let calls = Arc::new(Mutex::new(Vec::new()));

@@ -29,6 +29,7 @@ fn epoch(adapter: &KvEventAdapter, dp_rank: u32) -> String {
     reset.epoch
 }
 
+// Protects rank-local KV replay and prevents raw token or upstream hash disclosure.
 #[test]
 fn lifecycle_is_rank_local_replayable_and_privacy_preserving() {
     let adapter = adapter(2);
@@ -79,6 +80,7 @@ fn lifecycle_is_rank_local_replayable_and_privacy_preserving() {
     ));
 }
 
+// Protects placement normalization and global clear semantics from vLLM events.
 #[test]
 fn placement_and_clear_follow_vllm_lifecycle() {
     let adapter = adapter(1);
@@ -116,6 +118,7 @@ fn placement_and_clear_follow_vllm_lifecycle() {
     ));
 }
 
+// Protects fail-closed KV availability and recovery after a valid event batch.
 #[test]
 fn protocol_failure_is_unavailable_and_a_valid_batch_recovers() {
     let adapter = adapter(1);
@@ -130,6 +133,7 @@ fn protocol_failure_is_unavailable_and_a_valid_batch_recovers() {
     assert!(adapter.delta(0, Some(&epoch), None, 2).is_ok());
 }
 
+// Protects cursor reset responses with the exact source and rank identity.
 #[test]
 fn invalid_cursor_returns_current_source_identity() {
     let adapter = adapter(2);

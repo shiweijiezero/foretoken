@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// TestInvalidPDRouteWithdrawsOnlyItsService protects healthy routes from withdrawal when another P/D service becomes invalid.
 func TestInvalidPDRouteWithdrawsOnlyItsService(t *testing.T) {
 	ctx := context.Background()
 	frontend := &inferencev1alpha1.FrontendService{

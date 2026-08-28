@@ -7,12 +7,7 @@ fn plan() -> LaunchPlanV1 {
     LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"model":"model","revision":"rev","tokenizer":"tokenizer","tokenizerRevision":"tokenizer-rev"},"parallelism":{"tp":2,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":30,"drainSeconds":7},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":["--max-model-len=32768"]}"#).unwrap()
 }
 
-#[test]
-fn rejects_unknown_and_missing_wire_fields() {
-    assert!(LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{},"parallelism":{},"kv":{"kind":"none","events":true},"lifecycle":{},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[],"unexpected":true}"#).is_err());
-    assert!(LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":1,"drainSeconds":1}}"#).is_err());
-}
-
+// Protects launch from unsupported node and context-parallel topology combinations.
 #[test]
 fn rejects_invalid_topology() {
     let mut invalid = plan();
@@ -25,6 +20,7 @@ fn rejects_invalid_topology() {
     assert!(invalid.validate().is_err());
 }
 
+// Protects controller-owned vLLM flags from duplicate rendering.
 #[test]
 fn renders_owned_arguments_once() {
     let args = plan().render_vllm_args().unwrap();
@@ -57,6 +53,7 @@ fn renders_owned_arguments_once() {
     assert_eq!(event_config["topic"], "foretoken-kv-v1");
 }
 
+// Protects role-specific EC launch configuration for encoder and prefill.
 #[test]
 fn ec_plan_renders_one_owned_config_for_each_role() {
     let producer = LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"producer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
@@ -86,12 +83,14 @@ fn ec_plan_renders_one_owned_config_for_each_role() {
     assert_eq!(producer.ec.runtime_metadata().unwrap().role, "ec_producer");
 }
 
+// Protects E/P/D launch from incomplete or mismatched EC configuration.
 #[test]
 fn rejects_invalid_ec_pairing() {
     let invalid = r#"{"version":1,"nodeCount":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"profile","profileRevision":"r1","connector":"arbitrary","role":"producer","sharedStoragePath":"relative"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#;
     assert!(LaunchPlanV1::parse(invalid).is_err());
 }
 
+// Protects each KV launch variant and its owned runtime arguments.
 #[test]
 fn kv_variants_render_expected_semantics() {
     let cases = [

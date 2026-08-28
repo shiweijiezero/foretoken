@@ -8,7 +8,7 @@ mod route_target_stats;
 mod snapshot;
 mod snapshot_projection;
 
-pub use registry::{BackendRegistry, RouteTable};
+pub use registry::BackendRegistry;
 pub use snapshot::{
     ModelIdentity, ServingSnapshot, SnapshotEpdComponent, SnapshotEpdPipelineScope, SnapshotError,
     SnapshotGroup, SnapshotModel, SnapshotPdComponent, SnapshotPdPipelineScope,
@@ -23,10 +23,6 @@ pub struct BackendRegistryBuild {
 }
 
 impl BackendRegistryBuild {
-    pub fn from_json(bytes: &[u8]) -> Result<Self, SnapshotError> {
-        Self::from_snapshot(serde_json::from_slice(bytes).map_err(SnapshotError::Parse)?)
-    }
-
     pub fn from_snapshot(snapshot: ServingSnapshot) -> Result<Self, SnapshotError> {
         let kv_runtime_config = snapshot_projection::project_kv_runtime(&snapshot)?;
         let registry = BackendRegistry::from_snapshot(snapshot)?;

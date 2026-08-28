@@ -15,12 +15,10 @@ pub use inventory::{
     ScalingTarget, ScalingTargetKind,
 };
 pub use request::RouterRequest;
-pub use route_target_stats::{
-    NoopRouteTargetStatsReader, RouteTargetLatencyStats, RouteTargetStats, RouteTargetStatsReader,
-};
+pub use route_target_stats::{RouteTargetLatencyStats, RouteTargetStats, RouteTargetStatsReader};
 pub use selection::{
     AlgorithmName, CandidateIndex, FilterAlgorithm, FilterDescriptor, PickerAlgorithm,
     PickerDescriptor, PipelineRouter, RouteCandidate, RouteError, RouteScore, RouteSession, Router,
     RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError, ScoredCandidate,
-    ScorerAlgorithm, ScorerDescriptor, validate_descriptor_names,
+    ScorerAlgorithm, ScorerDescriptor,
 };

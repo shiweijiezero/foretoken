@@ -102,6 +102,7 @@ fn run_for_each_index(test: impl Fn(&mut dyn KvLocalityIndex)) {
     test(&mut radix);
 }
 
+// Protects cache matches from crossing placement, group, partition, or source identity.
 #[test]
 fn placement_group_and_source_identity_are_exact() {
     let now = Instant::now();
@@ -172,6 +173,7 @@ fn placement_group_and_source_identity_are_exact() {
     });
 }
 
+// Protects recursive removal from deleting cache branches in another placement.
 #[test]
 fn hash_remove_recursively_erases_only_its_placement_branch() {
     let now = Instant::now();
@@ -204,6 +206,7 @@ fn hash_remove_recursively_erases_only_its_placement_branch() {
     });
 }
 
+// Protects locality decisions from an unknown removal hash by failing closed in the affected scope.
 #[test]
 fn unknown_hash_removal_fails_closed_in_its_exact_group_scope() {
     let now = Instant::now();
@@ -237,6 +240,7 @@ fn unknown_hash_removal_fails_closed_in_its_exact_group_scope() {
     });
 }
 
+// Protects TTL pruning and epoch rollover from retaining stale descendant matches.
 #[test]
 fn expired_parent_prunes_refreshed_descendants_and_epoch_rollover_isolated() {
     let now = Instant::now();
@@ -339,6 +343,7 @@ fn expired_parent_prunes_refreshed_descendants_and_epoch_rollover_isolated() {
     });
 }
 
+// Protects routing from treating an unspecified cache location as reusable locality.
 #[test]
 fn unspecified_locality_is_not_a_cache_hit() {
     let now = Instant::now();
@@ -357,6 +362,7 @@ fn unspecified_locality_is_not_a_cache_hit() {
     });
 }
 
+// Protects radix recovery from orphan growth, duplicate links, and parent cycles.
 #[test]
 fn radix_pending_orphans_expire_deduplicate_and_fail_closed_on_cycles() {
     let now = Instant::now();

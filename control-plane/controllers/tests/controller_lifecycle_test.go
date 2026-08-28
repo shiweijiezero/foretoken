@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// TestModelServingControllerLifecycle protects controller-owned pool and group materialization across serving revisions.
 func TestModelServingControllerLifecycle(t *testing.T) {
 	ctx := context.Background()
 	t.Run("ModelService materializes owned Pool and aggregates readiness", func(t *testing.T) {

@@ -142,10 +142,6 @@ pub struct PreparedRuntime {
 }
 
 impl PreparedRuntime {
-    pub fn version(&self) -> u64 {
-        self.version
-    }
-
     pub fn publish(self, generation: &RuntimeGeneration) -> bool {
         generation.replace_state(self.version, self.state, self.control)
     }

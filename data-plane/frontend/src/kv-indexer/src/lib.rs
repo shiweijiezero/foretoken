@@ -70,7 +70,6 @@ pub enum KvPrefixUnavailableReason {
     MissingBinding,
     UnsupportedRequest,
     RankMismatch,
-    UnknownHashFormat,
 }
 pub trait KvPrefixIndexer: Send + Sync {
     fn prefix_matches(&self, lookup: KvPrefixLookup<'_>) -> KvPrefixQueryResult;

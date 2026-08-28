@@ -14,7 +14,7 @@ use foretoken_model_protocol::{RuntimeMetadataResponse, TelemetryResponse};
 
 use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::{
-    ModelRouteTable, RouteDecision, RouteInventory, RouteTarget, RouteTargetId, RouteTargetStats,
+    ModelRouteTable, RouteDecision, RouteInventory, RouteTargetId, RouteTargetStats,
     RouteTargetStatsReader,
 };
 
@@ -23,32 +23,8 @@ use crate::snapshot::{ServingSnapshot, SnapshotError};
 
 const ROUTE_TARGET_STATS_RETENTION: Duration = Duration::from_secs(300);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RouteTable {
-    version: u64,
-    model_routes: ModelRouteTable,
-}
-impl RouteTable {
-    pub(crate) fn new(version: u64, routes: Vec<RouteTarget>) -> Self {
-        Self {
-            version,
-            model_routes: ModelRouteTable::new(routes),
-        }
-    }
-
-    pub fn version(&self) -> u64 {
-        self.version
-    }
-    pub fn model_routes(&self) -> &ModelRouteTable {
-        &self.model_routes
-    }
-
-    pub fn routes(&self) -> &[RouteTarget] {
-        self.model_routes.routes()
-    }
-}
 pub struct BackendRegistry {
-    table: RouteTable,
+    model_routes: ModelRouteTable,
     configured_models: BTreeSet<String>,
     components: BTreeMap<RouteTargetId, Component>,
     health: BTreeMap<RouteTargetId, AtomicBool>,
@@ -91,18 +67,15 @@ impl Component {
     }
 }
 impl BackendRegistry {
-    pub fn from_json(bytes: &[u8]) -> Result<Self, SnapshotError> {
-        Self::from_snapshot(serde_json::from_slice(bytes).map_err(SnapshotError::Parse)?)
-    }
     pub fn from_snapshot(snapshot: ServingSnapshot) -> Result<Self, SnapshotError> {
         let configured_models = snapshot.admission_target_sets()?.into_keys().collect();
-        let (table, components) = crate::snapshot_projection::project_registry(snapshot)?;
+        let (model_routes, components) = crate::snapshot_projection::project_registry(snapshot)?;
         let health = components
             .keys()
             .map(|id| (id.clone(), AtomicBool::new(false)))
             .collect();
         Ok(Self {
-            table,
+            model_routes,
             configured_models,
             components,
             health,
@@ -114,10 +87,6 @@ impl BackendRegistry {
                 .expect("static client"),
         })
     }
-    pub fn route_table(&self) -> &RouteTable {
-        &self.table
-    }
-
     pub fn configured_models(&self) -> Vec<String> {
         self.configured_models.iter().cloned().collect()
     }
@@ -126,8 +95,7 @@ impl BackendRegistry {
         !self.configured_models.is_empty()
     }
 
-    /// Returns the last metadata response that passed this component's snapshot checks.
-    pub fn metadata(&self, id: &RouteTargetId) -> Option<RuntimeMetadataResponse> {
+    fn metadata(&self, id: &RouteTargetId) -> Option<RuntimeMetadataResponse> {
         self.metadata.lock().ok()?.get(id).cloned()
     }
 
@@ -140,7 +108,7 @@ impl BackendRegistry {
         id: &RouteTargetId,
         metadata: &RuntimeMetadataResponse,
     ) -> bool {
-        self.table.routes().iter().any(|route| {
+        self.model_routes.routes().iter().any(|route| {
             route.route_target_id == *id
                 && metadata.model.model == route.model
                 && metadata.model.revision == route.revision
@@ -149,7 +117,7 @@ impl BackendRegistry {
 
     /// Returns the safe effective context limit across healthy components for a model.
     pub fn effective_max_model_len(&self, model: &str) -> Option<u32> {
-        self.table
+        self.model_routes
             .routes()
             .iter()
             .filter(|route| {
@@ -163,7 +131,7 @@ impl BackendRegistry {
     /// Returns one consistent engine-reported dtype across healthy components.
     pub fn effective_model_dtype(&self, model: &str) -> Option<ModelDtype> {
         let mut dtypes = self
-            .table
+            .model_routes
             .routes()
             .iter()
             .filter(|route| {
@@ -184,7 +152,7 @@ impl BackendRegistry {
         // P+D, or E+P+D when that scope includes an encoder.
         let mut models = BTreeSet::new();
         let mut pipeline_scopes = BTreeMap::<(String, String), (bool, bool, bool)>::new();
-        for route in self.table.routes() {
+        for route in self.model_routes.routes() {
             if route.role == ModelServerRole::Aggregate
                 && self.is_route_target_healthy(&route.route_target_id)
             {
@@ -207,7 +175,7 @@ impl BackendRegistry {
             }
         }
         for ((model, pipeline_scope_id), (encoder, prefill, decode)) in pipeline_scopes {
-            let epd = self.table.routes().iter().any(|route| {
+            let epd = self.model_routes.routes().iter().any(|route| {
                 route.model == model
                     && route.pipeline_scope_id.as_deref() == Some(pipeline_scope_id.as_str())
                     && route.role == ModelServerRole::Encoder
@@ -300,7 +268,7 @@ impl LlmFacadeResolver for BackendRegistry {
 }
 impl RouteInventory for BackendRegistry {
     fn model_routes(&self) -> &ModelRouteTable {
-        self.table.model_routes()
+        &self.model_routes
     }
     fn is_route_target_healthy(&self, id: &RouteTargetId) -> bool {
         self.health
@@ -310,7 +278,7 @@ impl RouteInventory for BackendRegistry {
 
     fn effective_capabilities(&self, id: &RouteTargetId) -> BTreeSet<String> {
         let Some(declared) = self
-            .table
+            .model_routes
             .routes()
             .iter()
             .find(|route| &route.route_target_id == id)
@@ -330,7 +298,7 @@ impl RouteInventory for BackendRegistry {
             .iter()
             .filter(|capability| {
                 !requires_runtime_observation(capability)
-                    || observed.capabilities.contains(capability.as_str())
+                    || observed.capabilities.contains(*capability)
             })
             .cloned()
             .collect()

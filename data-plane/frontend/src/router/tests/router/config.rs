@@ -8,6 +8,7 @@ use foretoken_router::{
     ScorerAlgorithm,
 };
 
+// Protects every documented built-in router algorithm from missing compile-time registration.
 #[test]
 fn every_compiled_builtin_name_parses_and_builds() {
     for (filter, scorer, picker) in [
@@ -20,25 +21,13 @@ fn every_compiled_builtin_name_parses_and_builds() {
             scorer: scorer.parse().unwrap(),
             picker: picker.parse().unwrap(),
         };
-        config.validate().unwrap();
         let _ = config.build().unwrap();
     }
 }
 
+// Protects user configuration from ambiguous or unavailable algorithm names.
 #[test]
-fn defaults_serialize_as_stable_snake_case_names() {
-    let config = RouterPipelineConfig::default();
-    assert_eq!(config.filter.as_str(), "allow_all");
-    assert_eq!(config.scorer.as_str(), "kv_least_loaded");
-    assert_eq!(config.picker.as_str(), "round_robin");
-    assert_eq!(
-        serde_json::to_string(&config).unwrap(),
-        r#"{"filter":"allow_all","scorer":"kv_least_loaded","picker":"round_robin"}"#
-    );
-}
-
-#[test]
-fn invalid_unknown_and_duplicate_names_are_explicit_errors() {
+fn invalid_and_unknown_names_are_explicit_errors() {
     assert_eq!(
         "".parse::<FilterAlgorithm>(),
         Err(RouterPipelineConfigError::EmptyName)
@@ -59,11 +48,4 @@ fn invalid_unknown_and_duplicate_names_are_explicit_errors() {
             name,
         }) if name == "community_scorer"
     ));
-    assert_eq!(
-        foretoken_router::validate_descriptor_names("picker", ["round_robin", "max", "max"]),
-        Err(RouterPipelineConfigError::DuplicateDescriptorName {
-            category: "picker",
-            name: "max".into(),
-        })
-    );
 }

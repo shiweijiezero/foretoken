@@ -33,23 +33,15 @@ pub struct GenerateInput {
     pub request_id: String,
     pub prompt_token_ids: Vec<u32>,
     pub sampling_params: EngineCoreSamplingParams,
-    #[serde(default)]
     pub mm_features: Option<MmFeatures>,
-    #[serde(default)]
     pub arrival_time: Option<f64>,
-    #[serde(default)]
     pub cache_salt: Option<String>,
-    #[serde(default)]
     pub trace_headers: Option<BTreeMap<String, String>>,
     #[serde(default)]
     pub priority: i32,
-    #[serde(default)]
     pub data_parallel_rank: Option<u32>,
-    #[serde(default)]
     pub session_id: Option<String>,
-    #[serde(default)]
     pub reasoning_parser_kwargs: Option<ReasoningParserKwargs>,
-    #[serde(default)]
     pub lora_request: Option<LoraRequest>,
 }
 impl From<GenerateRequest> for GenerateInput {

@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 mod http_support;
+#[path = "support/test_tokenizer.rs"]
+mod test_tokenizer;
 
 use std::sync::{Arc, Mutex};
 
@@ -22,6 +24,7 @@ fn request(uri: &str, body: impl Into<Body>) -> Request<Body> {
         .unwrap()
 }
 
+// Protects OpenAI request lowering, routing, and server-issued request identities.
 #[tokio::test]
 async fn openai_generation_routes_lower_requests_and_issue_server_request_ids() {
     let generation = Arc::new(RecordingGeneration::default());
@@ -82,6 +85,7 @@ async fn openai_generation_routes_lower_requests_and_issue_server_request_ids() 
     assert!(request_ids.iter().all(|id| id != "client-id"));
 }
 
+// Protects model discovery and tokenization through the public HTTP surface.
 #[tokio::test]
 async fn openai_http_surface_resolves_models_and_tokenization() {
     let generation = Arc::new(RecordingGeneration::default());
@@ -148,6 +152,7 @@ async fn openai_http_surface_resolves_models_and_tokenization() {
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
 
+// Protects request validation from unsupported features and unsafe unbounded generation.
 #[tokio::test]
 async fn openai_http_rejects_unsupported_or_unbounded_requests() {
     let app = router(
@@ -185,6 +190,7 @@ async fn openai_http_rejects_unsupported_or_unbounded_requests() {
     }
 }
 
+// Protects equivalent terminal usage for streaming and collected completion responses.
 #[tokio::test]
 async fn completion_stream_and_collected_response_share_terminal_usage_contract() {
     let app = router(
@@ -255,6 +261,7 @@ async fn completion_stream_and_collected_response_share_terminal_usage_contract(
     );
 }
 
+// Protects collected chat content, finish reason, and usage accounting.
 #[tokio::test]
 async fn chat_collected_response_preserves_content_finish_reason_and_usage() {
     let app = router(
