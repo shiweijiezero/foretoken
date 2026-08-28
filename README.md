@@ -122,7 +122,7 @@ kubectl apply --server-side -k examples/quickstart
 ```bash
 kubectl wait --for=condition=Ready \
   --namespace foretoken-demo \
-  --timeout=15m \
+  --timeout=6m \
   frontendservice/quickstart-frontend \
   modelservice/quickstart-qwen3-0.6b
 ```

@@ -165,7 +165,7 @@ helm upgrade --install foretoken \
   --set frontend.image=foretoken-dev-frontend:latest \
   --set runtime.vllm.image=foretoken-dev-model-server:latest \
   --wait \
-  --timeout=15m
+  --timeout=5m
 ```
 
 ### 2.2 Build and deploy through an OCI registry
@@ -217,7 +217,7 @@ kubectl apply --server-side -k examples/quickstart
 
 kubectl wait --for=condition=Ready \
   --namespace foretoken-demo \
-  --timeout=15m \
+  --timeout=6m \
   frontendservice/quickstart-frontend \
   modelservice/quickstart-qwen3-0.6b
 ```

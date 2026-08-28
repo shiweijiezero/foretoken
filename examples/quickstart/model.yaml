@@ -27,7 +27,7 @@ spec:
       cpu: "8"
       memory: 64Gi
   timeouts:
-    startup: 10m # Maximum time allowed for model loading and backend initialization.
+    startup: 5m # Maximum time allowed for model loading and backend initialization.
     drain: 2m # Maximum time allowed for accepted requests to finish during shutdown.
   parallelism:
     tp: 1 # Number of tensor-parallel ranks in each ModelGroup.

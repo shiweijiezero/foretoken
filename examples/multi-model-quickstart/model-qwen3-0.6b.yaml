@@ -34,7 +34,7 @@ spec:
       cpu: "8"
       memory: 64Gi
   timeouts:
-    startup: 10m
+    startup: 5m
     drain: 2m
   parallelism:
     tp: 1

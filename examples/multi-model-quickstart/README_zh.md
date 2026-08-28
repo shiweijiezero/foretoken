@@ -30,7 +30,7 @@ kubectl apply --server-side -k examples/multi-model-quickstart
 
 kubectl wait --for=condition=Ready \
   --namespace foretoken-multi-model-demo \
-  --timeout=15m \
+  --timeout=6m \
   frontendservice/multi-model-frontend \
   modelservice/multi-model-qwen3-0.6b \
   modelservice/multi-model-llama3.2-1b
