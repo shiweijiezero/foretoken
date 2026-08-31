@@ -140,7 +140,8 @@ curl --fail-with-body --no-buffer \
 使用由 Chart 创建的 HTTP 网关时，解析网关地址和路由域名：
 
 ```bash
-source <(foretoken endpoint examples/quickstart --format shell)
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \

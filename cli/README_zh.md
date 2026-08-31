@@ -42,13 +42,14 @@ foretoken status -n foretoken-multi-model-demo --watch
 FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 ```
 
-同时加载 URL 和 HTTP `Host` 值：
+HTTP Gateway 模式下，单独解析请求的 `Host`：
 
 ```bash
-source <(foretoken endpoint examples/quickstart --format shell)
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
-该命令会设置 `FORETOKEN_FRONTEND_URL` 和 `FORETOKEN_REQUEST_HOST`。后者在直接访问时是 URL authority，在 HTTP Gateway 模式下是配置的路由域名。该命令负责等待 LoadBalancer 或 Gateway 地址，服务就绪仍由 `foretoken deploy` 负责。
+Host 值在直接访问时是 URL authority，在 HTTP Gateway 模式下是配置的路由域名。该命令负责等待 LoadBalancer 或 Gateway 地址，服务就绪仍由 `foretoken deploy` 负责。
 
 评测能力使用可选依赖：
 

@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import shlex
 import sys
 import time
 from collections.abc import Sequence
@@ -116,21 +115,14 @@ def _status(
         time.sleep(2)
 
 
-def _endpoint(
-    kustomize_path: str, timeout: str, output_format: str
-) -> None:
+def _endpoint(kustomize_path: str, timeout: str, host: bool) -> None:
     """Wait for and print the public endpoint of one rendered deployment."""
     kubectl = Kubectl()
     deployment = load_deployment(kustomize_path, kubectl)
     print("Waiting for the frontend endpoint", file=sys.stderr, flush=True)
     endpoint = resolve_frontend_endpoint(deployment, kubectl, timeout)
-    if output_format == "shell":
-        print(f"FORETOKEN_FRONTEND_URL={shlex.quote(endpoint.url)}")
-        request_host = endpoint.routing_host or urlsplit(endpoint.url).netloc
-        print(
-            "FORETOKEN_REQUEST_HOST="
-            f"{shlex.quote(request_host)}"
-        )
+    if host:
+        print(endpoint.routing_host or urlsplit(endpoint.url).netloc)
         return
     print(endpoint.url)
 
@@ -161,7 +153,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             _endpoint(
                 command.kustomize_path,
                 command.timeout,
-                command.output_format,
+                command.host,
             )
         elif isinstance(command, BenchCommand):
             _bench(command.arguments)

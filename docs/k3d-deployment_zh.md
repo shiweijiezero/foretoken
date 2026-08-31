@@ -183,7 +183,8 @@ foretoken deploy examples/quickstart --timeout 6m
 解析 k3s ServiceLB 为前端服务分配的地址：
 
 ```bash
-source <(foretoken endpoint examples/quickstart --format shell)
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
 ### 4.3 网关模式
@@ -219,7 +220,8 @@ foretoken deploy examples/quickstart --timeout 6m
 解析已配置的 Gateway 入口：
 
 ```bash
-source <(foretoken endpoint examples/quickstart --format shell)
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
 ### 4.4 发送 OpenAI API 兼容格式的请求

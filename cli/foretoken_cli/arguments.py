@@ -9,8 +9,6 @@ import argparse
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-_DEFAULT_TIMEOUT = "10m"
-
 
 @dataclass(frozen=True)
 class DeployCommand:
@@ -35,7 +33,7 @@ class EndpointCommand:
 
     kustomize_path: str
     timeout: str
-    output_format: str
+    host: bool
 
 
 @dataclass(frozen=True)
@@ -46,6 +44,17 @@ class BenchCommand:
 
 
 ParsedCommand = DeployCommand | StatusCommand | EndpointCommand | BenchCommand
+
+
+def _add_wait_timeout_argument(
+    parser: argparse.ArgumentParser, target: str
+) -> None:
+    """Add the shared bounded-wait option for a command target."""
+    parser.add_argument(
+        "--timeout",
+        default="10m",
+        help=f"maximum {target} wait (default: %(default)s)",
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -65,11 +74,7 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Kustomize root containing one frontend and one or more models",
     )
-    deploy.add_argument(
-        "--timeout",
-        default=_DEFAULT_TIMEOUT,
-        help=f"maximum readiness wait (default: {_DEFAULT_TIMEOUT})",
-    )
+    _add_wait_timeout_argument(deploy, "serving readiness")
 
     status = subparsers.add_parser(
         "status",
@@ -102,17 +107,11 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Kustomize root containing one frontend",
     )
+    _add_wait_timeout_argument(endpoint, "endpoint")
     endpoint.add_argument(
-        "--timeout",
-        default=_DEFAULT_TIMEOUT,
-        help=f"maximum endpoint wait (default: {_DEFAULT_TIMEOUT})",
-    )
-    endpoint.add_argument(
-        "--format",
-        choices=("url", "shell"),
-        default="url",
-        dest="output_format",
-        help="output a URL or shell variable assignments (default: url)",
+        "--host",
+        action="store_true",
+        help="print the HTTP Host value instead of the URL",
     )
 
     subparsers.add_parser(
@@ -130,13 +129,11 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
         return BenchCommand(arguments)
 
     parser = _build_parser()
-    parsed = parser.parse_args(arguments)
-    if parsed.command == "deploy":
-        return DeployCommand(parsed.kustomize_path, parsed.timeout)
-    if parsed.command == "status":
-        if bool(parsed.kustomize_path) == bool(parsed.namespace):
+    parsed_args = parser.parse_args(arguments)
+    if parsed_args.command == "deploy":
+        return DeployCommand(parsed_args.kustomize_path, parsed_args.timeout)
+    if parsed_args.command == "status":
+        if bool(parsed_args.kustomize_path) == bool(parsed_args.namespace):
             parser.error("status requires either PATH or --namespace")
-        return StatusCommand(parsed.kustomize_path, parsed.namespace, parsed.watch)
-    return EndpointCommand(
-        parsed.kustomize_path, parsed.timeout, parsed.output_format
-    )
+        return StatusCommand(parsed_args.kustomize_path, parsed_args.namespace, parsed_args.watch)
+    return EndpointCommand(parsed_args.kustomize_path, parsed_args.timeout, parsed_args.host)

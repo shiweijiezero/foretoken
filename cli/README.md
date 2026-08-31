@@ -42,13 +42,14 @@ Resolve the public frontend URL after deployment:
 FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 ```
 
-To load both the URL and its HTTP `Host` value:
+For an HTTP Gateway, resolve its request `Host` separately:
 
 ```bash
-source <(foretoken endpoint examples/quickstart --format shell)
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
-This sets `FORETOKEN_FRONTEND_URL` and `FORETOKEN_REQUEST_HOST`. The latter is the URL authority for direct access or the configured routing hostname for an HTTP Gateway. The command waits for the LoadBalancer or Gateway address, but serving readiness remains owned by `foretoken deploy`.
+The host value is the URL authority for direct access or the configured routing hostname for an HTTP Gateway. The command waits for the LoadBalancer or Gateway address, but serving readiness remains owned by `foretoken deploy`.
 
 Benchmark support uses optional dependencies:
 

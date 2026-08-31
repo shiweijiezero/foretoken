@@ -140,7 +140,8 @@ curl --fail-with-body --no-buffer \
 For the Chart-created HTTP Gateway, resolve its address and routing hostname:
 
 ```bash
-source <(foretoken endpoint examples/quickstart --format shell)
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \

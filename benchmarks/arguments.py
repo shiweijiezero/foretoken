@@ -427,13 +427,13 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchCommand:
     )
     _add_benchmark_arguments(bench)
 
-    namespace = parser.parse_args(argv)
-    if bool(namespace.kustomize_path) == bool(namespace.url):
+    parsed_args = parser.parse_args(argv)
+    if bool(parsed_args.kustomize_path) == bool(parsed_args.url):
         bench.error("provide either PATH or --url")
-    if namespace.url and not namespace.model:
+    if parsed_args.url and not parsed_args.model:
         bench.error("--model is required with --url")
     return BenchCommand(
-        kustomize_path=namespace.kustomize_path or "",
-        config=_bench_config(namespace),
-        wait_timeout=namespace.wait_timeout,
+        kustomize_path=parsed_args.kustomize_path or "",
+        config=_bench_config(parsed_args),
+        wait_timeout=parsed_args.wait_timeout,
     )

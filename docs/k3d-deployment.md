@@ -183,7 +183,8 @@ foretoken deploy examples/quickstart --timeout 6m
 Resolve the address that k3s ServiceLB assigns to the frontend:
 
 ```bash
-source <(foretoken endpoint examples/quickstart --format shell)
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
 ### 4.3 Gateway mode
@@ -219,7 +220,8 @@ foretoken deploy examples/quickstart --timeout 6m
 Resolve the configured Gateway endpoint:
 
 ```bash
-source <(foretoken endpoint examples/quickstart --format shell)
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
 ### 4.4 Send an OpenAI API-compatible request
