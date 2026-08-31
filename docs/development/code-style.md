@@ -90,7 +90,8 @@ Follow the surrounding code and the executable checks for each subtree.
 
 - **Rust data plane:** run `make verify-data-plane`. It checks formatting, compilation, tests, and Clippy for first-party workspace packages.
 - **Go control plane:** run `make -C control-plane verify`. Generated code and CRDs must be regenerated through the Makefile targets rather than edited independently.
-- **Python benchmarks:** follow the package structure and typing style already used under `benchmarks/`; run the relevant benchmark tests and exercise the affected CLI or runner path.
+- **Python CLI:** keep public argument definitions and parsing separate from command execution, return explicit command types rather than passing `argparse.Namespace` across that boundary, and exercise the affected installed command against Kubernetes.
+- **Python benchmarks:** follow the package structure and typing style already used under `benchmarks/`; run the relevant benchmark tests and exercise the affected benchmark command or runner path.
 - **Helm and Kubernetes YAML:** run Helm lint and render the changed modes. Verify generated resources, values schema, selectors, ports, namespaces, and network access as one deployment contract.
 - **Repository-wide files:** run `pre-commit run --all-files` for file hygiene, structured formats, merge conflicts, secret detection, and GitHub Actions linting.
 

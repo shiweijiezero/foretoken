@@ -29,6 +29,7 @@ Code should be elegant and concise because responsibilities are well separated, 
 
 - `data-plane/`: Rust request handling, routing, streaming, model protocol, runtime composition, and inference-engine adapters.
 - `control-plane/`: Go Kubernetes APIs, desired state, reconciliation, service lifecycle, autoscaling, generated CRDs, and status publication.
+- `cli/`: Python workstation commands for deployment submission, service status observation, and top-level command dispatch. It does not own controller reconciliation or benchmark policy.
 - `benchmarks/`: Python workloads, request execution, aggregation, reporting, and Kubernetes-aware benchmark lifecycle.
 - `deploy/`: Helm, local-cluster configuration, development image workflows, hardware settings, and release composition.
 - `examples/`: maintained, runnable Kustomize configurations. Keep them minimal and aligned with public documentation.
@@ -104,6 +105,7 @@ Choose the smallest real validation that covers the changed responsibility, then
 - Repository files: `pre-commit run --all-files`.
 - Rust data plane: `make verify-data-plane`.
 - Go control plane and generated artifacts: `make -C control-plane verify`.
+- Python CLI: install the package from the repository root, verify the affected help surface, and execute the changed deploy or status path against Kubernetes. Use server-side dry-run when validation must not mutate shared resources.
 - Helm baseline: `helm lint deploy/charts/foretoken --kube-version 1.36.3` and `helm template foretoken deploy/charts/foretoken --kube-version 1.36.3 > /tmp/foretoken.yaml`; render additional affected modes and values.
 - Benchmark changes have no generic smoke command. Follow `benchmarks/README.md` and run the changed `foretoken bench` path against its real `--deploy` or `--url` service source.
 - Deployment or controller contracts also have no generic smoke command. Run the affected Kubernetes/OCI workflow described by the relevant deployment guide; compilation or template rendering alone is not end-to-end validation.

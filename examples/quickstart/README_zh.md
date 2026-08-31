@@ -14,7 +14,7 @@
 先安装 Foretoken 平台，再从仓库根目录安装 CLI 并部署：
 
 ```bash
-pip install .
+pip install -e .
 foretoken deploy -k examples/quickstart
 ```
 

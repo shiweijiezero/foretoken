@@ -42,6 +42,7 @@ Obtain agreement from the maintainers of affected components before implementati
 
 - `data-plane/`: request handling, routing, inference-engine integration, and runtime data paths;
 - `control-plane/`: desired state, instance lifecycle, scaling decisions, Kubernetes resources, and failure recovery;
+- `cli/`: user-facing deployment submission, service status inspection, and top-level command dispatch;
 - `benchmarks/`: correctness, workloads, performance, SLO evaluation, and simulation;
 - `deploy/`: deployment composition, hardware configuration, and release artifacts.
 

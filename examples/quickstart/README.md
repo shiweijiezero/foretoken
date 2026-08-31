@@ -14,7 +14,7 @@ This example deploys one frontend and one `Qwen/Qwen3-0.6B` model replica using 
 Install the Foretoken platform first, then install the CLI and deploy from the repository root:
 
 ```bash
-pip install .
+pip install -e .
 foretoken deploy -k examples/quickstart
 ```
 

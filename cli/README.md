@@ -12,7 +12,7 @@ The Foretoken CLI deploys Kustomize configurations, reports serving readiness, a
 Install the deployment and status commands from the repository root:
 
 ```bash
-pip install .
+pip install -e .
 ```
 
 Deploy one frontend and all models rendered by a Kustomize root:
@@ -39,7 +39,7 @@ foretoken status -n foretoken-multi-model-demo --watch
 Benchmark support uses optional dependencies:
 
 ```bash
-pip install '.[bench]'
+pip install -e '.[bench]'
 foretoken bench --deploy examples/quickstart
 ```
 

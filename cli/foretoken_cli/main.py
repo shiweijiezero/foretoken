@@ -5,11 +5,16 @@
 
 from __future__ import annotations
 
-import argparse
 import sys
 import time
 from collections.abc import Sequence
 
+from foretoken_cli.arguments import (
+    BenchCommand,
+    DeployCommand,
+    StatusCommand,
+    parse_arguments,
+)
 from foretoken_cli.kubernetes import (
     Kubectl,
     ResourceProgress,
@@ -21,68 +26,12 @@ from foretoken_cli.kubernetes import (
 )
 from foretoken_cli.manifest import DeploymentError, ResourceRef
 
-_DEFAULT_TIMEOUT = "10m"
 
-
-def _parser() -> argparse.ArgumentParser:
-    """Build the stable top-level command surface owned by the CLI package."""
-    parser = argparse.ArgumentParser(
-        prog="foretoken",
-        description="Deploy, inspect, and benchmark Foretoken services",
-    )
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    deploy = subparsers.add_parser(
-        "deploy",
-        help="Apply a Kustomize deployment and wait for serving readiness",
-    )
-    deploy.add_argument(
-        "-k",
-        "--kustomize",
-        required=True,
-        metavar="PATH",
-        help="Kustomize root containing one frontend and one or more models",
-    )
-    deploy.add_argument(
-        "--timeout",
-        default=_DEFAULT_TIMEOUT,
-        help=f"maximum readiness wait (default: {_DEFAULT_TIMEOUT})",
-    )
-
-    status = subparsers.add_parser(
-        "status",
-        help="Show Foretoken service readiness",
-    )
-    source = status.add_mutually_exclusive_group(required=True)
-    source.add_argument(
-        "-k",
-        "--kustomize",
-        metavar="PATH",
-        help="inspect services rendered by this Kustomize root",
-    )
-    source.add_argument(
-        "-n",
-        "--namespace",
-        metavar="NAMESPACE",
-        help="inspect all Foretoken services in this namespace",
-    )
-    status.add_argument(
-        "--watch",
-        action="store_true",
-        help="print service state changes until interrupted",
-    )
-
-    subparsers.add_parser(
-        "bench",
-        add_help=False,
-        help="Benchmark a Foretoken or OpenAI-compatible service",
-    )
-    return parser
-
-
-def _deployment_resources(path_value: str, kubectl: Kubectl) -> tuple[ResourceRef, ...]:
+def _deployment_resources(
+    kustomize_path: str, kubectl: Kubectl
+) -> tuple[ResourceRef, ...]:
     """Render a Kustomize root and return its user-facing service resources."""
-    return load_deployment(path_value, kubectl).service_refs()
+    return load_deployment(kustomize_path, kubectl).service_refs()
 
 
 def _report_progress(elapsed: float, progress: ResourceProgress) -> None:
@@ -110,10 +59,10 @@ def _print_status(progress: tuple[ResourceProgress, ...]) -> None:
         )
 
 
-def _deploy(namespace_path: str, timeout: str) -> None:
+def _deploy(kustomize_path: str, timeout: str) -> None:
     """Apply one Kustomize deployment and wait for current-generation readiness."""
     kubectl = Kubectl()
-    deployment = load_deployment(namespace_path, kubectl)
+    deployment = load_deployment(kustomize_path, kubectl)
     timeout_seconds(timeout)
     namespace = deployment.namespace or "<current>"
     print(f"Applying {deployment.path} to namespace {namespace}")
@@ -129,12 +78,14 @@ def _deploy(namespace_path: str, timeout: str) -> None:
     print(f"Foretoken deployment is ready in {time.monotonic() - started:.1f}s")
 
 
-def _status(path_value: str | None, namespace: str | None, watch: bool) -> None:
+def _status(
+    kustomize_path: str | None, namespace: str | None, watch: bool
+) -> None:
     """Inspect a rendered deployment or all services in one namespace."""
     kubectl = Kubectl()
     deployment_resources = (
-        _deployment_resources(path_value, kubectl)
-        if path_value is not None
+        _deployment_resources(kustomize_path, kubectl)
+        if kustomize_path is not None
         else None
     )
 
@@ -161,7 +112,7 @@ def _status(path_value: str | None, namespace: str | None, watch: bool) -> None:
         time.sleep(2)
 
 
-def _bench(argv: Sequence[str]) -> None:
+def _bench(arguments: Sequence[str]) -> None:
     """Load optional benchmark dependencies only when the bench command runs."""
     try:
         from benchmarks.main import main as benchmark_main
@@ -172,23 +123,19 @@ def _bench(argv: Sequence[str]) -> None:
                 "install them with: pip install 'foretoken-cli[bench]'"
             ) from exc
         raise
-    benchmark_main(argv)
+    benchmark_main(arguments)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     """Dispatch Foretoken deployment, status, and benchmark commands."""
-    arguments = list(sys.argv[1:] if argv is None else argv)
-    if arguments and arguments[0] == "bench":
-        _bench(arguments)
-        return
-
-    parser = _parser()
-    command = parser.parse_args(arguments)
+    command = parse_arguments(sys.argv[1:] if argv is None else argv)
     try:
-        if command.command == "deploy":
-            _deploy(command.kustomize, command.timeout)
-        elif command.command == "status":
-            _status(command.kustomize, command.namespace, command.watch)
+        if isinstance(command, DeployCommand):
+            _deploy(command.kustomize_path, command.timeout)
+        elif isinstance(command, StatusCommand):
+            _status(command.kustomize_path, command.namespace, command.watch)
+        elif isinstance(command, BenchCommand):
+            _bench(command.arguments)
     except DeploymentError as exc:
         raise SystemExit(str(exc)) from exc
     except KeyboardInterrupt:

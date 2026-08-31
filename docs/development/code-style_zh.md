@@ -90,7 +90,8 @@ YAML 应便于阅读和修改：
 
 - **Rust 数据面：**运行 `make verify-data-plane`，检查 Foretoken 自有工作区包的格式、编译、测试和 Clippy。
 - **Go 控制面：**运行 `make -C control-plane verify`。生成代码和 CRD 通过 Makefile 目标重新生成，不单独手工修改。
-- **Python 基准测试：**遵循 `benchmarks/` 中现有的包结构和类型标注风格，运行相关测试，并实际执行受影响的 CLI 或运行流程。
+- **Python CLI：**公共参数定义和解析应与命令执行分离，跨越该边界时返回明确的命令类型，不传递 `argparse.Namespace`；应在 Kubernetes 环境中实际执行受影响的已安装命令。
+- **Python 基准测试：**遵循 `benchmarks/` 中现有的包结构和类型标注风格，运行相关测试，并实际执行受影响的评测命令或运行流程。
 - **Helm 与 Kubernetes YAML：**运行 Helm lint，并渲染受影响的模板。把生成资源、values schema、选择器、端口、命名空间和网络访问作为一条部署契约验证。
 - **全仓库文件：**运行 `pre-commit run --all-files`，检查文件规范、结构化格式、合并冲突、密钥和 GitHub Actions。
 

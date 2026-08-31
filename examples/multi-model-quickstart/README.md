@@ -26,7 +26,7 @@ The Qwen service evaluates its queue every five seconds:
 Install the Foretoken platform first, then install the CLI and deploy from the repository root:
 
 ```bash
-pip install .
+pip install -e .
 foretoken deploy -k examples/multi-model-quickstart
 ```
 

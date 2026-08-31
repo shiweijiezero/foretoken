@@ -114,7 +114,7 @@ helm upgrade --install foretoken \
 先在仓库根目录安装 Foretoken CLI。`examples/quickstart` 提供一套可直接使用的前端服务和单模型配置。如需运行双模型并验证基于队列的自动扩缩容，请参阅[多模型快速开始](examples/multi-model-quickstart/README_zh.md)。
 
 ```bash
-pip install .
+pip install -e .
 foretoken deploy -k examples/quickstart
 ```
 
@@ -165,7 +165,7 @@ curl --fail-with-body --no-buffer \
 在仓库根目录安装可选的评测依赖：
 
 ```bash
-pip install '.[bench]'
+pip install -e '.[bench]'
 ```
 
 以下命令会复用已经运行的快速开始服务；服务尚未部署时，CLI 会创建配置中的资源，并在评测结束后只清理本次创建的资源。未指定 `--prompt` 或 `--dataset` 时，使用一个简短的内置提示词：

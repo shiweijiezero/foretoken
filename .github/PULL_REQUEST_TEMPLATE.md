@@ -26,8 +26,9 @@ Mention replaced or removed paths when relevant.
 
 <!-- Optional. Keep this section when the change was validated by commands or real execution.
 List what actually ran and its result. State important skipped checks when their absence
-affects review. Do not write only "CI" or claim hardware, Kubernetes, or performance
-validation that did not occur. -->
+affects review. For CLI changes, include installation, the affected help surface, and the
+real command path exercised. Do not write only "CI" or claim hardware, Kubernetes, or
+performance validation that did not occur. -->
 
 - `command` — result
 

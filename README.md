@@ -114,7 +114,7 @@ helm upgrade --install foretoken \
 Install the Foretoken CLI from the repository root. `examples/quickstart` provides a ready-to-use frontend and single-model configuration. For two models with queue-based autoscaling, see [Multi-Model Quick Start](examples/multi-model-quickstart/README.md).
 
 ```bash
-pip install .
+pip install -e .
 foretoken deploy -k examples/quickstart
 ```
 
@@ -165,7 +165,7 @@ When reusing a platform Gateway, use that Gateway's configured hostname, port, a
 Install the optional benchmark dependencies from the repository root:
 
 ```bash
-pip install '.[bench]'
+pip install -e '.[bench]'
 ```
 
 The deployment command reuses an existing Quick Start service. If the service is absent, it deploys the configuration and removes only the resources it created after the benchmark. When neither `--prompt` nor `--dataset` is specified, it uses a short built-in prompt:

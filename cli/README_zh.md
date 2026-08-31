@@ -12,7 +12,7 @@ Foretoken CLI 通过统一的 `foretoken` 入口部署 Kustomize 配置、查看
 从仓库根目录安装部署和状态命令：
 
 ```bash
-pip install .
+pip install -e .
 ```
 
 部署一个 Kustomize 根目录中渲染出的前端服务和全部模型：
@@ -39,7 +39,7 @@ foretoken status -n foretoken-multi-model-demo --watch
 评测能力使用可选依赖：
 
 ```bash
-pip install '.[bench]'
+pip install -e '.[bench]'
 foretoken bench --deploy examples/quickstart
 ```
 

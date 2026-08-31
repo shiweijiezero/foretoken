@@ -26,7 +26,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 <!-- 可选。改动经过命令或真实执行验证时保留本节。
 列出实际执行的内容及其结果。重要检查未执行且会影响评审时，应说明原因。
-不要只写“CI”，也不要声称完成了实际没有执行的硬件、Kubernetes 或性能验证。 -->
+CLI 改动应包含安装、受影响的帮助界面和实际执行的命令路径。不要只写“CI”，
+也不要声称完成了实际没有执行的硬件、Kubernetes 或性能验证。 -->
 
 - `命令` — 结果
 
