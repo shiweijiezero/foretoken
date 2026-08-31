@@ -9,10 +9,12 @@ English | [简体中文](README_zh.md)
 
 The Foretoken CLI deploys Kustomize configurations, reports serving readiness, resolves frontend endpoints, and exposes the benchmark command through one `foretoken` entry point.
 
-Install the CLI from the repository root:
+Install the Foretoken CLI with pip or uv:
 
 ```bash
 pip install -e .
+# or
+uv pip install -e .
 ```
 
 Deploy one frontend and all models rendered by a Kustomize root:
@@ -22,6 +24,14 @@ foretoken deploy examples/multi-model-quickstart
 ```
 
 The command applies the configuration, reports each `FrontendService` and `ModelService` state when it changes, and exits when every resource is Ready for its current generation. Change the default ten-minute deadline with `--timeout`.
+
+Delete the resources rendered by the same configuration:
+
+```bash
+foretoken delete examples/multi-model-quickstart
+```
+
+The command waits for deletion and ignores resources that are already absent.
 
 Inspect the same deployment without applying it:
 
@@ -55,6 +65,9 @@ Benchmark support uses optional dependencies:
 
 ```bash
 pip install -e '.[bench]'
+# or
+uv pip install -e '.[bench]'
+
 foretoken bench examples/quickstart
 ```
 

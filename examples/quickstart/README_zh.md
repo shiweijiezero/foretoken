@@ -45,6 +45,5 @@ printf '\n'
 ## 清理
 
 ```bash
-kubectl delete --wait=true --timeout=10m \
-  -k examples/quickstart
+foretoken delete examples/quickstart
 ```

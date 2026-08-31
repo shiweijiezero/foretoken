@@ -181,8 +181,7 @@ foretoken bench \
 
 ```bash
 # 删除服务配置，停止服务并清理所辖资源：
-kubectl delete --wait=true --timeout=10m \
-  -k examples/quickstart
+foretoken delete examples/quickstart
 
 # 服务资源清理完成后，再卸载 Foretoken：
 helm uninstall foretoken \

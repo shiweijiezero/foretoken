@@ -66,16 +66,7 @@ def _delete_objects(
     )
     for group in (namespaced, namespaces):
         if group:
-            kubectl.run(
-                [
-                    "delete",
-                    "--filename=-",
-                    "--ignore-not-found",
-                    "--wait=true",
-                    f"--timeout={timeout}",
-                ],
-                input_text=yaml.safe_dump_all(group),
-            )
+            kubectl.delete(yaml.safe_dump_all(group), timeout)
 
 
 @contextmanager

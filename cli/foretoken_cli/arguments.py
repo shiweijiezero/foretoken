@@ -19,6 +19,14 @@ class DeployCommand:
 
 
 @dataclass(frozen=True)
+class DeleteCommand:
+    """Delete the resources rendered by one Kustomize deployment."""
+
+    kustomize_path: str
+    timeout: str
+
+
+@dataclass(frozen=True)
 class StatusCommand:
     """Inspect services selected by Kustomize configuration or namespace."""
 
@@ -43,7 +51,9 @@ class BenchCommand:
     arguments: tuple[str, ...]
 
 
-ParsedCommand = DeployCommand | StatusCommand | EndpointCommand | BenchCommand
+ParsedCommand = (
+    DeployCommand | DeleteCommand | StatusCommand | EndpointCommand | BenchCommand
+)
 
 
 def _add_wait_timeout_argument(
@@ -75,6 +85,17 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Kustomize root containing one frontend and one or more models",
     )
     _add_wait_timeout_argument(deploy, "serving readiness")
+
+    delete = subparsers.add_parser(
+        "delete",
+        help="Delete the resources rendered by a Kustomize deployment",
+    )
+    delete.add_argument(
+        "kustomize_path",
+        metavar="PATH",
+        help="Kustomize root whose resources should be deleted",
+    )
+    _add_wait_timeout_argument(delete, "resource deletion")
 
     status = subparsers.add_parser(
         "status",
@@ -132,6 +153,8 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
     parsed_args = parser.parse_args(arguments)
     if parsed_args.command == "deploy":
         return DeployCommand(parsed_args.kustomize_path, parsed_args.timeout)
+    if parsed_args.command == "delete":
+        return DeleteCommand(parsed_args.kustomize_path, parsed_args.timeout)
     if parsed_args.command == "status":
         if bool(parsed_args.kustomize_path) == bool(parsed_args.namespace):
             parser.error("status requires either PATH or --namespace")

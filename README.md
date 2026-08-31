@@ -182,8 +182,7 @@ foretoken bench \
 Delete the serving configuration so the Operator can stop the service and clean up its resources:
 
 ```bash
-kubectl delete --wait=true --timeout=10m \
-  -k examples/quickstart
+foretoken delete examples/quickstart
 ```
 
 After the serving resources are gone, uninstall Foretoken:

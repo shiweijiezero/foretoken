@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 
 from foretoken_cli.arguments import (
     BenchCommand,
+    DeleteCommand,
     DeployCommand,
     EndpointCommand,
     StatusCommand,
@@ -81,6 +82,17 @@ def _deploy(kustomize_path: str, timeout: str) -> None:
     print(f"Foretoken deployment is ready in {time.monotonic() - started:.1f}s")
 
 
+def _delete(kustomize_path: str, timeout: str) -> None:
+    """Delete one rendered deployment and wait for resource termination."""
+    kubectl = Kubectl()
+    deployment = load_deployment(kustomize_path, kubectl)
+    timeout_seconds(timeout)
+    namespace = deployment.namespace or "<current>"
+    print(f"Deleting {deployment.path} from namespace {namespace}")
+    kubectl.delete(deployment.rendered, timeout)
+    print("Foretoken deployment deleted")
+
+
 def _status(
     kustomize_path: str | None, namespace: str | None, watch: bool
 ) -> None:
@@ -147,6 +159,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         if isinstance(command, DeployCommand):
             _deploy(command.kustomize_path, command.timeout)
+        elif isinstance(command, DeleteCommand):
+            _delete(command.kustomize_path, command.timeout)
         elif isinstance(command, StatusCommand):
             _status(command.kustomize_path, command.namespace, command.watch)
         elif isinstance(command, EndpointCommand):

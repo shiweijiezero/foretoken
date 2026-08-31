@@ -85,6 +85,19 @@ class Kubectl:
             input_text=rendered,
         )
 
+    def delete(self, rendered: str, timeout: str) -> None:
+        """Delete one rendered payload and wait for its resources to terminate."""
+        self.run(
+            [
+                "delete",
+                "--filename=-",
+                "--ignore-not-found",
+                "--wait=true",
+                f"--timeout={timeout}",
+            ],
+            input_text=rendered,
+        )
+
     def exists(self, kind: str, name: str, namespace: str = "") -> bool:
         """Return whether a named Kubernetes resource currently exists."""
         args = ["get", kind, name, "--ignore-not-found", "-o", "name"]

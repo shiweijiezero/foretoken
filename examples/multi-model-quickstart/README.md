@@ -72,6 +72,5 @@ printf '\n'
 ## Clean up
 
 ```bash
-kubectl delete --wait=true --timeout=10m \
-  -k examples/multi-model-quickstart
+foretoken delete examples/multi-model-quickstart
 ```
