@@ -17,6 +17,12 @@ type ResourceQuantity string
 // +kubebuilder:validation:XValidation:rule="duration(self) > duration('0s')",message="must be a positive duration"
 type Duration string
 
+// NonNegativeDuration is a Go-style duration that may be zero.
+// +kubebuilder:validation:MinLength=2
+// +kubebuilder:validation:Pattern="^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$"
+// +kubebuilder:validation:XValidation:rule="duration(self) >= duration('0s')",message="must be a non-negative duration"
+type NonNegativeDuration string
+
 // BackendArg is one long-form CLI argument passed to the inference engine.
 // The vLLM adapter accepts max-model-len, dtype, quantization, gpu-memory-utilization,
 // max-num-seqs, max-num-batched-tokens, limit-mm-per-prompt, enforce-eager, and

@@ -41,15 +41,20 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
     ) -> Vec<RouteScore>;
 }
 
-/// Returns a candidate's current running-request count as a score-safe integer.
+/// Returns the best available view of a candidate's current engine request load.
 ///
-/// Built-in load scorers consume this derived value; the candidate retains its telemetry snapshot.
+/// Model-server admission and vLLM scheduler gauges overlap, so the load is their maximum rather
+/// than their sum. Built-in load scorers consume this derived value; the candidate retains its
+/// telemetry snapshot.
 pub(crate) fn load(candidate: &RouteCandidate) -> i64 {
-    candidate
-        .route_target_stats
-        .as_ref()
-        .and_then(|stats| i64::try_from(stats.running_requests).ok())
-        .unwrap_or(0)
+    candidate.route_target_stats.as_ref().map_or(0, |stats| {
+        let scheduler_requests = stats
+            .scheduler_running_requests
+            .unwrap_or(0)
+            .saturating_add(stats.scheduler_waiting_requests.unwrap_or(0));
+        let requests = stats.running_requests.max(scheduler_requests);
+        i64::try_from(requests).unwrap_or(i64::MAX)
+    })
 }
 
 /// Returns the least model-server route load among Decode eligible route options in each E/P/D route set.

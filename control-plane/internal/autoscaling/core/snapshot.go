@@ -40,6 +40,7 @@ type TargetID struct {
 	Kind             TargetKind
 	Role             TargetRole
 }
+
 type ObservationState string
 
 const (
@@ -55,12 +56,14 @@ type ObservationWindow struct {
 	Samples     int32
 	Complete    bool
 }
+
 type DemandObservation struct {
 	State          ObservationState
 	Window         ObservationWindow
 	QueueRequests  int64
 	ActiveRequests int64
 }
+
 type CapacityState struct {
 	BaselineGroups     int32
 	RequestedGroups    int32
@@ -73,14 +76,13 @@ type CapacityState struct {
 	FailedGroups       int32
 	Transitioning      bool
 }
+
 type CapacityLimits struct {
-	MinGroups          int32
-	MaxGroups          int32
-	MaxScaleUpGroups   int32
-	MaxScaleDownGroups int32
+	MinGroups int32
+	MaxGroups int32
 }
+
 type ScalingSnapshot struct {
-	ID          string
 	Target      TargetID
 	EvaluatedAt time.Time
 	Capacity    CapacityState

@@ -16,53 +16,50 @@ type ScalingDecision struct {
 	Message             string
 	Trigger             TriggerDecision
 }
+
 type Resolver struct{ AllowDuringTransition bool }
 
-// Hold preserves requested capacity for a non-firing trigger while enforcing hard bounds.
-func (resolver Resolver) Hold(snapshot ScalingSnapshot, trigger TriggerDecision, decisionName, adjustmentName string, adjustment ScalingAdjustment) (ScalingDecision, error) {
-	if err := validateSnapshot(snapshot); err != nil {
-		return ScalingDecision{}, err
-	}
-	if trigger.Disposition != TriggerHold && trigger.Disposition != TriggerInsufficientData {
-		return ScalingDecision{}, fmt.Errorf("trigger decision for target %q cannot hold capacity with disposition %q", snapshot.Target.Name, trigger.Disposition)
-	}
-	current, applied := snapshot.Capacity.RequestedGroups, snapshot.Capacity.RequestedGroups
-	constraint, message := DesiredCapacityReason(""), trigger.Message
-	if current < snapshot.Limits.MinGroups {
-		applied, constraint, message = snapshot.Limits.MinGroups, DesiredCapacityReasonAtMinimum, adjustment.Message
-	} else if current > snapshot.Limits.MaxGroups {
-		applied, constraint, message = snapshot.Limits.MaxGroups, DesiredCapacityReasonAtMaximum, adjustment.Message
-	}
-	if applied != current && adjustment.AdjustedGroups != applied {
-		return ScalingDecision{}, fmt.Errorf("adjustment algorithm %q returned desired groups %d for target %q instead of hard bound %d", adjustmentName, adjustment.AdjustedGroups, snapshot.Target.Name, applied)
-	}
-	return ScalingDecision{Target: snapshot.Target, DecisionAlgorithm: decisionName, AdjustmentAlgorithm: adjustmentName, Adjustment: adjustment, AppliedGroups: applied, Direction: direction(current, applied), Constraint: constraint, Message: message, Trigger: trigger}, nil
-}
-
-// Resolve applies an adjusted decision subject to bounds and in-progress transitions.
+// Resolve applies an adjusted recommendation subject to hard bounds and in-progress lifecycle transitions.
 func (resolver Resolver) Resolve(snapshot ScalingSnapshot, decisionName string, desiredCapacity DesiredCapacity, adjustmentName string, adjusted ScalingAdjustment) (ScalingDecision, error) {
 	if err := validateSnapshot(snapshot); err != nil {
 		return ScalingDecision{}, err
 	}
-	current, desired := snapshot.Capacity.RequestedGroups, snapshot.Capacity.RequestedGroups
-	message := desiredCapacity.Message
-	switch desiredCapacity.Disposition {
-	case DesiredCapacityApply:
-		desired, message = adjusted.AdjustedGroups, adjusted.Message
-	case DesiredCapacityHold, DesiredCapacityInsufficientData:
-	default:
+	if desiredCapacity.Disposition != DesiredCapacityApply && desiredCapacity.Disposition != DesiredCapacityInsufficientData {
 		return ScalingDecision{}, fmt.Errorf("decision algorithm %q returned invalid disposition %q for target %q", decisionName, desiredCapacity.Disposition, snapshot.Target.Name)
 	}
-	if desiredCapacity.Disposition == DesiredCapacityApply && (desired < snapshot.Limits.MinGroups || desired > snapshot.Limits.MaxGroups) {
-		return ScalingDecision{}, fmt.Errorf("adjustment algorithm %q returned desired groups %d for target %q outside [%d, %d]", adjustmentName, desired, snapshot.Target.Name, snapshot.Limits.MinGroups, snapshot.Limits.MaxGroups)
+
+	current := snapshot.Capacity.RequestedGroups
+	applied := current
+	message := desiredCapacity.Message
+	if desiredCapacity.Disposition == DesiredCapacityApply {
+		applied, message = adjusted.AdjustedGroups, adjusted.Message
 	}
 	constraint := DesiredCapacityReason("")
-	// Freeze ordinary changes while replacement capacity is still converging, but allow
-	// zero-to-positive bootstrap so a scaled-to-zero target can re-enter service.
-	if snapshot.Capacity.Transitioning && !resolver.AllowDuringTransition && !(current == 0 && desired > 0) && desired != current {
-		desired, constraint, message = current, DesiredCapacityReasonTransitionInProgress, "capacity transition is in progress; holding current capacity"
+	if current < snapshot.Limits.MinGroups {
+		applied, constraint, message = snapshot.Limits.MinGroups, DesiredCapacityReasonAtMinimum, adjusted.Message
+	} else if current > snapshot.Limits.MaxGroups {
+		applied, constraint, message = snapshot.Limits.MaxGroups, DesiredCapacityReasonAtMaximum, adjusted.Message
 	}
-	return ScalingDecision{Target: snapshot.Target, DecisionAlgorithm: decisionName, AdjustmentAlgorithm: adjustmentName, DesiredCapacity: desiredCapacity, Adjustment: adjusted, AppliedGroups: desired, Direction: direction(current, desired), Constraint: constraint, Message: message}, nil
+	if applied < snapshot.Limits.MinGroups || applied > snapshot.Limits.MaxGroups {
+		return ScalingDecision{}, fmt.Errorf("adjustment algorithm %q returned groups %d for target %q outside [%d, %d]", adjustmentName, applied, snapshot.Target.Name, snapshot.Limits.MinGroups, snapshot.Limits.MaxGroups)
+	}
+	if constraint != "" && adjusted.AdjustedGroups != applied {
+		return ScalingDecision{}, fmt.Errorf("adjustment algorithm %q returned groups %d for target %q instead of hard bound %d", adjustmentName, adjusted.AdjustedGroups, snapshot.Target.Name, applied)
+	}
+	if constraint == "" && snapshot.Capacity.Transitioning && !resolver.AllowDuringTransition && applied != current {
+		applied, constraint, message = current, DesiredCapacityReasonTransitionInProgress, "capacity transition is in progress; holding current capacity"
+	}
+	return ScalingDecision{
+		Target:              snapshot.Target,
+		DecisionAlgorithm:   decisionName,
+		AdjustmentAlgorithm: adjustmentName,
+		DesiredCapacity:     desiredCapacity,
+		Adjustment:          adjusted,
+		AppliedGroups:       applied,
+		Direction:           direction(current, applied),
+		Constraint:          constraint,
+		Message:             message,
+	}, nil
 }
 
 // validateSnapshot verifies the capacity bounds required by the resolution stage.
@@ -75,6 +72,7 @@ func validateSnapshot(snapshot ScalingSnapshot) error {
 	}
 	return nil
 }
+
 func direction(current, desired int32) Direction {
 	if desired > current {
 		return DirectionUp

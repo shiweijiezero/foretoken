@@ -74,7 +74,9 @@ async fn logical_only_snapshot_publishes_a_ready_scale_from_zero_runtime() {
             let telemetry = foretoken_metrics::autoscaling_telemetry();
             if ["pool-a", "pool-b"].into_iter().all(|target_id| {
                 telemetry.targets.iter().any(|target| {
-                    target.target.target_id == target_id && target.queued_requests == 1
+                    target.target.target_id == target_id
+                        && target.runtime_queued_requests == 1
+                        && target.dispatch_queued_requests == 0
                 })
             }) {
                 break;
@@ -90,9 +92,10 @@ async fn logical_only_snapshot_publishes_a_ready_scale_from_zero_runtime() {
     }
     let telemetry = foretoken_metrics::autoscaling_telemetry();
     assert!(["pool-a", "pool-b"].into_iter().all(|target_id| {
-        telemetry
-            .targets
-            .iter()
-            .any(|target| target.target.target_id == target_id && target.queued_requests == 0)
+        telemetry.targets.iter().any(|target| {
+            target.target.target_id == target_id
+                && target.runtime_queued_requests == 0
+                && target.dispatch_queued_requests == 0
+        })
     }));
 }

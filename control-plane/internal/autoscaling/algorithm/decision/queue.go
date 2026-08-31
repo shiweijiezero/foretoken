@@ -3,70 +3,56 @@
 package decision
 
 import (
-	"context"
 	"fmt"
+	"math"
+
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 )
 
-type Queue struct{ TargetQueuePerRoutableGroup int64 }
+type Queue struct{ TargetAverageQueuedRequests int64 }
 
 // Name identifies the queue decision algorithm for registry consumers.
 func (Queue) Name() string { return "queue" }
 
-// CalculateDesiredCapacity adjusts one group when queue pressure exceeds routable capacity or becomes idle.
-func (queue Queue) CalculateDesiredCapacity(_ context.Context, s core.ScalingSnapshot) (core.DesiredCapacity, error) {
-	current := s.Capacity.RequestedGroups
-	switch s.Observation.State {
-	case core.ObservationUnavailable:
-		return rec(current, core.DesiredCapacityInsufficientData, core.DesiredCapacityReasonObservationUnavailable, "demand observations are unavailable"), nil
-	case core.ObservationStale:
-		return rec(current, core.DesiredCapacityInsufficientData, core.DesiredCapacityReasonObservationStale, "demand observations are stale"), nil
-	case core.ObservationFresh:
-		if !s.Observation.Window.Complete {
-			return rec(current, core.DesiredCapacityInsufficientData, core.DesiredCapacityReasonObservationIncomplete, "demand observation window is incomplete"), nil
+// CalculateDesiredCapacity converts aggregate waiting requests into an HPA-style average-value recommendation.
+func (queue Queue) CalculateDesiredCapacity(snapshot core.ScalingSnapshot) (core.DesiredCapacity, error) {
+	current := snapshot.Capacity.RequestedGroups
+	requests := snapshot.Observation.QueueRequests
+	if requests > 0 {
+		desired := divideRoundUp(requests, queue.TargetAverageQueuedRequests)
+		if desired > current {
+			return recommendation(desired, core.DesiredCapacityApply, core.DesiredCapacityReasonQueuePressure, "queued requests exceed target average capacity"), nil
 		}
-	default:
-		return rec(current, core.DesiredCapacityInsufficientData, core.DesiredCapacityReasonObservationUnavailable, "demand observations are unavailable"), nil
+		return recommendation(desired, core.DesiredCapacityApply, core.DesiredCapacityReasonQueueBelowTarget, "queued requests require lower average-value capacity"), nil
 	}
-	supply := s.Capacity.RoutableGroups
-	if supply < 1 {
-		supply = 1
+	if snapshot.Observation.ActiveRequests == 0 {
+		return recommendation(0, core.DesiredCapacityApply, core.DesiredCapacityReasonIdle, "the target is idle"), nil
 	}
-	if exceeds(s.Observation.QueueRequests, queue.TargetQueuePerRoutableGroup, supply) {
-		if current < s.Limits.MaxGroups {
-			return rec(current+1, core.DesiredCapacityApply, core.DesiredCapacityReasonQueuePressure, "queue pressure exceeds routable capacity"), nil
-		}
-		return rec(current, core.DesiredCapacityHold, core.DesiredCapacityReasonAtMaximum, "queue pressure is high but the target is at its maximum"), nil
-	}
-	if s.Observation.QueueRequests == 0 && s.Observation.ActiveRequests == 0 {
-		if current > s.Limits.MinGroups {
-			return rec(current-1, core.DesiredCapacityApply, core.DesiredCapacityReasonIdle, "the target is idle"), nil
-		}
-		return rec(current, core.DesiredCapacityHold, core.DesiredCapacityReasonAtMinimum, "the target is idle but already at its minimum"), nil
-	}
-	return rec(current, core.DesiredCapacityHold, core.DesiredCapacityReasonStable, "current capacity matches observed demand"), nil
+	return recommendation(current, core.DesiredCapacityApply, core.DesiredCapacityReasonStable, "active requests keep current capacity"), nil
 }
-func exceeds(requests, target int64, supply int32) bool {
-	if requests <= 0 {
-		return false
+
+func divideRoundUp(value, divisor int64) int32 {
+	groups := value / divisor
+	if value%divisor != 0 {
+		groups++
 	}
-	if target <= 0 {
-		return true
+	if groups > math.MaxInt32 {
+		return math.MaxInt32
 	}
-	groups := int64(supply)
-	q, r := requests/groups, requests%groups
-	return q > target || q == target && r > 0
+	return int32(groups)
 }
-func rec(desired int32, d core.DesiredCapacityDisposition, r core.DesiredCapacityReason, m string) core.DesiredCapacity {
-	return core.DesiredCapacity{Disposition: d, Groups: desired, Reason: r, Message: m}
+
+func recommendation(groups int32, disposition core.DesiredCapacityDisposition, reason core.DesiredCapacityReason, message string) core.DesiredCapacity {
+	return core.DesiredCapacity{Disposition: disposition, Groups: groups, Reason: reason, Message: message}
 }
+
 func init() {
 	if err := algorithm.RegisterDecisionAlgorithm("queue", func(config core.DecisionConfig) (core.DecisionAlgorithm, error) {
-		if config.TargetQueuePerRoutableGroup < 0 {
-			return nil, fmt.Errorf("autoscaling targetQueuePerRoutableGroup must be non-negative")
+		if config.TargetAverageQueuedRequests <= 0 {
+			return nil, fmt.Errorf("autoscaling targetAverageQueuedRequests must be positive")
 		}
-		return Queue{config.TargetQueuePerRoutableGroup}, nil
+		return Queue{TargetAverageQueuedRequests: config.TargetAverageQueuedRequests}, nil
 	}); err != nil {
 		panic(err)
 	}

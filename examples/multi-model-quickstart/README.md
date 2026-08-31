@@ -16,7 +16,7 @@ Each replica uses one GPU, so the cluster needs two to four schedulable GPUs. Fo
 
 ## Queue autoscaling
 
-The Qwen service evaluates its queue every five seconds. It calculates desired capacity from one average waiting request per Group, adds at most one ModelGroup per evaluation, and scales from one to three Groups. Scale down begins only after the recommendation has remained lower for five minutes.
+The Qwen service evaluates its queue every five seconds. It calculates desired capacity from one average waiting request per Group and changes at most one ModelGroup per evaluation, up to three. A lower recommendation must remain stable for five minutes before scale down begins.
 
 ## Deploy
 

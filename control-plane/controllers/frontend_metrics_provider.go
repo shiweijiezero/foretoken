@@ -20,13 +20,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const frontendAutoscalingTelemetryVersion = 1
+const frontendAutoscalingTelemetryVersion = 2
 
 type frontendAutoscalingTarget struct {
-	ServiceUID     string `json:"service_uid"`
-	TargetKind     string `json:"target_kind"`
-	TargetID       string `json:"target_id"`
-	QueuedRequests uint64 `json:"queued_requests"`
+	ServiceUID             string `json:"service_uid"`
+	TargetKind             string `json:"target_kind"`
+	TargetID               string `json:"target_id"`
+	RuntimeQueuedRequests  uint64 `json:"runtime_queued_requests"`
+	DispatchQueuedRequests uint64 `json:"dispatch_queued_requests"`
 }
 
 type frontendAutoscalingTelemetry struct {
@@ -71,18 +72,18 @@ func (provider *HTTPPoolMetricsProvider) Observation(ctx context.Context, target
 	startedAt := provider.now()
 	collectionCtx, cancel := context.WithTimeout(ctx, provider.collectionTimeout)
 	defer cancel()
-	var queuedRequests, activeRequests uint64
+	var runtimeQueuedRequests, dispatchQueuedRequests, schedulerWaitingRequests, activeRequests uint64
 	var queueSamples, activeSamples int64
-	var queueObservedAt time.Time
+	var queueObservedAt, activeObservedAt time.Time
 	group, collectionCtx := errgroup.WithContext(collectionCtx)
 	group.Go(func() error {
 		var err error
-		queuedRequests, queueSamples, queueObservedAt, err = provider.frontendQueue(collectionCtx, target)
+		runtimeQueuedRequests, dispatchQueuedRequests, queueSamples, queueObservedAt, err = provider.frontendQueue(collectionCtx, target)
 		return err
 	})
 	group.Go(func() error {
 		var err error
-		activeRequests, activeSamples, err = provider.activeRequests(collectionCtx, target)
+		schedulerWaitingRequests, activeRequests, activeSamples, activeObservedAt, err = provider.modelDemand(collectionCtx, target)
 		return err
 	})
 	if err := group.Wait(); err != nil {
@@ -93,29 +94,39 @@ func (provider *HTTPPoolMetricsProvider) Observation(ctx context.Context, target
 	if samples > math.MaxInt32 {
 		samples = math.MaxInt32
 	}
+	observedAt := queueObservedAt
+	if !activeObservedAt.IsZero() && activeObservedAt.Before(observedAt) {
+		observedAt = activeObservedAt
+	}
 	return core.DemandObservation{
 		State: core.ObservationFresh,
 		Window: core.ObservationWindow{
 			Start:       startedAt,
-			End:         queueObservedAt,
+			End:         observedAt,
 			CollectedAt: collectedAt,
 			Samples:     int32(samples),
 			Complete:    true,
 		},
-		QueueRequests:  saturatingInt64(queuedRequests),
+		// Runtime preparation is independent demand. Backend dispatch and scheduler queues can
+		// observe the same request at adjacent stages, so count only their larger aggregate.
+		QueueRequests: saturatingInt64(saturatingAdd(
+			runtimeQueuedRequests,
+			max(dispatchQueuedRequests, schedulerWaitingRequests),
+		)),
 		ActiveRequests: saturatingInt64(activeRequests),
 	}, nil
 }
 
 // frontendQueue sums target-attributed queue samples from ready frontend Pods.
-func (provider *HTTPPoolMetricsProvider) frontendQueue(ctx context.Context, target core.TargetID) (uint64, int64, time.Time, error) {
+func (provider *HTTPPoolMetricsProvider) frontendQueue(ctx context.Context, target core.TargetID) (uint64, uint64, int64, time.Time, error) {
 	var pods corev1.PodList
 	if err := provider.client.List(ctx, &pods, client.InNamespace(target.ServiceNamespace)); err != nil {
-		return 0, 0, time.Time{}, fmt.Errorf("list frontend Pods: %w", err)
+		return 0, 0, 0, time.Time{}, fmt.Errorf("list frontend Pods: %w", err)
 	}
 	type queueSample struct {
-		queuedRequests uint64
-		observedAt     time.Time
+		runtimeQueuedRequests  uint64
+		dispatchQueuedRequests uint64
+		observedAt             time.Time
 	}
 	results := make(chan queueSample, len(pods.Items))
 	group, groupCtx := errgroup.WithContext(ctx)
@@ -127,7 +138,7 @@ func (provider *HTTPPoolMetricsProvider) frontendQueue(ctx context.Context, targ
 		}
 		endpoint, err := frontendPodEndpoint(pod)
 		if err != nil {
-			return 0, 0, time.Time{}, err
+			return 0, 0, 0, time.Time{}, err
 		}
 		name := pod.Name
 		group.Go(func() error {
@@ -135,45 +146,50 @@ func (provider *HTTPPoolMetricsProvider) frontendQueue(ctx context.Context, targ
 			if err != nil {
 				return fmt.Errorf("frontend Pod %q autoscaling telemetry: %w", name, err)
 			}
-			queuedRequests, _ := telemetryTarget(telemetry.Targets, target)
-			results <- queueSample{queuedRequests: queuedRequests, observedAt: time.UnixMilli(int64(telemetry.CollectedAtUnixMS))}
+			value, _ := telemetryTarget(telemetry.Targets, target)
+			results <- queueSample{
+				runtimeQueuedRequests:  value.RuntimeQueuedRequests,
+				dispatchQueuedRequests: value.DispatchQueuedRequests,
+				observedAt:             time.UnixMilli(int64(telemetry.CollectedAtUnixMS)),
+			}
 			return nil
 		})
 	}
 	if err := group.Wait(); err != nil {
-		return 0, 0, time.Time{}, err
+		return 0, 0, 0, time.Time{}, err
 	}
 	close(results)
-	var total uint64
+	var runtimeQueuedRequests, dispatchQueuedRequests uint64
 	var samples int64
 	var oldest time.Time
 	for sample := range results {
-		total = saturatingAdd(total, sample.queuedRequests)
+		runtimeQueuedRequests = saturatingAdd(runtimeQueuedRequests, sample.runtimeQueuedRequests)
+		dispatchQueuedRequests = saturatingAdd(dispatchQueuedRequests, sample.dispatchQueuedRequests)
 		samples++
 		if oldest.IsZero() || sample.observedAt.Before(oldest) {
 			oldest = sample.observedAt
 		}
 	}
 	if samples == 0 {
-		return 0, 0, time.Time{}, fmt.Errorf("no ready frontend Pods")
+		return 0, 0, 0, time.Time{}, fmt.Errorf("no ready frontend Pods")
 	}
-	return total, samples, oldest, nil
+	return runtimeQueuedRequests, dispatchQueuedRequests, samples, oldest, nil
 }
 
-// activeRequests sums active requests from routable model servers for one target.
-func (provider *HTTPPoolMetricsProvider) activeRequests(ctx context.Context, target core.TargetID) (uint64, int64, error) {
+// modelDemand sums scheduler backlog and admitted requests from routable model servers for one target.
+func (provider *HTTPPoolMetricsProvider) modelDemand(ctx context.Context, target core.TargetID) (uint64, uint64, int64, time.Time, error) {
 	service := new(inferencev1alpha1.ModelService)
 	if err := provider.client.Get(ctx, client.ObjectKey{Namespace: target.ServiceNamespace, Name: target.ServiceName}, service); err != nil {
-		return 0, 0, fmt.Errorf("get ModelService for telemetry: %w", err)
+		return 0, 0, 0, time.Time{}, fmt.Errorf("get ModelService for telemetry: %w", err)
 	}
 	if string(service.UID) != target.ServiceUID {
-		return 0, 0, fmt.Errorf("ModelService UID changed for target %q", target.Name)
+		return 0, 0, 0, time.Time{}, fmt.Errorf("ModelService UID changed for target %q", target.Name)
 	}
 	// Demand follows only the service-selected serving revision; preparing and draining
 	// cohorts must not influence scaling. E/P/D aggregates all three stages as one target.
 	var pools inferencev1alpha1.ModelPoolList
 	if err := provider.client.List(ctx, &pools, client.InNamespace(target.ServiceNamespace)); err != nil {
-		return 0, 0, fmt.Errorf("list ModelPools for telemetry: %w", err)
+		return 0, 0, 0, time.Time{}, fmt.Errorf("list ModelPools for telemetry: %w", err)
 	}
 	selectedPools := make(map[string]*inferencev1alpha1.ModelPool)
 	for index := range pools.Items {
@@ -190,14 +206,19 @@ func (provider *HTTPPoolMetricsProvider) activeRequests(ctx context.Context, tar
 		selectedPools[string(pool.UID)] = pool
 	}
 	if len(selectedPools) == 0 {
-		return 0, 0, fmt.Errorf("no ModelPools found for target %q", target.Name)
+		return 0, 0, 0, time.Time{}, fmt.Errorf("no ModelPools found for target %q", target.Name)
 	}
 
 	var groups inferencev1alpha1.ModelGroupList
 	if err := provider.client.List(ctx, &groups, client.InNamespace(target.ServiceNamespace)); err != nil {
-		return 0, 0, fmt.Errorf("list ModelGroups for telemetry: %w", err)
+		return 0, 0, 0, time.Time{}, fmt.Errorf("list ModelGroups for telemetry: %w", err)
 	}
-	results := make(chan uint64, len(groups.Items))
+	type modelDemandSample struct {
+		waitingRequests uint64
+		activeRequests  uint64
+		observedAt      time.Time
+	}
+	results := make(chan modelDemandSample, len(groups.Items))
 	requestGroup, groupCtx := errgroup.WithContext(ctx)
 	requestGroup.SetLimit(provider.concurrency)
 	for index := range groups.Items {
@@ -216,21 +237,40 @@ func (provider *HTTPPoolMetricsProvider) activeRequests(ctx context.Context, tar
 			if !telemetry.Accepting {
 				return fmt.Errorf("ModelGroup %q is not accepting", name)
 			}
-			results <- telemetry.RunningRequests
+			if telemetry.CollectedAtUnixMS > math.MaxInt64 {
+				return fmt.Errorf("ModelGroup %q telemetry has invalid collection timestamp", name)
+			}
+			waitingRequests := uint64(0)
+			if telemetry.SchedulerWaitingRequests != nil {
+				waitingRequests = *telemetry.SchedulerWaitingRequests
+			}
+			results <- modelDemandSample{
+				waitingRequests: waitingRequests,
+				activeRequests:  telemetry.RunningRequests,
+				observedAt:      time.UnixMilli(int64(telemetry.CollectedAtUnixMS)),
+			}
 			return nil
 		})
 	}
 	if err := requestGroup.Wait(); err != nil {
-		return 0, 0, err
+		return 0, 0, 0, time.Time{}, err
 	}
 	close(results)
-	var total uint64
+	var waitingRequests, activeRequests uint64
 	var samples int64
-	for value := range results {
-		total = saturatingAdd(total, value)
+	var oldest time.Time
+	for sample := range results {
+		waitingRequests = saturatingAdd(waitingRequests, sample.waitingRequests)
+		activeRequests = saturatingAdd(activeRequests, sample.activeRequests)
 		samples++
+		if oldest.IsZero() || sample.observedAt.Before(oldest) {
+			oldest = sample.observedAt
+		}
 	}
-	return total, samples, nil
+	if samples == 0 {
+		return 0, 0, 0, time.Time{}, fmt.Errorf("no routable ModelGroups for target %q", target.Name)
+	}
+	return waitingRequests, activeRequests, samples, oldest, nil
 }
 
 // getFrontendTelemetry reads and validates one frontend autoscaling telemetry response.
@@ -261,40 +301,40 @@ func (provider *HTTPPoolMetricsProvider) getFrontendTelemetry(ctx context.Contex
 }
 
 // getModelTelemetry reads and validates one model-server telemetry response.
-func (provider *HTTPPoolMetricsProvider) getModelTelemetry(ctx context.Context, endpoint string) (drainTelemetry, error) {
+func (provider *HTTPPoolMetricsProvider) getModelTelemetry(ctx context.Context, endpoint string) (modelServerTelemetry, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+"/v1/internal/telemetry", nil)
 	if err != nil {
-		return drainTelemetry{}, err
+		return modelServerTelemetry{}, err
 	}
 	response, err := provider.httpClient.Do(request)
 	if err != nil {
-		return drainTelemetry{}, err
+		return modelServerTelemetry{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return drainTelemetry{}, fmt.Errorf("HTTP %d", response.StatusCode)
+		return modelServerTelemetry{}, fmt.Errorf("HTTP %d", response.StatusCode)
 	}
-	var telemetry drainTelemetry
+	var telemetry modelServerTelemetry
 	if err := json.NewDecoder(response.Body).Decode(&telemetry); err != nil {
-		return drainTelemetry{}, fmt.Errorf("decode response: %w", err)
+		return modelServerTelemetry{}, fmt.Errorf("decode response: %w", err)
 	}
 	if telemetry.Version != modelServerTelemetryVersion {
-		return drainTelemetry{}, fmt.Errorf("unsupported version %d", telemetry.Version)
+		return modelServerTelemetry{}, fmt.Errorf("unsupported version %d", telemetry.Version)
 	}
 	return telemetry, nil
 }
 
-func telemetryTarget(values []frontendAutoscalingTarget, target core.TargetID) (uint64, bool) {
+func telemetryTarget(values []frontendAutoscalingTarget, target core.TargetID) (frontendAutoscalingTarget, bool) {
 	targetID := target.UID
 	if target.Kind == core.TargetEPDPipelineScope {
 		targetID = target.ServiceUID
 	}
 	for _, value := range values {
 		if value.ServiceUID == target.ServiceUID && value.TargetKind == string(target.Kind) && value.TargetID == targetID {
-			return value.QueuedRequests, true
+			return value, true
 		}
 	}
-	return 0, false
+	return frontendAutoscalingTarget{}, false
 }
 
 func saturatingAdd(left, right uint64) uint64 {

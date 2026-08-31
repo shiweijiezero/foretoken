@@ -88,7 +88,9 @@ impl LlmFacade for StageFacade {
                 .targets
                 .iter()
                 .any(|target| {
-                    target.target.target_id == self.target_id && target.queued_requests == 1
+                    target.target.target_id == self.target_id
+                        && target.runtime_queued_requests == 0
+                        && target.dispatch_queued_requests == 1
                 }),
             "{} generation must run while admitted to its scaling target",
             self.stage
@@ -291,7 +293,9 @@ async fn runtime_workflow_aborts_every_started_stage_after_decode_admission_fail
             .targets
             .iter()
             .any(|target| {
-                target.target.target_id == "workflow-service" && target.queued_requests == 0
+                target.target.target_id == "workflow-service"
+                    && target.runtime_queued_requests == 0
+                    && target.dispatch_queued_requests == 0
             })
     );
     bootstrap_task.abort();

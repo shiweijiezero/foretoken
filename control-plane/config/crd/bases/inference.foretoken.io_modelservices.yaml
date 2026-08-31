@@ -62,127 +62,155 @@ spec:
                   side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.
                 properties:
                   adjustment:
-                    description: |-
-                      Adjustment modifies a scaling desired capacity before platform decision resolution.
-                      Manual intent always uses direct adjustment.
+                    description: ModelAutoscalingAdjustmentConfig configures the adjustment
+                      stage.
                     properties:
                       algorithm:
                         default: step
                         description: AutoscalingAdjustmentAlgorithm selects how a
-                          desired capacity is adjusted before resolution.
+                          desired capacity is rate-limited before lifecycle resolution.
                         enum:
                         - direct
                         - step
                         type: string
-                      maxScaleDownGroups:
-                        default: 1
-                        description: Zero disables the downward per-evaluation step
-                          limit.
-                        format: int32
-                        minimum: 0
-                        type: integer
-                      maxScaleUpGroups:
-                        default: 1
-                        description: Zero disables the upward per-evaluation step
-                          limit.
-                        format: int32
-                        minimum: 0
-                        type: integer
+                      scaleDown:
+                        description: ModelAutoscalingScaleDownConfig controls downward
+                          stabilization and per-evaluation change.
+                        properties:
+                          maxGroupsPerEvaluation:
+                            default: 1
+                            description: Zero disables the downward per-evaluation
+                              step limit.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          stabilizationWindow:
+                            default: 300s
+                            description: NonNegativeDuration is a Go-style duration
+                              that may be zero.
+                            minLength: 2
+                            pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                            type: string
+                            x-kubernetes-validations:
+                            - message: must be a non-negative duration
+                              rule: duration(self) >= duration('0s')
+                        type: object
+                      scaleUp:
+                        description: ModelAutoscalingScaleUpConfig controls upward
+                          stabilization and per-evaluation change.
+                        properties:
+                          maxGroupsPerEvaluation:
+                            default: 1
+                            description: Zero disables the upward per-evaluation step
+                              limit.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          stabilizationWindow:
+                            default: 0s
+                            description: NonNegativeDuration is a Go-style duration
+                              that may be zero.
+                            minLength: 2
+                            pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                            type: string
+                            x-kubernetes-validations:
+                            - message: must be a non-negative duration
+                              rule: duration(self) >= duration('0s')
+                        type: object
                     type: object
-                  algorithm:
-                    default: manual
-                    description: AutoscalingAlgorithm selects a statically linked
-                      autoscaling decision algorithm.
-                    enum:
-                    - manual
-                    - queue
-                    - threshold
-                    type: string
+                    x-kubernetes-validations:
+                    - message: direct adjustment does not accept scaleUp or scaleDown
+                        configuration
+                      rule: self.algorithm != 'direct' || (!has(self.scaleUp) && !has(self.scaleDown))
+                  decision:
+                    description: ModelAutoscalingDecisionConfig configures desired-capacity
+                      calculation.
+                    properties:
+                      algorithm:
+                        description: AutoscalingDecisionAlgorithm selects how observed
+                          demand is converted into desired Group capacity.
+                        enum:
+                        - queue
+                        - queue_threshold
+                        type: string
+                      queue:
+                        description: ModelAutoscalingQueueDecisionConfig configures
+                          HPA-style average queue capacity.
+                        properties:
+                          targetAverageQueuedRequests:
+                            default: 1
+                            description: TargetAverageQueuedRequests is the desired
+                              average waiting requests per Group.
+                            format: int64
+                            minimum: 1
+                            type: integer
+                        type: object
+                      queueThreshold:
+                        description: ModelAutoscalingQueueThresholdDecisionConfig
+                          configures absolute backlog boundaries.
+                        properties:
+                          scaleDownQueuedRequests:
+                            default: 0
+                            description: ScaleDownQueuedRequests is the queue depth
+                              at or below which one fewer idle Group is recommended.
+                            format: int64
+                            minimum: 0
+                            type: integer
+                          scaleUpQueuedRequests:
+                            default: 1
+                            description: ScaleUpQueuedRequests is the queue depth
+                              above which one additional Group is recommended.
+                            format: int64
+                            minimum: 0
+                            type: integer
+                        type: object
+                        x-kubernetes-validations:
+                        - message: scaleDownQueuedRequests must not exceed scaleUpQueuedRequests
+                          rule: self.scaleDownQueuedRequests <= self.scaleUpQueuedRequests
+                    required:
+                    - algorithm
+                    type: object
+                    x-kubernetes-validations:
+                    - message: autoscaling decision must configure exactly the selected
+                        algorithm
+                      rule: 'self.algorithm == ''queue'' ? has(self.queue) && !has(self.queueThreshold)
+                        : has(self.queueThreshold) && !has(self.queue)'
                   maxGroups:
-                    description: MaxGroups is required for automatic autoscaling.
-                      When omitted, manual intent is unbounded.
                     format: int32
-                    minimum: 0
+                    minimum: 1
                     type: integer
-                  metricsMaxAge:
+                  minGroups:
+                    default: 1
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  observationMaxAge:
                     default: 15s
-                    description: Duration is a positive Go-style duration.
+                    description: ObservationMaxAge is the oldest telemetry accepted
+                      for a scaling decision.
                     minLength: 2
                     pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
                     x-kubernetes-validations:
                     - message: must be a positive duration
                       rule: duration(self) > duration('0s')
-                  minGroups:
-                    default: 0
-                    format: int32
-                    minimum: 0
-                    type: integer
-                  scaleUpQueue:
-                    default: 1
-                    description: ScaleUpQueue is the queue-depth threshold above which
-                      threshold adds one Group.
-                    format: int64
-                    minimum: 0
-                    type: integer
-                  targetQueuePerRoutableGroup:
-                    default: 1
-                    format: int64
-                    minimum: 0
-                    type: integer
-                  trigger:
-                    description: |-
-                      Trigger controls when an automatic algorithm receives a fresh observation.
-                      It is ignored by manual autoscaling.
-                    properties:
-                      algorithm:
-                        default: periodic
-                        description: AutoscalingTriggerAlgorithm selects when an automatic
-                          scaling algorithm is evaluated.
-                        enum:
-                        - periodic
-                        - watermark
-                        type: string
-                      highQueuePerRoutableGroup:
-                        default: 1
-                        description: |-
-                          HighQueuePerRoutableGroup fires a watermark evaluation only when queue
-                          strictly exceeds this per-routable-Group level.
-                        format: int64
-                        minimum: 0
-                        type: integer
-                      interval:
-                        default: 5s
-                        description: Duration is a positive Go-style duration.
-                        minLength: 2
-                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
-                        type: string
-                        x-kubernetes-validations:
-                        - message: must be a positive duration
-                          rule: duration(self) > duration('0s')
-                      lowQueuePerRoutableGroup:
-                        default: 0
-                        description: |-
-                          LowQueuePerRoutableGroup fires a watermark evaluation for idle capacity when
-                          queue is at or below this per-routable-Group level and no requests are active.
-                        format: int64
-                        minimum: 0
-                        type: integer
-                    type: object
+                  pollingInterval:
+                    default: 5s
+                    description: PollingInterval controls how often the controller
+                      evaluates automatic capacity.
+                    minLength: 2
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                    type: string
                     x-kubernetes-validations:
-                    - message: autoscaling trigger lowQueuePerRoutableGroup must not
-                        exceed highQueuePerRoutableGroup
-                      rule: '!has(self.lowQueuePerRoutableGroup) || !has(self.highQueuePerRoutableGroup)
-                        || self.lowQueuePerRoutableGroup <= self.highQueuePerRoutableGroup'
+                    - message: must be a positive duration
+                      rule: duration(self) > duration('0s')
                 required:
-                - algorithm
+                - decision
+                - maxGroups
                 type: object
                 x-kubernetes-validations:
                 - message: autoscaling minGroups must not exceed maxGroups
-                  rule: '!has(self.minGroups) || !has(self.maxGroups) || self.minGroups
-                    <= self.maxGroups'
-                - message: autoscaling maxGroups is required unless algorithm is manual
-                  rule: self.algorithm == 'manual' || has(self.maxGroups)
+                  rule: self.minGroups <= self.maxGroups
               backend:
                 enum:
                 - vllm
@@ -867,24 +895,31 @@ spec:
                 description: Autoscaling contains the latest decision for each Pool
                   or linked E/P/D processing unit.
                 items:
-                  description: AutoscalingTargetStatus records the latest auditable
-                    decision for one scaling target.
+                  description: AutoscalingTargetStatus is the latest complete autoscaling
+                    evaluation for one scaling target.
                   properties:
-                    adjustedGroups:
-                      description: AdjustedGroups is the capacity proposed by the
-                        adjustment decision.
-                      format: int32
-                      type: integer
-                    adjustmentAlgorithm:
-                      type: string
-                    adjustmentMessage:
-                      type: string
-                    adjustmentReason:
-                      description: AdjustmentReason and AdjustmentMessage explain
-                        desired-capacity adjustment.
-                      type: string
-                    algorithm:
-                      type: string
+                    adjustment:
+                      description: AutoscalingAdjustmentStatus records capacity after
+                        stabilization and rate limiting.
+                      properties:
+                        adjustedGroups:
+                          format: int32
+                          minimum: 0
+                          type: integer
+                        algorithm:
+                          type: string
+                        disposition:
+                          type: string
+                        message:
+                          type: string
+                        reason:
+                          type: string
+                      required:
+                      - adjustedGroups
+                      - algorithm
+                      - disposition
+                      - reason
+                      type: object
                     appliedGroups:
                       description: |-
                         AppliedGroups is the platform-resolved target successfully written to all
@@ -892,14 +927,43 @@ spec:
                       format: int32
                       minimum: 0
                       type: integer
-                    desiredGroups:
-                      description: DesiredGroups is the capacity calculated by the
-                        scaling decision algorithm.
-                      format: int32
-                      type: integer
+                    constraint:
+                      description: Constraint is set when hard bounds or lifecycle
+                        state override adjusted capacity.
+                      properties:
+                        message:
+                          type: string
+                        reason:
+                          type: string
+                      required:
+                      - reason
+                      type: object
+                    decision:
+                      description: AutoscalingDecisionStatus records desired capacity
+                        before adjustment.
+                      properties:
+                        algorithm:
+                          type: string
+                        desiredGroups:
+                          format: int32
+                          minimum: 0
+                          type: integer
+                        disposition:
+                          type: string
+                        message:
+                          type: string
+                        reason:
+                          type: string
+                      required:
+                      - algorithm
+                      - desiredGroups
+                      - disposition
+                      - reason
+                      type: object
                     direction:
                       type: string
-                    disposition:
+                    evaluatedAt:
+                      format: date-time
                       type: string
                     id:
                       minLength: 1
@@ -909,19 +973,18 @@ spec:
                       - Pool
                       - EPDPipelineScope
                       type: string
-                    message:
+                    observationEndAt:
+                      description: |-
+                        ObservationEndAt is the oldest source sample included in this evaluation.
+                        It is absent for fixed manual capacity.
+                      format: date-time
                       type: string
                     observationState:
-                      type: string
-                    observedAt:
-                      format: date-time
                       type: string
                     readyGroups:
                       format: int32
                       minimum: 0
                       type: integer
-                    reason:
-                      type: string
                     role:
                       enum:
                       - Aggregate
@@ -934,33 +997,35 @@ spec:
                       format: int32
                       minimum: 0
                       type: integer
-                    snapshotID:
-                      type: string
-                    triggerAlgorithm:
-                      type: string
-                    triggerDisposition:
-                      type: string
-                    triggerMessage:
-                      type: string
-                    triggerReason:
-                      type: string
+                    trigger:
+                      description: AutoscalingStageStatus describes one named pipeline
+                        stage result.
+                      properties:
+                        algorithm:
+                          type: string
+                        disposition:
+                          type: string
+                        message:
+                          type: string
+                        reason:
+                          type: string
+                      required:
+                      - algorithm
+                      - disposition
+                      - reason
+                      type: object
                   required:
-                  - adjustedGroups
-                  - adjustmentAlgorithm
-                  - algorithm
+                  - adjustment
                   - appliedGroups
-                  - desiredGroups
+                  - decision
                   - direction
-                  - disposition
+                  - evaluatedAt
                   - id
                   - kind
                   - observationState
-                  - observedAt
                   - readyGroups
-                  - reason
                   - role
                   - routableGroups
-                  - snapshotID
                   type: object
                 maxItems: 32
                 type: array

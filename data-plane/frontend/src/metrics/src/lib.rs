@@ -55,7 +55,8 @@ impl From<&ScalingTarget> for QueuedTarget {
 pub struct AutoscalingTargetTelemetry {
     #[serde(flatten)]
     pub target: QueuedTarget,
-    pub queued_requests: u64,
+    pub runtime_queued_requests: u64,
+    pub dispatch_queued_requests: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -65,11 +66,23 @@ pub struct AutoscalingTelemetry {
     pub targets: Vec<AutoscalingTargetTelemetry>,
 }
 
-static QUEUED: OnceLock<Mutex<BTreeMap<QueuedTarget, u64>>> = OnceLock::new();
-fn queued() -> &'static Mutex<BTreeMap<QueuedTarget, u64>> {
+#[derive(Debug, Clone, Copy)]
+enum QueueStage {
+    RuntimePreparation,
+    BackendDispatch,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct QueueCounts {
+    runtime_preparation: u64,
+    backend_dispatch: u64,
+}
+
+static QUEUED: OnceLock<Mutex<BTreeMap<QueuedTarget, QueueCounts>>> = OnceLock::new();
+fn queued() -> &'static Mutex<BTreeMap<QueuedTarget, QueueCounts>> {
     QUEUED.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
-fn queued_lock() -> MutexGuard<'static, BTreeMap<QueuedTarget, u64>> {
+fn queued_lock() -> MutexGuard<'static, BTreeMap<QueuedTarget, QueueCounts>> {
     queued()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -78,12 +91,20 @@ fn queued_lock() -> MutexGuard<'static, BTreeMap<QueuedTarget, u64>> {
 /// RAII ownership of one request waiting for admission to a fixed target set.
 pub struct QueueGuard {
     targets: Vec<QueuedTarget>,
+    stage: QueueStage,
 }
 impl QueueGuard {
-    /// Begins queue attribution for a request waiting on every required scaling target.
-    ///
-    /// The admission path owns the guard while the request remains queued; dropping it removes the request from telemetry.
-    pub fn new(targets: &RouteTargetSet) -> Self {
+    /// Attributes a request waiting for its model runtime to become ready.
+    pub fn runtime_preparation(targets: &RouteTargetSet) -> Self {
+        Self::new(targets, QueueStage::RuntimePreparation)
+    }
+
+    /// Attributes a routed request waiting for the backend stream to begin.
+    pub fn backend_dispatch(targets: &RouteTargetSet) -> Self {
+        Self::new(targets, QueueStage::BackendDispatch)
+    }
+
+    fn new(targets: &RouteTargetSet, stage: QueueStage) -> Self {
         let targets = targets
             .targets()
             .iter()
@@ -91,17 +112,25 @@ impl QueueGuard {
             .collect::<Vec<_>>();
         let mut values = queued_lock();
         for target in &targets {
-            *values.entry(target.clone()).or_default() += 1;
+            let counts = values.entry(target.clone()).or_default();
+            match stage {
+                QueueStage::RuntimePreparation => counts.runtime_preparation += 1,
+                QueueStage::BackendDispatch => counts.backend_dispatch += 1,
+            }
         }
         drop(values);
-        Self { targets }
+        Self { targets, stage }
     }
 }
 impl Drop for QueueGuard {
     fn drop(&mut self) {
         let mut values = queued_lock();
         for target in &self.targets {
-            let value = values.entry(target.clone()).or_default();
+            let counts = values.entry(target.clone()).or_default();
+            let value = match self.stage {
+                QueueStage::RuntimePreparation => &mut counts.runtime_preparation,
+                QueueStage::BackendDispatch => &mut counts.backend_dispatch,
+            };
             *value = value.saturating_sub(1);
         }
     }
@@ -113,9 +142,10 @@ impl Drop for QueueGuard {
 pub fn autoscaling_telemetry() -> AutoscalingTelemetry {
     let targets = queued_lock()
         .iter()
-        .map(|(target, queued_requests)| AutoscalingTargetTelemetry {
+        .map(|(target, counts)| AutoscalingTargetTelemetry {
             target: target.clone(),
-            queued_requests: *queued_requests,
+            runtime_queued_requests: counts.runtime_preparation,
+            dispatch_queued_requests: counts.backend_dispatch,
         })
         .collect();
     let collected_at_unix_ms = SystemTime::now()
@@ -125,7 +155,7 @@ pub fn autoscaling_telemetry() -> AutoscalingTelemetry {
         .try_into()
         .unwrap_or(u64::MAX);
     AutoscalingTelemetry {
-        version: 1,
+        version: 2,
         collected_at_unix_ms,
         targets,
     }
@@ -179,7 +209,10 @@ fn render_admission_metrics() -> String {
     let mut body = String::from(
         "# TYPE foretoken_upstream_queued_requests gauge\n# HELP foretoken_upstream_queued_requests Requests waiting for admission to a scaling target.\n",
     );
-    for (target, value) in values.iter() {
+    for (target, counts) in values.iter() {
+        let value = counts
+            .runtime_preparation
+            .saturating_add(counts.backend_dispatch);
         body.push_str(&format!("foretoken_upstream_queued_requests{{service_uid=\"{}\",target_kind=\"{}\",target_id=\"{}\"}} {}\n", escape_label(&target.service_uid), escape_label(&target.target_kind), escape_label(&target.target_id), value));
     }
     body

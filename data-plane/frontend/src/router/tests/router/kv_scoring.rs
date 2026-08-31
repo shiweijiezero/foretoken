@@ -195,6 +195,26 @@ fn prefill_downstream_load_is_scoped_to_its_pipeline_scope() {
     }
 }
 
+// Protects load-aware routing from ignoring requests queued inside the vLLM scheduler.
+#[test]
+fn load_scoring_uses_scheduler_backlog_without_double_counting_admission() {
+    let mut idle = candidate("idle", ModelServerRole::Aggregate, 1);
+    let mut queued = candidate("queued", ModelServerRole::Aggregate, 2);
+    Arc::get_mut(idle.route_target_stats.as_mut().unwrap())
+        .unwrap()
+        .scheduler_running_requests = Some(1);
+    let queued_stats = Arc::get_mut(queued.route_target_stats.as_mut().unwrap()).unwrap();
+    queued_stats.scheduler_running_requests = Some(2);
+    queued_stats.scheduler_waiting_requests = Some(5);
+
+    let candidates = vec![idle, queued];
+    let scores = LeastLoadedScorer.score(&request(), &candidates, &PrefixFacts, &mut ());
+
+    assert_eq!(scores[0].load, -1);
+    assert_eq!(scores[1].load, -7);
+    assert!(scores[0] > scores[1]);
+}
+
 struct RankFacts;
 
 impl KvPrefixIndexer for RankFacts {

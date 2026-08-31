@@ -19,69 +19,75 @@ import (
 )
 
 type modelScalingConfig struct {
-	Autoscaler      *autoscaling.Autoscaler
-	Limits          core.CapacityLimits
-	TriggerInterval time.Duration
-	MetricsMaxAge   time.Duration
+	Autoscaler        *autoscaling.Autoscaler
+	Limits            core.CapacityLimits
+	PollingInterval   time.Duration
+	ObservationMaxAge time.Duration
 }
 
 // scalingConfig resolves one ModelService autoscaling configuration into runtime algorithms and limits.
 func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alpha1.ModelService) (modelScalingConfig, error) {
 	config := modelScalingConfig{
-		Autoscaler:      defaultAutoscaler,
-		Limits:          core.CapacityLimits{MinGroups: 0, MaxGroups: maxDesiredGroups},
-		TriggerInterval: defaultScalingPollInterval,
-		MetricsMaxAge:   defaultMetricsMaxAge,
-	}
-	if reconciler.Autoscaler != nil {
-		config.Autoscaler = reconciler.Autoscaler
+		Autoscaler:        autoscaling.Manual(),
+		Limits:            core.CapacityLimits{MinGroups: 0, MaxGroups: maxDesiredGroups},
+		PollingInterval:   defaultScalingPollInterval,
+		ObservationMaxAge: defaultObservationMaxAge,
 	}
 	autoscalingConfig := service.Spec.Autoscaling
 	if autoscalingConfig == nil {
 		return config, nil
 	}
-	name := autoscaling.DecisionAlgorithmName(autoscalingConfig.Algorithm)
-	if autoscalingConfig.MinGroups != nil {
-		config.Limits.MinGroups = *autoscalingConfig.MinGroups
-	}
-	if autoscalingConfig.MaxGroups != nil {
-		config.Limits.MaxGroups = *autoscalingConfig.MaxGroups
-	}
-	config.Limits.MaxScaleUpGroups = adjustmentMaxScaleUp(autoscalingConfig.Adjustment)
-	config.Limits.MaxScaleDownGroups = adjustmentMaxScaleDown(autoscalingConfig.Adjustment)
-	interval, err := durationOrDefault(triggerInterval(autoscalingConfig.Trigger), defaultScalingPollInterval)
+
+	pollingInterval, err := durationOrDefault(autoscalingConfig.PollingInterval, defaultScalingPollInterval)
 	if err != nil {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling trigger.interval: %w", err)
+		return modelScalingConfig{}, fmt.Errorf("autoscaling pollingInterval: %w", err)
 	}
-	metricsMaxAge, err := durationOrDefault(autoscalingConfig.MetricsMaxAge, defaultMetricsMaxAge)
+	observationMaxAge, err := durationOrDefault(autoscalingConfig.ObservationMaxAge, defaultObservationMaxAge)
 	if err != nil {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling metricsMaxAge: %w", err)
+		return modelScalingConfig{}, fmt.Errorf("autoscaling observationMaxAge: %w", err)
 	}
-	config.TriggerInterval = interval
-	config.MetricsMaxAge = metricsMaxAge
-	if reconciler.Autoscaler == nil {
-		selected, err := autoscaling.New(autoscaling.Configuration{
-			DecisionAlgorithm:   name,
-			TriggerAlgorithm:    autoscaling.TriggerAlgorithmName(triggerAlgorithm(autoscalingConfig.Trigger)),
-			AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmName(adjustmentAlgorithm(autoscalingConfig.Adjustment)),
-			Decision: core.DecisionConfig{
-				TargetQueuePerRoutableGroup: int64OrDefault(autoscalingConfig.TargetQueuePerRoutableGroup, 1),
-				ScaleUpQueue:                int64OrDefault(autoscalingConfig.ScaleUpQueue, 1),
-			},
-			Trigger: core.TriggerConfig{
-				LowQueuePerRoutableGroup:  triggerLowQueue(autoscalingConfig.Trigger),
-				HighQueuePerRoutableGroup: triggerHighQueue(autoscalingConfig.Trigger),
-			},
-		})
-		if err != nil {
-			return modelScalingConfig{}, err
-		}
-		config.Autoscaler = selected
+	scaleUpWindow, err := nonNegativeDurationOrDefault(scaleUpStabilizationWindow(autoscalingConfig.Adjustment), 0)
+	if err != nil {
+		return modelScalingConfig{}, fmt.Errorf("autoscaling adjustment.scaleUp.stabilizationWindow: %w", err)
 	}
-	if config.Autoscaler.Automatic() && autoscalingConfig.MaxGroups == nil {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling maxGroups is required unless algorithm is manual")
+	scaleDownWindow, err := nonNegativeDurationOrDefault(scaleDownStabilizationWindow(autoscalingConfig.Adjustment), 5*time.Minute)
+	if err != nil {
+		return modelScalingConfig{}, fmt.Errorf("autoscaling adjustment.scaleDown.stabilizationWindow: %w", err)
 	}
+
+	selected, err := autoscaling.New(autoscaling.Configuration{
+		DecisionAlgorithm:   autoscaling.DecisionAlgorithmName(autoscalingConfig.Decision.Algorithm),
+		TriggerAlgorithm:    autoscaling.TriggerAlgorithmPeriodic,
+		AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmName(adjustmentAlgorithm(autoscalingConfig.Adjustment)),
+		Decision:            decisionConfig(autoscalingConfig.Decision),
+		Adjustment: core.AdjustmentConfig{
+			MaxScaleUpGroups:             scaleUpMaxGroups(autoscalingConfig.Adjustment),
+			MaxScaleDownGroups:           scaleDownMaxGroups(autoscalingConfig.Adjustment),
+			ScaleUpStabilizationWindow:   scaleUpWindow,
+			ScaleDownStabilizationWindow: scaleDownWindow,
+			History:                      reconciler.autoscalingRecommendationHistory(),
+		},
+	})
+	if err != nil {
+		return modelScalingConfig{}, err
+	}
+	config.Autoscaler = selected
+	config.Limits = core.CapacityLimits{MinGroups: autoscalingConfig.MinGroups, MaxGroups: autoscalingConfig.MaxGroups}
+	config.PollingInterval = pollingInterval
+	config.ObservationMaxAge = observationMaxAge
 	return config, nil
+}
+
+func decisionConfig(config inferencev1alpha1.ModelAutoscalingDecisionConfig) core.DecisionConfig {
+	decision := core.DecisionConfig{}
+	if config.Queue != nil {
+		decision.TargetAverageQueuedRequests = int64OrDefault(config.Queue.TargetAverageQueuedRequests, 1)
+	}
+	if config.QueueThreshold != nil {
+		decision.ScaleUpQueuedRequests = int64OrDefault(config.QueueThreshold.ScaleUpQueuedRequests, 1)
+		decision.ScaleDownQueuedRequests = int64OrDefault(config.QueueThreshold.ScaleDownQueuedRequests, 0)
+	}
+	return decision
 }
 
 func adjustmentAlgorithm(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) inferencev1alpha1.AutoscalingAdjustmentAlgorithm {
@@ -91,46 +97,32 @@ func adjustmentAlgorithm(config *inferencev1alpha1.ModelAutoscalingAdjustmentCon
 	return config.Algorithm
 }
 
-func adjustmentMaxScaleUp(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) int32 {
-	if config == nil {
+func scaleUpMaxGroups(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) int32 {
+	if config == nil || config.ScaleUp == nil {
 		return 1
 	}
-	return int32OrDefault(config.MaxScaleUpGroups, 1)
+	return int32OrDefault(config.ScaleUp.MaxGroupsPerEvaluation, 1)
 }
 
-func adjustmentMaxScaleDown(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) int32 {
-	if config == nil {
+func scaleDownMaxGroups(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) int32 {
+	if config == nil || config.ScaleDown == nil {
 		return 1
 	}
-	return int32OrDefault(config.MaxScaleDownGroups, 1)
+	return int32OrDefault(config.ScaleDown.MaxGroupsPerEvaluation, 1)
 }
 
-func triggerInterval(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.Duration {
-	if config == nil {
+func scaleUpStabilizationWindow(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) inferencev1alpha1.NonNegativeDuration {
+	if config == nil || config.ScaleUp == nil {
 		return ""
 	}
-	return config.Interval
+	return config.ScaleUp.StabilizationWindow
 }
 
-func triggerAlgorithm(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.AutoscalingTriggerAlgorithm {
-	if config == nil {
+func scaleDownStabilizationWindow(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) inferencev1alpha1.NonNegativeDuration {
+	if config == nil || config.ScaleDown == nil {
 		return ""
 	}
-	return config.Algorithm
-}
-
-func triggerLowQueue(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) int64 {
-	if config == nil {
-		return 0
-	}
-	return int64OrDefault(config.LowQueuePerRoutableGroup, 0)
-}
-
-func triggerHighQueue(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) int64 {
-	if config == nil {
-		return 1
-	}
-	return int64OrDefault(config.HighQueuePerRoutableGroup, 1)
+	return config.ScaleDown.StabilizationWindow
 }
 
 func int32OrDefault(value *int32, fallback int32) int32 {
@@ -154,6 +146,17 @@ func durationOrDefault(value inferencev1alpha1.Duration, fallback time.Duration)
 	duration, err := time.ParseDuration(string(value))
 	if err != nil || duration <= 0 {
 		return 0, fmt.Errorf("must be a positive duration")
+	}
+	return duration, nil
+}
+
+func nonNegativeDurationOrDefault(value inferencev1alpha1.NonNegativeDuration, fallback time.Duration) (time.Duration, error) {
+	if value == "" {
+		return fallback, nil
+	}
+	duration, err := time.ParseDuration(string(value))
+	if err != nil || duration < 0 {
+		return 0, fmt.Errorf("must be a non-negative duration")
 	}
 	return duration, nil
 }
@@ -233,7 +236,7 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 		}
 		snapshots = append(snapshots, snapshot)
 	}
-	decisions, err := scaling.Autoscaler.Plan(ctx, snapshots)
+	decisions, err := scaling.Autoscaler.Plan(snapshots)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -256,45 +259,60 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 			return nil, nil, fmt.Errorf("autoscaler returned unknown target %q", decision.Target.Name)
 		}
 		byTarget[decision.Target] = decision.AppliedGroups
-		reason := string(decision.DesiredCapacity.Reason)
-		if decision.Constraint != "" {
-			reason = string(decision.Constraint)
-		}
-		if decision.Trigger.Reason != "" && decision.DesiredCapacity.Reason == "" && decision.Constraint == "" {
-			reason = string(decision.Trigger.Reason)
-		}
-		desiredGroups := decision.DesiredCapacity.Groups
-		adjusted := decision.Adjustment.AdjustedGroups
-		if decision.DesiredCapacity.Disposition == "" {
-			desiredGroups = snapshot.Capacity.RequestedGroups
-			if decision.Constraint == "" {
-				adjusted = snapshot.Capacity.RequestedGroups
+
+		var trigger *inferencev1alpha1.AutoscalingStageStatus
+		if algorithm := scaling.Autoscaler.TriggerAlgorithmName(); algorithm != "" {
+			trigger = &inferencev1alpha1.AutoscalingStageStatus{
+				Algorithm:   algorithm,
+				Disposition: string(decision.Trigger.Disposition),
+				Reason:      string(decision.Trigger.Reason),
+				Message:     decision.Trigger.Message,
 			}
 		}
+		var constraint *inferencev1alpha1.AutoscalingConstraintStatus
+		if decision.Constraint != "" {
+			constraint = &inferencev1alpha1.AutoscalingConstraintStatus{Reason: string(decision.Constraint), Message: decision.Message}
+		}
+		var observationEndAt *metav1.Time
+		if !snapshot.Observation.Window.End.IsZero() {
+			value := metav1.NewTime(snapshot.Observation.Window.End)
+			observationEndAt = &value
+		}
+		adjustmentDisposition := "Hold"
+		if decision.Adjustment.Reason != core.AdjustmentReasonHold {
+			adjustmentDisposition = "Apply"
+		}
 		statuses = append(statuses, inferencev1alpha1.AutoscalingTargetStatus{
-			ID:                  fmt.Sprintf("%s/%s", decision.Target.Kind, decision.Target.Name),
-			Kind:                string(decision.Target.Kind),
-			Role:                string(decision.Target.Role),
-			Algorithm:           decision.DecisionAlgorithm,
-			AdjustmentAlgorithm: decision.AdjustmentAlgorithm,
-			TriggerAlgorithm:    scaling.Autoscaler.TriggerAlgorithmName(),
-			SnapshotID:          snapshot.ID,
-			ObservedAt:          metav1.NewTime(snapshot.EvaluatedAt),
-			ObservationState:    string(snapshot.Observation.State),
-			Disposition:         string(decision.DesiredCapacity.Disposition),
-			Reason:              reason,
-			Message:             decision.Message,
-			TriggerDisposition:  string(decision.Trigger.Disposition),
-			TriggerReason:       string(decision.Trigger.Reason),
-			TriggerMessage:      decision.Trigger.Message,
-			Direction:           string(decision.Direction),
-			DesiredGroups:       desiredGroups,
-			AdjustmentReason:    string(decision.Adjustment.Reason),
-			AdjustmentMessage:   decision.Adjustment.Message,
-			AdjustedGroups:      adjusted,
-			AppliedGroups:       decision.AppliedGroups,
-			ReadyGroups:         snapshot.Capacity.ReadyGroups,
-			RoutableGroups:      snapshot.Capacity.RoutableGroups,
+			ID:               fmt.Sprintf("%s/%s", decision.Target.Kind, decision.Target.Name),
+			Kind:             string(decision.Target.Kind),
+			Role:             string(decision.Target.Role),
+			EvaluatedAt:      metav1.NewTime(snapshot.EvaluatedAt),
+			ObservationEndAt: observationEndAt,
+			ObservationState: string(snapshot.Observation.State),
+			Trigger:          trigger,
+			Decision: inferencev1alpha1.AutoscalingDecisionStatus{
+				AutoscalingStageStatus: inferencev1alpha1.AutoscalingStageStatus{
+					Algorithm:   decision.DecisionAlgorithm,
+					Disposition: string(decision.DesiredCapacity.Disposition),
+					Reason:      string(decision.DesiredCapacity.Reason),
+					Message:     decision.DesiredCapacity.Message,
+				},
+				DesiredGroups: decision.DesiredCapacity.Groups,
+			},
+			Adjustment: inferencev1alpha1.AutoscalingAdjustmentStatus{
+				AutoscalingStageStatus: inferencev1alpha1.AutoscalingStageStatus{
+					Algorithm:   decision.AdjustmentAlgorithm,
+					Disposition: adjustmentDisposition,
+					Reason:      string(decision.Adjustment.Reason),
+					Message:     decision.Adjustment.Message,
+				},
+				AdjustedGroups: decision.Adjustment.AdjustedGroups,
+			},
+			Constraint:     constraint,
+			Direction:      string(decision.Direction),
+			AppliedGroups:  decision.AppliedGroups,
+			ReadyGroups:    snapshot.Capacity.ReadyGroups,
+			RoutableGroups: snapshot.Capacity.RoutableGroups,
 		})
 	}
 	resolved := append([]compiler.ModelPool(nil), compiledPools...)
@@ -323,10 +341,9 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 func (reconciler *ModelServiceReconciler) scalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, target core.TargetID, evaluatedAt metav1.Time, capacity core.CapacityState, scaling modelScalingConfig) core.ScalingSnapshot {
 	observation := core.DemandObservation{State: core.ObservationUnavailable}
 	if scaling.Autoscaler.Automatic() {
-		observation = reconciler.demandObservation(ctx, target, scaling.MetricsMaxAge)
+		observation = reconciler.demandObservation(ctx, target, scaling.ObservationMaxAge)
 	}
 	return core.ScalingSnapshot{
-		ID:          fmt.Sprintf("%s/%s/%s/%s", service.UID, service.ResourceVersion, target.Kind, target.Name),
 		Target:      target,
 		EvaluatedAt: evaluatedAt.Time,
 		Capacity:    capacity,

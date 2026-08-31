@@ -470,7 +470,7 @@ impl RuntimeGeneration {
                 return Err(GenerationError::ModelNotFound);
             };
             if queued.is_none() {
-                queued = Some(foretoken_metrics::QueueGuard::new(&targets));
+                queued = Some(foretoken_metrics::QueueGuard::runtime_preparation(&targets));
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero()
@@ -510,7 +510,7 @@ impl RuntimeGeneration {
         let initial = session
             .select_initial()
             .map_err(|_| GenerationError::Unavailable)?;
-        let _queue = foretoken_metrics::QueueGuard::new(&initial.admission_targets);
+        let _queue = foretoken_metrics::QueueGuard::backend_dispatch(&initial.admission_targets);
         let (decision, backend_stream) = execute_workflow(
             &*slot.state.resolver,
             &mut *session,

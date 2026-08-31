@@ -2,13 +2,10 @@
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 package core
 
-import "context"
-
 type DesiredCapacityDisposition string
 
 const (
 	DesiredCapacityApply            DesiredCapacityDisposition = "Apply"
-	DesiredCapacityHold             DesiredCapacityDisposition = "Hold"
 	DesiredCapacityInsufficientData DesiredCapacityDisposition = "InsufficientData"
 )
 
@@ -17,6 +14,7 @@ type DesiredCapacityReason string
 const (
 	DesiredCapacityReasonManualIntent           DesiredCapacityReason = "ManualIntent"
 	DesiredCapacityReasonQueuePressure          DesiredCapacityReason = "QueuePressure"
+	DesiredCapacityReasonQueueBelowTarget       DesiredCapacityReason = "QueueBelowTarget"
 	DesiredCapacityReasonIdle                   DesiredCapacityReason = "Idle"
 	DesiredCapacityReasonStable                 DesiredCapacityReason = "Stable"
 	DesiredCapacityReasonAtMinimum              DesiredCapacityReason = "AtMinimum"
@@ -33,11 +31,14 @@ type DesiredCapacity struct {
 	Reason      DesiredCapacityReason
 	Message     string
 }
+
 type DecisionAlgorithm interface {
 	Name() string
-	CalculateDesiredCapacity(context.Context, ScalingSnapshot) (DesiredCapacity, error)
+	CalculateDesiredCapacity(ScalingSnapshot) (DesiredCapacity, error)
 }
+
 type DecisionConfig struct {
-	TargetQueuePerRoutableGroup int64
-	ScaleUpQueue                int64
+	TargetAverageQueuedRequests int64
+	ScaleUpQueuedRequests       int64
+	ScaleDownQueuedRequests     int64
 }

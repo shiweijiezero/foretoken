@@ -66,7 +66,7 @@ Router 从 `RouteInventory` 获取路由目标。只有模型、输入限制和�
   2. **存储层级优先**：Device (4) > HostPinned (3) > Disk (2) > External (1)。
   3. **物理位置优先**：Local (2) > Remote (1)。
   4. **当前负载**：前缀条件相同时，优先选择总体负载（含下游 Decode）最轻的节点。
-- `least_loaded`：纯低负载优先策略。仅根据节点的当前处理负载进行评分，并自动累加上下游关联负载。
+- `least_loaded`：纯低负载优先策略。取 model-server 已接纳请求数与 vLLM scheduler 运行加等待请求数中的较大值作为节点负载，并自动累加下游关联负载。
 - `uniform`：等分策略。为所有候选项赋予相同得分，通常搭配 `round_robin` 实现随机或轮询路由。
 - `weighted_round_robin`：基于预设的节点权重（GPU 算力大小、显存容量等）进行加权轮询，让性能更强的节点承担更多请求。
 - `lowest_latency`：基于目标节点近期的平均响应延迟，如 TTFT（首个 token 时延）或 TPOT（每个输出 token 的时延）进行评分，优先路由给响应最快的节点。
