@@ -111,23 +111,16 @@ helm upgrade --install foretoken \
 
 ### 2. 部署模型服务
 
-`examples/quickstart` 提供一套可直接使用的前端服务和单模型配置。如需运行双模型并验证基于队列的自动扩缩容，请参阅[多模型快速开始](examples/multi-model-quickstart/README_zh.md)。
+先在仓库根目录安装 Foretoken CLI。`examples/quickstart` 提供一套可直接使用的前端服务和单模型配置。如需运行双模型并验证基于队列的自动扩缩容，请参阅[多模型快速开始](examples/multi-model-quickstart/README_zh.md)。
 
 ```bash
-kubectl apply --server-side -k examples/quickstart
+pip install .
+foretoken deploy -k examples/quickstart
 ```
 
-### 3. 等待服务就绪
+该命令会应用 Kustomize 配置，在服务状态变化时输出进度，并在当前配置就绪后退出。
 
-```bash
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-demo \
-  --timeout=6m \
-  frontendservice/quickstart-frontend \
-  modelservice/quickstart-qwen3-0.6b
-```
-
-### 4. 发送生成请求进行测试
+### 3. 发送生成请求进行测试
 
 #### 本地模式
 
@@ -167,12 +160,12 @@ curl --fail-with-body --no-buffer \
 
 复用平台已有网关时，使用该网关实际配置的域名、端口和 TLS。
 
-### 5. 评测服务吞吐
+### 4. 评测服务吞吐
 
-先在当前项目目录中安装 Foretoken 评测 CLI：
+在仓库根目录安装可选的评测依赖：
 
 ```bash
-python -m pip install ./benchmarks
+pip install '.[bench]'
 ```
 
 以下命令会复用已经运行的快速开始服务；服务尚未部署时，CLI 会创建配置中的资源，并在评测结束后只清理本次创建的资源。未指定 `--prompt` 或 `--dataset` 时，使用一个简短的内置提示词：

@@ -11,17 +11,14 @@ This example deploys one frontend and one `Qwen/Qwen3-0.6B` model replica using 
 
 ## Deploy
 
-Install the Foretoken platform first, then run from the repository root:
+Install the Foretoken platform first, then install the CLI and deploy from the repository root:
 
 ```bash
-kubectl apply --server-side -k examples/quickstart
-
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-demo \
-  --timeout=6m \
-  frontendservice/quickstart-frontend \
-  modelservice/quickstart-qwen3-0.6b
+pip install .
+foretoken deploy -k examples/quickstart
 ```
+
+The command reports each service state as it changes and exits when the current configuration is ready.
 
 ## Send a request
 

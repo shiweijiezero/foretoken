@@ -111,23 +111,16 @@ helm upgrade --install foretoken \
 
 ### 2. Deploy the model service
 
-`examples/quickstart` provides a ready-to-use frontend and single-model configuration. For two models with queue-based autoscaling, see [Multi-Model Quick Start](examples/multi-model-quickstart/README.md).
+Install the Foretoken CLI from the repository root. `examples/quickstart` provides a ready-to-use frontend and single-model configuration. For two models with queue-based autoscaling, see [Multi-Model Quick Start](examples/multi-model-quickstart/README.md).
 
 ```bash
-kubectl apply --server-side -k examples/quickstart
+pip install .
+foretoken deploy -k examples/quickstart
 ```
 
-### 3. Wait for serving to become ready
+The command applies the Kustomize configuration, reports each service state as it changes, and exits when the current configuration is ready.
 
-```bash
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-demo \
-  --timeout=6m \
-  frontendservice/quickstart-frontend \
-  modelservice/quickstart-qwen3-0.6b
-```
-
-### 4. Send a generation request
+### 3. Send a generation request
 
 #### Local mode
 
@@ -167,12 +160,12 @@ curl --fail-with-body --no-buffer \
 
 When reusing a platform Gateway, use that Gateway's configured hostname, port, and TLS settings.
 
-### 5. Benchmark service throughput
+### 4. Benchmark service throughput
 
-Install the Foretoken Benchmark CLI from this project path:
+Install the optional benchmark dependencies from the repository root:
 
 ```bash
-python -m pip install ./benchmarks
+pip install '.[bench]'
 ```
 
 The deployment command reuses an existing Quick Start service. If the service is absent, it deploys the configuration and removes only the resources it created after the benchmark. When neither `--prompt` nor `--dataset` is specified, it uses a short built-in prompt:

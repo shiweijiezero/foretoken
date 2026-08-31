@@ -11,17 +11,14 @@
 
 ## 部署
 
-先安装 Foretoken 平台，再从仓库根目录执行：
+先安装 Foretoken 平台，再从仓库根目录安装 CLI 并部署：
 
 ```bash
-kubectl apply --server-side -k examples/quickstart
-
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-demo \
-  --timeout=6m \
-  frontendservice/quickstart-frontend \
-  modelservice/quickstart-qwen3-0.6b
+pip install .
+foretoken deploy -k examples/quickstart
 ```
+
+该命令会在服务状态变化时输出进度，并在当前配置就绪后退出。
 
 ## 发送请求
 

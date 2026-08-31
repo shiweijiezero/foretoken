@@ -18,23 +18,19 @@ Each replica uses one GPU, so the cluster needs two to four schedulable GPUs. Fo
 
 The Qwen service evaluates its queue every five seconds:
 
-- queued requests add one ModelGroup per evaluation, up to three;
-- an empty queue with no active requests removes one ModelGroup per evaluation, down to one.
+- requests waiting at the frontend or inside the inference scheduler add one ModelGroup per evaluation, up to three;
+- no waiting or active requests removes one ModelGroup per evaluation, down to one.
 
 ## Deploy
 
-Install the Foretoken platform first, then run from the repository root:
+Install the Foretoken platform first, then install the CLI and deploy from the repository root:
 
 ```bash
-kubectl apply --server-side -k examples/multi-model-quickstart
-
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-multi-model-demo \
-  --timeout=6m \
-  frontendservice/multi-model-frontend \
-  modelservice/multi-model-qwen3-0.6b \
-  modelservice/multi-model-llama3.2-1b
+pip install .
+foretoken deploy -k examples/multi-model-quickstart
 ```
+
+The command discovers every model in the rendered configuration, reports service state changes, and exits when the current configuration is ready.
 
 Watch the Qwen replicas change:
 

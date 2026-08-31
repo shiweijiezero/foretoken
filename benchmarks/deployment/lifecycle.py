@@ -13,14 +13,9 @@ from typing import Any
 
 import yaml
 
-from benchmarks.deployment.cluster import Kubectl
 from benchmarks.deployment.discovery import BenchmarkEndpoint, discover_endpoint
-from benchmarks.deployment.manifest import (
-    DeploymentError,
-    DeploymentResources,
-    deployment_path,
-    parse_deployment,
-)
+from foretoken_cli.kubernetes import Kubectl, load_deployment
+from foretoken_cli.manifest import DeploymentError, ForetokenDeployment
 
 logger = logging.getLogger(__name__)
 
@@ -37,23 +32,24 @@ def _object_identity(document: dict[str, Any]) -> tuple[str, str, str]:
     return kind, name, namespace
 
 
-def _service_presence(resources: DeploymentResources, kubectl: Kubectl) -> list[bool]:
+def _service_presence(resources: ForetokenDeployment, kubectl: Kubectl) -> list[bool]:
     return [
-        kubectl.exists("frontendservice", resources.frontend, resources.namespace),
-        *(
-            kubectl.exists("modelservice", name, resources.namespace)
-            for name in resources.models
-        ),
+        kubectl.exists(resource.kind, resource.name, resource.namespace)
+        for resource in resources.service_refs()
     ]
 
 
 def _new_objects(
-    resources: DeploymentResources, kubectl: Kubectl
+    resources: ForetokenDeployment, kubectl: Kubectl
 ) -> tuple[dict[str, Any], ...]:
+    missing_services = {
+        (resource.kind, resource.name, resource.namespace)
+        for resource in resources.service_refs()
+    }
     created: list[dict[str, Any]] = []
     for document in resources.objects:
-        kind, name, namespace = _object_identity(document)
-        if not kubectl.exists(kind, name, namespace):
+        identity = _object_identity(document)
+        if identity in missing_services or not kubectl.exists(*identity):
             created.append(document)
     return tuple(created)
 
@@ -61,6 +57,7 @@ def _new_objects(
 def _delete_objects(
     kubectl: Kubectl, objects: tuple[dict[str, Any], ...], timeout: str
 ) -> None:
+    """Delete benchmark-owned objects, removing namespaces after their contents."""
     namespaced = tuple(
         document for document in objects if document.get("kind") != "Namespace"
     )
@@ -69,7 +66,16 @@ def _delete_objects(
     )
     for group in (namespaced, namespaces):
         if group:
-            kubectl.delete_yaml(yaml.safe_dump_all(group), timeout)
+            kubectl.run(
+                [
+                    "delete",
+                    "--filename=-",
+                    "--ignore-not-found",
+                    "--wait=true",
+                    f"--timeout={timeout}",
+                ],
+                input_text=yaml.safe_dump_all(group),
+            )
 
 
 @contextmanager
@@ -82,8 +88,7 @@ def benchmark_deployment(
 ) -> Iterator[BenchmarkEndpoint]:
     """Reuse an existing Foretoken deployment or own it for this benchmark."""
     kubectl = Kubectl()
-    path = deployment_path(deployment)
-    resources = parse_deployment(path, kubectl.kustomize(path))
+    resources = load_deployment(deployment, kubectl)
     presence = _service_presence(resources, kubectl)
     if any(presence) and not all(presence):
         raise DeploymentError(
@@ -93,9 +98,9 @@ def benchmark_deployment(
     created: tuple[dict[str, Any], ...] = ()
     if not any(presence):
         created = _new_objects(resources, kubectl)
-        logger.info("Deploying Foretoken service from %s", path)
+        logger.info("Deploying Foretoken service from %s", resources.path)
         try:
-            kubectl.apply_kustomize(path)
+            kubectl.apply(resources.rendered)
         except Exception:
             _delete_objects(kubectl, created, timeout)
             raise
@@ -110,5 +115,5 @@ def benchmark_deployment(
         )
     finally:
         if created:
-            logger.info("Cleaning up Foretoken service from %s", path)
+            logger.info("Cleaning up Foretoken service from %s", resources.path)
             _delete_objects(kubectl, created, timeout)

@@ -13,8 +13,9 @@ from contextlib import nullcontext
 from dataclasses import replace
 
 from benchmarks.arguments import parse_arguments
-from benchmarks.deployment import DeploymentError, benchmark_deployment
+from benchmarks.deployment import benchmark_deployment
 from benchmarks.logger.cli import configure_logging, print_endpoint
+from foretoken_cli.manifest import DeploymentError
 from benchmarks.runner.select_runner import select_runner
 
 logger = logging.getLogger(__name__)

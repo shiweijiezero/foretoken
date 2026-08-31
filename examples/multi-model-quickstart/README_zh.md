@@ -18,23 +18,19 @@
 
 Qwen 服务每 5 秒评估一次队列：
 
-- 出现排队请求时，每轮增加 1 个 ModelGroup，最多扩容到 3 个；
-- 队列为空且没有正在执行的请求时，每轮减少 1 个 ModelGroup，最少保留 1 个。
+- 前端或推理引擎调度器中出现等待请求时，每轮增加 1 个 ModelGroup，最多扩容到 3 个；
+- 没有等待和正在执行的请求时，每轮减少 1 个 ModelGroup，最少保留 1 个。
 
 ## 部署
 
-先安装 Foretoken 平台，再从仓库根目录执行：
+先安装 Foretoken 平台，再从仓库根目录安装 CLI 并部署：
 
 ```bash
-kubectl apply --server-side -k examples/multi-model-quickstart
-
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-multi-model-demo \
-  --timeout=6m \
-  frontendservice/multi-model-frontend \
-  modelservice/multi-model-qwen3-0.6b \
-  modelservice/multi-model-llama3.2-1b
+pip install .
+foretoken deploy -k examples/multi-model-quickstart
 ```
+
+该命令会自动发现渲染配置中的全部模型，在服务状态变化时输出进度，并在当前配置就绪后退出。
 
 观察 Qwen 副本变化：
 

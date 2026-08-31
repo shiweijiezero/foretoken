@@ -5,6 +5,5 @@
 """Manage Foretoken services used by deployment benchmarks."""
 
 from benchmarks.deployment.lifecycle import benchmark_deployment
-from benchmarks.deployment.manifest import DeploymentError
 
-__all__ = ["DeploymentError", "benchmark_deployment"]
+__all__ = ["benchmark_deployment"]
