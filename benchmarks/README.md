@@ -36,13 +36,13 @@ The console summary is shown by default. Use `--output local` for local artifact
 Benchmark a Foretoken Kubernetes deployment. The CLI reuses it when already present; otherwise it deploys the rendered resources and removes only those resources after the benchmark. When neither `--prompt` nor `--dataset` is specified, it uses a short built-in prompt:
 
 ```bash
-foretoken bench --deploy examples/quickstart
+foretoken bench examples/quickstart
 ```
 
 Use the common sampling options directly and pass other OpenAI-compatible or backend-specific request fields through `--extra-body`:
 
 ```bash
-foretoken bench --deploy examples/quickstart \
+foretoken bench examples/quickstart \
   --temperature 0 \
   --top-p 1 \
   --top-k 0 \

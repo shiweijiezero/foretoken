@@ -158,6 +158,12 @@ cd /path/to/your/foretoken
 - **Use release images**: continue with [section 4.2: Local mode](#42-local-mode) or [section 4.3: Gateway mode](#43-gateway-mode).
 - **Deploy from source**: complete [section 2.1: Import local images directly](custom-deployment.md#21-import-local-images-directly), [section 4: Deploy the Quick Start](custom-deployment.md#4-deploy-the-quick-start-optional), and [section 5: Send a request](custom-deployment.md#5-send-a-request-optional).
 
+For release-image deployment, install the CLI once from the repository root:
+
+```bash
+pip install -e .
+```
+
 ### 4.2 Local mode
 
 Install Foretoken from release images and deploy the Quick Start:
@@ -171,22 +177,13 @@ helm upgrade --install foretoken \
   --set frontend.mode=local \
   --wait
 
-kubectl apply --server-side -k examples/quickstart
-
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-demo \
-  --timeout=6m \
-  frontendservice/quickstart-frontend \
-  modelservice/quickstart-qwen3-0.6b
+foretoken deploy examples/quickstart --timeout 6m
 ```
 
-Read the address that k3s ServiceLB assigns to the frontend:
+Resolve the address that k3s ServiceLB assigns to the frontend:
 
 ```bash
-export FRONTEND_HOST="$(kubectl get service quickstart-frontend \
-  --namespace foretoken-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')"
-export FRONTEND_URL="http://$FRONTEND_HOST:8080"
+source <(foretoken endpoint examples/quickstart --format shell)
 ```
 
 ### 4.3 Gateway mode
@@ -216,25 +213,20 @@ helm upgrade --install foretoken \
   --set frontend.gateway.create=true \
   --wait
 
-kubectl apply --server-side -k examples/quickstart
-
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-demo \
-  --timeout=6m \
-  frontendservice/quickstart-frontend \
-  modelservice/quickstart-qwen3-0.6b
+foretoken deploy examples/quickstart --timeout 6m
 ```
 
-Use the configured hostname:
+Resolve the configured Gateway endpoint:
 
 ```bash
-export FRONTEND_URL=https://foretoken.example.com
+source <(foretoken endpoint examples/quickstart --format shell)
 ```
 
 ### 4.4 Send an OpenAI API-compatible request
 
 ```bash
-curl "$FRONTEND_URL/v1/chat/completions" \
+curl "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $FORETOKEN_REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "Qwen/Qwen3-0.6B",

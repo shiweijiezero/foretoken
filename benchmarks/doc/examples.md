@@ -3,7 +3,7 @@
 Deploy or reuse the Quick Start service, discover its model and endpoint, and clean up resources created for the benchmark:
 
 ```bash
-foretoken bench --deploy examples/quickstart
+foretoken bench examples/quickstart
 ```
 
 # Random dataset

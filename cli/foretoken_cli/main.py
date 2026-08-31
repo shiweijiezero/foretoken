@@ -5,13 +5,16 @@
 
 from __future__ import annotations
 
+import shlex
 import sys
 import time
 from collections.abc import Sequence
+from urllib.parse import urlsplit
 
 from foretoken_cli.arguments import (
     BenchCommand,
     DeployCommand,
+    EndpointCommand,
     StatusCommand,
     parse_arguments,
 )
@@ -21,6 +24,7 @@ from foretoken_cli.kubernetes import (
     load_deployment,
     namespace_progress,
     read_progress,
+    resolve_frontend_endpoint,
     timeout_seconds,
     wait_for_resources,
 )
@@ -112,6 +116,25 @@ def _status(
         time.sleep(2)
 
 
+def _endpoint(
+    kustomize_path: str, timeout: str, output_format: str
+) -> None:
+    """Wait for and print the public endpoint of one rendered deployment."""
+    kubectl = Kubectl()
+    deployment = load_deployment(kustomize_path, kubectl)
+    print("Waiting for the frontend endpoint", file=sys.stderr, flush=True)
+    endpoint = resolve_frontend_endpoint(deployment, kubectl, timeout)
+    if output_format == "shell":
+        print(f"FORETOKEN_FRONTEND_URL={shlex.quote(endpoint.url)}")
+        request_host = endpoint.routing_host or urlsplit(endpoint.url).netloc
+        print(
+            "FORETOKEN_REQUEST_HOST="
+            f"{shlex.quote(request_host)}"
+        )
+        return
+    print(endpoint.url)
+
+
 def _bench(arguments: Sequence[str]) -> None:
     """Load optional benchmark dependencies only when the bench command runs."""
     try:
@@ -134,6 +157,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             _deploy(command.kustomize_path, command.timeout)
         elif isinstance(command, StatusCommand):
             _status(command.kustomize_path, command.namespace, command.watch)
+        elif isinstance(command, EndpointCommand):
+            _endpoint(
+                command.kustomize_path,
+                command.timeout,
+                command.output_format,
+            )
         elif isinstance(command, BenchCommand):
             _bench(command.arguments)
     except DeploymentError as exc:

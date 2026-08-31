@@ -115,7 +115,7 @@ helm upgrade --install foretoken \
 
 ```bash
 pip install -e .
-foretoken deploy -k examples/quickstart
+foretoken deploy examples/quickstart
 ```
 
 该命令会应用 Kustomize 配置，在服务状态变化时输出进度，并在当前配置就绪后退出。
@@ -124,36 +124,27 @@ foretoken deploy -k examples/quickstart
 
 #### 本地模式
 
-读取前端服务的访问地址并发送请求：
+解析前端服务 URL 并发送请求：
 
 ```bash
-kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' \
-  --namespace foretoken-demo \
-  --timeout=5m \
-  service/quickstart-frontend
-
-FORETOKEN_FRONTEND_ADDRESS=$(kubectl get service quickstart-frontend \
-  --namespace foretoken-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
 
 curl --fail-with-body --no-buffer \
-  "http://${FORETOKEN_FRONTEND_ADDRESS}:8080/v1/chat/completions" \
+  "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
 
 #### 网关模式
 
-使用由 Chart 创建的 HTTP 网关时，读取网关地址并携带配置的域名：
+使用由 Chart 创建的 HTTP 网关时，解析网关地址和路由域名：
 
 ```bash
-FORETOKEN_GATEWAY_ADDRESS=$(kubectl get gateway foretoken-gateway \
-  --namespace foretoken-platform \
-  -o jsonpath='{.status.addresses[0].value}')
+source <(foretoken endpoint examples/quickstart --format shell)
 
 curl --fail-with-body --no-buffer \
-  "http://${FORETOKEN_GATEWAY_ADDRESS}/v1/chat/completions" \
-  -H "Host: foretoken.example.com" \
+  "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $FORETOKEN_REQUEST_HOST" \
   -H "Content-Type: application/json" \
   -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
 ```
@@ -171,7 +162,7 @@ pip install -e '.[bench]'
 以下命令会复用已经运行的快速开始服务；服务尚未部署时，CLI 会创建配置中的资源，并在评测结束后只清理本次创建的资源。未指定 `--prompt` 或 `--dataset` 时，使用一个简短的内置提示词：
 
 ```bash
-foretoken bench --deploy examples/quickstart
+foretoken bench examples/quickstart
 ```
 
 默认仅在控制台显示结果。使用 `--output local` 将结果保存到本地，使用 `--output wandb` 发布到 W&B；两者也可同时使用。

@@ -15,20 +15,17 @@ Install the Foretoken platform first, then install the CLI and deploy from the r
 
 ```bash
 pip install -e .
-foretoken deploy -k examples/quickstart
+foretoken deploy examples/quickstart
 ```
 
 The command reports each service state as it changes and exits when the current configuration is ready.
 
 ## Send a request
 
-Read the `LoadBalancer` Service address:
+Resolve the frontend URL:
 
 ```bash
-export FRONTEND_HOST="$(kubectl get service quickstart-frontend \
-  --namespace foretoken-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')"
-export FRONTEND_URL="http://$FRONTEND_HOST:8080"
+FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
 ```
 
 Send an OpenAI-compatible request:

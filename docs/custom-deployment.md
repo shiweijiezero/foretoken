@@ -210,29 +210,21 @@ Changed images: control-plane=false frontend=true model-server=false
 
 The Quick Start requires GPU resources in the target Kubernetes cluster. With k3d, first configure the GPUs as described in [Deploy Foretoken with k3d](k3d-deployment.md), then confirm that the current Kubernetes context points to the target k3d cluster.
 
-To start the example frontend and `Qwen/Qwen3-0.6B` model service, run the following commands.
+To start the example frontend and `Qwen/Qwen3-0.6B` model service, install the CLI and deploy from the repository root.
 
 ```bash
-kubectl apply --server-side -k examples/quickstart
-
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-demo \
-  --timeout=6m \
-  frontendservice/quickstart-frontend \
-  modelservice/quickstart-qwen3-0.6b
+pip install -e .
+foretoken deploy examples/quickstart --timeout 6m
 ```
 
-After the wait command exits successfully, the Quick Start can accept requests.
+The command discovers the rendered services, reports state changes, and exits when the current configuration is ready.
 
 ## 5. Send a request (optional)
 
-After completing [section 4: Deploy the Quick Start](#4-deploy-the-quick-start-optional) and waiting for the service to become Ready, you can send a request to verify it. The default `local` frontend mode uses a `LoadBalancer` Service; first read the address assigned by the cluster:
+After completing [section 4: Deploy the Quick Start](#4-deploy-the-quick-start-optional), resolve the default `local` frontend URL:
 
 ```bash
-export FRONTEND_HOST="$(kubectl get service quickstart-frontend \
-  --namespace foretoken-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')"
-export FRONTEND_URL="http://$FRONTEND_HOST:8080"
+FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
 ```
 
 Check the frontend and model routing first:

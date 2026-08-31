@@ -158,6 +158,12 @@ cd /path/to/your/foretoken
 - **使用发布镜像**：继续执行 [第 4.2 节：本地模式](#42-本地模式) 或 [第 4.3 节：网关模式](#43-网关模式)。
 - **从源码部署**：依次完成[第 2.1 节：直接导入本地镜像](custom-deployment_zh.md#21-直接导入本地镜像)、[第 4 节：部署快速开始示例](custom-deployment_zh.md#4-部署快速开始示例可选)和[第 5 节：发送请求](custom-deployment_zh.md#5-发送请求可选)。
 
+使用发布镜像部署时，先从仓库根目录安装一次 CLI：
+
+```bash
+pip install -e .
+```
+
 ### 4.2 本地模式
 
 使用发布镜像安装 Foretoken 并部署快速开始示例：
@@ -171,22 +177,13 @@ helm upgrade --install foretoken \
   --set frontend.mode=local \
   --wait
 
-kubectl apply --server-side -k examples/quickstart
-
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-demo \
-  --timeout=6m \
-  frontendservice/quickstart-frontend \
-  modelservice/quickstart-qwen3-0.6b
+foretoken deploy examples/quickstart --timeout 6m
 ```
 
-读取 k3s ServiceLB 为前端服务分配的地址：
+解析 k3s ServiceLB 为前端服务分配的地址：
 
 ```bash
-export FRONTEND_HOST="$(kubectl get service quickstart-frontend \
-  --namespace foretoken-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')"
-export FRONTEND_URL="http://$FRONTEND_HOST:8080"
+source <(foretoken endpoint examples/quickstart --format shell)
 ```
 
 ### 4.3 网关模式
@@ -216,25 +213,20 @@ helm upgrade --install foretoken \
   --set frontend.gateway.create=true \
   --wait
 
-kubectl apply --server-side -k examples/quickstart
-
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-demo \
-  --timeout=6m \
-  frontendservice/quickstart-frontend \
-  modelservice/quickstart-qwen3-0.6b
+foretoken deploy examples/quickstart --timeout 6m
 ```
 
-使用已配置的域名：
+解析已配置的 Gateway 入口：
 
 ```bash
-export FRONTEND_URL=https://foretoken.example.com
+source <(foretoken endpoint examples/quickstart --format shell)
 ```
 
 ### 4.4 发送 OpenAI API 兼容格式的请求
 
 ```bash
-curl "$FRONTEND_URL/v1/chat/completions" \
+curl "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
+  -H "Host: $FORETOKEN_REQUEST_HOST" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "Qwen/Qwen3-0.6B",

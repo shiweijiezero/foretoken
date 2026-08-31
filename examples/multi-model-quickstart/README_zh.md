@@ -16,10 +16,7 @@
 
 ## 基于队列的自动扩缩容
 
-Qwen 服务每 5 秒评估一次队列：
-
-- 前端或推理引擎调度器中出现等待请求时，每轮增加 1 个 ModelGroup，最多扩容到 3 个；
-- 没有等待和正在执行的请求时，每轮减少 1 个 ModelGroup，最少保留 1 个。
+Qwen 服务每 5 秒评估一次队列，以每个 Group 平均 1 个等待请求为容量目标，每轮最多增加 1 个 ModelGroup，并在 1–3 个 Group 之间扩缩。只有较低容量建议持续 5 分钟后才开始缩容。
 
 ## 部署
 
@@ -27,7 +24,7 @@ Qwen 服务每 5 秒评估一次队列：
 
 ```bash
 pip install -e .
-foretoken deploy -k examples/multi-model-quickstart
+foretoken deploy examples/multi-model-quickstart
 ```
 
 该命令会自动发现渲染配置中的全部模型，在服务状态变化时输出进度，并在当前配置就绪后退出。
@@ -43,10 +40,7 @@ kubectl get modelpool,modelgroup \
 ## 发送请求
 
 ```bash
-export FRONTEND_HOST="$(kubectl get service multi-model-frontend \
-  --namespace foretoken-multi-model-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')"
-export FRONTEND_URL="http://$FRONTEND_HOST:8080"
+FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 ```
 
 请求 Qwen：

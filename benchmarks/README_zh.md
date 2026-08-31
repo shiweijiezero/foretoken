@@ -36,13 +36,13 @@
 评测 Foretoken 的 Kubernetes 部署。若服务已存在则直接复用；若尚未部署，CLI 会部署渲染后的资源，并在评测结束后仅清理本次创建的资源。未指定 `--prompt` 或 `--dataset` 时，使用一个简短的内置提示词：
 
 ```bash
-foretoken bench --deploy examples/quickstart
+foretoken bench examples/quickstart
 ```
 
 常用采样参数可直接指定；其他与 OpenAI 兼容的请求字段或后端扩展字段可通过 `--extra-body` 传入：
 
 ```bash
-foretoken bench --deploy examples/quickstart \
+foretoken bench examples/quickstart \
   --temperature 0 \
   --top-p 1 \
   --top-k 0 \

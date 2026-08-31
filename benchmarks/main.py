@@ -27,7 +27,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         command = parse_arguments(argv)
         config = command.config
         if (
-            command.deploy
+            command.kustomize_path
             and not config.dataset.prompt
             and not config.dataset.dataset
         ):
@@ -36,12 +36,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         configure_logging(not config.output.includes("quiet"))
         service_context = (
             benchmark_deployment(
-                command.deploy,
+                command.kustomize_path,
                 command.wait_timeout,
                 requested_model=config.endpoint.model,
                 api_key=config.endpoint.api_key,
             )
-            if command.deploy
+            if command.kustomize_path
             else nullcontext(None)
         )
         with service_context as endpoint:

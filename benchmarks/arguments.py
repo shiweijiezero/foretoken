@@ -29,7 +29,7 @@ from benchmarks.config import (
 class BenchCommand:
     """Run a benchmark against a deployment or existing endpoint."""
 
-    deploy: str
+    kustomize_path: str
     config: BenchConfig
     wait_timeout: str
 
@@ -49,13 +49,13 @@ def _output_destinations(value: str) -> tuple[str, ...]:
 
 def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     # Service source
-    service_source = parser.add_mutually_exclusive_group(required=True)
-    service_source.add_argument(
-        "--deploy",
-        default="",
-        help="Kustomize directory to deploy or reuse for this benchmark",
+    parser.add_argument(
+        "kustomize_path",
+        nargs="?",
+        metavar="PATH",
+        help="Kustomize root to deploy or reuse for this benchmark",
     )
-    service_source.add_argument(
+    parser.add_argument(
         "--url",
         default="",
         help="Existing OpenAI-compatible API URL",
@@ -428,10 +428,12 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchCommand:
     _add_benchmark_arguments(bench)
 
     namespace = parser.parse_args(argv)
+    if bool(namespace.kustomize_path) == bool(namespace.url):
+        bench.error("provide either PATH or --url")
     if namespace.url and not namespace.model:
         bench.error("--model is required with --url")
     return BenchCommand(
-        deploy=namespace.deploy,
+        kustomize_path=namespace.kustomize_path or "",
         config=_bench_config(namespace),
         wait_timeout=namespace.wait_timeout,
     )

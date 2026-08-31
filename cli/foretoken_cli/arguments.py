@@ -30,13 +30,22 @@ class StatusCommand:
 
 
 @dataclass(frozen=True)
+class EndpointCommand:
+    """Resolve the public frontend endpoint for one Kustomize deployment."""
+
+    kustomize_path: str
+    timeout: str
+    output_format: str
+
+
+@dataclass(frozen=True)
 class BenchCommand:
     """Forward benchmark arguments to the optional benchmark module."""
 
     arguments: tuple[str, ...]
 
 
-ParsedCommand = DeployCommand | StatusCommand | BenchCommand
+ParsedCommand = DeployCommand | StatusCommand | EndpointCommand | BenchCommand
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -52,10 +61,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Apply a Kustomize deployment and wait for serving readiness",
     )
     deploy.add_argument(
-        "-k",
-        "--kustomize",
-        required=True,
-        dest="kustomize_path",
+        "kustomize_path",
         metavar="PATH",
         help="Kustomize root containing one frontend and one or more models",
     )
@@ -69,15 +75,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "status",
         help="Show Foretoken service readiness",
     )
-    source = status.add_mutually_exclusive_group(required=True)
-    source.add_argument(
-        "-k",
-        "--kustomize",
-        dest="kustomize_path",
+    status.add_argument(
+        "kustomize_path",
+        nargs="?",
         metavar="PATH",
-        help="inspect services rendered by this Kustomize root",
+        help="Kustomize root whose services should be inspected",
     )
-    source.add_argument(
+    status.add_argument(
         "-n",
         "--namespace",
         metavar="NAMESPACE",
@@ -87,6 +91,28 @@ def _build_parser() -> argparse.ArgumentParser:
         "--watch",
         action="store_true",
         help="print service state changes until interrupted",
+    )
+
+    endpoint = subparsers.add_parser(
+        "endpoint",
+        help="Wait for and print a deployment's public frontend endpoint",
+    )
+    endpoint.add_argument(
+        "kustomize_path",
+        metavar="PATH",
+        help="Kustomize root containing one frontend",
+    )
+    endpoint.add_argument(
+        "--timeout",
+        default=_DEFAULT_TIMEOUT,
+        help=f"maximum endpoint wait (default: {_DEFAULT_TIMEOUT})",
+    )
+    endpoint.add_argument(
+        "--format",
+        choices=("url", "shell"),
+        default="url",
+        dest="output_format",
+        help="output a URL or shell variable assignments (default: url)",
     )
 
     subparsers.add_parser(
@@ -103,7 +129,14 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
     if arguments and arguments[0] == "bench":
         return BenchCommand(arguments)
 
-    parsed = _build_parser().parse_args(arguments)
+    parser = _build_parser()
+    parsed = parser.parse_args(arguments)
     if parsed.command == "deploy":
         return DeployCommand(parsed.kustomize_path, parsed.timeout)
-    return StatusCommand(parsed.kustomize_path, parsed.namespace, parsed.watch)
+    if parsed.command == "status":
+        if bool(parsed.kustomize_path) == bool(parsed.namespace):
+            parser.error("status requires either PATH or --namespace")
+        return StatusCommand(parsed.kustomize_path, parsed.namespace, parsed.watch)
+    return EndpointCommand(
+        parsed.kustomize_path, parsed.timeout, parsed.output_format
+    )

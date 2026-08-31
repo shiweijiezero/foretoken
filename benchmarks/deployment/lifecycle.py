@@ -80,7 +80,7 @@ def _delete_objects(
 
 @contextmanager
 def benchmark_deployment(
-    deployment: str,
+    kustomize_path: str,
     timeout: str,
     *,
     requested_model: str,
@@ -88,7 +88,7 @@ def benchmark_deployment(
 ) -> Iterator[BenchmarkEndpoint]:
     """Reuse an existing Foretoken deployment or own it for this benchmark."""
     kubectl = Kubectl()
-    resources = load_deployment(deployment, kubectl)
+    resources = load_deployment(kustomize_path, kubectl)
     presence = _service_presence(resources, kubectl)
     if any(presence) and not all(presence):
         raise DeploymentError(

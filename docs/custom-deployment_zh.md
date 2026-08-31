@@ -210,29 +210,21 @@ Changed images: control-plane=false frontend=true model-server=false
 
 快速开始示例需要目标 Kubernetes 集群提供 GPU 资源。使用 k3d 时，先按[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)完成 GPU 配置，并确认当前 Kubernetes 上下文指向目标 k3d 集群。
 
-需要启动示例前端服务和 `Qwen/Qwen3-0.6B` 模型服务时，执行以下命令。
+需要启动示例前端服务和 `Qwen/Qwen3-0.6B` 模型服务时，从仓库根目录安装 CLI 并部署。
 
 ```bash
-kubectl apply --server-side -k examples/quickstart
-
-kubectl wait --for=condition=Ready \
-  --namespace foretoken-demo \
-  --timeout=6m \
-  frontendservice/quickstart-frontend \
-  modelservice/quickstart-qwen3-0.6b
+pip install -e .
+foretoken deploy examples/quickstart --timeout 6m
 ```
 
-等待命令成功退出后，快速开始示例即可接受请求。
+该命令会发现渲染后的服务、输出状态变化，并在当前配置就绪后退出。
 
 ## 5. 发送请求（可选）
 
-完成[第 4 节：部署快速开始示例](#4-部署快速开始示例可选)并等待服务就绪后，可以发送请求验证服务。默认的 `local` 前端模式使用 `LoadBalancer` Service，先读取集群分配的地址：
+完成[第 4 节：部署快速开始示例](#4-部署快速开始示例可选)后，解析默认 `local` 前端模式的 URL：
 
 ```bash
-export FRONTEND_HOST="$(kubectl get service quickstart-frontend \
-  --namespace foretoken-demo \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}{.status.loadBalancer.ingress[0].hostname}')"
-export FRONTEND_URL="http://$FRONTEND_HOST:8080"
+FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
 ```
 
 先确认前端服务和模型路由可用：
