@@ -20,7 +20,12 @@ from foretoken_cli.arguments import (
     UninstallCommand,
     parse_arguments,
 )
-from foretoken_cli.helm import Helm, platform_release, prometheus_release
+from foretoken_cli.helm import (
+    Helm,
+    dcgm_release,
+    platform_release,
+    prometheus_release,
+)
 from foretoken_cli.kubernetes import (
     Kubectl,
     ResourceProgress,
@@ -36,7 +41,12 @@ from foretoken_cli.kubernetes import (
     wait_for_resources,
 )
 from foretoken_cli.manifest import DeploymentError, ResourceRef
-from foretoken_cli.observability import PrometheusRef, select_prometheus
+from foretoken_cli.accelerators.nvidia import discover_nvidia_metrics
+from foretoken_cli.observability import (
+    PrometheusRef,
+    prometheus_selects_service_monitor,
+    select_prometheus,
+)
 
 
 def _print_plan(responsibility: str, action: str, detail: str) -> None:
@@ -77,6 +87,17 @@ def _install(command: InstallCommand) -> None:
             f"lifecycle: {existing}"
         )
 
+    managed_dcgm = dcgm_release()
+    managed_dcgm_exists = helm.release_exists(managed_dcgm)
+    if managed_dcgm_exists and not helm.is_cli_managed(managed_dcgm):
+        raise DeploymentError(
+            f"Helm release {managed_dcgm.display_name} is not managed by foretoken; "
+            "use its existing Helm lifecycle"
+        )
+    nvidia_metrics = discover_nvidia_metrics(
+        kubectl, managed_dcgm if managed_dcgm_exists else None
+    )
+
     managed_prometheus = prometheus_release()
     managed_prometheus_exists = helm.release_exists(managed_prometheus)
     selected_prometheus: PrometheusRef | None = None
@@ -104,19 +125,75 @@ def _install(command: InstallCommand) -> None:
     install_managed_prometheus = (
         managed_prometheus_exists or selected_prometheus is None
     )
+    if (
+        selected_prometheus is not None
+        and nvidia_metrics is not None
+        and nvidia_metrics.reused_service_monitor is not None
+        and not prometheus_selects_service_monitor(
+            kubectl,
+            selected_prometheus,
+            nvidia_metrics.reused_service_monitor.namespace,
+            nvidia_metrics.service_monitor_labels,
+        )
+    ):
+        monitor = nvidia_metrics.reused_service_monitor
+        raise DeploymentError(
+            f"Prometheus {selected_prometheus.namespace}/{selected_prometheus.name} "
+            f"does not select DCGM ServiceMonitor {monitor.namespace}/{monitor.name}; "
+            "update the shared platform selectors before installing Foretoken"
+        )
+    if nvidia_metrics is None:
+        nvidia_action = "Preserve" if managed_dcgm_exists else "Skip"
+        nvidia_detail = (
+            managed_dcgm.display_name
+            if managed_dcgm_exists
+            else "no allocatable nvidia.com/gpu resource"
+        )
+        install_managed_dcgm = False
+    elif managed_dcgm_exists:
+        nvidia_action = "Upgrade"
+        nvidia_detail = managed_dcgm.display_name
+        install_managed_dcgm = True
+    elif nvidia_metrics.reused_daemonset is not None:
+        nvidia_action = "Reuse"
+        nvidia_detail = (
+            f"{nvidia_metrics.reused_daemonset.namespace}/"
+            f"{nvidia_metrics.reused_daemonset.display_name}"
+        )
+        install_managed_dcgm = False
+    else:
+        nvidia_action = "Install"
+        nvidia_detail = managed_dcgm.display_name
+        install_managed_dcgm = True
+
+    observability_labels = (
+        () if selected_prometheus is None else selected_prometheus.additional_labels
+    )
+    monitor_namespaces = {platform.namespace}
+    if nvidia_metrics is not None and nvidia_metrics.reused_daemonset is not None:
+        monitor_namespaces.add(nvidia_metrics.reused_daemonset.namespace)
+
     platform_action = "Upgrade" if platform_exists else "Install"
     _print_plan("Prometheus", prometheus_action, prometheus_detail)
+    _print_plan("NVIDIA DCGM Exporter", nvidia_action, nvidia_detail)
     _print_plan("Foretoken platform", platform_action, platform.display_name)
 
     if install_managed_prometheus:
         helm.install_prometheus(
             managed_prometheus,
+            tuple(sorted(monitor_namespaces)),
             command.timeout,
             command.dry_run,
         )
-    observability_labels = (
-        () if selected_prometheus is None else selected_prometheus.additional_labels
-    )
+    if install_managed_dcgm:
+        helm.install_dcgm_exporter(
+            managed_dcgm,
+            observability_labels,
+            nvidia_metrics.node_selector,
+            managed_dcgm_exists,
+            command.timeout,
+            command.dry_run,
+        )
     dry_run_api_versions = (
         (
             "monitoring.coreos.com/v1/ServiceMonitor",
@@ -144,6 +221,8 @@ def _install(command: InstallCommand) -> None:
                 kubectl, managed_prometheus.namespace
             )
             _print_plan("Prometheus", "Ready", managed_prometheus.display_name)
+        if install_managed_dcgm:
+            _print_plan("NVIDIA DCGM Exporter", "Ready", managed_dcgm.display_name)
         _print_plan("Foretoken platform", "Ready", platform.display_name)
 
 def _uninstall(command: UninstallCommand) -> None:
@@ -151,6 +230,7 @@ def _uninstall(command: UninstallCommand) -> None:
     helm = Helm()
     kubectl = Kubectl()
     platform = platform_release()
+    managed_dcgm = dcgm_release()
     managed_prometheus = prometheus_release()
 
     platform_exists = helm.release_exists(platform)
@@ -160,11 +240,13 @@ def _uninstall(command: UninstallCommand) -> None:
             "use its existing Helm lifecycle"
         )
 
+    dcgm_exists = helm.release_exists(managed_dcgm)
+    dcgm_managed = dcgm_exists and helm.is_cli_managed(managed_dcgm)
     prometheus_exists = helm.release_exists(managed_prometheus)
     prometheus_managed = (
         prometheus_exists and helm.is_cli_managed(managed_prometheus)
     )
-    if platform_exists or prometheus_managed:
+    if platform_exists or dcgm_managed or prometheus_managed:
         resources = platform_service_resources(kubectl)
         if resources:
             remaining = ", ".join(
@@ -180,6 +262,12 @@ def _uninstall(command: UninstallCommand) -> None:
         _print_plan("Foretoken platform", "Remove", platform.display_name)
     else:
         _print_plan("Foretoken platform", "Skip", "not installed")
+    if dcgm_managed:
+        _print_plan("NVIDIA DCGM Exporter", "Remove", managed_dcgm.display_name)
+    elif dcgm_exists:
+        _print_plan("NVIDIA DCGM Exporter", "Preserve", managed_dcgm.display_name)
+    else:
+        _print_plan("NVIDIA DCGM Exporter", "Skip", "no managed release")
     if prometheus_managed:
         _print_plan("Prometheus", "Remove", managed_prometheus.display_name)
     elif prometheus_exists:
@@ -192,6 +280,9 @@ def _uninstall(command: UninstallCommand) -> None:
     if platform_exists:
         helm.uninstall(platform, command.timeout)
         _print_plan("Foretoken platform", "Removed", platform.display_name)
+    if dcgm_managed:
+        helm.uninstall(managed_dcgm, command.timeout)
+        _print_plan("NVIDIA DCGM Exporter", "Removed", managed_dcgm.display_name)
     if prometheus_managed:
         helm.uninstall(managed_prometheus, command.timeout)
         unmark_managed_metrics_scraper_namespace(

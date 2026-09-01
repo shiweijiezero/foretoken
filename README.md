@@ -59,7 +59,7 @@ Use the CLI to install the Foretoken platform into the cluster selected by the a
 foretoken install
 ```
 
-The command also reuses a compatible Prometheus or installs a CLI-managed monitoring stack.
+The command also prepares Prometheus and, on NVIDIA GPU nodes, DCGM Exporter. Existing compatible components are reused; GPU drivers and device plugins remain platform-owned.
 
 #### Gateway mode
 
@@ -191,7 +191,7 @@ After the serving resources are gone, uninstall the platform:
 foretoken uninstall
 ```
 
-A CLI-managed monitoring stack is removed with the platform; a reused Prometheus is preserved. A `GatewayClass` and `Gateway` created for Foretoken are removed with the platform release, while a reused Gateway is left unchanged.
+CLI-managed monitoring and DCGM Exporter releases are removed with the platform; reused components are preserved. A `GatewayClass` and `Gateway` created for Foretoken are removed with the platform release, while a reused Gateway is left unchanged.
 
 If Envoy Gateway was installed only for this Foretoken deployment, uninstall it as well:
 

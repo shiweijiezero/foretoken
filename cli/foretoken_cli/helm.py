@@ -45,6 +45,11 @@ def prometheus_release() -> ReleaseRef:
     return ReleaseRef("foretoken-prometheus", platform_release().namespace)
 
 
+def dcgm_release() -> ReleaseRef:
+    """Return the fixed CLI-managed NVIDIA exporter release."""
+    return ReleaseRef("foretoken-dcgm-exporter", platform_release().namespace)
+
+
 class Helm:
     """Read and mutate Helm releases through the local Helm CLI."""
 
@@ -130,23 +135,24 @@ class Helm:
 
     @staticmethod
     def _upgrade_install_args(
-        release: ReleaseRef, chart: str, chart_version: str
+        release: ReleaseRef, chart: str, chart_version: str | None
     ) -> list[str]:
         """Build the shared CLI-owned Helm release identity and chart selection."""
         management_key, management_value = release.management_label
-        return [
+        args = [
             "upgrade",
             "--install",
             release.name,
             chart,
-            "--version",
-            chart_version,
             "--namespace",
             release.namespace,
             "--create-namespace",
             "--labels",
             f"{management_key}={management_value}",
         ]
+        if chart_version is not None:
+            args.extend(["--version", chart_version])
+        return args
 
     @staticmethod
     def _finish_upgrade(args: list[str], timeout: str, dry_run: bool) -> None:
@@ -237,14 +243,33 @@ class Helm:
         self.run(args)
 
     def install_prometheus(
-        self, release: ReleaseRef, timeout: str, dry_run: bool
+        self,
+        release: ReleaseRef,
+        service_monitor_namespaces: tuple[str, ...],
+        timeout: str,
+        dry_run: bool,
     ) -> None:
         """Install or upgrade the CLI-managed kube-prometheus-stack release."""
-        namespace_selector = {
-            "matchLabels": {
-                "kubernetes.io/metadata.name": release.namespace,
+        selected_namespaces = tuple(sorted(set(service_monitor_namespaces)))
+        if not selected_namespaces:
+            raise DeploymentError("managed Prometheus requires a monitor namespace")
+        namespace_selector = (
+            {
+                "matchLabels": {
+                    "kubernetes.io/metadata.name": selected_namespaces[0],
+                }
             }
-        }
+            if len(selected_namespaces) == 1
+            else {
+                "matchExpressions": [
+                    {
+                        "key": "kubernetes.io/metadata.name",
+                        "operator": "In",
+                        "values": list(selected_namespaces),
+                    }
+                ]
+            }
+        )
         rule_selector = {
             "matchLabels": {
                 "app.kubernetes.io/name": "foretoken-control-plane",
@@ -282,6 +307,73 @@ class Helm:
                 "--set-json",
                 "prometheus.prometheusSpec.ruleNamespaceSelector="
                 + json.dumps(namespace_selector, separators=(",", ":")),
+            ]
+        )
+        if not dry_run:
+            self._finish_upgrade(args, timeout, False)
+        self.run(args)
+
+    def install_dcgm_exporter(
+        self,
+        release: ReleaseRef,
+        observability_labels: tuple[tuple[str, str], ...],
+        node_selector: tuple[str, str] | None,
+        reuse_values: bool,
+        timeout: str,
+        dry_run: bool,
+    ) -> None:
+        """Install or upgrade the CLI-managed NVIDIA DCGM Exporter release."""
+        chart = (
+            "https://nvidia.github.io/dcgm-exporter/helm-charts/"
+            "dcgm-exporter-4.8.3.tgz"
+        )
+        metrics = """# Foretoken hardware metrics
+DCGM_FI_DEV_GPU_UTIL, gauge, GPU utilization (in %).
+DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory utilization (in %).
+DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
+DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
+DCGM_FI_DEV_POWER_USAGE, gauge, Power draw (in W).
+DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature (in C).
+DCGM_FI_DEV_XID_ERRORS, gauge, Last XID error code.
+"""
+        if dry_run:
+            args = [
+                "template",
+                release.name,
+                chart,
+                "--namespace",
+                release.namespace,
+            ]
+        else:
+            args = self._upgrade_install_args(release, chart, None)
+            if reuse_values:
+                args.append("--reuse-values")
+        args.extend(
+            [
+                "--set",
+                "serviceMonitor.enabled=true",
+                "--set-string",
+                "customMetrics=" + metrics.replace(",", "\\,"),
+                "--set-json",
+                "securityContext.capabilities.add=[]",
+            ]
+        )
+        if observability_labels:
+            args.extend(
+                [
+                    "--set-json",
+                    "serviceMonitor.additionalLabels="
+                    + json.dumps(dict(observability_labels), separators=(",", ":")),
+                ]
+            )
+        rendered_node_selector = (
+            {} if node_selector is None else {node_selector[0]: node_selector[1]}
+        )
+        args.extend(
+            [
+                "--set-json",
+                "nodeSelector="
+                + json.dumps(rendered_node_selector, separators=(",", ":")),
             ]
         )
         if not dry_run:

@@ -115,6 +115,34 @@ def select_prometheus(
     return compatible[0]
 
 
+def prometheus_selects_service_monitor(
+    kubectl: Kubectl,
+    prometheus: PrometheusRef,
+    monitor_namespace: str,
+    monitor_labels: tuple[tuple[str, str], ...],
+) -> bool:
+    """Return whether a reused Prometheus selects one existing ServiceMonitor."""
+    value = kubectl.get(
+        "prometheuses.monitoring.coreos.com",
+        prometheus.name,
+        prometheus.namespace,
+    )
+    spec = value.get("spec") or {}
+    if not isinstance(spec, dict):
+        return False
+    namespace = kubectl.get_if_exists("namespace", monitor_namespace) or {}
+    namespace_labels = _namespace_labels(namespace, monitor_namespace)
+    return matches_label_selector(
+        spec.get("serviceMonitorSelector"), dict(monitor_labels)
+    ) and _namespacematches_label_selector(
+        spec,
+        "serviceMonitorNamespaceSelector",
+        prometheus.namespace,
+        monitor_namespace,
+        namespace_labels,
+    )
+
+
 def _requested_identity(requested: str | None) -> tuple[str, str] | None:
     """Parse the optional Prometheus identity supplied by the install command."""
     if requested is None:
@@ -211,13 +239,13 @@ def _compatible_prometheus(
         return None
     resource_labels = dict(_FORETOKEN_LABELS)
     resource_labels.update(additional_labels)
-    if not _selector_matches(service_selector, resource_labels):
+    if not matches_label_selector(service_selector, resource_labels):
         return None
-    if not _selector_matches(rule_selector, resource_labels):
+    if not matches_label_selector(rule_selector, resource_labels):
         return None
 
     prometheus_namespace, name = identity
-    if not _namespace_selector_matches(
+    if not _namespacematches_label_selector(
         spec,
         "serviceMonitorNamespaceSelector",
         prometheus_namespace,
@@ -225,7 +253,7 @@ def _compatible_prometheus(
         namespace_labels,
     ):
         return None
-    if not _namespace_selector_matches(
+    if not _namespacematches_label_selector(
         spec,
         "ruleNamespaceSelector",
         prometheus_namespace,
@@ -264,7 +292,7 @@ def _additional_labels(
     return tuple(sorted(labels.items()))
 
 
-def _namespace_selector_matches(
+def _namespacematches_label_selector(
     spec: dict[str, Any],
     selector_name: str,
     prometheus_namespace: str,
@@ -274,10 +302,10 @@ def _namespace_selector_matches(
     """Apply Prometheus' default same-namespace behavior for missing selectors."""
     if selector_name not in spec or spec[selector_name] is None:
         return prometheus_namespace == platform_namespace
-    return _selector_matches(spec[selector_name], platform_labels)
+    return matches_label_selector(spec[selector_name], platform_labels)
 
 
-def _selector_matches(selector: Any, labels: dict[str, str]) -> bool:
+def matches_label_selector(selector: Any, labels: dict[str, str]) -> bool:
     """Evaluate the Kubernetes LabelSelector forms used by Prometheus resources."""
     if not isinstance(selector, dict):
         return False
