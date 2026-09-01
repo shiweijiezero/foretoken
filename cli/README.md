@@ -49,7 +49,21 @@ foretoken install \
   --gateway-section-name https
 ```
 
-Use `--dry-run` to validate and show the installation plan without changing the cluster. Repeatable `--values` files provide platform image, runtime, and hardware settings. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
+Install the current Foretoken source tree with the same lifecycle:
+
+```bash
+foretoken install -e .
+```
+
+A standard active kind or k3d context imports the built images locally. Other Kubernetes contexts require a registry reachable by their nodes:
+
+```bash
+foretoken install -e . --registry ghcr.io/example/foretoken
+```
+
+Private registries also require `imagePullSecrets` and `workload.imagePullSecrets` through `--values`; see [Deploy Foretoken from Source](../docs/custom-deployment.md).
+
+Use `--dry-run` to validate and show the installation plan without building or changing the cluster. Repeatable `--values` files provide platform image, runtime, and hardware settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
 
 Deploy one frontend and all models rendered by a Kustomize root:
 

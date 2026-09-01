@@ -59,7 +59,7 @@ uv pip install -e .
 foretoken install
 ```
 
-该命令还会准备 Prometheus，并在 NVIDIA GPU 节点上准备 DCGM Exporter。在沐曦 GPU 节点上，命令会验证并复用平台已有的 mxExporter。GPU 驱动、device plugin 和厂商 Operator 继续由平台负责。
+该命令还会准备 Prometheus，并在 NVIDIA GPU 节点上准备 DCGM Exporter。在沐曦 GPU 节点上，命令会验证并复用平台已有的 mxExporter。GPU 驱动、device plugin 和厂商 Operator 继续由平台负责。如需安装当前源码，使用 `foretoken install -e .`；远程 Kubernetes context 还需要提供 `--registry`。
 
 #### 网关模式
 

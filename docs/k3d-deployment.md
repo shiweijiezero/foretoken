@@ -7,7 +7,7 @@
 
 k3d runs the lightweight k3s Kubernetes distribution in Docker containers. It is well suited to creating an isolated, disposable Foretoken cluster on a shared GPU server while retaining standard Helm, CRDs, and Kubernetes APIs. All k3d cluster nodes run on one Docker host; use k3s or Kubernetes for deployments across physical machines.
 
-After creating the k3d cluster, run `make dev-deploy` from the repository root. The script builds the source and imports changed local images into the current cluster; the Helm deployment, Ready wait, and request verification remain the same as for any other Kubernetes cluster.
+After creating the k3d cluster, use `foretoken install` for release images or `foretoken install -e .` for the current source tree. Source mode reuses the repository build lifecycle and imports only changed local images into the active k3d cluster.
 
 ## How k3d restricts physical GPUs
 
@@ -153,15 +153,26 @@ Change to the Foretoken project directory:
 cd /path/to/your/foretoken
 ```
 
-### 4.1 Choose a deployment method
-
-- **Use release images**: continue with [section 4.2: Local mode](#42-local-mode) or [section 4.3: Gateway mode](#43-gateway-mode).
-- **Deploy from source**: complete [section 2.1: Import local images directly](custom-deployment.md#21-import-local-images-directly), [section 4: Deploy the Quick Start](custom-deployment.md#4-deploy-the-quick-start-optional), and [section 5: Send a request](custom-deployment.md#5-send-a-request-optional).
-
-For release-image deployment, install the CLI once from the repository root:
+Install the CLI with pip:
 
 ```bash
 pip install -e .
+```
+
+Or use uv:
+
+```bash
+uv pip install -e .
+```
+
+### 4.1 Choose a deployment method
+
+- **Use release images**: continue with [section 4.2: Local mode](#42-local-mode) or [section 4.3: Gateway mode](#43-gateway-mode).
+- **Deploy from source in local mode**: run the complete commands below, then continue with [section 4.4: Send a request](#44-send-an-openai-api-compatible-request).
+
+```bash
+foretoken install -e .
+foretoken deploy examples/quickstart --timeout 6m
 ```
 
 ### 4.2 Local mode

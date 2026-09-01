@@ -49,6 +49,10 @@ from foretoken_cli.observability import (
     prometheus_selects_service_monitor,
     select_prometheus,
 )
+from foretoken_cli.source import (
+    prepare_source_images,
+    restart_changed_source_deployments,
+)
 
 
 def _print_plan(responsibility: str, action: str, detail: str) -> None:
@@ -89,6 +93,19 @@ def _install(command: InstallCommand) -> None:
             f"Helm release {platform.display_name} is not managed by foretoken; "
             "use its existing Helm lifecycle"
         )
+    if platform_exists:
+        install_source = helm.release_install_source(platform) or "release"
+        requested_source = "source" if command.editable is not None else "release"
+        if install_source != requested_source:
+            command_hint = (
+                "foretoken install -e PATH"
+                if install_source == "source"
+                else "foretoken install"
+            )
+            raise DeploymentError(
+                f"Helm release {platform.display_name} uses {install_source} images; "
+                f"run {command_hint}"
+            )
 
     deployments = control_plane_deployments(kubectl)
     expected_deployment = f"{platform.name}-control-plane"
@@ -209,11 +226,24 @@ def _install(command: InstallCommand) -> None:
         monitor_namespaces.add(metax_metrics.service_monitor.namespace)
 
     platform_action = "Upgrade" if platform_exists else "Install"
+    if command.editable is not None:
+        _print_plan("Source images", "Build", command.editable)
     _print_plan("Prometheus", prometheus_action, prometheus_detail)
     _print_plan("NVIDIA DCGM Exporter", nvidia_action, nvidia_detail)
     _print_plan("MetaX mxExporter", metax_action, metax_detail)
     _print_plan("Foretoken platform", platform_action, platform.display_name)
 
+    source_images = (
+        prepare_source_images(
+            command.editable,
+            command.registry,
+            platform.namespace,
+            command.timeout,
+            command.dry_run,
+        )
+        if command.editable is not None
+        else None
+    )
     if install_managed_prometheus:
         helm.install_prometheus(
             managed_prometheus,
@@ -240,6 +270,7 @@ def _install(command: InstallCommand) -> None:
     )
     helm.install_platform(
         release=platform,
+        source_images=source_images,
         values=command.values,
         frontend_mode=command.frontend_mode,
         gateway_name=command.gateway_name,
@@ -252,6 +283,13 @@ def _install(command: InstallCommand) -> None:
         dry_run_api_versions=dry_run_api_versions,
     )
     if not command.dry_run:
+        if source_images is not None:
+            restart_changed_source_deployments(
+                kubectl,
+                source_images,
+                platform.namespace,
+                command.timeout,
+            )
         if install_managed_prometheus:
             mark_managed_metrics_scraper_namespace(
                 kubectl, managed_prometheus.namespace

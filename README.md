@@ -59,7 +59,7 @@ Use the CLI to install the Foretoken platform into the cluster selected by the a
 foretoken install
 ```
 
-The command also prepares Prometheus and, on NVIDIA GPU nodes, DCGM Exporter. On MetaX GPU nodes it verifies and reuses the platform's mxExporter. GPU drivers, device plugins, and vendor operators remain platform-owned.
+The command also prepares Prometheus and, on NVIDIA GPU nodes, DCGM Exporter. On MetaX GPU nodes it verifies and reuses the platform's mxExporter. GPU drivers, device plugins, and vendor operators remain platform-owned. To install the current source tree instead, run `foretoken install -e .`; remote Kubernetes contexts also require `--registry`.
 
 #### Gateway mode
 
