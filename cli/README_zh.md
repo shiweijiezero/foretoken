@@ -47,7 +47,21 @@ foretoken install \
   --gateway-section-name https
 ```
 
-使用 `--dry-run` 可在不修改集群的情况下验证并查看安装计划。重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，CLI 不会自动接管。
+使用同一套生命周期安装当前 Foretoken 源码：
+
+```bash
+foretoken install -e .
+```
+
+当前 context 是标准 kind 或 k3d 时，命令会构建并导入本地镜像；其他 Kubernetes context 需要提供节点可访问的 registry：
+
+```bash
+foretoken install -e . --registry ghcr.io/example/foretoken
+```
+
+私有 registry 还需要通过 `--values` 配置 `imagePullSecrets` 和 `workload.imagePullSecrets`，详见[从源码部署 Foretoken](../docs/custom-deployment_zh.md)。
+
+使用 `--dry-run` 可在不构建镜像、不修改集群的情况下验证并查看安装计划。重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，CLI 不会自动接管。
 
 部署一个 Kustomize 根目录中渲染出的前端服务和全部模型：
 
