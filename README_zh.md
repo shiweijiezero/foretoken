@@ -57,7 +57,7 @@ uv pip install -e .
 foretoken install
 ```
 
-该命令还会准备 Prometheus，并在 NVIDIA GPU 节点上准备 DCGM Exporter。兼容的已有组件会被复用，GPU 驱动和 device plugin 继续由平台负责。
+该命令还会准备 Prometheus，并在 NVIDIA GPU 节点上准备 DCGM Exporter。在沐曦 GPU 节点上，命令会验证并复用平台已有的 mxExporter。GPU 驱动、device plugin 和厂商 Operator 继续由平台负责。
 
 #### 网关模式
 

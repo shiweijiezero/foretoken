@@ -23,6 +23,8 @@ foretoken install
 
 命令会复用集群中唯一兼容的 Prometheus；如果没有，则安装由 CLI 管理的 kube-prometheus-stack。发现 NVIDIA GPU 节点时，如果没有 exporter，CLI 会安装 DCGM Exporter；已有一个完整覆盖全部 GPU 节点的就绪 exporter，并且其 ServiceMonitor 有效且被 Prometheus 选择时，才会复用。已有 exporter 重复、不健康、覆盖不全或无法采集时会停止安装，不会继续叠加。CPU/GPU 混合集群需要使用 `nvidia.com/gpu.present=true` 或 `feature.node.kubernetes.io/pci-10de.present=true` 标识 GPU 节点；CLI 不猜测节点范围，也不安装驱动。
 
+沐曦 GPU 节点需要平台安装官方 [mxExporter](https://github.com/MetaX-MACA/mxExporter) 并配置有效的 ServiceMonitor。CLI 会验证 DaemonSet、GPU 节点覆盖、Service、ServiceMonitor 和 Prometheus 选择链后再复用，不会重新分发或构建厂商软件。
+
 存在多个兼容 Prometheus 实例时，再显式指定：
 
 ```bash

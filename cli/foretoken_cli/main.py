@@ -40,8 +40,10 @@ from foretoken_cli.kubernetes import (
     unmark_managed_metrics_scraper_namespace,
     wait_for_resources,
 )
-from foretoken_cli.manifest import DeploymentError, ResourceRef
+from foretoken_cli.accelerators._exporter import ExporterMonitor
+from foretoken_cli.accelerators.metax import discover_metax_metrics
 from foretoken_cli.accelerators.nvidia import discover_nvidia_metrics
+from foretoken_cli.manifest import DeploymentError, ResourceRef
 from foretoken_cli.observability import (
     PrometheusRef,
     prometheus_selects_service_monitor,
@@ -52,6 +54,28 @@ from foretoken_cli.observability import (
 def _print_plan(responsibility: str, action: str, detail: str) -> None:
     """Print one stable installation lifecycle decision."""
     print(f"{responsibility:<28} {action:<8} {detail}")
+
+
+def _require_prometheus_exporter_selection(
+    kubectl: Kubectl,
+    prometheus: PrometheusRef,
+    exporter: ExporterMonitor,
+    exporter_name: str,
+) -> None:
+    """Require a shared Prometheus to select one reused exporter monitor."""
+    monitor = exporter.service_monitor
+    if prometheus_selects_service_monitor(
+        kubectl,
+        prometheus,
+        monitor.namespace,
+        exporter.service_monitor_labels,
+    ):
+        return
+    raise DeploymentError(
+        f"Prometheus {prometheus.namespace}/{prometheus.name} does not select "
+        f"{exporter_name} ServiceMonitor {monitor.namespace}/{monitor.name}; "
+        "update the shared platform selectors before installing Foretoken"
+    )
 
 
 def _install(command: InstallCommand) -> None:
@@ -89,6 +113,7 @@ def _install(command: InstallCommand) -> None:
     nvidia_metrics = discover_nvidia_metrics(
         kubectl, managed_dcgm if managed_dcgm_exists else None
     )
+    metax_metrics = discover_metax_metrics(kubectl)
 
     managed_prometheus = prometheus_release(command.namespace)
     managed_prometheus_exists = helm.release_exists(managed_prometheus)
@@ -117,23 +142,21 @@ def _install(command: InstallCommand) -> None:
     install_managed_prometheus = (
         managed_prometheus_exists or selected_prometheus is None
     )
-    if (
-        selected_prometheus is not None
-        and nvidia_metrics is not None
-        and nvidia_metrics.reused_service_monitor is not None
-        and not prometheus_selects_service_monitor(
-            kubectl,
-            selected_prometheus,
-            nvidia_metrics.reused_service_monitor.namespace,
-            nvidia_metrics.service_monitor_labels,
-        )
-    ):
-        monitor = nvidia_metrics.reused_service_monitor
-        raise DeploymentError(
-            f"Prometheus {selected_prometheus.namespace}/{selected_prometheus.name} "
-            f"does not select DCGM ServiceMonitor {monitor.namespace}/{monitor.name}; "
-            "update the shared platform selectors before installing Foretoken"
-        )
+    if selected_prometheus is not None:
+        if nvidia_metrics is not None and nvidia_metrics.reused_exporter is not None:
+            _require_prometheus_exporter_selection(
+                kubectl,
+                selected_prometheus,
+                nvidia_metrics.reused_exporter,
+                "DCGM",
+            )
+        if metax_metrics is not None:
+            _require_prometheus_exporter_selection(
+                kubectl,
+                selected_prometheus,
+                metax_metrics,
+                "mxExporter",
+            )
     if nvidia_metrics is None:
         nvidia_action = "Preserve" if managed_dcgm_exists else "Skip"
         nvidia_detail = (
@@ -146,11 +169,11 @@ def _install(command: InstallCommand) -> None:
         nvidia_action = "Upgrade"
         nvidia_detail = managed_dcgm.display_name
         install_managed_dcgm = True
-    elif nvidia_metrics.reused_daemonset is not None:
+    elif nvidia_metrics.reused_exporter is not None:
         nvidia_action = "Reuse"
         nvidia_detail = (
-            f"{nvidia_metrics.reused_daemonset.namespace}/"
-            f"{nvidia_metrics.reused_daemonset.display_name}"
+            f"{nvidia_metrics.reused_exporter.daemonset.namespace}/"
+            f"{nvidia_metrics.reused_exporter.daemonset.display_name}"
         )
         install_managed_dcgm = False
     else:
@@ -158,16 +181,29 @@ def _install(command: InstallCommand) -> None:
         nvidia_detail = managed_dcgm.display_name
         install_managed_dcgm = True
 
+    if metax_metrics is None:
+        metax_action = "Skip"
+        metax_detail = "no allocatable metax-tech.com/gpu resource"
+    else:
+        metax_action = "Reuse"
+        metax_detail = (
+            f"{metax_metrics.daemonset.namespace}/"
+            f"{metax_metrics.daemonset.display_name}"
+        )
+
     observability_labels = (
         () if selected_prometheus is None else selected_prometheus.additional_labels
     )
     monitor_namespaces = {command.namespace}
-    if nvidia_metrics is not None and nvidia_metrics.reused_daemonset is not None:
-        monitor_namespaces.add(nvidia_metrics.reused_daemonset.namespace)
+    if nvidia_metrics is not None and nvidia_metrics.reused_exporter is not None:
+        monitor_namespaces.add(nvidia_metrics.reused_exporter.service_monitor.namespace)
+    if metax_metrics is not None:
+        monitor_namespaces.add(metax_metrics.service_monitor.namespace)
 
     platform_action = "Upgrade" if platform_exists else "Install"
     _print_plan("Prometheus", prometheus_action, prometheus_detail)
     _print_plan("NVIDIA DCGM Exporter", nvidia_action, nvidia_detail)
+    _print_plan("MetaX mxExporter", metax_action, metax_detail)
     _print_plan("Foretoken platform", platform_action, platform.display_name)
 
     if install_managed_prometheus:
