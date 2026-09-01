@@ -7,7 +7,15 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-The Foretoken CLI installs the platform, deploys Kustomize configurations, reports serving readiness, resolves frontend endpoints, and exposes benchmarks through one `foretoken` entry point.
+The Foretoken CLI installs the shared Kubernetes platform, deploys model services from Kustomize configurations, reports serving readiness, resolves frontend endpoints, and runs benchmarks through one `foretoken` entry point.
+
+For a new cluster, start with CLI installation. If `foretoken --version` already works, go straight to platform installation. If the cluster already has the Foretoken platform, start with model deployment.
+
+## Before you start
+
+You need Python 3.10 or later, an active Kubernetes context, `kubectl`, and Helm. GPU nodes must already have their vendor driver and Kubernetes device plugin. Source installation also requires Docker and Make, plus either a local kind/k3d cluster or an OCI registry reachable by every target node.
+
+## Install the CLI
 
 Install the Foretoken CLI with pip:
 
@@ -23,33 +31,63 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
-This step only installs the `foretoken` command in the current Python environment; it does not change the Kubernetes cluster. The CLI installs the Foretoken Chart version that matches its package version; run `foretoken --version` to see that release version.
+This step only installs the `foretoken` command in the current Python environment; it does not change the Kubernetes cluster. Run `foretoken --version` to see the CLI and corresponding platform version.
 
-Use the CLI to install the platform into the active Kubernetes context with the default local access mode. CLI-managed platform resources use the `foretoken-platform` namespace. Run the same command again to update the existing installation:
+## Install the Kubernetes platform
+
+`foretoken install` installs the Foretoken CRDs and controller in the active Kubernetes context. Platform resources use the `foretoken-platform` namespace. The command also configures monitoring and, in Gateway mode, the Gateway resources. Deploy model services separately with `foretoken deploy`.
+
+### Default installation
+
+The default uses release images and local access through a `LoadBalancer` Service:
 
 ```bash
 foretoken install
 ```
 
-The command reuses one compatible Prometheus instance or installs a CLI-managed monitoring stack when none exists. On NVIDIA GPU nodes it reuses one ready DCGM Exporter with a working ServiceMonitor, or installs a CLI-managed exporter when none exists. A shared Prometheus must select that ServiceMonitor. Duplicate, unhealthy, incomplete, or unmonitored exporters stop installation instead of being overlaid. On MetaX GPU nodes the CLI requires and reuses one platform-managed mxExporter with a working ServiceMonitor. The CLI never installs GPU drivers, device plugins, or vendor operators. Use `--prometheus NAMESPACE/NAME` only when automatic discovery finds multiple compatible instances.
+During installation, the CLI discovers Prometheus and accelerator metric exporters. It reuses compatible shared instances, installs managed Prometheus and NVIDIA DCGM Exporter releases when needed, and connects to the mxExporter already provided by a MetaX cluster. It never installs GPU drivers, device plugins, or vendor operators. Ambiguous or incomplete monitoring stops installation with an actionable error; see [Observability](../observability/README.md) for the selection rules.
 
-Gateway mode requires an existing Gateway Controller. Without existing Gateway details, the CLI creates a dedicated `GatewayClass` and `Gateway`:
+### Gateway mode
+
+The CLI creates a dedicated `GatewayClass` and `Gateway` only when the cluster runs Envoy Gateway:
 
 ```bash
 foretoken install --frontend-mode gateway
 ```
 
-To reuse an existing Gateway instead:
+With another Gateway Controller, reuse a Gateway managed by that controller:
 
 ```bash
 foretoken install \
   --frontend-mode gateway \
   --gateway-name inference-gateway \
-  --gateway-namespace gateway-system \
-  --gateway-section-name https
+  --gateway-namespace gateway-system
 ```
 
-Use `--dry-run` to validate and show the installation plan without changing the cluster. Repeatable `--values` files provide platform image, runtime, and hardware settings. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
+Add `--gateway-section-name LISTENER` only when more than one listener matches.
+
+### Current source
+
+Build Foretoken images from the current source tree and configure the platform to use them:
+
+```bash
+foretoken install -e .
+```
+
+A standard active kind or k3d context imports the built images locally. Other Kubernetes contexts need a registry reachable by their nodes. Sign in to the registry host with an account that can push the target repository before installation:
+
+```bash
+docker login ghcr.io
+foretoken install -e . --registry ghcr.io/example/foretoken
+```
+
+Registry login authorizes the local image push. Private registries also need `imagePullSecrets` and `workload.imagePullSecrets` through `--values` so nodes can pull the images; see [Deploy Foretoken from Source](../docs/custom-deployment.md).
+
+### Installation options
+
+Use `--dry-run` to validate and show the installation plan without building or changing the cluster. Repeatable `--values` files provide platform image, runtime, and hardware settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
+
+## Deploy and operate model services
 
 Deploy one frontend and all models rendered by a Kustomize root:
 
@@ -71,7 +109,7 @@ The command waits for deletion and ignores resources that are already absent. Af
 foretoken uninstall
 ```
 
-The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain.
+The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain. It removes CLI-managed monitoring and Gateway resources with the platform, while reused cluster components remain unchanged.
 
 Inspect the same deployment without applying it:
 
@@ -100,6 +138,8 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
 The host value is the URL authority for direct access or the configured routing hostname for an HTTP Gateway. The command waits for the LoadBalancer or Gateway address, but serving readiness remains owned by `foretoken deploy`.
+
+## Run benchmarks
 
 Install the optional benchmark dependencies with pip:
 

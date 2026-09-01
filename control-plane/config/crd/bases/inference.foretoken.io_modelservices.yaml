@@ -705,8 +705,8 @@ spec:
                     self.dcp == self.pcp || self.dcp == self.tp * self.pcp'
               replicas:
                 description: |-
-                  Replicas is the initial service replica count; the compiler defaults it to 1.
-                  When autoscaling is configured, its minReplicas and maxReplicas bound subsequent decisions.
+                  Replicas is the baseline service replica count; the compiler defaults it to 1.
+                  When autoscaling is configured, its minReplicas and maxReplicas bound capacity from the first reconcile.
                 format: int32
                 minimum: 0
                 type: integer

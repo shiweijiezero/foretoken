@@ -7,7 +7,7 @@
 
 k3d 在 Docker 容器中运行轻量级 Kubernetes 发行版 k3s。它适合在一台共享 GPU 服务器上创建相互隔离、可随时删除的 Foretoken 集群，同时继续使用标准 Helm、CRD 和 Kubernetes API。k3d 集群的节点位于同一台 Docker 主机；跨物理机器部署使用 k3s 或 Kubernetes。
 
-创建 k3d 集群后，在仓库根目录运行 `make dev-deploy`。脚本会构建源码并将发生变化的本地镜像导入当前集群；后续的 Helm 部署、等待就绪和请求验证与其他 Kubernetes 集群相同。
+创建 k3d 集群后，使用 `foretoken install` 安装 Foretoken Kubernetes 平台。如需从当前源码构建平台镜像而不是使用发布镜像，使用 `foretoken install -e .`。源码模式只把发生变化的本地镜像导入当前 k3d 集群；模型服务单独部署。
 
 ## k3d 如何限定物理 GPU
 
@@ -33,6 +33,7 @@ Pod 不指定宿主机 GPU 编号。k3d 可以在创建 Kubernetes 节点容器�
 
 主机需要：
 
+- Python 3.10 或更高版本；
 - Linux；
 - NVIDIA 驱动程序；
 - NVIDIA Container Toolkit；
@@ -47,7 +48,7 @@ Pod 不指定宿主机 GPU 编号。k3d 可以在创建 Kubernetes 节点容器�
 nvidia-smi
 ```
 
-以下示例选择 GPU 6、7，并将集群命名为 `foretoken-qwen-test`：
+快速开始工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。以下示例选择 GPU 6、7，并将集群命名为 `foretoken-qwen-test`：
 
 ```bash
 export GPU_INDICES=6,7
@@ -153,15 +154,28 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 cd /path/to/your/foretoken
 ```
 
-### 4.1 选择部署方式
-
-- **使用发布镜像**：继续执行 [第 4.2 节：本地模式](#42-本地模式) 或 [第 4.3 节：网关模式](#43-网关模式)。
-- **从源码部署**：依次完成[第 2.1 节：直接导入本地镜像](custom-deployment_zh.md#21-直接导入本地镜像)、[第 4 节：部署快速开始示例](custom-deployment_zh.md#4-部署快速开始示例可选)和[第 5 节：发送请求](custom-deployment_zh.md#5-发送请求可选)。
-
-使用发布镜像部署时，先从仓库根目录安装一次 CLI：
+使用 pip 安装 CLI：
 
 ```bash
 pip install -e .
+```
+
+或使用 uv 创建并激活虚拟环境后安装：
+
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -e .
+```
+
+### 4.1 选择部署方式
+
+- **使用发布镜像**：继续执行 [第 4.2 节：本地模式](#42-本地模式) 或 [第 4.3 节：网关模式](#43-网关模式)。
+- **以本地模式部署源码**：执行下面的完整命令，然后直接进入[第 4.4 节：发送请求](#44-发送-openai-api-兼容请求)。
+
+```bash
+foretoken install -e .
+foretoken deploy examples/quickstart --timeout 6m
 ```
 
 ### 4.2 本地模式

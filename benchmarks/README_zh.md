@@ -1,128 +1,61 @@
-# Benchmarks
+# 评测
 
 [English](README.md) | 简体中文
 
-`benchmarks/` 是 Foretoken 的评测模块。
+使用 `foretoken bench` 测量 Foretoken 部署或现有 OpenAI 兼容端点的延迟和吞吐量。
 
-它可通过 Kustomize 发现 Foretoken 服务，也可连接现有的 OpenAI 兼容端点，用于运行可复现的延迟和吞吐量实验。
+## 开始前
 
-## 适用场景
-
-- 了解当前服务在特定并发度或到达率下的延迟和吞吐量。
-- 比较不同并发度、请求数量、生成参数或服务端配置的表现。
-- 在给定的延迟和吞吐要求下，确定合适的负载点或容量方案。
-
-## 主要功能
-
-| 功能 | 说明 |
-|---|---|
-| 性能压测 | 发送受控负载，测量延迟、吞吐量、首个 token 时延等指标 |
-| 负载扫描 | 对多个并发度、请求数或到达率进行扫描，观察性能变化 |
-| 参数扫描 | 批量比较请求参数和负载配置 |
-
-## 会产出什么
-
-- 控制台中的易读汇总结果
-- 本地保存的配置、原始结果和指标，方便事后复查
-- W&B 可用时上传实验记录与图表
-
-默认显示控制台汇总、保存本地产物并上传 W&B。W&B 不可用时会给出提示并继续保存本地结果。使用 `--output local` 可关闭上传，加入 `quiet` 可关闭控制台输出。本地文件保存在 `--output-dir` 指定的目录中。
-
-## 示例
-
-评测 Foretoken 的 Kubernetes 部署。若服务已存在则直接复用；若尚未部署，CLI 会部署渲染后的资源，并在评测结束后仅清理本次创建的资源。未指定 `--prompt` 或 `--dataset` 时，使用一个简短的内置提示词：
+从仓库根目录使用 Python 3.10 或更高版本运行评测命令：
 
 ```bash
+pip install -e '.[bench]'
+```
+
+评测 Foretoken 部署时，先安装平台，再评测 Kustomize 配置：
+
+```bash
+foretoken install
 foretoken bench examples/quickstart
 ```
 
-常用采样参数可直接指定；其他与 OpenAI 兼容的请求字段或后端扩展字段可通过 `--extra-body` 传入：
+快速开始服务已运行时，命令会直接复用；否则会部署渲染后的资源，并在评测结束后只删除本次创建的资源。
 
-```bash
-foretoken bench examples/quickstart \
-  --temperature 0 \
-  --top-p 1 \
-  --top-k 0 \
-  --extra-body '{"seed":7,"min_tokens":8}'
-```
-
-使用固定提示词评测现有端点：
+评测现有端点时，不需要 Foretoken 或 Kubernetes 平台：
 
 ```bash
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --prompt "hello" \
+  --model Qwen/Qwen3-0.6B \
+  --prompt "你好" \
   --parallel 2 \
   --number 20
 ```
 
-本地数据集文件：
+## 结果与输出
 
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --dataset /path/to/conversation.jsonl \
-  --parallel 4 \
-  --number 20
-```
+不指定 `--output` 时，评测会打印汇总、在 `results/` 下保存本地产物，并尝试上传 W&B。W&B 不可用时，本地结果仍会保留。
 
-轨迹回放使用 `--trace` 提供到达时间，使用 `--dataset` 提供请求内容。
-它支持本地 JSONL、Hugging Face 数据集和 `hf://` 文件，并自动识别 StudyChat 或 Mooncake 格式。
+`--output` 会替换默认输出目标：
 
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --trace KrisQ/StudyChat \
-  --dataset KrisQ/StudyChat \
-  --trace-start 600 \
-  --trace-duration 300 \
-  --trace-max-concurrency 32
-```
+| 目标 | `--output` 值 |
+| --- | --- |
+| 默认控制台、本地产物和 W&B | 不传 `--output` |
+| 仅保存本地产物 | `local` |
+| 保存本地产物但不输出控制台 | `local,quiet` |
+| 保存本地产物并上传 W&B，但不输出控制台 | `local,wandb,quiet` |
+| 仅上传 W&B | `wandb` |
 
-时间窗口为 `[first + start, first + start + duration)`，窗口起点是回放时间零点。
-`--trace-max-concurrency` 限制活跃请求数，等待并发槽位的时间计入回放延迟。
-Mooncake 可以组合随机负载或外部数据集请求内容，也可以合成共享前缀块。
-完整用法和运行截图见 [trace 示例](docs/examples_zh.md)。
+如需关闭控制台输出但保留结果，请将 `quiet` 与 `local`、`wandb` 或两者组合。使用 `--output-dir PATH` 修改本地产物目录。
 
-使用随机生成的提示词进行压测（需指定 tokenizer）：
+## 指标
 
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --dataset random \
-  --tokenizer-path Qwen/Qwen3.6-27B \
-  --random-seed 0 \
-  --min-prompt-length 128 --max-prompt-length 512 \
-  --parallel 4 --number 20 --max-tokens 64 \
-  --rate 5
-```
+汇总结果包括请求延迟、首个 token 时延（TTFT）、每输出 token 时延（TPOT）、失败率、输入/输出 token 数和输出吞吐量。
 
-Hugging Face 数据集 ID（数据行格式：`messages` / `prompt` / `user`[+`system`]）：
+参数扫描中的 `token/s/user` 表示输出吞吐量除以配置的 closed-loop `--parallel` 值，不表示真实用户数或活跃会话数。open-loop（`--rate`）的分母固定为一，因此它等于总输出吞吐量。`token/s/GPU` 表示输出吞吐量除以该负载点配置的 GPU 数。
 
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
-  --parallel 4 \
-  --number 20
-```
+扫描会保存每个有效负载点；只有至少有两个有效负载点时，才会生成 `pareto/PARETO.png`。
 
-多个 JSONL 和 Hugging Face 数据源可用逗号分隔。`--number` 由全部数据源共享并按顺序分配；不能整除时，前面的数据源各多一个请求。各数据源按顺序运行，随后合并结果。启用 W&B 输出时，一次实验对应一个 **group**，每个数据集对应一个 **run**：
+## 下一步
 
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --dataset /path/a.jsonl,org/name:train,/path/b.jsonl \
-  --parallel 4 \
-  --number 30
-```
-
-### 参数扫描
-
-评测 Foretoken Kustomize 部署时，通过 `--bench-params` 传入 JSONL 文件，比较请求执行配置和负载点。运行结果会记录全部负载点，并生成“每用户输出 token/s”对“每 GPU 输出 token/s”的 Pareto 图。完整命令见[参数扫描示例](docs/examples_zh.md#参数扫描)。
+数据集、随机提示词、轨迹回放、前缀复用、多数据集和参数扫描的配方见[评测示例](docs/examples_zh.md)。命令参数和结果格式可通过 `foretoken bench --help` 及本地产物查看。

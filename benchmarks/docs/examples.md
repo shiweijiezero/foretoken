@@ -1,20 +1,10 @@
-# Benchmark examples
+# Benchmark Examples
 
 English | [简体中文](examples_zh.md)
 
-# Foretoken deployment
+## Dataset selectors
 
-Deploy or reuse the Quick Start service, discover its model and endpoint, and clean up resources created for the benchmark:
-
-```bash
-foretoken bench examples/quickstart
-```
-
-The remaining examples use an existing endpoint. W&B upload is enabled by default; if W&B is unavailable, the benchmark continues with local results.
-
-# Dataset sources
-
-Supported `--dataset` selectors include local JSONL files, Hugging Face datasets, and files stored in dataset repositories:
+`--dataset` accepts local JSONL, Hugging Face datasets, and files in dataset repositories:
 
 ```text
 /path/to/conversation.jsonl
@@ -22,158 +12,94 @@ org/dataset:train
 hf://datasets/org/dataset@main/path/to/conversation.jsonl
 ```
 
-Multiple sources can be comma-separated. A Hub file URI must include the `datasets` repository type.
+Multiple sources may be comma-separated. A Hub file URI must include the `datasets` repository type.
 
-# Random dataset
+## Random prompts
 
-```
+Random prompts require a tokenizer:
+
+```bash
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
+  --model Qwen/Qwen3-0.6B \
   --dataset random \
-  --tokenizer-path Qwen/Qwen3.6-27B \
+  --tokenizer-path Qwen/Qwen3-0.6B \
   --random-seed 0 \
   --min-prompt-length 128 --max-prompt-length 512 \
   --parallel 4 --number 20 --max-tokens 64 \
   --rate 5
 ```
 
-![Random dataset benchmark output](imgs/random-dataset-benchmark-output.png)
+## Hugging Face and local datasets
 
-![Random dataset W&B dashboard](imgs/random-dataset-wandb-dashboard.png)
-
+```bash
 # Hugging Face dataset
-
-```
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --dataset weijiezz/foretoken-trace:conversation \
+  --model Qwen/Qwen3-0.6B \
+  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
   --parallel 4 \
   --number 20
-```
 
-![Hugging Face dataset benchmark output](imgs/huggingface-dataset-benchmark-output.png)
-
-![Hugging Face dataset W&B dashboard](imgs/huggingface-dataset-wandb-dashboard.png)
-
-# Local dataset
-
-```
+# Local JSONL dataset
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
+  --model Qwen/Qwen3-0.6B \
   --dataset /path/to/conversation.jsonl \
   --parallel 4 \
   --number 20
 ```
 
-![Local dataset benchmark output](imgs/local-dataset-benchmark-output.png)
+## Trace replay
 
-![Local dataset W&B dashboard](imgs/local-dataset-wandb-dashboard.png)
+`--trace` supplies arrival timestamps and `--dataset` supplies request content. The benchmark detects StudyChat and Mooncake trace formats. `--trace-start` and `--trace-duration` select `[first + start, first + start + duration)`; waiting for `--trace-max-concurrency` counts toward replay delay.
 
-# StudyChat trace + dataset
-
-```
+```bash
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
+  --model Qwen/Qwen3-0.6B \
   --trace KrisQ/StudyChat \
   --dataset KrisQ/StudyChat \
-  --trace-start 18609042.663 --trace-duration 120 \
-  --trace-max-concurrency 16 \
-  --max-tokens 64 --temperature 0 \
-  --timeout 90 --max-retries 0 \
-  --output-dir results/trace-studychat
+  --trace-start 600 \
+  --trace-duration 300 \
+  --trace-max-concurrency 32
 ```
 
-![StudyChat trace benchmark output](imgs/trace-studychat-benchmark-output.png)
+Replay a Mooncake trace with random payloads and shared synthetic prefixes:
 
-![StudyChat trace W&B dashboard](imgs/trace-studychat-wandb-dashboard.png)
-
-# Mooncake trace + StudyChat dataset
-
-```
+```bash
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
+  --model Qwen/Qwen3-0.6B \
   --trace valeriol29/mooncake-traces \
-  --dataset KrisQ/StudyChat \
-  --trace-start 540 --trace-duration 120 \
-  --trace-max-concurrency 16 \
-  --max-tokens 64 --temperature 0 \
-  --timeout 90 --max-retries 0 \
-  --output-dir results/trace-mooncake-dataset
-```
-
-![Mooncake trace with StudyChat benchmark output](imgs/trace-mooncake-studychat-benchmark-output.png)
-
-![Mooncake trace with StudyChat W&B dashboard](imgs/trace-mooncake-studychat-wandb-dashboard.png)
-
-# Mooncake trace + random
-
-```
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --trace valeriol29/mooncake-traces \
-  --trace-start 2620 --trace-duration 30 \
+  --trace-start 2620 \
+  --trace-duration 30 \
   --dataset random \
-  --tokenizer-path Qwen/Qwen3.6-27B \
-  --random-seed 0 \
-  --trace-max-concurrency 16 \
-  --max-tokens 64 --temperature 0 \
-  --timeout 90 --max-retries 0 \
-  --output-dir results/trace-mooncake-random
-```
-
-![Mooncake trace with random payload benchmark output](imgs/trace-mooncake-random-benchmark-output.png)
-
-![Mooncake trace with random payload W&B dashboard](imgs/trace-mooncake-random-wandb-dashboard.png)
-
-# Mooncake trace + synthetic prefix reuse
-
-```
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
-  --trace valeriol29/mooncake-traces \
-  --trace-start 2620 --trace-duration 30 \
-  --dataset random \
-  --tokenizer-path Qwen/Qwen3.6-27B \
+  --tokenizer-path Qwen/Qwen3-0.6B \
   --random-seed 0 \
   --trace-synthetic-prefix-reuse \
   --trace-max-concurrency 16 \
-  --max-tokens 64 --temperature 0 \
-  --timeout 90 --max-retries 0 \
-  --output-dir results/trace-mooncake-prefix
+  --max-tokens 64
 ```
 
-![Mooncake synthetic prefix replay benchmark output](imgs/trace-mooncake-prefix-reuse-benchmark-output.png)
+## Multiple datasets
 
-![Mooncake synthetic prefix replay W&B dashboard](imgs/trace-mooncake-prefix-reuse-wandb-dashboard.png)
+Sources run in order and their results are merged. `--number` is shared across the sources and divided in source order; earlier sources receive one extra request when division is uneven.
 
-# Multi-dataset
-
-```
+```bash
 foretoken bench \
   --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen3.6-27B \
+  --model Qwen/Qwen3-0.6B \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train,ianncity/GLM-5.2-Conversation:train \
   --parallel 4 \
   --number 20
 ```
 
-![Multi-dataset W&B comparison](imgs/multi-dataset-wandb-comparison.png)
+## Parameter sweep
 
-![Multi-dataset benchmark output](imgs/multi-dataset-benchmark-output.png)
+`--bench-params` accepts a JSONL file. Each line overrides request execution fields; list-valued `parallel`, `number`, and `rate` expand into separate points. A `rate` of `-1` sends requests as fast as possible.
 
-
-# Parameter sweep
-
-Pass `--bench-params` a JSONL file whose lines override request execution fields. List-valued `parallel`, `number`, or `rate` values expand into separate load points. A `rate` of `-1` sends requests as fast as possible.
-
-Example (`benchmarks/examples/bench_params.jsonl`):
+`benchmarks/examples/bench_params.jsonl` contains a maintained example:
 
 ```jsonl
 {"_benchmark_name": "n10", "parallel": [1, 2, 4, 8], "number": 10, "max_tokens": 64}
@@ -188,10 +114,4 @@ foretoken bench examples/quickstart \
   --bench-params benchmarks/examples/bench_params.jsonl
 ```
 
-The experiment writes every point and `pareto/PARETO.png`, which compares output tokens/s/user with output tokens/s/GPU.
-
-![Pareto frontier](imgs/PARETO.png)
-
-![Sweep benchmark output](imgs/sweep-benchmark-output.png)
-
-![Sweep W&B comparison](imgs/sweep-wandb-comparison.png)
+Every valid point is saved. A sweep with at least two valid points also writes `pareto/PARETO.png`.

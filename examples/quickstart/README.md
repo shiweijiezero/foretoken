@@ -7,25 +7,11 @@
 
 For two models with autoscaling, see [Multi-Model Quick Start](../multi-model-quickstart/README.md).
 
-This example deploys one frontend and one `Qwen/Qwen3-0.6B` model replica using one GPU.
+This example deploys one frontend and one `Qwen/Qwen3-0.6B` model replica. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform.
 
 ## Deploy
 
-Install the Foretoken platform first. Then install the CLI from the repository root with pip:
-
-```bash
-pip install -e .
-```
-
-Or create and activate a virtual environment with uv:
-
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install -e .
-```
-
-Deploy the example:
+First complete the [root Quick Start](../../README.md) through platform installation. Then deploy this example:
 
 ```bash
 foretoken deploy examples/quickstart
