@@ -23,6 +23,12 @@ from foretoken_cli.manifest import (
     parse_deployment,
 )
 
+_METRICS_SCRAPER_LABEL = "inference.foretoken.io/metrics-scraper"
+_METRICS_SCRAPER_OWNER_ANNOTATION = (
+    "inference.foretoken.io/metrics-scraper-managed-by"
+)
+_METRICS_SCRAPER_OWNER = "foretoken-cli"
+
 
 @dataclass(frozen=True)
 class FrontendEndpoint:
@@ -97,6 +103,38 @@ class Kubectl:
             ],
             input_text=rendered,
         )
+
+    def label_namespace(self, name: str, key: str, value: str) -> None:
+        """Set one namespace label required by a platform integration."""
+        self.run(
+            [
+                "label",
+                "namespace",
+                name,
+                f"{key}={value}",
+                "--overwrite",
+            ]
+        )
+
+    def annotate_namespace(self, name: str, key: str, value: str) -> None:
+        """Set one namespace annotation that records integration ownership."""
+        self.run(
+            [
+                "annotate",
+                "namespace",
+                name,
+                f"{key}={value}",
+                "--overwrite",
+            ]
+        )
+
+    def remove_namespace_label(self, name: str, key: str) -> None:
+        """Remove one namespace label owned by the CLI."""
+        self.run(["label", "namespace", name, f"{key}-"])
+
+    def remove_namespace_annotation(self, name: str, key: str) -> None:
+        """Remove one namespace annotation owned by the CLI."""
+        self.run(["annotate", "namespace", name, f"{key}-"])
 
     def exists(self, kind: str, name: str, namespace: str = "") -> bool:
         """Return whether a named Kubernetes resource currently exists."""
@@ -217,6 +255,38 @@ def control_plane_deployments(kubectl: Kubectl) -> tuple[ResourceRef, ...]:
             label_selector="app.kubernetes.io/name=foretoken-control-plane",
         )
     )
+
+
+def mark_managed_metrics_scraper_namespace(kubectl: Kubectl, name: str) -> None:
+    """Grant metrics access and record ownership when the label was absent."""
+    namespace = kubectl.get("namespace", name)
+    metadata = namespace.get("metadata") or {}
+    labels = metadata.get("labels") or {}
+    if isinstance(labels, dict) and labels.get(_METRICS_SCRAPER_LABEL) == "true":
+        return
+    kubectl.annotate_namespace(
+        name,
+        _METRICS_SCRAPER_OWNER_ANNOTATION,
+        _METRICS_SCRAPER_OWNER,
+    )
+    kubectl.label_namespace(name, _METRICS_SCRAPER_LABEL, "true")
+
+
+def unmark_managed_metrics_scraper_namespace(kubectl: Kubectl, name: str) -> None:
+    """Remove metrics access only when the namespace records CLI ownership."""
+    namespace = kubectl.get_if_exists("namespace", name)
+    if namespace is None:
+        return
+    metadata = namespace.get("metadata") or {}
+    annotations = metadata.get("annotations") or {}
+    if (
+        not isinstance(annotations, dict)
+        or annotations.get(_METRICS_SCRAPER_OWNER_ANNOTATION)
+        != _METRICS_SCRAPER_OWNER
+    ):
+        return
+    kubectl.remove_namespace_label(name, _METRICS_SCRAPER_LABEL)
+    kubectl.remove_namespace_annotation(name, _METRICS_SCRAPER_OWNER_ANNOTATION)
 
 
 def platform_service_resources(kubectl: Kubectl) -> tuple[ResourceRef, ...]:

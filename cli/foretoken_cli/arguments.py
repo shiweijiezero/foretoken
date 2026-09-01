@@ -16,6 +16,7 @@ class InstallCommand:
     """Install or update the Foretoken platform Helm release."""
 
     values: tuple[str, ...]
+    prometheus: str | None
     frontend_mode: str | None
     gateway_name: str
     gateway_namespace: str
@@ -118,6 +119,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="PATH",
         help="Helm values file; may be repeated",
+    )
+    install.add_argument(
+        "--prometheus",
+        metavar="NAMESPACE/NAME",
+        help="existing compatible Prometheus when automatic discovery is ambiguous",
     )
     install.add_argument(
         "--frontend-mode",
@@ -257,6 +263,7 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             )
         return InstallCommand(
             tuple(parsed_args.values or ()),
+            parsed_args.prometheus,
             parsed_args.frontend_mode,
             parsed_args.gateway_name,
             parsed_args.gateway_namespace,

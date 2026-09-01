@@ -31,6 +31,8 @@ Use the CLI to install the platform into the active Kubernetes context with the 
 foretoken install
 ```
 
+The command reuses one compatible Prometheus instance or installs a CLI-managed monitoring stack when none exists. Use `--prometheus NAMESPACE/NAME` only when automatic discovery finds multiple compatible instances.
+
 Gateway mode requires an existing Gateway Controller. Without existing Gateway details, the CLI creates a dedicated `GatewayClass` and `Gateway`:
 
 ```bash

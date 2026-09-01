@@ -59,6 +59,8 @@ Use the CLI to install the Foretoken platform into the cluster selected by the a
 foretoken install
 ```
 
+The command also reuses a compatible Prometheus or installs a CLI-managed monitoring stack.
+
 #### Gateway mode
 
 First set the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
@@ -189,7 +191,7 @@ After the serving resources are gone, uninstall the platform:
 foretoken uninstall
 ```
 
-A `GatewayClass` and `Gateway` created with `frontend.gateway.create=true` are removed with the Foretoken release; a reused platform Gateway is left unchanged.
+A CLI-managed monitoring stack is removed with the platform; a reused Prometheus is preserved. A `GatewayClass` and `Gateway` created for Foretoken are removed with the platform release, while a reused Gateway is left unchanged.
 
 If Envoy Gateway was installed only for this Foretoken deployment, uninstall it as well:
 

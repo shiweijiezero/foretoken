@@ -15,92 +15,45 @@ Observability helps operators understand whether a service is healthy, why reque
 
 ## Enable metric collection
 
-Frontend and model-server expose `/metrics` without requiring Prometheus. To collect those metrics and evaluate the recording rules, reuse an existing Prometheus Operator or install kube-prometheus-stack:
-
-```bash
-helm repo add prometheus-community \
-  https://prometheus-community.github.io/helm-charts
-helm repo update
-
-helm upgrade --install kube-prometheus-stack \
-  prometheus-community/kube-prometheus-stack \
-  --namespace monitoring \
-  --create-namespace \
-  --values deploy/observability/kube-prometheus-stack-values.yaml \
-  --wait
-```
-
-Label the namespace that runs the Prometheus Pods so it can reach model-server metrics:
-
-```bash
-PROMETHEUS_NAMESPACE=monitoring
-kubectl label namespace "${PROMETHEUS_NAMESPACE}" \
-  inference.foretoken.io/metrics-scraper=true \
-  --overwrite
-```
-
-After the Operator CRDs are established, a normal online Foretoken installation uses the default `auto` mode to create the ServiceMonitors and PrometheusRule:
+Frontend and model-server expose `/metrics` without requiring Prometheus. The normal installation connects them automatically:
 
 ```bash
 foretoken install
 ```
 
-For a CLI-managed release, put the integration settings in a values file and run install again:
-
-```yaml
-observability:
-  mode: enabled
-  additionalLabels:
-    release: your-prometheus-release
-```
+The command reuses the unique compatible Prometheus instance in the cluster. If none exists, it installs a CLI-managed kube-prometheus-stack release. When more than one compatible instance exists, select one explicitly:
 
 ```bash
-foretoken install --values foretoken-observability-values.yaml
+kubectl label namespace monitoring \
+  inference.foretoken.io/metrics-scraper=true \
+  --overwrite
+
+foretoken install --prometheus monitoring/prometheus
 ```
 
-Use `disabled` in the same file to remove the Chart-owned monitoring resources. A release originally installed directly with Helm remains under that Helm lifecycle and is not adopted by the CLI.
-
-`auto` creates both resources only when the cluster exposes the `ServiceMonitor` and `PrometheusRule` APIs. Offline rendering and GitOps should use `enabled` and install the Operator CRDs before Foretoken. Set `interval` or `scrapeTimeout` only when overriding Prometheus defaults.
-
-The included kube-prometheus-stack values select Foretoken resources from the `foretoken-platform` namespace. When reusing another Prometheus installation, its ServiceMonitor and rule namespace selectors must include the Foretoken release namespace. Add `additionalLabels` only when its object selectors require platform-specific labels.
+The CLI configures namespace access for its managed stack, plus the ServiceMonitors and recording rules. The label on a reused Prometheus namespace remains platform-owned and must be removed by that platform owner when no longer needed. A release originally installed directly with Helm remains under that Helm lifecycle and is not adopted automatically.
 
 ## Confirm collection is enabled
-
-First confirm that Kubernetes contains the expected resources:
 
 ```bash
 kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
 ```
 
-For the included kube-prometheus-stack installation, open Prometheus locally:
+For the CLI-managed Prometheus, open the service locally:
 
 ```bash
 kubectl port-forward \
-  --namespace monitoring \
-  service/kube-prometheus-stack-prometheus \
+  --namespace foretoken-platform \
+  service/foretoken-prometheus-kube-prometheus \
   9090:9090
 ```
 
-In Prometheus, confirm that the Foretoken targets are `UP` at <http://127.0.0.1:9090/targets> and that `foretoken.recording` is loaded at <http://127.0.0.1:9090/rules>. After the service receives traffic, query a recorded metric:
+Confirm that Foretoken targets are `UP` at <http://127.0.0.1:9090/targets> and that `foretoken.recording` is loaded at <http://127.0.0.1:9090/rules>. For a reused Prometheus, use its existing access path for the same checks.
 
-```bash
-curl --get http://127.0.0.1:9090/api/v1/query \
-  --data-urlencode 'query=foretoken:model_server_requests_running:sum'
-```
+## Remove the integration
 
-Object presence alone does not prove that Prometheus selected the monitors or loaded the rules. For an existing platform installation, use its normal Prometheus access path for the same target, rule, and query checks.
-
-## Disable or remove the integration
-
-Setting `observability.mode=disabled` or uninstalling Foretoken removes only the ServiceMonitors and PrometheusRule owned by the Foretoken release. It does not uninstall Prometheus, Prometheus Operator, Grafana, or Alertmanager. Remove the namespace label only when no remaining Foretoken workload needs that Prometheus installation:
-
-```bash
-kubectl label namespace monitoring \
-  inference.foretoken.io/metrics-scraper-
-```
-
-Replace `monitoring` when Prometheus runs in another namespace.
+`foretoken uninstall` removes the CLI-managed Prometheus release after all Foretoken services are deleted. A reused Prometheus installation is preserved.
 
 ## Recording rules
 

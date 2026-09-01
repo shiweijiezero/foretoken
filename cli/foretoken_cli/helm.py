@@ -40,6 +40,11 @@ def platform_release() -> ReleaseRef:
     return ReleaseRef("foretoken", "foretoken-platform")
 
 
+def prometheus_release() -> ReleaseRef:
+    """Return the fixed CLI-managed Prometheus release."""
+    return ReleaseRef("foretoken-prometheus", platform_release().namespace)
+
+
 class Helm:
     """Read and mutate Helm releases through the local Helm CLI."""
 
@@ -123,6 +128,34 @@ class Helm:
             raise DeploymentError("helm list returned an unexpected JSON value")
         return tuple(listed)
 
+    @staticmethod
+    def _upgrade_install_args(
+        release: ReleaseRef, chart: str, chart_version: str
+    ) -> list[str]:
+        """Build the shared CLI-owned Helm release identity and chart selection."""
+        management_key, management_value = release.management_label
+        return [
+            "upgrade",
+            "--install",
+            release.name,
+            chart,
+            "--version",
+            chart_version,
+            "--namespace",
+            release.namespace,
+            "--create-namespace",
+            "--labels",
+            f"{management_key}={management_value}",
+        ]
+
+    @staticmethod
+    def _finish_upgrade(args: list[str], timeout: str, dry_run: bool) -> None:
+        """Add the execution mode shared by managed Helm upgrades."""
+        if dry_run:
+            args.extend(["--dry-run=server", "--hide-secret"])
+        else:
+            args.extend(["--wait", f"--timeout={timeout}"])
+
     def install_platform(
         self,
         *,
@@ -132,29 +165,48 @@ class Helm:
         gateway_name: str,
         gateway_namespace: str,
         gateway_section_name: str,
+        observability_labels: tuple[tuple[str, str], ...],
         reuse_values: bool,
         timeout: str,
         dry_run: bool,
+        dry_run_api_versions: tuple[str, ...] = (),
     ) -> None:
         """Install or update the CLI-owned Foretoken platform release."""
-        management_key, management_value = release.management_label
-        args = [
-            "upgrade",
-            "--install",
-            release.name,
-            "oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken",
-            "--namespace",
-            release.namespace,
-            "--create-namespace",
-            "--labels",
-            f"{management_key}={management_value}",
-        ]
-        args.extend(["--version", version("foretoken-cli")])
-        if reuse_values:
+        chart = "oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken"
+        chart_version = version("foretoken-cli")
+        render_template = dry_run and bool(dry_run_api_versions)
+        if render_template:
+            args = [
+                "template",
+                release.name,
+                chart,
+                "--version",
+                chart_version,
+                "--namespace",
+                release.namespace,
+            ]
+        else:
+            args = self._upgrade_install_args(release, chart, chart_version)
+        if reuse_values and not render_template:
             args.append("--reuse-values")
         for values_file in values:
             args.extend(["--values", values_file])
-        args.extend(["--set", "frontend.enabled=true"])
+        args.extend(
+            [
+                "--set",
+                "frontend.enabled=true",
+                "--set",
+                "observability.mode=enabled",
+            ]
+        )
+        if observability_labels:
+            args.extend(
+                [
+                    "--set-json",
+                    "observability.additionalLabels="
+                    + json.dumps(dict(observability_labels), separators=(",", ":")),
+                ]
+            )
         if frontend_mode is not None:
             gateway_create = frontend_mode == "gateway" and not gateway_name
             args.extend(["--set", f"frontend.mode={frontend_mode}"])
@@ -177,10 +229,63 @@ class Helm:
                     f"frontend.gateway.sectionName={gateway_section_name}",
                 ]
             )
-        if dry_run:
-            args.extend(["--dry-run=server", "--hide-secret"])
+        if render_template:
+            for api_version in dry_run_api_versions:
+                args.extend(["--api-versions", api_version])
         else:
-            args.extend(["--wait", f"--timeout={timeout}"])
+            self._finish_upgrade(args, timeout, dry_run)
+        self.run(args)
+
+    def install_prometheus(
+        self, release: ReleaseRef, timeout: str, dry_run: bool
+    ) -> None:
+        """Install or upgrade the CLI-managed kube-prometheus-stack release."""
+        namespace_selector = {
+            "matchLabels": {
+                "kubernetes.io/metadata.name": release.namespace,
+            }
+        }
+        rule_selector = {
+            "matchLabels": {
+                "app.kubernetes.io/name": "foretoken-control-plane",
+            }
+        }
+        chart = "oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack"
+        chart_version = "88.5.2"
+        if dry_run:
+            args = [
+                "template",
+                release.name,
+                chart,
+                "--version",
+                chart_version,
+                "--namespace",
+                release.namespace,
+                "--include-crds",
+            ]
+        else:
+            args = self._upgrade_install_args(release, chart, chart_version)
+        args.extend(
+            [
+                "--set",
+                "prometheus.prometheusSpec.serviceMonitorSelectorNilUsesHelmValues=false",
+                "--set-json",
+                "prometheus.prometheusSpec.serviceMonitorSelector={}",
+                "--set-json",
+                "prometheus.prometheusSpec.serviceMonitorNamespaceSelector="
+                + json.dumps(namespace_selector, separators=(",", ":")),
+                "--set",
+                "prometheus.prometheusSpec.ruleSelectorNilUsesHelmValues=false",
+                "--set-json",
+                "prometheus.prometheusSpec.ruleSelector="
+                + json.dumps(rule_selector, separators=(",", ":")),
+                "--set-json",
+                "prometheus.prometheusSpec.ruleNamespaceSelector="
+                + json.dumps(namespace_selector, separators=(",", ":")),
+            ]
+        )
+        if not dry_run:
+            self._finish_upgrade(args, timeout, False)
         self.run(args)
 
     def uninstall(self, release: ReleaseRef, timeout: str) -> None:
