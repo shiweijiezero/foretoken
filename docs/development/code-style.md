@@ -138,6 +138,8 @@ User documentation should begin with purpose and a minimal executable example. M
 
 Keep English and Chinese documentation aligned in capability, prerequisites, commands, defaults, and limitations. Update both when user-visible behavior changes.
 
+Write the Chinese version independently for Chinese readers rather than translating the English version sentence by sentence. Use natural Chinese prose and established Chinese technical terms in narrative text. Preserve exact commands, field names, type names, and algorithm identifiers when readers need to recognize or enter them, and explain uncommon identifiers in Chinese on first use. When a clear Chinese expression exists, do not leave ordinary prose as raw English words such as “status”, “runtime”, “owner”, or “freshness”. Review the Chinese document on its own for fluency; equivalent capability does not require identical sentence structure.
+
 ## Change and PR discipline
 
 Keep each PR focused on one responsibility and make its final diff the smallest maintainable expression of that change.
