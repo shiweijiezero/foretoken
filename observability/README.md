@@ -23,6 +23,8 @@ foretoken install
 
 The command reuses the unique compatible Prometheus instance in the cluster. If none exists, it installs a CLI-managed kube-prometheus-stack release. NVIDIA GPU nodes also receive a DCGM Exporter when none exists. One ready exporter that covers every GPU node is reused only when it has a working ServiceMonitor selected by Prometheus. Duplicate, unhealthy, incomplete, or unmonitored exporters stop installation instead of being overlaid. Mixed CPU/GPU clusters must identify GPU nodes with `nvidia.com/gpu.present=true` or `feature.node.kubernetes.io/pci-10de.present=true`; the CLI does not guess node placement or install drivers.
 
+MetaX GPU nodes require the platform's official [mxExporter](https://github.com/MetaX-MACA/mxExporter) and a working ServiceMonitor. The CLI verifies the DaemonSet, GPU-node coverage, Service, ServiceMonitor, and Prometheus selection before reuse. It does not redistribute or build the vendor software.
+
 When more than one compatible Prometheus instance exists, select one explicitly:
 
 ```bash
