@@ -169,13 +169,7 @@ pip install -e .
 使用发布镜像安装 Foretoken 并部署快速开始示例：
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=local \
-  --wait
+foretoken install
 
 foretoken deploy examples/quickstart --timeout 6m
 ```
@@ -196,7 +190,7 @@ spec:
   hostname: foretoken.example.com
 ```
 
-安装 Envoy Gateway，并使用发布镜像部署 Foretoken 和快速开始示例：
+网关模式要求集群已经安装 Gateway Controller。如果集群尚未安装，可以使用以下命令安装 Envoy Gateway：
 
 ```bash
 helm upgrade --install envoy-gateway \
@@ -204,16 +198,12 @@ helm upgrade --install envoy-gateway \
   --namespace envoy-gateway-system \
   --create-namespace \
   --wait
+```
 
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=gateway \
-  --set frontend.gateway.create=true \
-  --wait
+创建 Foretoken 专用 Gateway，并使用发布镜像部署快速开始示例：
 
+```bash
+foretoken install --frontend-mode gateway
 foretoken deploy examples/quickstart --timeout 6m
 ```
 

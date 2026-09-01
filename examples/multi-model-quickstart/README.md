@@ -20,10 +20,23 @@ The Qwen service starts with the top-level `replicas: 1`, then evaluates its que
 
 ## Deploy
 
-Install the Foretoken platform first, then install the CLI and deploy from the repository root:
+Install the Foretoken platform first. Then install the CLI from the repository root with pip:
 
 ```bash
 pip install -e .
+```
+
+Or create and activate a virtual environment with uv:
+
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -e .
+```
+
+Deploy the example:
+
+```bash
 foretoken deploy examples/multi-model-quickstart
 ```
 

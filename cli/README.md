@@ -7,15 +7,47 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-The Foretoken CLI deploys Kustomize configurations, reports serving readiness, resolves frontend endpoints, and exposes the benchmark command through one `foretoken` entry point.
+The Foretoken CLI installs the platform, deploys Kustomize configurations, reports serving readiness, resolves frontend endpoints, and exposes benchmarks through one `foretoken` entry point.
 
-Install the Foretoken CLI with pip or uv:
+Install the Foretoken CLI with pip:
 
 ```bash
 pip install -e .
-# or
+```
+
+Or create and activate a virtual environment with uv:
+
+```bash
+uv venv
+source .venv/bin/activate
 uv pip install -e .
 ```
+
+This step only installs the `foretoken` command in the current Python environment; it does not change the Kubernetes cluster. The CLI installs the Foretoken Chart version that matches its package version; run `foretoken --version` to see that release version.
+
+Use the CLI to install the platform into the active Kubernetes context with the default local access mode. CLI-managed platform resources use the `foretoken-platform` namespace. Run the same command again to update the existing installation:
+
+```bash
+foretoken install
+```
+
+Gateway mode requires an existing Gateway Controller. Without existing Gateway details, the CLI creates a dedicated `GatewayClass` and `Gateway`:
+
+```bash
+foretoken install --frontend-mode gateway
+```
+
+To reuse an existing Gateway instead:
+
+```bash
+foretoken install \
+  --frontend-mode gateway \
+  --gateway-name inference-gateway \
+  --gateway-namespace gateway-system \
+  --gateway-section-name https
+```
+
+Use `--dry-run` to validate and show the installation plan without changing the cluster. Repeatable `--values` files provide platform image, runtime, and hardware settings. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
 
 Deploy one frontend and all models rendered by a Kustomize root:
 
@@ -31,7 +63,13 @@ Delete the resources rendered by the same configuration:
 foretoken delete examples/multi-model-quickstart
 ```
 
-The command waits for deletion and ignores resources that are already absent.
+The command waits for deletion and ignores resources that are already absent. After deleting all Foretoken services, remove the platform release:
+
+```bash
+foretoken uninstall
+```
+
+The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain.
 
 Inspect the same deployment without applying it:
 
@@ -61,13 +99,21 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 
 The host value is the URL authority for direct access or the configured routing hostname for an HTTP Gateway. The command waits for the LoadBalancer or Gateway address, but serving readiness remains owned by `foretoken deploy`.
 
-Benchmark support uses optional dependencies:
+Install the optional benchmark dependencies with pip:
 
 ```bash
 pip install -e '.[bench]'
-# or
-uv pip install -e '.[bench]'
+```
 
+Or install the benchmark dependencies in the activated uv environment:
+
+```bash
+uv pip install -e '.[bench]'
+```
+
+Then run the benchmark:
+
+```bash
 foretoken bench examples/quickstart
 ```
 

@@ -15,20 +15,108 @@ from foretoken_cli.arguments import (
     DeleteCommand,
     DeployCommand,
     EndpointCommand,
+    InstallCommand,
     StatusCommand,
+    UninstallCommand,
     parse_arguments,
 )
+from foretoken_cli.helm import Helm, platform_release
 from foretoken_cli.kubernetes import (
     Kubectl,
     ResourceProgress,
+    control_plane_deployments,
     load_deployment,
     namespace_progress,
+    platform_service_resources,
     read_progress,
     resolve_frontend_endpoint,
     timeout_seconds,
     wait_for_resources,
 )
 from foretoken_cli.manifest import DeploymentError, ResourceRef
+
+
+def _print_plan(action: str, detail: str) -> None:
+    """Print one stable platform lifecycle decision."""
+    print(f"{'Foretoken platform':<28} {action:<8} {detail}")
+
+
+def _install(command: InstallCommand) -> None:
+    """Install or update the CLI-owned Foretoken platform release."""
+    helm = Helm()
+    release = platform_release()
+    release_exists = helm.release_exists(release)
+    if release_exists and not helm.is_cli_managed(release):
+        raise DeploymentError(
+            f"Helm release {release.display_name} is not managed by foretoken; "
+            "use its existing Helm lifecycle"
+        )
+    deployments = control_plane_deployments(Kubectl())
+    expected_deployment = f"{release.name}-control-plane"
+    unexpected_deployments = tuple(
+        deployment
+        for deployment in deployments
+        if not (
+            release_exists
+            and deployment.namespace == release.namespace
+            and deployment.name == expected_deployment
+        )
+    )
+    if unexpected_deployments:
+        existing = ", ".join(
+            f"{deployment.namespace}/{deployment.display_name}"
+            for deployment in unexpected_deployments
+        )
+        raise DeploymentError(
+            "another Foretoken control plane already exists; use its existing "
+            f"lifecycle: {existing}"
+        )
+
+    action = "Upgrade" if release_exists else "Install"
+    _print_plan(action, release.display_name)
+    helm.install_platform(
+        release=release,
+        values=command.values,
+        frontend_mode=command.frontend_mode,
+        gateway_name=command.gateway_name,
+        gateway_namespace=command.gateway_namespace,
+        gateway_section_name=command.gateway_section_name,
+        reuse_values=release_exists,
+        timeout=command.timeout,
+        dry_run=command.dry_run,
+    )
+    if not command.dry_run:
+        _print_plan("Ready", release.display_name)
+
+
+def _uninstall(command: UninstallCommand) -> None:
+    """Remove the CLI-owned platform release after user services are gone."""
+    helm = Helm()
+    release = platform_release()
+    if not helm.release_exists(release):
+        _print_plan("Skip", f"{release.display_name} is not installed")
+        return
+    if not helm.is_cli_managed(release):
+        raise DeploymentError(
+            f"Helm release {release.display_name} is not managed by foretoken; "
+            "use its existing Helm lifecycle"
+        )
+
+    resources = platform_service_resources(Kubectl())
+    if resources:
+        remaining = ", ".join(
+            f"{resource.namespace}/{resource.display_name}" for resource in resources
+        )
+        raise DeploymentError(
+            "delete Foretoken services before uninstalling the platform: "
+            f"{remaining}"
+        )
+
+    _print_plan("Remove", release.display_name)
+    if command.dry_run:
+        return
+    helm.uninstall(release, command.timeout)
+    _print_plan("Removed", release.display_name)
 
 
 def _deployment_resources(
@@ -157,7 +245,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Dispatch Foretoken deployment, status, and benchmark commands."""
     command = parse_arguments(sys.argv[1:] if argv is None else argv)
     try:
-        if isinstance(command, DeployCommand):
+        if isinstance(command, InstallCommand):
+            _install(command)
+        elif isinstance(command, UninstallCommand):
+            _uninstall(command)
+        elif isinstance(command, DeployCommand):
             _deploy(command.kustomize_path, command.timeout)
         elif isinstance(command, DeleteCommand):
             _delete(command.kustomize_path, command.timeout)

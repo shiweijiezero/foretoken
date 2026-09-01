@@ -35,16 +35,28 @@ Foretoken supports local and gateway access modes. Local mode exposes the fronte
 
 ### 1. Install Foretoken
 
-#### Local mode
+Install the CLI from the repository root with pip:
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=local \
-  --wait
+pip install -e .
+```
+
+Or create and activate a virtual environment with uv:
+
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -e .
+```
+
+This step only installs the `foretoken` command in the current Python environment; it does not change the Kubernetes cluster. The CLI installs the Foretoken Chart version that matches its package version; run `foretoken --version` to see that release version.
+
+#### Local mode
+
+Use the CLI to install the Foretoken platform into the cluster selected by the active `kubectl` context. CLI-managed platform resources use the `foretoken-platform` namespace. The default local mode exposes the frontend through a `LoadBalancer` Service. Run the same command again to update the existing installation:
+
+```bash
+foretoken install
 ```
 
 #### Gateway mode
@@ -56,7 +68,7 @@ spec:
   hostname: foretoken.example.com
 ```
 
-Gateway mode requires a Gateway Controller. This example installs Envoy Gateway:
+Gateway mode requires a Gateway Controller. If the cluster does not already have one, this example installs Envoy Gateway:
 
 ```bash
 helm upgrade --install envoy-gateway \
@@ -66,55 +78,35 @@ helm upgrade --install envoy-gateway \
   --wait
 ```
 
-Then let the Foretoken Chart create a dedicated `GatewayClass` and `Gateway`:
+Create a dedicated `GatewayClass` and `Gateway` for Foretoken:
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=gateway \
-  --set frontend.gateway.create=true \
-  --wait
+foretoken install --frontend-mode gateway
 ```
 
-If the platform already has a suitable `Gateway`, first list its name and namespace:
+To reuse an existing Gateway, list its name and namespace:
 
 ```bash
 kubectl get gateway -A
 ```
 
-For example:
-
-```text
-NAMESPACE        NAME
-gateway-system   inference-gateway
-```
-
-To reuse this Gateway, install Foretoken with the complete command below:
+Then install Foretoken with that Gateway and listener:
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=gateway \
-  --set frontend.gateway.name=inference-gateway \
-  --set frontend.gateway.namespace=gateway-system \
-  --set frontend.gateway.sectionName=https \
-  --wait
+foretoken install \
+  --frontend-mode gateway \
+  --gateway-name inference-gateway \
+  --gateway-namespace gateway-system \
+  --gateway-section-name https
 ```
 
-`name` comes from the `NAME` column, `namespace` from `NAMESPACE`, and `sectionName` is the listener name selected from that Gateway. The Gateway must allow `HTTPRoute` resources from the frontend namespace; DNS and TLS remain owned by the platform Gateway.
+The Gateway must allow `HTTPRoute` resources from the frontend namespace; DNS and TLS remain owned by the platform Gateway.
 
 ### 2. Deploy the model service
 
-Install the Foretoken CLI from the repository root. `examples/quickstart` provides a ready-to-use frontend and single-model configuration. For two models with queue-based autoscaling, see [Multi-Model Quick Start](examples/multi-model-quickstart/README.md).
+`examples/quickstart` provides a ready-to-use frontend and single-model configuration. For two models with queue-based autoscaling, see [Multi-Model Quick Start](examples/multi-model-quickstart/README.md).
 
 ```bash
-pip install -e .
 foretoken deploy examples/quickstart
 ```
 
@@ -154,10 +146,16 @@ When reusing a platform Gateway, use that Gateway's configured hostname, port, a
 
 ### 4. Benchmark service throughput
 
-Install the optional benchmark dependencies from the repository root:
+Install the optional benchmark dependencies from the repository root with pip:
 
 ```bash
 pip install -e '.[bench]'
+```
+
+Or install the benchmark dependencies in the activated uv environment:
+
+```bash
+uv pip install -e '.[bench]'
 ```
 
 The benchmark command reuses an existing Quick Start service. If the service is absent, it deploys the configuration and removes only the resources it created after the benchmark. When neither `--prompt` nor `--dataset` is specified, it uses a short built-in prompt:
@@ -185,12 +183,10 @@ Delete the serving configuration so the Operator can stop the service and clean 
 foretoken delete examples/quickstart
 ```
 
-After the serving resources are gone, uninstall Foretoken:
+After the serving resources are gone, uninstall the platform:
 
 ```bash
-helm uninstall foretoken \
-  --namespace foretoken-platform \
-  --wait --timeout 5m
+foretoken uninstall
 ```
 
 A `GatewayClass` and `Gateway` created with `frontend.gateway.create=true` are removed with the Foretoken release; a reused platform Gateway is left unchanged.

@@ -8,6 +8,28 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from dataclasses import dataclass
+from importlib.metadata import version
+
+
+@dataclass(frozen=True)
+class InstallCommand:
+    """Install or update the Foretoken platform Helm release."""
+
+    values: tuple[str, ...]
+    frontend_mode: str | None
+    gateway_name: str
+    gateway_namespace: str
+    gateway_section_name: str
+    timeout: str
+    dry_run: bool
+
+
+@dataclass(frozen=True)
+class UninstallCommand:
+    """Remove the Foretoken platform Helm release."""
+
+    timeout: str
+    dry_run: bool
 
 
 @dataclass(frozen=True)
@@ -52,7 +74,13 @@ class BenchCommand:
 
 
 ParsedCommand = (
-    DeployCommand | DeleteCommand | StatusCommand | EndpointCommand | BenchCommand
+    InstallCommand
+    | UninstallCommand
+    | DeployCommand
+    | DeleteCommand
+    | StatusCommand
+    | EndpointCommand
+    | BenchCommand
 )
 
 
@@ -71,9 +99,66 @@ def _build_parser() -> argparse.ArgumentParser:
     """Build the stable top-level command surface owned by the CLI package."""
     parser = argparse.ArgumentParser(
         prog="foretoken",
-        description="Deploy, inspect, and benchmark Foretoken services",
+        description="Install the platform, deploy services, and run benchmarks",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {version('foretoken-cli')}",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    install = subparsers.add_parser(
+        "install",
+        help="Install or update the Foretoken platform",
+    )
+    install.add_argument(
+        "-f",
+        "--values",
+        action="append",
+        metavar="PATH",
+        help="Helm values file; may be repeated",
+    )
+    install.add_argument(
+        "--frontend-mode",
+        choices=("local", "gateway"),
+        help="frontend access mode; new releases default to local",
+    )
+    install.add_argument(
+        "--gateway-name",
+        default="",
+        metavar="NAME",
+        help="existing Gateway name",
+    )
+    install.add_argument(
+        "--gateway-namespace",
+        default="",
+        metavar="NAMESPACE",
+        help="existing Gateway namespace",
+    )
+    install.add_argument(
+        "--gateway-section-name",
+        default="",
+        metavar="NAME",
+        help="listener name on an existing Gateway",
+    )
+    _add_wait_timeout_argument(install, "platform readiness")
+    install.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="show the installation plan without changing the cluster",
+    )
+
+    uninstall = subparsers.add_parser(
+        "uninstall",
+        help="Remove the Foretoken platform release",
+    )
+    _add_wait_timeout_argument(uninstall, "platform removal")
+    uninstall.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="show the removal plan without changing the cluster",
+    )
 
     deploy = subparsers.add_parser(
         "deploy",
@@ -151,6 +236,36 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
 
     parser = _build_parser()
     parsed_args = parser.parse_args(arguments)
+    if parsed_args.command == "install":
+        reused_gateway_arguments = any(
+            (
+                parsed_args.gateway_name,
+                parsed_args.gateway_namespace,
+                parsed_args.gateway_section_name,
+            )
+        )
+        if parsed_args.frontend_mode != "gateway" and reused_gateway_arguments:
+            parser.error("Gateway options require --frontend-mode gateway")
+        if (
+            parsed_args.frontend_mode == "gateway"
+            and reused_gateway_arguments
+            and not (parsed_args.gateway_name and parsed_args.gateway_namespace)
+        ):
+            parser.error(
+                "reusing a Gateway requires both --gateway-name and "
+                "--gateway-namespace"
+            )
+        return InstallCommand(
+            tuple(parsed_args.values or ()),
+            parsed_args.frontend_mode,
+            parsed_args.gateway_name,
+            parsed_args.gateway_namespace,
+            parsed_args.gateway_section_name,
+            parsed_args.timeout,
+            parsed_args.dry_run,
+        )
+    if parsed_args.command == "uninstall":
+        return UninstallCommand(parsed_args.timeout, parsed_args.dry_run)
     if parsed_args.command == "deploy":
         return DeployCommand(parsed_args.kustomize_path, parsed_args.timeout)
     if parsed_args.command == "delete":

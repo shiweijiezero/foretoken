@@ -20,10 +20,23 @@ Qwen 服务先按顶层的 `replicas: 1` 启动。控制器随后每 5 秒评估
 
 ## 部署
 
-先安装 Foretoken 平台，再从仓库根目录安装 CLI 并部署：
+先安装 Foretoken 平台，再使用 pip 从仓库根目录安装 CLI：
 
 ```bash
 pip install -e .
+```
+
+或使用 uv 创建并激活虚拟环境后安装：
+
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -e .
+```
+
+部署示例：
+
+```bash
 foretoken deploy examples/multi-model-quickstart
 ```
 

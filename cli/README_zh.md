@@ -7,15 +7,47 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken CLI 通过统一的 `foretoken` 入口部署 Kustomize 配置、查看服务就绪状态、解析前端访问入口并运行评测。
+Foretoken CLI 通过统一的 `foretoken` 入口安装平台、部署 Kustomize 配置、查看服务就绪状态、解析前端访问入口并运行评测。
 
-使用 pip 或 uv 安装 Foretoken CLI：
+使用 pip 安装 Foretoken CLI：
 
 ```bash
 pip install -e .
-# 或
+```
+
+或使用 uv 创建并激活虚拟环境后安装：
+
+```bash
+uv venv
+source .venv/bin/activate
 uv pip install -e .
 ```
+
+这一步只会在当前 Python 环境中安装 `foretoken` 命令，不会修改 Kubernetes 集群。CLI 会安装与自身软件包版本一致的 Foretoken Chart；运行 `foretoken --version` 可以查看该发布版本。
+
+使用 CLI 将平台安装到当前 Kubernetes context，并采用默认的本地访问模式。CLI 管理的平台资源固定使用 `foretoken-platform` 命名空间；以后再次运行同一命令会更新现有安装：
+
+```bash
+foretoken install
+```
+
+网关模式要求集群已经安装 Gateway Controller。未提供已有 Gateway 信息时，CLI 会创建专用的 `GatewayClass` 和 `Gateway`：
+
+```bash
+foretoken install --frontend-mode gateway
+```
+
+如需复用已有 Gateway：
+
+```bash
+foretoken install \
+  --frontend-mode gateway \
+  --gateway-name inference-gateway \
+  --gateway-namespace gateway-system \
+  --gateway-section-name https
+```
+
+使用 `--dry-run` 可在不修改集群的情况下验证并查看安装计划。重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，CLI 不会自动接管。
 
 部署一个 Kustomize 根目录中渲染出的前端服务和全部模型：
 
@@ -31,7 +63,13 @@ foretoken deploy examples/multi-model-quickstart
 foretoken delete examples/multi-model-quickstart
 ```
 
-该命令会等待删除完成，并忽略已经不存在的资源。
+该命令会等待删除完成，并忽略已经不存在的资源。删除全部 Foretoken 服务后，可以移除平台发布实例：
+
+```bash
+foretoken uninstall
+```
+
+该命令保留 Foretoken CRD，并在仍有用户服务时拒绝卸载。
 
 不应用配置，直接查看同一部署的状态：
 
@@ -61,13 +99,21 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 
 Host 值在直接访问时是 URL authority，在 HTTP Gateway 模式下是配置的路由域名。该命令负责等待 LoadBalancer 或 Gateway 地址，服务就绪仍由 `foretoken deploy` 负责。
 
-评测能力使用可选依赖：
+使用 pip 安装可选的评测依赖：
 
 ```bash
 pip install -e '.[bench]'
-# 或
-uv pip install -e '.[bench]'
+```
 
+或在已经激活的 uv 虚拟环境中安装评测依赖：
+
+```bash
+uv pip install -e '.[bench]'
+```
+
+然后运行评测：
+
+```bash
 foretoken bench examples/quickstart
 ```
 

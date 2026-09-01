@@ -35,16 +35,28 @@ Foretoken 支持本地模式和网关模式。本地模式通过 `LoadBalancer` 
 
 ### 1. 安装 Foretoken
 
-#### 本地模式
+使用 pip 从仓库根目录安装 CLI：
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=local \
-  --wait
+pip install -e .
+```
+
+或使用 uv 创建并激活虚拟环境后安装：
+
+```bash
+uv venv
+source .venv/bin/activate
+uv pip install -e .
+```
+
+这一步只会在当前 Python 环境中安装 `foretoken` 命令，不会修改 Kubernetes 集群。CLI 会安装与自身软件包版本一致的 Foretoken Chart；运行 `foretoken --version` 可以查看该发布版本。
+
+#### 本地模式
+
+使用 CLI 将 Foretoken 平台安装到当前 `kubectl` context 指向的集群。CLI 管理的平台资源固定使用 `foretoken-platform` 命名空间。默认的本地模式通过 `LoadBalancer` Service 提供前端访问地址；以后再次运行同一命令会更新现有安装：
+
+```bash
+foretoken install
 ```
 
 #### 网关模式
@@ -56,7 +68,7 @@ spec:
   hostname: foretoken.example.com
 ```
 
-网关模式需要网关控制器。以下示例安装 Envoy Gateway：
+网关模式需要网关控制器。如果集群尚未安装，可以使用以下命令安装 Envoy Gateway：
 
 ```bash
 helm upgrade --install envoy-gateway \
@@ -66,55 +78,35 @@ helm upgrade --install envoy-gateway \
   --wait
 ```
 
-然后使用 Foretoken Chart 创建专用的 `GatewayClass` 和 `Gateway`：
+为 Foretoken 创建专用的 `GatewayClass` 和 `Gateway`：
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=gateway \
-  --set frontend.gateway.create=true \
-  --wait
+foretoken install --frontend-mode gateway
 ```
 
-如果平台已经有可用的 `Gateway`，可以先查看其名称和命名空间：
+如果复用已有 Gateway，先查看其名称和命名空间：
 
 ```bash
 kubectl get gateway -A
 ```
 
-例如输出：
-
-```text
-NAMESPACE        NAME
-gateway-system   inference-gateway
-```
-
-如果复用这个 Gateway，使用以下完整命令安装 Foretoken：
+然后使用该 Gateway 和 listener 安装 Foretoken：
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=gateway \
-  --set frontend.gateway.name=inference-gateway \
-  --set frontend.gateway.namespace=gateway-system \
-  --set frontend.gateway.sectionName=https \
-  --wait
+foretoken install \
+  --frontend-mode gateway \
+  --gateway-name inference-gateway \
+  --gateway-namespace gateway-system \
+  --gateway-section-name https
 ```
 
-其中 `name` 对应 `NAME` 列，`namespace` 对应 `NAMESPACE` 列，`sectionName` 是该 Gateway 中目标监听器的名称。该 Gateway 必须允许前端服务所在命名空间的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
+该 Gateway 必须允许前端服务所在命名空间的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
 
 ### 2. 部署模型服务
 
-先在仓库根目录安装 Foretoken CLI。`examples/quickstart` 提供一套可直接使用的前端服务和单模型配置。如需运行双模型并验证基于队列的自动扩缩容，请参阅[多模型快速开始](examples/multi-model-quickstart/README_zh.md)。
+`examples/quickstart` 提供一套可直接使用的前端服务和单模型配置。如需运行双模型并验证基于队列的自动扩缩容，请参阅[多模型快速开始](examples/multi-model-quickstart/README_zh.md)。
 
 ```bash
-pip install -e .
 foretoken deploy examples/quickstart
 ```
 
@@ -154,10 +146,16 @@ curl --fail-with-body --no-buffer \
 
 ### 4. 评测服务吞吐
 
-在仓库根目录安装可选的评测依赖：
+使用 pip 从仓库根目录安装可选的评测依赖：
 
 ```bash
 pip install -e '.[bench]'
+```
+
+或在已经激活的 uv 虚拟环境中安装评测依赖：
+
+```bash
+uv pip install -e '.[bench]'
 ```
 
 以下命令会复用已经运行的快速开始服务；服务尚未部署时，CLI 会创建配置中的资源，并在评测结束后只清理本次创建的资源。未指定 `--prompt` 或 `--dataset` 时，使用一个简短的内置提示词：
@@ -183,10 +181,8 @@ foretoken bench \
 # 删除服务配置，停止服务并清理所辖资源：
 foretoken delete examples/quickstart
 
-# 服务资源清理完成后，再卸载 Foretoken：
-helm uninstall foretoken \
-  --namespace foretoken-platform \
-  --wait --timeout 5m
+# 服务资源清理完成后，再卸载平台：
+foretoken uninstall
 ```
 
 通过 `frontend.gateway.create=true` 创建的 `GatewayClass` 和 `Gateway` 会随 Foretoken 的 Helm 发布实例一同删除；复用的平台网关不会被删除。

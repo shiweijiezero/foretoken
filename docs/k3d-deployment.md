@@ -169,13 +169,7 @@ pip install -e .
 Install Foretoken from release images and deploy the Quick Start:
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=local \
-  --wait
+foretoken install
 
 foretoken deploy examples/quickstart --timeout 6m
 ```
@@ -196,7 +190,7 @@ spec:
   hostname: foretoken.example.com
 ```
 
-Install Envoy Gateway, then deploy Foretoken and the Quick Start from release images:
+Gateway mode requires a Gateway Controller. If the cluster does not already have one, install Envoy Gateway:
 
 ```bash
 helm upgrade --install envoy-gateway \
@@ -204,16 +198,12 @@ helm upgrade --install envoy-gateway \
   --namespace envoy-gateway-system \
   --create-namespace \
   --wait
+```
 
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=gateway \
-  --set frontend.gateway.create=true \
-  --wait
+Create a dedicated Foretoken Gateway and deploy the Quick Start from release images:
 
+```bash
+foretoken install --frontend-mode gateway
 foretoken deploy examples/quickstart --timeout 6m
 ```
 
