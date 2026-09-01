@@ -14,8 +14,10 @@ spec:
   autoscaling:
     minGroups: 1
     maxGroups: 3
-    pollingInterval: 5s
-    observationMaxAge: 15s
+    trigger:
+      algorithm: periodic
+      interval: 5s
+      observationMaxAge: 15s
     decision:
       algorithm: queue
       queue:

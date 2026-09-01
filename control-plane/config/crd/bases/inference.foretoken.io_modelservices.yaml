@@ -184,26 +184,39 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
-                  observationMaxAge:
-                    default: 15s
-                    description: ObservationMaxAge is the oldest telemetry accepted
-                      for a scaling decision.
-                    minLength: 2
-                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
-                    type: string
-                    x-kubernetes-validations:
-                    - message: must be a positive duration
-                      rule: duration(self) > duration('0s')
-                  pollingInterval:
-                    default: 5s
-                    description: PollingInterval controls how often the controller
-                      evaluates automatic capacity.
-                    minLength: 2
-                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
-                    type: string
-                    x-kubernetes-validations:
-                    - message: must be a positive duration
-                      rule: duration(self) > duration('0s')
+                  trigger:
+                    default: {}
+                    description: Trigger may be omitted to use periodic evaluation
+                      every five seconds with a 15-second observation age limit.
+                    properties:
+                      algorithm:
+                        default: periodic
+                        description: AutoscalingTriggerAlgorithm selects how observations
+                          enter automatic capacity evaluation.
+                        enum:
+                        - periodic
+                        type: string
+                      interval:
+                        default: 5s
+                        description: Interval controls how often the controller runs
+                          the Trigger stage.
+                        minLength: 2
+                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a positive duration
+                          rule: duration(self) > duration('0s')
+                      observationMaxAge:
+                        default: 15s
+                        description: ObservationMaxAge is the oldest telemetry the
+                          Trigger stage accepts.
+                        minLength: 2
+                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: must be a positive duration
+                          rule: duration(self) > duration('0s')
+                    type: object
                 required:
                 - decision
                 - maxGroups

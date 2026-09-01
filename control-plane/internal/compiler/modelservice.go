@@ -319,8 +319,8 @@ func validateAutoscalingConfig(config *inferencev1alpha1.ModelAutoscalingConfig)
 		}
 	}
 	for field, value := range map[string]inferencev1alpha1.Duration{
-		"autoscaling.pollingInterval":   valueOrDefaultDuration(config.PollingInterval, "5s"),
-		"autoscaling.observationMaxAge": valueOrDefaultDuration(config.ObservationMaxAge, "15s"),
+		"autoscaling.trigger.interval":          triggerInterval(config.Trigger),
+		"autoscaling.trigger.observationMaxAge": triggerObservationMaxAge(config.Trigger),
 	} {
 		if duration, err := time.ParseDuration(string(value)); err != nil || duration <= 0 {
 			return fmt.Errorf("%s must be a positive duration", field)
@@ -335,6 +335,20 @@ func validateAutoscalingConfig(config *inferencev1alpha1.ModelAutoscalingConfig)
 		}
 	}
 	return nil
+}
+
+func triggerInterval(trigger *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.Duration {
+	if trigger == nil {
+		return "5s"
+	}
+	return valueOrDefaultDuration(trigger.Interval, "5s")
+}
+
+func triggerObservationMaxAge(trigger *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.Duration {
+	if trigger == nil {
+		return "15s"
+	}
+	return valueOrDefaultDuration(trigger.ObservationMaxAge, "15s")
 }
 
 func scaleUpWindow(adjustment *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) inferencev1alpha1.NonNegativeDuration {

@@ -15,7 +15,7 @@ ScalingSnapshot
 - **Adjustment** applies stabilization, hard bounds, and per-evaluation Group limits. A recent higher recommendation delays scale down in the same way as an HPA stabilization window.
 - **Resolver** enforces lifecycle ownership. Capacity changes wait for an in-progress Group transition, while configured min/max bounds remain mandatory.
 
-Missing, stale, or incomplete observations hold current capacity and are never interpreted as zero demand. Automatic scaling maintains at least one Group; scale-to-zero is not supported.
+The public Trigger block may be omitted; it defaults to `periodic` evaluation every five seconds with a 15-second observation age limit. Missing, stale, or incomplete observations hold current capacity and are never interpreted as zero demand. Automatic scaling maintains at least one Group; scale-to-zero is not supported.
 
 ## Queue demand
 
@@ -56,8 +56,10 @@ This mode serves users who reason about absolute service backlog rather than ave
 autoscaling:
   minGroups: 1
   maxGroups: 8
-  pollingInterval: 5s
-  observationMaxAge: 15s
+  trigger:
+    algorithm: periodic
+    interval: 5s
+    observationMaxAge: 15s
   decision:
     algorithm: queue
     queue:

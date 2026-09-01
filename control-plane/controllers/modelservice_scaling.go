@@ -38,13 +38,13 @@ func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alph
 		return config, nil
 	}
 
-	pollingInterval, err := durationOrDefault(autoscalingConfig.PollingInterval, defaultScalingPollInterval)
+	pollingInterval, err := durationOrDefault(triggerInterval(autoscalingConfig.Trigger), defaultScalingPollInterval)
 	if err != nil {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling pollingInterval: %w", err)
+		return modelScalingConfig{}, fmt.Errorf("autoscaling trigger.interval: %w", err)
 	}
-	observationMaxAge, err := durationOrDefault(autoscalingConfig.ObservationMaxAge, defaultObservationMaxAge)
+	observationMaxAge, err := durationOrDefault(triggerObservationMaxAge(autoscalingConfig.Trigger), defaultObservationMaxAge)
 	if err != nil {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling observationMaxAge: %w", err)
+		return modelScalingConfig{}, fmt.Errorf("autoscaling trigger.observationMaxAge: %w", err)
 	}
 	scaleUpWindow, err := nonNegativeDurationOrDefault(scaleUpStabilizationWindow(autoscalingConfig.Adjustment), 0)
 	if err != nil {
@@ -57,7 +57,7 @@ func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alph
 
 	selected, err := autoscaling.New(autoscaling.Configuration{
 		DecisionAlgorithm:   autoscaling.DecisionAlgorithmName(autoscalingConfig.Decision.Algorithm),
-		TriggerAlgorithm:    autoscaling.TriggerAlgorithmPeriodic,
+		TriggerAlgorithm:    autoscaling.TriggerAlgorithmName(triggerAlgorithm(autoscalingConfig.Trigger)),
 		AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmName(adjustmentAlgorithm(autoscalingConfig.Adjustment)),
 		Decision:            decisionConfig(autoscalingConfig.Decision),
 		Adjustment: core.AdjustmentConfig{
@@ -76,6 +76,27 @@ func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alph
 	config.PollingInterval = pollingInterval
 	config.ObservationMaxAge = observationMaxAge
 	return config, nil
+}
+
+func triggerAlgorithm(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.AutoscalingTriggerAlgorithm {
+	if config == nil {
+		return ""
+	}
+	return config.Algorithm
+}
+
+func triggerInterval(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.Duration {
+	if config == nil {
+		return ""
+	}
+	return config.Interval
+}
+
+func triggerObservationMaxAge(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.Duration {
+	if config == nil {
+		return ""
+	}
+	return config.ObservationMaxAge
 }
 
 func decisionConfig(config inferencev1alpha1.ModelAutoscalingDecisionConfig) core.DecisionConfig {

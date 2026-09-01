@@ -15,7 +15,7 @@ ScalingSnapshot
 - **Adjustment** 应用稳定窗口、硬容量边界和单轮 Group 变化限制。近期较高的容量建议会像 HPA stabilization window 一样延迟缩容。
 - **Resolver** 负责生命周期约束。Group 转换未完成时保持当前容量，同时始终执行配置的最小和最大容量边界。
 
-观测缺失、过期或不完整时保持当前容量，不会将其解释为零需求。自动扩缩容至少维持一个 Group，当前不支持 scale-to-zero。
+公开 Trigger 配置可以省略，默认每 5 秒执行一次 `periodic` 评估，并接受最多 15 秒前的观测。观测缺失、过期或不完整时保持当前容量，不会将其解释为零需求。自动扩缩容至少维持一个 Group，当前不支持 scale-to-zero。
 
 ## 队列需求
 
@@ -56,8 +56,10 @@ queueRequests <= scaleDownQueuedRequests 且 activeRequests == 0
 autoscaling:
   minGroups: 1
   maxGroups: 8
-  pollingInterval: 5s
-  observationMaxAge: 15s
+  trigger:
+    algorithm: periodic
+    interval: 5s
+    observationMaxAge: 15s
   decision:
     algorithm: queue
     queue:

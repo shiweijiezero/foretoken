@@ -176,6 +176,29 @@ const (
 	AutoscalingDecisionAlgorithmQueueThreshold AutoscalingDecisionAlgorithm = "queue_threshold"
 )
 
+// AutoscalingTriggerAlgorithm selects how observations enter automatic capacity evaluation.
+// +kubebuilder:validation:Enum=periodic
+type AutoscalingTriggerAlgorithm string
+
+const AutoscalingTriggerAlgorithmPeriodic AutoscalingTriggerAlgorithm = "periodic"
+
+// ModelAutoscalingTriggerConfig configures the Trigger stage.
+type ModelAutoscalingTriggerConfig struct {
+	// +optional
+	// +kubebuilder:default=periodic
+	Algorithm AutoscalingTriggerAlgorithm `json:"algorithm,omitempty"`
+
+	// Interval controls how often the controller runs the Trigger stage.
+	// +optional
+	// +kubebuilder:default="5s"
+	Interval Duration `json:"interval,omitempty"`
+
+	// ObservationMaxAge is the oldest telemetry the Trigger stage accepts.
+	// +optional
+	// +kubebuilder:default="15s"
+	ObservationMaxAge Duration `json:"observationMaxAge,omitempty"`
+}
+
 // ModelAutoscalingQueueDecisionConfig configures HPA-style average queue capacity.
 type ModelAutoscalingQueueDecisionConfig struct {
 	// TargetAverageQueuedRequests is the desired average waiting requests per Group.
@@ -274,15 +297,10 @@ type ModelAutoscalingConfig struct {
 	// +kubebuilder:validation:Minimum=1
 	MaxGroups int32 `json:"maxGroups"`
 
-	// PollingInterval controls how often the controller evaluates automatic capacity.
+	// Trigger may be omitted to use periodic evaluation every five seconds with a 15-second observation age limit.
 	// +optional
-	// +kubebuilder:default="5s"
-	PollingInterval Duration `json:"pollingInterval,omitempty"`
-
-	// ObservationMaxAge is the oldest telemetry accepted for a scaling decision.
-	// +optional
-	// +kubebuilder:default="15s"
-	ObservationMaxAge Duration `json:"observationMaxAge,omitempty"`
+	// +kubebuilder:default={}
+	Trigger *ModelAutoscalingTriggerConfig `json:"trigger,omitempty"`
 
 	Decision ModelAutoscalingDecisionConfig `json:"decision"`
 
