@@ -42,30 +42,10 @@ kubectl label namespace "${PROMETHEUS_NAMESPACE}" \
 Operator CRD 建立后，在线安装 Foretoken 时，默认的 `auto` 模式会创建 ServiceMonitor 和 PrometheusRule：
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --wait
+foretoken install
 ```
 
-对于已经安装的 Foretoken release，通过拥有该 release 的 Helm 生命周期启用接入：
-
-```bash
-helm upgrade foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --reuse-values \
-  --set observability.mode=enabled \
-  --wait
-```
-
-在同一命令中使用 `disabled` 可删除 Chart 管理的监控资源。`--reuse-values` 只适用于已经使用 `observability.mode` 的 release；旧 release 必须先在 values 文件中替换 `observability.serviceMonitor`，再执行升级。
-
-`auto` 只在集群同时提供 `ServiceMonitor` 和 `PrometheusRule` API 时创建两种资源。离线渲染和 GitOps 应使用 `enabled`，并先安装 Operator CRD。只有需要覆盖 Prometheus 默认值时才设置 `interval` 或 `scrapeTimeout`。
-
-仓库提供的 kube-prometheus-stack values 配置文件默认从 `foretoken-platform` 命名空间选择 Foretoken 资源。复用其他 Prometheus 安装时，其 ServiceMonitor 与规则命名空间选择器必须包含 Foretoken release 所在命名空间。如果对象选择器要求平台自定义标签，可以为全部 Foretoken 监控资源统一添加：
+如果 Foretoken 平台由 CLI 管理，请将接入配置写入 values 文件，然后再次运行 `foretoken install`：
 
 ```yaml
 observability:
@@ -73,6 +53,16 @@ observability:
   additionalLabels:
     release: your-prometheus-release
 ```
+
+```bash
+foretoken install --values foretoken-observability-values.yaml
+```
+
+在同一文件中使用 `disabled` 可删除 Chart 管理的监控资源。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，CLI 不会自动接管。
+
+`auto` 只在集群同时提供 `ServiceMonitor` 和 `PrometheusRule` API 时创建两种资源。离线渲染和 GitOps 应使用 `enabled`，并先安装 Operator CRD。只有需要覆盖 Prometheus 默认值时才设置 `interval` 或 `scrapeTimeout`。
+
+仓库提供的 kube-prometheus-stack values 配置文件默认从 `foretoken-platform` 命名空间选择 Foretoken 资源。复用其他 Prometheus 安装时，其 ServiceMonitor 与规则命名空间选择器必须包含 Foretoken 发布实例所在命名空间。只有对象选择器要求平台自定义标签时才设置 `additionalLabels`。
 
 ## 确认采集已启用
 
@@ -103,7 +93,7 @@ curl --get http://127.0.0.1:9090/api/v1/query \
 
 ## 关闭或移除接入
 
-设置 `observability.mode=disabled` 或卸载 Foretoken，只会删除 Foretoken release 管理的 ServiceMonitor 和 PrometheusRule，不会卸载 Prometheus、Prometheus Operator、Grafana 或 Alertmanager。没有其他 Foretoken workload 需要该 Prometheus 安装时，可以移除命名空间标签：
+设置 `observability.mode=disabled` 或卸载 Foretoken，只会删除 Foretoken 发布实例管理的 ServiceMonitor 和 PrometheusRule，不会卸载 Prometheus、Prometheus Operator、Grafana 或 Alertmanager。没有其他 Foretoken workload 需要该 Prometheus 安装时，可以移除命名空间标签：
 
 ```bash
 kubectl label namespace monitoring \

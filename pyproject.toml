@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "foretoken-cli"
 version = "0.0.1"
-description = "Command-line tools for deploying and evaluating Foretoken services"
+description = "Command-line tools for installing and operating Foretoken"
 readme = "cli/README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"

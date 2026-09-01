@@ -42,30 +42,10 @@ kubectl label namespace "${PROMETHEUS_NAMESPACE}" \
 After the Operator CRDs are established, a normal online Foretoken installation uses the default `auto` mode to create the ServiceMonitors and PrometheusRule:
 
 ```bash
-helm upgrade --install foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --wait
+foretoken install
 ```
 
-For an existing release, apply the integration through the Helm lifecycle that owns it:
-
-```bash
-helm upgrade foretoken \
-  oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken \
-  --namespace foretoken-platform \
-  --reuse-values \
-  --set observability.mode=enabled \
-  --wait
-```
-
-Use `disabled` in the same command to remove the Chart-owned monitoring resources. `--reuse-values` applies only to releases that already use `observability.mode`; older releases must replace `observability.serviceMonitor` in their values file before upgrading.
-
-`auto` creates both resources only when the cluster exposes the `ServiceMonitor` and `PrometheusRule` APIs. Offline rendering and GitOps should use `enabled` and install the Operator CRDs before Foretoken. Set `interval` or `scrapeTimeout` only when overriding Prometheus defaults.
-
-The included kube-prometheus-stack values select Foretoken resources from the `foretoken-platform` namespace. When reusing another Prometheus installation, its ServiceMonitor and rule namespace selectors must include the Foretoken release namespace. If its object selectors require platform-specific labels, add the same labels to all Foretoken monitoring resources:
+For a CLI-managed release, put the integration settings in a values file and run install again:
 
 ```yaml
 observability:
@@ -73,6 +53,16 @@ observability:
   additionalLabels:
     release: your-prometheus-release
 ```
+
+```bash
+foretoken install --values foretoken-observability-values.yaml
+```
+
+Use `disabled` in the same file to remove the Chart-owned monitoring resources. A release originally installed directly with Helm remains under that Helm lifecycle and is not adopted by the CLI.
+
+`auto` creates both resources only when the cluster exposes the `ServiceMonitor` and `PrometheusRule` APIs. Offline rendering and GitOps should use `enabled` and install the Operator CRDs before Foretoken. Set `interval` or `scrapeTimeout` only when overriding Prometheus defaults.
+
+The included kube-prometheus-stack values select Foretoken resources from the `foretoken-platform` namespace. When reusing another Prometheus installation, its ServiceMonitor and rule namespace selectors must include the Foretoken release namespace. Add `additionalLabels` only when its object selectors require platform-specific labels.
 
 ## Confirm collection is enabled
 

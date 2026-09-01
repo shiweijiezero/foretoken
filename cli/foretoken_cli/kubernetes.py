@@ -136,13 +136,7 @@ class Kubectl:
         namespace = next(iter(namespaces))
         if namespace:
             args.extend(["--namespace", namespace])
-        value = _decode_object(self.run([*args, "-o", "json"]).stdout)
-        items = value.get("items") or []
-        if not isinstance(items, list) or not all(
-            isinstance(item, dict) for item in items
-        ):
-            raise DeploymentError("kubectl returned an unexpected resource list")
-        return tuple(items)
+        return _decode_resource_list(self.run([*args, "-o", "json"]).stdout)
 
     def list_resources(
         self, kinds: Iterable[str], namespace: str
@@ -156,13 +150,23 @@ class Kubectl:
             "-o",
             "json",
         ]
-        value = _decode_object(self.run(args).stdout)
-        items = value.get("items") or []
-        if not isinstance(items, list) or not all(
-            isinstance(item, dict) for item in items
-        ):
-            raise DeploymentError("kubectl returned an unexpected resource list")
-        return tuple(items)
+        return _decode_resource_list(self.run(args).stdout)
+
+    def list_all_resources(
+        self, kinds: Iterable[str], *, label_selector: str = ""
+    ) -> tuple[dict[str, Any], ...]:
+        """Return selected resource kinds across every namespace."""
+        args = ["get", ",".join(kinds), "--all-namespaces", "-o", "json"]
+        if label_selector:
+            args.extend(["--selector", label_selector])
+        return _decode_resource_list(self.run(args).stdout)
+
+    def api_resource_names(self, group: str) -> tuple[str, ...]:
+        """Return resource names currently served for one Kubernetes API group."""
+        output = self.run(
+            ["api-resources", "--api-group", group, "-o", "name"]
+        ).stdout
+        return tuple(line.strip() for line in output.splitlines() if line.strip())
 
 
 def _decode_object(output: str) -> dict[str, Any]:
@@ -176,10 +180,61 @@ def _decode_object(output: str) -> dict[str, Any]:
     return value
 
 
+def _decode_resource_list(output: str) -> tuple[dict[str, Any], ...]:
+    """Decode a Kubernetes List and return its object items."""
+    items = _decode_object(output).get("items") or []
+    if not isinstance(items, list) or not all(
+        isinstance(item, dict) for item in items
+    ):
+        raise DeploymentError("kubectl returned an unexpected resource list")
+    return tuple(items)
+
+
 def load_deployment(path_value: str, kubectl: Kubectl) -> ForetokenDeployment:
     """Render and identify one Kustomize deployment for CLI or benchmark use."""
     path = deployment_path(path_value)
     return parse_deployment(path, kubectl.kustomize(path))
+
+
+def _resource_refs(values: Iterable[dict[str, Any]]) -> tuple[ResourceRef, ...]:
+    """Return named resource identities from Kubernetes objects."""
+    resources: list[ResourceRef] = []
+    for value in values:
+        metadata = value.get("metadata") or {}
+        kind = str(value.get("kind") or "")
+        name = str(metadata.get("name") or "")
+        namespace = str(metadata.get("namespace") or "")
+        if kind and name:
+            resources.append(ResourceRef(kind, name, namespace))
+    return tuple(resources)
+
+
+def control_plane_deployments(kubectl: Kubectl) -> tuple[ResourceRef, ...]:
+    """Return active Foretoken control-plane Deployments across the cluster."""
+    return _resource_refs(
+        kubectl.list_all_resources(
+            ("deployment.apps",),
+            label_selector="app.kubernetes.io/name=foretoken-control-plane",
+        )
+    )
+
+
+def platform_service_resources(kubectl: Kubectl) -> tuple[ResourceRef, ...]:
+    """Return user-owned services that require the Foretoken control plane."""
+    supported = set(kubectl.api_resource_names("inference.foretoken.io"))
+    top_level_kinds = tuple(
+        name
+        for name in (
+            "frontendservices.inference.foretoken.io",
+            "modelservices.inference.foretoken.io",
+            "kvservices.inference.foretoken.io",
+        )
+        if name in supported
+    )
+    if not top_level_kinds:
+        return ()
+
+    return _resource_refs(kubectl.list_all_resources(top_level_kinds))
 
 
 def timeout_seconds(value: str) -> float:
