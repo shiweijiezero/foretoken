@@ -12,9 +12,9 @@ type Periodic struct{}
 // Name identifies the periodic trigger algorithm for registry consumers.
 func (Periodic) Name() string { return "periodic" }
 
-// Decide evaluates every complete fresh observation supplied by the controller polling loop.
+// Decide evaluates every complete fresh metrics snapshot supplied by the controller polling loop.
 func (Periodic) Decide(snapshot core.ScalingSnapshot) core.TriggerDecision {
-	if decision, available := core.ObservationTriggerDecision(snapshot); !available {
+	if decision, available := core.MetricsTriggerDecision(snapshot); !available {
 		return decision
 	}
 	return core.TriggerDecision{Disposition: core.TriggerFire, Reason: core.TriggerReasonPeriodic, Message: "periodic evaluation"}

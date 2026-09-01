@@ -246,7 +246,7 @@ func main() {
 	}
 	if err := (&controllers.ModelServiceReconciler{
 		Client: manager.GetClient(),
-		PoolMetricsProvider: controllers.NewHTTPPoolMetricsProvider(manager.GetClient(), controllers.AutoscalingTelemetryOptions{
+		MetricsProvider: controllers.NewHTTPScalingMetricsProvider(manager.GetClient(), controllers.AutoscalingTelemetryOptions{
 			CollectionTimeout: autoscalingTelemetryCollectionTimeout,
 			RequestTimeout:    autoscalingTelemetryRequestTimeout,
 			Concurrency:       autoscalingTelemetryConcurrency,

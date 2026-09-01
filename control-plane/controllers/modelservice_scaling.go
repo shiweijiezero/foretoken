@@ -19,19 +19,19 @@ import (
 )
 
 type modelScalingConfig struct {
-	Autoscaler        *autoscaling.Autoscaler
-	Limits            core.CapacityLimits
-	PollingInterval   time.Duration
-	ObservationMaxAge time.Duration
+	Autoscaler      *autoscaling.Autoscaler
+	Limits          core.ReplicaLimits
+	PollingInterval time.Duration
+	MetricsMaxAge   time.Duration
 }
 
 // scalingConfig resolves one ModelService autoscaling configuration into runtime algorithms and limits.
 func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alpha1.ModelService) (modelScalingConfig, error) {
 	config := modelScalingConfig{
-		Autoscaler:        autoscaling.Manual(),
-		Limits:            core.CapacityLimits{MinGroups: 0, MaxGroups: maxDesiredGroups},
-		PollingInterval:   defaultScalingPollInterval,
-		ObservationMaxAge: 3 * defaultScalingPollInterval,
+		Autoscaler:      autoscaling.Manual(),
+		Limits:          core.ReplicaLimits{MinReplicas: 0, MaxReplicas: maxDesiredReplicas},
+		PollingInterval: defaultScalingPollInterval,
+		MetricsMaxAge:   3 * defaultScalingPollInterval,
 	}
 	autoscalingConfig := service.Spec.Autoscaling
 	if autoscalingConfig == nil {
@@ -42,7 +42,7 @@ func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alph
 	if err != nil {
 		return modelScalingConfig{}, fmt.Errorf("autoscaling trigger.interval: %w", err)
 	}
-	observationMaxAge := 3 * pollingInterval
+	metricsMaxAge := 3 * pollingInterval
 	scaleUpWindow, err := nonNegativeDurationOrDefault(scaleUpStabilizationWindow(autoscalingConfig.Adjustment), 0)
 	if err != nil {
 		return modelScalingConfig{}, fmt.Errorf("autoscaling adjustment.scaleUp.stabilizationWindow: %w", err)
@@ -67,9 +67,9 @@ func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alph
 		return modelScalingConfig{}, err
 	}
 	config.Autoscaler = selected
-	config.Limits = core.CapacityLimits{MinGroups: autoscalingConfig.MinReplicas, MaxGroups: autoscalingConfig.MaxReplicas}
+	config.Limits = core.ReplicaLimits{MinReplicas: autoscalingConfig.MinReplicas, MaxReplicas: autoscalingConfig.MaxReplicas}
 	config.PollingInterval = pollingInterval
-	config.ObservationMaxAge = observationMaxAge
+	config.MetricsMaxAge = metricsMaxAge
 	return config, nil
 }
 
@@ -212,17 +212,17 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 			Kind:             core.TargetPool,
 			Role:             autoscalingRole(compiled.Template.Role),
 		}
-		capacity := modelPoolCapacity(service, pool, groupList.Items)
-		capacity.BaselineGroups = compiled.DesiredGroups
-		capacity.RequestedGroups = current
-		capacity.Transitioning = capacity.Transitioning || transitioning
-		finalizeCapacity(&capacity)
+		replicaState := modelPoolReplicaState(service, pool, groupList.Items)
+		replicaState.BaselineReplicas = compiled.DesiredGroups
+		replicaState.RequestedReplicas = current
+		replicaState.Transitioning = replicaState.Transitioning || transitioning
+		finalizeReplicaState(&replicaState)
 		// A Pool not yet created has no transition; its first controller
 		// write remains eligible for the selected algorithm's bootstrap core.
 		if pool == nil {
-			capacity.Transitioning = false
+			replicaState.Transitioning = false
 		}
-		snapshots = append(snapshots, reconciler.scalingSnapshot(ctx, service, target, evaluatedAt, capacity, scaling))
+		snapshots = append(snapshots, reconciler.scalingSnapshot(ctx, service, target, evaluatedAt, replicaState, scaling))
 	}
 	if hasEPD {
 		snapshot, err := reconciler.epdScalingSnapshot(ctx, service, compiledPools, epdIndexes, byPoolName, groupList.Items, evaluatedAt, scaling)
@@ -253,7 +253,7 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 		if !exists {
 			return nil, nil, fmt.Errorf("autoscaler returned unknown target %q", decision.Target.Name)
 		}
-		byTarget[decision.Target] = decision.AppliedGroups
+		byTarget[decision.Target] = decision.AppliedReplicas
 
 		var trigger *inferencev1alpha1.AutoscalingStageStatus
 		if algorithm := scaling.Autoscaler.TriggerAlgorithmName(); algorithm != "" {
@@ -269,8 +269,8 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 			constraint = &inferencev1alpha1.AutoscalingConstraintStatus{Reason: string(decision.Constraint), Message: decision.Message}
 		}
 		var observationEndAt *metav1.Time
-		if !snapshot.Observation.Window.End.IsZero() {
-			value := metav1.NewTime(snapshot.Observation.Window.End)
+		if !snapshot.Metrics.Window.End.IsZero() {
+			value := metav1.NewTime(snapshot.Metrics.Window.End)
 			observationEndAt = &value
 		}
 		adjustmentDisposition := "Hold"
@@ -283,16 +283,16 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 			Role:             string(decision.Target.Role),
 			EvaluatedAt:      metav1.NewTime(snapshot.EvaluatedAt),
 			ObservationEndAt: observationEndAt,
-			ObservationState: string(snapshot.Observation.State),
+			ObservationState: string(snapshot.Metrics.State),
 			Trigger:          trigger,
 			Decision: inferencev1alpha1.AutoscalingDecisionStatus{
 				AutoscalingStageStatus: inferencev1alpha1.AutoscalingStageStatus{
 					Algorithm:   decision.DecisionAlgorithm,
-					Disposition: string(decision.DesiredCapacity.Disposition),
-					Reason:      string(decision.DesiredCapacity.Reason),
-					Message:     decision.DesiredCapacity.Message,
+					Disposition: string(decision.Recommendation.State),
+					Reason:      string(decision.Recommendation.Reason),
+					Message:     decision.Recommendation.Message,
 				},
-				DesiredReplicas: decision.DesiredCapacity.Groups,
+				DesiredReplicas: decision.Recommendation.Replicas,
 			},
 			Adjustment: inferencev1alpha1.AutoscalingAdjustmentStatus{
 				AutoscalingStageStatus: inferencev1alpha1.AutoscalingStageStatus{
@@ -301,13 +301,13 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 					Reason:      string(decision.Adjustment.Reason),
 					Message:     decision.Adjustment.Message,
 				},
-				AdjustedReplicas: decision.Adjustment.AdjustedGroups,
+				AdjustedReplicas: decision.Adjustment.Replicas,
 			},
 			Constraint:       constraint,
 			Direction:        string(decision.Direction),
-			AppliedReplicas:  decision.AppliedGroups,
-			ReadyReplicas:    snapshot.Capacity.ReadyGroups,
-			RoutableReplicas: snapshot.Capacity.RoutableGroups,
+			AppliedReplicas:  decision.AppliedReplicas,
+			ReadyReplicas:    snapshot.Replicas.ReadyReplicas,
+			RoutableReplicas: snapshot.Replicas.RoutableReplicas,
 		})
 	}
 	resolved := append([]compiler.ModelPool(nil), compiledPools...)
@@ -332,40 +332,40 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 	return resolved, statuses, nil
 }
 
-// scalingSnapshot builds one capacity and demand input for the autoscaling pipeline.
-func (reconciler *ModelServiceReconciler) scalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, target core.TargetID, evaluatedAt metav1.Time, capacity core.CapacityState, scaling modelScalingConfig) core.ScalingSnapshot {
-	observation := core.DemandObservation{State: core.ObservationUnavailable}
+// scalingSnapshot builds one replica and metrics input for the autoscaling pipeline.
+func (reconciler *ModelServiceReconciler) scalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, target core.TargetID, evaluatedAt metav1.Time, replicas core.ReplicaState, scaling modelScalingConfig) core.ScalingSnapshot {
+	metrics := core.MetricsSnapshot{State: core.MetricsUnavailable}
 	if scaling.Autoscaler.Automatic() {
-		observation = reconciler.demandObservation(ctx, target, scaling.ObservationMaxAge)
+		metrics = reconciler.metricsSnapshot(ctx, target, scaling.MetricsMaxAge)
 	}
 	return core.ScalingSnapshot{
 		Target:      target,
 		EvaluatedAt: evaluatedAt.Time,
-		Capacity:    capacity,
+		Replicas:    replicas,
 		Limits:      scaling.Limits,
-		Observation: observation,
+		Metrics:     metrics,
 	}
 }
 
-// demandObservation fails closed: a missing or failed provider can never be interpreted as zero demand.
-func (reconciler *ModelServiceReconciler) demandObservation(ctx context.Context, target core.TargetID, maxAge time.Duration) core.DemandObservation {
-	if reconciler.PoolMetricsProvider == nil {
-		return core.DemandObservation{State: core.ObservationUnavailable}
+// metricsSnapshot fails closed: a missing or failed provider can never be interpreted as zero demand.
+func (reconciler *ModelServiceReconciler) metricsSnapshot(ctx context.Context, target core.TargetID, maxAge time.Duration) core.MetricsSnapshot {
+	if reconciler.MetricsProvider == nil {
+		return core.MetricsSnapshot{State: core.MetricsUnavailable}
 	}
-	observation, err := reconciler.PoolMetricsProvider.Observation(ctx, target)
-	if err != nil || observation.State == "" {
-		return core.DemandObservation{State: core.ObservationUnavailable}
+	metrics, err := reconciler.MetricsProvider.Snapshot(ctx, target)
+	if err != nil || metrics.State == "" {
+		return core.MetricsSnapshot{State: core.MetricsUnavailable}
 	}
-	if observation.State == core.ObservationFresh {
-		if observation.Window.End.IsZero() || observation.Window.CollectedAt.IsZero() {
-			return core.DemandObservation{State: core.ObservationUnavailable}
+	if metrics.State == core.MetricsFresh {
+		if metrics.Window.End.IsZero() || metrics.Window.CollectedAt.IsZero() {
+			return core.MetricsSnapshot{State: core.MetricsUnavailable}
 		}
-		age := time.Since(observation.Window.End)
+		age := time.Since(metrics.Window.End)
 		if age < 0 || age > maxAge {
-			observation.State = core.ObservationStale
+			metrics.State = core.MetricsStale
 		}
 	}
-	return observation
+	return metrics
 }
 
 // epdScalingSnapshot builds the shared autoscaling input for an E/P/D triplet.
@@ -408,12 +408,12 @@ func (reconciler *ModelServiceReconciler) epdScalingSnapshot(ctx context.Context
 			return core.ScalingSnapshot{}, fmt.Errorf("E/P/D scaling requires a %s Pool", role)
 		}
 	}
-	capacity := epdPipelineScopeCapacity(service, owned, groups, requested)
-	capacity.BaselineGroups = baseline
-	capacity.RequestedGroups = requested
-	capacity.Transitioning = capacity.Transitioning || transitioning
-	finalizeCapacity(&capacity)
-	return reconciler.scalingSnapshot(ctx, service, epdPipelineScopeTargetID(service), evaluatedAt, capacity, scaling), nil
+	replicaState := epdPipelineReplicaState(service, owned, groups, requested)
+	replicaState.BaselineReplicas = baseline
+	replicaState.RequestedReplicas = requested
+	replicaState.Transitioning = replicaState.Transitioning || transitioning
+	finalizeReplicaState(&replicaState)
+	return reconciler.scalingSnapshot(ctx, service, epdPipelineScopeTargetID(service), evaluatedAt, replicaState, scaling), nil
 }
 
 func epdPipelineScopeTargetID(service *inferencev1alpha1.ModelService) core.TargetID {

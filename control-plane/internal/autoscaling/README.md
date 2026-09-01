@@ -5,8 +5,8 @@ The public API scales service replicas. The controller materializes each replica
 ```text
 ScalingSnapshot
 → TriggerDecision
-→ DesiredCapacity
-→ ScalingAdjustment
+→ ReplicaRecommendation
+→ ReplicaAdjustment
 → ScalingDecision
 ```
 

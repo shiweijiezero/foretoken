@@ -387,7 +387,7 @@ type AutoscalingStageStatus struct {
 	Message     string `json:"message,omitempty"`
 }
 
-// AutoscalingDecisionStatus records desired capacity before adjustment.
+// AutoscalingDecisionStatus records the Decision stage replica recommendation.
 type AutoscalingDecisionStatus struct {
 	AutoscalingStageStatus `json:",inline"`
 
@@ -395,7 +395,7 @@ type AutoscalingDecisionStatus struct {
 	DesiredReplicas int32 `json:"desiredReplicas"`
 }
 
-// AutoscalingAdjustmentStatus records capacity after stabilization and rate limiting.
+// AutoscalingAdjustmentStatus records the replica count after stabilization and rate limiting.
 type AutoscalingAdjustmentStatus struct {
 	AutoscalingStageStatus `json:",inline"`
 

@@ -9,11 +9,11 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 )
 
-// TestPipelineSeparatesCapacityCalculationFromStepAdjustment protects HPA-style queue recommendations from fixed-step application.
-func TestPipelineSeparatesCapacityCalculationFromStepAdjustment(t *testing.T) {
+// TestPipelineSeparatesReplicaRecommendationFromAdjustment protects HPA-style queue recommendations from fixed-step application.
+func TestPipelineSeparatesReplicaRecommendationFromAdjustment(t *testing.T) {
 	snapshot := scalingSnapshot()
-	snapshot.Capacity.RequestedGroups = 1
-	snapshot.Observation.QueueRequests = 5
+	snapshot.Replicas.RequestedReplicas = 1
+	snapshot.Metrics.WaitingRequests = 5
 	planner, err := autoscaling.New(autoscaling.Configuration{
 		DecisionAlgorithm:   autoscaling.DecisionAlgorithmQueue,
 		TriggerAlgorithm:    autoscaling.TriggerAlgorithmPeriodic,
@@ -29,7 +29,7 @@ func TestPipelineSeparatesCapacityCalculationFromStepAdjustment(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := results[0]
-	if result.DesiredCapacity.Groups != 3 || result.Adjustment.AdjustedGroups != 2 || result.AppliedGroups != 2 || result.Direction != core.DirectionUp {
+	if result.Recommendation.Replicas != 3 || result.Adjustment.Replicas != 2 || result.AppliedReplicas != 2 || result.Direction != core.DirectionUp {
 		t.Fatalf("queue recommendation = %#v", result)
 	}
 }
@@ -46,25 +46,25 @@ func TestQueueAverageValueCanRecommendLowerCapacity(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := scalingSnapshot()
-	snapshot.Capacity.RequestedGroups = 8
-	snapshot.Observation.QueueRequests = 1
+	snapshot.Replicas.RequestedReplicas = 8
+	snapshot.Metrics.WaitingRequests = 1
 	results, err := planner.Plan([]core.ScalingSnapshot{snapshot})
-	if err != nil || results[0].DesiredCapacity.Groups != 1 || results[0].AppliedGroups != 1 {
+	if err != nil || results[0].Recommendation.Replicas != 1 || results[0].AppliedReplicas != 1 {
 		t.Fatalf("lower queue recommendation = %#v err=%v", results, err)
 	}
 }
 
-// TestManualCapacityBypassesTelemetry protects fixed replicas from automatic observation requirements.
+// TestManualCapacityBypassesTelemetry protects fixed replicas from automatic metrics requirements.
 func TestManualCapacityBypassesTelemetry(t *testing.T) {
 	snapshot := scalingSnapshot()
-	snapshot.Capacity.BaselineGroups = 3
-	snapshot.Capacity.RequestedGroups = 1
-	snapshot.Observation.State = core.ObservationUnavailable
+	snapshot.Replicas.BaselineReplicas = 3
+	snapshot.Replicas.RequestedReplicas = 1
+	snapshot.Metrics.State = core.MetricsUnavailable
 	results, err := autoscaling.Manual().Plan([]core.ScalingSnapshot{snapshot})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if results[0].AppliedGroups != 3 || results[0].Trigger.Disposition != "" {
+	if results[0].AppliedReplicas != 3 || results[0].Trigger.Disposition != "" {
 		t.Fatalf("manual decision = %#v", results[0])
 	}
 }
@@ -72,9 +72,9 @@ func TestManualCapacityBypassesTelemetry(t *testing.T) {
 // TestAutomaticInsufficientDataStillEnforcesHardBounds protects configured capacity bounds when telemetry is unavailable.
 func TestAutomaticInsufficientDataStillEnforcesHardBounds(t *testing.T) {
 	snapshot := scalingSnapshot()
-	snapshot.Capacity.RequestedGroups = 0
-	snapshot.Limits = core.CapacityLimits{MinGroups: 1, MaxGroups: 8}
-	snapshot.Observation.State = core.ObservationUnavailable
+	snapshot.Replicas.RequestedReplicas = 0
+	snapshot.Limits = core.ReplicaLimits{MinReplicas: 1, MaxReplicas: 8}
+	snapshot.Metrics.State = core.MetricsUnavailable
 	planner, err := autoscaling.New(autoscaling.Configuration{
 		DecisionAlgorithm:   autoscaling.DecisionAlgorithmQueue,
 		TriggerAlgorithm:    autoscaling.TriggerAlgorithmPeriodic,
@@ -90,7 +90,7 @@ func TestAutomaticInsufficientDataStillEnforcesHardBounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := results[0]
-	if result.DesiredCapacity.Disposition != core.DesiredCapacityInsufficientData || result.AppliedGroups != 1 || result.Constraint != core.DesiredCapacityReasonAtMinimum {
+	if result.Recommendation.State != core.RecommendationInsufficientData || result.AppliedReplicas != 1 || result.Constraint != core.ConstraintReasonAtMinimum {
 		t.Fatalf("bounded insufficient data = %#v", result)
 	}
 }
@@ -110,21 +110,21 @@ func TestQueueThresholdUsesAbsoluteBacklogBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := scalingSnapshot()
-	snapshot.Observation.QueueRequests = 11
+	snapshot.Metrics.WaitingRequests = 11
 	results, err := planner.Plan([]core.ScalingSnapshot{snapshot})
-	if err != nil || results[0].AppliedGroups != 3 {
+	if err != nil || results[0].AppliedReplicas != 3 {
 		t.Fatalf("threshold scale up = %#v err=%v", results, err)
 	}
 
-	snapshot.Capacity.RequestedGroups = 3
-	snapshot.Observation.QueueRequests = 0
+	snapshot.Replicas.RequestedReplicas = 3
+	snapshot.Metrics.WaitingRequests = 0
 	results, err = planner.Plan([]core.ScalingSnapshot{snapshot})
-	if err != nil || results[0].AppliedGroups != 2 {
+	if err != nil || results[0].AppliedReplicas != 2 {
 		t.Fatalf("threshold scale down = %#v err=%v", results, err)
 	}
 }
 
-// TestScaleDownStabilizationRetainsRecentHigherRecommendation protects burst gaps from immediately removing warm Groups.
+// TestScaleDownStabilizationRetainsRecentHigherRecommendation protects burst gaps from immediately removing warm replicas.
 func TestScaleDownStabilizationRetainsRecentHigherRecommendation(t *testing.T) {
 	history := core.NewRecommendationHistory()
 	planner, err := autoscaling.New(autoscaling.Configuration{
@@ -143,27 +143,27 @@ func TestScaleDownStabilizationRetainsRecentHigherRecommendation(t *testing.T) {
 	start := time.Unix(1_000, 0)
 	loaded := scalingSnapshot()
 	loaded.EvaluatedAt = start
-	loaded.Capacity.RequestedGroups = 1
-	loaded.Observation.QueueRequests = 5
+	loaded.Replicas.RequestedReplicas = 1
+	loaded.Metrics.WaitingRequests = 5
 	results, err := planner.Plan([]core.ScalingSnapshot{loaded})
-	if err != nil || results[0].DesiredCapacity.Groups != 3 || results[0].AppliedGroups != 2 {
+	if err != nil || results[0].Recommendation.Replicas != 3 || results[0].AppliedReplicas != 2 {
 		t.Fatalf("loaded decision = %#v err=%v", results, err)
 	}
 
 	idle := scalingSnapshot()
 	idle.EvaluatedAt = start.Add(time.Second)
-	idle.Capacity.RequestedGroups = 2
+	idle.Replicas.RequestedReplicas = 2
 	results, err = planner.Plan([]core.ScalingSnapshot{idle})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if results[0].AppliedGroups != 2 || results[0].Adjustment.Reason != core.AdjustmentReasonScaleDownStabilized {
+	if results[0].AppliedReplicas != 2 || results[0].Adjustment.Reason != core.AdjustmentReasonScaleDownStabilized {
 		t.Fatalf("stabilized decision = %#v", results[0])
 	}
 
 	idle.EvaluatedAt = start.Add(5*time.Minute + 2*time.Second)
 	results, err = planner.Plan([]core.ScalingSnapshot{idle})
-	if err != nil || results[0].AppliedGroups != 1 {
+	if err != nil || results[0].AppliedReplicas != 1 {
 		t.Fatalf("expired stabilization = %#v err=%v", results, err)
 	}
 }
@@ -172,8 +172,8 @@ func scalingSnapshot() core.ScalingSnapshot {
 	return core.ScalingSnapshot{
 		Target:      core.TargetID{ServiceUID: "service", Name: "default", Kind: core.TargetPool, Role: core.RoleAggregate},
 		EvaluatedAt: time.Unix(1_000, 0),
-		Capacity:    core.CapacityState{BaselineGroups: 2, RequestedGroups: 2, RoutableGroups: 1},
-		Limits:      core.CapacityLimits{MinGroups: 1, MaxGroups: 8},
-		Observation: core.DemandObservation{State: core.ObservationFresh, Window: core.ObservationWindow{Complete: true}},
+		Replicas:    core.ReplicaState{BaselineReplicas: 2, RequestedReplicas: 2, RoutableReplicas: 1},
+		Limits:      core.ReplicaLimits{MinReplicas: 1, MaxReplicas: 8},
+		Metrics:     core.MetricsSnapshot{State: core.MetricsFresh, Window: core.MetricsWindow{Complete: true}},
 	}
 }

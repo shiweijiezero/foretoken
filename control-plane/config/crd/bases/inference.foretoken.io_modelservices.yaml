@@ -889,8 +889,8 @@ spec:
                     evaluation for one scaling target.
                   properties:
                     adjustment:
-                      description: AutoscalingAdjustmentStatus records capacity after
-                        stabilization and rate limiting.
+                      description: AutoscalingAdjustmentStatus records the replica
+                        count after stabilization and rate limiting.
                       properties:
                         adjustedReplicas:
                           format: int32
@@ -929,8 +929,8 @@ spec:
                       - reason
                       type: object
                     decision:
-                      description: AutoscalingDecisionStatus records desired capacity
-                        before adjustment.
+                      description: AutoscalingDecisionStatus records the Decision
+                        stage replica recommendation.
                       properties:
                         algorithm:
                           type: string

@@ -15,36 +15,36 @@ type Queue struct{ TargetAverageQueuedRequests int64 }
 // Name identifies the queue decision algorithm for registry consumers.
 func (Queue) Name() string { return "queue" }
 
-// CalculateDesiredCapacity converts aggregate waiting requests into an HPA-style average-value recommendation.
-func (queue Queue) CalculateDesiredCapacity(snapshot core.ScalingSnapshot) (core.DesiredCapacity, error) {
-	current := snapshot.Capacity.RequestedGroups
-	requests := snapshot.Observation.QueueRequests
+// RecommendReplicas converts aggregate waiting requests into an HPA-style average-value recommendation.
+func (queue Queue) RecommendReplicas(snapshot core.ScalingSnapshot) (core.ReplicaRecommendation, error) {
+	current := snapshot.Replicas.RequestedReplicas
+	requests := snapshot.Metrics.WaitingRequests
 	if requests > 0 {
 		desired := divideRoundUp(requests, queue.TargetAverageQueuedRequests)
 		if desired > current {
-			return recommendation(desired, core.DesiredCapacityApply, core.DesiredCapacityReasonQueuePressure, "queued requests exceed target average capacity"), nil
+			return recommendation(desired, core.RecommendationAvailable, core.RecommendationReasonQueuePressure, "queued requests exceed target average capacity"), nil
 		}
-		return recommendation(desired, core.DesiredCapacityApply, core.DesiredCapacityReasonQueueBelowTarget, "queued requests require lower average-value capacity"), nil
+		return recommendation(desired, core.RecommendationAvailable, core.RecommendationReasonQueueBelowTarget, "queued requests require lower average-value capacity"), nil
 	}
-	if snapshot.Observation.ActiveRequests == 0 {
-		return recommendation(0, core.DesiredCapacityApply, core.DesiredCapacityReasonIdle, "the target is idle"), nil
+	if snapshot.Metrics.ActiveRequests == 0 {
+		return recommendation(0, core.RecommendationAvailable, core.RecommendationReasonIdle, "the target is idle"), nil
 	}
-	return recommendation(current, core.DesiredCapacityApply, core.DesiredCapacityReasonStable, "active requests keep current capacity"), nil
+	return recommendation(current, core.RecommendationAvailable, core.RecommendationReasonStable, "active requests keep current capacity"), nil
 }
 
 func divideRoundUp(value, divisor int64) int32 {
-	groups := value / divisor
+	replicas := value / divisor
 	if value%divisor != 0 {
-		groups++
+		replicas++
 	}
-	if groups > math.MaxInt32 {
+	if replicas > math.MaxInt32 {
 		return math.MaxInt32
 	}
-	return int32(groups)
+	return int32(replicas)
 }
 
-func recommendation(groups int32, disposition core.DesiredCapacityDisposition, reason core.DesiredCapacityReason, message string) core.DesiredCapacity {
-	return core.DesiredCapacity{Disposition: disposition, Groups: groups, Reason: reason, Message: message}
+func recommendation(replicas int32, state core.RecommendationState, reason core.RecommendationReason, message string) core.ReplicaRecommendation {
+	return core.ReplicaRecommendation{State: state, Replicas: replicas, Reason: reason, Message: message}
 }
 
 func init() {

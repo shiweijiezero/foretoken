@@ -34,20 +34,20 @@ const (
 	conditionIntentCompiled    = "IntentCompiled"
 	conditionPoolsMaterialized = "PoolsMaterialized"
 	conditionReady             = "Ready"
-	maxDesiredGroups           = int32(1<<31 - 1)
+	maxDesiredReplicas         = int32(1<<31 - 1)
 	defaultScalingPollInterval = 5 * time.Second
 )
 
-// PoolMetricsProvider supplies one read-only, target-attributed demand observation.
-// Implementations must not modify Kubernetes resources or autoscaling algorithms.
-type PoolMetricsProvider interface {
-	Observation(context.Context, core.TargetID) (core.DemandObservation, error)
+// ScalingMetricsProvider supplies one read-only, target-attributed metrics snapshot.
+// Implementations collect metrics without mutating Kubernetes resources or autoscaling state.
+type ScalingMetricsProvider interface {
+	Snapshot(context.Context, core.TargetID) (core.MetricsSnapshot, error)
 }
 
 // ModelServiceReconciler compiles ModelService intent and owns ModelPool specs.
 type ModelServiceReconciler struct {
 	client.Client
-	PoolMetricsProvider PoolMetricsProvider
+	MetricsProvider ScalingMetricsProvider
 
 	recommendationHistoryOnce sync.Once
 	recommendationHistory     *core.RecommendationHistory

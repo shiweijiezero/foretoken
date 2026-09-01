@@ -15,14 +15,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-type fixedPoolMetrics struct {
-	observation core.DemandObservation
-	targets     []core.TargetID
+type fixedScalingMetrics struct {
+	snapshot core.MetricsSnapshot
+	targets  []core.TargetID
 }
 
-func (metrics *fixedPoolMetrics) Observation(_ context.Context, target core.TargetID) (core.DemandObservation, error) {
+func (metrics *fixedScalingMetrics) Snapshot(_ context.Context, target core.TargetID) (core.MetricsSnapshot, error) {
 	metrics.targets = append(metrics.targets, target)
-	return metrics.observation, nil
+	return metrics.snapshot, nil
 }
 
 // TestStaleSourceMetricsStillEnforceMaximumCapacity protects hard capacity limits when telemetry becomes stale.
@@ -40,12 +40,12 @@ func TestStaleSourceMetricsStillEnforceMaximumCapacity(t *testing.T) {
 		},
 	}
 	now := time.Now()
-	metrics := &fixedPoolMetrics{observation: core.DemandObservation{
-		State:  core.ObservationFresh,
-		Window: core.ObservationWindow{Start: now.Add(-time.Minute), End: now.Add(-time.Minute), CollectedAt: now, Samples: 1, Complete: true},
+	metrics := &fixedScalingMetrics{snapshot: core.MetricsSnapshot{
+		State:  core.MetricsFresh,
+		Window: core.MetricsWindow{Start: now.Add(-time.Minute), End: now.Add(-time.Minute), CollectedAt: now, Samples: 1, Complete: true},
 	}}
 	c := controllerClient(t, service)
-	r := &controllers.ModelServiceReconciler{Client: c, PoolMetricsProvider: metrics}
+	r := &controllers.ModelServiceReconciler{Client: c, MetricsProvider: metrics}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(service)}
 	for range 2 {
 		if _, err := r.Reconcile(ctx, request); err != nil {
@@ -58,7 +58,7 @@ func TestStaleSourceMetricsStillEnforceMaximumCapacity(t *testing.T) {
 		t.Fatalf("bounded pool/status = %#v %#v", pool.Spec, current.Status.Autoscaling)
 	}
 	status := current.Status.Autoscaling[0]
-	if status.ObservationState != string(core.ObservationStale) || status.Trigger == nil || status.Trigger.Disposition != string(core.TriggerInsufficientData) || status.Constraint == nil || status.Constraint.Reason != string(core.DesiredCapacityReasonAtMaximum) || status.Adjustment.AdjustedReplicas != 3 || status.AppliedReplicas != 3 {
+	if status.ObservationState != string(core.MetricsStale) || status.Trigger == nil || status.Trigger.Disposition != string(core.TriggerInsufficientData) || status.Constraint == nil || status.Constraint.Reason != string(core.ConstraintReasonAtMaximum) || status.Adjustment.AdjustedReplicas != 3 || status.AppliedReplicas != 3 {
 		t.Fatalf("bounded autoscaling status = %#v", status)
 	}
 }
@@ -78,13 +78,13 @@ func TestMetricsAggregationDrivesPoolScalingContract(t *testing.T) {
 		},
 	}
 	now := time.Now()
-	metrics := &fixedPoolMetrics{observation: core.DemandObservation{
-		State:         core.ObservationFresh,
-		Window:        core.ObservationWindow{Start: now.Add(-time.Second), End: now, CollectedAt: now, Samples: 1, Complete: true},
-		QueueRequests: 2,
+	metrics := &fixedScalingMetrics{snapshot: core.MetricsSnapshot{
+		State:           core.MetricsFresh,
+		Window:          core.MetricsWindow{Start: now.Add(-time.Second), End: now, CollectedAt: now, Samples: 1, Complete: true},
+		WaitingRequests: 2,
 	}}
 	c := controllerClient(t, service)
-	r := &controllers.ModelServiceReconciler{Client: c, PoolMetricsProvider: metrics}
+	r := &controllers.ModelServiceReconciler{Client: c, MetricsProvider: metrics}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(service)}
 	for range 2 {
 		if _, err := r.Reconcile(ctx, request); err != nil {
@@ -96,7 +96,7 @@ func TestMetricsAggregationDrivesPoolScalingContract(t *testing.T) {
 		t.Fatalf("scaled pool and target attribution = pool %#v targets %#v", pool.Spec, metrics.targets)
 	}
 	current := get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.ModelService))
-	if len(current.Status.Autoscaling) != 1 || current.Status.Autoscaling[0].ObservationState != string(core.ObservationFresh) || current.Status.Autoscaling[0].Decision.DesiredReplicas != 2 || current.Status.Autoscaling[0].AppliedReplicas != 2 {
+	if len(current.Status.Autoscaling) != 1 || current.Status.Autoscaling[0].ObservationState != string(core.MetricsFresh) || current.Status.Autoscaling[0].Decision.DesiredReplicas != 2 || current.Status.Autoscaling[0].AppliedReplicas != 2 {
 		t.Fatalf("autoscaling aggregation status = %#v", current.Status.Autoscaling)
 	}
 }

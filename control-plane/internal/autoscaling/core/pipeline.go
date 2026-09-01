@@ -12,7 +12,7 @@ type Pipeline struct {
 	Automatic           bool
 }
 
-// Plan evaluates each target through trigger, decision, adjustment, and resolution stages.
+// Plan evaluates each target through trigger, recommendation, adjustment, and resolution stages.
 func (pipeline Pipeline) Plan(snapshots []ScalingSnapshot) ([]ScalingDecision, error) {
 	if pipeline.DecisionAlgorithm == nil || pipeline.AdjustmentAlgorithm == nil {
 		return nil, fmt.Errorf("autoscaler decision and adjustment algorithms are required")
@@ -26,7 +26,7 @@ func (pipeline Pipeline) Plan(snapshots []ScalingSnapshot) ([]ScalingDecision, e
 		seen[snapshot.Target] = struct{}{}
 
 		var trigger TriggerDecision
-		var desired DesiredCapacity
+		var recommendation ReplicaRecommendation
 		if pipeline.Automatic {
 			if pipeline.TriggerAlgorithm == nil {
 				return nil, fmt.Errorf("automatic autoscaler requires a trigger")
@@ -34,42 +34,42 @@ func (pipeline Pipeline) Plan(snapshots []ScalingSnapshot) ([]ScalingDecision, e
 			trigger = pipeline.TriggerAlgorithm.Decide(snapshot)
 			switch trigger.Disposition {
 			case TriggerFire:
-				calculated, err := pipeline.DecisionAlgorithm.CalculateDesiredCapacity(snapshot)
+				value, err := pipeline.DecisionAlgorithm.RecommendReplicas(snapshot)
 				if err != nil {
 					return nil, fmt.Errorf("decision algorithm %q for target %q: %w", pipeline.DecisionAlgorithm.Name(), snapshot.Target.Name, err)
 				}
-				desired = calculated
+				recommendation = value
 			case TriggerInsufficientData:
-				desired = DesiredCapacity{Disposition: DesiredCapacityInsufficientData, Groups: snapshot.Capacity.RequestedGroups, Reason: desiredReason(trigger.Reason), Message: trigger.Message}
+				recommendation = ReplicaRecommendation{State: RecommendationInsufficientData, Replicas: snapshot.Replicas.RequestedReplicas, Reason: recommendationReason(trigger.Reason), Message: trigger.Message}
 			default:
 				return nil, fmt.Errorf("autoscaling trigger %q returned invalid disposition %q for target %q", pipeline.TriggerAlgorithm.Name(), trigger.Disposition, snapshot.Target.Name)
 			}
 		} else {
-			calculated, err := pipeline.DecisionAlgorithm.CalculateDesiredCapacity(snapshot)
+			value, err := pipeline.DecisionAlgorithm.RecommendReplicas(snapshot)
 			if err != nil {
 				return nil, fmt.Errorf("decision algorithm %q for target %q: %w", pipeline.DecisionAlgorithm.Name(), snapshot.Target.Name, err)
 			}
-			desired = calculated
+			recommendation = value
 		}
 
-		current := snapshot.Capacity.RequestedGroups
-		outsideBounds := current < snapshot.Limits.MinGroups || current > snapshot.Limits.MaxGroups
-		adjusted := ScalingAdjustment{AdjustedGroups: current, Reason: AdjustmentReasonHold, Message: "capacity adjustment is not required"}
-		if desired.Disposition == DesiredCapacityApply || outsideBounds {
+		current := snapshot.Replicas.RequestedReplicas
+		outsideBounds := current < snapshot.Limits.MinReplicas || current > snapshot.Limits.MaxReplicas
+		adjustment := ReplicaAdjustment{Replicas: current, Reason: AdjustmentReasonHold, Message: "replica adjustment is not required"}
+		if recommendation.State == RecommendationAvailable || outsideBounds {
 			value, err := pipeline.AdjustmentAlgorithm.Adjust(AdjustmentInput{
-				Target:        snapshot.Target,
-				EvaluatedAt:   snapshot.EvaluatedAt,
-				CurrentGroups: current,
-				DesiredGroups: desired.Groups,
-				Bounds:        snapshot.Limits,
+				Target:              snapshot.Target,
+				EvaluatedAt:         snapshot.EvaluatedAt,
+				CurrentReplicas:     current,
+				RecommendedReplicas: recommendation.Replicas,
+				Limits:              snapshot.Limits,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("adjustment algorithm %q for target %q: %w", pipeline.AdjustmentAlgorithm.Name(), snapshot.Target.Name, err)
 			}
-			adjusted = value
+			adjustment = value
 		}
 
-		result, err := pipeline.Resolver.Resolve(snapshot, pipeline.DecisionAlgorithm.Name(), desired, pipeline.AdjustmentAlgorithm.Name(), adjusted)
+		result, err := pipeline.Resolver.Resolve(snapshot, pipeline.DecisionAlgorithm.Name(), recommendation, pipeline.AdjustmentAlgorithm.Name(), adjustment)
 		if err != nil {
 			return nil, err
 		}
@@ -81,15 +81,15 @@ func (pipeline Pipeline) Plan(snapshots []ScalingSnapshot) ([]ScalingDecision, e
 	return decisions, nil
 }
 
-func desiredReason(reason TriggerReason) DesiredCapacityReason {
+func recommendationReason(reason TriggerReason) RecommendationReason {
 	switch reason {
-	case TriggerReasonObservationUnavailable:
-		return DesiredCapacityReasonObservationUnavailable
-	case TriggerReasonObservationStale:
-		return DesiredCapacityReasonObservationStale
-	case TriggerReasonObservationIncomplete:
-		return DesiredCapacityReasonObservationIncomplete
+	case TriggerReasonMetricsUnavailable:
+		return RecommendationReasonMetricsUnavailable
+	case TriggerReasonMetricsStale:
+		return RecommendationReasonMetricsStale
+	case TriggerReasonMetricsIncomplete:
+		return RecommendationReasonMetricsIncomplete
 	default:
-		return DesiredCapacityReasonStable
+		return RecommendationReasonStable
 	}
 }

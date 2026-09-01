@@ -41,6 +41,7 @@ type modelServerTelemetry struct {
 	CollectedAtUnixMS        uint64  `json:"collected_at_unix_ms"`
 	Accepting                bool    `json:"accepting"`
 	RunningRequests          uint64  `json:"running_requests"`
+	SchedulerRunningRequests *uint64 `json:"scheduler_running_requests"`
 	SchedulerWaitingRequests *uint64 `json:"scheduler_waiting_requests"`
 }
 

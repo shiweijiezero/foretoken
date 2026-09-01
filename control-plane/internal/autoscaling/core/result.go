@@ -4,71 +4,78 @@ package core
 
 import "fmt"
 
+type ConstraintReason string
+
+const (
+	ConstraintReasonAtMinimum            ConstraintReason = "AtMinimum"
+	ConstraintReasonAtMaximum            ConstraintReason = "AtMaximum"
+	ConstraintReasonTransitionInProgress ConstraintReason = "TransitionInProgress"
+)
+
 type ScalingDecision struct {
 	Target              TargetID
 	DecisionAlgorithm   string
 	AdjustmentAlgorithm string
-	DesiredCapacity     DesiredCapacity
-	Adjustment          ScalingAdjustment
-	AppliedGroups       int32
+	Recommendation      ReplicaRecommendation
+	Adjustment          ReplicaAdjustment
+	AppliedReplicas     int32
 	Direction           Direction
-	Constraint          DesiredCapacityReason
+	Constraint          ConstraintReason
 	Message             string
 	Trigger             TriggerDecision
 }
 
 type Resolver struct{ AllowDuringTransition bool }
 
-// Resolve applies an adjusted recommendation subject to hard bounds and in-progress lifecycle transitions.
-func (resolver Resolver) Resolve(snapshot ScalingSnapshot, decisionName string, desiredCapacity DesiredCapacity, adjustmentName string, adjusted ScalingAdjustment) (ScalingDecision, error) {
+// Resolve applies an adjusted recommendation subject to replica bounds and ModelGroup lifecycle transitions.
+func (resolver Resolver) Resolve(snapshot ScalingSnapshot, decisionName string, recommendation ReplicaRecommendation, adjustmentName string, adjustment ReplicaAdjustment) (ScalingDecision, error) {
 	if err := validateSnapshot(snapshot); err != nil {
 		return ScalingDecision{}, err
 	}
-	if desiredCapacity.Disposition != DesiredCapacityApply && desiredCapacity.Disposition != DesiredCapacityInsufficientData {
-		return ScalingDecision{}, fmt.Errorf("decision algorithm %q returned invalid disposition %q for target %q", decisionName, desiredCapacity.Disposition, snapshot.Target.Name)
+	if recommendation.State != RecommendationAvailable && recommendation.State != RecommendationInsufficientData {
+		return ScalingDecision{}, fmt.Errorf("decision algorithm %q returned invalid recommendation state %q for target %q", decisionName, recommendation.State, snapshot.Target.Name)
 	}
 
-	current := snapshot.Capacity.RequestedGroups
+	current := snapshot.Replicas.RequestedReplicas
 	applied := current
-	message := desiredCapacity.Message
-	if desiredCapacity.Disposition == DesiredCapacityApply {
-		applied, message = adjusted.AdjustedGroups, adjusted.Message
+	message := recommendation.Message
+	if recommendation.State == RecommendationAvailable {
+		applied, message = adjustment.Replicas, adjustment.Message
 	}
-	constraint := DesiredCapacityReason("")
-	if current < snapshot.Limits.MinGroups {
-		applied, constraint, message = snapshot.Limits.MinGroups, DesiredCapacityReasonAtMinimum, adjusted.Message
-	} else if current > snapshot.Limits.MaxGroups {
-		applied, constraint, message = snapshot.Limits.MaxGroups, DesiredCapacityReasonAtMaximum, adjusted.Message
+	constraint := ConstraintReason("")
+	if current < snapshot.Limits.MinReplicas {
+		applied, constraint, message = snapshot.Limits.MinReplicas, ConstraintReasonAtMinimum, adjustment.Message
+	} else if current > snapshot.Limits.MaxReplicas {
+		applied, constraint, message = snapshot.Limits.MaxReplicas, ConstraintReasonAtMaximum, adjustment.Message
 	}
-	if applied < snapshot.Limits.MinGroups || applied > snapshot.Limits.MaxGroups {
-		return ScalingDecision{}, fmt.Errorf("adjustment algorithm %q returned groups %d for target %q outside [%d, %d]", adjustmentName, applied, snapshot.Target.Name, snapshot.Limits.MinGroups, snapshot.Limits.MaxGroups)
+	if applied < snapshot.Limits.MinReplicas || applied > snapshot.Limits.MaxReplicas {
+		return ScalingDecision{}, fmt.Errorf("adjustment algorithm %q returned replicas %d for target %q outside [%d, %d]", adjustmentName, applied, snapshot.Target.Name, snapshot.Limits.MinReplicas, snapshot.Limits.MaxReplicas)
 	}
-	if constraint != "" && adjusted.AdjustedGroups != applied {
-		return ScalingDecision{}, fmt.Errorf("adjustment algorithm %q returned groups %d for target %q instead of hard bound %d", adjustmentName, adjusted.AdjustedGroups, snapshot.Target.Name, applied)
+	if constraint != "" && adjustment.Replicas != applied {
+		return ScalingDecision{}, fmt.Errorf("adjustment algorithm %q returned replicas %d for target %q instead of hard bound %d", adjustmentName, adjustment.Replicas, snapshot.Target.Name, applied)
 	}
-	if constraint == "" && snapshot.Capacity.Transitioning && !resolver.AllowDuringTransition && applied != current {
-		applied, constraint, message = current, DesiredCapacityReasonTransitionInProgress, "capacity transition is in progress; holding current capacity"
+	if constraint == "" && snapshot.Replicas.Transitioning && !resolver.AllowDuringTransition && applied != current {
+		applied, constraint, message = current, ConstraintReasonTransitionInProgress, "replica transition is in progress; holding current replicas"
 	}
 	return ScalingDecision{
 		Target:              snapshot.Target,
 		DecisionAlgorithm:   decisionName,
 		AdjustmentAlgorithm: adjustmentName,
-		DesiredCapacity:     desiredCapacity,
-		Adjustment:          adjusted,
-		AppliedGroups:       applied,
+		Recommendation:      recommendation,
+		Adjustment:          adjustment,
+		AppliedReplicas:     applied,
 		Direction:           direction(current, applied),
 		Constraint:          constraint,
 		Message:             message,
 	}, nil
 }
 
-// validateSnapshot verifies the capacity bounds required by the resolution stage.
 func validateSnapshot(snapshot ScalingSnapshot) error {
-	if snapshot.Limits.MinGroups < 0 || snapshot.Limits.MaxGroups < snapshot.Limits.MinGroups {
-		return fmt.Errorf("autoscaling bounds for target %q are invalid", snapshot.Target.Name)
+	if snapshot.Limits.MinReplicas < 0 || snapshot.Limits.MaxReplicas < snapshot.Limits.MinReplicas {
+		return fmt.Errorf("autoscaling replica bounds for target %q are invalid", snapshot.Target.Name)
 	}
-	if snapshot.Capacity.BaselineGroups < 0 || snapshot.Capacity.RequestedGroups < 0 {
-		return fmt.Errorf("autoscaling capacity for target %q must be non-negative", snapshot.Target.Name)
+	if snapshot.Replicas.BaselineReplicas < 0 || snapshot.Replicas.RequestedReplicas < 0 {
+		return fmt.Errorf("autoscaling replicas for target %q must be non-negative", snapshot.Target.Name)
 	}
 	return nil
 }

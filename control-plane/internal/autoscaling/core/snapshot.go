@@ -41,51 +41,53 @@ type TargetID struct {
 	Role             TargetRole
 }
 
-type ObservationState string
+type MetricsState string
 
 const (
-	ObservationUnavailable ObservationState = "Unavailable"
-	ObservationFresh       ObservationState = "Fresh"
-	ObservationStale       ObservationState = "Stale"
+	MetricsUnavailable MetricsState = "Unavailable"
+	MetricsFresh       MetricsState = "Fresh"
+	MetricsStale       MetricsState = "Stale"
 )
 
-type ObservationWindow struct {
+type MetricsWindow struct {
 	Start       time.Time // Local collection start.
-	End         time.Time // Oldest source sample included in the aggregate.
+	End         time.Time // Oldest source sample included in the snapshot.
 	CollectedAt time.Time // Local collection completion.
 	Samples     int32
 	Complete    bool
 }
 
-type DemandObservation struct {
-	State          ObservationState
-	Window         ObservationWindow
-	QueueRequests  int64
-	ActiveRequests int64
+// MetricsSnapshot contains the complete backend-neutral metrics available for one evaluation.
+type MetricsSnapshot struct {
+	State           MetricsState
+	Window          MetricsWindow
+	WaitingRequests int64
+	RunningRequests int64
+	ActiveRequests  int64
 }
 
-type CapacityState struct {
-	BaselineGroups     int32
-	RequestedGroups    int32
-	ReadyGroups        int32
-	RoutableGroups     int32
-	PendingGroups      int32
-	ProvisioningGroups int32
-	DrainingGroups     int32
-	TerminatingGroups  int32
-	FailedGroups       int32
-	Transitioning      bool
+type ReplicaState struct {
+	BaselineReplicas     int32
+	RequestedReplicas    int32
+	ReadyReplicas        int32
+	RoutableReplicas     int32
+	PendingReplicas      int32
+	ProvisioningReplicas int32
+	DrainingReplicas     int32
+	TerminatingReplicas  int32
+	FailedReplicas       int32
+	Transitioning        bool
 }
 
-type CapacityLimits struct {
-	MinGroups int32
-	MaxGroups int32
+type ReplicaLimits struct {
+	MinReplicas int32
+	MaxReplicas int32
 }
 
 type ScalingSnapshot struct {
 	Target      TargetID
 	EvaluatedAt time.Time
-	Capacity    CapacityState
-	Limits      CapacityLimits
-	Observation DemandObservation
+	Replicas    ReplicaState
+	Limits      ReplicaLimits
+	Metrics     MetricsSnapshot
 }

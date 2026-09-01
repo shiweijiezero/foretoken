@@ -26,8 +26,8 @@ func (roundTrip roundTripFunc) RoundTrip(request *http.Request) (*http.Response,
 	return roundTrip(request)
 }
 
-// TestHTTPPoolMetricsProviderUsesSchedulerBacklog protects scaling demand that waits inside vLLM rather than at the frontend dispatch boundary.
-func TestHTTPPoolMetricsProviderUsesSchedulerBacklog(t *testing.T) {
+// TestHTTPScalingMetricsProviderUsesSchedulerBacklog protects waiting and running scheduler metrics in one snapshot.
+func TestHTTPScalingMetricsProviderUsesSchedulerBacklog(t *testing.T) {
 	const (
 		namespace  = "serving"
 		serviceUID = "service-uid"
@@ -84,7 +84,7 @@ func TestHTTPPoolMetricsProviderUsesSchedulerBacklog(t *testing.T) {
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-	provider := NewHTTPPoolMetricsProvider(
+	provider := NewHTTPScalingMetricsProvider(
 		fake.NewClientBuilder().WithScheme(scheme).WithObjects(service, pool, group, frontend).Build(),
 		AutoscalingTelemetryOptions{CollectionTimeout: time.Second, RequestTimeout: time.Second, Concurrency: 2},
 	)
@@ -97,7 +97,7 @@ func TestHTTPPoolMetricsProviderUsesSchedulerBacklog(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: make(http.Header), Request: request}, nil
 	})
 
-	observation, err := provider.Observation(context.Background(), core.TargetID{
+	metrics, err := provider.Snapshot(context.Background(), core.TargetID{
 		ServiceNamespace: namespace,
 		ServiceName:      service.Name,
 		ServiceUID:       serviceUID,
@@ -109,7 +109,7 @@ func TestHTTPPoolMetricsProviderUsesSchedulerBacklog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observation.QueueRequests != 7 || observation.ActiveRequests != 3 || !observation.Window.Complete || !observation.Window.End.Equal(time.UnixMilli(900)) {
-		t.Fatalf("observation = %#v", observation)
+	if metrics.WaitingRequests != 7 || metrics.RunningRequests != 2 || metrics.ActiveRequests != 3 || !metrics.Window.Complete || !metrics.Window.End.Equal(time.UnixMilli(900)) {
+		t.Fatalf("metrics = %#v", metrics)
 	}
 }

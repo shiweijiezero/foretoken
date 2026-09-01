@@ -21,17 +21,18 @@ const (
 )
 
 type AdjustmentInput struct {
-	Target        TargetID
-	EvaluatedAt   time.Time
-	CurrentGroups int32
-	DesiredGroups int32
-	Bounds        CapacityLimits
+	Target              TargetID
+	EvaluatedAt         time.Time
+	CurrentReplicas     int32
+	RecommendedReplicas int32
+	Limits              ReplicaLimits
 }
 
-type ScalingAdjustment struct {
-	AdjustedGroups int32
-	Reason         AdjustmentReason
-	Message        string
+// ReplicaAdjustment is the Adjustment stage output after stabilization and rate limiting.
+type ReplicaAdjustment struct {
+	Replicas int32
+	Reason   AdjustmentReason
+	Message  string
 }
 
 type AdjustmentConfig struct {
@@ -42,29 +43,29 @@ type AdjustmentConfig struct {
 
 type AdjustmentAlgorithm interface {
 	Name() string
-	Adjust(AdjustmentInput) (ScalingAdjustment, error)
+	Adjust(AdjustmentInput) (ReplicaAdjustment, error)
 }
 
-type capacityRecommendation struct {
-	at     time.Time
-	groups int32
+type replicaRecommendation struct {
+	at       time.Time
+	replicas int32
 }
 
-// RecommendationHistory retains recent desired capacities used by stabilization windows.
+// RecommendationHistory retains recent replica recommendations used by stabilization windows.
 type RecommendationHistory struct {
 	mu      sync.Mutex
-	targets map[TargetID][]capacityRecommendation
+	targets map[TargetID][]replicaRecommendation
 }
 
 // NewRecommendationHistory creates empty in-memory recommendation history for one controller process.
 func NewRecommendationHistory() *RecommendationHistory {
-	return &RecommendationHistory{targets: make(map[TargetID][]capacityRecommendation)}
+	return &RecommendationHistory{targets: make(map[TargetID][]replicaRecommendation)}
 }
 
-// Stabilize records one desired capacity and returns the conservative recommendation for its direction.
-func (history *RecommendationHistory) Stabilize(target TargetID, now time.Time, current, desired int32, scaleUpWindow, scaleDownWindow time.Duration) int32 {
+// Stabilize records one replica recommendation and returns the conservative value for its direction.
+func (history *RecommendationHistory) Stabilize(target TargetID, now time.Time, current, recommended int32, scaleUpWindow, scaleDownWindow time.Duration) int32 {
 	if history == nil {
-		return desired
+		return recommended
 	}
 	history.mu.Lock()
 	defer history.mu.Unlock()
@@ -72,7 +73,7 @@ func (history *RecommendationHistory) Stabilize(target TargetID, now time.Time, 
 	retention := max(scaleUpWindow, scaleDownWindow)
 	if retention == 0 {
 		delete(history.targets, target)
-		return desired
+		return recommended
 	}
 	oldest := now.Add(-retention)
 	for candidate, recommendations := range history.targets {
@@ -89,27 +90,27 @@ func (history *RecommendationHistory) Stabilize(target TargetID, now time.Time, 
 		}
 	}
 
-	history.targets[target] = append(history.targets[target], capacityRecommendation{at: now, groups: desired})
-	if desired < current && scaleDownWindow > 0 {
+	history.targets[target] = append(history.targets[target], replicaRecommendation{at: now, replicas: recommended})
+	if recommended < current && scaleDownWindow > 0 {
 		cutoff := now.Add(-scaleDownWindow)
 		for _, recommendation := range history.targets[target] {
-			if !recommendation.at.Before(cutoff) && recommendation.groups > desired {
-				desired = recommendation.groups
+			if !recommendation.at.Before(cutoff) && recommendation.replicas > recommended {
+				recommended = recommendation.replicas
 			}
 		}
-		if desired > current {
-			desired = current
+		if recommended > current {
+			recommended = current
 		}
-	} else if desired > current && scaleUpWindow > 0 {
+	} else if recommended > current && scaleUpWindow > 0 {
 		cutoff := now.Add(-scaleUpWindow)
 		for _, recommendation := range history.targets[target] {
-			if !recommendation.at.Before(cutoff) && recommendation.groups < desired {
-				desired = recommendation.groups
+			if !recommendation.at.Before(cutoff) && recommendation.replicas < recommended {
+				recommended = recommendation.replicas
 			}
 		}
-		if desired < current {
-			desired = current
+		if recommended < current {
+			recommended = current
 		}
 	}
-	return desired
+	return recommended
 }

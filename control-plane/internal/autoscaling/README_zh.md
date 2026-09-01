@@ -5,8 +5,8 @@
 ```text
 ScalingSnapshot
 → TriggerDecision
-→ DesiredCapacity
-→ ScalingAdjustment
+→ ReplicaRecommendation
+→ ReplicaAdjustment
 → ScalingDecision
 ```
 
