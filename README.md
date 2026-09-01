@@ -189,7 +189,7 @@ After the serving resources are gone, uninstall the platform:
 foretoken uninstall
 ```
 
-A `GatewayClass` and `Gateway` created with `frontend.gateway.create=true` are removed with the Foretoken release; a reused platform Gateway is left unchanged.
+`foretoken uninstall` removes the platform and its CLI-managed monitoring and Gateway resources; reused cluster components remain unchanged.
 
 If Envoy Gateway was installed only for this Foretoken deployment, uninstall it as well:
 

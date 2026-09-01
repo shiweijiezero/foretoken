@@ -7,104 +7,65 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-可观测性帮助运维人员了解服务是否健康、请求变慢的原因、容量是否充足，以及问题发生在哪一层。Foretoken 通过指标、告警和按需性能剖析支持这些工作。
+Foretoken 通过指标、告警和按需性能剖析展示服务健康状态、请求延迟、队列压力、可用容量和硬件利用率。
 
-- **指标与仪表盘**：Prometheus 持续采集运行指标，Grafana 用于查询和展示。
-- **告警**：Prometheus 判断持续异常，Alertmanager 负责通知、分组和静默。
-- **性能剖析**：PyTorch Profiler 和 Nsight 用于在复现问题时分析 CPU、GPU、kernel 和通信瓶颈。
+## 采集指标
 
-## 启用指标采集
-
-Frontend 和 model-server 无需 Prometheus 即可提供 `/metrics`。如需采集这些指标并计算记录规则，可以复用已有 Prometheus Operator，也可以安装 kube-prometheus-stack：
-
-```bash
-helm repo add prometheus-community \
-  https://prometheus-community.github.io/helm-charts
-helm repo update
-
-helm upgrade --install kube-prometheus-stack \
-  prometheus-community/kube-prometheus-stack \
-  --namespace monitoring \
-  --create-namespace \
-  --values deploy/observability/kube-prometheus-stack-values.yaml \
-  --wait
-```
-
-为实际运行 Prometheus Pod 的命名空间添加标签，使其可以访问 model-server 指标：
-
-```bash
-PROMETHEUS_NAMESPACE=monitoring
-kubectl label namespace "${PROMETHEUS_NAMESPACE}" \
-  inference.foretoken.io/metrics-scraper=true \
-  --overwrite
-```
-
-Operator CRD 建立后，在线安装 Foretoken 时，默认的 `auto` 模式会创建 ServiceMonitor 和 PrometheusRule：
+安装 Foretoken 时会配置 Prometheus 采集和记录规则：
 
 ```bash
 foretoken install
 ```
 
-如果 Foretoken 平台由 CLI 管理，请将接入配置写入 values 文件，然后再次运行 `foretoken install`：
+CLI 会复用集群中唯一兼容的 Prometheus；如果没有，则安装由 CLI 管理的 kube-prometheus-stack。
 
-```yaml
-observability:
-  mode: enabled
-  additionalLabels:
-    release: your-prometheus-release
-```
+只有自动发现得到多个兼容实例时，才需要显式选择 Prometheus。先允许该 Prometheus 所在的命名空间采集 Foretoken 指标，再指定实例：
 
 ```bash
-foretoken install --values foretoken-observability-values.yaml
+kubectl label namespace monitoring \
+  inference.foretoken.io/metrics-scraper=true \
+  --overwrite
+
+foretoken install --prometheus monitoring/prometheus
 ```
 
-在同一文件中使用 `disabled` 可删除 Chart 管理的监控资源。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，CLI 不会自动接管。
+该命名空间标签继续由 Prometheus 所属平台管理。不再采集 Foretoken 指标时，也应通过该平台移除标签。
 
-`auto` 只在集群同时提供 `ServiceMonitor` 和 `PrometheusRule` API 时创建两种资源。离线渲染和 GitOps 应使用 `enabled`，并先安装 Operator CRD。只有需要覆盖 Prometheus 默认值时才设置 `interval` 或 `scrapeTimeout`。
+## 验证采集状态
 
-仓库提供的 kube-prometheus-stack values 配置文件默认从 `foretoken-platform` 命名空间选择 Foretoken 资源。复用其他 Prometheus 安装时，其 ServiceMonitor 与规则命名空间选择器必须包含 Foretoken 发布实例所在命名空间。只有对象选择器要求平台自定义标签时才设置 `additionalLabels`。
-
-## 确认采集已启用
-
-先确认 Kubernetes 中存在预期资源：
+查看 Foretoken 的 ServiceMonitor 和记录规则：
 
 ```bash
 kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
 ```
 
-使用仓库提供的 kube-prometheus-stack 安装时，将 Prometheus 转发到本机：
+使用 CLI 管理的 Prometheus 时，将服务转发到本机：
 
 ```bash
 kubectl port-forward \
-  --namespace monitoring \
-  service/kube-prometheus-stack-prometheus \
+  --namespace foretoken-platform \
+  service/foretoken-prometheus-kube-prometheus \
   9090:9090
 ```
 
-在 Prometheus 的 <http://127.0.0.1:9090/targets> 确认 Foretoken target 为 `UP`，并在 <http://127.0.0.1:9090/rules> 确认 `foretoken.recording` 已加载。服务收到请求后，可以查询记录指标：
+打开 <http://127.0.0.1:9090/targets>，确认 Foretoken target 为 `UP`；再打开 <http://127.0.0.1:9090/rules>，确认 `foretoken.recording` 已加载。复用已有 Prometheus 时，通过平台原有的访问方式执行相同检查。
 
-```bash
-curl --get http://127.0.0.1:9090/api/v1/query \
-  --data-urlencode 'query=foretoken:model_server_requests_running:sum'
-```
+## 指标来源
 
-仅看到 Kubernetes 对象并不能证明 Prometheus 已选择 Monitor 或加载规则。复用平台已有 Prometheus 时，使用该平台原有的访问方式执行相同的 target、rule 和查询检查。
+| 来源 | 内容 |
+| --- | --- |
+| Frontend `/metrics` | HTTP 请求、准入队列、路由和前端运行状态 |
+| model-server `/metrics` | 当前推理后端提供的原生指标 |
+| DCGM Exporter | NVIDIA GPU 利用率、显存、功耗、温度和硬件错误 |
+| kubelet/cAdvisor | 容器 CPU、内存、文件系统和网络 |
+| kube-state-metrics | Kubernetes 资源状态 |
 
-## 关闭或移除接入
-
-设置 `observability.mode=disabled` 或卸载 Foretoken，只会删除 Foretoken 发布实例管理的 ServiceMonitor 和 PrometheusRule，不会卸载 Prometheus、Prometheus Operator、Grafana 或 Alertmanager。没有其他 Foretoken workload 需要该 Prometheus 安装时，可以移除命名空间标签：
-
-```bash
-kubectl label namespace monitoring \
-  inference.foretoken.io/metrics-scraper-
-```
-
-Prometheus 运行在其他命名空间时，替换命令中的 `monitoring`。
+model-server 指标的名称、单位和标签以 `/metrics` 中的 `HELP` 和 `TYPE` 元数据为准。
 
 ## 记录规则
 
-可选的 PrometheusRule 在 Frontend 和 model-server 原始指标之上提供稳定、低基数的查询：
+Foretoken 的 `PrometheusRule` 在 Frontend 和 model-server 指标之上提供稳定、低基数的查询：
 
 | 记录规则 | 含义 |
 | --- | --- |
@@ -116,34 +77,24 @@ Prometheus 运行在其他命名空间时，替换命令中的 `monitoring`。
 | `foretoken:model_server_requests_waiting:sum` | vLLM 调度器中当前等待的请求数 |
 | `foretoken:model_server_kv_cache_usage_ratio:max` | 最高 KV Cache 使用比例 |
 
-规则保留 namespace、Frontend 服务、模型组与角色、模型名称和可选的 Prefill/Decode pipeline scope。计数器先按原始序列计算可处理重置的五分钟速率，再执行聚合。model-server 样本缺失时结果保持缺失，实际观测到的 gauge 零值仍保持为零。
+记录规则保留 namespace、Frontend 服务、模型组与角色、模型名称和可选的 Prefill/Decode pipeline scope。计数器会先计算可处理重置的五分钟速率，再执行聚合。
 
-Frontend HTTP 状态在响应开始时记录。后续流式传输失败时状态仍可能是 `2xx`，因此响应开始时的 5xx 比例不能作为面向用户的推理成功率 SLO。
-
-## 指标来源
-
-| 来源 | 内容 |
-| --- | --- |
-| Frontend `/metrics` | HTTP 请求、准入队列、路由及前端服务运行状态 |
-| model-server `/metrics` | 当前推理后端提供的完整原生指标 |
-| DCGM Exporter | NVIDIA GPU 利用率、显存、功耗、温度和硬件错误 |
-| kubelet/cAdvisor | 容器 CPU、内存、文件系统和网络 |
-| kube-state-metrics | Kubernetes 对象状态 |
-
-model-server 不会重命名或过滤推理后端的原生指标。对于当前 vLLM 适配器，指标名称、单位和标签以 `/metrics` 响应中的 `HELP` 和 `TYPE` 为准。
-
-Prometheus 只负责观测，不参与 Foretoken 的路由或自动扩缩容控制环。路由和自动扩缩容仍直接读取 model-server 中带版本标识的内部快照。
+Frontend 在响应开始时记录 HTTP 状态。后续流式传输失败时，状态仍可能是 `2xx`，因此响应开始时的 5xx 比例不能作为推理成功率 SLO。
 
 ## 告警
 
-告警规则由 Prometheus 评估，并交给 Alertmanager 发送通知。告警应关注需要处理的持续状态，例如服务不可用、错误率升高、队列持续积压、延迟异常和容量耗尽。通知接收方式和路由由平台 Alertmanager 统一配置。
+Prometheus 评估服务不可用、错误率升高、队列持续积压、延迟异常和容量耗尽等持续状态。通知接收方、分组和路由由 Alertmanager 管理。
 
 ## 性能剖析
 
-性能剖析用于分析某次具体实验或故障，不是持续监控，也不应默认开启：
+性能剖析用于调查可复现的实验或故障，不用于持续监控：
 
-- PyTorch Profiler：分析模型执行、算子时间和内存；
-- Nsight Systems：分析进程、kernel 和通信时间线；
-- Nsight Compute：深入分析单个 GPU kernel。
+- PyTorch Profiler 分析模型执行、算子时间和内存；
+- Nsight Systems 分析进程、kernel 和通信时间线；
+- Nsight Compute 分析单个 GPU kernel。
 
-性能剖析会影响推理性能。采集时只发送少量可复现请求，并将结果与模型、并发、硬件和运行参数一起保存。
+性能剖析会影响推理性能。采集时使用小规模工作负载，并将模型、并发、硬件和运行参数与结果一起记录。
+
+## 停止采集
+
+删除全部 Foretoken 服务后，`foretoken uninstall` 会删除由 CLI 管理的 Prometheus 发布实例；复用的 Prometheus 保持不变。

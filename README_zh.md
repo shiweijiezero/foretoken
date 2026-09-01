@@ -185,7 +185,7 @@ foretoken delete examples/quickstart
 foretoken uninstall
 ```
 
-通过 `frontend.gateway.create=true` 创建的 `GatewayClass` 和 `Gateway` 会随 Foretoken 的 Helm 发布实例一同删除；复用的平台网关不会被删除。
+`foretoken uninstall` 会删除平台及其由 CLI 管理的监控和网关资源；复用的集群组件保持不变。
 
 如果 Envoy Gateway 仅供本次 Foretoken 部署使用，可以继续卸载它：
 

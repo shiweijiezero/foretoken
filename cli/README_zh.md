@@ -31,6 +31,8 @@ uv pip install -e .
 foretoken install
 ```
 
+命令会复用一个兼容的 Prometheus；如果没有，则安装由 CLI 管理的监控栈。只有自动发现得到多个兼容实例时，才需要使用 `--prometheus NAMESPACE/NAME` 指定。
+
 网关模式要求集群已经安装 Gateway Controller。未提供已有 Gateway 信息时，CLI 会创建专用的 `GatewayClass` 和 `Gateway`：
 
 ```bash

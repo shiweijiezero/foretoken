@@ -7,104 +7,65 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Observability helps operators understand whether a service is healthy, why requests are slow, whether capacity is sufficient, and which layer is responsible for a problem. Foretoken supports this work through metrics, alerts, and on-demand profiling.
+Foretoken uses metrics, alerts, and on-demand profiling to show service health, request latency, queue pressure, capacity, and hardware utilization.
 
-- **Metrics and dashboards**: Prometheus collects runtime metrics continuously, and Grafana provides queries and dashboards.
-- **Alerts**: Prometheus detects sustained abnormal conditions, while Alertmanager handles notification, grouping, and silencing.
-- **Profiling**: PyTorch Profiler and Nsight diagnose CPU, GPU, kernel, and communication bottlenecks while reproducing a problem.
+## Collect metrics
 
-## Enable metric collection
-
-Frontend and model-server expose `/metrics` without requiring Prometheus. To collect those metrics and evaluate the recording rules, reuse an existing Prometheus Operator or install kube-prometheus-stack:
-
-```bash
-helm repo add prometheus-community \
-  https://prometheus-community.github.io/helm-charts
-helm repo update
-
-helm upgrade --install kube-prometheus-stack \
-  prometheus-community/kube-prometheus-stack \
-  --namespace monitoring \
-  --create-namespace \
-  --values deploy/observability/kube-prometheus-stack-values.yaml \
-  --wait
-```
-
-Label the namespace that runs the Prometheus Pods so it can reach model-server metrics:
-
-```bash
-PROMETHEUS_NAMESPACE=monitoring
-kubectl label namespace "${PROMETHEUS_NAMESPACE}" \
-  inference.foretoken.io/metrics-scraper=true \
-  --overwrite
-```
-
-After the Operator CRDs are established, a normal online Foretoken installation uses the default `auto` mode to create the ServiceMonitors and PrometheusRule:
+Install Foretoken to configure Prometheus collection and recording rules:
 
 ```bash
 foretoken install
 ```
 
-For a CLI-managed release, put the integration settings in a values file and run install again:
+The CLI reuses the single compatible Prometheus instance in the cluster. If none exists, it installs a managed kube-prometheus-stack release.
 
-```yaml
-observability:
-  mode: enabled
-  additionalLabels:
-    release: your-prometheus-release
-```
+Only select Prometheus explicitly when automatic discovery reports multiple compatible instances. First allow the Prometheus namespace to collect Foretoken metrics, then identify the instance:
 
 ```bash
-foretoken install --values foretoken-observability-values.yaml
+kubectl label namespace monitoring \
+  inference.foretoken.io/metrics-scraper=true \
+  --overwrite
+
+foretoken install --prometheus monitoring/prometheus
 ```
 
-Use `disabled` in the same file to remove the Chart-owned monitoring resources. A release originally installed directly with Helm remains under that Helm lifecycle and is not adopted by the CLI.
+The namespace label remains owned by the platform that operates the reused Prometheus. Remove it through that platform when collection is no longer required.
 
-`auto` creates both resources only when the cluster exposes the `ServiceMonitor` and `PrometheusRule` APIs. Offline rendering and GitOps should use `enabled` and install the Operator CRDs before Foretoken. Set `interval` or `scrapeTimeout` only when overriding Prometheus defaults.
+## Verify collection
 
-The included kube-prometheus-stack values select Foretoken resources from the `foretoken-platform` namespace. When reusing another Prometheus installation, its ServiceMonitor and rule namespace selectors must include the Foretoken release namespace. Add `additionalLabels` only when its object selectors require platform-specific labels.
-
-## Confirm collection is enabled
-
-First confirm that Kubernetes contains the expected resources:
+List the Foretoken monitors and recording rules:
 
 ```bash
 kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
 ```
 
-For the included kube-prometheus-stack installation, open Prometheus locally:
+For the CLI-managed Prometheus, forward its service to the local machine:
 
 ```bash
 kubectl port-forward \
-  --namespace monitoring \
-  service/kube-prometheus-stack-prometheus \
+  --namespace foretoken-platform \
+  service/foretoken-prometheus-kube-prometheus \
   9090:9090
 ```
 
-In Prometheus, confirm that the Foretoken targets are `UP` at <http://127.0.0.1:9090/targets> and that `foretoken.recording` is loaded at <http://127.0.0.1:9090/rules>. After the service receives traffic, query a recorded metric:
+Open <http://127.0.0.1:9090/targets> and confirm that the Foretoken targets are `UP`. Then open <http://127.0.0.1:9090/rules> and confirm that `foretoken.recording` is loaded. When reusing Prometheus, perform the same checks through its existing access path.
 
-```bash
-curl --get http://127.0.0.1:9090/api/v1/query \
-  --data-urlencode 'query=foretoken:model_server_requests_running:sum'
-```
+## Metric sources
 
-Object presence alone does not prove that Prometheus selected the monitors or loaded the rules. For an existing platform installation, use its normal Prometheus access path for the same target, rule, and query checks.
+| Source | Contents |
+| --- | --- |
+| Frontend `/metrics` | HTTP requests, admission queues, routing, and Frontend runtime state |
+| model-server `/metrics` | Native metrics from the active inference backend |
+| DCGM Exporter | NVIDIA GPU utilization, memory, power, temperature, and hardware errors |
+| kubelet/cAdvisor | Container CPU, memory, filesystem, and network |
+| kube-state-metrics | Kubernetes object state |
 
-## Disable or remove the integration
-
-Setting `observability.mode=disabled` or uninstalling Foretoken removes only the ServiceMonitors and PrometheusRule owned by the Foretoken release. It does not uninstall Prometheus, Prometheus Operator, Grafana, or Alertmanager. Remove the namespace label only when no remaining Foretoken workload needs that Prometheus installation:
-
-```bash
-kubectl label namespace monitoring \
-  inference.foretoken.io/metrics-scraper-
-```
-
-Replace `monitoring` when Prometheus runs in another namespace.
+For model-server metrics, use the `HELP` and `TYPE` metadata in `/metrics` as the source of truth for names, units, and labels.
 
 ## Recording rules
 
-The optional PrometheusRule provides stable, low-cardinality queries over the raw Frontend and model-server series:
+The Foretoken `PrometheusRule` provides stable, low-cardinality queries over Frontend and model-server metrics:
 
 | Recording rule | Meaning |
 | --- | --- |
@@ -116,34 +77,24 @@ The optional PrometheusRule provides stable, low-cardinality queries over the ra
 | `foretoken:model_server_requests_waiting:sum` | Requests currently waiting in the vLLM scheduler |
 | `foretoken:model_server_kv_cache_usage_ratio:max` | Highest KV-cache usage ratio |
 
-The rules retain the namespace, Frontend service, model group and role, model name, and optional Prefill/Decode pipeline scope. Counter rules apply a reset-aware five-minute rate before aggregation. Missing model-server samples remain absent, while an observed gauge value of zero remains zero.
+The rules preserve namespace, Frontend service, model group and role, model name, and optional Prefill/Decode pipeline scope. Counter rules calculate a reset-aware five-minute rate before aggregation.
 
-Frontend HTTP status is recorded when the response starts. A later streaming failure can still have status `2xx`, so the response-start 5xx ratio is not a user-visible inference success SLO.
-
-## Metric sources
-
-| Source | Contents |
-| --- | --- |
-| Frontend `/metrics` | HTTP requests, admission queues, routing, and Frontend runtime state |
-| model-server `/metrics` | Complete native metrics from the active inference backend |
-| DCGM Exporter | NVIDIA GPU utilization, memory, power, temperature, and hardware errors |
-| kubelet/cAdvisor | Container CPU, memory, filesystem, and network |
-| kube-state-metrics | Kubernetes object state |
-
-The model-server does not rename or filter backend-native metrics. For the current vLLM adapter, use the `HELP` and `TYPE` metadata in the `/metrics` response as the source of truth for metric names, units, and labels.
-
-Prometheus is for observation only and is not part of the Foretoken routing or autoscaling control loop. Routing and autoscaling continue to read the versioned internal model-server snapshot directly.
+Frontend HTTP status is recorded when the response starts. A later streaming failure can still have status `2xx`, so the response-start 5xx ratio is not an inference success SLO.
 
 ## Alerts
 
-Prometheus evaluates alert rules and sends notifications through Alertmanager. Alerts should represent sustained conditions that require action, such as unavailable services, elevated error rates, persistent queue pressure, abnormal latency, or exhausted capacity. Notification receivers and routing are configured once in the platform Alertmanager.
+Prometheus evaluates sustained conditions such as service unavailability, elevated errors, queue pressure, abnormal latency, and exhausted capacity. Alertmanager owns notification receivers, grouping, and routing.
 
 ## Profiling
 
-Profiling diagnoses a specific experiment or incident rather than providing continuous monitoring, and it should not be enabled by default:
+Use profiling to investigate a reproducible experiment or incident, not for continuous monitoring:
 
 - PyTorch Profiler analyzes model execution, operator time, and memory;
 - Nsight Systems analyzes process, kernel, and communication timelines;
-- Nsight Compute performs detailed analysis of individual GPU kernels.
+- Nsight Compute analyzes individual GPU kernels.
 
-Profiling affects inference performance. Send only a small reproducible workload and store the results with the model, concurrency, hardware, and runtime parameters.
+Profiling affects inference performance. Use a small workload and record the model, concurrency, hardware, and runtime parameters with the result.
+
+## Remove collection
+
+After all Foretoken services are deleted, `foretoken uninstall` removes the CLI-managed Prometheus release. Reused Prometheus installations remain unchanged.

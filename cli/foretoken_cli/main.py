@@ -20,45 +20,50 @@ from foretoken_cli.arguments import (
     UninstallCommand,
     parse_arguments,
 )
-from foretoken_cli.helm import Helm, platform_release
+from foretoken_cli.helm import Helm, platform_release, prometheus_release
 from foretoken_cli.kubernetes import (
     Kubectl,
     ResourceProgress,
     control_plane_deployments,
     load_deployment,
+    mark_managed_metrics_scraper_namespace,
     namespace_progress,
     platform_service_resources,
     read_progress,
     resolve_frontend_endpoint,
     timeout_seconds,
+    unmark_managed_metrics_scraper_namespace,
     wait_for_resources,
 )
 from foretoken_cli.manifest import DeploymentError, ResourceRef
+from foretoken_cli.observability import PrometheusRef, select_prometheus
 
 
-def _print_plan(action: str, detail: str) -> None:
-    """Print one stable platform lifecycle decision."""
-    print(f"{'Foretoken platform':<28} {action:<8} {detail}")
+def _print_plan(responsibility: str, action: str, detail: str) -> None:
+    """Print one stable installation lifecycle decision."""
+    print(f"{responsibility:<28} {action:<8} {detail}")
 
 
 def _install(command: InstallCommand) -> None:
-    """Install or update the CLI-owned Foretoken platform release."""
+    """Install managed observability and update the Foretoken platform release."""
     helm = Helm()
-    release = platform_release()
-    release_exists = helm.release_exists(release)
-    if release_exists and not helm.is_cli_managed(release):
+    kubectl = Kubectl()
+    platform = platform_release()
+    platform_exists = helm.release_exists(platform)
+    if platform_exists and not helm.is_cli_managed(platform):
         raise DeploymentError(
-            f"Helm release {release.display_name} is not managed by foretoken; "
+            f"Helm release {platform.display_name} is not managed by foretoken; "
             "use its existing Helm lifecycle"
         )
-    deployments = control_plane_deployments(Kubectl())
-    expected_deployment = f"{release.name}-control-plane"
+
+    deployments = control_plane_deployments(kubectl)
+    expected_deployment = f"{platform.name}-control-plane"
     unexpected_deployments = tuple(
         deployment
         for deployment in deployments
         if not (
-            release_exists
-            and deployment.namespace == release.namespace
+            platform_exists
+            and deployment.namespace == platform.namespace
             and deployment.name == expected_deployment
         )
     )
@@ -72,52 +77,127 @@ def _install(command: InstallCommand) -> None:
             f"lifecycle: {existing}"
         )
 
-    action = "Upgrade" if release_exists else "Install"
-    _print_plan(action, release.display_name)
+    managed_prometheus = prometheus_release()
+    managed_prometheus_exists = helm.release_exists(managed_prometheus)
+    selected_prometheus: PrometheusRef | None = None
+    if managed_prometheus_exists:
+        if not helm.is_cli_managed(managed_prometheus):
+            raise DeploymentError(
+                f"Helm release {managed_prometheus.display_name} is not managed by "
+                "foretoken; use its existing Helm lifecycle"
+            )
+        prometheus_action = "Upgrade"
+        prometheus_detail = managed_prometheus.display_name
+    else:
+        selected_prometheus = select_prometheus(
+            kubectl, platform.namespace, command.prometheus
+        )
+        if selected_prometheus is None:
+            prometheus_action = "Install"
+            prometheus_detail = managed_prometheus.display_name
+        else:
+            prometheus_action = "Reuse"
+            prometheus_detail = (
+                f"{selected_prometheus.namespace}/{selected_prometheus.name}"
+            )
+
+    install_managed_prometheus = (
+        managed_prometheus_exists or selected_prometheus is None
+    )
+    platform_action = "Upgrade" if platform_exists else "Install"
+    _print_plan("Prometheus", prometheus_action, prometheus_detail)
+    _print_plan("Foretoken platform", platform_action, platform.display_name)
+
+    if install_managed_prometheus:
+        helm.install_prometheus(
+            managed_prometheus,
+            command.timeout,
+            command.dry_run,
+        )
+    observability_labels = (
+        () if selected_prometheus is None else selected_prometheus.additional_labels
+    )
+    dry_run_api_versions = (
+        (
+            "monitoring.coreos.com/v1/ServiceMonitor",
+            "monitoring.coreos.com/v1/PrometheusRule",
+        )
+        if command.dry_run and install_managed_prometheus
+        else ()
+    )
     helm.install_platform(
-        release=release,
+        release=platform,
         values=command.values,
         frontend_mode=command.frontend_mode,
         gateway_name=command.gateway_name,
         gateway_namespace=command.gateway_namespace,
         gateway_section_name=command.gateway_section_name,
-        reuse_values=release_exists,
+        observability_labels=observability_labels,
+        reuse_values=platform_exists,
         timeout=command.timeout,
         dry_run=command.dry_run,
+        dry_run_api_versions=dry_run_api_versions,
     )
     if not command.dry_run:
-        _print_plan("Ready", release.display_name)
-
+        if install_managed_prometheus:
+            mark_managed_metrics_scraper_namespace(
+                kubectl, managed_prometheus.namespace
+            )
+            _print_plan("Prometheus", "Ready", managed_prometheus.display_name)
+        _print_plan("Foretoken platform", "Ready", platform.display_name)
 
 def _uninstall(command: UninstallCommand) -> None:
-    """Remove the CLI-owned platform release after user services are gone."""
+    """Remove CLI-owned releases after user services are gone."""
     helm = Helm()
-    release = platform_release()
-    if not helm.release_exists(release):
-        _print_plan("Skip", f"{release.display_name} is not installed")
-        return
-    if not helm.is_cli_managed(release):
+    kubectl = Kubectl()
+    platform = platform_release()
+    managed_prometheus = prometheus_release()
+
+    platform_exists = helm.release_exists(platform)
+    if platform_exists and not helm.is_cli_managed(platform):
         raise DeploymentError(
-            f"Helm release {release.display_name} is not managed by foretoken; "
+            f"Helm release {platform.display_name} is not managed by foretoken; "
             "use its existing Helm lifecycle"
         )
 
-    resources = platform_service_resources(Kubectl())
-    if resources:
-        remaining = ", ".join(
-            f"{resource.namespace}/{resource.display_name}" for resource in resources
-        )
-        raise DeploymentError(
-            "delete Foretoken services before uninstalling the platform: "
-            f"{remaining}"
-        )
+    prometheus_exists = helm.release_exists(managed_prometheus)
+    prometheus_managed = (
+        prometheus_exists and helm.is_cli_managed(managed_prometheus)
+    )
+    if platform_exists or prometheus_managed:
+        resources = platform_service_resources(kubectl)
+        if resources:
+            remaining = ", ".join(
+                f"{resource.namespace}/{resource.display_name}"
+                for resource in resources
+            )
+            raise DeploymentError(
+                "delete Foretoken services before uninstalling the platform: "
+                f"{remaining}"
+            )
 
-    _print_plan("Remove", release.display_name)
+    if platform_exists:
+        _print_plan("Foretoken platform", "Remove", platform.display_name)
+    else:
+        _print_plan("Foretoken platform", "Skip", "not installed")
+    if prometheus_managed:
+        _print_plan("Prometheus", "Remove", managed_prometheus.display_name)
+    elif prometheus_exists:
+        _print_plan("Prometheus", "Preserve", managed_prometheus.display_name)
+    else:
+        _print_plan("Prometheus", "Skip", "no managed release")
     if command.dry_run:
         return
-    helm.uninstall(release, command.timeout)
-    _print_plan("Removed", release.display_name)
 
+    if platform_exists:
+        helm.uninstall(platform, command.timeout)
+        _print_plan("Foretoken platform", "Removed", platform.display_name)
+    if prometheus_managed:
+        helm.uninstall(managed_prometheus, command.timeout)
+        unmark_managed_metrics_scraper_namespace(
+            kubectl, managed_prometheus.namespace
+        )
+        _print_plan("Prometheus", "Removed", managed_prometheus.display_name)
 
 def _deployment_resources(
     kustomize_path: str, kubectl: Kubectl
