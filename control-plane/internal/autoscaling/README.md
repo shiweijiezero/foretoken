@@ -50,6 +50,11 @@ queueRequests <= scaleDownQueuedRequests and activeRequests == 0
 
 This mode serves users who reason about absolute service backlog rather than average queue per replica.
 
+## Built-in adjustments
+
+- `direct` applies the Decision recommendation immediately after min/max clipping. It has no stabilization configuration.
+- `step` changes at most one replica per trigger and supports independent scale-up and scale-down stabilization windows.
+
 ## Example
 
 Top-level `spec.replicas` sets initial capacity. After startup, autoscaling keeps the service within `minReplicas` and `maxReplicas`.

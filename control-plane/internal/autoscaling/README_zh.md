@@ -50,6 +50,11 @@ queueRequests <= scaleDownQueuedRequests 且 activeRequests == 0
 
 该模式面向按服务总积压量而非每个副本平均队列进行配置的用户。
 
+## 内置调整算法
+
+- `direct` 在 min/max 裁剪后立即应用 Decision 建议，不配置稳定窗口。
+- `step` 每次触发最多变化一个副本，并支持分别配置扩容和缩容稳定窗口。
+
 ## 示例
 
 顶层 `spec.replicas` 设置初始容量；服务启动后，自动扩缩容在 `minReplicas` 和 `maxReplicas` 范围内接管副本数。

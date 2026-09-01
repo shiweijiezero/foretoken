@@ -232,10 +232,13 @@ type ModelAutoscalingDecisionConfig struct {
 }
 
 // AutoscalingAdjustmentAlgorithm selects how a desired replica count is stabilized before lifecycle resolution.
-// +kubebuilder:validation:Enum=step
+// +kubebuilder:validation:Enum=direct;step
 type AutoscalingAdjustmentAlgorithm string
 
-const AutoscalingAdjustmentAlgorithmStep AutoscalingAdjustmentAlgorithm = "step"
+const (
+	AutoscalingAdjustmentAlgorithmDirect AutoscalingAdjustmentAlgorithm = "direct"
+	AutoscalingAdjustmentAlgorithmStep   AutoscalingAdjustmentAlgorithm = "step"
+)
 
 // ModelAutoscalingScaleUpConfig controls upward stabilization.
 type ModelAutoscalingScaleUpConfig struct {
@@ -251,7 +254,8 @@ type ModelAutoscalingScaleDownConfig struct {
 	StabilizationWindow NonNegativeDuration `json:"stabilizationWindow,omitempty"`
 }
 
-// ModelAutoscalingAdjustmentConfig configures stabilization before replica changes are applied.
+// ModelAutoscalingAdjustmentConfig configures how desired replica capacity is applied.
+// +kubebuilder:validation:XValidation:rule="self.algorithm != 'direct' || (!has(self.scaleUp) && !has(self.scaleDown))",message="direct adjustment does not accept scaleUp or scaleDown configuration"
 type ModelAutoscalingAdjustmentConfig struct {
 	// +optional
 	// +kubebuilder:default=step

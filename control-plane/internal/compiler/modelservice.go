@@ -310,6 +310,9 @@ func validateAutoscalingConfig(config *inferencev1alpha1.ModelAutoscalingConfig)
 	default:
 		return fmt.Errorf("autoscaling decision algorithm is required")
 	}
+	if adjustment := config.Adjustment; adjustment != nil && adjustment.Algorithm == inferencev1alpha1.AutoscalingAdjustmentAlgorithmDirect && (adjustment.ScaleUp != nil || adjustment.ScaleDown != nil) {
+		return fmt.Errorf("autoscaling direct adjustment does not accept scaleUp or scaleDown configuration")
+	}
 	if duration, err := time.ParseDuration(string(triggerInterval(config.Trigger))); err != nil || duration <= 0 {
 		return fmt.Errorf("autoscaling trigger.interval must be a positive duration")
 	}
