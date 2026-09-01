@@ -46,22 +46,12 @@ func (step Step) Adjust(input core.AdjustmentInput) (core.ScalingAdjustment, err
 	}
 
 	current := int64(input.CurrentGroups)
-	if desired > input.CurrentGroups {
-		if step.config.MaxScaleUpGroups > 0 {
-			upper := current + int64(step.config.MaxScaleUpGroups)
-			if int64(desired) > upper {
-				desired = int32(upper)
-				reason, message = core.AdjustmentReasonScaleUpLimited, "desired capacity is limited by the scale-up step"
-			}
-		}
-	} else if desired < input.CurrentGroups {
-		if step.config.MaxScaleDownGroups > 0 {
-			lower := current - int64(step.config.MaxScaleDownGroups)
-			if int64(desired) < lower {
-				desired = int32(lower)
-				reason, message = core.AdjustmentReasonScaleDownLimited, "desired capacity is limited by the scale-down step"
-			}
-		}
+	if int64(desired) > current+1 {
+		desired = int32(current + 1)
+		reason, message = core.AdjustmentReasonScaleUpLimited, "desired capacity is limited to one additional replica"
+	} else if int64(desired) < current-1 {
+		desired = int32(current - 1)
+		reason, message = core.AdjustmentReasonScaleDownLimited, "desired capacity is limited to one fewer replica"
 	}
 	return core.ScalingAdjustment{AdjustedGroups: desired, Reason: reason, Message: message}, nil
 }

@@ -289,7 +289,7 @@ func validateAutoscalingConfig(config *inferencev1alpha1.ModelAutoscalingConfig)
 	if config == nil {
 		return nil
 	}
-	if config.MinGroups < 1 || config.MaxGroups < config.MinGroups {
+	if config.MinReplicas < 1 || config.MaxReplicas < config.MinReplicas {
 		return fmt.Errorf("autoscaling group bounds are invalid")
 	}
 	decision := config.Decision
@@ -310,21 +310,8 @@ func validateAutoscalingConfig(config *inferencev1alpha1.ModelAutoscalingConfig)
 	default:
 		return fmt.Errorf("autoscaling decision algorithm is required")
 	}
-	if adjustment := config.Adjustment; adjustment != nil {
-		if adjustment.Algorithm == inferencev1alpha1.AutoscalingAdjustmentAlgorithmDirect && (adjustment.ScaleUp != nil || adjustment.ScaleDown != nil) {
-			return fmt.Errorf("autoscaling direct adjustment does not accept scaleUp or scaleDown configuration")
-		}
-		if adjustment.ScaleUp != nil && adjustment.ScaleUp.MaxGroupsPerEvaluation != nil && *adjustment.ScaleUp.MaxGroupsPerEvaluation < 0 || adjustment.ScaleDown != nil && adjustment.ScaleDown.MaxGroupsPerEvaluation != nil && *adjustment.ScaleDown.MaxGroupsPerEvaluation < 0 {
-			return fmt.Errorf("autoscaling adjustment step limits must be non-negative")
-		}
-	}
-	for field, value := range map[string]inferencev1alpha1.Duration{
-		"autoscaling.trigger.interval":          triggerInterval(config.Trigger),
-		"autoscaling.trigger.observationMaxAge": triggerObservationMaxAge(config.Trigger),
-	} {
-		if duration, err := time.ParseDuration(string(value)); err != nil || duration <= 0 {
-			return fmt.Errorf("%s must be a positive duration", field)
-		}
+	if duration, err := time.ParseDuration(string(triggerInterval(config.Trigger))); err != nil || duration <= 0 {
+		return fmt.Errorf("autoscaling trigger.interval must be a positive duration")
 	}
 	for field, value := range map[string]inferencev1alpha1.NonNegativeDuration{
 		"autoscaling.adjustment.scaleUp.stabilizationWindow":   scaleUpWindow(config.Adjustment),
@@ -342,13 +329,6 @@ func triggerInterval(trigger *inferencev1alpha1.ModelAutoscalingTriggerConfig) i
 		return "5s"
 	}
 	return valueOrDefaultDuration(trigger.Interval, "5s")
-}
-
-func triggerObservationMaxAge(trigger *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.Duration {
-	if trigger == nil {
-		return "15s"
-	}
-	return valueOrDefaultDuration(trigger.ObservationMaxAge, "15s")
 }
 
 func scaleUpWindow(adjustment *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) inferencev1alpha1.NonNegativeDuration {

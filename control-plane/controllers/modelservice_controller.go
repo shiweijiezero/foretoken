@@ -36,7 +36,6 @@ const (
 	conditionReady             = "Ready"
 	maxDesiredGroups           = int32(1<<31 - 1)
 	defaultScalingPollInterval = 5 * time.Second
-	defaultObservationMaxAge   = 15 * time.Second
 )
 
 // PoolMetricsProvider supplies one read-only, target-attributed demand observation.

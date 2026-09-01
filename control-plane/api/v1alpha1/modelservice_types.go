@@ -167,7 +167,7 @@ type ModelPoolTemplate struct {
 	Features *ModelFeatures `json:"features,omitempty"`
 }
 
-// AutoscalingDecisionAlgorithm selects how observed demand is converted into desired Group capacity.
+// AutoscalingDecisionAlgorithm selects how observed demand is converted into desired replica capacity.
 // +kubebuilder:validation:Enum=queue;queue_threshold
 type AutoscalingDecisionAlgorithm string
 
@@ -192,16 +192,11 @@ type ModelAutoscalingTriggerConfig struct {
 	// +optional
 	// +kubebuilder:default="5s"
 	Interval Duration `json:"interval,omitempty"`
-
-	// ObservationMaxAge is the oldest telemetry the Trigger stage accepts.
-	// +optional
-	// +kubebuilder:default="15s"
-	ObservationMaxAge Duration `json:"observationMaxAge,omitempty"`
 }
 
 // ModelAutoscalingQueueDecisionConfig configures HPA-style average queue capacity.
 type ModelAutoscalingQueueDecisionConfig struct {
-	// TargetAverageQueuedRequests is the desired average waiting requests per Group.
+	// TargetAverageQueuedRequests is the desired average waiting requests per replica.
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=1
@@ -211,13 +206,13 @@ type ModelAutoscalingQueueDecisionConfig struct {
 // ModelAutoscalingQueueThresholdDecisionConfig configures absolute backlog boundaries.
 // +kubebuilder:validation:XValidation:rule="self.scaleDownQueuedRequests <= self.scaleUpQueuedRequests",message="scaleDownQueuedRequests must not exceed scaleUpQueuedRequests"
 type ModelAutoscalingQueueThresholdDecisionConfig struct {
-	// ScaleUpQueuedRequests is the queue depth above which one additional Group is recommended.
+	// ScaleUpQueuedRequests is the queue depth above which one additional replica is recommended.
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=0
 	ScaleUpQueuedRequests *int64 `json:"scaleUpQueuedRequests,omitempty"`
 
-	// ScaleDownQueuedRequests is the queue depth at or below which one fewer idle Group is recommended.
+	// ScaleDownQueuedRequests is the queue depth at or below which one fewer idle replica is recommended.
 	// +optional
 	// +kubebuilder:default=0
 	// +kubebuilder:validation:Minimum=0
@@ -236,43 +231,27 @@ type ModelAutoscalingDecisionConfig struct {
 	QueueThreshold *ModelAutoscalingQueueThresholdDecisionConfig `json:"queueThreshold,omitempty"`
 }
 
-// AutoscalingAdjustmentAlgorithm selects how a desired capacity is rate-limited before lifecycle resolution.
-// +kubebuilder:validation:Enum=direct;step
+// AutoscalingAdjustmentAlgorithm selects how a desired replica count is stabilized before lifecycle resolution.
+// +kubebuilder:validation:Enum=step
 type AutoscalingAdjustmentAlgorithm string
 
-const (
-	AutoscalingAdjustmentAlgorithmDirect AutoscalingAdjustmentAlgorithm = "direct"
-	AutoscalingAdjustmentAlgorithmStep   AutoscalingAdjustmentAlgorithm = "step"
-)
+const AutoscalingAdjustmentAlgorithmStep AutoscalingAdjustmentAlgorithm = "step"
 
-// ModelAutoscalingScaleUpConfig controls upward stabilization and per-evaluation change.
+// ModelAutoscalingScaleUpConfig controls upward stabilization.
 type ModelAutoscalingScaleUpConfig struct {
 	// +optional
 	// +kubebuilder:default="0s"
 	StabilizationWindow NonNegativeDuration `json:"stabilizationWindow,omitempty"`
-
-	// Zero disables the upward per-evaluation step limit.
-	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=0
-	MaxGroupsPerEvaluation *int32 `json:"maxGroupsPerEvaluation,omitempty"`
 }
 
-// ModelAutoscalingScaleDownConfig controls downward stabilization and per-evaluation change.
+// ModelAutoscalingScaleDownConfig controls downward stabilization.
 type ModelAutoscalingScaleDownConfig struct {
 	// +optional
 	// +kubebuilder:default="300s"
 	StabilizationWindow NonNegativeDuration `json:"stabilizationWindow,omitempty"`
-
-	// Zero disables the downward per-evaluation step limit.
-	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=0
-	MaxGroupsPerEvaluation *int32 `json:"maxGroupsPerEvaluation,omitempty"`
 }
 
-// ModelAutoscalingAdjustmentConfig configures the adjustment stage.
-// +kubebuilder:validation:XValidation:rule="self.algorithm != 'direct' || (!has(self.scaleUp) && !has(self.scaleDown))",message="direct adjustment does not accept scaleUp or scaleDown configuration"
+// ModelAutoscalingAdjustmentConfig configures stabilization before replica changes are applied.
 type ModelAutoscalingAdjustmentConfig struct {
 	// +optional
 	// +kubebuilder:default=step
@@ -285,19 +264,19 @@ type ModelAutoscalingAdjustmentConfig struct {
 	ScaleDown *ModelAutoscalingScaleDownConfig `json:"scaleDown,omitempty"`
 }
 
-// ModelAutoscalingConfig configures controller-owned Group autoscaling.
-// Automatic scaling always maintains at least one complete Group; scale-to-zero is not supported.
-// +kubebuilder:validation:XValidation:rule="self.minGroups <= self.maxGroups",message="autoscaling minGroups must not exceed maxGroups"
+// ModelAutoscalingConfig configures user-visible service replica autoscaling.
+// Automatic scaling always maintains at least one service replica; scale-to-zero is not supported.
+// +kubebuilder:validation:XValidation:rule="self.minReplicas <= self.maxReplicas",message="autoscaling minReplicas must not exceed maxReplicas"
 type ModelAutoscalingConfig struct {
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=1
-	MinGroups int32 `json:"minGroups,omitempty"`
+	MinReplicas int32 `json:"minReplicas,omitempty"`
 
 	// +kubebuilder:validation:Minimum=1
-	MaxGroups int32 `json:"maxGroups"`
+	MaxReplicas int32 `json:"maxReplicas"`
 
-	// Trigger may be omitted to use periodic evaluation every five seconds with a 15-second observation age limit.
+	// Trigger may be omitted to use periodic evaluation every five seconds.
 	// +optional
 	// +kubebuilder:default={}
 	Trigger *ModelAutoscalingTriggerConfig `json:"trigger,omitempty"`
@@ -408,7 +387,7 @@ type AutoscalingDecisionStatus struct {
 	AutoscalingStageStatus `json:",inline"`
 
 	// +kubebuilder:validation:Minimum=0
-	DesiredGroups int32 `json:"desiredGroups"`
+	DesiredReplicas int32 `json:"desiredReplicas"`
 }
 
 // AutoscalingAdjustmentStatus records capacity after stabilization and rate limiting.
@@ -416,7 +395,7 @@ type AutoscalingAdjustmentStatus struct {
 	AutoscalingStageStatus `json:",inline"`
 
 	// +kubebuilder:validation:Minimum=0
-	AdjustedGroups int32 `json:"adjustedGroups"`
+	AdjustedReplicas int32 `json:"adjustedReplicas"`
 }
 
 // AutoscalingConstraintStatus describes a lifecycle constraint that changed the adjusted capacity.
@@ -458,16 +437,16 @@ type AutoscalingTargetStatus struct {
 
 	Direction string `json:"direction"`
 
-	// AppliedGroups is the platform-resolved target successfully written to all
+	// AppliedReplicas is the platform-resolved replica count successfully written to all
 	// ModelPools represented by this status entry.
 	// +kubebuilder:validation:Minimum=0
-	AppliedGroups int32 `json:"appliedGroups"`
+	AppliedReplicas int32 `json:"appliedReplicas"`
 
 	// +kubebuilder:validation:Minimum=0
-	ReadyGroups int32 `json:"readyGroups"`
+	ReadyReplicas int32 `json:"readyReplicas"`
 
 	// +kubebuilder:validation:Minimum=0
-	RoutableGroups int32 `json:"routableGroups"`
+	RoutableReplicas int32 `json:"routableReplicas"`
 }
 
 // ServingPoolRevision selects one prepared ModelPool cohort for the active service generation.

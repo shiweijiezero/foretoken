@@ -12,12 +12,11 @@ spec:
   backend: vllm
   replicas: 1
   autoscaling:
-    minGroups: 1
-    maxGroups: 3
+    minReplicas: 1
+    maxReplicas: 3
     trigger:
       algorithm: periodic
       interval: 5s
-      observationMaxAge: 15s
     decision:
       algorithm: queue
       queue:
@@ -26,10 +25,8 @@ spec:
       algorithm: step
       scaleUp:
         stabilizationWindow: 0s
-        maxGroupsPerEvaluation: 1
       scaleDown:
         stabilizationWindow: 300s
-        maxGroupsPerEvaluation: 1
   nodes: 1
   resources:
     requests:

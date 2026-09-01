@@ -35,8 +35,6 @@ type ScalingAdjustment struct {
 }
 
 type AdjustmentConfig struct {
-	MaxScaleUpGroups             int32
-	MaxScaleDownGroups           int32
 	ScaleUpStabilizationWindow   time.Duration
 	ScaleDownStabilizationWindow time.Duration
 	History                      *RecommendationHistory

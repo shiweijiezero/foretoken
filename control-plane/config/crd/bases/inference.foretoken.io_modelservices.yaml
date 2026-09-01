@@ -62,28 +62,20 @@ spec:
                   side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.
                 properties:
                   adjustment:
-                    description: ModelAutoscalingAdjustmentConfig configures the adjustment
-                      stage.
+                    description: ModelAutoscalingAdjustmentConfig configures stabilization
+                      before replica changes are applied.
                     properties:
                       algorithm:
                         default: step
                         description: AutoscalingAdjustmentAlgorithm selects how a
-                          desired capacity is rate-limited before lifecycle resolution.
+                          desired replica count is stabilized before lifecycle resolution.
                         enum:
-                        - direct
                         - step
                         type: string
                       scaleDown:
                         description: ModelAutoscalingScaleDownConfig controls downward
-                          stabilization and per-evaluation change.
+                          stabilization.
                         properties:
-                          maxGroupsPerEvaluation:
-                            default: 1
-                            description: Zero disables the downward per-evaluation
-                              step limit.
-                            format: int32
-                            minimum: 0
-                            type: integer
                           stabilizationWindow:
                             default: 300s
                             description: NonNegativeDuration is a Go-style duration
@@ -97,15 +89,8 @@ spec:
                         type: object
                       scaleUp:
                         description: ModelAutoscalingScaleUpConfig controls upward
-                          stabilization and per-evaluation change.
+                          stabilization.
                         properties:
-                          maxGroupsPerEvaluation:
-                            default: 1
-                            description: Zero disables the upward per-evaluation step
-                              limit.
-                            format: int32
-                            minimum: 0
-                            type: integer
                           stabilizationWindow:
                             default: 0s
                             description: NonNegativeDuration is a Go-style duration
@@ -118,17 +103,13 @@ spec:
                               rule: duration(self) >= duration('0s')
                         type: object
                     type: object
-                    x-kubernetes-validations:
-                    - message: direct adjustment does not accept scaleUp or scaleDown
-                        configuration
-                      rule: self.algorithm != 'direct' || (!has(self.scaleUp) && !has(self.scaleDown))
                   decision:
                     description: ModelAutoscalingDecisionConfig configures desired-capacity
                       calculation.
                     properties:
                       algorithm:
                         description: AutoscalingDecisionAlgorithm selects how observed
-                          demand is converted into desired Group capacity.
+                          demand is converted into desired replica capacity.
                         enum:
                         - queue
                         - queue_threshold
@@ -140,7 +121,7 @@ spec:
                           targetAverageQueuedRequests:
                             default: 1
                             description: TargetAverageQueuedRequests is the desired
-                              average waiting requests per Group.
+                              average waiting requests per replica.
                             format: int64
                             minimum: 1
                             type: integer
@@ -152,14 +133,14 @@ spec:
                           scaleDownQueuedRequests:
                             default: 0
                             description: ScaleDownQueuedRequests is the queue depth
-                              at or below which one fewer idle Group is recommended.
+                              at or below which one fewer idle replica is recommended.
                             format: int64
                             minimum: 0
                             type: integer
                           scaleUpQueuedRequests:
                             default: 1
                             description: ScaleUpQueuedRequests is the queue depth
-                              above which one additional Group is recommended.
+                              above which one additional replica is recommended.
                             format: int64
                             minimum: 0
                             type: integer
@@ -175,11 +156,11 @@ spec:
                         algorithm
                       rule: 'self.algorithm == ''queue'' ? has(self.queue) && !has(self.queueThreshold)
                         : has(self.queueThreshold) && !has(self.queue)'
-                  maxGroups:
+                  maxReplicas:
                     format: int32
                     minimum: 1
                     type: integer
-                  minGroups:
+                  minReplicas:
                     default: 1
                     format: int32
                     minimum: 1
@@ -187,7 +168,7 @@ spec:
                   trigger:
                     default: {}
                     description: Trigger may be omitted to use periodic evaluation
-                      every five seconds with a 15-second observation age limit.
+                      every five seconds.
                     properties:
                       algorithm:
                         default: periodic
@@ -206,24 +187,14 @@ spec:
                         x-kubernetes-validations:
                         - message: must be a positive duration
                           rule: duration(self) > duration('0s')
-                      observationMaxAge:
-                        default: 15s
-                        description: ObservationMaxAge is the oldest telemetry the
-                          Trigger stage accepts.
-                        minLength: 2
-                        pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
-                        type: string
-                        x-kubernetes-validations:
-                        - message: must be a positive duration
-                          rule: duration(self) > duration('0s')
                     type: object
                 required:
                 - decision
-                - maxGroups
+                - maxReplicas
                 type: object
                 x-kubernetes-validations:
-                - message: autoscaling minGroups must not exceed maxGroups
-                  rule: self.minGroups <= self.maxGroups
+                - message: autoscaling minReplicas must not exceed maxReplicas
+                  rule: self.minReplicas <= self.maxReplicas
               backend:
                 enum:
                 - vllm
@@ -915,7 +886,7 @@ spec:
                       description: AutoscalingAdjustmentStatus records capacity after
                         stabilization and rate limiting.
                       properties:
-                        adjustedGroups:
+                        adjustedReplicas:
                           format: int32
                           minimum: 0
                           type: integer
@@ -928,14 +899,14 @@ spec:
                         reason:
                           type: string
                       required:
-                      - adjustedGroups
+                      - adjustedReplicas
                       - algorithm
                       - disposition
                       - reason
                       type: object
-                    appliedGroups:
+                    appliedReplicas:
                       description: |-
-                        AppliedGroups is the platform-resolved target successfully written to all
+                        AppliedReplicas is the platform-resolved replica count successfully written to all
                         ModelPools represented by this status entry.
                       format: int32
                       minimum: 0
@@ -957,7 +928,7 @@ spec:
                       properties:
                         algorithm:
                           type: string
-                        desiredGroups:
+                        desiredReplicas:
                           format: int32
                           minimum: 0
                           type: integer
@@ -969,7 +940,7 @@ spec:
                           type: string
                       required:
                       - algorithm
-                      - desiredGroups
+                      - desiredReplicas
                       - disposition
                       - reason
                       type: object
@@ -994,7 +965,7 @@ spec:
                       type: string
                     observationState:
                       type: string
-                    readyGroups:
+                    readyReplicas:
                       format: int32
                       minimum: 0
                       type: integer
@@ -1006,7 +977,7 @@ spec:
                       - Decode
                       - EPD
                       type: string
-                    routableGroups:
+                    routableReplicas:
                       format: int32
                       minimum: 0
                       type: integer
@@ -1029,16 +1000,16 @@ spec:
                       type: object
                   required:
                   - adjustment
-                  - appliedGroups
+                  - appliedReplicas
                   - decision
                   - direction
                   - evaluatedAt
                   - id
                   - kind
                   - observationState
-                  - readyGroups
+                  - readyReplicas
                   - role
-                  - routableGroups
+                  - routableReplicas
                   type: object
                 maxItems: 32
                 type: array

@@ -19,10 +19,7 @@ func TestPipelineSeparatesCapacityCalculationFromStepAdjustment(t *testing.T) {
 		TriggerAlgorithm:    autoscaling.TriggerAlgorithmPeriodic,
 		AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmStep,
 		Decision:            core.DecisionConfig{TargetAverageQueuedRequests: 2},
-		Adjustment: core.AdjustmentConfig{
-			MaxScaleUpGroups: 1,
-			History:          core.NewRecommendationHistory(),
-		},
+		Adjustment:          core.AdjustmentConfig{History: core.NewRecommendationHistory()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +80,7 @@ func TestAutomaticInsufficientDataStillEnforcesHardBounds(t *testing.T) {
 		TriggerAlgorithm:    autoscaling.TriggerAlgorithmPeriodic,
 		AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmStep,
 		Decision:            core.DecisionConfig{TargetAverageQueuedRequests: 1},
-		Adjustment:          core.AdjustmentConfig{MaxScaleUpGroups: 1, MaxScaleDownGroups: 1, History: core.NewRecommendationHistory()},
+		Adjustment:          core.AdjustmentConfig{History: core.NewRecommendationHistory()},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -136,7 +133,6 @@ func TestScaleDownStabilizationRetainsRecentHigherRecommendation(t *testing.T) {
 		AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmStep,
 		Decision:            core.DecisionConfig{TargetAverageQueuedRequests: 2},
 		Adjustment: core.AdjustmentConfig{
-			MaxScaleUpGroups:             1,
 			ScaleDownStabilizationWindow: 5 * time.Minute,
 			History:                      history,
 		},

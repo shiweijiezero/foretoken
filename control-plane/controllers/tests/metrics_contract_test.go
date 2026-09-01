@@ -30,8 +30,8 @@ func TestStaleSourceMetricsStillEnforceMaximumCapacity(t *testing.T) {
 	ctx := context.Background()
 	service := modelService("bounded", 5)
 	service.Spec.Autoscaling = &inferencev1alpha1.ModelAutoscalingConfig{
-		MinGroups: 1,
-		MaxGroups: 3,
+		MinReplicas: 1,
+		MaxReplicas: 3,
 		Decision: inferencev1alpha1.ModelAutoscalingDecisionConfig{
 			Algorithm: inferencev1alpha1.AutoscalingDecisionAlgorithmQueue,
 			Queue: &inferencev1alpha1.ModelAutoscalingQueueDecisionConfig{
@@ -58,7 +58,7 @@ func TestStaleSourceMetricsStillEnforceMaximumCapacity(t *testing.T) {
 		t.Fatalf("bounded pool/status = %#v %#v", pool.Spec, current.Status.Autoscaling)
 	}
 	status := current.Status.Autoscaling[0]
-	if status.ObservationState != string(core.ObservationStale) || status.Trigger == nil || status.Trigger.Disposition != string(core.TriggerInsufficientData) || status.Constraint == nil || status.Constraint.Reason != string(core.DesiredCapacityReasonAtMaximum) || status.Adjustment.AdjustedGroups != 3 || status.AppliedGroups != 3 {
+	if status.ObservationState != string(core.ObservationStale) || status.Trigger == nil || status.Trigger.Disposition != string(core.TriggerInsufficientData) || status.Constraint == nil || status.Constraint.Reason != string(core.DesiredCapacityReasonAtMaximum) || status.Adjustment.AdjustedReplicas != 3 || status.AppliedReplicas != 3 {
 		t.Fatalf("bounded autoscaling status = %#v", status)
 	}
 }
@@ -68,8 +68,8 @@ func TestMetricsAggregationDrivesPoolScalingContract(t *testing.T) {
 	ctx := context.Background()
 	service := modelService("autoscaled", 1)
 	service.Spec.Autoscaling = &inferencev1alpha1.ModelAutoscalingConfig{
-		MinGroups: 1,
-		MaxGroups: 2,
+		MinReplicas: 1,
+		MaxReplicas: 2,
 		Decision: inferencev1alpha1.ModelAutoscalingDecisionConfig{
 			Algorithm: inferencev1alpha1.AutoscalingDecisionAlgorithmQueue,
 			Queue: &inferencev1alpha1.ModelAutoscalingQueueDecisionConfig{
@@ -96,7 +96,7 @@ func TestMetricsAggregationDrivesPoolScalingContract(t *testing.T) {
 		t.Fatalf("scaled pool and target attribution = pool %#v targets %#v", pool.Spec, metrics.targets)
 	}
 	current := get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.ModelService))
-	if len(current.Status.Autoscaling) != 1 || current.Status.Autoscaling[0].ObservationState != string(core.ObservationFresh) || current.Status.Autoscaling[0].Decision.DesiredGroups != 2 || current.Status.Autoscaling[0].AppliedGroups != 2 {
+	if len(current.Status.Autoscaling) != 1 || current.Status.Autoscaling[0].ObservationState != string(core.ObservationFresh) || current.Status.Autoscaling[0].Decision.DesiredReplicas != 2 || current.Status.Autoscaling[0].AppliedReplicas != 2 {
 		t.Fatalf("autoscaling aggregation status = %#v", current.Status.Autoscaling)
 	}
 }

@@ -1,6 +1,6 @@
 # Autoscaling
 
-Autoscaling operates on complete ModelGroups. It never scales individual Pods, ranks, or E/P/D members independently.
+The public API scales service replicas. The controller materializes each replica as one complete ModelGroup and never scales individual Pods, ranks, or E/P/D members independently.
 
 ```text
 ScalingSnapshot
@@ -11,11 +11,11 @@ ScalingSnapshot
 ```
 
 - **Trigger** decides whether the current observation can be evaluated. The built-in `periodic` trigger accepts every complete fresh observation supplied by the controller polling loop.
-- **Decision** calculates desired capacity. `queue` follows Kubernetes HPA `AverageValue` semantics; `queue_threshold` provides one-Group recommendations at absolute backlog boundaries.
-- **Adjustment** applies stabilization, hard bounds, and per-evaluation Group limits. A recent higher recommendation delays scale down in the same way as an HPA stabilization window.
-- **Resolver** enforces lifecycle ownership. Capacity changes wait for an in-progress Group transition, while configured min/max bounds remain mandatory.
+- **Decision** calculates desired capacity. `queue` follows Kubernetes HPA `AverageValue` semantics; `queue_threshold` provides one-replica recommendations at absolute backlog boundaries.
+- **Adjustment** applies stabilization, hard bounds, and a fixed one-replica step. A recent higher recommendation delays scale down in the same way as an HPA stabilization window.
+- **Resolver** enforces lifecycle ownership. Capacity changes wait for an in-progress ModelGroup transition, while configured min/max bounds remain mandatory.
 
-The public Trigger block may be omitted; it defaults to `periodic` evaluation every five seconds with a 15-second observation age limit. Missing, stale, or incomplete observations hold current capacity and are never interpreted as zero demand. Automatic scaling maintains at least one Group; scale-to-zero is not supported.
+The public Trigger block may be omitted; it defaults to `periodic` evaluation every five seconds. The controller accepts observations from the latest three polling intervals, so the default freshness limit is 15 seconds. Missing, stale, or incomplete observations hold current capacity and are never interpreted as zero demand. Automatic scaling maintains at least one replica; scale-to-zero is not supported.
 
 ## Queue demand
 
@@ -33,33 +33,32 @@ Runtime preparation is independent demand. Backend dispatch and scheduler gauges
 ### `queue`
 
 ```text
-desiredGroups = ceil(queueRequests / targetAverageQueuedRequests)
+desiredReplicas = ceil(queueRequests / targetAverageQueuedRequests)
 ```
 
-A positive queue can recommend either higher or lower capacity from the average-value formula. With no queued requests, active requests hold current capacity; a fully idle target recommends zero and `minGroups` supplies the automatic capacity floor.
+A positive queue can recommend either higher or lower capacity from the average-value formula. With no queued requests, active requests hold current capacity; a fully idle target recommends zero and `minReplicas` supplies the automatic capacity floor.
 
 ### `queue_threshold`
 
 ```text
 queueRequests > scaleUpQueuedRequests
-→ recommend currentGroups + 1
+→ recommend currentReplicas + 1
 
 queueRequests <= scaleDownQueuedRequests and activeRequests == 0
-→ recommend currentGroups - 1
+→ recommend currentReplicas - 1
 ```
 
-This mode serves users who reason about absolute service backlog rather than average queue per Group.
+This mode serves users who reason about absolute service backlog rather than average queue per replica.
 
 ## Example
 
 ```yaml
 autoscaling:
-  minGroups: 1
-  maxGroups: 8
+  minReplicas: 1
+  maxReplicas: 8
   trigger:
     algorithm: periodic
     interval: 5s
-    observationMaxAge: 15s
   decision:
     algorithm: queue
     queue:
@@ -68,10 +67,8 @@ autoscaling:
     algorithm: step
     scaleUp:
       stabilizationWindow: 0s
-      maxGroupsPerEvaluation: 1
     scaleDown:
       stabilizationWindow: 300s
-      maxGroupsPerEvaluation: 1
 ```
 
-`desiredGroups`, `adjustedGroups`, and `appliedGroups` in status show the output of Decision, Adjustment, and lifecycle resolution respectively. Trigger, Decision, Adjustment, and Constraint reasons are reported separately.
+`desiredReplicas`, `adjustedReplicas`, and `appliedReplicas` in status show the output of Decision, Adjustment, and lifecycle resolution respectively. Trigger, Decision, Adjustment, and Constraint reasons are reported separately.

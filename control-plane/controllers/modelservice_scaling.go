@@ -31,7 +31,7 @@ func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alph
 		Autoscaler:        autoscaling.Manual(),
 		Limits:            core.CapacityLimits{MinGroups: 0, MaxGroups: maxDesiredGroups},
 		PollingInterval:   defaultScalingPollInterval,
-		ObservationMaxAge: defaultObservationMaxAge,
+		ObservationMaxAge: 3 * defaultScalingPollInterval,
 	}
 	autoscalingConfig := service.Spec.Autoscaling
 	if autoscalingConfig == nil {
@@ -42,10 +42,7 @@ func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alph
 	if err != nil {
 		return modelScalingConfig{}, fmt.Errorf("autoscaling trigger.interval: %w", err)
 	}
-	observationMaxAge, err := durationOrDefault(triggerObservationMaxAge(autoscalingConfig.Trigger), defaultObservationMaxAge)
-	if err != nil {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling trigger.observationMaxAge: %w", err)
-	}
+	observationMaxAge := 3 * pollingInterval
 	scaleUpWindow, err := nonNegativeDurationOrDefault(scaleUpStabilizationWindow(autoscalingConfig.Adjustment), 0)
 	if err != nil {
 		return modelScalingConfig{}, fmt.Errorf("autoscaling adjustment.scaleUp.stabilizationWindow: %w", err)
@@ -61,8 +58,6 @@ func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alph
 		AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmName(adjustmentAlgorithm(autoscalingConfig.Adjustment)),
 		Decision:            decisionConfig(autoscalingConfig.Decision),
 		Adjustment: core.AdjustmentConfig{
-			MaxScaleUpGroups:             scaleUpMaxGroups(autoscalingConfig.Adjustment),
-			MaxScaleDownGroups:           scaleDownMaxGroups(autoscalingConfig.Adjustment),
 			ScaleUpStabilizationWindow:   scaleUpWindow,
 			ScaleDownStabilizationWindow: scaleDownWindow,
 			History:                      reconciler.autoscalingRecommendationHistory(),
@@ -72,7 +67,7 @@ func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alph
 		return modelScalingConfig{}, err
 	}
 	config.Autoscaler = selected
-	config.Limits = core.CapacityLimits{MinGroups: autoscalingConfig.MinGroups, MaxGroups: autoscalingConfig.MaxGroups}
+	config.Limits = core.CapacityLimits{MinGroups: autoscalingConfig.MinReplicas, MaxGroups: autoscalingConfig.MaxReplicas}
 	config.PollingInterval = pollingInterval
 	config.ObservationMaxAge = observationMaxAge
 	return config, nil
@@ -92,13 +87,6 @@ func triggerInterval(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) in
 	return config.Interval
 }
 
-func triggerObservationMaxAge(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.Duration {
-	if config == nil {
-		return ""
-	}
-	return config.ObservationMaxAge
-}
-
 func decisionConfig(config inferencev1alpha1.ModelAutoscalingDecisionConfig) core.DecisionConfig {
 	decision := core.DecisionConfig{}
 	if config.Queue != nil {
@@ -116,20 +104,6 @@ func adjustmentAlgorithm(config *inferencev1alpha1.ModelAutoscalingAdjustmentCon
 		return ""
 	}
 	return config.Algorithm
-}
-
-func scaleUpMaxGroups(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) int32 {
-	if config == nil || config.ScaleUp == nil {
-		return 1
-	}
-	return int32OrDefault(config.ScaleUp.MaxGroupsPerEvaluation, 1)
-}
-
-func scaleDownMaxGroups(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) int32 {
-	if config == nil || config.ScaleDown == nil {
-		return 1
-	}
-	return int32OrDefault(config.ScaleDown.MaxGroupsPerEvaluation, 1)
 }
 
 func scaleUpStabilizationWindow(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) inferencev1alpha1.NonNegativeDuration {
@@ -318,7 +292,7 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 					Reason:      string(decision.DesiredCapacity.Reason),
 					Message:     decision.DesiredCapacity.Message,
 				},
-				DesiredGroups: decision.DesiredCapacity.Groups,
+				DesiredReplicas: decision.DesiredCapacity.Groups,
 			},
 			Adjustment: inferencev1alpha1.AutoscalingAdjustmentStatus{
 				AutoscalingStageStatus: inferencev1alpha1.AutoscalingStageStatus{
@@ -327,13 +301,13 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 					Reason:      string(decision.Adjustment.Reason),
 					Message:     decision.Adjustment.Message,
 				},
-				AdjustedGroups: decision.Adjustment.AdjustedGroups,
+				AdjustedReplicas: decision.Adjustment.AdjustedGroups,
 			},
-			Constraint:     constraint,
-			Direction:      string(decision.Direction),
-			AppliedGroups:  decision.AppliedGroups,
-			ReadyGroups:    snapshot.Capacity.ReadyGroups,
-			RoutableGroups: snapshot.Capacity.RoutableGroups,
+			Constraint:       constraint,
+			Direction:        string(decision.Direction),
+			AppliedReplicas:  decision.AppliedGroups,
+			ReadyReplicas:    snapshot.Capacity.ReadyGroups,
+			RoutableReplicas: snapshot.Capacity.RoutableGroups,
 		})
 	}
 	resolved := append([]compiler.ModelPool(nil), compiledPools...)
