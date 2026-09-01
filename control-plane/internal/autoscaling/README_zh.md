@@ -1,6 +1,6 @@
 # 自动扩缩容
 
-公共 API 调整服务副本数。控制器将每个副本物化为一个完整 ModelGroup，不会独立调整 Pod、rank 或 E/P/D 成员数量。
+用户通过公共 API 调整模型服务的副本数。控制器内部，一个服务副本对应一个完整的 ModelGroup；ModelGroup 可以包含多个 Pod、rank 或 E/P/D 成员，这些成员始终作为一个整体扩缩。
 
 ```text
 ScalingSnapshot
@@ -10,25 +10,29 @@ ScalingSnapshot
 → ScalingDecision
 ```
 
-- **Trigger** 判断当前观测是否可以进入评估。内置 `periodic` trigger 接受控制器轮询得到的每个完整、新鲜观测。
-- **Decision** 计算期望容量。`queue` 对齐 Kubernetes HPA 的 `AverageValue` 语义；`queue_threshold` 在绝对积压边界上给出单副本调整建议。
-- **Adjustment** 应用稳定窗口、硬容量边界和固定的单副本步进。近期较高的容量建议会像 HPA stabilization window 一样延迟缩容。
-- **Resolver** 负责生命周期约束。ModelGroup 转换未完成时保持当前容量，同时始终执行配置的最小和最大容量边界。
+扩缩容分为四个职责清晰的阶段：
 
-公开 Trigger 配置可以省略，默认每 5 秒执行一次 `periodic` 评估。控制器接受最近三个轮询周期内的观测，因此默认 freshness 上限为 15 秒。观测缺失、过期或不完整时保持当前容量，不会将其解释为零需求。自动扩缩容至少维持一个副本，当前不支持 scale-to-zero。
+- **触发阶段（Trigger）**：判断当前观测是否完整、有效，可以用于本轮评估。内置 `periodic` 算法按配置的时间间隔执行。
+- **容量决策阶段（Decision）**：根据请求积压计算期望副本数。`queue` 采用 Kubernetes HPA 的平均值目标语义；`queue_threshold` 根据服务的总积压量给出增减一个副本的建议。
+- **调整阶段（Adjustment）**：决定是否立即应用建议，或者通过稳定窗口延迟扩缩。`step` 每次最多增减一个副本。
+- **生命周期解析阶段（Resolver）**：执行最小和最大副本数限制，并在 ModelGroup 仍处于创建、更新或排空状态时保持当前容量。
 
-## 队列需求
+`trigger` 可以省略，默认每 5 秒执行一次 `periodic` 评估。控制器只接受最近三个轮询周期内采集的指标，因此默认有效期为 15 秒。指标缺失、过期或不完整时，控制器会保持当前副本数，不会把它们当成零负载。
 
-控制器组合两类具有独立 ownership 的信号：
+自动扩缩容至少保留一个副本，当前不支持缩容到零。
+
+## 请求积压量
+
+控制器组合两类来源明确的等待请求：
 
 ```text
-runtime 准备队列
-+ max(后端分发队列, 推理调度器等待请求)
+等待模型运行环境准备的请求数
++ max(等待后端开始响应的请求数, 推理调度器中的等待请求数)
 ```
 
-runtime 准备属于独立需求。后端分发与调度器指标可能短暂观察到同一请求，因此只计入两者较大的聚合值。存在 model-server 活跃请求时不会执行空闲缩容。
+等待模型运行环境准备的请求属于独立需求。后端分发阶段和推理调度器可能短暂观察到同一个请求，因此两者只取较大值，避免重复计数。模型服务器仍有正在处理的请求时，不会按完全空闲状态缩容。
 
-## 内置决策
+## 内置容量决策算法
 
 ### `queue`
 
@@ -36,7 +40,7 @@ runtime 准备属于独立需求。后端分发与调度器指标可能短暂观
 desiredReplicas = ceil(queueRequests / targetAverageQueuedRequests)
 ```
 
-队列为正时，平均值公式可以建议更高或更低容量。没有排队但仍有活跃请求时保持当前容量；完全空闲时建议容量为零，再由 `minReplicas` 提供自动扩缩容的容量下限。
+该算法按每个副本期望承担的平均等待请求数计算容量，因此既可以建议扩容，也可以建议缩容。没有等待请求但仍有正在处理的请求时，保持当前副本数；服务完全空闲时建议容量为零，再由 `minReplicas` 保证最小副本数。
 
 ### `queue_threshold`
 
@@ -48,16 +52,16 @@ queueRequests <= scaleDownQueuedRequests 且 activeRequests == 0
 → 建议 currentReplicas - 1
 ```
 
-该模式面向按服务总积压量而非每个副本平均队列进行配置的用户。
+该算法适合希望直接按服务总积压量设置扩缩边界的用户。
 
 ## 内置调整算法
 
-- `direct` 在 min/max 裁剪后立即应用 Decision 建议，不配置稳定窗口。
-- `step` 每次触发最多变化一个副本，并支持分别配置扩容和缩容稳定窗口。
+- `direct`：将容量决策裁剪到 `minReplicas` 和 `maxReplicas` 范围后立即应用，不使用稳定窗口。
+- `step`：每次触发最多增减一个副本，并可分别配置扩容和缩容稳定窗口。
 
-## 示例
+## 配置示例
 
-顶层 `spec.replicas` 设置初始容量；服务启动后，自动扩缩容在 `minReplicas` 和 `maxReplicas` 范围内接管副本数。
+顶层 `spec.replicas` 设置服务启动时的初始副本数。服务启动后，自动扩缩容在 `minReplicas` 和 `maxReplicas` 范围内接管副本数。
 
 ```yaml
 autoscaling:
@@ -78,4 +82,4 @@ autoscaling:
       stabilizationWindow: 300s
 ```
 
-status 中的 `desiredReplicas`、`adjustedReplicas` 和 `appliedReplicas` 分别表示 Decision、Adjustment 和生命周期解析后的容量。Trigger、Decision、Adjustment 与 Constraint 原因会分别发布。
+状态中的 `desiredReplicas`、`adjustedReplicas` 和 `appliedReplicas` 分别表示容量决策、调整阶段和生命周期解析后的副本数。触发、容量决策、调整和生命周期约束的原因会分别记录，便于排查扩缩行为。
