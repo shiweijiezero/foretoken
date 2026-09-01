@@ -138,6 +138,8 @@ Learn from the organization and ownership of those documents; do not combine or 
 
 User documentation should begin with purpose and a minimal executable example. Move exhaustive configuration, architecture, and troubleshooting details behind the main path. Describe only implemented behavior and necessary limits. Do not publish PR plans, acceptance criteria, implementation diaries, private wire contracts, source-file tours, or future capabilities as current behavior.
 
+When adding a capability, do not mechanically append another paragraph to the existing documentation. Reconsider the reader path and section structure, state shared behavior once, and use a table or focused subsections for real differences. Remove replaced, repeated, or no-longer-actionable content so feature growth does not become documentation growth by accumulation.
+
 Introduce each command block with a sentence that states what the reader is about to do and, when relevant, what the command produces or where to continue. A heading alone is not sufficient context. Present mutually exclusive alternatives, such as pip and uv, with separate prose labels and code blocks instead of `# or` comments inside one block. Keep commands in one block only when readers should run them in sequence.
 
 Keep English and Chinese documentation aligned in capability, prerequisites, commands, defaults, and limitations. Update both when user-visible behavior changes.

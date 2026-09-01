@@ -31,7 +31,7 @@ uv pip install -e .
 foretoken install
 ```
 
-命令会复用一个兼容的 Prometheus；如果没有，则安装由 CLI 管理的监控栈。只有自动发现得到多个兼容实例时，才需要使用 `--prometheus NAMESPACE/NAME` 指定。
+命令会复用一个兼容的 Prometheus；如果没有，则安装由 CLI 管理的监控栈。发现 NVIDIA GPU 节点时，命令会复用一个已就绪且 ServiceMonitor 有效的 DCGM Exporter；没有 exporter 时才安装由 CLI 管理的版本。共享 Prometheus 必须能够选择该 ServiceMonitor。已有 exporter 重复、不健康、覆盖不全或无法采集时会停止安装，不会继续叠加。CLI 不安装 GPU 驱动或 device plugin。只有自动发现得到多个兼容实例时，才需要使用 `--prometheus NAMESPACE/NAME` 指定。
 
 网关模式要求集群已经安装 Gateway Controller。未提供已有 Gateway 信息时，CLI 会创建专用的 `GatewayClass` 和 `Gateway`：
 

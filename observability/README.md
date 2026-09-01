@@ -19,6 +19,14 @@ foretoken install
 
 The CLI reuses the single compatible Prometheus instance in the cluster. If none exists, it installs a managed kube-prometheus-stack release.
 
+GPU metric collection depends on the device platform:
+
+| Device | CLI behavior |
+| --- | --- |
+| NVIDIA | Reuse a compatible DCGM Exporter, or install a managed exporter when none exists |
+
+An existing exporter must be ready, cover the GPU nodes, and have a ServiceMonitor selected by Prometheus. Installation stops when existing exporters conflict or the collection path is incomplete. In mixed CPU/GPU clusters, label GPU nodes with `nvidia.com/gpu.present=true` or `feature.node.kubernetes.io/pci-10de.present=true`. GPU drivers and device plugins remain platform-owned.
+
 Only select Prometheus explicitly when automatic discovery reports multiple compatible instances. First allow the Prometheus namespace to collect Foretoken metrics, then identify the instance:
 
 ```bash
@@ -97,4 +105,4 @@ Profiling affects inference performance. Use a small workload and record the mod
 
 ## Remove collection
 
-After all Foretoken services are deleted, `foretoken uninstall` removes the CLI-managed Prometheus release. Reused Prometheus installations remain unchanged.
+After all Foretoken services are deleted, `foretoken uninstall` removes CLI-managed Prometheus and DCGM Exporter releases. Reused installations remain unchanged.

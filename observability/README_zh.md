@@ -19,6 +19,14 @@ foretoken install
 
 CLI 会复用集群中唯一兼容的 Prometheus；如果没有，则安装由 CLI 管理的 kube-prometheus-stack。
 
+GPU 指标的接入方式取决于设备平台：
+
+| 设备 | CLI 行为 |
+| --- | --- |
+| NVIDIA | 复用兼容的 DCGM Exporter；没有可用实例时安装由 CLI 管理的 exporter |
+
+已有 exporter 必须就绪、覆盖 GPU 节点，并且其 ServiceMonitor 已被 Prometheus 选择。发现多个冲突实例或采集链路不完整时，安装会停止。CPU/GPU 混合集群需要使用 `nvidia.com/gpu.present=true` 或 `feature.node.kubernetes.io/pci-10de.present=true` 标识 GPU 节点。GPU 驱动和 device plugin 继续由平台管理。
+
 只有自动发现得到多个兼容实例时，才需要显式选择 Prometheus。先允许该 Prometheus 所在的命名空间采集 Foretoken 指标，再指定实例：
 
 ```bash
@@ -97,4 +105,4 @@ Prometheus 评估服务不可用、错误率升高、队列持续积压、延迟
 
 ## 停止采集
 
-删除全部 Foretoken 服务后，`foretoken uninstall` 会删除由 CLI 管理的 Prometheus 发布实例；复用的 Prometheus 保持不变。
+删除全部 Foretoken 服务后，`foretoken uninstall` 会删除由 CLI 管理的 Prometheus 和 DCGM Exporter 发布实例；复用的组件保持不变。
