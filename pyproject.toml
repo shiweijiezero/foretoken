@@ -41,6 +41,7 @@ foretoken = "foretoken_cli.main:main"
 [tool.setuptools]
 packages = [
     "foretoken_cli",
+    "foretoken_cli.accelerators",
     "benchmarks",
     "benchmarks.client",
     "benchmarks.deployment",

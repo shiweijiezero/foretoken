@@ -21,7 +21,9 @@ Frontend and model-server expose `/metrics` without requiring Prometheus. The no
 foretoken install
 ```
 
-The command reuses the unique compatible Prometheus instance in the cluster. If none exists, it installs a CLI-managed kube-prometheus-stack release. When more than one compatible instance exists, select one explicitly:
+The command reuses the unique compatible Prometheus instance in the cluster. If none exists, it installs a CLI-managed kube-prometheus-stack release. NVIDIA GPU nodes also receive a DCGM Exporter when none exists. One ready exporter that covers every GPU node is reused only when it has a working ServiceMonitor selected by Prometheus. Duplicate, unhealthy, incomplete, or unmonitored exporters stop installation instead of being overlaid. Mixed CPU/GPU clusters must identify GPU nodes with `nvidia.com/gpu.present=true` or `feature.node.kubernetes.io/pci-10de.present=true`; the CLI does not guess node placement or install drivers.
+
+When more than one compatible Prometheus instance exists, select one explicitly:
 
 ```bash
 kubectl label namespace monitoring \
@@ -53,7 +55,7 @@ Confirm that Foretoken targets are `UP` at <http://127.0.0.1:9090/targets> and t
 
 ## Remove the integration
 
-`foretoken uninstall` removes the CLI-managed Prometheus release after all Foretoken services are deleted. A reused Prometheus installation is preserved.
+`foretoken uninstall` removes CLI-managed Prometheus and DCGM Exporter releases after all Foretoken services are deleted. Reused installations are preserved.
 
 ## Recording rules
 

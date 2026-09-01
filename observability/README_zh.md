@@ -21,7 +21,9 @@ Frontend 和 model-server 无需 Prometheus 即可提供 `/metrics`。普通安�
 foretoken install
 ```
 
-命令会复用集群中唯一兼容的 Prometheus；如果没有，则安装由 CLI 管理的 kube-prometheus-stack。存在多个兼容实例时，再显式指定：
+命令会复用集群中唯一兼容的 Prometheus；如果没有，则安装由 CLI 管理的 kube-prometheus-stack。发现 NVIDIA GPU 节点时，如果没有 exporter，CLI 会安装 DCGM Exporter；已有一个完整覆盖全部 GPU 节点的就绪 exporter，并且其 ServiceMonitor 有效且被 Prometheus 选择时，才会复用。已有 exporter 重复、不健康、覆盖不全或无法采集时会停止安装，不会继续叠加。CPU/GPU 混合集群需要使用 `nvidia.com/gpu.present=true` 或 `feature.node.kubernetes.io/pci-10de.present=true` 标识 GPU 节点；CLI 不猜测节点范围，也不安装驱动。
+
+存在多个兼容 Prometheus 实例时，再显式指定：
 
 ```bash
 kubectl label namespace monitoring \
@@ -53,7 +55,7 @@ kubectl port-forward \
 
 ## 移除接入
 
-删除全部 Foretoken 服务后，`foretoken uninstall` 会删除 CLI 管理的 Prometheus 发布实例；复用的 Prometheus 不受影响。
+删除全部 Foretoken 服务后，`foretoken uninstall` 会删除由 CLI 管理的 Prometheus 和 DCGM Exporter 发布实例；复用的组件不受影响。
 
 ## 记录规则
 
