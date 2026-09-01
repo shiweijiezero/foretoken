@@ -20,6 +20,13 @@ INFERENCE_ENGINE_IMAGE=${INFERENCE_ENGINE_IMAGE:-ghcr.io/shiweijiezero/foretoken
 IMAGE_PULL_SECRET=${IMAGE_PULL_SECRET:-}
 LOCAL_IMAGE_PREFIX=${LOCAL_IMAGE_PREFIX:-foretoken-dev}
 K3D_CONFIG=${K3D_CONFIG:-$ROOT/deploy/k3d/config.yaml}
+DEV_IMAGE_OUTPUT=${DEV_IMAGE_OUTPUT:-}
+DEV_IMAGE_PLAN_ONLY=${DEV_IMAGE_PLAN_ONLY:-false}
+
+if [[ "$DEV_IMAGE_PLAN_ONLY" == true && -z "$DEV_IMAGE_OUTPUT" ]]; then
+  printf 'DEV_IMAGE_PLAN_ONLY requires DEV_IMAGE_OUTPUT\n' >&2
+  exit 1
+fi
 
 for command in docker helm kubectl make; do
   command -v "$command" >/dev/null || {
@@ -35,6 +42,47 @@ cleanup() {
 }
 trap cleanup EXIT
 
+write_image_output() {
+  python3 - "$DEV_IMAGE_OUTPUT" \
+    "$IMAGE_MODE" \
+    "$CONTROL_PLANE_DEPLOY_IMAGE" \
+    "$FRONTEND_DEPLOY_IMAGE" \
+    "$MODEL_SERVER_DEPLOY_IMAGE" \
+    "$CONTROL_PLANE_CHANGED" \
+    "$FRONTEND_CHANGED" \
+    "$MODEL_SERVER_CHANGED" <<'PY'
+import json
+import sys
+
+(
+    output_path,
+    image_mode,
+    control_plane_deploy_image,
+    frontend_deploy_image,
+    model_server_deploy_image,
+    control_plane_changed,
+    frontend_changed,
+    model_server_changed,
+) = sys.argv[1:]
+
+with open(output_path, "w", encoding="utf-8") as output:
+    json.dump(
+        {
+            "IMAGE_MODE": image_mode,
+            "CONTROL_PLANE_DEPLOY_IMAGE": control_plane_deploy_image,
+            "FRONTEND_DEPLOY_IMAGE": frontend_deploy_image,
+            "MODEL_SERVER_DEPLOY_IMAGE": model_server_deploy_image,
+            "CONTROL_PLANE_CHANGED": control_plane_changed == "true",
+            "FRONTEND_CHANGED": frontend_changed == "true",
+            "MODEL_SERVER_CHANGED": model_server_changed == "true",
+        },
+        output,
+        separators=(",", ":"),
+    )
+    output.write("\n")
+PY
+}
+
 if [[ -n "$CLUSTER" && -n "$KIND_CLUSTER" ]]; then
   printf 'set either CLUSTER or KIND_CLUSTER, not both\n' >&2
   exit 1
@@ -42,10 +90,20 @@ fi
 
 if [[ -z "$CLUSTER" && -z "$KIND_CLUSTER" ]]; then
   current_context=$(kubectl config current-context 2>/dev/null || true)
-  if [[ "$current_context" == kind-* ]]; then
-    KIND_CLUSTER=${current_context#kind-}
-  elif [[ "$current_context" == k3d-* ]]; then
-    CLUSTER=${current_context#k3d-}
+  current_nodes=$(kubectl get nodes -o name 2>/dev/null | sed 's#^node/##' | sort || true)
+  if [[ "$current_context" == kind-* ]] && command -v kind >/dev/null; then
+    candidate=${current_context#kind-}
+    kind_nodes=$(kind get nodes --name "$candidate" 2>/dev/null | sort || true)
+    if [[ -n "$current_nodes" && "$current_nodes" == "$kind_nodes" ]]; then
+      KIND_CLUSTER=$candidate
+    fi
+  elif [[ "$current_context" == k3d-* ]] && command -v k3d >/dev/null; then
+    candidate=${current_context#k3d-}
+    if k3d cluster get "$candidate" >/dev/null 2>&1 &&
+      [[ -n "$current_nodes" ]] &&
+      ! grep -Ev "^k3d-${candidate}-" <<<"$current_nodes" >/dev/null; then
+      CLUSTER=$candidate
+    fi
   fi
 fi
 
@@ -95,7 +153,11 @@ elif [[ -n "$CLUSTER" ]]; then
   LOCAL_CLUSTER=k3d
 else
   [[ -n "$REGISTRY" ]] || {
-    printf 'set REGISTRY for the Kubernetes deployment\n' >&2
+    if [[ "${FORETOKEN_CLI_SOURCE:-false}" == true ]]; then
+      printf 'current context requires: foretoken install -e PATH --registry REGISTRY\n' >&2
+    else
+      printf 'set REGISTRY for the Kubernetes deployment\n' >&2
+    fi
     exit 1
   }
 fi
@@ -110,6 +172,22 @@ fi
 CONTROL_PLANE_IMAGE="$LOCAL_IMAGE_PREFIX-control-plane:$TAG"
 FRONTEND_IMAGE="$LOCAL_IMAGE_PREFIX-frontend:$TAG"
 MODEL_SERVER_IMAGE="$LOCAL_IMAGE_PREFIX-model-server:$TAG"
+
+if [[ "$DEV_IMAGE_PLAN_ONLY" == true ]]; then
+  CONTROL_PLANE_DEPLOY_IMAGE=$CONTROL_PLANE_IMAGE
+  FRONTEND_DEPLOY_IMAGE=$FRONTEND_IMAGE
+  MODEL_SERVER_DEPLOY_IMAGE=$MODEL_SERVER_IMAGE
+  if [[ "$IMAGE_MODE" == registry ]]; then
+    CONTROL_PLANE_DEPLOY_IMAGE="$REGISTRY/control-plane:source"
+    FRONTEND_DEPLOY_IMAGE="$REGISTRY/frontend:source"
+    MODEL_SERVER_DEPLOY_IMAGE="$REGISTRY/model-server:source"
+  fi
+  CONTROL_PLANE_CHANGED=true
+  FRONTEND_CHANGED=true
+  MODEL_SERVER_CHANGED=true
+  write_image_output
+  exit 0
+fi
 
 CONTROL_PLANE_BEFORE=$(image_id "$CONTROL_PLANE_IMAGE")
 FRONTEND_BEFORE=$(image_id "$FRONTEND_IMAGE")
@@ -129,12 +207,15 @@ MODEL_SERVER_CHANGED=false
 [[ "$MODEL_SERVER_BEFORE" != "$MODEL_SERVER_AFTER" ]] && MODEL_SERVER_CHANGED=true
 
 RELEASE_EXISTS=false
-if helm status "$RELEASE" --namespace "$PLATFORM_NAMESPACE" >/dev/null 2>&1; then
+if RELEASE_STATUS=$(helm status "$RELEASE" --namespace "$PLATFORM_NAMESPACE" 2>&1); then
   RELEASE_EXISTS=true
-else
+elif grep -q 'release: not found' <<<"$RELEASE_STATUS"; then
   CONTROL_PLANE_CHANGED=true
   FRONTEND_CHANGED=true
   MODEL_SERVER_CHANGED=true
+else
+  printf '%s\n' "$RELEASE_STATUS" >&2
+  exit 1
 fi
 
 if [[ "$RELEASE_EXISTS" == true ]]; then
@@ -195,6 +276,11 @@ else
     docker tag "$MODEL_SERVER_IMAGE" "$MODEL_SERVER_DEPLOY_IMAGE"
     docker push "$MODEL_SERVER_DEPLOY_IMAGE"
   fi
+fi
+
+if [[ -n "$DEV_IMAGE_OUTPUT" ]]; then
+  write_image_output
+  exit 0
 fi
 
 helm_args=(

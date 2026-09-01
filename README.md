@@ -59,6 +59,8 @@ Use the CLI to install the Foretoken platform into the cluster selected by the a
 foretoken install
 ```
 
+To install the current source tree instead, run `foretoken install -e .`; remote Kubernetes contexts also require `--registry`.
+
 #### Gateway mode
 
 First set the public hostname under `spec` in `examples/quickstart/frontend.yaml`:

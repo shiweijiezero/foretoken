@@ -84,12 +84,11 @@ deployment_image() {
   kubectl get deployment \
     --namespace "$1" \
     --selector "$2" \
-    -o jsonpath='{.items[0].spec.template.spec.containers[0].image}' \
-    2>/dev/null || true
+    -o jsonpath='{.items[0].spec.template.spec.containers[0].image}'
 }
 
 deployments_exist() {
-  [[ -n "$(kubectl get deployment --namespace "$1" --selector "$2" -o name 2>/dev/null)" ]]
+  [[ -n "$(kubectl get deployment --namespace "$1" --selector "$2" -o name)" ]]
 }
 
 restart_deployments() {

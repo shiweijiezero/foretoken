@@ -18,6 +18,48 @@ kubectl get nodes
 
 ## 2. Build and deploy the source
 
+Install the CLI from the source root with pip:
+
+```bash
+pip install -e .
+```
+
+Or use uv:
+
+```bash
+uv pip install -e .
+```
+
+Build and install the current source into the active Kubernetes context:
+
+```bash
+foretoken install -e .
+```
+
+A standard kind or k3d context builds and imports local images. Other Kubernetes contexts require a registry reachable by every target node:
+
+```bash
+foretoken install -e . --registry ghcr.io/example/foretoken
+```
+
+A private registry also requires the same pull Secret name in the platform namespace and every workload namespace. Reference it through a values file:
+
+```yaml
+imagePullSecrets:
+  - name: registry-auth
+workload:
+  imagePullSecrets:
+    - name: registry-auth
+```
+
+```bash
+foretoken install -e . \
+  --registry registry.example.com/foretoken \
+  --values platform-values.yaml
+```
+
+The command reuses the repository's existing build, import, and push lifecycle before running the same platform and observability installation used for release images. The remaining sections document the underlying manual stages for development and troubleshooting.
+
 Kubernetes nodes must be able to obtain the images built from source. You can import local images directly or distribute them through an OCI registry.
 
 ### 2.1 Import local images directly
@@ -210,10 +252,9 @@ Changed images: control-plane=false frontend=true model-server=false
 
 The Quick Start requires GPU resources in the target Kubernetes cluster. With k3d, first configure the GPUs as described in [Deploy Foretoken with k3d](k3d-deployment.md), then confirm that the current Kubernetes context points to the target k3d cluster.
 
-To start the example frontend and `Qwen/Qwen3-0.6B` model service, install the CLI and deploy from the repository root.
+To start the example frontend and `Qwen/Qwen3-0.6B` model service, deploy from the repository root using the CLI installed in section 2:
 
 ```bash
-pip install -e .
 foretoken deploy examples/quickstart --timeout 6m
 ```
 
@@ -250,16 +291,16 @@ printf '\n'
 
 ## 6. Redeploy source changes
 
-With direct local image import, run this after changing the source.
+Run the same source installation command after changing the code:
 
 ```bash
-make dev-deploy
+foretoken install -e .
 ```
 
-With a registry, run:
+For a remote cluster, keep using the same registry:
 
 ```bash
-REGISTRY="$REGISTRY" make dev-deploy
+foretoken install -e . --registry "$REGISTRY"
 ```
 
-BuildKit reuses compilation caches. The script imports or pushes only images whose build result changed and rolls out only the corresponding workloads. The platform update is complete when `Foretoken deployment completed.` appears.
+BuildKit reuses compilation caches. The command imports or pushes only changed images, preserves the source installation mode, and rolls out workloads whose local image content changed. Use `make dev-deploy` only when debugging the underlying manual build and deployment stages.

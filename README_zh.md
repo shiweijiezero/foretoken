@@ -59,6 +59,8 @@ uv pip install -e .
 foretoken install
 ```
 
+如需安装当前源码，使用 `foretoken install -e .`；远程 Kubernetes context 还需要提供 `--registry`。
+
 #### 网关模式
 
 先在 `examples/quickstart/frontend.yaml` 的 `spec` 中填写对外域名：

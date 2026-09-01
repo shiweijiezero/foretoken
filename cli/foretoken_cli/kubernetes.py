@@ -136,6 +136,30 @@ class Kubectl:
         """Remove one namespace annotation owned by the CLI."""
         self.run(["annotate", "namespace", name, f"{key}-"])
 
+    def restart_deployment(
+        self, name: str, namespace: str, timeout: str
+    ) -> None:
+        """Restart one Deployment and wait for its rollout to complete."""
+        self.run(
+            [
+                "rollout",
+                "restart",
+                f"deployment/{name}",
+                "--namespace",
+                namespace,
+            ]
+        )
+        self.run(
+            [
+                "rollout",
+                "status",
+                f"deployment/{name}",
+                "--namespace",
+                namespace,
+                f"--timeout={timeout}",
+            ]
+        )
+
     def exists(self, kind: str, name: str, namespace: str = "") -> bool:
         """Return whether a named Kubernetes resource currently exists."""
         args = ["get", kind, name, "--ignore-not-found", "-o", "name"]
