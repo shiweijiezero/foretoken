@@ -52,6 +52,8 @@ queueRequests <= scaleDownQueuedRequests 且 activeRequests == 0
 
 ## 示例
 
+顶层 `spec.replicas` 设置初始容量；服务启动后，自动扩缩容在 `minReplicas` 和 `maxReplicas` 范围内接管副本数。
+
 ```yaml
 autoscaling:
   minReplicas: 1

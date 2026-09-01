@@ -699,8 +699,9 @@ spec:
                   rule: 'self.pcp == 1 ? self.tp % self.dcp == 0 : self.dcp == 1 ||
                     self.dcp == self.pcp || self.dcp == self.tp * self.pcp'
               replicas:
-                description: Replicas is the number of complete ModelGroups in the
-                  default Pool; the compiler defaults it to 1.
+                description: |-
+                  Replicas is the initial service replica count; the compiler defaults it to 1.
+                  When autoscaling is configured, its minReplicas and maxReplicas bound subsequent decisions.
                 format: int32
                 minimum: 0
                 type: integer

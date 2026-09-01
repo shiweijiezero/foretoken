@@ -52,6 +52,8 @@ This mode serves users who reason about absolute service backlog rather than ave
 
 ## Example
 
+Top-level `spec.replicas` sets initial capacity. After startup, autoscaling keeps the service within `minReplicas` and `maxReplicas`.
+
 ```yaml
 autoscaling:
   minReplicas: 1
