@@ -69,6 +69,8 @@ Catch only errors the caller can handle. Broad exception handling must not turn 
 
 Names should describe domain responsibility and ownership without relying on the current discussion. Prefer `create_client`, `metrics_url`, or `model_group` over vague verbs and generic nouns.
 
+Keep values at the narrowest scope that owns them. A value used by one function belongs inside that function; use a module-level constant only when multiple functions share it or it represents a module-wide external contract. Do not move configuration into file globals merely for convenience.
+
 Keep related stages readable as one flow. Extract a function when it owns a meaningful stage or lifecycle, not merely to shorten another function. Avoid fragmenting sequential logic into thin helpers that force readers to jump between files.
 
 Comments explain information the code cannot express clearly:
@@ -135,6 +137,8 @@ Before adding or substantially rewriting user documentation:
 Learn from the organization and ownership of those documents; do not combine or copy their text. Deprecated, historical, draft, and proposal documents may provide background but are not templates for current user guidance.
 
 User documentation should begin with purpose and a minimal executable example. Move exhaustive configuration, architecture, and troubleshooting details behind the main path. Describe only implemented behavior and necessary limits. Do not publish PR plans, acceptance criteria, implementation diaries, private wire contracts, source-file tours, or future capabilities as current behavior.
+
+Introduce each command block with a sentence that states what the reader is about to do and, when relevant, what the command produces or where to continue. A heading alone is not sufficient context. Present mutually exclusive alternatives, such as pip and uv, with separate prose labels and code blocks instead of `# or` comments inside one block. Keep commands in one block only when readers should run them in sequence.
 
 Keep English and Chinese documentation aligned in capability, prerequisites, commands, defaults, and limitations. Update both when user-visible behavior changes.
 
