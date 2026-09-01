@@ -23,9 +23,10 @@ GPU metric collection depends on the device platform:
 
 | Device | CLI behavior |
 | --- | --- |
-| NVIDIA | Reuse a compatible DCGM Exporter, or install a managed exporter when none exists |
+| NVIDIA | Configure DCGM Exporter automatically |
+| MetaX | Connect the official [mxExporter](https://github.com/MetaX-MACA/mxExporter) already provided by the cluster |
 
-An existing exporter must be ready, cover the GPU nodes, and have a ServiceMonitor selected by Prometheus. Installation stops when existing exporters conflict or the collection path is incomplete. In mixed CPU/GPU clusters, label GPU nodes with `nvidia.com/gpu.present=true` or `feature.node.kubernetes.io/pci-10de.present=true`. GPU drivers and device plugins remain platform-owned.
+An existing exporter must be ready, cover the GPU nodes, and have a ServiceMonitor selected by Prometheus. Installation stops when exporters conflict or the collection path is incomplete. In mixed CPU/GPU clusters, label NVIDIA GPU nodes with `nvidia.com/gpu.present=true` or `feature.node.kubernetes.io/pci-10de.present=true`. GPU drivers, device plugins, and vendor operators remain platform-owned.
 
 Only select Prometheus explicitly when automatic discovery reports multiple compatible instances. First allow the Prometheus namespace to collect Foretoken metrics, then identify the instance:
 
@@ -66,6 +67,7 @@ Open <http://127.0.0.1:9090/targets> and confirm that the Foretoken targets are 
 | Frontend `/metrics` | HTTP requests, admission queues, routing, and Frontend runtime state |
 | model-server `/metrics` | Native metrics from the active inference backend |
 | DCGM Exporter | NVIDIA GPU utilization, memory, power, temperature, and hardware errors |
+| mxExporter | MetaX GPU utilization and memory metrics |
 | kubelet/cAdvisor | Container CPU, memory, filesystem, and network |
 | kube-state-metrics | Kubernetes object state |
 

@@ -23,9 +23,10 @@ GPU 指标的接入方式取决于设备平台：
 
 | 设备 | CLI 行为 |
 | --- | --- |
-| NVIDIA | 复用兼容的 DCGM Exporter；没有可用实例时安装由 CLI 管理的 exporter |
+| NVIDIA | 自动配置 DCGM Exporter |
+| 沐曦 | 接入集群已经提供的官方 [mxExporter](https://github.com/MetaX-MACA/mxExporter) |
 
-已有 exporter 必须就绪、覆盖 GPU 节点，并且其 ServiceMonitor 已被 Prometheus 选择。发现多个冲突实例或采集链路不完整时，安装会停止。CPU/GPU 混合集群需要使用 `nvidia.com/gpu.present=true` 或 `feature.node.kubernetes.io/pci-10de.present=true` 标识 GPU 节点。GPU 驱动和 device plugin 继续由平台管理。
+集群已有的 exporter 必须就绪、覆盖 GPU 节点，并且其 ServiceMonitor 已被 Prometheus 选择。发现实例冲突或采集链路不完整时，安装会停止。CPU/GPU 混合集群需要使用 `nvidia.com/gpu.present=true` 或 `feature.node.kubernetes.io/pci-10de.present=true` 标识 NVIDIA GPU 节点。GPU 驱动、device plugin 和厂商 Operator 继续由平台管理。
 
 只有自动发现得到多个兼容实例时，才需要显式选择 Prometheus。先允许该 Prometheus 所在的命名空间采集 Foretoken 指标，再指定实例：
 
@@ -66,6 +67,7 @@ kubectl port-forward \
 | Frontend `/metrics` | HTTP 请求、准入队列、路由和前端运行状态 |
 | model-server `/metrics` | 当前推理后端提供的原生指标 |
 | DCGM Exporter | NVIDIA GPU 利用率、显存、功耗、温度和硬件错误 |
+| mxExporter | 沐曦 GPU 利用率和显存指标 |
 | kubelet/cAdvisor | 容器 CPU、内存、文件系统和网络 |
 | kube-state-metrics | Kubernetes 资源状态 |
 
