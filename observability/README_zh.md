@@ -15,92 +15,45 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 启用指标采集
 
-Frontend 和 model-server 无需 Prometheus 即可提供 `/metrics`。如需采集这些指标并计算记录规则，可以复用已有 Prometheus Operator，也可以安装 kube-prometheus-stack：
-
-```bash
-helm repo add prometheus-community \
-  https://prometheus-community.github.io/helm-charts
-helm repo update
-
-helm upgrade --install kube-prometheus-stack \
-  prometheus-community/kube-prometheus-stack \
-  --namespace monitoring \
-  --create-namespace \
-  --values deploy/observability/kube-prometheus-stack-values.yaml \
-  --wait
-```
-
-为实际运行 Prometheus Pod 的命名空间添加标签，使其可以访问 model-server 指标：
-
-```bash
-PROMETHEUS_NAMESPACE=monitoring
-kubectl label namespace "${PROMETHEUS_NAMESPACE}" \
-  inference.foretoken.io/metrics-scraper=true \
-  --overwrite
-```
-
-Operator CRD 建立后，在线安装 Foretoken 时，默认的 `auto` 模式会创建 ServiceMonitor 和 PrometheusRule：
+Frontend 和 model-server 无需 Prometheus 即可提供 `/metrics`。普通安装会自动完成接入：
 
 ```bash
 foretoken install
 ```
 
-如果 Foretoken 平台由 CLI 管理，请将接入配置写入 values 文件，然后再次运行 `foretoken install`：
-
-```yaml
-observability:
-  mode: enabled
-  additionalLabels:
-    release: your-prometheus-release
-```
+命令会复用集群中唯一兼容的 Prometheus；如果没有，则安装由 CLI 管理的 kube-prometheus-stack。存在多个兼容实例时，再显式指定：
 
 ```bash
-foretoken install --values foretoken-observability-values.yaml
+kubectl label namespace monitoring \
+  inference.foretoken.io/metrics-scraper=true \
+  --overwrite
+
+foretoken install --prometheus monitoring/prometheus
 ```
 
-在同一文件中使用 `disabled` 可删除 Chart 管理的监控资源。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，CLI 不会自动接管。
-
-`auto` 只在集群同时提供 `ServiceMonitor` 和 `PrometheusRule` API 时创建两种资源。离线渲染和 GitOps 应使用 `enabled`，并先安装 Operator CRD。只有需要覆盖 Prometheus 默认值时才设置 `interval` 或 `scrapeTimeout`。
-
-仓库提供的 kube-prometheus-stack values 配置文件默认从 `foretoken-platform` 命名空间选择 Foretoken 资源。复用其他 Prometheus 安装时，其 ServiceMonitor 与规则命名空间选择器必须包含 Foretoken 发布实例所在命名空间。只有对象选择器要求平台自定义标签时才设置 `additionalLabels`。
+CLI 会为自己管理的监控栈配置命名空间访问，并创建 ServiceMonitor 和记录规则。复用 Prometheus 时，该命名空间标签继续由平台负责，不再需要时也由平台移除。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，CLI 不会自动接管。
 
 ## 确认采集已启用
-
-先确认 Kubernetes 中存在预期资源：
 
 ```bash
 kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
 ```
 
-使用仓库提供的 kube-prometheus-stack 安装时，将 Prometheus 转发到本机：
+使用 CLI 管理的 Prometheus 时，将服务转发到本机：
 
 ```bash
 kubectl port-forward \
-  --namespace monitoring \
-  service/kube-prometheus-stack-prometheus \
+  --namespace foretoken-platform \
+  service/foretoken-prometheus-kube-prometheus \
   9090:9090
 ```
 
-在 Prometheus 的 <http://127.0.0.1:9090/targets> 确认 Foretoken target 为 `UP`，并在 <http://127.0.0.1:9090/rules> 确认 `foretoken.recording` 已加载。服务收到请求后，可以查询记录指标：
+在 <http://127.0.0.1:9090/targets> 确认 Foretoken target 为 `UP`，并在 <http://127.0.0.1:9090/rules> 确认 `foretoken.recording` 已加载。复用已有 Prometheus 时，使用平台原有的访问方式执行相同检查。
 
-```bash
-curl --get http://127.0.0.1:9090/api/v1/query \
-  --data-urlencode 'query=foretoken:model_server_requests_running:sum'
-```
+## 移除接入
 
-仅看到 Kubernetes 对象并不能证明 Prometheus 已选择 Monitor 或加载规则。复用平台已有 Prometheus 时，使用该平台原有的访问方式执行相同的 target、rule 和查询检查。
-
-## 关闭或移除接入
-
-设置 `observability.mode=disabled` 或卸载 Foretoken，只会删除 Foretoken 发布实例管理的 ServiceMonitor 和 PrometheusRule，不会卸载 Prometheus、Prometheus Operator、Grafana 或 Alertmanager。没有其他 Foretoken workload 需要该 Prometheus 安装时，可以移除命名空间标签：
-
-```bash
-kubectl label namespace monitoring \
-  inference.foretoken.io/metrics-scraper-
-```
-
-Prometheus 运行在其他命名空间时，替换命令中的 `monitoring`。
+删除全部 Foretoken 服务后，`foretoken uninstall` 会删除 CLI 管理的 Prometheus 发布实例；复用的 Prometheus 不受影响。
 
 ## 记录规则
 

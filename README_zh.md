@@ -57,6 +57,8 @@ uv pip install -e .
 foretoken install
 ```
 
+该命令还会复用兼容的 Prometheus；如果没有，则安装由 CLI 管理的监控栈。
+
 #### 网关模式
 
 先在 `examples/quickstart/frontend.yaml` 的 `spec` 中填写对外域名：
@@ -183,7 +185,7 @@ foretoken delete examples/quickstart
 foretoken uninstall
 ```
 
-通过 `frontend.gateway.create=true` 创建的 `GatewayClass` 和 `Gateway` 会随 Foretoken 的 Helm 发布实例一同删除；复用的平台网关不会被删除。
+CLI 管理的监控栈会随平台移除，复用的 Prometheus 保持不变。为 Foretoken 创建的 `GatewayClass` 和 `Gateway` 会随平台发布实例删除，复用的 Gateway 保持不变。
 
 如果 Envoy Gateway 仅供本次 Foretoken 部署使用，可以继续卸载它：
 
