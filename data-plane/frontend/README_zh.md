@@ -48,7 +48,7 @@ foretoken-frontend
 
 ### 网关模式
 
-安装 Gateway Controller 后，Foretoken Chart 可以创建专用的 `GatewayClass` 和 `Gateway`，也可以复用平台已有网关。Foretoken 为前端服务创建 `HTTPRoute`，域名、TLS、认证和其他入口策略继续由平台网关管理。
+在网关模式下，CLI 会复用已就绪的 Envoy Gateway Controller；没有可用实例时则安装由自己管理的 Controller。Foretoken 可以创建专用的 `GatewayClass` 和 `Gateway`，也可以复用平台已有网关，然后为前端服务创建 `HTTPRoute`。复用平台网关时，域名、TLS、认证和其他入口策略继续由平台网关管理。
 
 ## HTTP 接口
 

@@ -48,7 +48,7 @@ Local mode obtains an address from a `LoadBalancer` Service. See the repository 
 
 ### Gateway mode
 
-After a Gateway Controller is installed, the Foretoken Chart can create a dedicated `GatewayClass` and `Gateway` or reuse an existing platform Gateway. Foretoken creates the frontend's `HTTPRoute`, while the platform Gateway continues to own DNS, TLS, authentication, and other ingress policies.
+In Gateway mode, the CLI reuses an accepted Envoy Gateway Controller or installs a managed controller when none is available. Foretoken can create a dedicated `GatewayClass` and `Gateway` or reuse an existing platform Gateway, then creates the frontend's `HTTPRoute`. A reused platform Gateway continues to own DNS, TLS, authentication, and other ingress policies.
 
 ## HTTP APIs
 

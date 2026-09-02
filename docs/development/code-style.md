@@ -78,6 +78,10 @@ When a component owns the same resources, clients, configuration, or invariants 
 
 A module centered on a state-owning class should contain that lifecycle and its closely related types. Put behavior shared by current implementations on their base class, and keep adapter-specific recognition, capacity, and policy as methods on the specialized class so the adapter remains readable in one place. Move only reusable stateless parsing, matching, and formatting to clearly named helper modules. Do not enforce one class per file mechanically; keep multiple classes together when they participate in the same lifecycle and share one responsibility.
 
+File length alone is not a refactoring rule. Split a module when it accumulates independent lifecycles, protocols, backends, or ownership boundaries; when an entry point starts making domain policy decisions; or when one state is threaded through many unrelated helpers. Create a domain package or directory when multiple current modules share one stable responsibility, and keep the entry point focused on composition and dispatch. Do not create empty hierarchies, generic `utils` layers, registries, or directories for hypothetical future implementations. A long file with one cohesive responsibility may remain intact.
+
+After substantial feature growth, review the final responsibility map rather than accepting code growth as inevitable. Remove replaced paths, duplicate state, repeated stages, and forwarding layers with no independent ownership; move domain policy out of entry points; and verify that a split reduces the total concepts and implementation that maintainers must understand.
+
 Comments explain information the code cannot express clearly:
 
 - why stages must run in a particular order;

@@ -131,7 +131,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--values",
         action="append",
         metavar="PATH",
-        help="Helm values file; may be repeated",
+        help="Helm values for images, runtime, or hardware; may be repeated",
     )
     install.add_argument(
         "--prometheus",

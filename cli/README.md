@@ -33,7 +33,7 @@ foretoken install
 
 The command reuses one compatible Prometheus instance or installs a CLI-managed monitoring stack when none exists. On NVIDIA GPU nodes it reuses one ready DCGM Exporter with a working ServiceMonitor, or installs a CLI-managed exporter when none exists. A shared Prometheus must select that ServiceMonitor. Duplicate, unhealthy, incomplete, or unmonitored exporters stop installation instead of being overlaid. On MetaX GPU nodes the CLI requires and reuses one platform-managed mxExporter with a working ServiceMonitor. The CLI never installs GPU drivers, device plugins, or vendor operators. Use `--prometheus NAMESPACE/NAME` only when automatic discovery finds multiple compatible instances.
 
-Gateway mode requires an existing Gateway Controller. Without existing Gateway details, the CLI creates a dedicated `GatewayClass` and `Gateway`:
+Gateway mode reuses an accepted Envoy Gateway Controller or installs a CLI-managed controller when none is available. Without existing Gateway details, it then creates a dedicated `GatewayClass` and `Gateway`:
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -45,9 +45,10 @@ To reuse an existing Gateway instead:
 foretoken install \
   --frontend-mode gateway \
   --gateway-name inference-gateway \
-  --gateway-namespace gateway-system \
-  --gateway-section-name https
+  --gateway-namespace gateway-system
 ```
+
+Use `--gateway-section-name` only to bind routes to one specific listener.
 
 Install the current Foretoken source tree with the same lifecycle:
 
