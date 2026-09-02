@@ -214,6 +214,15 @@ class Kubectl:
         ]
         return _decode_resource_list(self.run(args).stdout)
 
+    def list_cluster_resources(
+        self, kinds: Iterable[str], *, label_selector: str = ""
+    ) -> tuple[dict[str, Any], ...]:
+        """Return selected cluster-scoped resource kinds."""
+        args = ["get", ",".join(kinds), "-o", "json"]
+        if label_selector:
+            args.extend(["--selector", label_selector])
+        return _decode_resource_list(self.run(args).stdout)
+
     def list_all_resources(
         self, kinds: Iterable[str], *, label_selector: str = ""
     ) -> tuple[dict[str, Any], ...]:
@@ -610,16 +619,19 @@ def _gateway_endpoint(
 
     listeners = (gateway.get("spec") or {}).get("listeners") or []
     section_name = str(parent.get("sectionName") or "")
-    listener = next(
-        (
-            item
-            for item in listeners
-            if not section_name or item.get("name") == section_name
-        ),
-        None,
+    matching_listeners = tuple(
+        item
+        for item in listeners
+        if not section_name or item.get("name") == section_name
     )
-    if not listener:
+    if len(matching_listeners) != 1:
+        if not section_name and len(matching_listeners) > 1:
+            raise DeploymentError(
+                f"gateway/{gateway_name} has multiple listeners; reinstall with "
+                "--gateway-section-name to select one"
+            )
         raise DeploymentError(f"gateway/{gateway_name} has no matching listener")
+    listener = matching_listeners[0]
     protocol = str(listener.get("protocol") or "HTTP").upper()
     scheme = "https" if protocol in {"HTTPS", "TLS"} else "http"
     port = int(listener.get("port") or (443 if scheme == "https" else 80))
