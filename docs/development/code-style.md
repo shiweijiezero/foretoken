@@ -73,6 +73,12 @@ Keep values at the narrowest scope that owns them. A value used by one function 
 
 Keep related stages readable as one flow. Extract a function when it owns a meaningful stage or lifecycle, not merely to shorten another function. Avoid fragmenting sequential logic into thin helpers that force readers to jump between files.
 
+When a component owns the same resources, clients, configuration, or invariants across multiple lifecycle stages, use a state-owning type: a class in Python or a struct with methods in Go and Rust. Keep stateless transformations and single-stage operations as functions. Do not introduce a type only for namespacing, shorter parameter lists, or hypothetical reuse.
+
+File length alone is not a refactoring rule. Split a module when it accumulates independent lifecycles, protocols, backends, or ownership boundaries; when an entry point starts making domain policy decisions; or when one state is threaded through many unrelated helpers. Create a domain package or directory when multiple current modules share one stable responsibility, and keep the entry point focused on composition and dispatch. Do not create empty hierarchies, generic `utils` layers, registries, or directories for hypothetical future implementations. A long file with one cohesive responsibility may remain intact.
+
+After substantial feature growth, review the final responsibility map rather than accepting code growth as inevitable. Remove replaced paths, duplicate state, repeated stages, and forwarding layers with no independent ownership; move domain policy out of entry points; and verify that a split reduces the total concepts and implementation that maintainers must understand.
+
 Comments explain information the code cannot express clearly:
 
 - why stages must run in a particular order;

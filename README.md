@@ -68,17 +68,7 @@ spec:
   hostname: foretoken.example.com
 ```
 
-Gateway mode requires a Gateway Controller. If the cluster does not already have one, this example installs Envoy Gateway:
-
-```bash
-helm upgrade --install envoy-gateway \
-  oci://docker.io/envoyproxy/gateway-helm \
-  --namespace envoy-gateway-system \
-  --create-namespace \
-  --wait
-```
-
-Create a dedicated `GatewayClass` and `Gateway` for Foretoken:
+Install Gateway mode. The CLI reuses an accepted Envoy Gateway Controller when available; otherwise it installs a CLI-managed controller before creating a dedicated `GatewayClass` and `Gateway`:
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -90,17 +80,16 @@ To reuse an existing Gateway, list its name and namespace:
 kubectl get gateway -A
 ```
 
-Then install Foretoken with that Gateway and listener:
+Then install Foretoken with that Gateway:
 
 ```bash
 foretoken install \
   --frontend-mode gateway \
   --gateway-name inference-gateway \
-  --gateway-namespace gateway-system \
-  --gateway-section-name https
+  --gateway-namespace gateway-system
 ```
 
-The Gateway must allow `HTTPRoute` resources from the frontend namespace; DNS and TLS remain owned by the platform Gateway.
+Use `--gateway-section-name` only to bind routes to one specific listener. The Gateway must allow `HTTPRoute` resources from the frontend namespace; DNS and TLS remain owned by the platform Gateway.
 
 ### 2. Deploy the model service
 
@@ -189,17 +178,7 @@ After the serving resources are gone, uninstall the platform:
 foretoken uninstall
 ```
 
-CLI-managed monitoring and DCGM Exporter releases are removed with the platform; reused components are preserved. A `GatewayClass` and `Gateway` created for Foretoken are removed with the platform release, while a reused Gateway is left unchanged.
-
-If Envoy Gateway was installed only for this Foretoken deployment, uninstall it as well:
-
-```bash
-helm uninstall envoy-gateway \
-  --namespace envoy-gateway-system \
-  --wait --timeout 5m
-```
-
-Do not run this step while other services still use Envoy Gateway.
+CLI-managed monitoring, GPU exporter, and Envoy Gateway releases are removed with the platform when they have no other users; reused components are preserved. A `GatewayClass` and `Gateway` created for Foretoken are removed with the platform release, while a reused Gateway is left unchanged. Gateway API and Envoy Gateway CRDs are preserved.
 
 Uninstalling the control plane preserves Foretoken CRDs and custom resources. Delete the CRDs explicitly only after all Foretoken resources have been removed:
 

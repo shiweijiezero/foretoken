@@ -28,6 +28,12 @@ _DCGM_CHART = (
     "dcgm-exporter-4.8.3.tgz"
 )
 _DCGM_RELEASE = "foretoken-dcgm-exporter"
+_ENVOY_GATEWAY_CHART = "oci://docker.io/envoyproxy/gateway-helm"
+_ENVOY_GATEWAY_CHART_VERSION = "v1.9.1"
+_ENVOY_GATEWAY_RELEASE = "foretoken-envoy-gateway"
+_MANAGED_ENVOY_GATEWAY_CONTROLLER = (
+    "gateway.foretoken.io/gatewayclass-controller"
+)
 _DCGM_METRICS = """# Foretoken hardware metrics
 DCGM_FI_DEV_GPU_UTIL, gauge, GPU utilization (in %).
 DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory utilization (in %).
@@ -68,6 +74,28 @@ def prometheus_release(namespace: str) -> ReleaseRef:
 def dcgm_release(namespace: str) -> ReleaseRef:
     """Return the fixed CLI-managed NVIDIA exporter release."""
     return ReleaseRef(_DCGM_RELEASE, namespace)
+
+
+def envoy_gateway_release(namespace: str) -> ReleaseRef:
+    """Return the fixed CLI-managed Envoy Gateway release."""
+    return ReleaseRef(_ENVOY_GATEWAY_RELEASE, namespace)
+
+
+def managed_envoy_gateway_controller_name() -> str:
+    """Return the controller identity reserved for CLI-managed Envoy Gateway."""
+    return _MANAGED_ENVOY_GATEWAY_CONTROLLER
+
+
+@dataclass(frozen=True)
+class PlatformGatewayConfig:
+    """Effective Gateway mode stored in one platform Helm release."""
+
+    mode: str
+    create: bool
+    controller_name: str
+    name: str
+    namespace: str
+    section_name: str
 
 
 class Helm:
@@ -132,6 +160,33 @@ class Helm:
             )
         )
 
+    def managed_envoy_gateway_releases(self) -> tuple[ReleaseRef, ...]:
+        """Return CLI-managed Envoy Gateway releases across the cluster."""
+        listed = _decode_json(
+            self.run(
+                [
+                    "list",
+                    "--all",
+                    "--all-namespaces",
+                    "--filter",
+                    f"^{re.escape(_ENVOY_GATEWAY_RELEASE)}$",
+                    "--selector",
+                    f"{_MANAGED_BY_LABEL}={_MANAGED_BY_VALUE}",
+                    "--output",
+                    "json",
+                ]
+            ).stdout
+        )
+        if not isinstance(listed, list) or not all(
+            isinstance(item, dict) for item in listed
+        ):
+            raise DeploymentError("helm list returned an unexpected JSON value")
+        return tuple(
+            ReleaseRef(str(item.get("name") or ""), str(item.get("namespace") or ""))
+            for item in listed
+            if item.get("name") and item.get("namespace")
+        )
+
     def has_release_label(
         self, release: ReleaseRef, key: str, value: str
     ) -> bool:
@@ -140,10 +195,8 @@ class Helm:
             self._list_releases(release, selector=f"{key}={value}")
         )
 
-    def platform_image_references(
-        self, release: ReleaseRef
-    ) -> tuple[str, str, str]:
-        """Return the image references currently stored for a source release."""
+    def _release_values(self, release: ReleaseRef) -> dict[str, Any]:
+        """Return the effective values stored for one Helm release."""
         values = _decode_json(
             self.run(
                 [
@@ -160,6 +213,30 @@ class Helm:
         )
         if not isinstance(values, dict):
             raise DeploymentError("helm get values returned an unexpected JSON value")
+        return values
+
+    def platform_gateway_config(self, release: ReleaseRef) -> PlatformGatewayConfig:
+        """Return the effective frontend Gateway configuration for a platform."""
+        frontend = self._release_values(release).get("frontend") or {}
+        if not isinstance(frontend, dict):
+            raise DeploymentError("platform Gateway values are invalid")
+        gateway = frontend.get("gateway") or {}
+        if not isinstance(gateway, dict):
+            raise DeploymentError("platform Gateway values are invalid")
+        return PlatformGatewayConfig(
+            mode=str(frontend.get("mode") or "local"),
+            create=bool(gateway.get("create")),
+            controller_name=str(gateway.get("controllerName") or ""),
+            name=str(gateway.get("name") or ""),
+            namespace=str(gateway.get("namespace") or ""),
+            section_name=str(gateway.get("sectionName") or ""),
+        )
+
+    def platform_image_references(
+        self, release: ReleaseRef
+    ) -> tuple[str, str, str]:
+        """Return the image references currently stored for a source release."""
+        values = self._release_values(release)
         image = values.get("image") or {}
         frontend = values.get("frontend") or {}
         runtime = values.get("runtime") or {}
@@ -253,6 +330,7 @@ class Helm:
         gateway_name: str,
         gateway_namespace: str,
         gateway_section_name: str,
+        gateway_controller_name: str,
         observability_labels: tuple[tuple[str, str], ...],
     ) -> None:
         """Add the platform values shared by release and source installs."""
@@ -283,13 +361,22 @@ class Helm:
                     f"frontend.gateway.create={str(gateway_create).lower()}",
                 ]
             )
+        if gateway_controller_name:
+            args.extend(
+                [
+                    "--set-string",
+                    f"frontend.gateway.controllerName={gateway_controller_name}",
+                ]
+            )
         if gateway_name:
             args.extend(["--set-string", f"frontend.gateway.name={gateway_name}"])
         if gateway_namespace:
             args.extend(
                 ["--set-string", f"frontend.gateway.namespace={gateway_namespace}"]
             )
-        if gateway_section_name:
+        if gateway_section_name or (
+            frontend_mode == "gateway" and gateway_name
+        ):
             args.extend(
                 [
                     "--set-string",
@@ -307,6 +394,7 @@ class Helm:
         gateway_name: str,
         gateway_namespace: str,
         gateway_section_name: str,
+        gateway_controller_name: str,
         observability_labels: tuple[tuple[str, str], ...],
         reuse_values: bool,
         timeout: str,
@@ -342,6 +430,7 @@ class Helm:
             gateway_name,
             gateway_namespace,
             gateway_section_name,
+            gateway_controller_name,
             observability_labels,
         )
         if source_images is not None:
@@ -389,6 +478,41 @@ class Helm:
                 args.extend(["--api-versions", api_version])
         else:
             self._finish_upgrade(args, timeout, dry_run)
+        self.run(args)
+
+    def install_envoy_gateway(
+        self,
+        release: ReleaseRef,
+        timeout: str,
+        dry_run: bool,
+    ) -> None:
+        """Install or update the CLI-managed Envoy Gateway release."""
+        if dry_run:
+            args = [
+                "template",
+                release.name,
+                _ENVOY_GATEWAY_CHART,
+                "--version",
+                _ENVOY_GATEWAY_CHART_VERSION,
+                "--namespace",
+                release.namespace,
+                "--include-crds",
+            ]
+        else:
+            args = self._upgrade_install_args(
+                release,
+                _ENVOY_GATEWAY_CHART,
+                _ENVOY_GATEWAY_CHART_VERSION,
+            )
+        args.extend(
+            [
+                "--set-string",
+                "config.envoyGateway.gateway.controllerName="
+                + _MANAGED_ENVOY_GATEWAY_CONTROLLER,
+            ]
+        )
+        if not dry_run:
+            self._finish_upgrade(args, timeout, False)
         self.run(args)
 
     def install_prometheus(
