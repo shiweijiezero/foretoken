@@ -70,17 +70,7 @@ spec:
   hostname: foretoken.example.com
 ```
 
-网关模式需要网关控制器。如果集群尚未安装，可以使用以下命令安装 Envoy Gateway：
-
-```bash
-helm upgrade --install envoy-gateway \
-  oci://docker.io/envoyproxy/gateway-helm \
-  --namespace envoy-gateway-system \
-  --create-namespace \
-  --wait
-```
-
-为 Foretoken 创建专用的 `GatewayClass` 和 `Gateway`：
+安装网关模式。CLI 会优先复用已就绪的 Envoy Gateway Controller；如果没有，则先安装由 CLI 管理的 Controller，再创建 Foretoken 专用的 `GatewayClass` 和 `Gateway`：
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -92,17 +82,16 @@ foretoken install --frontend-mode gateway
 kubectl get gateway -A
 ```
 
-然后使用该 Gateway 和 listener 安装 Foretoken：
+然后使用该 Gateway 安装 Foretoken：
 
 ```bash
 foretoken install \
   --frontend-mode gateway \
   --gateway-name inference-gateway \
-  --gateway-namespace gateway-system \
-  --gateway-section-name https
+  --gateway-namespace gateway-system
 ```
 
-该 Gateway 必须允许前端服务所在命名空间的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
+只有需要将路由绑定到特定 listener 时才使用 `--gateway-section-name`。该 Gateway 必须允许前端服务所在命名空间的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
 
 ### 2. 部署模型服务
 
@@ -187,17 +176,7 @@ foretoken delete examples/quickstart
 foretoken uninstall
 ```
 
-CLI 管理的监控栈和 DCGM Exporter 会随平台移除，复用的组件保持不变。为 Foretoken 创建的 `GatewayClass` 和 `Gateway` 会随平台发布实例删除，复用的 Gateway 保持不变。
-
-如果 Envoy Gateway 仅供本次 Foretoken 部署使用，可以继续卸载它：
-
-```bash
-helm uninstall envoy-gateway \
-  --namespace envoy-gateway-system \
-  --wait --timeout 5m
-```
-
-其他服务仍在使用 Envoy Gateway 时不要执行这一步。
+CLI 管理的监控栈、GPU exporter 和 Envoy Gateway 在没有其他使用者时会随平台移除，复用的组件保持不变。为 Foretoken 创建的 `GatewayClass` 和 `Gateway` 会随平台发布实例删除，复用的 Gateway 保持不变。Gateway API 和 Envoy Gateway CRD 会继续保留。
 
 卸载控制平面时会保留 Foretoken CRD 和自定义资源。只有在清理全部 Foretoken 资源后，才应显式删除 CRD：
 
