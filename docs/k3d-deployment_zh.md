@@ -155,9 +155,11 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 pip install -e .
 ```
 
-或使用 uv 安装：
+或使用 uv 创建并激活虚拟环境后安装：
 
 ```bash
+uv venv
+source .venv/bin/activate
 uv pip install -e .
 ```
 

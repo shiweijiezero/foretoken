@@ -155,9 +155,11 @@ Install the CLI with pip:
 pip install -e .
 ```
 
-Or use uv:
+Or create and activate a virtual environment with uv:
 
 ```bash
+uv venv
+source .venv/bin/activate
 uv pip install -e .
 ```
 

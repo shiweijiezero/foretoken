@@ -33,7 +33,14 @@ foretoken install
 
 The command reuses one compatible Prometheus instance or installs a CLI-managed monitoring stack when none exists. On NVIDIA GPU nodes it reuses one ready DCGM Exporter with a working ServiceMonitor, or installs a CLI-managed exporter when none exists. A shared Prometheus must select that ServiceMonitor. Duplicate, unhealthy, incomplete, or unmonitored exporters stop installation instead of being overlaid. On MetaX GPU nodes the CLI requires and reuses one platform-managed mxExporter with a working ServiceMonitor. The CLI never installs GPU drivers, device plugins, or vendor operators. Use `--prometheus NAMESPACE/NAME` only when automatic discovery finds multiple compatible instances.
 
-Gateway mode reuses an accepted Envoy Gateway Controller or installs a CLI-managed controller when none is available. Without existing Gateway details, it then creates a dedicated `GatewayClass` and `Gateway`:
+Gateway mode reuses an accepted Envoy Gateway Controller or installs a CLI-managed controller when none is available. Before deploying the Quick Start in this mode, add its public hostname to `examples/quickstart/frontend.yaml`:
+
+```yaml
+spec:
+  hostname: foretoken.example.com
+```
+
+Without existing Gateway details, the CLI creates a dedicated `GatewayClass` and `Gateway`:
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -64,7 +71,7 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 Private registries also require `imagePullSecrets` and `workload.imagePullSecrets` through `--values`; see [Deploy Foretoken from Source](../docs/custom-deployment.md).
 
-Use `--dry-run` to validate and show the installation plan without building or changing the cluster. Repeatable `--values` files provide platform image, runtime, and hardware settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
+Use `--dry-run` to validate and show the installation plan without building or changing the cluster. Repeatable `--values` files provide platform image, runtime, and hardware settings; frontend topology remains controlled by `--frontend-mode` and `--gateway-*`. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
 
 Deploy one frontend and all models rendered by a Kustomize root:
 

@@ -12,10 +12,7 @@ import shutil
 import subprocess
 from collections.abc import Iterable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, NoReturn
-
-import yaml
 
 from foretoken_cli.manifest import DeploymentError
 from foretoken_cli.platform.config import PlatformConfig
@@ -87,29 +84,6 @@ class Helm:
         if completed.returncode:
             self._raise_command_error(command, completed)
         return completed
-
-    def validate_platform_values(self, paths: tuple[str, ...]) -> None:
-        """Keep frontend topology under the CLI argument contract."""
-        for path_value in paths:
-            path = Path(path_value)
-            try:
-                values = yaml.safe_load(path.read_text()) or {}
-            except (OSError, yaml.YAMLError) as exc:
-                raise DeploymentError(f"cannot read Helm values file {path}: {exc}") from exc
-            if not isinstance(values, dict):
-                continue
-            frontend = values.get("frontend")
-            if not isinstance(frontend, dict):
-                continue
-            reserved = tuple(
-                key for key in ("mode", "gateway") if key in frontend
-            )
-            if reserved:
-                names = ", ".join(f"frontend.{key}" for key in reserved)
-                raise DeploymentError(
-                    f"Helm values file {path} sets {names}; use --frontend-mode "
-                    "and --gateway-* options for frontend topology"
-                )
 
     @staticmethod
     def _execute(command: list[str]) -> subprocess.CompletedProcess[str]:
