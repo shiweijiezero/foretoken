@@ -46,15 +46,23 @@ def user_count_for_throughput(parallel: int) -> int:
     return 1 if parallel < 0 else int(parallel)
 
 
-def tokens_per_s_per_user(tokens_per_second: float, parallel: int) -> float:
-    return float(tokens_per_second) / float(user_count_for_throughput(parallel))
+def generation_tokens_per_second_per_user(
+    generation_tokens_per_second: float,
+    parallel: int,
+) -> float:
+    return float(generation_tokens_per_second) / float(
+        user_count_for_throughput(parallel)
+    )
 
 
-def tokens_per_s_per_gpu(tokens_per_second: float, gpu_count: int) -> float:
+def generation_tokens_per_second_per_gpu(
+    generation_tokens_per_second: float,
+    gpu_count: int,
+) -> float:
     """Normalize token throughput by the GPUs represented by one point."""
     if gpu_count < 1:
         raise ValueError(f"gpu_count must be >= 1, got {gpu_count}")
-    return float(tokens_per_second) / float(gpu_count)
+    return float(generation_tokens_per_second) / float(gpu_count)
 
 
 def attach_user_throughput(
@@ -64,9 +72,12 @@ def attach_user_throughput(
 ) -> dict[str, Any]:
     metrics["parallel"] = int(parallel)
     throughput = metrics["throughput"]
-    tokens_per_second = float(throughput["token/s"])
-    throughput["token/s/user"] = tokens_per_s_per_user(
-        tokens_per_second, parallel
+    generation_tokens_per_second = float(throughput["generation_tokens_per_second"])
+    throughput[
+        "generation_tokens_per_second_per_user"
+    ] = generation_tokens_per_second_per_user(
+        generation_tokens_per_second,
+        parallel,
     )
     return metrics
 
@@ -135,10 +146,10 @@ class MetricsAggregator:
             "tpot": percentile_stats(tpots),
             "itl": percentile_stats(tpots),
             "throughput": {
-                "request/s": len(results) / total_time,
-                "token/s": output_tokens / total_time,
-                "input_token/s": input_tokens / total_time,
-                "total_token/s": (input_tokens + output_tokens) / total_time,
+                "requests_per_second": len(results) / total_time,
+                "generation_tokens_per_second": output_tokens / total_time,
+                "prompt_tokens_per_second": input_tokens / total_time,
+                "total_tokens_per_second": (input_tokens + output_tokens) / total_time,
             },
             "avg_input_tokens": (
                 input_tokens / success_count if success_count else None
