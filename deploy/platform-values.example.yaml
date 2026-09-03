@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Copy this file and replace the image, Gateway, and GPU values with settings
-# that exist in your cluster. The registry must be reachable by workload nodes.
+# Copy this file and replace the image and GPU values with settings that exist
+# in your cluster. The registry must be reachable by workload nodes. Select
+# frontend topology through foretoken install options rather than this file.
 image:
   repository: registry.example.com/foretoken/control-plane
   tag: dev
 
-# This Secret must exist in the Helm release namespace for the control-plane Pod.
+# This Secret must exist in foretoken-platform for the control-plane Pod.
 imagePullSecrets:
   - name: registry-auth
 
@@ -17,18 +18,7 @@ workload:
     - name: registry-auth
 
 frontend:
-  enabled: true
-  mode: gateway
   image: registry.example.com/foretoken/frontend:dev
-  gateway:
-    create: false
-    name: inference-gateway
-    namespace: gateway-system
-    sectionName: https
-
-# auto enables integration when the cluster provides the Prometheus Operator CRDs.
-observability:
-  mode: auto
 
 runtime:
   vllm:

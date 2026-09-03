@@ -38,6 +38,14 @@ class PlatformConfig:
     envoy_gateway_controller: str
     dcgm_metrics: str
 
+    @property
+    def platform_selector_labels(self) -> tuple[tuple[str, str], ...]:
+        """Return labels shared by resources in the platform Helm release."""
+        return (
+            ("app.kubernetes.io/name", "foretoken-control-plane"),
+            ("app.kubernetes.io/instance", self.platform.release_name),
+        )
+
 
 def default_platform_config() -> PlatformConfig:
     """Return the version-aligned configuration owned by the installed CLI."""
