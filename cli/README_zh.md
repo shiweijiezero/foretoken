@@ -33,7 +33,14 @@ foretoken install
 
 命令会复用一个兼容的 Prometheus；如果没有，则安装由 CLI 管理的监控栈。发现 NVIDIA GPU 节点时，命令会复用一个已就绪且 ServiceMonitor 有效的 DCGM Exporter；没有 exporter 时才安装由 CLI 管理的版本。共享 Prometheus 必须能够选择该 ServiceMonitor。已有 exporter 重复、不健康、覆盖不全或无法采集时会停止安装，不会继续叠加。在沐曦 GPU 节点上，CLI 要求并复用一个由平台管理、ServiceMonitor 有效的 mxExporter。CLI 不安装 GPU 驱动、device plugin 或厂商 Operator。只有自动发现得到多个兼容实例时，才需要使用 `--prometheus NAMESPACE/NAME` 指定。
 
-网关模式会复用已就绪的 Envoy Gateway Controller；没有可用实例时，CLI 会先安装由自己管理的 Controller。未提供已有 Gateway 信息时，CLI 随后创建专用的 `GatewayClass` 和 `Gateway`：
+网关模式会复用已就绪的 Envoy Gateway Controller；没有可用实例时，CLI 会先安装由自己管理的 Controller。使用该模式部署快速开始示例前，先在 `examples/quickstart/frontend.yaml` 中填写对外域名：
+
+```yaml
+spec:
+  hostname: foretoken.example.com
+```
+
+未提供已有 Gateway 信息时，CLI 随后创建专用的 `GatewayClass` 和 `Gateway`：
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -64,7 +71,7 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 私有 registry 还需要通过 `--values` 配置 `imagePullSecrets` 和 `workload.imagePullSecrets`，详见[从源码部署 Foretoken](../docs/custom-deployment_zh.md)。
 
-使用 `--dry-run` 可在不构建镜像、不修改集群的情况下验证并查看安装计划。重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，CLI 不会自动接管。
+使用 `--dry-run` 可在不构建镜像、不修改集群的情况下验证并查看安装计划。重复使用 `--values` 可提供平台镜像、runtime 和硬件配置；前端拓扑继续由 `--frontend-mode` 和 `--gateway-*` 控制。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，CLI 不会自动接管。
 
 部署一个 Kustomize 根目录中渲染出的前端服务和全部模型：
 

@@ -7,6 +7,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib.metadata import version
+from pathlib import Path
+
+import yaml
+
+from foretoken_cli.manifest import DeploymentError
 
 
 @dataclass(frozen=True)
@@ -78,3 +83,27 @@ DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature (in C).
 DCGM_FI_DEV_XID_ERRORS, gauge, Last XID error code.
 """,
     )
+
+
+def validate_platform_values(paths: tuple[str, ...]) -> None:
+    """Keep frontend topology under the CLI argument contract."""
+    for path_value in paths:
+        path = Path(path_value)
+        try:
+            values = yaml.safe_load(path.read_text()) or {}
+        except (OSError, yaml.YAMLError) as exc:
+            raise DeploymentError(
+                f"cannot read Helm values file {path}: {exc}"
+            ) from exc
+        if not isinstance(values, dict):
+            continue
+        frontend = values.get("frontend")
+        if not isinstance(frontend, dict):
+            continue
+        reserved = tuple(key for key in ("mode", "gateway") if key in frontend)
+        if reserved:
+            names = ", ".join(f"frontend.{key}" for key in reserved)
+            raise DeploymentError(
+                f"Helm values file {path} sets {names}; use --frontend-mode "
+                "and --gateway-* options for frontend topology"
+            )

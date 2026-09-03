@@ -18,7 +18,10 @@ from foretoken_cli.kubernetes import (
 )
 from foretoken_cli.manifest import DeploymentError
 from foretoken_cli.observability import PrometheusRef, select_prometheus
-from foretoken_cli.platform.config import default_platform_config
+from foretoken_cli.platform.config import (
+    default_platform_config,
+    validate_platform_values,
+)
 from foretoken_cli.platform.gateway import GatewayControllerLifecycle
 from foretoken_cli.platform.helm import Helm
 from foretoken_cli.source import (
@@ -66,7 +69,7 @@ class PlatformLifecycle:
                     f"Helm release {platform.display_name} uses {install_source} images; "
                     f"run {command_hint}"
                 )
-        helm.validate_platform_values(command.values)
+        validate_platform_values(command.values)
 
         deployments = control_plane_deployments(kubectl)
         expected_deployment = f"{platform.name}-control-plane"
