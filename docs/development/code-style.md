@@ -146,6 +146,8 @@ User documentation should begin with purpose and a minimal executable example. M
 
 Introduce each command block with a sentence that states what the reader is about to do and, when relevant, what the command produces or where to continue. A heading alone is not sufficient context. Present mutually exclusive alternatives, such as pip and uv, with separate prose labels and code blocks instead of `# or` comments inside one block. Keep commands in one block only when readers should run them in sequence.
 
+A block marked `bash`, `shell`, or `console` must use complete, concrete values and valid shell syntax so it runs unchanged when its stated resources and prerequisites exist. Derive identities and defaults through the CLI or a preceding discovery command when possible; otherwise explain the required environment before the example. Never place angle-bracket placeholders in an executable shell block. Use `text` only for abstract grammar that is explicitly not presented as a command to run.
+
 Keep English and Chinese documentation aligned in capability, prerequisites, commands, defaults, and limitations. Update both when user-visible behavior changes.
 
 ## Change and PR discipline
