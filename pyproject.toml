@@ -6,7 +6,7 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "foretoken-cli"
+name = "foretoken"
 version = "0.0.1"
 description = "Command-line tools for installing and operating Foretoken"
 readme = "cli/README.md"

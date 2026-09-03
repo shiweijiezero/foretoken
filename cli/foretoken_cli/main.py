@@ -150,7 +150,7 @@ def _bench(arguments: Sequence[str]) -> None:
         if exc.name and not exc.name.startswith(("benchmarks", "foretoken_cli")):
             raise SystemExit(
                 "foretoken bench requires benchmark dependencies; "
-                "install them with: pip install 'foretoken-cli[bench]'"
+                "install them with: pip install 'foretoken[bench]'"
             ) from exc
         raise
     benchmark_main(arguments)
