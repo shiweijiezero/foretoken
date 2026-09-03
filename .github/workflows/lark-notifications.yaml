@@ -1,0 +1,98 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Sends repository activity to the project Lark group without executing pull-request code.
+
+name: Lark notifications
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+      - closed
+  push:
+    branches:
+      - main
+  workflow_run:
+    workflows:
+      - Control plane
+      - Data plane
+      - Pre-commit
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Notify Lark
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion != 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
+    steps:
+      # pull_request_target supplies repository secrets for fork PRs. This workflow must only read
+      # the event payload; never check out or execute code from the pull-request head revision.
+      - name: Send notification
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          webhook = os.environ.get("LARK_WEBHOOK_URL", "")
+          if not webhook:
+              raise SystemExit(0)
+
+          with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as event_file:
+              event = json.load(event_file)
+
+          event_name = os.environ["GITHUB_EVENT_NAME"]
+          repository = event["repository"]["full_name"]
+
+          if event_name == "pull_request_target":
+              pull_request = event["pull_request"]
+              action = event["action"]
+              if action == "closed":
+                  action = "merged" if pull_request["merged"] else "closed"
+              text = (
+                  f"GitHub PR {action}: {repository}#{pull_request['number']}\n"
+                  f"{pull_request['title']}\n"
+                  f"by {pull_request['user']['login']}\n"
+                  f"{pull_request['html_url']}"
+              )
+          elif event_name == "push":
+              head_commit = event.get("head_commit") or {}
+              message = head_commit.get("message", "").splitlines()[0]
+              text = (
+                  f"GitHub main updated: {repository}\n"
+                  f"{event['pusher']['name']}: {message}\n"
+                  f"{event['compare']}"
+              )
+          elif event_name == "workflow_run":
+              workflow_run = event["workflow_run"]
+              text = (
+                  f"GitHub CI {workflow_run['conclusion']}: {repository}\n"
+                  f"{workflow_run['name']} on {workflow_run['head_branch']}\n"
+                  f"{workflow_run['html_url']}"
+              )
+          else:
+              raise SystemExit(0)
+
+          request = urllib.request.Request(
+              webhook,
+              data=json.dumps({"msg_type": "text", "content": {"text": text}}).encode(),
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          with urllib.request.urlopen(request, timeout=10) as response:
+              result = json.load(response)
+          result_code = result.get("code", result.get("StatusCode"))
+          if result_code != 0:
+              raise RuntimeError(f"Lark rejected the notification: {result}")
+          PY
