@@ -14,6 +14,7 @@ from foretoken_cli.kubernetes import (
     control_plane_deployments,
     mark_managed_metrics_scraper_namespace,
     platform_service_resources,
+    timeout_seconds,
     unmark_managed_metrics_scraper_namespace,
 )
 from foretoken_cli.manifest import DeploymentError
@@ -48,6 +49,7 @@ class PlatformLifecycle:
         helm = self._helm
         kubectl = self._kubectl
         gateway = self._gateway
+        timeout_seconds(command.timeout)
 
         platform = helm.platform_release()
         platform_exists = helm.release_exists(platform)
@@ -304,6 +306,7 @@ class PlatformLifecycle:
         helm = self._helm
         kubectl = self._kubectl
         gateway = self._gateway
+        timeout_seconds(command.timeout)
         platform = helm.platform_release()
         managed_dcgm = helm.dcgm_release()
         managed_prometheus = helm.prometheus_release()

@@ -108,16 +108,9 @@ def _validate_reused_gateway(
 
 def _effective_gateway_config(
     command: InstallCommand,
-    helm: Helm,
-    platform: ReleaseRef,
-    platform_exists: bool,
+    stored: PlatformGatewayConfig,
 ) -> PlatformGatewayConfig:
     """Resolve Gateway mode from explicit input or stored release values."""
-    stored = (
-        helm.platform_gateway_config(platform)
-        if platform_exists
-        else PlatformGatewayConfig("local", False, "", "", "", "")
-    )
     if command.frontend_mode is None:
         return stored
     create = command.frontend_mode == "gateway" and not command.gateway_name
@@ -132,24 +125,26 @@ def _effective_gateway_config(
     )
 
 
+def _release_owns(metadata: dict[str, Any], release: ReleaseRef) -> bool:
+    """Return whether Helm metadata assigns a resource to one release."""
+    annotations = metadata.get("annotations") or {}
+    return isinstance(annotations, dict) and (
+        annotations.get("meta.helm.sh/release-name") == release.name
+        and annotations.get("meta.helm.sh/release-namespace") == release.namespace
+    )
+
+
 def _other_controller_gateway_classes(
     kubectl: Kubectl,
     controller_name: str,
     *,
-    exclude_platform: bool,
+    exclude_release: ReleaseRef | None,
 ) -> tuple[ResourceRef, ...]:
-    """Return GatewayClasses that remain outside a removed platform release."""
+    """Return GatewayClasses outside an optional platform Helm release."""
     resources: list[ResourceRef] = []
     for value in _gateway_classes_for_controller(kubectl, controller_name):
         metadata = value.get("metadata") or {}
-        labels = metadata.get("labels") or {}
-        if (
-            exclude_platform
-            and isinstance(labels, dict)
-            and labels.get("app.kubernetes.io/name")
-            == "foretoken-control-plane"
-            and labels.get("app.kubernetes.io/instance") == "foretoken"
-        ):
+        if exclude_release is not None and _release_owns(metadata, exclude_release):
             continue
         name = str(metadata.get("name") or "")
         if name:
@@ -157,23 +152,71 @@ def _other_controller_gateway_classes(
     return tuple(resources)
 
 
+def _external_platform_gateways(
+    kubectl: Kubectl,
+    platform: ReleaseRef,
+    platform_labels: tuple[tuple[str, str], ...],
+) -> tuple[ResourceRef, ...]:
+    """Return external Gateways that depend on the platform-owned GatewayClass."""
+    selector = ",".join(f"{key}={value}" for key, value in platform_labels)
+    gateway_classes = kubectl.list_cluster_resources(
+        ("gatewayclasses.gateway.networking.k8s.io",),
+        label_selector=selector,
+    )
+    class_names = {
+        str((value.get("metadata") or {}).get("name") or "")
+        for value in gateway_classes
+    }
+    class_names.discard("")
+    if not class_names:
+        return ()
+
+    resources: list[ResourceRef] = []
+    for value in kubectl.list_all_resources(
+        ("gateways.gateway.networking.k8s.io",)
+    ):
+        gateway_class_name = str(
+            (value.get("spec") or {}).get("gatewayClassName") or ""
+        )
+        if gateway_class_name not in class_names:
+            continue
+        metadata = value.get("metadata") or {}
+        if _release_owns(metadata, platform):
+            continue
+        name = str(metadata.get("name") or "")
+        namespace = str(metadata.get("namespace") or "")
+        if name:
+            resources.append(ResourceRef("Gateway", name, namespace))
+    return tuple(resources)
 
 
-
-
+def _require_no_external_platform_gateways(
+    kubectl: Kubectl,
+    platform: ReleaseRef,
+    platform_labels: tuple[tuple[str, str], ...],
+) -> None:
+    """Refuse to remove a GatewayClass still used outside its Helm release."""
+    users = _external_platform_gateways(kubectl, platform, platform_labels)
+    if not users:
+        return
+    names = ", ".join(
+        f"{user.namespace}/{user.display_name}" for user in users
+    )
+    raise DeploymentError(
+        "Foretoken GatewayClass is still used by external Gateways; "
+        f"migrate or delete them before changing the platform: {names}"
+    )
 
 
 def _wait_foretoken_gateway_class(
     kubectl: Kubectl,
     controller_name: str,
+    platform_labels: tuple[tuple[str, str], ...],
     timeout: str,
 ) -> ResourceRef:
     """Wait for the Foretoken-owned GatewayClass to become Accepted."""
     deadline = time.monotonic() + timeout_seconds(timeout)
-    selector = (
-        "app.kubernetes.io/name=foretoken-control-plane,"
-        "app.kubernetes.io/instance=foretoken"
-    )
+    selector = ",".join(f"{key}={value}" for key, value in platform_labels)
     while time.monotonic() < deadline:
         values = tuple(
             value
@@ -225,7 +268,21 @@ class GatewayControllerLifecycle:
         """Resolve the Gateway mode and Controller lifecycle before installation."""
         helm = self._helm
         kubectl = self._kubectl
-        config = _effective_gateway_config(command, helm, platform, platform_exists)
+        stored_config = (
+            helm.platform_gateway_config(platform)
+            if platform_exists
+            else PlatformGatewayConfig("local", False, "", "", "", "")
+        )
+        config = _effective_gateway_config(command, stored_config)
+        removes_platform_gateway = (
+            stored_config.mode == "gateway"
+            and stored_config.create
+            and not (config.mode == "gateway" and config.create)
+        )
+        if removes_platform_gateway:
+            _require_no_external_platform_gateways(
+                kubectl, platform, helm.platform_selector_labels
+            )
         release = helm.envoy_gateway_release()
         release_exists = helm.release_exists(release)
         managed_release = self._managed_release()
@@ -244,7 +301,9 @@ class GatewayControllerLifecycle:
         if config.mode != "gateway":
             users = (
                 _other_controller_gateway_classes(
-                    kubectl, managed_controller, exclude_platform=platform_exists
+                    kubectl,
+                    managed_controller,
+                    exclude_release=platform if platform_exists else None,
                 )
                 if controller_release is not None
                 else ()
@@ -278,7 +337,9 @@ class GatewayControllerLifecycle:
             )
             users = (
                 _other_controller_gateway_classes(
-                    kubectl, managed_controller, exclude_platform=platform_exists
+                    kubectl,
+                    managed_controller,
+                    exclude_release=platform if platform_exists else None,
                 )
                 if controller_release is not None
                 else ()
@@ -295,7 +356,9 @@ class GatewayControllerLifecycle:
         shared_managed_release = (
             managed_release if managed_release != release else None
         )
-        preferred_controller = config.controller_name or helm.envoy_gateway_default_controller
+        preferred_controller = (
+            config.controller_name or helm.envoy_gateway_default_controller
+        )
         external_gateway_class = None
         if (
             not release_managed
@@ -372,13 +435,13 @@ class GatewayControllerLifecycle:
         config: PlatformGatewayConfig,
         timeout: str,
     ) -> tuple[tuple[str, str, str], ...]:
-        """Finish Controller cleanup and GatewayClass readiness after platform update."""
+        """Finish Controller cleanup and GatewayClass readiness after update."""
         helm = self._helm
         kubectl = self._kubectl
         results: list[tuple[str, str, str]] = []
         if plan.remove:
             remaining = _other_controller_gateway_classes(
-                kubectl, plan.controller_name, exclude_platform=False
+                kubectl, plan.controller_name, exclude_release=None
             )
             if remaining:
                 users = ", ".join(user.display_name for user in remaining)
@@ -392,7 +455,10 @@ class GatewayControllerLifecycle:
             results.append(("Gateway Controller", "Ready", plan.release.display_name))
         if config.mode == "gateway" and config.create:
             gateway_class = _wait_foretoken_gateway_class(
-                kubectl, plan.controller_name, timeout
+                kubectl,
+                plan.controller_name,
+                helm.platform_selector_labels,
+                timeout,
             )
             results.append(("GatewayClass", "Ready", gateway_class.display_name))
         return tuple(results)
@@ -412,6 +478,10 @@ class GatewayControllerLifecycle:
             if platform_exists
             else PlatformGatewayConfig("local", False, "", "", "", "")
         )
+        if platform_exists and config.mode == "gateway" and config.create:
+            _require_no_external_platform_gateways(
+                kubectl, platform, helm.platform_selector_labels
+            )
         controller_release = (
             managed_release
             if managed_release is not None
@@ -423,7 +493,9 @@ class GatewayControllerLifecycle:
         )
         users = (
             _other_controller_gateway_classes(
-                kubectl, controller_name, exclude_platform=platform_exists
+                kubectl,
+                controller_name,
+                exclude_release=platform if platform_exists else None,
             )
             if controller_release is not None
             else ()
@@ -460,7 +532,7 @@ class GatewayControllerLifecycle:
         if not plan.managed:
             return None
         remaining = _other_controller_gateway_classes(
-            kubectl, plan.controller_name, exclude_platform=False
+            kubectl, plan.controller_name, exclude_release=None
         )
         if remaining:
             return "Preserve", ", ".join(user.display_name for user in remaining)
