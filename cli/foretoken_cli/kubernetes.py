@@ -27,7 +27,7 @@ _METRICS_SCRAPER_LABEL = "inference.foretoken.io/metrics-scraper"
 _METRICS_SCRAPER_OWNER_ANNOTATION = (
     "inference.foretoken.io/metrics-scraper-managed-by"
 )
-_METRICS_SCRAPER_OWNER = "foretoken-cli"
+_METRICS_SCRAPER_OWNER = "foretoken"
 
 
 @dataclass(frozen=True)

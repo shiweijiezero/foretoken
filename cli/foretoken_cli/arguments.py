@@ -8,7 +8,8 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from dataclasses import dataclass
-from importlib.metadata import version
+
+from foretoken_cli import package_version
 
 
 @dataclass(frozen=True)
@@ -107,7 +108,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--version",
         action="version",
-        version=f"%(prog)s {version('foretoken-cli')}",
+        version=f"%(prog)s {package_version()}",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
