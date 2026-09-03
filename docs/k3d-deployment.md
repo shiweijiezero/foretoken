@@ -147,11 +147,7 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 
 ## 4. Install and access Foretoken
 
-Change to the Foretoken project directory:
-
-```bash
-cd /path/to/your/foretoken
-```
+Run the remaining commands from the root of an existing Foretoken checkout.
 
 Install the CLI with pip:
 
