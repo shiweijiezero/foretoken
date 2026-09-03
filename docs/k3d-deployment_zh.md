@@ -147,11 +147,7 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 
 ## 4. 安装并访问 Foretoken
 
-进入 Foretoken 项目路径：
-
-```bash
-cd /path/to/your/foretoken
-```
+以下命令均从已经检出的 Foretoken 仓库根目录运行。
 
 使用 pip 安装 CLI：
 
