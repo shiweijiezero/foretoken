@@ -24,9 +24,11 @@ Install the CLI from the source root with pip:
 pip install -e .
 ```
 
-Or use uv:
+Or create and activate a virtual environment with uv:
 
 ```bash
+uv venv
+source .venv/bin/activate
 uv pip install -e .
 ```
 
@@ -58,13 +60,9 @@ foretoken install -e . \
   --values platform-values.yaml
 ```
 
-The command reuses the repository's existing build, import, and push lifecycle before running the same platform and observability installation used for release images. The remaining sections document the underlying manual stages for development and troubleshooting.
+The command reuses the repository's existing build, import, and push lifecycle before running the same platform and observability installation used for release images. It is the authoritative source installation path. The optional section below shows how to inspect local image imports while diagnosing that workflow; it does not define a second platform lifecycle.
 
-Kubernetes nodes must be able to obtain the images built from source. You can import local images directly or distribute them through an OCI registry.
-
-### 2.1 Import local images directly
-
-#### 2.1.1 Import local images
+### 2.1 Inspect local image imports
 
 **Option 1: Import into a Kind cluster.** Create a Kind cluster directly to validate the control plane, CRDs, frontend, and scheduling behavior. To run a GPU model service, use k3d in option 2 and select the available GPUs as described in [Deploy Foretoken with k3d](k3d-deployment.md). Install Kind first:
 
@@ -116,11 +114,11 @@ export KUBECONFIG="$PWD/tmp/kubeconfig-$KIND_CLUSTER.yaml"
 kubectl get nodes
 ```
 
-**Option 2: Import into a k3d cluster.** List the clusters on the current machine and set `CLUSTER` to the actual name:
+**Option 2: Import into a k3d cluster.** List the clusters on the current machine. The following example uses the `foretoken-qwen-test` cluster created by the k3d deployment guide:
 
 ```bash
 k3d cluster list
-export CLUSTER=your-cluster-name
+export CLUSTER=foretoken-qwen-test
 ```
 
 If the target cluster has not been created, complete the cluster creation steps in [Deploy Foretoken with k3d](k3d-deployment.md) first. Then build and import the local images from the repository root.
@@ -141,114 +139,7 @@ export KUBECONFIG="$PWD/tmp/kubeconfig-$CLUSTER.yaml"
 kubectl get nodes
 ```
 
-`--namespace k8s.io` selects the containerd image namespace used by Kubernetes. A node administrator performs options 3 and 4.
-
-**Option 3: Import into single-node containerd.** When the Kubernetes node and development machine are the same host, build the image bundle from the repository root and import it into the Kubernetes containerd namespace.
-
-```bash
-make dev-build
-mkdir -p ./tmp
-
-docker save \
-  foretoken-dev-control-plane:latest \
-  foretoken-dev-frontend:latest \
-  foretoken-dev-model-server:latest \
-  --output ./tmp/foretoken-dev-images.tar
-
-sudo ctr --namespace k8s.io images import ./tmp/foretoken-dev-images.tar
-rm ./tmp/foretoken-dev-images.tar
-```
-
-**Option 4: Import into multi-node containerd.** For an offline multi-node Kubernetes cluster that uses containerd, build the image bundle on the development machine.
-
-```bash
-make dev-build
-mkdir -p ./tmp
-
-docker save \
-  foretoken-dev-control-plane:latest \
-  foretoken-dev-frontend:latest \
-  foretoken-dev-model-server:latest \
-  --output ./tmp/foretoken-dev-images.tar
-```
-
-Replace `node-a` and `node-b` with the SSH addresses of the actual nodes, then import the bundle into every node that may run a Foretoken workload.
-
-```bash
-for NODE in node-a node-b; do
-  # Transfer the image bundle to the node
-  ssh "$NODE" 'mkdir -p ./tmp'
-  rsync --archive --progress \
-    ./tmp/foretoken-dev-images.tar \
-    "$NODE:./tmp/foretoken-dev-images.tar"
-
-  # Import it into the containerd image namespace used by Kubernetes
-  ssh -t "$NODE" \
-    'sudo ctr --namespace k8s.io images import ./tmp/foretoken-dev-images.tar &&
-     rm ./tmp/foretoken-dev-images.tar'
-done
-```
-
-#### 2.1.2 Install the Foretoken platform
-
-After importing the images, confirm that the current Kubernetes context points to the target cluster, then run the Helm command once.
-
-```bash
-# Expected runtime: about 30 seconds
-helm upgrade --install foretoken \
-  ./deploy/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=local \
-  --set image.repository=foretoken-dev-control-plane \
-  --set image.tag=latest \
-  --set image.pullPolicy=Never \
-  --set frontend.image=foretoken-dev-frontend:latest \
-  --set runtime.vllm.image=foretoken-dev-model-server:latest \
-  --wait \
-  --timeout=5m
-```
-
-### 2.2 Build and deploy through an OCI registry
-
-An OCI registry distributes images built on the development machine to Kubernetes nodes. The following example uses GHCR.
-
-```bash
-export GITHUB_USER=your-github-user
-export REGISTRY="ghcr.io/$GITHUB_USER/foretoken-dev"
-docker login ghcr.io
-REGISTRY="$REGISTRY" make dev-deploy
-```
-
-This command pushes the images and installs or updates the Foretoken platform.
-
-The script pushes:
-
-```text
-ghcr.io/your-github-user/foretoken-dev/control-plane:<tag>
-ghcr.io/your-github-user/foretoken-dev/frontend:<tag>
-ghcr.io/your-github-user/foretoken-dev/model-server:<tag>
-```
-
-For a private registry, provide a Kubernetes image pull Secret through `IMAGE_PULL_SECRET`:
-
-```bash
-REGISTRY="$REGISTRY" \
-IMAGE_PULL_SECRET=foretoken-registry \
-make dev-deploy
-```
-
-## 3. Confirm the platform deployment
-
-The script installs or updates Foretoken with Helm and waits for the control-plane rollout. When the command exits successfully with the following output, the platform deployment is complete:
-
-```text
-Foretoken deployment completed.
-Changed images: control-plane=false frontend=true model-server=false
-```
-
-## 4. Deploy the Quick Start (optional)
+## 3. Deploy the Quick Start (optional)
 
 The Quick Start requires GPU resources in the target Kubernetes cluster. With k3d, first configure the GPUs as described in [Deploy Foretoken with k3d](k3d-deployment.md), then confirm that the current Kubernetes context points to the target k3d cluster.
 
@@ -260,9 +151,9 @@ foretoken deploy examples/quickstart --timeout 6m
 
 The command discovers the rendered services, reports state changes, and exits when the current configuration is ready.
 
-## 5. Send a request (optional)
+## 4. Send a request (optional)
 
-After completing [section 4: Deploy the Quick Start](#4-deploy-the-quick-start-optional), resolve the default `local` frontend URL:
+After completing [section 3: Deploy the Quick Start](#3-deploy-the-quick-start-optional), resolve the default `local` frontend URL:
 
 ```bash
 FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
@@ -289,7 +180,7 @@ curl "$FRONTEND_URL/v1/chat/completions" \
 printf '\n'
 ```
 
-## 6. Redeploy source changes
+## 5. Redeploy source changes
 
 Run the same source installation command after changing the code:
 
@@ -300,7 +191,7 @@ foretoken install -e .
 For a remote cluster, keep using the same registry:
 
 ```bash
-foretoken install -e . --registry "$REGISTRY"
+foretoken install -e . --registry ghcr.io/example/foretoken
 ```
 
-BuildKit reuses compilation caches. The command imports or pushes only changed images, preserves the source installation mode, and rolls out workloads whose local image content changed. Use `make dev-deploy` only when debugging the underlying manual build and deployment stages.
+BuildKit reuses compilation caches. The command imports or pushes only changed images, preserves the source installation mode, and rolls out workloads whose local image content changed.

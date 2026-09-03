@@ -61,11 +61,20 @@ class Helm:
 
     def dcgm_release(self) -> ReleaseRef:
         """Return the NVIDIA exporter release managed with the platform."""
-        return ReleaseRef(self._config.dcgm_exporter.release_name, self._config.namespace)
+        return ReleaseRef(
+            self._config.dcgm_exporter.release_name, self._config.namespace
+        )
 
     def envoy_gateway_release(self) -> ReleaseRef:
         """Return the Envoy Gateway release managed with the platform."""
-        return ReleaseRef(self._config.envoy_gateway.release_name, self._config.namespace)
+        return ReleaseRef(
+            self._config.envoy_gateway.release_name, self._config.namespace
+        )
+
+    @property
+    def platform_selector_labels(self) -> tuple[tuple[str, str], ...]:
+        """Return labels shared by resources in the platform release."""
+        return self._config.platform_selector_labels
 
     @property
     def envoy_gateway_default_controller(self) -> str:
@@ -584,7 +593,9 @@ class Helm:
                 release.namespace,
             ]
         else:
-            args = self._upgrade_install_args(release, self._config.dcgm_exporter.source, None)
+            args = self._upgrade_install_args(
+                release, self._config.dcgm_exporter.source, None
+            )
             if reuse_values:
                 args.append("--reuse-values")
         args.extend(

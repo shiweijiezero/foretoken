@@ -24,9 +24,11 @@ kubectl get nodes
 pip install -e .
 ```
 
-或使用 uv 安装：
+或使用 uv 创建并激活虚拟环境后安装：
 
 ```bash
+uv venv
+source .venv/bin/activate
 uv pip install -e .
 ```
 
@@ -58,13 +60,9 @@ foretoken install -e . \
   --values platform-values.yaml
 ```
 
-命令会复用仓库已有的构建、导入和推送生命周期，再执行与发布镜像相同的平台和可观测性安装。后续章节保留底层手工步骤，供开发和排障使用。
+命令会复用仓库已有的构建、导入和推送生命周期，再执行与发布镜像相同的平台和可观测性安装。这是源码安装的唯一权威路径。下面的可选章节仅用于排查本地镜像导入，不定义第二套平台生命周期。
 
-Kubernetes 节点需要能够获得源码构建出的镜像。可以直接导入本地镜像，也可以通过 OCI 镜像仓库分发。
-
-### 2.1 直接导入本地镜像
-
-#### 2.1.1 导入本地镜像
+### 2.1 检查本地镜像导入
 
 **选项 1：导入 Kind 集群。** 使用 Kind 验证控制平面、CRD、前端服务和调度逻辑时，可以直接创建集群。需要运行 GPU 模型服务时，使用选项 2 的 k3d，并按 [使用 k3d 部署 Foretoken](k3d-deployment_zh.md) 指定可用 GPU。先安装 Kind：
 
@@ -116,11 +114,11 @@ export KUBECONFIG="$PWD/tmp/kubeconfig-$KIND_CLUSTER.yaml"
 kubectl get nodes
 ```
 
-**选项 2：导入 k3d 集群。** 先查看当前机器上的集群，并将 `CLUSTER` 设置为实际名称：
+**选项 2：导入 k3d 集群。** 先查看当前机器上的集群。以下示例使用 k3d 部署指南创建的 `foretoken-qwen-test` 集群：
 
 ```bash
 k3d cluster list
-export CLUSTER=your-cluster-name
+export CLUSTER=foretoken-qwen-test
 ```
 
 如果目标集群尚未创建，请先完成[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)中的集群创建步骤。然后在仓库根目录构建并导入本地镜像。
@@ -141,114 +139,7 @@ export KUBECONFIG="$PWD/tmp/kubeconfig-$CLUSTER.yaml"
 kubectl get nodes
 ```
 
-`--namespace k8s.io` 表示 Kubernetes 使用的 containerd 镜像命名空间。选项 3 和选项 4 由节点管理员执行。
-
-**选项 3：导入单节点上的 containerd。** Kubernetes 节点与开发机是同一台机器时，在仓库根目录构建镜像包并导入 Kubernetes 使用的 containerd 镜像命名空间。
-
-```bash
-make dev-build
-mkdir -p ./tmp
-
-docker save \
-  foretoken-dev-control-plane:latest \
-  foretoken-dev-frontend:latest \
-  foretoken-dev-model-server:latest \
-  --output ./tmp/foretoken-dev-images.tar
-
-sudo ctr --namespace k8s.io images import ./tmp/foretoken-dev-images.tar
-rm ./tmp/foretoken-dev-images.tar
-```
-
-**选项 4：导入多节点 containerd。** 针对使用 containerd 的离线多节点 Kubernetes 集群，在开发机上构建镜像包。
-
-```bash
-make dev-build
-mkdir -p ./tmp
-
-docker save \
-  foretoken-dev-control-plane:latest \
-  foretoken-dev-frontend:latest \
-  foretoken-dev-model-server:latest \
-  --output ./tmp/foretoken-dev-images.tar
-```
-
-将 `node-a` 和 `node-b` 替换为实际节点的 SSH 地址，然后导入每个可能运行 Foretoken 工作负载的节点。
-
-```bash
-for NODE in node-a node-b; do
-  # 将镜像包传输到节点
-  ssh "$NODE" 'mkdir -p ./tmp'
-  rsync --archive --progress \
-    ./tmp/foretoken-dev-images.tar \
-    "$NODE:./tmp/foretoken-dev-images.tar"
-
-  # 在节点上导入 Kubernetes 使用的 containerd 镜像空间
-  ssh -t "$NODE" \
-    'sudo ctr --namespace k8s.io images import ./tmp/foretoken-dev-images.tar &&
-     rm ./tmp/foretoken-dev-images.tar'
-done
-```
-
-#### 2.1.2 安装 Foretoken 平台
-
-镜像导入完成后，确认当前 Kubernetes 上下文指向目标集群，然后执行 Helm 命令。
-
-```bash
-# 预计执行时间：约 30 秒
-helm upgrade --install foretoken \
-  ./deploy/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=local \
-  --set image.repository=foretoken-dev-control-plane \
-  --set image.tag=latest \
-  --set image.pullPolicy=Never \
-  --set frontend.image=foretoken-dev-frontend:latest \
-  --set runtime.vllm.image=foretoken-dev-model-server:latest \
-  --wait \
-  --timeout=5m
-```
-
-### 2.2 通过 OCI 镜像仓库构建并部署
-
-OCI 镜像仓库可以将开发机构建的镜像分发给 Kubernetes 节点。以下示例使用 GHCR。
-
-```bash
-export GITHUB_USER=your-github-user
-export REGISTRY="ghcr.io/$GITHUB_USER/foretoken-dev"
-docker login ghcr.io
-REGISTRY="$REGISTRY" make dev-deploy
-```
-
-该命令会推送镜像并安装或更新 Foretoken 平台。
-
-脚本会自动推送：
-
-```text
-ghcr.io/your-github-user/foretoken-dev/control-plane:<tag>
-ghcr.io/your-github-user/foretoken-dev/frontend:<tag>
-ghcr.io/your-github-user/foretoken-dev/model-server:<tag>
-```
-
-使用私有镜像仓库时，通过 `IMAGE_PULL_SECRET` 提供 Kubernetes 镜像拉取 Secret：
-
-```bash
-REGISTRY="$REGISTRY" \
-IMAGE_PULL_SECRET=foretoken-registry \
-make dev-deploy
-```
-
-## 3. 确认平台部署完成
-
-脚本会通过 Helm 安装或更新 Foretoken，并等待控制平面完成滚动更新。命令成功退出并显示以下输出后，平台部署完成：
-
-```text
-Foretoken deployment completed.
-Changed images: control-plane=false frontend=true model-server=false
-```
-
-## 4. 部署快速开始示例（可选）
+## 3. 部署快速开始示例（可选）
 
 快速开始示例需要目标 Kubernetes 集群提供 GPU 资源。使用 k3d 时，先按[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)完成 GPU 配置，并确认当前 Kubernetes 上下文指向目标 k3d 集群。
 
@@ -260,9 +151,9 @@ foretoken deploy examples/quickstart --timeout 6m
 
 该命令会发现渲染后的服务、输出状态变化，并在当前配置就绪后退出。
 
-## 5. 发送请求（可选）
+## 4. 发送请求（可选）
 
-完成[第 4 节：部署快速开始示例](#4-部署快速开始示例可选)后，解析默认 `local` 前端模式的 URL：
+完成[第 3 节：部署快速开始示例](#3-部署快速开始示例可选)后，解析默认 `local` 前端模式的 URL：
 
 ```bash
 FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
@@ -289,7 +180,7 @@ curl "$FRONTEND_URL/v1/chat/completions" \
 printf '\n'
 ```
 
-## 6. 修改源码后重新部署
+## 5. 修改源码后重新部署
 
 修改代码后再次执行同一条源码安装命令：
 
@@ -300,7 +191,7 @@ foretoken install -e .
 远程集群继续使用同一个镜像仓库：
 
 ```bash
-foretoken install -e . --registry "$REGISTRY"
+foretoken install -e . --registry ghcr.io/example/foretoken
 ```
 
-BuildKit 会复用编译缓存。命令只导入或推送发生变化的镜像，保持源码安装模式，并滚动更新使用本地同名镜像且内容发生变化的工作负载。只有排查底层手工构建与部署阶段时才直接使用 `make dev-deploy`。
+BuildKit 会复用编译缓存。命令只导入或推送发生变化的镜像，保持源码安装模式，并滚动更新使用本地同名镜像且内容发生变化的工作负载。
