@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use crate::{RouteFilter, RoutePicker, RouteScorer, RouterPipeline};
 
-/// A Filter implementation compiled into this binary.
+/// A Filter implementation compiled into this binary and selectable without control-plane changes.
 pub struct FilterDescriptor {
     /// Stable configuration name.
     pub name: &'static str,
@@ -21,7 +21,7 @@ pub struct FilterDescriptor {
 }
 inventory::collect!(FilterDescriptor);
 
-/// A Scorer implementation compiled into this binary.
+/// A Scorer implementation compiled into this binary and selectable without control-plane changes.
 pub struct ScorerDescriptor {
     /// Stable configuration name.
     pub name: &'static str,
@@ -30,7 +30,7 @@ pub struct ScorerDescriptor {
 }
 inventory::collect!(ScorerDescriptor);
 
-/// A Picker implementation compiled into this binary.
+/// A Picker implementation compiled into this binary and selectable without control-plane changes.
 pub struct PickerDescriptor {
     /// Stable configuration name.
     pub name: &'static str,
