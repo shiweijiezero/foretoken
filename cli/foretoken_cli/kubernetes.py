@@ -219,12 +219,14 @@ def _decode_object(output: str) -> dict[str, Any]:
 
 
 def _decode_resource_list(output: str) -> tuple[dict[str, Any], ...]:
-    """Decode a Kubernetes List and return its object items."""
-    items = _decode_object(output).get("items") or []
+    """Decode a Kubernetes List and return its identified object items."""
+    items = _decode_object(output).get("items")
     if not isinstance(items, list) or not all(
         isinstance(item, dict) for item in items
     ):
         raise DeploymentError("kubectl returned an unexpected resource list")
+    for item in items:
+        resource_ref(item)
     return tuple(items)
 
 
@@ -252,6 +254,16 @@ def resource_ref(value: dict[str, Any]) -> ResourceRef:
         )
     namespace = "" if namespace_value is None else namespace_value
     return ResourceRef(kind, name, namespace)
+
+
+def namespaced_resource_ref(value: dict[str, Any]) -> ResourceRef:
+    """Return one namespaced Kubernetes identity and reject cluster-scoped shape."""
+    ref = resource_ref(value)
+    if not ref.namespace:
+        raise DeploymentError(
+            f"Kubernetes {ref.display_name} has no metadata.namespace"
+        )
+    return ref
 
 
 def _resource_refs(values: Iterable[dict[str, Any]]) -> tuple[ResourceRef, ...]:

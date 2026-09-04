@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from foretoken_cli.accelerators._exporter import object_name
 from foretoken_cli.accelerators.discovery import AcceleratorMetricsDiscovery, ExporterMonitor
+from foretoken_cli.kubernetes import resource_ref
 from foretoken_cli.manifest import DeploymentError
 
 
@@ -21,10 +21,7 @@ class MetaXMetricsDiscovery(AcceleratorMetricsDiscovery):
     def resolve(self) -> ExporterMonitor | None:
         """Return the mxExporter collection path for allocatable MetaX GPUs."""
         gpu_nodes = {
-            name
-            for node in self.accelerator_nodes()
-            for name in (object_name(node),)
-            if name
+            resource_ref(node).name for node in self.accelerator_nodes()
         }
         if not gpu_nodes:
             return None

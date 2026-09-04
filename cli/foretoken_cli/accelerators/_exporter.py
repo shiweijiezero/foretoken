@@ -7,12 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from foretoken_cli.kubernetes import namespaced_resource_ref
 from foretoken_cli.observability import matches_label_selector
-
-
-def object_name(value: dict[str, Any]) -> str:
-    """Return one Kubernetes object's name when present."""
-    return str((value.get("metadata") or {}).get("name") or "")
 
 
 def service_selects_pods(
@@ -32,10 +28,10 @@ def monitor_selects_service(
     monitor: dict[str, Any], service: dict[str, Any], pod_ports: set[str | int]
 ) -> bool:
     """Return whether a ServiceMonitor selects one exporter Service and port."""
-    monitor_metadata = monitor.get("metadata") or {}
-    monitor_namespace = str(monitor_metadata.get("namespace") or "")
-    service_metadata = service.get("metadata") or {}
-    service_namespace = str(service_metadata.get("namespace") or "")
+    monitor_namespace = namespaced_resource_ref(monitor).namespace
+    service_ref = namespaced_resource_ref(service)
+    service_metadata = service["metadata"]
+    service_namespace = service_ref.namespace
     service_labels = service_metadata.get("labels") or {}
     spec = monitor.get("spec") or {}
     if (

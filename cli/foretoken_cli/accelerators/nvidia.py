@@ -8,12 +8,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from foretoken_cli.accelerators._exporter import object_name
 from foretoken_cli.accelerators.discovery import (
     AcceleratorMetricsDiscovery,
     ExporterMonitor,
 )
-from foretoken_cli.kubernetes import resource_ref
+from foretoken_cli.kubernetes import namespaced_resource_ref, resource_ref
 from foretoken_cli.manifest import DeploymentError, ResourceRef
 
 
@@ -41,11 +40,9 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
             if not (node.get("spec") or {}).get("unschedulable")
         )
         blocked_gpu_nodes = tuple(
-            name
+            resource_ref(node).name
             for node in candidate_nodes
             if self.has_capacity(node) and self.unsupported_taints(node)
-            for name in (object_name(node),)
-            if name
         )
         if blocked_gpu_nodes:
             raise DeploymentError(
@@ -65,7 +62,7 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
             external = tuple(
                 ref
                 for value in candidates
-                for ref in (resource_ref(value),)
+                for ref in (namespaced_resource_ref(value),)
                 if ref != managed_daemonset
             )
             if external:
@@ -115,9 +112,7 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
         self, nodes: tuple[dict[str, Any], ...], gpu_nodes: tuple[str, ...]
     ) -> tuple[str, str] | None:
         """Return a proven GPU-only node selector for a managed exporter."""
-        schedulable_nodes = {
-            name for node in nodes for name in (object_name(node),) if name
-        }
+        schedulable_nodes = {resource_ref(node).name for node in nodes}
         gpu_node_set = set(gpu_nodes)
         if schedulable_nodes == gpu_node_set:
             return None
@@ -126,11 +121,9 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
             "feature.node.kubernetes.io/pci-10de.present",
         ):
             selected = {
-                name
+                resource_ref(node).name
                 for node in nodes
                 if self.node_label(node, label) == "true"
-                for name in (object_name(node),)
-                if name
             }
             if selected == gpu_node_set:
                 return label, "true"
@@ -167,11 +160,9 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
         """Return stable names for nodes with NVIDIA GPU capacity."""
         return tuple(
             sorted(
-                name
+                resource_ref(node).name
                 for node in nodes
                 if self.has_capacity(node)
-                for name in (object_name(node),)
-                if name
             )
         )
 

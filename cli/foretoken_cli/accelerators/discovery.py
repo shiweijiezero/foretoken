@@ -11,12 +11,11 @@ from typing import Any
 
 from foretoken_cli.accelerators._exporter import (
     monitor_selects_service,
-    object_name,
     owned_by_daemonset,
     pod_ready,
     service_selects_pods,
 )
-from foretoken_cli.kubernetes import Kubectl, resource_ref
+from foretoken_cli.kubernetes import Kubectl, namespaced_resource_ref
 from foretoken_cli.manifest import DeploymentError, ResourceRef
 from foretoken_cli.observability import (
     PrometheusRef,
@@ -113,20 +112,26 @@ class ExporterDiscovery:
         self, daemonset: dict[str, Any], node_names: set[str]
     ) -> bool:
         """Return whether ready DaemonSet Pods cover every selected node."""
-        metadata = daemonset.get("metadata") or {}
-        namespace = str(metadata.get("namespace") or "")
-        uid = str(metadata.get("uid") or "")
-        selector_spec = (daemonset.get("spec") or {}).get("selector") or {}
-        if not isinstance(selector_spec, dict):
-            return False
-        match_labels = selector_spec.get("matchLabels", {})
-        if not namespace or not uid or not isinstance(match_labels, dict):
-            return False
-        if not all(
+        daemonset_ref = namespaced_resource_ref(daemonset)
+        metadata = daemonset["metadata"]
+        uid = metadata.get("uid")
+        if not isinstance(uid, str) or not uid:
+            raise DeploymentError(
+                f"Kubernetes {daemonset_ref.display_name} has no metadata.uid"
+            )
+        spec = daemonset.get("spec")
+        if not isinstance(spec, dict) or not isinstance(spec.get("selector"), dict):
+            raise DeploymentError(
+                f"Kubernetes {daemonset_ref.display_name} has no spec.selector"
+            )
+        match_labels = spec["selector"].get("matchLabels") or {}
+        if not isinstance(match_labels, dict) or not all(
             isinstance(key, str) and isinstance(value, str)
             for key, value in match_labels.items()
         ):
-            return False
+            raise DeploymentError(
+                f"Kubernetes {daemonset_ref.display_name} has an invalid spec.selector.matchLabels"
+            )
         selector = ",".join(
             f"{key}={value}" for key, value in sorted(match_labels.items())
         )
@@ -134,18 +139,22 @@ class ExporterDiscovery:
         if pods is None:
             pods = self._kubectl.list_all_resources(("pod",), label_selector=selector)
             self._pods[selector] = pods
-        ready_nodes = {
-            str((pod.get("spec") or {}).get("nodeName") or "")
-            for pod in pods
-            if str((pod.get("metadata") or {}).get("namespace") or "") == namespace
-            and owned_by_daemonset(pod, uid)
-            and pod_ready(pod)
-        }
+        ready_nodes = set()
+        for pod in pods:
+            pod_ref = namespaced_resource_ref(pod)
+            if (
+                pod_ref.namespace == daemonset_ref.namespace
+                and owned_by_daemonset(pod, uid)
+                and pod_ready(pod)
+            ):
+                node_name = (pod.get("spec") or {}).get("nodeName")
+                if isinstance(node_name, str) and node_name:
+                    ready_nodes.add(node_name)
         return node_names.issubset(ready_nodes)
 
     def _service_monitor(self, daemonset: dict[str, Any]) -> ExporterMonitor:
         """Return the ServiceMonitor proven to scrape one exporter."""
-        daemonset_ref = resource_ref(daemonset)
+        daemonset_ref = namespaced_resource_ref(daemonset)
         if self._monitoring_resources is None:
             self._monitoring_resources = frozenset(
                 self._kubectl.api_resource_names("monitoring.coreos.com")
@@ -191,7 +200,7 @@ class ExporterDiscovery:
                 ("servicemonitors.monitoring.coreos.com",)
             )
         monitors = {
-            resource_ref(monitor): monitor
+            namespaced_resource_ref(monitor): monitor
             for monitor in self._service_monitors
             if any(
                 monitor_selects_service(monitor, service, pod_ports)
@@ -219,7 +228,7 @@ class ExporterDiscovery:
     @staticmethod
     def _display_name(value: dict[str, Any]) -> str:
         """Return a stable namespaced identity for an exporter object."""
-        ref = resource_ref(value)
+        ref = namespaced_resource_ref(value)
         return f"{ref.namespace}/{ref.display_name}"
 
 
