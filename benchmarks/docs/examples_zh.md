@@ -30,6 +30,7 @@ export MODEL_ID=Qwen/Qwen3-0.6B
 - [StudyChat 轨迹回放](coomon_commands/studychat_zh.md)
 - [Mooncake trace 回放](coomon_commands/mooncake-trace_zh.md)
 - [参数扫描](coomon_commands/sweep_zh.md)
+- [视频生成评测](coomon_commands/video_zh.md)
 - [W&B 输出](coomon_commands/wandb_zh.md)
 
 指标定义见[结果指标](../metrics_zh.md)。全部参数见 `foretoken bench --help`。
