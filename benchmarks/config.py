@@ -152,6 +152,8 @@ class OutputConfig:
         return destination in self.destinations
 
     def validate(self) -> None:
+        if not self.destinations:
+            raise ValueError("--output must select at least one destination")
         allowed = {"local", "wandb", "quiet"}
         unknown = set(self.destinations) - allowed
         if unknown:

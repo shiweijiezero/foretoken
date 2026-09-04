@@ -46,6 +46,14 @@ def _output_destinations(value: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in value.split(",") if item.strip())
 
 
+def _json_object(value: str) -> dict[str, Any]:
+    """Parse one CLI JSON object without accepting other JSON value types."""
+    parsed = json.loads(value)
+    if not isinstance(parsed, dict):
+        raise argparse.ArgumentTypeError("must be a JSON object")
+    return parsed
+
+
 def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     # Service source
     parser.add_argument(
@@ -170,7 +178,7 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--extra-body",
-        type=json.loads,
+        type=_json_object,
         default=_default(GenerationConfig, "extra_body"),
         help="JSON object of extra body parameters included in each request",
     )
