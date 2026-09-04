@@ -33,6 +33,48 @@ const (
 	frontendModeGateway = "gateway"
 )
 
+// validateECProfile rejects partial EC settings before the manager starts.
+func validateECProfile(name, revision, connector, claim, path string) error {
+	if name == "" {
+		if revision != "" || claim != "" {
+			return errors.New("vLLM EC settings require vllm-ec-profile-name")
+		}
+		return nil
+	}
+	if revision == "" || connector != "ECExampleConnector" || claim == "" || path == "" {
+		return errors.New("vLLM EC profile is incomplete")
+	}
+	return nil
+}
+
+// validatePDProfile rejects partial or unsupported P/D settings before startup.
+func validatePDProfile(name, revision, protocol string, bootstrapPort, abortTimeout int, rdmaDevice, rdmaResource string, rdmaCount int) error {
+	if name == "" {
+		if revision != "" || protocol != "" || bootstrapPort != 0 || abortTimeout != 0 || rdmaDevice != "" || rdmaResource != "" || rdmaCount != 0 {
+			return errors.New("vLLM P/D settings require vllm-pd-profile-name")
+		}
+		return nil
+	}
+	if revision == "" || protocol != "rdma" || bootstrapPort < 1 || bootstrapPort > 65535 || abortTimeout < 1 || int64(abortTimeout) > int64(1<<31-1) || rdmaDevice == "" || rdmaResource == "" || rdmaCount < 1 || int64(rdmaCount) > int64(1<<31-1) {
+		return errors.New("vLLM P/D profile is incomplete or unsupported")
+	}
+	return nil
+}
+
+// validateMooncakeStoreProfile rejects partial external Store settings.
+func validateMooncakeStoreProfile(name, revision, configMapName, configMapKey, pythonHashSeed string) error {
+	if name == "" {
+		if revision != "" || configMapName != "" || configMapKey != "" || pythonHashSeed != "" {
+			return errors.New("Mooncake Store settings require vllm-mooncake-store-profile-name")
+		}
+		return nil
+	}
+	if revision == "" || configMapName == "" || configMapKey == "" || pythonHashSeed == "" {
+		return errors.New("Mooncake Store profile is incomplete")
+	}
+	return nil
+}
+
 func main() {
 	var metricsAddress string
 	var probeAddress string
@@ -129,6 +171,10 @@ func main() {
 		workloadImagePullSecrets[index] = corev1.LocalObjectReference{Name: name}
 	}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
+	if inferenceEngineImage == "" {
+		ctrl.Log.Error(errors.New("inference-engine-image must be nonempty"), "invalid inference engine profile")
+		os.Exit(1)
+	}
 	if modelServerPort < 1 || modelServerPort > 65535 {
 		ctrl.Log.Error(errors.New("model-server-port must be between 1 and 65535"), "invalid inference engine profile")
 		os.Exit(1)
@@ -141,8 +187,16 @@ func main() {
 		ctrl.Log.Error(errors.New("frontend-mode must be local or gateway"), "invalid frontend profile")
 		os.Exit(1)
 	}
-	if vllmPDProfileName != "" && (vllmPDBootstrapPort < 1 || vllmPDBootstrapPort > 65535 || vllmPDAbortRequestTimeoutSeconds < 1 || int64(vllmPDAbortRequestTimeoutSeconds) > int64(1<<31-1) || vllmPDRDMAResourceCount < 1 || int64(vllmPDRDMAResourceCount) > int64(1<<31-1)) {
-		ctrl.Log.Error(errors.New("vLLM P/D numeric settings are outside their supported ranges"), "invalid P/D profile")
+	if err := validateECProfile(vllmECProfileName, vllmECProfileRevision, vllmECConnector, vllmECSharedStorageClaim, vllmECSharedStoragePath); err != nil {
+		ctrl.Log.Error(err, "invalid EC profile")
+		os.Exit(1)
+	}
+	if err := validatePDProfile(vllmPDProfileName, vllmPDProfileRevision, vllmPDProtocol, vllmPDBootstrapPort, vllmPDAbortRequestTimeoutSeconds, vllmPDRDMADeviceName, vllmPDRDMAResourceName, vllmPDRDMAResourceCount); err != nil {
+		ctrl.Log.Error(err, "invalid P/D profile")
+		os.Exit(1)
+	}
+	if err := validateMooncakeStoreProfile(vllmMooncakeStoreProfileName, vllmMooncakeStoreProfileRevision, vllmMooncakeStoreConfigMapName, vllmMooncakeStoreConfigMapKey, vllmMooncakeStorePythonHashSeed); err != nil {
+		ctrl.Log.Error(err, "invalid Mooncake Store profile")
 		os.Exit(1)
 	}
 	var mooncakePD *resolver.MooncakePDProfile
