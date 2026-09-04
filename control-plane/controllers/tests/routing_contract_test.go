@@ -26,8 +26,9 @@ func TestFrontendRoutingSnapshotAndReadinessContract(t *testing.T) {
 		TypeMeta:   metav1.TypeMeta{APIVersion: inferencev1alpha1.GroupVersion.String(), Kind: "FrontendService"},
 		ObjectMeta: metav1.ObjectMeta{Name: "chat", Namespace: "default", UID: "chat-uid", Generation: 1},
 		Spec: inferencev1alpha1.FrontendServiceSpec{
-			Replicas: pointer(int32(1)),
-			Hostname: "chat.example.com",
+			Replicas:       pointer(int32(1)),
+			Hostname:       "chat.example.com",
+			RouterPipeline: routerPipeline(),
 			Resources: inferencev1alpha1.FrontendResources{
 				Requests: inferencev1alpha1.ComputeResourceRequests{CPU: "1", Memory: "1Gi"},
 			},
@@ -106,9 +107,10 @@ func TestFrontendLocalModeNeedsNoGateway(t *testing.T) {
 		TypeMeta:   metav1.TypeMeta{APIVersion: inferencev1alpha1.GroupVersion.String(), Kind: "FrontendService"},
 		ObjectMeta: metav1.ObjectMeta{Name: "local", Namespace: "default", UID: "local-uid", Generation: 1},
 		Spec: inferencev1alpha1.FrontendServiceSpec{
-			Replicas:  pointer(int32(1)),
-			Resources: inferencev1alpha1.FrontendResources{Requests: inferencev1alpha1.ComputeResourceRequests{CPU: "1", Memory: "1Gi"}},
-			Timeouts:  inferencev1alpha1.FrontendTimeouts{Request: "10m", StreamIdle: "5m"},
+			Replicas:       pointer(int32(1)),
+			RouterPipeline: routerPipeline(),
+			Resources:      inferencev1alpha1.FrontendResources{Requests: inferencev1alpha1.ComputeResourceRequests{CPU: "1", Memory: "1Gi"}},
+			Timeouts:       inferencev1alpha1.FrontendTimeouts{Request: "10m", StreamIdle: "5m"},
 		},
 	}
 	staleRoute := &gatewayv1.HTTPRoute{

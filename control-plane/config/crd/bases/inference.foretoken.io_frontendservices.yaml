@@ -136,6 +136,7 @@ spec:
                   rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                     <= 0'
               routerPipeline:
+                default: {}
                 description: RouterPipeline selects each independently composable
                   routing algorithm stage.
                 properties:

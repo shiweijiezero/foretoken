@@ -69,6 +69,7 @@ type FrontendServiceSpec struct {
 	Timeouts  FrontendTimeouts  `json:"timeouts"`
 
 	// +optional
+	// +kubebuilder:default={}
 	RouterPipeline RouterPipeline `json:"routerPipeline,omitempty"`
 
 	// Hostname is required when the platform exposes frontends through a Gateway.
