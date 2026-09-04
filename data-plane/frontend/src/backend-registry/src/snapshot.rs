@@ -3,7 +3,7 @@
 
 //! Defines the controller-projected component/pipeline-scope routing snapshot contract.
 use foretoken_model_protocol::ModelServerRole;
-use foretoken_router::{RouteTargetId, RouteTargetSet, ScalingTarget, ScalingTargetKind};
+use foretoken_router::{RouteTargetId, RouteTargetSet};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
@@ -11,7 +11,6 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ServingSnapshot {
     pub version: u64,
-    #[serde(default)]
     pub models: Vec<SnapshotModel>,
     pub groups: Vec<SnapshotGroup>,
     #[serde(default)]
@@ -71,7 +70,6 @@ pub struct SnapshotEpdComponent {
     pub endpoint: String,
     #[serde(default)]
     pub prefill_bootstrap_endpoint: Option<String>,
-    #[serde(default)]
     pub kv_scope_id: String,
     pub data_parallel_size: u32,
 }
@@ -108,7 +106,6 @@ pub struct SnapshotPdComponent {
     pub endpoint: String,
     #[serde(default)]
     pub prefill_bootstrap_endpoint: Option<String>,
-    #[serde(default)]
     pub kv_scope_id: String,
     pub data_parallel_size: u32,
 }
@@ -136,7 +133,6 @@ pub struct SnapshotGroup {
     #[serde(default)]
     pub max_input_tokens: Option<usize>,
     pub endpoint: String,
-    #[serde(default)]
     pub kv_scope_id: String,
     pub data_parallel_size: u32,
 }
@@ -151,8 +147,6 @@ impl ServingSnapshot {
     /// Returns each model's deterministically ordered, controller-owned admission target sets.
     ///
     /// Registry projection consumes these sets to attribute request admission; malformed or conflicting ownership is rejected.
-    // Prefer the controller-projected logical targets in `models`. Model-less snapshots fall
-    // back to topology-derived targets, then all sets are ordered and deduplicated consistently.
     pub fn admission_target_sets(
         &self,
     ) -> Result<BTreeMap<String, Vec<RouteTargetSet>>, SnapshotError> {
@@ -176,48 +170,6 @@ impl ServingSnapshot {
                 .entry(model.model.clone())
                 .or_default()
                 .extend(model.admission_target_sets.clone());
-        }
-        if targets.is_empty() {
-            for group in &self.groups {
-                targets
-                    .entry(group.model.clone())
-                    .or_default()
-                    .push(RouteTargetSet::new(vec![ScalingTarget {
-                        service_uid: group.service_uid.clone(),
-                        name: group.pool_name.clone(),
-                        uid: group.pool_uid.clone(),
-                        kind: ScalingTargetKind::Pool,
-                    }]));
-            }
-            let mut pd_targets = BTreeMap::<(String, String), Vec<ScalingTarget>>::new();
-            for component in &self.pd_components {
-                pd_targets
-                    .entry((component.model.clone(), component.service_uid.clone()))
-                    .or_default()
-                    .push(ScalingTarget {
-                        service_uid: component.service_uid.clone(),
-                        name: component.pool_name.clone(),
-                        uid: component.pool_uid.clone(),
-                        kind: ScalingTargetKind::Pool,
-                    });
-            }
-            for ((model, _), values) in pd_targets {
-                targets
-                    .entry(model)
-                    .or_default()
-                    .push(RouteTargetSet::new(values));
-            }
-            for component in &self.epd_components {
-                targets
-                    .entry(component.model.clone())
-                    .or_default()
-                    .push(RouteTargetSet::new(vec![ScalingTarget {
-                        service_uid: component.service_uid.clone(),
-                        name: "epd".into(),
-                        uid: component.service_uid.clone(),
-                        kind: ScalingTargetKind::EPDPipelineScope,
-                    }]));
-            }
         }
         for values in targets.values_mut() {
             values.sort_by(|left, right| left.targets().cmp(right.targets()));
