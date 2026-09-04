@@ -38,6 +38,7 @@ Public configuration includes CLI flags, YAML fields, environment variables, CRD
 - Derive values from the model identifier, Kubernetes resource, Helm release, namespace, or another authoritative input when possible.
 - Do not automatically expose every struct or dataclass field through reflection. CLI, configuration, and sweep surfaces require an explicit field mapping.
 - Keep one source for each default. Do not repeat the same default in a schema, parser, controller, adapter, and example.
+- Define user and runtime defaults at the configuration or lifecycle boundary that owns them. Decoders and consumers must not replace missing required state with empty strings, empty collections, zero values, or other convenient fallbacks; fail at the owning boundary so the broken contract remains visible. Represent absence explicitly only when it is valid domain state.
 - Experimental capabilities must be disabled by default and have an explicit activation boundary.
 - Stable contracts must not break silently. Incompatible changes require an explicit version, deprecation period, and migration path.
 
@@ -72,6 +73,10 @@ Names should describe domain responsibility and ownership without relying on the
 Keep values at the narrowest scope that owns them. A value used by one function belongs inside that function; use a module-level constant only when multiple functions share it or it represents a module-wide external contract. Do not move configuration into file globals merely for convenience.
 
 Keep related stages readable as one flow. Extract a function when it owns a meaningful stage or lifecycle, not merely to shorten another function. Avoid fragmenting sequential logic into thin helpers that force readers to jump between files.
+
+When a component owns the same resources, clients, configuration, or invariants across multiple lifecycle stages, use a state-owning type: a class in Python or a struct with methods in Go and Rust. Keep stateless transformations and single-stage operations as functions. Do not introduce a type only for namespacing, shorter parameter lists, or hypothetical reuse.
+
+A module centered on a state-owning class should contain that lifecycle and its closely related types. Put behavior shared by current implementations on their base class, and keep adapter-specific recognition, capacity, and policy as methods on the specialized class so the adapter remains readable in one place. Move only reusable stateless parsing, matching, and formatting to clearly named helper modules. Do not enforce one class per file mechanically; keep multiple classes together when they participate in the same lifecycle and share one responsibility.
 
 Comments explain information the code cannot express clearly:
 

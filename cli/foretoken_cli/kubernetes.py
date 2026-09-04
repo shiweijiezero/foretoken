@@ -234,17 +234,29 @@ def load_deployment(path_value: str, kubectl: Kubectl) -> ForetokenDeployment:
     return parse_deployment(path, kubectl.kustomize(path))
 
 
+def resource_ref(value: dict[str, Any]) -> ResourceRef:
+    """Return one Kubernetes identity and reject an incomplete object contract."""
+    metadata = value.get("metadata")
+    if not isinstance(metadata, dict):
+        raise DeploymentError("Kubernetes object has no metadata")
+    kind = value.get("kind")
+    name = metadata.get("name")
+    if not isinstance(kind, str) or not kind:
+        raise DeploymentError("Kubernetes object has no kind")
+    if not isinstance(name, str) or not name:
+        raise DeploymentError(f"Kubernetes {kind} object has no metadata.name")
+    namespace_value = metadata.get("namespace")
+    if namespace_value is not None and not isinstance(namespace_value, str):
+        raise DeploymentError(
+            f"Kubernetes {kind}/{name} has an invalid metadata.namespace"
+        )
+    namespace = "" if namespace_value is None else namespace_value
+    return ResourceRef(kind, name, namespace)
+
+
 def _resource_refs(values: Iterable[dict[str, Any]]) -> tuple[ResourceRef, ...]:
     """Return named resource identities from Kubernetes objects."""
-    resources: list[ResourceRef] = []
-    for value in values:
-        metadata = value.get("metadata") or {}
-        kind = str(value.get("kind") or "")
-        name = str(metadata.get("name") or "")
-        namespace = str(metadata.get("namespace") or "")
-        if kind and name:
-            resources.append(ResourceRef(kind, name, namespace))
-    return tuple(resources)
+    return tuple(resource_ref(value) for value in values)
 
 
 def control_plane_deployments(kubectl: Kubectl) -> tuple[ResourceRef, ...]:
@@ -378,12 +390,9 @@ def namespace_progress(
         ("frontendservice", "modelservice"), namespace
     )
     for value in values:
-        kind = str(value.get("kind") or "")
-        name = str((value.get("metadata") or {}).get("name") or "").strip()
-        if kind in {"FrontendService", "ModelService"} and name:
-            progress.append(
-                resource_progress(ResourceRef(kind, name, namespace), value)
-            )
+        resource = resource_ref(value)
+        if resource.kind in {"FrontendService", "ModelService"}:
+            progress.append(resource_progress(resource, value))
     if not progress:
         raise DeploymentError(
             f"no FrontendService or ModelService resources found in namespace {namespace}"
@@ -398,11 +407,9 @@ def read_progress(
     selected = tuple(resources)
     values = kubectl.get_resources(selected)
     by_identity = {
-        (
-            str(value.get("kind") or ""),
-            str((value.get("metadata") or {}).get("name") or ""),
-        ): value
+        (resource.kind, resource.name): value
         for value in values
+        for resource in (resource_ref(value),)
     }
     try:
         return tuple(

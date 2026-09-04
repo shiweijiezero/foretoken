@@ -1,204 +1,184 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""NVIDIA GPU and DCGM Exporter discovery for platform installation."""
+"""NVIDIA metric discovery lifecycle for platform installation."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-from foretoken_cli.accelerators._exporter import (
+from foretoken_cli.accelerators._exporter import object_name
+from foretoken_cli.accelerators.discovery import (
+    AcceleratorMetricsDiscovery,
     ExporterMonitor,
-    daemonset_covers_nodes,
-    exporter_service_monitor,
-    object_name,
-    resource_ref,
 )
-from foretoken_cli.kubernetes import Kubectl
+from foretoken_cli.kubernetes import resource_ref
 from foretoken_cli.manifest import DeploymentError, ResourceRef
+
 
 @dataclass(frozen=True)
 class NvidiaMetrics:
-    """The reusable exporter or safe placement for a managed release."""
+    """The selected exporter or safe placement for a managed release."""
 
-    reused_exporter: ExporterMonitor | None
+    exporter: ExporterMonitor | None
     node_selector: tuple[str, str] | None
 
 
-def discover_nvidia_metrics(
-    kubectl: Kubectl, managed_daemonset: ResourceRef | None = None
-) -> NvidiaMetrics | None:
-    """Resolve NVIDIA GPU nodes and a safe DCGM Exporter lifecycle."""
-    candidate_nodes = tuple(
-        node
-        for node in kubectl.list_all_resources(("node",))
-        if not (node.get("spec") or {}).get("unschedulable")
-    )
-    blocked_gpu_nodes = tuple(
-        name
-        for node in candidate_nodes
-        if _positive_gpu_capacity(node) and _unsupported_taints(node)
-        for name in (object_name(node),)
-        if name
-    )
-    if blocked_gpu_nodes:
-        raise DeploymentError(
-            "NVIDIA GPU nodes have NoSchedule or NoExecute taints that the managed "
-            "DCGM Exporter does not tolerate: " + ", ".join(sorted(blocked_gpu_nodes))
-        )
-    nodes = tuple(node for node in candidate_nodes if not _unsupported_taints(node))
-    gpu_nodes = _gpu_node_names(nodes)
-    if not gpu_nodes:
-        return None
+class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
+    """Resolve NVIDIA nodes and the DCGM Exporter lifecycle for one install."""
 
-    candidates = tuple(
-        daemonset
-        for daemonset in kubectl.list_all_resources(("daemonset.apps",))
-        if _is_dcgm_exporter(daemonset)
-    )
-    if managed_daemonset is not None:
-        external = tuple(
-            ref
-            for value in candidates
-            for ref in (resource_ref(value),)
-            if ref is not None and ref != managed_daemonset
+    exporter_name = "DCGM Exporter"
+    node_description = "every NVIDIA GPU node"
+
+    def resolve(
+        self, managed_daemonset: ResourceRef | None = None
+    ) -> NvidiaMetrics | None:
+        """Return NVIDIA metric collection or managed exporter placement."""
+        candidate_nodes = tuple(
+            node
+            for node in self._exporters.nodes
+            if not (node.get("spec") or {}).get("unschedulable")
         )
-        if external:
-            names = ", ".join(
-                f"{ref.namespace}/{ref.display_name}" for ref in external
-            )
+        blocked_gpu_nodes = tuple(
+            name
+            for node in candidate_nodes
+            if self.has_capacity(node) and self.unsupported_taints(node)
+            for name in (object_name(node),)
+            if name
+        )
+        if blocked_gpu_nodes:
             raise DeploymentError(
-                "a CLI-managed DCGM Exporter cannot coexist with another exporter: "
-                + names
+                "NVIDIA GPU nodes have NoSchedule or NoExecute taints that the "
+                "managed DCGM Exporter does not tolerate: "
+                + ", ".join(sorted(blocked_gpu_nodes))
             )
-        return NvidiaMetrics(None, _managed_node_selector(nodes, gpu_nodes))
+        nodes = tuple(
+            node for node in candidate_nodes if not self.unsupported_taints(node)
+        )
+        gpu_nodes = self.gpu_node_names(nodes)
+        if not gpu_nodes:
+            return None
 
-    compatible = tuple(
-        (daemonset, ref)
-        for daemonset in candidates
-        if daemonset_covers_nodes(kubectl, daemonset, set(gpu_nodes))
-        for ref in (resource_ref(daemonset),)
-        if ref is not None
-    )
-    if len(compatible) > 1:
-        names = ", ".join(
-            f"{ref.namespace}/{ref.display_name}" for _, ref in compatible
-        )
-        raise DeploymentError(
-            f"multiple ready DCGM Exporters cover NVIDIA GPU nodes: {names}"
-        )
-    if compatible:
-        daemonset, daemonset_ref = compatible[0]
+        candidates = self.exporter_candidates()
+        if managed_daemonset is not None:
+            external = tuple(
+                ref
+                for value in candidates
+                for ref in (resource_ref(value),)
+                if ref != managed_daemonset
+            )
+            if external:
+                names = ", ".join(
+                    f"{ref.namespace}/{ref.display_name}" for ref in external
+                )
+                raise DeploymentError(
+                    "a CLI-managed DCGM Exporter cannot coexist with another "
+                    f"exporter: {names}"
+                )
+            return NvidiaMetrics(
+                None, self.managed_node_selector(nodes, gpu_nodes)
+            )
+
+        monitor = self.find_monitor(set(gpu_nodes))
         return NvidiaMetrics(
-            exporter_service_monitor(kubectl, daemonset, daemonset_ref),
-            None,
+            monitor,
+            (
+                None
+                if monitor is not None
+                else self.managed_node_selector(nodes, gpu_nodes)
+            ),
         )
-    if candidates:
-        names = ", ".join(
-            f"{ref.namespace}/{ref.display_name}"
-            for value in candidates
-            for ref in (resource_ref(value),)
-            if ref is not None
-        )
-        raise DeploymentError(
-            "an existing DCGM Exporter does not cover every NVIDIA GPU node; "
-            f"repair its lifecycle before installing Foretoken: {names}"
-        )
-    return NvidiaMetrics(None, _managed_node_selector(nodes, gpu_nodes))
 
+    def has_capacity(self, node: dict[str, Any]) -> bool:
+        """Return whether Kubernetes advertises an allocatable NVIDIA GPU."""
+        value = ((node.get("status") or {}).get("allocatable") or {}).get(
+            "nvidia.com/gpu"
+        )
+        try:
+            return int(str(value)) > 0
+        except (TypeError, ValueError):
+            return False
 
-def _managed_node_selector(
-    nodes: tuple[dict[str, Any], ...], gpu_nodes: tuple[str, ...]
-) -> tuple[str, str] | None:
-    """Return a proven GPU-only node selector for a managed exporter."""
-    schedulable_nodes = {
-        name for node in nodes for name in (object_name(node),) if name
-    }
-    gpu_node_set = set(gpu_nodes)
-    if schedulable_nodes == gpu_node_set:
-        return None
-    for label in (
-        "nvidia.com/gpu.present",
-        "feature.node.kubernetes.io/pci-10de.present",
-    ):
-        selected = {
-            name
-            for node in nodes
-            if _node_label(node, label) == "true"
-            for name in (object_name(node),)
-            if name
+    def is_exporter(self, daemonset: dict[str, Any]) -> bool:
+        """Recognize standalone and GPU Operator exporter identities."""
+        metadata = daemonset.get("metadata") or {}
+        labels = metadata.get("labels") or {}
+        name = str(metadata.get("name") or "")
+        return isinstance(labels, dict) and (
+            name == "nvidia-dcgm-exporter"
+            or labels.get("app.kubernetes.io/name") == "dcgm-exporter"
+            or labels.get("app") in {"dcgm-exporter", "nvidia-dcgm-exporter"}
+        )
+
+    def managed_node_selector(
+        self, nodes: tuple[dict[str, Any], ...], gpu_nodes: tuple[str, ...]
+    ) -> tuple[str, str] | None:
+        """Return a proven GPU-only node selector for a managed exporter."""
+        schedulable_nodes = {
+            name for node in nodes for name in (object_name(node),) if name
         }
-        if selected == gpu_node_set:
-            return label, "true"
-    raise DeploymentError(
-        "NVIDIA GPU nodes need a GPU-only label before Foretoken can install "
-        "DCGM Exporter; use nvidia.com/gpu.present=true or "
-        "feature.node.kubernetes.io/pci-10de.present=true"
-    )
-
-
-def _unsupported_taints(node: dict[str, Any]) -> tuple[str, ...]:
-    """Return scheduling taints not covered by the managed chart defaults."""
-    tolerated = {
-        ("node-role.kubernetes.io/control-plane", "NoSchedule"),
-        ("node.kubernetes.io/disk-pressure", "NoSchedule"),
-        ("node.kubernetes.io/memory-pressure", "NoSchedule"),
-        ("node.kubernetes.io/not-ready", "NoExecute"),
-        ("node.kubernetes.io/pid-pressure", "NoSchedule"),
-        ("node.kubernetes.io/unreachable", "NoExecute"),
-        ("node.kubernetes.io/unschedulable", "NoSchedule"),
-    }
-    taints = (node.get("spec") or {}).get("taints") or []
-    return tuple(
-        str(taint.get("key") or "")
-        for taint in taints
-        if isinstance(taint, dict)
-        and taint.get("effect") in {"NoSchedule", "NoExecute"}
-        and (str(taint.get("key") or ""), str(taint.get("effect") or ""))
-        not in tolerated
-    )
-
-
-def _gpu_node_names(nodes: tuple[dict[str, Any], ...]) -> tuple[str, ...]:
-    """Return stable names for nodes that advertise NVIDIA GPU capacity."""
-    return tuple(
-        sorted(
-            name
-            for node in nodes
-            if _positive_gpu_capacity(node)
-            for name in (object_name(node),)
-            if name
+        gpu_node_set = set(gpu_nodes)
+        if schedulable_nodes == gpu_node_set:
+            return None
+        for label in (
+            "nvidia.com/gpu.present",
+            "feature.node.kubernetes.io/pci-10de.present",
+        ):
+            selected = {
+                name
+                for node in nodes
+                if self.node_label(node, label) == "true"
+                for name in (object_name(node),)
+                if name
+            }
+            if selected == gpu_node_set:
+                return label, "true"
+        raise DeploymentError(
+            "NVIDIA GPU nodes need a GPU-only label before Foretoken can install "
+            "DCGM Exporter; use nvidia.com/gpu.present=true or "
+            "feature.node.kubernetes.io/pci-10de.present=true"
         )
-    )
 
+    def unsupported_taints(self, node: dict[str, Any]) -> tuple[str, ...]:
+        """Return scheduling taints not covered by managed chart defaults."""
+        tolerated = {
+            ("node-role.kubernetes.io/control-plane", "NoSchedule"),
+            ("node.kubernetes.io/disk-pressure", "NoSchedule"),
+            ("node.kubernetes.io/memory-pressure", "NoSchedule"),
+            ("node.kubernetes.io/not-ready", "NoExecute"),
+            ("node.kubernetes.io/pid-pressure", "NoSchedule"),
+            ("node.kubernetes.io/unreachable", "NoExecute"),
+            ("node.kubernetes.io/unschedulable", "NoSchedule"),
+        }
+        taints = (node.get("spec") or {}).get("taints") or []
+        return tuple(
+            str(taint.get("key") or "")
+            for taint in taints
+            if isinstance(taint, dict)
+            and taint.get("effect") in {"NoSchedule", "NoExecute"}
+            and (str(taint.get("key") or ""), str(taint.get("effect") or ""))
+            not in tolerated
+        )
 
-def _positive_gpu_capacity(node: dict[str, Any]) -> bool:
-    """Return whether Kubernetes advertises an allocatable NVIDIA GPU."""
-    value = ((node.get("status") or {}).get("allocatable") or {}).get(
-        "nvidia.com/gpu"
-    )
-    try:
-        return int(str(value)) > 0
-    except (TypeError, ValueError):
-        return False
+    def gpu_node_names(
+        self, nodes: tuple[dict[str, Any], ...]
+    ) -> tuple[str, ...]:
+        """Return stable names for nodes with NVIDIA GPU capacity."""
+        return tuple(
+            sorted(
+                name
+                for node in nodes
+                if self.has_capacity(node)
+                for name in (object_name(node),)
+                if name
+            )
+        )
 
-
-def _node_label(node: dict[str, Any], key: str) -> str:
-    """Return one node label value when represented as a string."""
-    labels = (node.get("metadata") or {}).get("labels") or {}
-    if not isinstance(labels, dict):
-        return ""
-    return str(labels.get(key) or "")
-
-
-def _is_dcgm_exporter(daemonset: dict[str, Any]) -> bool:
-    """Recognize standalone and GPU Operator exporter identities."""
-    metadata = daemonset.get("metadata") or {}
-    labels = metadata.get("labels") or {}
-    name = str(metadata.get("name") or "")
-    return isinstance(labels, dict) and (
-        name == "nvidia-dcgm-exporter"
-        or labels.get("app.kubernetes.io/name") == "dcgm-exporter"
-        or labels.get("app") in {"dcgm-exporter", "nvidia-dcgm-exporter"}
-    )
+    @staticmethod
+    def node_label(node: dict[str, Any], key: str) -> str:
+        """Return one node label value when represented as a string."""
+        labels = (node.get("metadata") or {}).get("labels") or {}
+        if not isinstance(labels, dict):
+            return ""
+        return str(labels.get(key) or "")
