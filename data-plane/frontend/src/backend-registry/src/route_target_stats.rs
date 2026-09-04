@@ -52,43 +52,57 @@ impl RouteTargetStatsHistory {
     /// The registry exposes the returned snapshot to Router scorers; history ownership remains local.
     pub(crate) fn stats(&self, window: Duration) -> Option<RouteTargetStats> {
         let current = self.snapshots.back()?;
-        let window_ms = u64::try_from(window.as_millis()).ok()?;
-        let target = current.collected_at_unix_ms.checked_sub(window_ms)?;
-        let baseline = self
-            .snapshots
-            .iter()
-            .rev()
-            .find(|snapshot| snapshot.collected_at_unix_ms <= target)?;
-        let observed_ms = current
-            .collected_at_unix_ms
-            .checked_sub(baseline.collected_at_unix_ms)?;
-        let observed_seconds = observed_ms as f64 / 1_000.0;
-        if observed_seconds <= 0.0 {
-            return None;
-        }
-
-        Some(RouteTargetStats {
+        let mut stats = RouteTargetStats {
             collected_at_unix_ms: current.collected_at_unix_ms,
-            observed_window: Duration::from_millis(observed_ms),
+            observed_window: Duration::ZERO,
             running_requests: current.running_requests,
             max_concurrent_requests: current.max_concurrent_requests,
             scheduler_running_requests: current.scheduler_running_requests,
             scheduler_waiting_requests: current.scheduler_waiting_requests,
             kv_cache_usage: current.kv_cache_usage,
-            prompt_tokens_per_second: rate(
-                baseline.prompt_tokens_total,
-                current.prompt_tokens_total,
-                observed_seconds,
-            ),
-            generation_tokens_per_second: rate(
-                baseline.generation_tokens_total,
-                current.generation_tokens_total,
-                observed_seconds,
-            ),
-            ttft: latency(&baseline.ttft_seconds, &current.ttft_seconds),
-            tpot: latency(&baseline.tpot_seconds, &current.tpot_seconds),
-            e2e_latency: latency(&baseline.e2e_seconds, &current.e2e_seconds),
-        })
+            prompt_tokens_per_second: None,
+            generation_tokens_per_second: None,
+            ttft: None,
+            tpot: None,
+            e2e_latency: None,
+        };
+        let Ok(window_ms) = u64::try_from(window.as_millis()) else {
+            return Some(stats);
+        };
+        let Some(target) = current.collected_at_unix_ms.checked_sub(window_ms) else {
+            return Some(stats);
+        };
+        let Some(baseline) = self
+            .snapshots
+            .iter()
+            .rev()
+            .find(|snapshot| snapshot.collected_at_unix_ms <= target)
+        else {
+            return Some(stats);
+        };
+        let observed_ms = current
+            .collected_at_unix_ms
+            .checked_sub(baseline.collected_at_unix_ms)?;
+        let observed_seconds = observed_ms as f64 / 1_000.0;
+        if observed_seconds <= 0.0 {
+            return Some(stats);
+        }
+
+        stats.observed_window = Duration::from_millis(observed_ms);
+        stats.prompt_tokens_per_second = rate(
+            baseline.prompt_tokens_total,
+            current.prompt_tokens_total,
+            observed_seconds,
+        );
+        stats.generation_tokens_per_second = rate(
+            baseline.generation_tokens_total,
+            current.generation_tokens_total,
+            observed_seconds,
+        );
+        stats.ttft = latency(&baseline.ttft_seconds, &current.ttft_seconds);
+        stats.tpot = latency(&baseline.tpot_seconds, &current.tpot_seconds);
+        stats.e2e_latency = latency(&baseline.e2e_seconds, &current.e2e_seconds);
+        Some(stats)
     }
 }
 

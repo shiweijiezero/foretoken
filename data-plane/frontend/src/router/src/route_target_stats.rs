@@ -18,12 +18,12 @@ pub struct RouteTargetLatencyStats {
     pub p95_ms: Option<f64>,
 }
 
-/// Latest route target gauges and statistics calculated over `observed_window`.
+/// Latest route target gauges and optional statistics calculated over `observed_window`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouteTargetStats {
     /// Collection time of the latest cumulative snapshot.
     pub collected_at_unix_ms: u64,
-    /// Actual interval between the Router-selected baseline and latest snapshot.
+    /// Actual interval used for rates and latency, or zero when retained history is insufficient.
     pub observed_window: Duration,
     /// Requests currently admitted by Model Server.
     pub running_requests: u64,
@@ -51,7 +51,8 @@ pub struct RouteTargetStats {
 pub trait RouteTargetStatsReader: Send + Sync {
     /// Calculates statistics for `route_target_id` over the Router-selected `window`.
     ///
-    /// Returns `None` when telemetry is unavailable or retained history cannot cover the window.
+    /// Returns `None` when telemetry is unavailable. When retained history cannot cover the window,
+    /// current gauges remain available while `observed_window` is zero and derived fields are `None`.
     fn stats(&self, route_target_id: &RouteTargetId, window: Duration) -> Option<RouteTargetStats>;
 }
 

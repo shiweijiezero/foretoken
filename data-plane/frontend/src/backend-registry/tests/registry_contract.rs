@@ -324,15 +324,27 @@ async fn readiness_requires_runtime_metadata() {
     assert!(!registry.is_route_target_healthy(&RouteTargetId::new("a")));
 }
 
-// Protects rate windows, histogram aggregation, and counter-reset invalidation.
+// Protects immediate load gauges, historical windows, and counter-reset invalidation.
 #[tokio::test]
-async fn telemetry_history_derives_windows_and_rejects_counter_resets() {
-    let telemetry_state = Arc::new(Mutex::new(telemetry(1_000, 100, histogram(2, 0.2, 1))));
+async fn telemetry_history_preserves_current_load_without_a_complete_window() {
+    let mut initial = telemetry(1_000, 100, histogram(2, 0.2, 1));
+    initial.running_requests = 7;
+    initial.scheduler_running_requests = Some(5);
+    initial.scheduler_waiting_requests = Some(4);
+    let telemetry_state = Arc::new(Mutex::new(initial));
     let endpoint = serve_model_server_with_telemetry(telemetry_state.clone()).await;
     let registry = BackendRegistry::from_snapshot(aggregate_snapshot(endpoint)).unwrap();
     let target = RouteTargetId::new("a");
 
     registry.refresh_backend_readiness().await;
+    let stats = registry.stats(&target, Duration::from_secs(150)).unwrap();
+    assert_eq!(stats.observed_window, Duration::ZERO);
+    assert_eq!(stats.running_requests, 7);
+    assert_eq!(stats.scheduler_running_requests, Some(5));
+    assert_eq!(stats.scheduler_waiting_requests, Some(4));
+    assert_eq!(stats.prompt_tokens_per_second, None);
+    assert_eq!(stats.ttft, None);
+
     *telemetry_state.lock().unwrap() = telemetry(151_000, 400, histogram(4, 0.8, 2));
     registry.refresh_backend_readiness().await;
 
@@ -344,7 +356,10 @@ async fn telemetry_history_derives_windows_and_rejects_counter_resets() {
 
     *telemetry_state.lock().unwrap() = telemetry(302_000, 10, histogram(1, 0.1, 1));
     registry.refresh_backend_readiness().await;
-    assert!(registry.stats(&target, Duration::from_secs(150)).is_none());
+    let stats = registry.stats(&target, Duration::from_secs(150)).unwrap();
+    assert_eq!(stats.observed_window, Duration::ZERO);
+    assert_eq!(stats.prompt_tokens_per_second, None);
+    assert_eq!(stats.ttft, None);
 
     telemetry_state.lock().unwrap().accepting = false;
     registry.refresh_backend_readiness().await;
