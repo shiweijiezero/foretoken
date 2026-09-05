@@ -26,11 +26,11 @@ _REQUEST_RATE = "Arrival rate (req/s)"
 _TOTAL_REQUESTS = "Requests"
 _SUCCEED_REQUESTS = "Successful requests"
 _FAILED_REQUESTS = "Failed requests"
-_REQUEST_THROUGHPUT = "Request throughput (req/s)"
+_REQUESTS_PER_SECOND = "Requests per second"
 _AVERAGE_LATENCY = "Mean latency (s)"
 _AVERAGE_INPUT_TOKENS = "Mean input tokens"
-_OUTPUT_TOKEN_THROUGHPUT = "Output throughput (tokens/s)"
-_TOTAL_TOKEN_THROUGHPUT = "Total throughput (tokens/s)"
+_GENERATION_TOKENS_PER_SECOND = "Generation tokens per second (tokens/s)"
+_TOTAL_TOKENS_PER_SECOND = "Total tokens per second (tokens/s)"
 _AVERAGE_TTFT = "Mean TTFT (ms)"
 _AVERAGE_TPOT = "Mean TPOT (ms)"
 _AVERAGE_ITL = "Mean ITL (ms)"
@@ -47,8 +47,8 @@ _TRACE_PERCENTILE_METRICS = (
     ("trace_e2e_latency", "End-to-end latency (s)", 1.0),
 )
 _TRACE_HISTORY_KEYS = {
-    "request/s": "Trace/Scheduled requests (req/s)",
-    "success/s": "Trace/Successful requests (req/s)",
+    "requests_per_second": "Trace/Scheduled requests per second",
+    "successful_requests_per_second": "Trace/Successful requests per second",
     **{
         key: f"Trace/{name} p95"
         for key, name, _ in _TRACE_PERCENTILE_METRICS
@@ -77,9 +77,13 @@ def metrics_to_wandb_message(metrics: dict[str, Any]) -> dict[str, Any]:
         _TOTAL_REQUESTS: int(metrics["request_num"]),
         _SUCCEED_REQUESTS: int(metrics["success_num"]),
         _FAILED_REQUESTS: int(metrics["failed_num"]),
-        _REQUEST_THROUGHPUT: round(float(throughput["request/s"]), 4),
-        _OUTPUT_TOKEN_THROUGHPUT: round(float(throughput["token/s"]), 4),
-        _TOTAL_TOKEN_THROUGHPUT: round(float(throughput["total_token/s"]), 4),
+        _REQUESTS_PER_SECOND: round(float(throughput["requests_per_second"]), 4),
+        _GENERATION_TOKENS_PER_SECOND: round(
+            float(throughput["generation_tokens_per_second"]), 4
+        ),
+        _TOTAL_TOKENS_PER_SECOND: round(
+            float(throughput["total_tokens_per_second"]), 4
+        ),
     }
     optional = (
         ("avg_input_tokens", _AVERAGE_INPUT_TOKENS, 1.0, 4),
@@ -134,8 +138,8 @@ def _trace_bucket_rows(
         successful = [result for result in bucket_results if result["success"]]
         row: dict[str, Any] = {
             _TRACE_TIME: bucket * bucket_seconds,
-            "request/s": len(bucket_results) / bucket_seconds,
-            "success/s": len(successful) / bucket_seconds,
+            "requests_per_second": len(bucket_results) / bucket_seconds,
+            "successful_requests_per_second": len(successful) / bucket_seconds,
         }
         for key, _, scale in _TRACE_PERCENTILE_METRICS:
             values = [

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from benchmarks.metrics.aggregator import tokens_per_s_per_gpu
+from benchmarks.metrics.aggregator import generation_tokens_per_second_per_gpu
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,12 @@ def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
     resolved = config["resolved"]
     parallel = metrics["parallel"]
     throughput = metrics["throughput"]
+    generation_tokens_per_second = throughput[
+        "generation_tokens_per_second"
+    ]
+    generation_tokens_per_second_per_user = throughput[
+        "generation_tokens_per_second_per_user"
+    ]
 
     if config.get("trace_path"):
         trace_max = config.get("trace_max_concurrency")
@@ -92,8 +98,9 @@ def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
             f"{metrics['request_num']} "
             f"({float(metrics['success_rate']) * 100:.2f}%)",
             *metric_lines,
-            f"  Requests/s : {_format_metric(throughput['request/s'])}",
-            f"  Output tokens/s: {_format_metric(throughput['token/s'])}",
+            f"  Requests/s : {_format_metric(throughput['requests_per_second'])}",
+            f"  Generation tokens/s: "
+            f"{_format_metric(generation_tokens_per_second)}",
             f"  Benchmark time: {_format_metric(metrics['benchmark_time'])}s",
             "============================================",
         ]
@@ -101,8 +108,8 @@ def log_summary(config: dict[str, Any], metrics: dict[str, Any]) -> None:
     if not config.get("trace_path"):
         lines.insert(
             -2,
-            f"  Output tokens/s/user: "
-            f"{_format_metric(throughput['token/s/user'])}",
+            f"  Generation tokens/s/user: "
+            f"{_format_metric(generation_tokens_per_second_per_user)}",
         )
     logger.info("\n%s", "\n".join(lines))
 
@@ -111,8 +118,8 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
     """Log one row per parameter-sweep point."""
     header = (
         f"{'Concurrency':>12} {'Arrival rate':>12} {'Requests':>8} "
-        f"{'Output tokens/s':>15} {'Output tokens/s/user':>20} "
-        f"{'Output tokens/s/GPU':>19} {'P99 latency':>12}"
+        f"{'Generation tokens/s':>15} {'Generation tokens/s/user':>20} "
+        f"{'Generation tokens/s/GPU':>19} {'P99 latency':>12}"
     )
     lines = [
         "========== Parameter Sweep Results =========",
@@ -126,14 +133,23 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
         rate = float(item["rate"])
         rate_label = "no limit" if rate == -1 else f"{rate:g}"
         throughput = item["throughput"]
-        token_s_per_gpu = tokens_per_s_per_gpu(
-            float(throughput["token/s"]), int(item["gpu_count"])
+        generation_tokens_per_second = throughput[
+            "generation_tokens_per_second"
+        ]
+        generation_tokens_per_second_per_user = throughput[
+            "generation_tokens_per_second_per_user"
+        ]
+        generation_tokens_per_second_per_gpu_value = (
+            generation_tokens_per_second_per_gpu(
+                float(generation_tokens_per_second),
+                int(item["gpu_count"]),
+            )
         )
         lines.append(
             f"{parallel_label:>12} {rate_label:>12} {int(item['number']):>8} "
-            f"{_format_metric(throughput['token/s'], 2):>15} "
-            f"{_format_metric(throughput['token/s/user'], 2):>20} "
-            f"{_format_metric(token_s_per_gpu, 2):>19} "
+            f"{_format_metric(generation_tokens_per_second, 2):>15} "
+            f"{_format_metric(generation_tokens_per_second_per_user, 2):>20} "
+            f"{_format_metric(generation_tokens_per_second_per_gpu_value, 2):>19} "
             f"{_format_metric(item['latency']['p99'], 3):>12}"
         )
     lines.append("============================================")

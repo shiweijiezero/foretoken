@@ -141,7 +141,10 @@ class SweepRunner(Runner):
 
         writer.save_json("sweep_points.json", all_points)
         best = max(
-            all_points, key=lambda item: item["throughput"]["token/s"]
+            all_points,
+            key=lambda item: item["throughput"][
+                "generation_tokens_per_second"
+            ],
         )
         logger.info(
             "Sweep done: %s combinations, %s points, output_dir=%s",

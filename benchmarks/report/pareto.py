@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.metrics.aggregator import (
-    tokens_per_s_per_gpu,
-    tokens_per_s_per_user,
+    generation_tokens_per_second_per_gpu,
+    generation_tokens_per_second_per_user,
     user_count_for_throughput,
 )
 
@@ -22,15 +22,17 @@ def _prepare_point(item: dict[str, Any]) -> dict[str, Any]:
     parallel = int(item["parallel"])
     user_count = user_count_for_throughput(parallel)
     gpu_count = int(item["gpu_count"])
-    tokens_per_second = float(item["throughput"]["token/s"])
+    generation_tokens_per_second = float(
+        item["throughput"]["generation_tokens_per_second"]
+    )
     return {
         "param_group": str(item["parameter_group"]),
         "user_count": user_count,
-        "tokens_per_user": tokens_per_s_per_user(
-            tokens_per_second, parallel
+        "generation_tokens_per_second_per_user": generation_tokens_per_second_per_user(
+            generation_tokens_per_second, parallel
         ),
-        "tokens_per_gpu": tokens_per_s_per_gpu(
-            tokens_per_second, gpu_count
+        "generation_tokens_per_second_per_gpu": generation_tokens_per_second_per_gpu(
+            generation_tokens_per_second, gpu_count
         ),
     }
 
@@ -40,22 +42,22 @@ def _pareto_frontier(
     *,
     epsilon: float = 1e-9,
 ) -> list[dict[str, Any]]:
-    """Return non-dominated points (higher tokens/s/user and tokens/s/GPU)."""
+    """Return points not dominated on per-user and per-GPU generation throughput."""
     ordered = sorted(
         points,
         key=lambda row: (
-            -float(row["tokens_per_user"]),
-            -float(row["tokens_per_gpu"]),
+            -float(row["generation_tokens_per_second_per_user"]),
+            -float(row["generation_tokens_per_second_per_gpu"]),
         ),
     )
     frontier: list[dict[str, Any]] = []
     best_y = -math.inf
     for row in ordered:
-        y_val = float(row["tokens_per_gpu"])
+        y_val = float(row["generation_tokens_per_second_per_gpu"])
         if y_val > best_y + epsilon:
             frontier.append(row)
             best_y = y_val
-    frontier.sort(key=lambda row: float(row["tokens_per_user"]))
+    frontier.sort(key=lambda row: float(row["generation_tokens_per_second_per_user"]))
     return frontier
 
 
@@ -78,8 +80,8 @@ def _plot_pareto_scatter(fig_path: Path, points: list[dict[str, Any]]) -> None:
     for group in groups:
         rows = [row for row in points if str(row["param_group"]) == group]
         ax.scatter(
-            [float(row["tokens_per_user"]) for row in rows],
-            [float(row["tokens_per_gpu"]) for row in rows],
+            [float(row["generation_tokens_per_second_per_user"]) for row in rows],
+            [float(row["generation_tokens_per_second_per_gpu"]) for row in rows],
             s=[_point_size(float(row["user_count"])) for row in rows],
             color=group_color[group],
             alpha=0.75,
@@ -92,8 +94,8 @@ def _plot_pareto_scatter(fig_path: Path, points: list[dict[str, Any]]) -> None:
     frontier = _pareto_frontier(points)
     if len(frontier) >= 2:
         ax.plot(
-            [float(row["tokens_per_user"]) for row in frontier],
-            [float(row["tokens_per_gpu"]) for row in frontier],
+            [float(row["generation_tokens_per_second_per_user"]) for row in frontier],
+            [float(row["generation_tokens_per_second_per_gpu"]) for row in frontier],
             color="0.2",
             linewidth=1.2,
             marker="o",
@@ -102,8 +104,8 @@ def _plot_pareto_scatter(fig_path: Path, points: list[dict[str, Any]]) -> None:
             zorder=3,
         )
 
-    ax.set_xlabel("Output tokens/s/user")
-    ax.set_ylabel("Output tokens/s/GPU")
+    ax.set_xlabel("Generation tokens/s/user")
+    ax.set_ylabel("Generation tokens/s/GPU")
     ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.6)
     ax.legend(
         title="Parameter group",
@@ -120,7 +122,7 @@ def plot_sweep_pareto(
     results: list[dict[str, Any]],
     output_dir: str | Path,
 ) -> Path:
-    """Plot Output tokens/s/user vs Output tokens/s/GPU.
+    """Plot per-user versus per-GPU generation tokens per second.
 
     Color = parameter combination; marker size = concurrency.
     Writes ``pareto/PARETO.png`` under ``output_dir``.
