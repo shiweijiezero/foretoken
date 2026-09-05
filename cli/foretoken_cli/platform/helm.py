@@ -126,6 +126,28 @@ class Helm(HelmClient):
         else:
             args.extend(["--wait", f"--timeout={timeout}"])
 
+    def _managed_chart_args(
+        self,
+        release: ReleaseRef,
+        chart: str,
+        chart_version: str | None,
+        timeout: str,
+        dry_run: bool,
+        *,
+        include_crds: bool = False,
+    ) -> list[str]:
+        """Build one managed chart command for preview or installation."""
+        if dry_run:
+            args = ["template", release.name, chart, "--namespace", release.namespace]
+            if chart_version is not None:
+                args.extend(["--version", chart_version])
+            if include_crds:
+                args.append("--include-crds")
+            return args
+        args = self._upgrade_install_args(release, chart, chart_version)
+        self._finish_upgrade(args, timeout, False)
+        return args
+
     @staticmethod
     def _add_platform_values(
         args: list[str],
@@ -296,23 +318,14 @@ class Helm(HelmClient):
         dry_run: bool,
     ) -> None:
         """Install or update the CLI-managed Envoy Gateway release."""
-        if dry_run:
-            args = [
-                "template",
-                release.name,
-                self._config.envoy_gateway.source,
-                "--version",
-                self._config.envoy_gateway.version,
-                "--namespace",
-                release.namespace,
-                "--include-crds",
-            ]
-        else:
-            args = self._upgrade_install_args(
-                release,
-                self._config.envoy_gateway.source,
-                self._config.envoy_gateway.version,
-            )
+        args = self._managed_chart_args(
+            release,
+            self._config.envoy_gateway.source,
+            self._config.envoy_gateway.version,
+            timeout,
+            dry_run,
+            include_crds=True,
+        )
         args.extend(
             [
                 "--set-string",
@@ -320,8 +333,6 @@ class Helm(HelmClient):
                 + self._config.envoy_gateway_controller,
             ]
         )
-        if not dry_run:
-            self._finish_upgrade(args, timeout, False)
         self.run(args)
 
     def install_prometheus(
@@ -357,21 +368,14 @@ class Helm(HelmClient):
                 "app.kubernetes.io/name": "foretoken-control-plane",
             }
         }
-        if dry_run:
-            args = [
-                "template",
-                release.name,
-                self._config.prometheus.source,
-                "--version",
-                self._config.prometheus.version,
-                "--namespace",
-                release.namespace,
-                "--include-crds",
-            ]
-        else:
-            args = self._upgrade_install_args(
-                release, self._config.prometheus.source, self._config.prometheus.version
-            )
+        args = self._managed_chart_args(
+            release,
+            self._config.prometheus.source,
+            self._config.prometheus.version,
+            timeout,
+            dry_run,
+            include_crds=True,
+        )
         args.extend(
             [
                 "--set",
@@ -391,8 +395,6 @@ class Helm(HelmClient):
                 + json.dumps(namespace_selector, separators=(",", ":")),
             ]
         )
-        if not dry_run:
-            self._finish_upgrade(args, timeout, False)
         self.run(args)
 
     def install_dcgm_exporter(
@@ -405,20 +407,15 @@ class Helm(HelmClient):
         dry_run: bool,
     ) -> None:
         """Install or upgrade the CLI-managed NVIDIA DCGM Exporter release."""
-        if dry_run:
-            args = [
-                "template",
-                release.name,
-                self._config.dcgm_exporter.source,
-                "--namespace",
-                release.namespace,
-            ]
-        else:
-            args = self._upgrade_install_args(
-                release, self._config.dcgm_exporter.source, None
-            )
-            if reuse_values:
-                args.append("--reuse-values")
+        args = self._managed_chart_args(
+            release,
+            self._config.dcgm_exporter.source,
+            None,
+            timeout,
+            dry_run,
+        )
+        if reuse_values and not dry_run:
+            args.append("--reuse-values")
         args.extend(
             [
                 "--set",
@@ -447,10 +444,7 @@ class Helm(HelmClient):
                 + json.dumps(rendered_node_selector, separators=(",", ":")),
             ]
         )
-        if not dry_run:
-            self._finish_upgrade(args, timeout, False)
         self.run(args)
-
 
 
 def _image_repository_tag(reference: str) -> tuple[str, str]:

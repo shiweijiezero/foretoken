@@ -30,9 +30,17 @@ class GatewayControllerPlan:
     action: str
     detail: str
     controller_name: str = ""
-    install: bool = False
-    remove: bool = False
     managed: bool = False
+
+    @property
+    def install(self) -> bool:
+        """Return whether the plan installs or upgrades its Controller release."""
+        return self.action in {"Install", "Upgrade"}
+
+    @property
+    def remove(self) -> bool:
+        """Return whether the plan removes its Controller release."""
+        return self.action == "Remove"
 
 
 def _effective_gateway_config(
@@ -126,7 +134,6 @@ class GatewayControllerLifecycle:
                     "Remove",
                     controller_release.display_name,
                     managed_controller,
-                    remove=True,
                     managed=True,
                 )
             if controller_release is not None:
@@ -161,7 +168,6 @@ class GatewayControllerLifecycle:
                 "Reuse",
                 f"{config.namespace}/{config.name}",
                 managed_controller if controller_release is not None else "",
-                remove=controller_release is not None and not users,
                 managed=controller_release is not None,
             )
 
@@ -187,7 +193,6 @@ class GatewayControllerLifecycle:
                 "Upgrade",
                 release.display_name,
                 managed_controller,
-                install=True,
                 managed=True,
             )
         if shared_managed_release is not None:
@@ -229,7 +234,6 @@ class GatewayControllerLifecycle:
             "Install",
             release.display_name,
             managed_controller,
-            install=True,
             managed=True,
         )
 
@@ -318,7 +322,6 @@ class GatewayControllerLifecycle:
                 "Remove",
                 controller_release.display_name,
                 controller_name,
-                remove=True,
                 managed=True,
             )
         if controller_release is not None:
