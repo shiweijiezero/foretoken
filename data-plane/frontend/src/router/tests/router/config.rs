@@ -25,20 +25,17 @@ fn every_compiled_builtin_name_parses_and_builds() {
     }
 }
 
-// Protects user configuration from ambiguous or unavailable algorithm names.
+// Protects user configuration from empty or unavailable algorithm names while allowing opaque names.
 #[test]
-fn invalid_and_unknown_names_are_explicit_errors() {
+fn empty_and_unknown_names_are_explicit_errors() {
     assert_eq!(
         "".parse::<FilterAlgorithm>(),
         Err(RouterPipelineConfigError::EmptyName)
     );
-    assert!(matches!(
-        "not-snake-case".parse::<ScorerAlgorithm>(),
-        Err(RouterPipelineConfigError::InvalidName { .. })
-    ));
+    assert!("community-scorer".parse::<ScorerAlgorithm>().is_ok());
     let unknown = RouterPipelineConfig {
         filter: "allow_all".parse().unwrap(),
-        scorer: "community_scorer".parse().unwrap(),
+        scorer: "community-scorer".parse().unwrap(),
         picker: PickerAlgorithm::default(),
     };
     assert!(matches!(
@@ -46,6 +43,6 @@ fn invalid_and_unknown_names_are_explicit_errors() {
         Err(RouterPipelineConfigError::UnknownAlgorithm {
             category: "scorer",
             name,
-        }) if name == "community_scorer"
+        }) if name == "community-scorer"
     ));
 }

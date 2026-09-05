@@ -136,32 +136,24 @@ spec:
                   rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                     <= 0'
               routerPipeline:
+                default: {}
                 description: RouterPipeline selects each independently composable
                   routing algorithm stage.
                 properties:
                   filter:
                     default: allow_all
-                    description: RouterFilterAlgorithm identifies a compiled Router
-                      Filter.
-                    enum:
-                    - allow_all
+                    description: RouterFilterAlgorithm identifies a Router Filter
+                      by name.
                     type: string
                   picker:
                     default: round_robin
-                    description: RouterPickerAlgorithm identifies a compiled Router
-                      Picker.
-                    enum:
-                    - max
-                    - round_robin
+                    description: RouterPickerAlgorithm identifies a Router Picker
+                      by name.
                     type: string
                   scorer:
                     default: kv_least_loaded
-                    description: RouterScorerAlgorithm identifies a compiled Router
-                      Scorer.
-                    enum:
-                    - uniform
-                    - least_loaded
-                    - kv_least_loaded
+                    description: RouterScorerAlgorithm identifies a Router Scorer
+                      by name.
                     type: string
                 type: object
               timeouts:

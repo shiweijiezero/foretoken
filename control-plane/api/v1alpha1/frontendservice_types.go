@@ -20,16 +20,13 @@ type FrontendTimeouts struct {
 	StreamIdle Duration `json:"streamIdle"`
 }
 
-// RouterFilterAlgorithm identifies a compiled Router Filter.
-// +kubebuilder:validation:Enum=allow_all
+// RouterFilterAlgorithm identifies a Router Filter by name.
 type RouterFilterAlgorithm string
 
-// RouterScorerAlgorithm identifies a compiled Router Scorer.
-// +kubebuilder:validation:Enum=uniform;least_loaded;kv_least_loaded
+// RouterScorerAlgorithm identifies a Router Scorer by name.
 type RouterScorerAlgorithm string
 
-// RouterPickerAlgorithm identifies a compiled Router Picker.
-// +kubebuilder:validation:Enum=max;round_robin
+// RouterPickerAlgorithm identifies a Router Picker by name.
 type RouterPickerAlgorithm string
 
 const (
@@ -69,6 +66,7 @@ type FrontendServiceSpec struct {
 	Timeouts  FrontendTimeouts  `json:"timeouts"`
 
 	// +optional
+	// +kubebuilder:default={}
 	RouterPipeline RouterPipeline `json:"routerPipeline,omitempty"`
 
 	// Hostname is required when the platform exposes frontends through a Gateway.

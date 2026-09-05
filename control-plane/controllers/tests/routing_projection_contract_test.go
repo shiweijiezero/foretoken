@@ -29,8 +29,9 @@ func TestInvalidPDRouteWithdrawsOnlyItsService(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "frontend", Namespace: "default", UID: "frontend-uid", Generation: 1},
 		Spec: inferencev1alpha1.FrontendServiceSpec{
 			Replicas: pointer(int32(1)), Hostname: "frontend.example.com",
-			Resources: inferencev1alpha1.FrontendResources{Requests: inferencev1alpha1.ComputeResourceRequests{CPU: "1", Memory: "1Gi"}},
-			Timeouts:  inferencev1alpha1.FrontendTimeouts{Request: "10m", StreamIdle: "5m"},
+			RouterPipeline: routerPipeline(),
+			Resources:      inferencev1alpha1.FrontendResources{Requests: inferencev1alpha1.ComputeResourceRequests{CPU: "1", Memory: "1Gi"}},
+			Timeouts:       inferencev1alpha1.FrontendTimeouts{Request: "10m", StreamIdle: "5m"},
 		},
 	}
 	aggregate := modelService("aggregate", 1)

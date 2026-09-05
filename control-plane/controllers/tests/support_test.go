@@ -24,6 +24,14 @@ const readyCondition = "Ready"
 
 func pointer[T any](value T) *T { return &value }
 
+func routerPipeline() inferencev1alpha1.RouterPipeline {
+	return inferencev1alpha1.RouterPipeline{
+		Filter: inferencev1alpha1.RouterFilterAllowAll,
+		Scorer: inferencev1alpha1.RouterScorerKVLeastLoaded,
+		Picker: inferencev1alpha1.RouterPickerRoundRobin,
+	}
+}
+
 func controllerClient(t *testing.T, objects ...client.Object) client.Client {
 	t.Helper()
 	scheme := runtime.NewScheme()

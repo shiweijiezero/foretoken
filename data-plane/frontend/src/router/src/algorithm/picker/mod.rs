@@ -3,13 +3,16 @@
 
 //! Scored-candidate selection and Picker implementations.
 
-mod max_picker;
-mod round_robin_picker;
-
 use crate::{CandidateIndex, RouterRequest, ScoredCandidate};
 
-pub use max_picker::MaxPicker;
-pub use round_robin_picker::RoundRobinPicker;
+// Each entry declares the module, re-exports the implementation, and binds its user-facing Picker name.
+// For example, `round_robin_picker => RoundRobinPicker = "round_robin"` maps
+// `round_robin_picker.rs`, the `RoundRobinPicker` type, and the user-facing name.
+declare_router_algorithms! {
+    descriptor = PickerDescriptor;
+    max_picker => MaxPicker = "max",
+    round_robin_picker => RoundRobinPicker = "round_robin",
+}
 
 /// Selects one route target from the scored candidates available in the current routing stage.
 ///

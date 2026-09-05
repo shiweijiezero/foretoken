@@ -3,13 +3,17 @@
 
 //! Candidate-list filtering and Filter implementations.
 
-mod allow_all_filter;
-
 use foretoken_kv_indexer::KvPrefixIndexer;
 
 use crate::{CandidateIndex, RouteCandidate, RouterRequest};
 
-pub use allow_all_filter::AllowAllFilter;
+// Each entry declares the module, re-exports the implementation, and binds its user-facing Filter name.
+// For example, `allow_all_filter => AllowAllFilter = "allow_all"` maps
+// `allow_all_filter.rs`, the `AllowAllFilter` type, and the user-facing name.
+declare_router_algorithms! {
+    descriptor = FilterDescriptor;
+    allow_all_filter => AllowAllFilter = "allow_all",
+}
 
 /// Filters the complete compatible, healthy route target snapshot for one routing round.
 ///

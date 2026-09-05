@@ -59,16 +59,10 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	terminationGracePeriodSeconds := requestTimeoutSeconds + 5
 	servingConfigMap := frontendServingConfigMapName(frontend)
 	routerFilter := frontend.Spec.RouterPipeline.Filter
-	if routerFilter == "" {
-		routerFilter = inferencev1alpha1.RouterFilterAllowAll
-	}
 	routerScorer := frontend.Spec.RouterPipeline.Scorer
-	if routerScorer == "" {
-		routerScorer = inferencev1alpha1.RouterScorerKVLeastLoaded
-	}
 	routerPicker := frontend.Spec.RouterPipeline.Picker
-	if routerPicker == "" {
-		routerPicker = inferencev1alpha1.RouterPickerRoundRobin
+	if routerFilter == "" || routerScorer == "" || routerPicker == "" {
+		return nil, nil, nil, fmt.Errorf("frontend routerPipeline was not defaulted")
 	}
 	frontendEnv := []corev1.EnvVar{
 		{Name: "FORETOKEN_LISTEN_ADDRESS", Value: fmt.Sprintf("0.0.0.0:%d", profile.Port)},
