@@ -6,6 +6,8 @@
 use crate::{CandidateIndex, RouterRequest, ScoredCandidate};
 
 // Each entry declares the module, re-exports the implementation, and binds its user-facing Picker name.
+// For example, `round_robin_picker => RoundRobinPicker = "round_robin"` maps
+// `round_robin_picker.rs`, the `RoundRobinPicker` type, and the user-facing name.
 declare_router_algorithms! {
     descriptor = PickerDescriptor;
     max_picker => MaxPicker = "max",
