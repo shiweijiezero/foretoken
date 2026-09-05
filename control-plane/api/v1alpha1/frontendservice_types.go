@@ -20,16 +20,16 @@ type FrontendTimeouts struct {
 	StreamIdle Duration `json:"streamIdle"`
 }
 
-// RouterFilterAlgorithm identifies a compiled Router Filter.
-// +kubebuilder:validation:Enum=allow_all
+// RouterFilterAlgorithm identifies a Router Filter by its lower-snake-case name.
+// +kubebuilder:validation:Pattern=^[a-z0-9]+(_[a-z0-9]+)*$
 type RouterFilterAlgorithm string
 
-// RouterScorerAlgorithm identifies a compiled Router Scorer.
-// +kubebuilder:validation:Enum=uniform;least_loaded;kv_least_loaded
+// RouterScorerAlgorithm identifies a Router Scorer by its lower-snake-case name.
+// +kubebuilder:validation:Pattern=^[a-z0-9]+(_[a-z0-9]+)*$
 type RouterScorerAlgorithm string
 
-// RouterPickerAlgorithm identifies a compiled Router Picker.
-// +kubebuilder:validation:Enum=max;round_robin
+// RouterPickerAlgorithm identifies a Router Picker by its lower-snake-case name.
+// +kubebuilder:validation:Pattern=^[a-z0-9]+(_[a-z0-9]+)*$
 type RouterPickerAlgorithm string
 
 const (

@@ -142,27 +142,21 @@ spec:
                 properties:
                   filter:
                     default: allow_all
-                    description: RouterFilterAlgorithm identifies a compiled Router
-                      Filter.
-                    enum:
-                    - allow_all
+                    description: RouterFilterAlgorithm identifies a Router Filter
+                      by its lower-snake-case name.
+                    pattern: ^[a-z0-9]+(_[a-z0-9]+)*$
                     type: string
                   picker:
                     default: round_robin
-                    description: RouterPickerAlgorithm identifies a compiled Router
-                      Picker.
-                    enum:
-                    - max
-                    - round_robin
+                    description: RouterPickerAlgorithm identifies a Router Picker
+                      by its lower-snake-case name.
+                    pattern: ^[a-z0-9]+(_[a-z0-9]+)*$
                     type: string
                   scorer:
                     default: kv_least_loaded
-                    description: RouterScorerAlgorithm identifies a compiled Router
-                      Scorer.
-                    enum:
-                    - uniform
-                    - least_loaded
-                    - kv_least_loaded
+                    description: RouterScorerAlgorithm identifies a Router Scorer
+                      by its lower-snake-case name.
+                    pattern: ^[a-z0-9]+(_[a-z0-9]+)*$
                     type: string
                 type: object
               timeouts:
