@@ -87,7 +87,7 @@ Open <http://127.0.0.1:3000>, then select **Dashboards** and open **Foretoken Sy
 
 When Foretoken reuses an existing Prometheus, Grafana remains owned by that platform. A Grafana sidecar that discovers ConfigMaps labeled `grafana_dashboard=1` can load the dashboard from the `foretoken-platform` namespace. Otherwise, extract the JSON and import it through the platform's normal dashboard workflow:
 
-When observability is enabled, the Chart also installs four alert rules: a metrics target that cannot be scraped, sustained Frontend response-start 5xx errors, a model-server scheduler backlog, and high KV-cache usage. Each alert requires the condition to persist before firing. Alertmanager owns notification receivers, grouping, and routing.
+When observability is enabled, the Chart also installs four alert rules: a metrics target that cannot be scraped, sustained Frontend response-start 5xx errors, a model-server scheduler backlog, and high KV-cache usage. Each alert carries the common `service=foretoken` label and requires the condition to persist before firing. Alertmanager owns notification receivers, grouping, and routing.
 
 ```bash
 kubectl get configmap \

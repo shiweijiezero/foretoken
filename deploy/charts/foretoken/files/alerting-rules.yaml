@@ -17,6 +17,7 @@ groups:
           )
         for: 5m
         labels:
+          service: foretoken
           severity: warning
         annotations:
           summary: 'Foretoken metrics target {{ $labels.endpoint }} cannot be scraped'
@@ -35,6 +36,7 @@ groups:
           )
         for: 10m
         labels:
+          service: foretoken
           severity: warning
         annotations:
           summary: 'Frontend {{ $labels.frontend_service }} has elevated response-start 5xx errors'
@@ -44,6 +46,7 @@ groups:
         expr: foretoken:model_server_requests_waiting:sum > 0
         for: 10m
         labels:
+          service: foretoken
           severity: warning
         annotations:
           summary: 'Model server scheduler backlog persists for {{ $labels.model_group }}'
@@ -53,6 +56,7 @@ groups:
         expr: foretoken:model_server_kv_cache_usage_ratio:max >= 0.95
         for: 10m
         labels:
+          service: foretoken
           severity: warning
         annotations:
           summary: 'KV cache pressure is high for {{ $labels.model_group }}'
