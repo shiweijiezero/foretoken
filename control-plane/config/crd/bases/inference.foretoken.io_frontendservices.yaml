@@ -142,18 +142,18 @@ spec:
                 properties:
                   filter:
                     default: allow_all
-                    description: RouterFilterAlgorithm identifies a Router Filter
-                      by name.
+                    description: RouterFilterAlgorithm names a Filter validated by
+                      the selected Frontend image.
                     type: string
                   picker:
                     default: round_robin
-                    description: RouterPickerAlgorithm identifies a Router Picker
-                      by name.
+                    description: RouterPickerAlgorithm names a Picker validated by
+                      the selected Frontend image.
                     type: string
                   scorer:
                     default: kv_least_loaded
-                    description: RouterScorerAlgorithm identifies a Router Scorer
-                      by name.
+                    description: RouterScorerAlgorithm names a Scorer validated by
+                      the selected Frontend image.
                     type: string
                 type: object
               timeouts:
