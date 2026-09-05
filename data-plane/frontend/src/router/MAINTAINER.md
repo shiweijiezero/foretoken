@@ -27,7 +27,7 @@ The Router owns candidate identity and validates duplicate or out-of-range index
 
 ## Adding an algorithm
 
-Implement the appropriate interface under `src/algorithm/filter/`, `src/algorithm/scorer/`, or `src/algorithm/picker/`. Register the compiled implementation with `inventory::submit!` and declare its module in the corresponding `mod.rs`. Update the controller enum, defaults, maintained examples, user-facing Router README, and contract tests together so accepted configuration and compiled algorithms remain aligned.
+Implement the appropriate interface under `src/algorithm/filter/`, `src/algorithm/scorer/`, or `src/algorithm/picker/`. Add one entry to the corresponding stage's `declare_router_algorithms!` list in `mod.rs`, providing the module name, type name, and user-facing configuration name. The macro generates the module declaration, public re-export, and compiled descriptor registration; no Controller enum or CRD change is required. Update maintained examples, the user-facing Router README, and contract tests only when observable behavior changes.
 
 Request-local shared state belongs in `RouterPipeline::with_customized_context`. The Router creates one context per request and drops it when that request finishes.
 

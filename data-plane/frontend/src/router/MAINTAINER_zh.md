@@ -27,7 +27,7 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 
 ## 添加算法
 
-在 `src/algorithm/filter/`、`src/algorithm/scorer/` 或 `src/algorithm/picker/` 下实现对应接口。使用 `inventory::submit!` 注册编译进二进制的实现，并在对应的 `mod.rs` 中声明模块。控制器 enum、默认值、维护中的示例、面向用户的 Router README 和 contract tests 必须一起更新，确保 API 接受的配置与实际编译的算法保持一致。
+在 `src/algorithm/filter/`、`src/algorithm/scorer/` 或 `src/algorithm/picker/` 下实现对应接口，然后在对应 stage 的 `mod.rs` 中为 `declare_router_algorithms!` 列表增加一项，填写模块名、类型名和用户配置名称。该宏会生成模块声明、公开导出和编译期 descriptor 注册；不需要修改 Controller enum 或 CRD。只有可观察行为发生变化时，才同步维护中的示例、面向用户的 Router README 和 contract tests。
 
 请求级共享状态放在 `RouterPipeline::with_customized_context` 中。Router 为每个请求创建一个 context，并在请求结束后释放。
 
