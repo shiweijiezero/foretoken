@@ -26,6 +26,7 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/controllers"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 )
 
 const (
@@ -129,6 +130,10 @@ func main() {
 		workloadImagePullSecrets[index] = corev1.LocalObjectReference{Name: name}
 	}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
+	if inferenceEngineImage == "" {
+		ctrl.Log.Error(errors.New("inference-engine-image must be nonempty"), "invalid inference engine profile")
+		os.Exit(1)
+	}
 	if modelServerPort < 1 || modelServerPort > 65535 {
 		ctrl.Log.Error(errors.New("model-server-port must be between 1 and 65535"), "invalid inference engine profile")
 		os.Exit(1)
@@ -141,8 +146,32 @@ func main() {
 		ctrl.Log.Error(errors.New("frontend-mode must be local or gateway"), "invalid frontend profile")
 		os.Exit(1)
 	}
-	if vllmPDProfileName != "" && (vllmPDBootstrapPort < 1 || vllmPDBootstrapPort > 65535 || vllmPDAbortRequestTimeoutSeconds < 1 || int64(vllmPDAbortRequestTimeoutSeconds) > int64(1<<31-1) || vllmPDRDMAResourceCount < 1 || int64(vllmPDRDMAResourceCount) > int64(1<<31-1)) {
-		ctrl.Log.Error(errors.New("vLLM P/D numeric settings are outside their supported ranges"), "invalid P/D profile")
+	if err := (runtimeconfig.Profiles{
+		EC: runtimeconfig.ECProfile{
+			Name: vllmECProfileName, Revision: vllmECProfileRevision,
+			Connector:          vllmECConnector,
+			SharedStorageClaim: vllmECSharedStorageClaim,
+			SharedStoragePath:  vllmECSharedStoragePath,
+		},
+		PD: runtimeconfig.PDProfile{
+			Name:                       vllmPDProfileName,
+			Revision:                   vllmPDProfileRevision,
+			Protocol:                   vllmPDProtocol,
+			BootstrapPort:              vllmPDBootstrapPort,
+			AbortRequestTimeoutSeconds: vllmPDAbortRequestTimeoutSeconds,
+			RDMADeviceName:             vllmPDRDMADeviceName,
+			RDMAResourceName:           vllmPDRDMAResourceName,
+			RDMAResourceCount:          vllmPDRDMAResourceCount,
+		},
+		MooncakeStore: runtimeconfig.MooncakeStoreProfile{
+			Name:           vllmMooncakeStoreProfileName,
+			Revision:       vllmMooncakeStoreProfileRevision,
+			ConfigMapName:  vllmMooncakeStoreConfigMapName,
+			ConfigMapKey:   vllmMooncakeStoreConfigMapKey,
+			PythonHashSeed: vllmMooncakeStorePythonHashSeed,
+		},
+	}).Validate(); err != nil {
+		ctrl.Log.Error(err, "invalid vLLM runtime profile")
 		os.Exit(1)
 	}
 	var mooncakePD *resolver.MooncakePDProfile
