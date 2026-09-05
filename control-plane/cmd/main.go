@@ -26,54 +26,13 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/controllers"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 )
 
 const (
 	frontendModeLocal   = "local"
 	frontendModeGateway = "gateway"
 )
-
-// validateECProfile rejects partial EC settings before the manager starts.
-func validateECProfile(name, revision, connector, claim, path string) error {
-	if name == "" {
-		if revision != "" || claim != "" {
-			return errors.New("vLLM EC settings require vllm-ec-profile-name")
-		}
-		return nil
-	}
-	if revision == "" || connector != "ECExampleConnector" || claim == "" || path == "" {
-		return errors.New("vLLM EC profile is incomplete")
-	}
-	return nil
-}
-
-// validatePDProfile rejects partial or unsupported P/D settings before startup.
-func validatePDProfile(name, revision, protocol string, bootstrapPort, abortTimeout int, rdmaDevice, rdmaResource string, rdmaCount int) error {
-	if name == "" {
-		if revision != "" || protocol != "" || bootstrapPort != 0 || abortTimeout != 0 || rdmaDevice != "" || rdmaResource != "" || rdmaCount != 0 {
-			return errors.New("vLLM P/D settings require vllm-pd-profile-name")
-		}
-		return nil
-	}
-	if revision == "" || protocol != "rdma" || bootstrapPort < 1 || bootstrapPort > 65535 || abortTimeout < 1 || int64(abortTimeout) > int64(1<<31-1) || rdmaDevice == "" || rdmaResource == "" || rdmaCount < 1 || int64(rdmaCount) > int64(1<<31-1) {
-		return errors.New("vLLM P/D profile is incomplete or unsupported")
-	}
-	return nil
-}
-
-// validateMooncakeStoreProfile rejects partial external Store settings.
-func validateMooncakeStoreProfile(name, revision, configMapName, configMapKey, pythonHashSeed string) error {
-	if name == "" {
-		if revision != "" || configMapName != "" || configMapKey != "" || pythonHashSeed != "" {
-			return errors.New("Mooncake Store settings require vllm-mooncake-store-profile-name")
-		}
-		return nil
-	}
-	if revision == "" || configMapName == "" || configMapKey == "" || pythonHashSeed == "" {
-		return errors.New("Mooncake Store profile is incomplete")
-	}
-	return nil
-}
 
 func main() {
 	var metricsAddress string
@@ -187,16 +146,32 @@ func main() {
 		ctrl.Log.Error(errors.New("frontend-mode must be local or gateway"), "invalid frontend profile")
 		os.Exit(1)
 	}
-	if err := validateECProfile(vllmECProfileName, vllmECProfileRevision, vllmECConnector, vllmECSharedStorageClaim, vllmECSharedStoragePath); err != nil {
-		ctrl.Log.Error(err, "invalid EC profile")
-		os.Exit(1)
-	}
-	if err := validatePDProfile(vllmPDProfileName, vllmPDProfileRevision, vllmPDProtocol, vllmPDBootstrapPort, vllmPDAbortRequestTimeoutSeconds, vllmPDRDMADeviceName, vllmPDRDMAResourceName, vllmPDRDMAResourceCount); err != nil {
-		ctrl.Log.Error(err, "invalid P/D profile")
-		os.Exit(1)
-	}
-	if err := validateMooncakeStoreProfile(vllmMooncakeStoreProfileName, vllmMooncakeStoreProfileRevision, vllmMooncakeStoreConfigMapName, vllmMooncakeStoreConfigMapKey, vllmMooncakeStorePythonHashSeed); err != nil {
-		ctrl.Log.Error(err, "invalid Mooncake Store profile")
+	if err := (runtimeconfig.Profiles{
+		EC: runtimeconfig.ECProfile{
+			Name: vllmECProfileName, Revision: vllmECProfileRevision,
+			Connector:          vllmECConnector,
+			SharedStorageClaim: vllmECSharedStorageClaim,
+			SharedStoragePath:  vllmECSharedStoragePath,
+		},
+		PD: runtimeconfig.PDProfile{
+			Name:                       vllmPDProfileName,
+			Revision:                   vllmPDProfileRevision,
+			Protocol:                   vllmPDProtocol,
+			BootstrapPort:              vllmPDBootstrapPort,
+			AbortRequestTimeoutSeconds: vllmPDAbortRequestTimeoutSeconds,
+			RDMADeviceName:             vllmPDRDMADeviceName,
+			RDMAResourceName:           vllmPDRDMAResourceName,
+			RDMAResourceCount:          vllmPDRDMAResourceCount,
+		},
+		MooncakeStore: runtimeconfig.MooncakeStoreProfile{
+			Name:           vllmMooncakeStoreProfileName,
+			Revision:       vllmMooncakeStoreProfileRevision,
+			ConfigMapName:  vllmMooncakeStoreConfigMapName,
+			ConfigMapKey:   vllmMooncakeStoreConfigMapKey,
+			PythonHashSeed: vllmMooncakeStorePythonHashSeed,
+		},
+	}).Validate(); err != nil {
+		ctrl.Log.Error(err, "invalid vLLM runtime profile")
 		os.Exit(1)
 	}
 	var mooncakePD *resolver.MooncakePDProfile

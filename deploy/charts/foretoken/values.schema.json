@@ -318,6 +318,19 @@
                         "minLength": 1
                       }
                     }
+                  },
+                  "else": {
+                    "properties": {
+                      "profileRevision": {
+                        "const": ""
+                      },
+                      "connector": {
+                        "const": "ECExampleConnector"
+                      },
+                      "sharedStorageClaim": {
+                        "const": ""
+                      }
+                    }
                   }
                 }
               ]
@@ -397,6 +410,31 @@
                         "maximum": 2147483647
                       }
                     }
+                  },
+                  "else": {
+                    "properties": {
+                      "profileRevision": {
+                        "const": ""
+                      },
+                      "protocol": {
+                        "const": ""
+                      },
+                      "bootstrapPort": {
+                        "const": 0
+                      },
+                      "abortRequestTimeoutSeconds": {
+                        "const": 0
+                      },
+                      "rdmaDeviceName": {
+                        "const": ""
+                      },
+                      "rdmaResourceName": {
+                        "const": ""
+                      },
+                      "rdmaResourceCount": {
+                        "const": 0
+                      }
+                    }
                   }
                 }
               ]
@@ -450,6 +488,22 @@
                       },
                       "pythonHashSeed": {
                         "minLength": 1
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "profileRevision": {
+                        "const": ""
+                      },
+                      "configMapName": {
+                        "const": ""
+                      },
+                      "configMapKey": {
+                        "const": ""
+                      },
+                      "pythonHashSeed": {
+                        "const": ""
                       }
                     }
                   }
