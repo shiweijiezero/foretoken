@@ -153,12 +153,12 @@ class OutputConfig:
 
     def validate(self) -> None:
         if not self.destinations:
-            raise ValueError("--output must select at least one destination")
+            raise ValueError("--output must select at least one output option")
         allowed = {"local", "wandb", "quiet"}
         unknown = set(self.destinations) - allowed
         if unknown:
             names = ", ".join(sorted(unknown))
-            raise ValueError(f"unknown --output destination: {names}")
+            raise ValueError(f"unknown --output option: {names}")
         if self.gpu_count < 1:
             raise ValueError(f"gpu_count must be >= 1, got {self.gpu_count}")
 

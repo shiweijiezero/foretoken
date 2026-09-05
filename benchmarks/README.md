@@ -36,7 +36,7 @@ foretoken bench \
 
 Without `--output`, the benchmark prints a summary, writes local artifacts under `results/`, and attempts a W&B upload. If W&B is unavailable, local results remain available.
 
-`--output` replaces the default destination set:
+`--output` replaces the default output choices:
 
 | Goal | `--output` value |
 | --- | --- |
