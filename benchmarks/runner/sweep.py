@@ -58,7 +58,6 @@ class SweepRunner(Runner):
             "mode": "sweep",
             "bench_params": sweep.bench_params,
             "num_runs": sweep.num_runs,
-            "dry_run": sweep.dry_run,
             "experiment_dir": experiment_dir,
             "wandb_group": wandb_group,
             "combinations": [
@@ -71,26 +70,6 @@ class SweepRunner(Runner):
             "base": self.config.to_dict(),
         }
         writer.save_json("config.json", plan)
-
-        if sweep.dry_run:
-            logger.info(
-                "Dry run: %s combinations under %s",
-                len(combinations),
-                experiment_dir,
-            )
-            for index, entry in enumerate(plan["combinations"]):
-                logger.info(
-                    "[%s] %s bench=%s",
-                    index,
-                    entry["dir"],
-                    entry["bench"],
-                )
-            return {
-                "mode": "sweep",
-                "dry_run": True,
-                "combinations": len(combinations),
-                "output_dir": experiment_dir,
-            }
 
         all_points: list[dict[str, Any]] = []
         for bench_comb in combinations:

@@ -14,10 +14,8 @@ from dataclasses import replace
 
 from benchmarks.arguments import parse_arguments
 from benchmarks.deployment import benchmark_deployment
-from benchmarks.deployment.discovery import resolve_deployment_model
 from benchmarks.logger.cli import configure_logging, print_endpoint
 from benchmarks.runner.select_runner import select_runner
-from foretoken_cli.kubernetes import Kubectl, load_deployment
 from foretoken_cli.manifest import DeploymentError
 
 logger = logging.getLogger(__name__)
@@ -35,31 +33,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         ):
             config.dataset = replace(config.dataset, prompt="Hello")
         config.validate()
-        if (
-            config.param_sweep.bench_params
-            and not config.param_sweep.dry_run
-            and not command.kustomize_path
-        ):
+        if config.param_sweep.bench_params and not command.kustomize_path:
             raise ValueError(
                 "--bench-params requires a Foretoken Kustomize deployment"
             )
         configure_logging(not config.output.includes("quiet"))
-        deployment_dry_run = bool(
-            command.kustomize_path and config.param_sweep.dry_run
-        )
-        if deployment_dry_run:
-            deployment = load_deployment(command.kustomize_path, Kubectl())
-            model, gpu_count = resolve_deployment_model(
-                deployment, config.endpoint.model
-            )
-            config.endpoint = replace(
-                config.endpoint,
-                url="<resolved after deployment>",
-                model=model,
-            )
-            config.output = replace(config.output, gpu_count=gpu_count)
-            service_context = nullcontext(None)
-        elif command.kustomize_path:
+        if command.kustomize_path:
             service_context = benchmark_deployment(
                 command.kustomize_path,
                 command.wait_timeout,
@@ -85,7 +64,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
             logger.info("%s", config.summary())
             result = asyncio.run(select_runner(config).run())
-            if not result.get("dry_run") and result["metrics"]["success_num"] == 0:
+            if result["metrics"]["success_num"] == 0:
                 raise SystemExit(1)
     except (DeploymentError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc

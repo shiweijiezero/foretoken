@@ -348,12 +348,6 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         help="Runs per parameter combination",
     )
     parser.add_argument(
-        "--dry-run",
-        action=argparse.BooleanOptionalAction,
-        default=_default(ParamSweepConfig, "dry_run"),
-        help="Print the sweep plan without sending requests",
-    )
-    parser.add_argument(
         "--experiment-name",
         default=_default(ParamSweepConfig, "experiment_name"),
         help="Sweep directory name under --output-dir",
@@ -419,7 +413,6 @@ def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
         param_sweep=ParamSweepConfig(
             bench_params=namespace.bench_params,
             num_runs=namespace.num_runs,
-            dry_run=namespace.dry_run,
             experiment_name=namespace.experiment_name,
         ),
     )
