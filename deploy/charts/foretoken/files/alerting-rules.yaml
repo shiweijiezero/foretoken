@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Defines the small set of Foretoken alerts derived from the recording rules.
+
+groups:
+  - name: foretoken.alerting
+    rules:
+      - alert: ForetokenMetricsTargetDown
+        expr: |
+          (
+            up{endpoint="http", inference_foretoken_io_frontend_service!=""} == 0
+          )
+          or
+          (
+            up{endpoint="model-server", inference_foretoken_io_model_group!=""} == 0
+          )
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Foretoken metrics target {{ $labels.endpoint }} cannot be scraped'
+          description: 'Prometheus has failed to scrape {{ $labels.endpoint }} at {{ $labels.instance }} in namespace {{ $labels.namespace }} for 5 minutes.'
+
+      - alert: ForetokenFrontendHTTPResponseStart5xxRatioHigh
+        expr: |
+          (
+            foretoken:frontend_http_response_start_5xx_ratio:rate5m > 0.05
+          )
+          and on (namespace, frontend_service)
+          (
+            sum by (namespace, frontend_service) (
+              foretoken:frontend_http_response_starts:rate5m
+            ) >= 0.1
+          )
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Frontend {{ $labels.frontend_service }} has elevated response-start 5xx errors'
+          description: 'More than 5% of HTTP response starts for Frontend {{ $labels.frontend_service }} have been 5xx for 10 minutes.'
+
+      - alert: ForetokenModelServerSchedulerBacklog
+        expr: foretoken:model_server_requests_waiting:sum > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Model server scheduler backlog persists for {{ $labels.model_group }}'
+          description: 'The model server scheduler for {{ $labels.model_group }}/{{ $labels.model_role }} has had waiting requests for 10 minutes.'
+
+      - alert: ForetokenModelServerKVCachePressureHigh
+        expr: foretoken:model_server_kv_cache_usage_ratio:max >= 0.95
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'KV cache pressure is high for {{ $labels.model_group }}'
+          description: 'KV cache usage for {{ $labels.model_group }}/{{ $labels.model_role }} has stayed at or above 95% for 10 minutes.'

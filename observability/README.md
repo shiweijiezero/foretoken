@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Foretoken installs Prometheus collection and recording rules for service and accelerator metrics. It does not install Foretoken alert rules. Alert thresholds, Alertmanager routing, and notifications remain owned by the platform team.
+Foretoken installs Prometheus collection, recording rules, and four optional alert rules for service metrics. Alertmanager routing and notifications remain owned by the platform team.
 
 ## Install collection
 
@@ -87,6 +87,8 @@ Open <http://127.0.0.1:3000>, then select **Dashboards** and open **Foretoken Sy
 
 When Foretoken reuses an existing Prometheus, Grafana remains owned by that platform. A Grafana sidecar that discovers ConfigMaps labeled `grafana_dashboard=1` can load the dashboard from the `foretoken-platform` namespace. Otherwise, extract the JSON and import it through the platform's normal dashboard workflow:
 
+When observability is enabled, the Chart also installs four alert rules: a metrics target that cannot be scraped, sustained Frontend response-start 5xx errors, a model-server scheduler backlog, and high KV-cache usage. Each alert requires the condition to persist before firing. Alertmanager owns notification receivers, grouping, and routing.
+
 ```bash
 kubectl get configmap \
   --namespace foretoken-platform \
@@ -140,7 +142,7 @@ A response may begin with `2xx` and fail later while streaming. Do not use `fore
 
 ## Alerts and profiling
 
-Foretoken currently provides metrics and recording rules, not alert rules. Define alert thresholds and notification policy in the Prometheus and Alertmanager configuration owned by the platform team.
+Foretoken provides the alert expressions and thresholds in its Chart. Define notification receivers, grouping, and routing in the Prometheus and Alertmanager configuration owned by the platform team.
 
 Foretoken does not manage a profiling workflow. For a reproducible investigation, run a controlled workload and use PyTorch Profiler, Nsight Systems, or Nsight Compute through the model runtime and hardware platform. Profiling changes serving performance; record the model, load, hardware, and runtime settings with the result.
 

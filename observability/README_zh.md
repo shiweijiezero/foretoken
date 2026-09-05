@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken 会为服务和加速器指标安装 Prometheus 采集与记录规则，但不会安装 Foretoken 告警规则。告警阈值、Alertmanager 路由和通知继续由平台团队负责。
+Foretoken 会为服务和加速器指标安装 Prometheus 采集、记录规则以及四条可选告警规则。Alertmanager 路由和通知继续由平台团队负责。
 
 ## 安装采集
 
@@ -87,6 +87,8 @@ kubectl port-forward \
 
 如果 Foretoken 复用已有 Prometheus，Grafana 仍由原平台管理。能够发现 `grafana_dashboard=1` ConfigMap 的 Grafana sidecar 可以从 `foretoken-platform` 命名空间自动加载该 Dashboard。否则先导出 JSON，再按照平台已有流程导入：
 
+启用可观测性后，Chart 还会安装四条告警规则：指标目标无法抓取、Frontend 持续出现响应开始阶段的 5xx、model-server 调度器持续有排队请求，以及 KV Cache 使用率过高。每条告警都要求条件持续一段时间后才会触发。通知接收方、分组和路由由 Alertmanager 管理。
+
 ```bash
 kubectl get configmap \
   --namespace foretoken-platform \
@@ -140,7 +142,7 @@ kubectl get configmap \
 
 ## 告警与性能剖析
 
-Foretoken 当前提供指标和记录规则，不提供告警规则。请在平台团队负责的 Prometheus 与 Alertmanager 配置中定义告警阈值和通知策略。
+Foretoken 在 Chart 中提供告警表达式和阈值。请在平台团队负责的 Prometheus 与 Alertmanager 配置中定义通知接收方、分组和路由。
 
 Foretoken 不管理性能剖析流程。调查可复现实验时，使用受控负载，并通过模型运行环境和硬件平台使用 PyTorch Profiler、Nsight Systems 或 Nsight Compute。性能剖析会影响服务性能，应记录模型、负载、硬件和运行参数。
 
