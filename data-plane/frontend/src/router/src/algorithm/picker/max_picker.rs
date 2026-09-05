@@ -3,7 +3,16 @@
 
 //! Picker for the highest-scored candidate.
 
-use crate::{CandidateIndex, RoutePicker, RouterRequest, ScoredCandidate};
+use std::sync::Arc;
+
+use crate::{CandidateIndex, PickerDescriptor, RoutePicker, RouterRequest, ScoredCandidate};
+
+inventory::submit! {
+    PickerDescriptor {
+        name: "max",
+        factory: || Arc::new(MaxPicker),
+    }
+}
 
 /// Selects the maximum score, breaking ties by the smallest route target ID.
 #[derive(Default)]

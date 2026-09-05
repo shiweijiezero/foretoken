@@ -5,7 +5,16 @@
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 
-use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest};
+use std::sync::Arc;
+
+use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescriptor};
+
+inventory::submit! {
+    ScorerDescriptor {
+        name: "uniform",
+        factory: || Arc::new(UniformScorer),
+    }
+}
 
 /// Assigns the same score to every candidate.
 #[derive(Default)]

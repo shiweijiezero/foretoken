@@ -3,14 +3,13 @@
 
 //! Candidate-list filtering and Filter implementations.
 
+mod allow_all_filter;
+
 use foretoken_kv_indexer::KvPrefixIndexer;
 
 use crate::{CandidateIndex, RouteCandidate, RouterRequest};
 
-declare_router_algorithms! {
-    descriptor = FilterDescriptor;
-    allow_all_filter => AllowAllFilter = "allow_all",
-}
+pub use allow_all_filter::AllowAllFilter;
 
 /// Filters the complete compatible, healthy route target snapshot for one routing round.
 ///

@@ -5,7 +5,16 @@
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 
-use crate::{CandidateIndex, RouteCandidate, RouteFilter, RouterRequest};
+use std::sync::Arc;
+
+use crate::{CandidateIndex, FilterDescriptor, RouteCandidate, RouteFilter, RouterRequest};
+
+inventory::submit! {
+    FilterDescriptor {
+        name: "allow_all",
+        factory: || Arc::new(AllowAllFilter),
+    }
+}
 
 /// Keeps every candidate produced by the Router's health and compatibility checks.
 #[derive(Default)]

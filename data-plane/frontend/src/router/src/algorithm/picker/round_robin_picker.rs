@@ -5,7 +5,14 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::{CandidateIndex, RoutePicker, RouterRequest, ScoredCandidate};
+use crate::{CandidateIndex, PickerDescriptor, RoutePicker, RouterRequest, ScoredCandidate};
+
+inventory::submit! {
+    PickerDescriptor {
+        name: "round_robin",
+        factory: || std::sync::Arc::new(RoundRobinPicker::default()),
+    }
+}
 
 /// Rotates across candidates tied for the maximum score.
 #[derive(Default)]
