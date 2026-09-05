@@ -14,7 +14,7 @@ use crate::{RouteFilter, RoutePicker, RouteScorer, RouterPipeline};
 
 /// A Filter implementation compiled into this binary.
 pub struct FilterDescriptor {
-    /// Stable lower-snake-case configuration name.
+    /// Stable configuration name.
     pub name: &'static str,
     /// Constructs the implementation selected by `name`.
     pub factory: fn() -> Arc<dyn RouteFilter>,
@@ -23,7 +23,7 @@ inventory::collect!(FilterDescriptor);
 
 /// A Scorer implementation compiled into this binary.
 pub struct ScorerDescriptor {
-    /// Stable lower-snake-case configuration name.
+    /// Stable configuration name.
     pub name: &'static str,
     /// Constructs the implementation selected by `name`.
     pub factory: fn() -> Arc<dyn RouteScorer>,
@@ -32,14 +32,14 @@ inventory::collect!(ScorerDescriptor);
 
 /// A Picker implementation compiled into this binary.
 pub struct PickerDescriptor {
-    /// Stable lower-snake-case configuration name.
+    /// Stable configuration name.
     pub name: &'static str,
     /// Constructs the implementation selected by `name`.
     pub factory: fn() -> Arc<dyn RoutePicker>,
 }
 inventory::collect!(PickerDescriptor);
 
-/// One lower-snake-case algorithm name selected in the pipeline configuration.
+/// One named algorithm selected in the pipeline configuration.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AlgorithmName(String);
 
@@ -47,9 +47,6 @@ impl AlgorithmName {
     fn new(value: String) -> Result<Self, RouterPipelineConfigError> {
         if value.is_empty() {
             return Err(RouterPipelineConfigError::EmptyName);
-        }
-        if !is_lower_snake_case(&value) {
-            return Err(RouterPipelineConfigError::InvalidName { name: value });
         }
         Ok(Self(value))
     }
@@ -112,7 +109,7 @@ pub struct PickerAlgorithm(AlgorithmName);
 macro_rules! algorithm_name_wrapper {
     ($type:ident, $default:literal) => {
         impl $type {
-            /// Returns this configuration's stable lower-snake-case name.
+            /// Returns this configuration's algorithm name.
             pub fn as_str(&self) -> &str {
                 self.0.as_str()
             }
@@ -235,16 +232,8 @@ fn validate_descriptor_names<'a>(
 ) -> Result<(), RouterPipelineConfigError> {
     let mut names = names.into_iter().collect::<Vec<_>>();
     names.sort_unstable();
-    for name in &names {
-        if name.is_empty() {
-            return Err(RouterPipelineConfigError::EmptyDescriptorName { category });
-        }
-        if !is_lower_snake_case(name) {
-            return Err(RouterPipelineConfigError::InvalidDescriptorName {
-                category,
-                name: (*name).to_owned(),
-            });
-        }
+    if names.iter().any(|name| name.is_empty()) {
+        return Err(RouterPipelineConfigError::EmptyDescriptorName { category });
     }
     if let Some(name) = names
         .windows(2)
@@ -258,33 +247,15 @@ fn validate_descriptor_names<'a>(
     Ok(())
 }
 
-fn is_lower_snake_case(value: &str) -> bool {
-    !value.starts_with('_')
-        && !value.ends_with('_')
-        && !value.contains("__")
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
-}
-
 /// A pipeline configuration or compiled registry is invalid.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum RouterPipelineConfigError {
     /// A configured name was empty.
     #[error("router algorithm name must not be empty")]
     EmptyName,
-    /// A configured name is not lower snake case.
-    #[error("router algorithm name {name:?} must be lower snake case")]
-    InvalidName { name: String },
     /// A compiled implementation omitted its name.
     #[error("compiled {category} descriptor has an empty name")]
     EmptyDescriptorName { category: &'static str },
-    /// A compiled implementation used an invalid name.
-    #[error("compiled {category} descriptor name {name:?} must be lower snake case")]
-    InvalidDescriptorName {
-        category: &'static str,
-        name: String,
-    },
     /// Two compiled implementations claim the same name.
     #[error("duplicate compiled {category} algorithm name {name:?}")]
     DuplicateDescriptorName {
