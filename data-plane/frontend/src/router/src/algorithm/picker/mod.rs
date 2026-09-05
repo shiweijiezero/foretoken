@@ -5,6 +5,7 @@
 
 use crate::{CandidateIndex, RouterRequest, ScoredCandidate};
 
+// Each entry declares the module, re-exports the implementation, and binds its user-facing Picker name.
 declare_router_algorithms! {
     descriptor = PickerDescriptor;
     max_picker => MaxPicker = "max",

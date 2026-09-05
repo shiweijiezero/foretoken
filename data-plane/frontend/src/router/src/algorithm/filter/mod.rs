@@ -7,6 +7,7 @@ use foretoken_kv_indexer::KvPrefixIndexer;
 
 use crate::{CandidateIndex, RouteCandidate, RouterRequest};
 
+// Each entry declares the module, re-exports the implementation, and binds its user-facing Filter name.
 declare_router_algorithms! {
     descriptor = FilterDescriptor;
     allow_all_filter => AllowAllFilter = "allow_all",

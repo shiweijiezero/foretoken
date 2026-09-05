@@ -10,6 +10,7 @@ use foretoken_model_protocol::ModelServerRole;
 
 use crate::{RouteCandidate, RouteScore, RouterRequest};
 
+// Each entry declares the module, re-exports the implementation, and binds its user-facing Scorer name.
 declare_router_algorithms! {
     descriptor = ScorerDescriptor;
     kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded",
