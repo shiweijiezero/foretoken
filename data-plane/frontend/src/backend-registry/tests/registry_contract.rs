@@ -144,7 +144,20 @@ fn epd_component(id: &str, role: ModelServerRole) -> SnapshotEpdComponent {
 fn epd_snapshot() -> ServingSnapshot {
     ServingSnapshot {
         version: 1,
-        models: vec![],
+        models: vec![SnapshotModel {
+            service_uid: "service".into(),
+            model: "model".into(),
+            revision: "r1".into(),
+            tokenizer: "tokenizer".into(),
+            tokenizer_revision: "r1".into(),
+            capabilities: ["chat".into()].into_iter().collect(),
+            admission_target_sets: vec![RouteTargetSet::new(vec![ScalingTarget {
+                service_uid: "service".into(),
+                name: "epd".into(),
+                uid: "service".into(),
+                kind: ScalingTargetKind::EPDPipelineScope,
+            }])],
+        }],
         groups: vec![],
         pd_components: vec![],
         pd_pipeline_scopes: vec![],
@@ -264,7 +277,20 @@ async fn serve_ready_without_metadata() -> String {
 fn aggregate_snapshot(endpoint: String) -> ServingSnapshot {
     ServingSnapshot {
         version: 1,
-        models: vec![],
+        models: vec![SnapshotModel {
+            service_uid: "service".into(),
+            model: "model".into(),
+            revision: "r1".into(),
+            tokenizer: "tokenizer".into(),
+            tokenizer_revision: "r1".into(),
+            capabilities: ["chat".into(), "multimodal".into()].into_iter().collect(),
+            admission_target_sets: vec![RouteTargetSet::new(vec![ScalingTarget {
+                service_uid: "service".into(),
+                name: "pool".into(),
+                uid: "pool".into(),
+                kind: ScalingTargetKind::Pool,
+            }])],
+        }],
         groups: vec![SnapshotGroup {
             service_uid: "service".into(),
             pool_uid: "pool".into(),
