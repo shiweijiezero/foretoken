@@ -204,17 +204,7 @@ spec:
   hostname: foretoken.example.com
 ```
 
-Gateway mode requires a Gateway Controller. If the cluster does not already have one, install Envoy Gateway:
-
-```bash
-helm upgrade --install envoy-gateway \
-  oci://docker.io/envoyproxy/gateway-helm \
-  --namespace envoy-gateway-system \
-  --create-namespace \
-  --wait
-```
-
-Create a dedicated Foretoken Gateway and deploy the Quick Start from release images:
+Install Gateway mode and deploy the Quick Start from release images. The CLI installs Envoy Gateway automatically when the cluster has no accepted Envoy controller:
 
 ```bash
 foretoken install --frontend-mode gateway

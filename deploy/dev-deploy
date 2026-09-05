@@ -21,12 +21,6 @@ IMAGE_PULL_SECRET=${IMAGE_PULL_SECRET:-}
 LOCAL_IMAGE_PREFIX=${LOCAL_IMAGE_PREFIX:-foretoken-dev}
 K3D_CONFIG=${K3D_CONFIG:-$ROOT/deploy/k3d/config.yaml}
 DEV_IMAGE_OUTPUT=${DEV_IMAGE_OUTPUT:-}
-DEV_IMAGE_PLAN_ONLY=${DEV_IMAGE_PLAN_ONLY:-false}
-
-if [[ "$DEV_IMAGE_PLAN_ONLY" == true && -z "$DEV_IMAGE_OUTPUT" ]]; then
-  printf 'DEV_IMAGE_PLAN_ONLY requires DEV_IMAGE_OUTPUT\n' >&2
-  exit 1
-fi
 
 for command in docker helm kubectl make; do
   command -v "$command" >/dev/null || {
@@ -172,22 +166,6 @@ fi
 CONTROL_PLANE_IMAGE="$LOCAL_IMAGE_PREFIX-control-plane:$TAG"
 FRONTEND_IMAGE="$LOCAL_IMAGE_PREFIX-frontend:$TAG"
 MODEL_SERVER_IMAGE="$LOCAL_IMAGE_PREFIX-model-server:$TAG"
-
-if [[ "$DEV_IMAGE_PLAN_ONLY" == true ]]; then
-  CONTROL_PLANE_DEPLOY_IMAGE=$CONTROL_PLANE_IMAGE
-  FRONTEND_DEPLOY_IMAGE=$FRONTEND_IMAGE
-  MODEL_SERVER_DEPLOY_IMAGE=$MODEL_SERVER_IMAGE
-  if [[ "$IMAGE_MODE" == registry ]]; then
-    CONTROL_PLANE_DEPLOY_IMAGE="$REGISTRY/control-plane:source"
-    FRONTEND_DEPLOY_IMAGE="$REGISTRY/frontend:source"
-    MODEL_SERVER_DEPLOY_IMAGE="$REGISTRY/model-server:source"
-  fi
-  CONTROL_PLANE_CHANGED=true
-  FRONTEND_CHANGED=true
-  MODEL_SERVER_CHANGED=true
-  write_image_output
-  exit 0
-fi
 
 CONTROL_PLANE_BEFORE=$(image_id "$CONTROL_PLANE_IMAGE")
 FRONTEND_BEFORE=$(image_id "$FRONTEND_IMAGE")

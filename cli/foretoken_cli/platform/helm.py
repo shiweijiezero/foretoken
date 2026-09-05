@@ -1,142 +1,78 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Helm lifecycle for CLI-managed Foretoken platform releases."""
+"""Helm chart adapters for CLI-managed Foretoken platform releases."""
 
 from __future__ import annotations
 
 import json
-import re
-import shlex
-import shutil
-import subprocess
-from collections.abc import Iterable
-from dataclasses import dataclass
-from importlib.metadata import version
-from typing import Any, NoReturn
 
 from foretoken_cli.manifest import DeploymentError
+from foretoken_cli.platform.helm_client import HelmClient
+from foretoken_cli.platform.types import PlatformGatewayConfig, ReleaseRef
 from foretoken_cli.source import SourceImages
 
-@dataclass(frozen=True)
-class ReleaseRef:
-    """A named Helm release whose lifecycle may be owned by the CLI."""
 
-    name: str
-    namespace: str
+class Helm(HelmClient):
+    """Build and execute Helm operations for platform-owned charts."""
 
-    @property
-    def display_name(self) -> str:
-        """Return the stable release identity shown in install plans."""
-        return f"{self.namespace}/{self.name}"
+    def platform_release(self) -> ReleaseRef:
+        """Return the single Foretoken platform release managed by the CLI."""
+        return ReleaseRef(self._config.platform.release_name, self._config.namespace)
 
-    @property
-    def management_label(self) -> tuple[str, str]:
-        """Return the Helm label that records CLI lifecycle ownership."""
-        return "foretoken.io/managed-by", "foretoken-cli"
+    def prometheus_release(self) -> ReleaseRef:
+        """Return the Prometheus release managed with the platform."""
+        return ReleaseRef(self._config.prometheus.release_name, self._config.namespace)
 
-
-def platform_release() -> ReleaseRef:
-    """Return the fixed CLI-managed Foretoken platform release."""
-    return ReleaseRef("foretoken", "foretoken-platform")
-
-
-def prometheus_release() -> ReleaseRef:
-    """Return the fixed CLI-managed Prometheus release."""
-    return ReleaseRef("foretoken-prometheus", platform_release().namespace)
-
-
-def dcgm_release() -> ReleaseRef:
-    """Return the fixed CLI-managed NVIDIA exporter release."""
-    return ReleaseRef("foretoken-dcgm-exporter", platform_release().namespace)
-
-
-class Helm:
-    """Read and mutate Helm releases through the local Helm CLI."""
-
-    def __init__(self) -> None:
-        if shutil.which("helm") is None:
-            raise DeploymentError("helm is required to install the Foretoken platform")
-
-    def run(self, args: Iterable[str]) -> subprocess.CompletedProcess[str]:
-        """Execute Helm and preserve its diagnostic output on failure."""
-        command = ["helm", *args]
-        completed = self._execute(command)
-        if completed.returncode:
-            self._raise_command_error(command, completed)
-        return completed
-
-    @staticmethod
-    def _execute(command: list[str]) -> subprocess.CompletedProcess[str]:
-        """Execute one fully assembled Helm command without interpreting failure."""
-        return subprocess.run(
-            command,
-            text=True,
-            capture_output=True,
-            check=False,
+    def dcgm_release(self) -> ReleaseRef:
+        """Return the NVIDIA exporter release managed with the platform."""
+        return ReleaseRef(
+            self._config.dcgm_exporter.release_name, self._config.namespace
         )
 
-    @staticmethod
-    def _raise_command_error(
-        command: list[str], completed: subprocess.CompletedProcess[str]
-    ) -> NoReturn:
-        """Raise the shared user-facing Helm failure."""
-        detail = completed.stderr.strip() or completed.stdout.strip()
-        raise DeploymentError(f"{shlex.join(command)} failed: {detail}")
+    def envoy_gateway_release(self) -> ReleaseRef:
+        """Return the Envoy Gateway release managed with the platform."""
+        return ReleaseRef(
+            self._config.envoy_gateway.release_name, self._config.namespace
+        )
 
-    def release_exists(self, release: ReleaseRef) -> bool:
-        """Return whether a release with the fixed identity exists."""
-        command = [
-            "helm",
-            "get",
-            "metadata",
-            release.name,
-            "--namespace",
-            release.namespace,
-            "--output",
-            "json",
-        ]
-        completed = self._execute(command)
-        if completed.returncode == 0:
-            return True
-        detail = completed.stderr.strip() or completed.stdout.strip()
-        if "release: not found" in detail:
-            return False
-        self._raise_command_error(command, completed)
+    @property
+    def platform_selector_labels(self) -> tuple[tuple[str, str], ...]:
+        """Return labels shared by resources in the platform release."""
+        return self._config.platform_selector_labels
 
-    def is_cli_managed(self, release: ReleaseRef) -> bool:
-        """Return whether Helm storage assigns the release to this CLI."""
-        key, value = release.management_label
-        return bool(self._list_releases(release, selector=f"{key}={value}"))
+    @property
+    def envoy_gateway_default_controller(self) -> str:
+        """Return the upstream Envoy Gateway controller identity."""
+        return self._config.envoy_gateway_default_controller
 
-    def has_release_label(
-        self, release: ReleaseRef, key: str, value: str
-    ) -> bool:
-        """Return whether Helm storage carries one exact release label."""
-        return bool(
-            self._list_releases(release, selector=f"{key}={value}")
+    @property
+    def envoy_gateway_controller(self) -> str:
+        """Return the controller identity reserved for managed Envoy Gateway."""
+        return self._config.envoy_gateway_controller
+
+    def platform_gateway_config(self, release: ReleaseRef) -> PlatformGatewayConfig:
+        """Return the effective frontend Gateway configuration for a platform."""
+        frontend = self._release_values(release).get("frontend") or {}
+        if not isinstance(frontend, dict):
+            raise DeploymentError("platform Gateway values are invalid")
+        gateway = frontend.get("gateway") or {}
+        if not isinstance(gateway, dict):
+            raise DeploymentError("platform Gateway values are invalid")
+        return PlatformGatewayConfig(
+            mode=str(frontend.get("mode") or "local"),
+            create=bool(gateway.get("create")),
+            controller_name=str(gateway.get("controllerName") or ""),
+            name=str(gateway.get("name") or ""),
+            namespace=str(gateway.get("namespace") or ""),
+            section_name=str(gateway.get("sectionName") or ""),
         )
 
     def platform_image_references(
         self, release: ReleaseRef
     ) -> tuple[str, str, str]:
         """Return the image references currently stored for a source release."""
-        values = _decode_json(
-            self.run(
-                [
-                    "get",
-                    "values",
-                    release.name,
-                    "--namespace",
-                    release.namespace,
-                    "--all",
-                    "--output",
-                    "json",
-                ]
-            ).stdout
-        )
-        if not isinstance(values, dict):
-            raise DeploymentError("helm get values returned an unexpected JSON value")
+        values = self._release_values(release)
         image = values.get("image") or {}
         frontend = values.get("frontend") or {}
         runtime = values.get("runtime") or {}
@@ -158,56 +94,15 @@ class Helm:
             model_server_image,
         )
 
-    def release_install_source(self, release: ReleaseRef) -> str:
-        """Return the required installation source recorded on a platform release."""
-        sources = tuple(
-            source
-            for source in ("release", "source")
-            if self.has_release_label(
-                release, "foretoken.io/install-source", source
-            )
-        )
-        if len(sources) != 1:
-            raise DeploymentError(
-                f"Helm release {release.display_name} has no valid "
-                "foretoken.io/install-source label"
-            )
-        return sources[0]
-
-    def _list_releases(
-        self, release: ReleaseRef, *, selector: str = ""
-    ) -> tuple[dict[str, Any], ...]:
-        """List one fixed release, optionally filtered by Helm metadata labels."""
-        args = [
-            "list",
-            "--all",
-            "--namespace",
-            release.namespace,
-            "--filter",
-            f"^{re.escape(release.name)}$",
-            "--output",
-            "json",
-            "--max",
-            "1",
-        ]
-        if selector:
-            args.extend(["--selector", selector])
-        listed = _decode_json(self.run(args).stdout)
-        if not isinstance(listed, list) or not all(
-            isinstance(item, dict) for item in listed
-        ):
-            raise DeploymentError("helm list returned an unexpected JSON value")
-        return tuple(listed)
-
-    @staticmethod
     def _upgrade_install_args(
+        self,
         release: ReleaseRef,
         chart: str,
         chart_version: str | None,
         release_labels: tuple[tuple[str, str], ...] = (),
     ) -> list[str]:
         """Build the shared CLI-owned Helm release identity and chart selection."""
-        labels = (release.management_label, *release_labels)
+        labels = (self._config.management_label, *release_labels)
         args = [
             "upgrade",
             "--install",
@@ -224,12 +119,21 @@ class Helm:
         return args
 
     @staticmethod
-    def _finish_upgrade(args: list[str], timeout: str, dry_run: bool) -> None:
-        """Add the execution mode shared by managed Helm upgrades."""
-        if dry_run:
-            args.extend(["--dry-run=server", "--hide-secret"])
-        else:
-            args.extend(["--wait", f"--timeout={timeout}"])
+    def _finish_upgrade(args: list[str], timeout: str) -> None:
+        """Wait for one managed Helm upgrade to finish."""
+        args.extend(["--wait", f"--timeout={timeout}"])
+
+    def _managed_chart_args(
+        self,
+        release: ReleaseRef,
+        chart: str,
+        chart_version: str | None,
+        timeout: str,
+    ) -> list[str]:
+        """Build one managed chart upgrade and wait configuration."""
+        args = self._upgrade_install_args(release, chart, chart_version)
+        self._finish_upgrade(args, timeout)
+        return args
 
     @staticmethod
     def _add_platform_values(
@@ -239,6 +143,7 @@ class Helm:
         gateway_name: str,
         gateway_namespace: str,
         gateway_section_name: str,
+        gateway_controller_name: str,
         observability_labels: tuple[tuple[str, str], ...],
     ) -> None:
         """Add the platform values shared by release and source installs."""
@@ -269,13 +174,22 @@ class Helm:
                     f"frontend.gateway.create={str(gateway_create).lower()}",
                 ]
             )
+        if gateway_controller_name:
+            args.extend(
+                [
+                    "--set-string",
+                    f"frontend.gateway.controllerName={gateway_controller_name}",
+                ]
+            )
         if gateway_name:
             args.extend(["--set-string", f"frontend.gateway.name={gateway_name}"])
         if gateway_namespace:
             args.extend(
                 ["--set-string", f"frontend.gateway.namespace={gateway_namespace}"]
             )
-        if gateway_section_name:
+        if gateway_section_name or (
+            frontend_mode == "gateway" and gateway_name
+        ):
             args.extend(
                 [
                     "--set-string",
@@ -293,33 +207,31 @@ class Helm:
         gateway_name: str,
         gateway_namespace: str,
         gateway_section_name: str,
+        gateway_controller_name: str,
         observability_labels: tuple[tuple[str, str], ...],
         reuse_values: bool,
         timeout: str,
-        dry_run: bool,
-        dry_run_api_versions: tuple[str, ...] = (),
     ) -> None:
         """Install or update the CLI-owned Foretoken platform release."""
         source_mode = source_images is not None
         chart = (
             str(source_images.source_root / "deploy" / "charts" / "foretoken")
             if source_images is not None
-            else "oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken"
+            else self._config.platform.source
         )
-        chart_version = None if source_mode else version("foretoken-cli")
-        render_template = dry_run and bool(dry_run_api_versions)
-        if render_template:
-            args = ["template", release.name, chart, "--namespace", release.namespace]
-            if chart_version is not None:
-                args.extend(["--version", chart_version])
-        else:
-            args = self._upgrade_install_args(
-                release,
-                chart,
-                chart_version,
-                (("foretoken.io/install-source", "source" if source_mode else "release"),),
-            )
-        if reuse_values and not render_template:
+        chart_version = None if source_mode else self._config.platform.version
+        args = self._upgrade_install_args(
+            release,
+            chart,
+            chart_version,
+            (
+                (
+                    self._config.install_source_label,
+                    "source" if source_mode else "release",
+                ),
+            ),
+        )
+        if reuse_values:
             args.append("--reuse-values")
         self._add_platform_values(
             args,
@@ -328,6 +240,7 @@ class Helm:
             gateway_name,
             gateway_namespace,
             gateway_section_name,
+            gateway_controller_name,
             observability_labels,
         )
         if source_images is not None:
@@ -370,11 +283,28 @@ class Helm:
                     f"runtime.vllm.image={model_server_image}",
                 ]
             )
-        if render_template:
-            for api_version in dry_run_api_versions:
-                args.extend(["--api-versions", api_version])
-        else:
-            self._finish_upgrade(args, timeout, dry_run)
+        self._finish_upgrade(args, timeout)
+        self.run(args)
+
+    def install_envoy_gateway(
+        self,
+        release: ReleaseRef,
+        timeout: str,
+    ) -> None:
+        """Install or update the CLI-managed Envoy Gateway release."""
+        args = self._managed_chart_args(
+            release,
+            self._config.envoy_gateway.source,
+            self._config.envoy_gateway.version,
+            timeout,
+        )
+        args.extend(
+            [
+                "--set-string",
+                "config.envoyGateway.gateway.controllerName="
+                + self._config.envoy_gateway_controller,
+            ]
+        )
         self.run(args)
 
     def install_prometheus(
@@ -382,7 +312,6 @@ class Helm:
         release: ReleaseRef,
         service_monitor_namespaces: tuple[str, ...],
         timeout: str,
-        dry_run: bool,
     ) -> None:
         """Install or upgrade the CLI-managed kube-prometheus-stack release."""
         selected_namespaces = tuple(sorted(set(service_monitor_namespaces)))
@@ -410,21 +339,12 @@ class Helm:
                 "app.kubernetes.io/name": "foretoken-control-plane",
             }
         }
-        chart = "oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack"
-        chart_version = "88.5.2"
-        if dry_run:
-            args = [
-                "template",
-                release.name,
-                chart,
-                "--version",
-                chart_version,
-                "--namespace",
-                release.namespace,
-                "--include-crds",
-            ]
-        else:
-            args = self._upgrade_install_args(release, chart, chart_version)
+        args = self._managed_chart_args(
+            release,
+            self._config.prometheus.source,
+            self._config.prometheus.version,
+            timeout,
+        )
         args.extend(
             [
                 "--set",
@@ -444,8 +364,6 @@ class Helm:
                 + json.dumps(namespace_selector, separators=(",", ":")),
             ]
         )
-        if not dry_run:
-            self._finish_upgrade(args, timeout, False)
         self.run(args)
 
     def install_dcgm_exporter(
@@ -455,40 +373,22 @@ class Helm:
         node_selector: tuple[str, str] | None,
         reuse_values: bool,
         timeout: str,
-        dry_run: bool,
     ) -> None:
         """Install or upgrade the CLI-managed NVIDIA DCGM Exporter release."""
-        chart = (
-            "https://nvidia.github.io/dcgm-exporter/helm-charts/"
-            "dcgm-exporter-4.8.3.tgz"
+        args = self._managed_chart_args(
+            release,
+            self._config.dcgm_exporter.source,
+            None,
+            timeout,
         )
-        metrics = """# Foretoken hardware metrics
-DCGM_FI_DEV_GPU_UTIL, gauge, GPU utilization (in %).
-DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory utilization (in %).
-DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
-DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
-DCGM_FI_DEV_POWER_USAGE, gauge, Power draw (in W).
-DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature (in C).
-DCGM_FI_DEV_XID_ERRORS, gauge, Last XID error code.
-"""
-        if dry_run:
-            args = [
-                "template",
-                release.name,
-                chart,
-                "--namespace",
-                release.namespace,
-            ]
-        else:
-            args = self._upgrade_install_args(release, chart, None)
-            if reuse_values:
-                args.append("--reuse-values")
+        if reuse_values:
+            args.append("--reuse-values")
         args.extend(
             [
                 "--set",
                 "serviceMonitor.enabled=true",
                 "--set-string",
-                "customMetrics=" + metrics.replace(",", "\\,"),
+                "customMetrics=" + self._config.dcgm_metrics.replace(",", "\\,"),
                 "--set-json",
                 "securityContext.capabilities.add=[]",
             ]
@@ -511,22 +411,7 @@ DCGM_FI_DEV_XID_ERRORS, gauge, Last XID error code.
                 + json.dumps(rendered_node_selector, separators=(",", ":")),
             ]
         )
-        if not dry_run:
-            self._finish_upgrade(args, timeout, False)
         self.run(args)
-
-    def uninstall(self, release: ReleaseRef, timeout: str) -> None:
-        """Remove one release whose ownership was verified by the caller."""
-        self.run(
-            [
-                "uninstall",
-                release.name,
-                "--namespace",
-                release.namespace,
-                "--wait",
-                f"--timeout={timeout}",
-            ]
-        )
 
 
 def _image_repository_tag(reference: str) -> tuple[str, str]:
@@ -535,11 +420,3 @@ def _image_repository_tag(reference: str) -> tuple[str, str]:
     if not separator or not repository or not tag:
         raise DeploymentError(f"source image must include a tag: {reference}")
     return repository, tag
-
-
-def _decode_json(output: str) -> Any:
-    """Decode one Helm JSON response without hiding invalid output."""
-    try:
-        return json.loads(output)
-    except json.JSONDecodeError as exc:
-        raise DeploymentError("helm returned invalid JSON") from exc

@@ -24,7 +24,6 @@ class InstallCommand:
     gateway_namespace: str
     gateway_section_name: str
     timeout: str
-    dry_run: bool
 
 
 @dataclass(frozen=True)
@@ -32,7 +31,6 @@ class UninstallCommand:
     """Remove the Foretoken platform Helm release."""
 
     timeout: str
-    dry_run: bool
 
 
 @dataclass(frozen=True)
@@ -139,7 +137,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--values",
         action="append",
         metavar="PATH",
-        help="Helm values file; may be repeated",
+        help="Helm values for images, runtime, or hardware; may be repeated",
     )
     install.add_argument(
         "--prometheus",
@@ -170,22 +168,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="listener name on an existing Gateway",
     )
     _add_wait_timeout_argument(install, "platform readiness")
-    install.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="show the installation plan without changing the cluster",
-    )
 
     uninstall = subparsers.add_parser(
         "uninstall",
         help="Remove the Foretoken platform release",
     )
     _add_wait_timeout_argument(uninstall, "platform removal")
-    uninstall.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="show the removal plan without changing the cluster",
-    )
 
     deploy = subparsers.add_parser(
         "deploy",
@@ -294,10 +282,9 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             parsed_args.gateway_namespace,
             parsed_args.gateway_section_name,
             parsed_args.timeout,
-            parsed_args.dry_run,
         )
     if parsed_args.command == "uninstall":
-        return UninstallCommand(parsed_args.timeout, parsed_args.dry_run)
+        return UninstallCommand(parsed_args.timeout)
     if parsed_args.command == "deploy":
         return DeployCommand(parsed_args.kustomize_path, parsed_args.timeout)
     if parsed_args.command == "delete":

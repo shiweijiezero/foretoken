@@ -178,7 +178,6 @@ class ParamSweepConfig:
 
     bench_params: str = ""
     num_runs: int = 1
-    dry_run: bool = False
     experiment_name: str = ""
 
 
