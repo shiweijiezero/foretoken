@@ -44,32 +44,104 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
 /// Returns the best available view of a candidate's current engine request load.
 ///
 /// Model-server admission and vLLM scheduler gauges overlap, so the load is their maximum rather
-/// than their sum. Built-in load scorers consume this derived value; the candidate retains its
-/// telemetry snapshot.
+/// than their sum. A missing route-target snapshot receives the largest penalty instead of looking
+/// like an idle target.
 pub(crate) fn load(candidate: &RouteCandidate) -> i64 {
-    candidate.route_target_stats.as_ref().map_or(0, |stats| {
-        let scheduler_requests = stats
-            .scheduler_running_requests
-            .unwrap_or(0)
-            .saturating_add(stats.scheduler_waiting_requests.unwrap_or(0));
-        let requests = stats.running_requests.max(scheduler_requests);
-        i64::try_from(requests).unwrap_or(i64::MAX)
-    })
+    candidate
+        .route_target_stats
+        .as_ref()
+        .map_or(i64::MAX, |stats| {
+            let scheduler_requests = stats
+                .scheduler_running_requests
+                .zip(stats.scheduler_waiting_requests)
+                .map(|(running, waiting)| running.saturating_add(waiting));
+            let requests = scheduler_requests
+                .map(|scheduler| stats.running_requests.max(scheduler))
+                .unwrap_or(stats.running_requests);
+            i64::try_from(requests).unwrap_or(i64::MAX)
+        })
 }
 
-/// Returns the least model-server route load among Decode eligible route options in each E/P/D route set.
+/// Returns the least model-server load among Decode options in each E/P/D pipeline scope.
 pub(crate) fn decode_loads_by_pipeline_scope(
     candidates: &[RouteCandidate],
 ) -> BTreeMap<Option<String>, i64> {
-    let mut loads = BTreeMap::new();
-    for candidate in candidates
-        .iter()
-        .filter(|candidate| candidate.role == ModelServerRole::Decode)
-    {
-        loads
+    role_min_by_pipeline_scope(candidates, ModelServerRole::Decode, |candidate| {
+        Some(load(candidate))
+    })
+    .expect("candidate load is always available")
+}
+
+/// Produces the built-in least-loaded ranking for callers that must fall back from incomplete
+/// telemetry without comparing values expressed in different units.
+pub(crate) fn least_loaded_scores(candidates: &[RouteCandidate]) -> Vec<RouteScore> {
+    pipeline_sum_penalties(candidates, |candidate| Some(load(candidate)))
+        .expect("candidate load is always available")
+        .into_iter()
+        .map(metric_score)
+        .collect()
+}
+
+/// Sums one comparable non-negative stage penalty across each candidate's executable pipeline.
+///
+/// Downstream alternatives contribute their minimum penalty because later routing rounds may
+/// select the best compatible target in the chosen pipeline scope. `None` rejects the complete
+/// round so unknown observations are never compared with measured values.
+pub(crate) fn pipeline_sum_penalties(
+    candidates: &[RouteCandidate],
+    metric: impl Fn(&RouteCandidate) -> Option<i64>,
+) -> Option<Vec<i64>> {
+    let values = candidates.iter().map(&metric).collect::<Option<Vec<_>>>()?;
+    let prefill = role_min_by_pipeline_scope(candidates, ModelServerRole::Prefill, &metric)?;
+    let decode = role_min_by_pipeline_scope(candidates, ModelServerRole::Decode, &metric)?;
+    Some(
+        candidates
+            .iter()
+            .zip(values)
+            .map(|(candidate, own)| {
+                let downstream_prefill = prefill
+                    .get(&candidate.pipeline_scope_id)
+                    .copied()
+                    .unwrap_or(0);
+                let downstream_decode = decode
+                    .get(&candidate.pipeline_scope_id)
+                    .copied()
+                    .unwrap_or(0);
+                match candidate.role {
+                    ModelServerRole::Encoder => own
+                        .saturating_add(downstream_prefill)
+                        .saturating_add(downstream_decode),
+                    ModelServerRole::Prefill => own.saturating_add(downstream_decode),
+                    ModelServerRole::Aggregate | ModelServerRole::Decode => own,
+                }
+            })
+            .collect(),
+    )
+}
+
+/// Returns the smallest available metric for `role` in each E/P/D pipeline scope.
+fn role_min_by_pipeline_scope(
+    candidates: &[RouteCandidate],
+    role: ModelServerRole,
+    metric: impl Fn(&RouteCandidate) -> Option<i64>,
+) -> Option<BTreeMap<Option<String>, i64>> {
+    let mut values = BTreeMap::new();
+    for candidate in candidates.iter().filter(|candidate| candidate.role == role) {
+        let value = metric(candidate)?;
+        values
             .entry(candidate.pipeline_scope_id.clone())
-            .and_modify(|current: &mut i64| *current = (*current).min(load(candidate)))
-            .or_insert_with(|| load(candidate));
+            .and_modify(|current: &mut i64| *current = (*current).min(value))
+            .or_insert(value);
     }
-    loads
+    Some(values)
+}
+
+/// Converts one non-negative metric penalty into a pure `RouteScore` where lower is better.
+pub(crate) fn metric_score(penalty: i64) -> RouteScore {
+    RouteScore {
+        matched_tokens: 0,
+        tier_preference: 0,
+        locality_preference: 0,
+        load: penalty.saturating_neg(),
+    }
 }

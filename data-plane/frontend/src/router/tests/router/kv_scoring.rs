@@ -215,6 +215,42 @@ fn load_scoring_uses_scheduler_backlog_without_double_counting_admission() {
     assert!(scores[0] > scores[1]);
 }
 
+// Protects missing route telemetry from being interpreted as an idle backend.
+#[test]
+fn missing_route_target_telemetry_ranks_below_a_measured_target() {
+    let mut unknown = candidate("unknown", ModelServerRole::Aggregate, 0);
+    unknown.route_target_stats = None;
+    let measured = candidate("measured", ModelServerRole::Aggregate, 100);
+
+    let scores = LeastLoadedScorer.score(&request(), &[unknown, measured], &PrefixFacts, &mut ());
+
+    assert!(scores[1] > scores[0]);
+}
+
+// Protects Encoder ranking from ignoring required downstream Prefill and Decode load.
+#[test]
+fn least_loaded_scores_the_complete_epd_pipeline() {
+    let mut encoder_a = candidate("encoder-a", ModelServerRole::Encoder, 0);
+    let mut prefill_a = candidate("prefill-a", ModelServerRole::Prefill, 100);
+    let mut decode_a = candidate("decode-a", ModelServerRole::Decode, 0);
+    let mut encoder_b = candidate("encoder-b", ModelServerRole::Encoder, 10);
+    let mut prefill_b = candidate("prefill-b", ModelServerRole::Prefill, 10);
+    let mut decode_b = candidate("decode-b", ModelServerRole::Decode, 10);
+    for candidate in [&mut encoder_a, &mut prefill_a, &mut decode_a] {
+        candidate.pipeline_scope_id = Some("pipeline-scope-a".into());
+    }
+    for candidate in [&mut encoder_b, &mut prefill_b, &mut decode_b] {
+        candidate.pipeline_scope_id = Some("pipeline-scope-b".into());
+    }
+    let candidates = vec![
+        encoder_a, prefill_a, decode_a, encoder_b, prefill_b, decode_b,
+    ];
+
+    let scores = LeastLoadedScorer.score(&request(), &candidates, &PrefixFacts, &mut ());
+
+    assert!(scores[3] > scores[0]);
+}
+
 struct RankFacts;
 
 impl KvPrefixIndexer for RankFacts {
