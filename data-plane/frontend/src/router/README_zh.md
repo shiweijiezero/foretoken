@@ -21,7 +21,7 @@ spec:
 | Scorer | `kv_least_loaded`、`least_loaded`、`uniform` | `kv_least_loaded` | 为保留目标评分 |
 | Picker | `max`、`round_robin` | `round_robin` | 从最高分目标中选择一个 |
 
-每个 pipeline 阶段都通过名称选择 lower-snake-case 算法。如果部署提供了其他已编译的路由实现，也可以在相同的 `routerPipeline` 字段中填写对应名称；Frontend 注册表会在启动时校验这些名称。
+每个 pipeline 阶段都通过名称选择算法。如果部署提供了其他路由实现，也可以在相同的 `routerPipeline` 字段中填写对应名称。
 
 `kv_least_loaded` 优先考虑已确认的本地 KV 前缀位置，再选择负载较低的目标。`least_loaded` 忽略 KV 位置，只按当前请求负载评分。`uniform` 为所有候选项赋予相同分数；`round_robin` 会在同分目标之间按确定顺序轮转，`max` 则选择一个确定的同分目标。
 

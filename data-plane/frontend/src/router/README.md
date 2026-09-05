@@ -21,7 +21,7 @@ spec:
 | Scorer | `kv_least_loaded`, `least_loaded`, `uniform` | `kv_least_loaded` | Ranks retained targets |
 | Picker | `max`, `round_robin` | `round_robin` | Selects among the highest-scoring targets |
 
-Each pipeline stage selects a lower-snake-case algorithm name. Deployments with additional compiled routing implementations can use their names in the same `routerPipeline` fields; the Frontend registry validates them at startup.
+Each pipeline stage selects an algorithm by name. Deployments with additional routing implementations can use their names in the same `routerPipeline` fields.
 
 `kv_least_loaded` prefers confirmed local KV-prefix locality, then lower load. `least_loaded` ignores KV locality and ranks by current request load. `uniform` gives every candidate the same score; `round_robin` then rotates deterministically among tied targets, while `max` chooses a deterministic tied target.
 

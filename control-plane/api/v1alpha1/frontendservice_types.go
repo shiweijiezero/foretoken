@@ -21,15 +21,12 @@ type FrontendTimeouts struct {
 }
 
 // RouterFilterAlgorithm names a Filter validated by the selected Frontend image.
-// +kubebuilder:validation:Pattern=^[a-z0-9]+(_[a-z0-9]+)*$
 type RouterFilterAlgorithm string
 
 // RouterScorerAlgorithm names a Scorer validated by the selected Frontend image.
-// +kubebuilder:validation:Pattern=^[a-z0-9]+(_[a-z0-9]+)*$
 type RouterScorerAlgorithm string
 
 // RouterPickerAlgorithm names a Picker validated by the selected Frontend image.
-// +kubebuilder:validation:Pattern=^[a-z0-9]+(_[a-z0-9]+)*$
 type RouterPickerAlgorithm string
 
 const (
