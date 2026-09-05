@@ -7,7 +7,15 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken CLI 通过统一的 `foretoken` 入口安装平台、部署 Kustomize 配置、查看服务就绪状态、解析前端访问入口并运行评测。
+Foretoken CLI 通过统一的 `foretoken` 入口安装 Kubernetes 平台、从 Kustomize 配置部署模型服务、查看服务就绪状态、解析前端访问入口并运行评测。
+
+新集群从“安装 CLI”开始。如果 `foretoken --version` 已经可用，直接安装平台；如果集群已经安装 Foretoken 平台，直接部署模型服务。
+
+## 开始前
+
+需要准备 Python 3.10 或更高版本、当前 Kubernetes context、`kubectl` 和 Helm。GPU 节点需要预先安装厂商驱动和 Kubernetes device plugin。源码安装还需要 Docker 和 Make，以及本地 kind/k3d 集群或所有目标节点都能访问的 OCI registry。
+
+## 安装 CLI
 
 使用 pip 安装 Foretoken CLI：
 
@@ -23,33 +31,63 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
-这一步只会在当前 Python 环境中安装 `foretoken` 命令，不会修改 Kubernetes 集群。CLI 会安装与自身软件包版本一致的 Foretoken Chart；运行 `foretoken --version` 可以查看该发布版本。
+这一步只会在当前 Python 环境中安装 `foretoken` 命令，不会修改 Kubernetes 集群。运行 `foretoken --version` 可以查看 CLI 及其对应的平台版本。
 
-使用 CLI 将平台安装到当前 Kubernetes context，并采用默认的本地访问模式。CLI 管理的平台资源固定使用 `foretoken-platform` 命名空间；以后再次运行同一命令会更新现有安装：
+## 安装 Kubernetes 平台
+
+`foretoken install` 会在当前 Kubernetes context 中安装 Foretoken CRD 和控制器。平台资源固定使用 `foretoken-platform` 命名空间。该命令还会配置监控，并在网关模式下配置 Gateway 资源。模型服务通过 `foretoken deploy` 单独部署。
+
+### 默认安装
+
+默认使用发布镜像，并通过 `LoadBalancer` Service 提供本地访问入口：
 
 ```bash
 foretoken install
 ```
 
-命令会复用一个兼容的 Prometheus；如果没有，则安装由 CLI 管理的监控栈。发现 NVIDIA GPU 节点时，命令会复用一个已就绪且 ServiceMonitor 有效的 DCGM Exporter；没有 exporter 时才安装由 CLI 管理的版本。共享 Prometheus 必须能够选择该 ServiceMonitor。已有 exporter 重复、不健康、覆盖不全或无法采集时会停止安装，不会继续叠加。在沐曦 GPU 节点上，CLI 要求并复用一个由平台管理、ServiceMonitor 有效的 mxExporter。CLI 不安装 GPU 驱动、device plugin 或厂商 Operator。只有自动发现得到多个兼容实例时，才需要使用 `--prometheus NAMESPACE/NAME` 指定。
+安装过程中，CLI 会发现 Prometheus 和加速器指标 exporter。它会复用兼容的共享实例，按需安装由 CLI 管理的 Prometheus 和 NVIDIA DCGM Exporter，并接入沐曦集群已经提供的 mxExporter。CLI 不安装 GPU 驱动、device plugin 或厂商 Operator。监控实例存在歧义或配置不完整时，安装会给出可操作的错误；选择规则见[可观测性](../observability/README_zh.md)。
 
-网关模式要求集群已经安装 Gateway Controller。未提供已有 Gateway 信息时，CLI 会创建专用的 `GatewayClass` 和 `Gateway`：
+### 网关模式
+
+只有集群运行 Envoy Gateway 时，CLI 才会创建专用的 `GatewayClass` 和 `Gateway`：
 
 ```bash
 foretoken install --frontend-mode gateway
 ```
 
-如需复用已有 Gateway：
+使用其他 Gateway Controller 时，应复用由该 Controller 管理的 Gateway：
 
 ```bash
 foretoken install \
   --frontend-mode gateway \
   --gateway-name inference-gateway \
-  --gateway-namespace gateway-system \
-  --gateway-section-name https
+  --gateway-namespace gateway-system
 ```
 
-使用 `--dry-run` 可在不修改集群的情况下验证并查看安装计划。重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，CLI 不会自动接管。
+只有多个 listener 都符合条件时，才需要添加 `--gateway-section-name LISTENER`。
+
+### 当前源码
+
+从当前源码构建 Foretoken 镜像，并配置平台使用这些镜像：
+
+```bash
+foretoken install -e .
+```
+
+当前 context 是标准 kind 或 k3d 时，命令会构建并导入本地镜像；其他 Kubernetes context 需要提供节点可访问的 registry。安装前先使用有目标仓库推送权限的账户登录 registry：
+
+```bash
+docker login ghcr.io
+foretoken install -e . --registry ghcr.io/example/foretoken
+```
+
+登录 registry 用于授权本机推送镜像。私有 registry 还需要通过 `--values` 配置 `imagePullSecrets` 和 `workload.imagePullSecrets`，让节点能够拉取镜像，详见[从源码部署 Foretoken](../docs/custom-deployment_zh.md)。
+
+### 安装选项
+
+使用 `--dry-run` 可在不构建镜像、不修改集群的情况下验证并查看安装计划。重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，CLI 不会自动接管。
+
+## 部署和管理模型服务
 
 部署一个 Kustomize 根目录中渲染出的前端服务和全部模型：
 
@@ -71,7 +109,7 @@ foretoken delete examples/multi-model-quickstart
 foretoken uninstall
 ```
 
-该命令保留 Foretoken CRD，并在仍有用户服务时拒绝卸载。
+该命令保留 Foretoken CRD，并在仍有用户服务时拒绝卸载。平台卸载时会一并删除由 CLI 管理的监控和 Gateway 资源，复用的集群组件保持不变。
 
 不应用配置，直接查看同一部署的状态：
 
@@ -100,6 +138,8 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
 Host 值在直接访问时是 URL authority，在 HTTP Gateway 模式下是配置的路由域名。该命令负责等待 LoadBalancer 或 Gateway 地址，服务就绪仍由 `foretoken deploy` 负责。
+
+## 运行评测
 
 使用 pip 安装可选的评测依赖：
 

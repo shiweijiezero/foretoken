@@ -131,25 +131,44 @@ New CI must report actionable failures, remain proportionate to the change risk,
 
 ## Documentation
 
-Write documentation for the person who will use or maintain the final system, not for the current PR discussion.
+Write documentation for the person who will use or maintain the final system, not for the current PR discussion or the author's implementation process. Start from the task readers need to complete, then decide which background, commands, choices, and results belong on the page.
 
 Before adding or substantially rewriting user documentation:
 
-1. verify the current code, CLI help, Helm values, schema, and maintained examples;
-2. read the latest documentation from at least two mature projects with a similar responsibility;
-3. compare their reader path, terminology, examples, prerequisites, and troubleshooting depth before choosing the Foretoken structure.
+1. define the page's responsibility and the result its readers need;
+2. verify the current code, CLI help, Helm values, schema, maintained examples, runtime behavior, and cleanup path;
+3. read the latest documentation from at least two mature projects with a similar responsibility;
+4. outline the shortest executable path before writing explanatory prose.
 
-Learn from the organization and ownership of those documents; do not combine or copy their text. Deprecated, historical, draft, and proposal documents may provide background but are not templates for current user guidance.
+Compare how mature projects present prerequisites, first success, alternatives, verification, and troubleshooting. Learn from their organization and ownership; do not combine or copy their text. Deprecated, historical, draft, and proposal documents may provide background but are not templates for current guidance.
 
-User documentation should begin with purpose and a minimal executable example. Move exhaustive configuration, architecture, and troubleshooting details behind the main path. Describe only implemented behavior and necessary limits. Do not publish PR plans, acceptance criteria, implementation diaries, private wire contracts, source-file tours, or future capabilities as current behavior.
+Give each document one clear responsibility:
 
-When adding a capability, do not mechanically append another paragraph to the existing documentation. Reconsider the reader path and section structure, state shared behavior once, and use a table or focused subsections for real differences. Remove replaced, repeated, or no-longer-actionable content so feature growth does not become documentation growth by accumulation.
+- The root README explains the project and provides one default path from setup to a successful request and cleanup.
+- Component READMEs describe user-visible purpose, inputs, outputs, access, and necessary limits rather than source-file tours or private contracts.
+- Installation, deployment, operations, troubleshooting, and reference guides own their respective details instead of duplicating them across entry pages.
+- Maintainer documents may explain ownership, data flow, and trade-offs, but must distinguish current behavior from target or draft designs.
 
-Introduce each command block with a sentence that states what the reader is about to do and, when relevant, what the command produces or where to continue. A heading alone is not sufficient context. Present mutually exclusive alternatives, such as pip and uv, with separate prose labels and code blocks instead of `# or` comments inside one block. Keep commands in one block only when readers should run them in sequence.
+A Quick Start should follow one default success path. Put alternatives where readers actually make that choice, or link to the guide that owns them. Do not interrupt the main path with every installer, cluster type, access mode, hardware backend, registry, or advanced option.
 
-Keep English and Chinese documentation aligned in capability, prerequisites, commands, defaults, and limitations. Update both when user-visible behavior changes.
+Commands and configuration examples must be directly usable:
 
-Write every language version independently for its readers rather than using another language as a sentence-by-sentence template. English documentation should use clear, natural technical English; Chinese documentation should use natural Chinese prose and established Chinese technical terms. Preserve exact commands, field names, type names, and algorithm identifiers when readers need to recognize or enter them, and explain uncommon identifiers in the surrounding language on first use. Avoid untranslated ordinary words when that language has a clear expression. Review each language version on its own for fluency; equivalent capability does not require identical sentence structure.
+- use real maintained paths, model identifiers, fields, and defaults;
+- explain placeholders before the command, and avoid them when a repository example can be used;
+- show the exact configuration fragment when a field must be added or changed;
+- keep commands together only when readers should run them in sequence, with short comments for distinct stages;
+- let a precise heading introduce a single obvious command instead of repeating it in prose;
+- do not repeat the same command in an overview and again in the detailed steps.
+
+After a command, describe the user-visible result: what is installed or deployed, what resources it needs, and how the reader knows it succeeded. Mention waiting or internal lifecycle details only when they affect when the reader can continue.
+
+When adding a capability, reconsider the reader path instead of mechanically appending another paragraph. State shared behavior once, place differences in a focused section or owned guide, and remove replaced, repeated, or no-longer-actionable content. Use stable directory or reference entry points for lists that will grow, such as examples and contributors.
+
+Documentation review is iterative. Read the complete user path as a first-time user, an experienced platform operator, and a source developer. For each concrete point of friction, fix page responsibility, section structure, and information placement before rewriting sentences. Then reread the surrounding steps and remove any duplication introduced by the change. Repeat until the default path is executable, alternatives appear at their decision point, and no reader has a reachable blocker; do not continue changing wording after those conditions are met.
+
+Before finalizing, perform a separate deletion pass for duplicated commands, meta-commentary about the document, misplaced alternatives, implementation details, and headings without an independent responsibility. Formatting and tests do not replace this reading review.
+
+Keep English and Chinese documentation aligned in capability, prerequisites, commands, defaults, and limitations, but write each version independently for its readers. Use natural technical English and natural Chinese rather than translating sentence by sentence. Preserve exact commands, field names, type names, and Kubernetes resource kinds when readers need to recognize or enter them; explain uncommon terms in the surrounding language on first use.
 
 ## Change and PR discipline
 

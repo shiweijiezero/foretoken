@@ -322,8 +322,8 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:Maximum=268435456
 	InternalGenerateRequestBodyLimitBytes *int64 `json:"internalGenerateRequestBodyLimitBytes,omitempty"`
 
-	// Replicas is the initial service replica count; the compiler defaults it to 1.
-	// When autoscaling is configured, its minReplicas and maxReplicas bound subsequent decisions.
+	// Replicas is the baseline service replica count; the compiler defaults it to 1.
+	// When autoscaling is configured, its minReplicas and maxReplicas bound capacity from the first reconcile.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	Replicas *int32 `json:"replicas,omitempty"`

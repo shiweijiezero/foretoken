@@ -13,7 +13,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 - 根据负载、队列或 KV Cache 状态路由请求。
 - 根据请求量和 SLO 自动扩缩推理实例。
 - 比较聚合部署、Prefill/Decode 分离和不同并行方案。
-- 在 NVIDIA、沐曦、昇腾等不同硬件上使用同一套编排方案。
+- 在 NVIDIA 和沐曦硬件上使用同一套编排方案。
 
 如果只在单张卡上运行一个模型，直接使用 vLLM 等推理引擎通常就够了。
 
@@ -26,195 +26,119 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 | 硬件适配 | 统一设备能力、运行时、通信和指标接口 | 开发中 |
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
 | 分布式推理 | 聚合部署、Prefill/Decode 分离和 WideEP 并行策略 | 研究中 |
-| 控制面 | 模型服务、实例组、扩缩容、更新和故障恢复 | 规划中 |
+| 控制面 | 模型服务、实例组、扩缩容、更新和故障恢复 | 开发中 |
 | [可观测性](observability/README_zh.md) | 采集运行指标、评估告警并分析 CPU/GPU 性能瓶颈 | 开发中 |
 
 ## 快速开始
 
-Foretoken 支持本地模式和网关模式。本地模式通过 `LoadBalancer` Service 直接提供前端服务地址，适合本地集群或实验室环境；网关模式通过 Gateway API 和域名提供统一入口，适合已经使用 Kubernetes Gateway 或需要统一管理对外流量的集群。安装时选择其中一种模式，后续的服务部署和评测步骤相同。
+本快速开始需要 Python 3.10 或更高版本、Kubernetes 集群、`kubectl`、Helm 和至少一块可用 GPU。如需在单台机器上准备测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。
 
-### 1. 安装 Foretoken
+### 1. 安装 CLI
 
-使用 pip 从仓库根目录安装 CLI：
+在仓库根目录运行：
 
 ```bash
 pip install -e .
 ```
 
-或使用 uv 创建并激活虚拟环境后安装：
+### 2. 安装 Kubernetes 平台
 
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install -e .
-```
-
-这一步只会在当前 Python 环境中安装 `foretoken` 命令，不会修改 Kubernetes 集群。CLI 会安装与自身软件包版本一致的 Foretoken Chart；运行 `foretoken --version` 可以查看该发布版本。
-
-#### 本地模式
-
-使用 CLI 将 Foretoken 平台安装到当前 `kubectl` context 指向的集群。CLI 管理的平台资源固定使用 `foretoken-platform` 命名空间。默认的本地模式通过 `LoadBalancer` Service 提供前端访问地址；以后再次运行同一命令会更新现有安装：
+默认使用 Foretoken 发布在 GHCR 的镜像：
 
 ```bash
 foretoken install
 ```
 
-#### 网关模式
+该命令会在 `foretoken-platform` 命名空间中安装 Foretoken CRD 和控制器，并等待控制器就绪。默认模式通过 `LoadBalancer` 类型的 Kubernetes `Service` 提供前端地址。
 
-先在 `examples/quickstart/frontend.yaml` 的 `spec` 中填写对外域名：
+如果修改了当前仓库中的源码，请改用源码安装：
+
+```bash
+foretoken install -e .
+```
+
+该命令会重新构建镜像并更新集群。如果要将当前源码部署到远程集群，请参阅[源码部署指南](docs/custom-deployment_zh.md)。
+
+### 3. 部署快速开始示例
+
+```bash
+foretoken deploy examples/quickstart
+```
+
+该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
+
+### 4. 发送测试请求
+
+```bash
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+
+curl --fail-with-body --no-buffer \
+  "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
+```
+
+### 5. 运行评测
+
+```bash
+pip install -e '.[bench]'
+foretoken bench examples/quickstart
+```
+
+数据集、远程服务、结果保存和参数扫描见[评测指南](benchmarks/README_zh.md)。
+
+## 网关模式
+
+网关模式通过 Kubernetes Gateway 和域名提供统一入口，适合已经使用 Gateway 或需要集中管理外部流量的集群。
+
+Foretoken 默认创建的 Gateway 使用 Envoy Gateway。先安装 Envoy Gateway，并在 `examples/quickstart/frontend.yaml` 的 `spec` 中添加访问域名：
 
 ```yaml
 spec:
   hostname: foretoken.example.com
 ```
 
-网关模式需要网关控制器。如果集群尚未安装，可以使用以下命令安装 Envoy Gateway：
+然后运行：
 
 ```bash
+# 安装 Envoy Gateway
 helm upgrade --install envoy-gateway \
   oci://docker.io/envoyproxy/gateway-helm \
   --namespace envoy-gateway-system \
   --create-namespace \
   --wait
-```
 
-为 Foretoken 创建专用的 `GatewayClass` 和 `Gateway`：
-
-```bash
+# 安装平台并启用网关模式
 foretoken install --frontend-mode gateway
-```
 
-如果复用已有 Gateway，先查看其名称和命名空间：
-
-```bash
-kubectl get gateway -A
-```
-
-然后使用该 Gateway 和 listener 安装 Foretoken：
-
-```bash
-foretoken install \
-  --frontend-mode gateway \
-  --gateway-name inference-gateway \
-  --gateway-namespace gateway-system \
-  --gateway-section-name https
-```
-
-该 Gateway 必须允许前端服务所在命名空间的 `HTTPRoute` 接入；DNS 和 TLS 继续由平台网关管理。
-
-### 2. 部署模型服务
-
-`examples/quickstart` 提供一套可直接使用的前端服务和单模型配置。如需运行双模型并验证基于队列的自动扩缩容，请参阅[多模型快速开始](examples/multi-model-quickstart/README_zh.md)。
-
-```bash
+# 部署快速开始示例
 foretoken deploy examples/quickstart
-```
 
-该命令会应用 Kustomize 配置，在服务状态变化时输出进度，并在当前配置就绪后退出。
-
-### 3. 发送生成请求进行测试
-
-#### 本地模式
-
-解析前端服务 URL 并发送请求：
-
-```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-
-curl --fail-with-body --no-buffer \
-  "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
-```
-
-#### 网关模式
-
-使用由 Chart 创建的 HTTP 网关时，解析网关地址和路由域名：
-
-```bash
+# 获取网关地址和请求域名
 FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
 FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 
+# 发送测试请求
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
   -H "Host: $FORETOKEN_REQUEST_HOST" \
   -H "Content-Type: application/json" \
-  -d '{"model":"quickstart-qwen3-0.6b","messages":[{"role":"user","content":"hello"}],"stream":true}'
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-复用平台已有网关时，使用该网关实际配置的域名、端口和 TLS。
-
-### 4. 评测服务吞吐
-
-使用 pip 从仓库根目录安装可选的评测依赖：
-
-```bash
-pip install -e '.[bench]'
-```
-
-或在已经激活的 uv 虚拟环境中安装评测依赖：
-
-```bash
-uv pip install -e '.[bench]'
-```
-
-以下命令会复用已经运行的快速开始服务；服务尚未部署时，CLI 会创建配置中的资源，并在评测结束后只清理本次创建的资源。未指定 `--prompt` 或 `--dataset` 时，使用一个简短的内置提示词：
-
-```bash
-foretoken bench examples/quickstart
-```
-
-默认仅在控制台显示结果。使用 `--output local` 将结果保存到本地，使用 `--output wandb` 发布到 W&B；两者也可同时使用。
-
-如果要评测已经运行的 OpenAI API 兼容服务，则显式提供地址和模型：
-
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --prompt "Hello"
-```
+要复用其他 Gateway Controller 管理的 Gateway、指定 listener 或配置 TLS，见 [CLI 使用指南](cli/README_zh.md)。
 
 ## 停止与卸载
 
 ```bash
-# 删除服务配置，停止服务并清理所辖资源：
+# 删除快速开始部署的前端和模型服务
 foretoken delete examples/quickstart
 
-# 服务资源清理完成后，再卸载平台：
+# 卸载 Foretoken 平台
 foretoken uninstall
 ```
 
-`foretoken uninstall` 会删除平台及其由 CLI 管理的监控和网关资源；复用的集群组件保持不变。
-
-如果 Envoy Gateway 仅供本次 Foretoken 部署使用，可以继续卸载它：
-
-```bash
-helm uninstall envoy-gateway \
-  --namespace envoy-gateway-system \
-  --wait --timeout 5m
-```
-
-其他服务仍在使用 Envoy Gateway 时不要执行这一步。
-
-卸载控制平面时会保留 Foretoken CRD 和自定义资源。只有在清理全部 Foretoken 资源后，才应显式删除 CRD：
-
-```bash
-kubectl delete crd \
-  frontendservices.inference.foretoken.io \
-  kvservices.inference.foretoken.io \
-  kvpools.inference.foretoken.io \
-  kvgroups.inference.foretoken.io \
-  modelservices.inference.foretoken.io \
-  modelpools.inference.foretoken.io \
-  modelgroups.inference.foretoken.io
-```
-
-## 开发部署
-
-如需构建和部署本地源码修改、向集群导入镜像，或通过 OCI 镜像仓库分发开发镜像，请参阅[从源码部署 Foretoken](docs/custom-deployment_zh.md)。
-
-如需在单台机器上创建相互隔离的 Kubernetes 集群并指定可用 GPU，请参阅[使用 k3d 部署 Foretoken](docs/k3d-deployment_zh.md)。
+卸载时会保留 Foretoken CRD 和复用的集群组件，并删除平台以及由 CLI 管理的监控或 Gateway 资源。
 
 ## 相关项目
 
@@ -229,6 +153,12 @@ kubectl delete crd \
 欢迎贡献部署基线、硬件适配、性能评测、路由算法、扩缩容算法、测试和文档。
 性能相关变更需要附上测试条件、原始结果和可重复执行的命令。
 开发原则、协作约定和 Pull Request 流程见 [《为 Foretoken 做贡献》](CONTRIBUTING_zh.md)。
+
+感谢所有为 Foretoken 做出贡献的开发者。
+
+<a href="https://github.com/shiweijiezero/foretoken/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=shiweijiezero/foretoken" alt="Foretoken 贡献者" />
+</a>
 
 ## 许可证
 

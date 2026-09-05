@@ -5,70 +5,28 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Foretoken Frontend
 
-[简体中文](README_zh.md)
+`foretoken-frontend` receives inference traffic and returns OpenAI-compatible responses. A `FrontendService` is created and configured by the Foretoken Controller; users deploy it through a maintained example or their own service configuration rather than starting it directly.
 
-`foretoken-frontend` is the Rust data plane behind the gateway that directly handles inference requests. It provides a consistent generation API and manages request routing, streaming responses, and runtime availability across multiple models and inference instances.
+The frontend is exposed directly through a `LoadBalancer` Service in the default mode, or through an `HTTPRoute` attached to a platform Gateway in Gateway mode. The Gateway owns DNS, TLS, authentication, and other ingress policy. Gateway mode exposes `/v1`, `/tokenize`, and `/detokenize` through the route, not the operator endpoints. In the default mode, operator endpoint reachability depends on the LoadBalancer and cluster network policy.
 
-## Capabilities
+## Use it
 
-- OpenAI-compatible Completion and Chat Completion APIs;
-- multiple public models through one frontend;
-- instance selection based on model compatibility, request capabilities, health, load, and KV cache reuse opportunities;
-- aggregated, Prefill/Decode, and Encoder/Prefill/Decode serving topologies;
-- both SSE streaming and collected JSON responses;
-- tools, reasoning, structured output, and capability-gated image input;
-- uninterrupted accepted requests while routes and instances change;
-- health, readiness, and runtime metrics endpoints.
+Follow the repository [Quick Start](../../README.md) to deploy a frontend and make a request. One frontend can serve multiple public models. The request `model` selects the model; requests are never silently redirected to another model when that model is unavailable.
 
-## Request path
+The frontend supports collected JSON and SSE streaming responses, completions and chat completions, tokenization, tools, reasoning, structured output, and capability-gated image input. Image input currently accepts bounded base64 `data:` content, not remote media URLs.
 
-```text
-Client
-  ↓
-LoadBalancer or Gateway
-  ↓
-foretoken-frontend
-  ├─ validates and prepares the request
-  ├─ selects the model and an available inference instance
-  ├─ executes an aggregated or disaggregated generation flow
-  └─ returns a streaming or collected response
-  ↓
-Model service
-```
+The Controller configures and validates aggregate, Prefill/Decode, and Encoder/Prefill/Decode topologies. The frontend routes each stage within that controller-owned topology. Current disaggregated serving requires the runtime profiles and transports accepted by the Controller; it is not configured through frontend request parameters.
 
-The request's `model` field selects the public model. The frontend sends it only to instances that support that model and the requested capabilities. If one model is temporarily unavailable, other healthy models continue serving; requests are never silently redirected to a different model.
+## Endpoint access
 
-When model instances or routes change, the frontend activates the new configuration only after it is ready. Invalid or unready updates do not replace the active configuration or interrupt requests already in progress.
+| Access | Endpoints | Purpose |
+| --- | --- | --- |
+| Client | `/v1/*`, `/tokenize`, `/detokenize` | Submit inference and discover configured models |
+| Operator | `/healthz`, `/readyz`, `/statusz`, `/metrics` | Probes, runtime diagnostics, and Prometheus scraping |
+| Controller internal | `/internal/autoscaling/telemetry` | Controller telemetry collection; not a client contract |
 
-## Access
+`/v1/models` lists models in the current published runtime generation. Listing a model does not guarantee its backends remain healthy at the instant of a later request; clients must handle an unavailable response.
 
-### Local mode
+`/healthz` reports that the frontend process is running. `/readyz` reports that a published runtime generation is available to accept new requests. It does not prove every configured model has a healthy backend path. `/statusz` reports runtime and KV-index diagnostics for platform operators. `/metrics` is the Prometheus scrape endpoint.
 
-Local mode obtains an address from a `LoadBalancer` Service. See the repository Quick Start for the access command.
-
-### Gateway mode
-
-After a Gateway Controller is installed, the Foretoken Chart can create a dedicated `GatewayClass` and `Gateway` or reuse an existing platform Gateway. Foretoken creates the frontend's `HTTPRoute`, while the platform Gateway continues to own DNS, TLS, authentication, and other ingress policies.
-
-## HTTP APIs
-
-- `POST /v1/completions`
-- `POST /v1/chat/completions`
-- `POST /v1/generate`
-- `POST /tokenize`
-- `POST /detokenize`
-- `GET /v1/models`
-- `GET /v1/models/{model}`
-- `GET /healthz`
-- `GET /readyz`
-- `GET /metrics`
-
-Streaming and non-streaming requests have the same generation semantics. Image input currently accepts bounded base64 `data:` content; remote media URLs are not accepted.
-
-## Health and readiness
-
-- `/healthz` reports whether the frontend process is operating;
-- `/readyz` reports whether at least one model route can accept inference requests;
-- `/v1/models` lists only models with a currently healthy inference path.
-
-The Foretoken Controller normally creates and configures the frontend; users do not need to start or maintain it separately.
+When models or routes change, the frontend activates a new runtime generation only after it is published successfully. Invalid or unready updates do not replace the active generation, and accepted requests continue on their generation.

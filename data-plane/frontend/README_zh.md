@@ -5,70 +5,28 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Foretoken Frontend
 
-[English](README.md)
+`foretoken-frontend` 接收推理请求并返回 OpenAI 兼容响应。Foretoken 控制器负责创建和配置 `FrontendService`；用户通过维护中的示例或自己的服务配置部署前端，而不需要单独启动进程。
 
-`foretoken-frontend` 是位于网关层之后、直接处理推理请求的 Rust 数据面。它为客户端提供统一的生成接口，并在多个模型和推理实例之间完成请求路由、流式响应与运行状态管理。
+默认模式通过 `LoadBalancer` 类型的 Kubernetes `Service` 直接暴露前端；网关模式通过绑定平台 Gateway 的 `HTTPRoute` 暴露。Gateway 负责域名、TLS、认证和其他入口策略。网关路由只暴露 `/v1`、`/tokenize` 和 `/detokenize`，不暴露运维接口；默认模式下，运维接口是否可从集群外访问取决于 LoadBalancer 和集群网络策略。
 
-## 主要能力
+## 使用方式
 
-- 提供 OpenAI 兼容的 Completion 和 Chat Completion API；
-- 通过同一个前端服务对外提供多个模型；
-- 根据模型、请求能力、实例健康状态、负载和 KV cache 复用机会选择推理实例；
-- 支持聚合部署、Prefill/Decode 分离和 Encoder/Prefill/Decode 分离；
-- 同时支持 SSE 流式响应和普通 JSON 响应；
-- 支持工具调用、reasoning、structured output 和受能力约束的图片输入；
-- 在路由配置更新或实例变化时继续完成已经接收的请求；
-- 提供健康检查、就绪状态和运行指标。
+按照仓库[快速开始](../../README_zh.md)部署前端并发送请求。一个前端可以提供多个公开模型，客户端通过请求中的 `model` 选择模型；目标模型暂时不可用时，前端不会静默改为其他模型。
 
-## 请求路径
+前端支持普通 JSON 和 SSE 流式响应、Completion、Chat Completion、分词、工具调用、reasoning、structured output 与受能力约束的图片输入。图片输入当前只接受大小受限的 base64 `data:` 内容，不接受远程媒体 URL。
 
-```text
-客户端
-  ↓
-LoadBalancer 或网关
-  ↓
-foretoken-frontend
-  ├─ 校验并转换请求
-  ├─ 选择模型和可用推理实例
-  ├─ 执行聚合或分离式推理流程
-  └─ 返回流式或非流式响应
-  ↓
-模型服务
-```
+控制器负责配置并验证聚合部署、Prefill/Decode 分离和 Encoder/Prefill/Decode 分离拓扑。前端在控制器发布的拓扑内选择各执行阶段。当前分离式推理需要控制器接受的运行 profile 和传输方式，不能通过前端请求参数配置。
 
-客户端通过请求中的 `model` 选择模型。前端服务只会把请求发送到满足该模型能力并且当前可用的实例；一个模型暂时不可用时，不会影响其他健康模型继续服务，也不会自动把请求转发到不同模型。
+## 接口访问范围
 
-当运行中的模型实例或路由发生变化时，前端服务会在新配置准备完成后再启用它。无效或尚未就绪的更新不会替换当前可用配置，也不会主动中断正在进行的请求。
+| 范围 | 接口 | 用途 |
+| --- | --- | --- |
+| 客户端 | `/v1/*`、`/tokenize`、`/detokenize` | 发送推理请求和发现已配置模型 |
+| 平台运维 | `/healthz`、`/readyz`、`/statusz`、`/metrics` | 探针、运行状态诊断和 Prometheus 抓取 |
+| 控制器内部 | `/internal/autoscaling/telemetry` | 控制器收集遥测；不是客户端契约 |
 
-## 访问方式
+`/v1/models` 返回当前已发布运行代中的模型。模型出现在列表中不保证后续请求时其后端仍然健康；客户端需要处理不可用响应。
 
-### 本地模式
+`/healthz` 表示前端进程正在运行。`/readyz` 表示已有已发布的运行代可以接收新请求，但不保证每个已配置模型都有健康后端路径。`/statusz` 为平台运维者提供运行代和 KV 索引诊断信息。`/metrics` 是 Prometheus 抓取端点。
 
-本地模式通过 `LoadBalancer` Service 提供访问地址。具体访问命令见仓库根目录的“快速开始”章节。
-
-### 网关模式
-
-安装 Gateway Controller 后，Foretoken Chart 可以创建专用的 `GatewayClass` 和 `Gateway`，也可以复用平台已有网关。Foretoken 为前端服务创建 `HTTPRoute`，域名、TLS、认证和其他入口策略继续由平台网关管理。
-
-## HTTP 接口
-
-- `POST /v1/completions`
-- `POST /v1/chat/completions`
-- `POST /v1/generate`
-- `POST /tokenize`
-- `POST /detokenize`
-- `GET /v1/models`
-- `GET /v1/models/{model}`
-- `GET /healthz`
-- `GET /readyz`
-- `GET /metrics`
-
-流式和非流式请求使用相同的生成语义。图片输入目前接受大小受限的 base64 `data:` 内容，不接受远程媒体 URL。
-
-## 健康与就绪状态
-
-- `/healthz` 表示前端服务进程能够正常工作；
-- `/readyz` 表示至少已有可用的模型路由，可以接收推理请求；
-- `/v1/models` 只返回当前具有健康推理路径的模型。
-
-前端服务通常由 Foretoken 控制器创建和配置，用户不需要单独启动或维护它。
+模型或路由变化时，前端只会在新运行代成功发布后启用它。无效或未就绪的更新不会替换当前运行代，已经接收的请求会在其所属运行代中继续完成。

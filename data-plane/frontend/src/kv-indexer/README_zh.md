@@ -3,79 +3,22 @@
 
 # KV 前缀索引
 
-## 它解决什么问题
+KV 前缀索引向 Router 提供 prompt 前缀的缓存位置。它是缓存目录，不是缓存本身：KV block 仍由推理后端保存，索引不会保存、恢复或传输缓存。
 
-大模型处理 prompt 时会生成 KV cache。后续请求如果包含相同的 prompt 前缀，就可以复用已有缓存，减少重复计算。
+## 当前行为
 
-KV 前缀索引如同缓存目录：它记录“哪个模型实例保存了哪些 prompt 前缀”。KV cache 本身仍由推理后端保存；索引仅向 Router 提供查询所需的信息，不负责保存或传输缓存，也不负责选择路由。
+当前控制器投影只发布本地 `Device` KV 位置。Foretoken 当前不把 CPU 内存或磁盘 offload、远端缓存共享或点对点缓存传输作为路由能力。
 
-## 一个路由示例
+对于支持查询的请求，索引可能返回已确认的前缀匹配、已确认的未命中，或 `Unavailable`。`Unavailable` 表示索引当前无法可靠回答，不等于未命中。Router 会把它视为没有 KV 位置偏好，继续常规路由。
 
-假设一个请求有 1,000 个 prompt token：
+缓存位置只是提示。它表示精确模型 revision、KV scope 和运行时分区内的完整 token block 前缀，不保证推理真正开始时后端仍保有缓存。使用 cache salt、LoRA、不支持的多模态特性或显式跳过 prefix cache 的请求不会使用 KV 前缀查询。
 
-- 路由目标 A 已缓存前 800 个 token；
-- 路由目标 B 已缓存前 200 个 token。
+## 运维
 
-索引会返回这两个匹配结果。Router 可以优先考虑 A，也可以根据负载和其他路由条件选择 B。
+Frontend 通过 model-server 事件刷新 KV 位置。事件源不可达、缺少密钥，或 cursor、epoch 不一致时，普通服务仍可继续，但该事件源的 KV 感知路由会变为不可用或退化。
 
-## 在 Foretoken 中如何工作
+平台运维者可以通过 Frontend 的集群内 `/statusz` 查看 KV 索引状态和事件源健康度，通过 `/metrics` 由 Prometheus 抓取指标。应用客户端不需要修复 KV 同步；应由平台运维者检查 model-server 事件源和 serving 配置。
 
-```text
-推理后端 ──KV block 事件──> KV 前缀索引 ──前缀查询结果──> Router
-```
+Router 会将该信号与负载和请求兼容性结合。路由行为见 [Router 指南](../router/README_zh.md)。
 
-- 推理后端通过后端适配器将自己的 KV cache 事件转换为 Foretoken 通用事件。
-- KV 前缀索引分别维护每个事件源、路由目标和 DP rank 的缓存目录。
-- Router 通过 `KvPrefixIndexer` 查询缓存命中情况，再结合负载等信息选择路由。
-
-### KV block 事件
-
-Foretoken 使用三类通用事件维护索引：
-
-- `BlockStored`：一个新的 KV block 已保存；
-- `BlockRemoved`：一个 KV block 已删除；
-- `AllBlocksCleared`：一个事件源和 DP rank 的 KV block 已全部清空。
-
-### 缓存位置
-
-| 位置 | 含义 |
-| --- | --- |
-| `Device` | 当前计算设备上的缓存，可以直接使用 |
-| `HostPinned` | 主机内存中的缓存，需要恢复到计算设备 |
-| `Disk` | 本地磁盘中的缓存，需要从磁盘恢复 |
-| `External` | 远端或共享存储中的缓存，需要通过网络传输 |
-
-只有当路由目标具备相应的恢复或传输能力时，索引才会返回 `HostPinned`、`Disk` 或 `External` 缓存。
-
-### 事件同步
-
-每个事件源使用独立的 epoch 和连续序号。出现事件缺失、乱序或 epoch 变化时，索引会暂时返回 `Unavailable`，而不是使用可能不完整的数据。同步恢复后即可继续查询。
-
-## 查询接口
-
-一次 `KvPrefixLookup` 包含：
-
-- `route_target_id`：要查询的路由目标；
-- `data_parallel_rank`：目标中的具体 DP rank；
-- `prompt_token_ids`：请求的 prompt token。
-
-查询返回以下结果之一：
-
-- `Matches`：查询成功。结果包含可复用的 prompt token 数量和缓存位置；没有命中也是一个正常结果。
-- `Unavailable`：当前无法可靠查询，例如事件源尚未同步完成或请求不支持前缀查询。它不等于“没有缓存”。
-
-## 接入新的推理后端
-
-推理后端的专用逻辑应放在后端适配器中。后端适配器负责把后端的事件、block 标识和存储类型转换为 Foretoken 通用类型；`KvPrefixIndexer` 本身不依赖某个特定推理后端。
-
-接入新的推理后端时，应新增或扩展对应的后端适配器，而不是在索引实现中加入后端特例。
-
-## 选择索引实现
-
-该 crate 提供：
-
-- `PositionalHashIndex`：按 prompt 位置匹配 block；
-- `RadixTreeIndex`：使用压缩前缀树查找匹配前缀；
-- `NoopKvPrefixIndexer`：关闭 KV 前缀查询时返回 `Unavailable`。
-
-它们都实现 `KvPrefixIndexer`，Router 不需要了解具体使用哪种索引结构。
+通用 placement 词汇、事件序号、索引实现和后端适配要求见 [KV 索引维护指南](MAINTAINER_zh.md)。

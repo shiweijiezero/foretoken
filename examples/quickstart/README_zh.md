@@ -7,25 +7,11 @@
 
 如需运行双模型并验证自动扩缩容，请参阅[多模型快速开始](../multi-model-quickstart/README_zh.md)。
 
-本示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本，使用 1 张 GPU。
+本示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。
 
 ## 部署
 
-先安装 Foretoken 平台，再使用 pip 从仓库根目录安装 CLI：
-
-```bash
-pip install -e .
-```
-
-或使用 uv 创建并激活虚拟环境后安装：
-
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install -e .
-```
-
-部署示例：
+先完成根目录[快速开始](../../README_zh.md)中的平台安装，再部署本示例：
 
 ```bash
 foretoken deploy examples/quickstart

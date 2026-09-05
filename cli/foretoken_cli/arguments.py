@@ -16,6 +16,8 @@ class InstallCommand:
     """Install or update the Foretoken platform Helm release."""
 
     values: tuple[str, ...]
+    editable: str | None
+    registry: str | None
     prometheus: str | None
     frontend_mode: str | None
     gateway_name: str
@@ -100,7 +102,10 @@ def _build_parser() -> argparse.ArgumentParser:
     """Build the stable top-level command surface owned by the CLI package."""
     parser = argparse.ArgumentParser(
         prog="foretoken",
-        description="Install the platform, deploy services, and run benchmarks",
+        description=(
+            "Install the Kubernetes control plane, deploy model services, "
+            "and run benchmarks"
+        ),
     )
     parser.add_argument(
         "--version",
@@ -111,7 +116,23 @@ def _build_parser() -> argparse.ArgumentParser:
 
     install = subparsers.add_parser(
         "install",
-        help="Install or update the Foretoken platform",
+        help="Install or update the Foretoken Kubernetes control plane",
+        description=(
+            "Install or update Foretoken CRDs and the controller, configure shared "
+            "monitoring, and create Gateway resources when Gateway mode is selected. "
+            "Model services are deployed separately with 'foretoken deploy'."
+        ),
+    )
+    install.add_argument(
+        "-e",
+        "--editable",
+        metavar="PATH",
+        help="build Foretoken images from this source root",
+    )
+    install.add_argument(
+        "--registry",
+        metavar="REGISTRY",
+        help="registry used to distribute source images to remote clusters",
     )
     install.add_argument(
         "-f",
@@ -261,8 +282,12 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
                 "reusing a Gateway requires both --gateway-name and "
                 "--gateway-namespace"
             )
+        if parsed_args.registry and not parsed_args.editable:
+            parser.error("--registry requires --editable PATH")
         return InstallCommand(
             tuple(parsed_args.values or ()),
+            parsed_args.editable,
+            parsed_args.registry,
             parsed_args.prometheus,
             parsed_args.frontend_mode,
             parsed_args.gateway_name,

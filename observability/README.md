@@ -7,104 +7,93 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Foretoken uses metrics, alerts, and on-demand profiling to show service health, request latency, queue pressure, capacity, and hardware utilization.
+Foretoken installs Prometheus collection and recording rules for service and accelerator metrics. It does not install Foretoken alert rules. Alert thresholds, Alertmanager routing, and notifications remain owned by the platform team.
 
-## Collect metrics
-
-Install Foretoken to configure Prometheus collection and recording rules:
+## Install collection
 
 ```bash
 foretoken install
 ```
 
-The CLI reuses the single compatible Prometheus instance in the cluster. If none exists, it installs a managed kube-prometheus-stack release.
+The CLI discovers the collection path and prints its plan before changing the cluster.
 
-GPU metric collection depends on the device platform:
+| Component | No suitable existing instance | Qualified existing instance | Conflict or incomplete path | `foretoken uninstall` |
+| --- | --- | --- | --- | --- |
+| Prometheus | Install a CLI-managed kube-prometheus-stack | Reuse it | Stop and request an explicit selection or repair | Remove only a CLI-managed release |
+| NVIDIA DCGM Exporter | Install a CLI-managed exporter when NVIDIA GPUs exist | Reuse it | Stop | Remove only a CLI-managed release |
+| MetaX mxExporter | Stop; the cluster must provide it | Reuse it | Stop | Preserve it |
 
-| Device | CLI behavior |
-| --- | --- |
-| NVIDIA | Configure DCGM Exporter automatically |
-| MetaX | Connect the official [mxExporter](https://github.com/MetaX-MACA/mxExporter) already provided by the cluster |
+A qualified exporter is ready, covers every selected GPU node, and has exactly one ServiceMonitor that its Prometheus selects. The CLI does not install GPU drivers, device plugins, or vendor operators.
 
-An existing exporter must be ready, cover the GPU nodes, and have a ServiceMonitor selected by Prometheus. Installation stops when exporters conflict or the collection path is incomplete. In mixed CPU/GPU clusters, label NVIDIA GPU nodes with `nvidia.com/gpu.present=true` or `feature.node.kubernetes.io/pci-10de.present=true`. GPU drivers, device plugins, and vendor operators remain platform-owned.
-
-Only select Prometheus explicitly when automatic discovery reports multiple compatible instances. First allow the Prometheus namespace to collect Foretoken metrics, then identify the instance:
+If automatic discovery finds multiple compatible Prometheus instances, select one explicitly:
 
 ```bash
+# Allow the Prometheus namespace to scrape Foretoken metrics
 kubectl label namespace monitoring \
   inference.foretoken.io/metrics-scraper=true \
   --overwrite
 
+# Select the Prometheus instance
 foretoken install --prometheus monitoring/prometheus
 ```
 
-The namespace label remains owned by the platform that operates the reused Prometheus. Remove it through that platform when collection is no longer required.
+The Prometheus platform owns this namespace label and removes it when collection is no longer needed.
 
 ## Verify collection
 
-List the Foretoken monitors and recording rules:
-
 ```bash
+# List the Foretoken monitors and recording rules
 kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
-```
 
-For the CLI-managed Prometheus, forward its service to the local machine:
-
-```bash
+# For CLI-managed Prometheus, open the Prometheus UI locally
 kubectl port-forward \
   --namespace foretoken-platform \
   service/foretoken-prometheus-kube-prometheus \
   9090:9090
 ```
 
-Open <http://127.0.0.1:9090/targets> and confirm that the Foretoken targets are `UP`. Then open <http://127.0.0.1:9090/rules> and confirm that `foretoken.recording` is loaded. When reusing Prometheus, perform the same checks through its existing access path.
+Open <http://127.0.0.1:9090/targets> and confirm Foretoken targets are `UP`. Open <http://127.0.0.1:9090/rules> and confirm `foretoken.recording` is loaded. Reused Prometheus instances use their platform-provided access path.
 
-## Metric sources
+A minimal query for frontend request volume is:
+
+```promql
+sum(foretoken:frontend_http_response_starts:rate5m)
+```
+
+## Metrics and recording rules
 
 | Source | Contents |
 | --- | --- |
-| Frontend `/metrics` | HTTP requests, admission queues, routing, and Frontend runtime state |
+| Frontend `/metrics` | HTTP requests, admission queues, routing, and runtime state |
 | model-server `/metrics` | Native metrics from the active inference backend |
-| DCGM Exporter | NVIDIA GPU utilization, memory, power, temperature, and hardware errors |
-| mxExporter | MetaX GPU utilization and memory metrics |
+| DCGM Exporter | NVIDIA utilization, memory, power, temperature, and XID errors |
+| mxExporter | MetaX utilization and memory metrics |
 | kubelet/cAdvisor | Container CPU, memory, filesystem, and network |
 | kube-state-metrics | Kubernetes object state |
 
-For model-server metrics, use the `HELP` and `TYPE` metadata in `/metrics` as the source of truth for names, units, and labels.
-
-## Recording rules
-
-The Foretoken `PrometheusRule` provides stable, low-cardinality queries over Frontend and model-server metrics:
+The following stable recording rules are currently derived from Frontend metrics and vLLM model-server metric families. They are not a normalized metrics contract for other inference backends.
 
 | Recording rule | Meaning |
 | --- | --- |
-| `foretoken:frontend_http_response_starts:rate5m` | Frontend HTTP responses started per second, split by method, handler, and status class |
-| `foretoken:frontend_http_response_start_5xx_ratio:rate5m` | Frontend response-start 5xx ratio; not an inference failure ratio |
-| `foretoken:model_server_prompt_tokens:rate5m` | Prompt tokens processed per second |
-| `foretoken:model_server_generation_tokens:rate5m` | Generation tokens processed per second |
-| `foretoken:model_server_requests_running:sum` | Requests currently running |
-| `foretoken:model_server_requests_waiting:sum` | Requests currently waiting in the vLLM scheduler |
-| `foretoken:model_server_kv_cache_usage_ratio:max` | Highest KV-cache usage ratio |
+| `foretoken:frontend_http_response_starts:rate5m` | Frontend HTTP response starts per second |
+| `foretoken:frontend_http_response_start_5xx_ratio:rate5m` | Response-start 5xx ratio, not inference failure ratio |
+| `foretoken:model_server_prompt_tokens:rate5m` | vLLM prompt tokens per second |
+| `foretoken:model_server_generation_tokens:rate5m` | vLLM generated tokens per second |
+| `foretoken:model_server_requests_running:sum` | vLLM requests currently running |
+| `foretoken:model_server_requests_waiting:sum` | vLLM requests waiting in the scheduler |
+| `foretoken:model_server_kv_cache_usage_ratio:max` | Highest vLLM KV-cache usage ratio |
 
-The rules preserve namespace, Frontend service, model group and role, model name, and optional Prefill/Decode pipeline scope. Counter rules calculate a reset-aware five-minute rate before aggregation.
+Rules preserve namespace, Frontend service, model group, model role, model name, and optional Prefill/Decode pipeline scope. Counter rules calculate reset-aware five-minute rates before aggregation. For raw backend metric names, units, and labels, inspect the backend `/metrics` `HELP` and `TYPE` metadata.
 
-Frontend HTTP status is recorded when the response starts. A later streaming failure can still have status `2xx`, so the response-start 5xx ratio is not an inference success SLO.
+A response may begin with `2xx` and fail later while streaming. Do not use `foretoken:frontend_http_response_start_5xx_ratio:rate5m` as an inference-success SLO.
 
-## Alerts
+## Alerts and profiling
 
-Prometheus evaluates sustained conditions such as service unavailability, elevated errors, queue pressure, abnormal latency, and exhausted capacity. Alertmanager owns notification receivers, grouping, and routing.
+Foretoken currently provides metrics and recording rules, not alert rules. Define alert thresholds and notification policy in the Prometheus and Alertmanager configuration owned by the platform team.
 
-## Profiling
-
-Use profiling to investigate a reproducible experiment or incident, not for continuous monitoring:
-
-- PyTorch Profiler analyzes model execution, operator time, and memory;
-- Nsight Systems analyzes process, kernel, and communication timelines;
-- Nsight Compute analyzes individual GPU kernels.
-
-Profiling affects inference performance. Use a small workload and record the model, concurrency, hardware, and runtime parameters with the result.
+Foretoken does not manage a profiling workflow. For a reproducible investigation, run a controlled workload and use PyTorch Profiler, Nsight Systems, or Nsight Compute through the model runtime and hardware platform. Profiling changes serving performance; record the model, load, hardware, and runtime settings with the result.
 
 ## Remove collection
 
-After all Foretoken services are deleted, `foretoken uninstall` removes CLI-managed Prometheus and DCGM Exporter releases. Reused installations remain unchanged.
+After all Foretoken services are deleted, `foretoken uninstall` removes CLI-managed Prometheus and DCGM Exporter releases. Reused Prometheus, DCGM Exporter, and mxExporter installations remain unchanged.

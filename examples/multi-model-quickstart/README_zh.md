@@ -5,44 +5,26 @@
 
 [English](README.md) | [中文](README_zh.md)
 
-如需最小的单模型部署，请参阅[单模型快速开始](../quickstart/README_zh.md)。
-
 本示例通过同一个前端服务提供两个模型：
 
-- `Qwen/Qwen3-0.6B`：根据请求队列在 1–3 个副本之间自动扩缩；
-- `unsloth/Llama-3.2-1B-Instruct`：固定 1 个副本。
+- `Qwen/Qwen3-0.6B` 根据请求队列从 1 个副本扩缩到 3 个副本。
+- `unsloth/Llama-3.2-1B-Instruct` 固定运行 1 个副本。
 
-每个副本使用 1 张 GPU，因此集群需要 2–4 张可调度 GPU。准备 4 张 GPU 可以覆盖完整扩缩容范围。
-
-## 基于队列的自动扩缩容
-
-Qwen 服务先按顶层的 `replicas: 1` 启动。控制器随后每 5 秒评估一次请求积压，并以每个副本平均 1 个等待请求为容量目标。每次触发最多增减 1 个副本，副本数上限为 3；只有当较低的容量建议持续 5 分钟后，控制器才会开始缩容。
+每个副本使用 1 张 GPU。完整扩缩范围最多需要 4 张可调度 GPU：Qwen 最多 3 张，Llama 1 张。如需最小部署，请参阅[单模型快速开始](../quickstart/README_zh.md)。
 
 ## 部署
 
-先安装 Foretoken 平台，再使用 pip 从仓库根目录安装 CLI：
-
-```bash
-pip install -e .
-```
-
-或使用 uv 创建并激活虚拟环境后安装：
-
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install -e .
-```
-
-部署示例：
+先完成[根目录快速开始](../../README_zh.md)中的平台安装，再运行：
 
 ```bash
 foretoken deploy examples/multi-model-quickstart
 ```
 
-该命令会自动发现渲染配置中的全部模型，在服务状态变化时输出进度，并在当前配置就绪后退出。
+## 观察队列自动扩缩容
 
-观察 Qwen 副本变化：
+Qwen 服务每 5 秒评估一次队列负载，从 1 个副本开始，每次评估最多调整 1 个副本，缩容前等待 5 分钟。配置和状态说明见[自动扩缩容指南](../../docs/autoscaling_zh.md)。
+
+在一个终端中观察 Qwen 容量资源：
 
 ```bash
 kubectl get modelpool,modelgroup \
@@ -50,16 +32,42 @@ kubectl get modelpool,modelgroup \
   --watch
 ```
 
-## 发送请求
+在另一个终端运行有界并发负载。该命令发送 32 个请求，同时最多运行 8 个：
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
+export FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
+
+seq 1 32 | xargs -P8 -I{} sh -c '
+  curl --fail --silent --show-error \
+    "$FRONTEND_URL/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"详细解释 Kubernetes 请求路由。\"}],\"max_tokens\":512}"
+'
 ```
+
+负载运行期间，队列压力可能增加 Qwen 副本。是否扩容取决于可用 GPU 容量和请求持续时间。使用以下命令查看实际应用的容量和决策原因：
+
+```bash
+kubectl get modelservice multi-model-qwen3-0.6b \
+  --namespace foretoken-multi-model-demo \
+  -o json | jq '.status.autoscaling[] | {
+    id,
+    kind,
+    role,
+    observationState,
+    direction,
+    desiredReplicas: .decision.desiredReplicas,
+    adjustedReplicas: .adjustment.adjustedReplicas,
+    appliedReplicas
+  }'
+```
+
+## 发送请求
 
 请求 Qwen：
 
 ```bash
-curl "$FRONTEND_URL/v1/chat/completions" \
+curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "Qwen/Qwen3-0.6B",
@@ -72,7 +80,7 @@ printf '\n'
 请求 Llama：
 
 ```bash
-curl "$FRONTEND_URL/v1/chat/completions" \
+curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "unsloth/Llama-3.2-1B-Instruct",
