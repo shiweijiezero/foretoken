@@ -238,12 +238,12 @@ class GatewayControllerLifecycle:
         )
 
     def apply_before_platform(
-        self, plan: GatewayControllerPlan, timeout: str, dry_run: bool
+        self, plan: GatewayControllerPlan, timeout: str
     ) -> None:
         """Install or update a managed Controller before the platform release."""
         helm = self._helm
         if plan.install:
-            helm.install_envoy_gateway(plan.release, timeout, dry_run)
+            helm.install_envoy_gateway(plan.release, timeout)
 
     def finish_update(
         self,

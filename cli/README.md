@@ -85,7 +85,7 @@ Registry login authorizes the local image push. Private registries also need `im
 
 ### Installation options
 
-Use `--dry-run` to validate and show the installation plan without building or changing the cluster. Repeatable `--values` files provide platform image, runtime, and hardware settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
+Repeatable `--values` files provide platform image, runtime, and hardware settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
 
 ## Deploy and operate model services
 

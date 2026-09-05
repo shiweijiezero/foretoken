@@ -212,20 +212,16 @@ class PlatformLifecycle:
                 command.registry,
                 platform.namespace,
                 command.timeout,
-                command.dry_run,
             )
             if command.editable is not None
             else None
         )
-        gateway.apply_before_platform(
-            gateway_plan, command.timeout, command.dry_run
-        )
+        gateway.apply_before_platform(gateway_plan, command.timeout)
         if install_managed_prometheus:
             helm.install_prometheus(
                 managed_prometheus,
                 tuple(sorted(monitor_namespaces)),
                 command.timeout,
-                command.dry_run,
             )
         if install_managed_dcgm:
             helm.install_dcgm_exporter(
@@ -234,72 +230,39 @@ class PlatformLifecycle:
                 nvidia_metrics.node_selector,
                 managed_dcgm_exists,
                 command.timeout,
-                command.dry_run,
-            )
-        dry_run_api_versions: list[str] = []
-        if command.dry_run and install_managed_prometheus:
-            dry_run_api_versions.extend(
-                (
-                    "monitoring.coreos.com/v1/ServiceMonitor",
-                    "monitoring.coreos.com/v1/PrometheusRule",
-                )
-            )
-        if command.dry_run and gateway_plan.install:
-            dry_run_api_versions.extend(
-                (
-                    "gateway.networking.k8s.io/v1/GatewayClass",
-                    "gateway.networking.k8s.io/v1/Gateway",
-                    "gateway.networking.k8s.io/v1/HTTPRoute",
-                )
-            )
-        platform_frontend_mode = command.frontend_mode
-        platform_gateway_name = command.gateway_name
-        platform_gateway_namespace = command.gateway_namespace
-        platform_gateway_section_name = command.gateway_section_name
-        if command.dry_run and dry_run_api_versions:
-            platform_frontend_mode = gateway_config.mode
-            platform_gateway_name = "" if gateway_config.create else gateway_config.name
-            platform_gateway_namespace = (
-                "" if gateway_config.create else gateway_config.namespace
-            )
-            platform_gateway_section_name = (
-                "" if gateway_config.create else gateway_config.section_name
             )
         helm.install_platform(
             release=platform,
             source_images=source_images,
             values=command.values,
-            frontend_mode=platform_frontend_mode,
-            gateway_name=platform_gateway_name,
-            gateway_namespace=platform_gateway_namespace,
-            gateway_section_name=platform_gateway_section_name,
+            frontend_mode=command.frontend_mode,
+            gateway_name=command.gateway_name,
+            gateway_namespace=command.gateway_namespace,
+            gateway_section_name=command.gateway_section_name,
             gateway_controller_name=gateway_plan.controller_name,
             observability_labels=observability_labels,
             reuse_values=platform_exists,
             timeout=command.timeout,
-            dry_run=command.dry_run,
-            dry_run_api_versions=tuple(dry_run_api_versions),
         )
-        if not command.dry_run:
-            if source_images is not None:
-                restart_changed_source_deployments(
-                    kubectl,
-                    source_images,
-                    platform.namespace,
-                    command.timeout,
-                )
-            for responsibility, action, detail in gateway.finish_update(
-                gateway_plan, gateway_config, command.timeout
-            ):
-                _print_plan(responsibility, action, detail)
-            if install_managed_prometheus:
-                mark_managed_metrics_scraper_namespace(
-                    kubectl, managed_prometheus.namespace
-                )
-                _print_plan("Prometheus", "Ready", managed_prometheus.display_name)
-            if install_managed_dcgm:
-                _print_plan("NVIDIA DCGM Exporter", "Ready", managed_dcgm.display_name)
-            _print_plan("Foretoken platform", "Ready", platform.display_name)
+        if source_images is not None:
+            restart_changed_source_deployments(
+                kubectl,
+                source_images,
+                platform.namespace,
+                command.timeout,
+            )
+        for responsibility, action, detail in gateway.finish_update(
+            gateway_plan, gateway_config, command.timeout
+        ):
+            _print_plan(responsibility, action, detail)
+        if install_managed_prometheus:
+            mark_managed_metrics_scraper_namespace(
+                kubectl, managed_prometheus.namespace
+            )
+            _print_plan("Prometheus", "Ready", managed_prometheus.display_name)
+        if install_managed_dcgm:
+            _print_plan("NVIDIA DCGM Exporter", "Ready", managed_dcgm.display_name)
+        _print_plan("Foretoken platform", "Ready", platform.display_name)
 
     def uninstall(self, command: UninstallCommand) -> None:
         """Remove CLI-owned releases after user services are gone."""
@@ -363,9 +326,6 @@ class PlatformLifecycle:
         _print_plan(
             "Gateway Controller", gateway_plan.action, gateway_plan.detail
         )
-        if command.dry_run:
-            return
-
         if platform_exists:
             helm.uninstall(platform, command.timeout)
             _print_plan("Foretoken platform", "Removed", platform.display_name)

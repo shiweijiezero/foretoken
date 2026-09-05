@@ -36,9 +36,8 @@ def prepare_source_images(
     registry: str | None,
     namespace: str,
     timeout: str,
-    dry_run: bool,
 ) -> SourceImages:
-    """Build and distribute source images, or return their dry-run identities."""
+    """Build and distribute source images for the platform installation."""
     source_root = Path(source_path).expanduser().resolve()
     script = source_root / "deploy" / "dev-deploy"
     chart = source_root / "deploy" / "charts" / "foretoken" / "Chart.yaml"
@@ -69,13 +68,11 @@ def prepare_source_images(
             "TAG",
             "DEPLOY_TAG",
             "DEV_IMAGE_OUTPUT",
-            "DEV_IMAGE_PLAN_ONLY",
         ):
             environment.pop(key, None)
         environment.update(
             {
                 "DEV_IMAGE_OUTPUT": str(output_path),
-                "DEV_IMAGE_PLAN_ONLY": "true" if dry_run else "false",
                 "FORETOKEN_CLI_SOURCE": "true",
                 "REGISTRY": normalized_registry,
                 "PLATFORM_NAMESPACE": namespace,
