@@ -7,16 +7,8 @@ use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
 
 use super::{decode_loads_by_pipeline_scope, load};
-use std::sync::Arc;
 
-use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescriptor};
-
-inventory::submit! {
-    ScorerDescriptor {
-        name: "kv_least_loaded",
-        factory: || Arc::new(KvLeastLoadedScorer),
-    }
-}
+use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest};
 
 /// Prefers longer confirmed-locality KV-prefix matches, then lower current and downstream Decode load.
 #[derive(Default)]

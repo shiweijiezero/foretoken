@@ -3,10 +3,6 @@
 
 //! Candidate scoring and Scorer implementations.
 
-mod kv_least_loaded_scorer;
-mod least_loaded_scorer;
-mod uniform_scorer;
-
 use std::collections::BTreeMap;
 
 use foretoken_kv_indexer::KvPrefixIndexer;
@@ -14,9 +10,12 @@ use foretoken_model_protocol::ModelServerRole;
 
 use crate::{RouteCandidate, RouteScore, RouterRequest};
 
-pub use kv_least_loaded_scorer::KvLeastLoadedScorer;
-pub use least_loaded_scorer::LeastLoadedScorer;
-pub use uniform_scorer::UniformScorer;
+declare_router_algorithms! {
+    descriptor = ScorerDescriptor;
+    kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded",
+    least_loaded_scorer => LeastLoadedScorer = "least_loaded",
+    uniform_scorer => UniformScorer = "uniform",
+}
 
 /// Scores the complete filtered compatible, healthy route target snapshot for one routing round.
 ///

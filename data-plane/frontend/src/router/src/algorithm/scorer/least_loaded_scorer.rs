@@ -7,16 +7,8 @@ use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
 
 use super::{decode_loads_by_pipeline_scope, load};
-use std::sync::Arc;
 
-use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, ScorerDescriptor};
-
-inventory::submit! {
-    ScorerDescriptor {
-        name: "least_loaded",
-        factory: || Arc::new(LeastLoadedScorer),
-    }
-}
+use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest};
 
 /// Prefers lower current load and includes the least-loaded Decode node when scoring Prefill.
 #[derive(Default)]
