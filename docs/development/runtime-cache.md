@@ -5,17 +5,22 @@
 
 English | [简体中文](runtime-cache_zh.md)
 
-Use an existing PVC to preserve model and compilation caches across Pod restarts. The feature is disabled when `claimName` is empty.
+Create one `RuntimeCache` in a workload namespace to preserve model and compilation caches across Pod restarts:
 
 ```yaml
-workload:
-  cache:
-    claimName: model-cache
-    mountPath: /var/cache/foretoken
+apiVersion: inference.foretoken.io/v1alpha1
+kind: RuntimeCache
+metadata:
+  name: models
+  namespace: foretoken-demo
+spec:
+  size: 100Gi
 ```
 
-The PVC must already exist in every workload namespace and be mountable from every eligible node. Multi-node deployments normally require `ReadWriteMany`. `mountPath` is a container path, not a host path. Foretoken does not create or delete the PVC.
+Foretoken creates the PVC with `ReadWriteMany` and `Retain` by default. The namespace's default `StorageClass` must support the selected access mode. Model and Frontend workloads automatically use the single Ready `RuntimeCache` in their namespace.
 
-The model server downloads or loads the model and writes reusable runtime artifacts to the cache. A new serving generation is selected only after its ModelGroup is ready; the previous generation remains selected while the new one starts.
+Increase `spec.size` to expand the PVC. PVC shrinking is not supported.
 
-Remove `workload.cache.claimName` to disable the persistent cache. Delete the PVC only after all workloads using it have stopped.
+Deleting the `RuntimeCache` retains the PVC by default. Set `spec.retentionPolicy: Delete` to delete it after workloads stop using it.
+
+An administrator can instead configure `workload.cache.claimName` during platform installation to use an existing PVC. Foretoken never modifies or deletes an existing claim.

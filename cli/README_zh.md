@@ -92,7 +92,7 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 ### 持久化运行时缓存
 
-如需在 Pod 重启后复用模型和编译缓存，将 `workload.cache.claimName` 设置为已有 PVC。该 PVC 必须能被所有可能运行工作负载的节点挂载；多节点部署通常需要 `ReadWriteMany`。留空则关闭持久化缓存。配置示例见[持久化运行时缓存](../docs/development/runtime-cache_zh.md)。
+在 workload namespace 中创建一个 `RuntimeCache`，Foretoken 即可自动创建并管理共享缓存 PVC。已有 PVC 仍可通过 `workload.cache.claimName` 使用。详见[持久化运行时缓存](../docs/development/runtime-cache_zh.md)。
 
 ## 部署和管理模型服务
 

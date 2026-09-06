@@ -10,7 +10,10 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/controllers"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -184,4 +187,149 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestRuntimeCacheControllerLifecycle protects managed PVC creation, expansion, and retention cleanup.
+func TestRuntimeCacheControllerLifecycle(t *testing.T) {
+	ctx := context.Background()
+	cache := &inferencev1alpha1.RuntimeCache{
+		TypeMeta:   metav1.TypeMeta{APIVersion: inferencev1alpha1.GroupVersion.String(), Kind: "RuntimeCache"},
+		ObjectMeta: metav1.ObjectMeta{Name: "models", Namespace: "default", UID: "runtime-cache-uid", Generation: 1},
+		Spec: inferencev1alpha1.RuntimeCacheSpec{
+			Size: "10Gi", AccessMode: inferencev1alpha1.RuntimeCacheAccessModeReadWriteMany,
+			RetentionPolicy: inferencev1alpha1.RuntimeCacheRetentionPolicyRetain,
+		},
+	}
+	c := controllerClient(t, cache)
+	r := &controllers.RuntimeCacheReconciler{Client: c}
+	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(cache)}
+	for range 2 {
+		if _, err := r.Reconcile(ctx, request); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var claims corev1.PersistentVolumeClaimList
+	if err := c.List(ctx, &claims, client.InNamespace(cache.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	if len(claims.Items) != 1 || !metav1.IsControlledBy(&claims.Items[0], cache) {
+		t.Fatalf("managed runtime cache claim = %#v", claims.Items)
+	}
+	initialRequest := claims.Items[0].Spec.Resources.Requests[corev1.ResourceStorage]
+	if initialRequest.Cmp(resource.MustParse("10Gi")) != 0 {
+		t.Fatalf("managed runtime cache request = %s", initialRequest.String())
+	}
+	claim := &claims.Items[0]
+	claim.Status.Phase = corev1.ClaimBound
+	claim.Status.Capacity = corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Gi")}
+	if err := c.Status().Update(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	current := get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.RuntimeCache))
+	if condition := meta.FindStatusCondition(current.Status.Conditions, readyCondition); condition == nil || condition.Status != metav1.ConditionTrue || current.Status.ClaimName != claim.Name {
+		t.Fatalf("ready runtime cache status = %#v", current.Status)
+	}
+
+	current.Spec.Size = "20Gi"
+	current.Generation++
+	if err := c.Update(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	claim = get(t, ctx, c, client.ObjectKeyFromObject(claim), new(corev1.PersistentVolumeClaim))
+	expandedRequest := claim.Spec.Resources.Requests[corev1.ResourceStorage]
+	if expandedRequest.Cmp(resource.MustParse("20Gi")) != 0 {
+		t.Fatalf("expanded runtime cache request = %#v", claim.Spec.Resources.Requests)
+	}
+	current = get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.RuntimeCache))
+	if current.Status.Phase != inferencev1alpha1.RuntimeCachePhaseResizing {
+		t.Fatalf("resizing runtime cache status = %#v", current.Status)
+	}
+	claim.Status.Capacity[corev1.ResourceStorage] = resource.MustParse("20Gi")
+	if err := c.Status().Update(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+
+	service := modelService("managed-cache-model", 1)
+	if err := c.Create(ctx, service); err != nil {
+		t.Fatal(err)
+	}
+	serviceReconciler := &controllers.ModelServiceReconciler{Client: c, CacheProfile: controllers.RuntimeCacheProfile{MountPath: "/cache"}}
+	serviceRequest := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(service)}
+	for range 2 {
+		if _, err := serviceReconciler.Reconcile(ctx, serviceRequest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pool := get(t, ctx, c, client.ObjectKey{Namespace: service.Namespace, Name: "managed-cache-model-default"}, new(inferencev1alpha1.ModelPool))
+	if pool.Spec.Template.RuntimeCache == nil || pool.Spec.Template.RuntimeCache.ClaimName != claim.Name || pool.Spec.Template.RuntimeCache.MountPath != "/cache" {
+		t.Fatalf("managed runtime cache binding = %#v", pool.Spec.Template.RuntimeCache)
+	}
+
+	current = get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.RuntimeCache))
+	if err := c.Delete(ctx, current); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	claim = get(t, ctx, c, client.ObjectKeyFromObject(claim), new(corev1.PersistentVolumeClaim))
+	if len(claim.OwnerReferences) != 0 {
+		t.Fatalf("retained runtime cache claim owners = %#v", claim.OwnerReferences)
+	}
+	if err := c.Get(ctx, request.NamespacedName, new(inferencev1alpha1.RuntimeCache)); !apierrors.IsNotFound(err) {
+		t.Fatalf("deleted RuntimeCache lookup error = %v", err)
+	}
+
+	deleteCache := cache.DeepCopy()
+	deleteCache.Name = "temporary"
+	deleteCache.UID = "temporary-cache-uid"
+	deleteCache.ResourceVersion = ""
+	deleteCache.Generation = 1
+	deleteCache.Finalizers = nil
+	deleteCache.DeletionTimestamp = nil
+	deleteCache.Status = inferencev1alpha1.RuntimeCacheStatus{}
+	deleteCache.Spec.RetentionPolicy = inferencev1alpha1.RuntimeCacheRetentionPolicyDelete
+	if err := c.Create(ctx, deleteCache); err != nil {
+		t.Fatal(err)
+	}
+	deleteRequest := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(deleteCache)}
+	for range 2 {
+		if _, err := r.Reconcile(ctx, deleteRequest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.List(ctx, &claims, client.InNamespace(deleteCache.Namespace)); err != nil {
+		t.Fatal(err)
+	}
+	var deleteClaim *corev1.PersistentVolumeClaim
+	for index := range claims.Items {
+		if metav1.IsControlledBy(&claims.Items[index], deleteCache) {
+			deleteClaim = &claims.Items[index]
+			break
+		}
+	}
+	if deleteClaim == nil {
+		t.Fatal("delete-policy RuntimeCache did not create a PVC")
+	}
+	deleteCache = get(t, ctx, c, deleteRequest.NamespacedName, new(inferencev1alpha1.RuntimeCache))
+	if err := c.Delete(ctx, deleteCache); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := r.Reconcile(ctx, deleteRequest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(deleteClaim), new(corev1.PersistentVolumeClaim)); !apierrors.IsNotFound(err) {
+		t.Fatalf("delete-policy PVC lookup error = %v", err)
+	}
 }

@@ -27,7 +27,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		pool := modelPool(service, "model-default", 1)
 		group := modelGroup(pool, "model-r1-0", 0)
 		group.Spec.Accelerator.RuntimeClassName = "nvidia"
-		group.Spec.Artifacts.Cache = &inferencev1alpha1.RuntimeCache{ClaimName: "runtime-cache", MountPath: "/cache"}
+		group.Spec.Artifacts.Cache = &inferencev1alpha1.RuntimeCacheBinding{ClaimName: "runtime-cache", MountPath: "/cache"}
 		c := controllerClient(t, service, pool, group)
 		r := &controllers.ModelGroupReconciler{Client: c, ControlPlaneNamespace: "foretoken-system", ImagePullSecrets: []corev1.LocalObjectReference{{Name: "registry-auth"}}}
 		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(group)}

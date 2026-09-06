@@ -5,17 +5,22 @@
 
 [English](runtime-cache.md) | 简体中文
 
-使用已有 PVC 保存模型和编译缓存，使 Pod 重启后可以复用之前的工作。`claimName` 为空时，该功能关闭。
+在 workload namespace 中创建一个 `RuntimeCache`，即可跨 Pod 重启保留模型和编译缓存：
 
 ```yaml
-workload:
-  cache:
-    claimName: model-cache
-    mountPath: /var/cache/foretoken
+apiVersion: inference.foretoken.io/v1alpha1
+kind: RuntimeCache
+metadata:
+  name: models
+  namespace: foretoken-demo
+spec:
+  size: 100Gi
 ```
 
-每个 workload namespace 都必须提前创建 PVC，并确保所有可能运行工作负载的节点都能挂载它。多节点部署通常需要 `ReadWriteMany`。`mountPath` 是容器内路径，不是宿主机路径。Foretoken 不创建或删除 PVC。
+Foretoken 默认创建 `ReadWriteMany` PVC，并使用 `Retain` 保留策略。命名空间的默认 `StorageClass` 必须支持所选访问模式。同一命名空间中的模型和 Frontend 工作负载会自动使用唯一且 Ready 的 `RuntimeCache`。
 
-model-server 负责下载或加载模型，并把可复用的运行时产物写入缓存。新的 ModelGroup ready 后才会选中新 serving generation；新 generation 启动期间，旧 generation 继续被选中。
+增大 `spec.size` 即可扩容 PVC，不支持缩容。
 
-移除 `workload.cache.claimName` 可关闭持久化缓存。只有在所有使用该 PVC 的工作负载停止后，才应删除 PVC。
+删除 `RuntimeCache` 时默认保留 PVC。设置 `spec.retentionPolicy: Delete` 后，Foretoken 会在工作负载停止使用该 PVC 后将其删除。
+
+平台管理员也可以在安装时通过 `workload.cache.claimName` 使用已有 PVC。Foretoken 不修改或删除已有 PVC。
