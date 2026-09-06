@@ -92,26 +92,7 @@ Repeatable `--values` files provide platform image, runtime, and hardware settin
 
 ### Persistent runtime cache
 
-Foretoken can mount one existing PVC as a shared runtime cache. The model server owns model download and loading; the same cache can also retain vLLM, TorchInductor, Triton, and backend compilation artifacts across Pod restarts. The claim must exist in every namespace that runs a `FrontendService` or `ModelService`, and every workload node must be able to mount it. Multi-node deployments normally require `ReadWriteMany` storage.
-
-```yaml
-workload:
-  cache:
-    claimName: model-cache
-    mountPath: /var/cache/foretoken
-
-runtime:
-  vllm:
-    modelSource:
-      endpoint: https://model-source.example.com
-      tokenSecret:
-        name: model-source-token
-        key: token
-```
-
-`workload.cache` only configures persistent storage. The optional `runtime.vllm.modelSource` values are passed to the vLLM model-server adapter; they do not select a provider in the platform API. The adapter decides how to interpret the model identifier and which subdirectories to use under the cache root. Foretoken does not create the PVC, choose a storage class, or delete cached data.
-
-If no `claimName` is configured, persistent caching is disabled and the platform keeps its normal ephemeral runtime behavior. See [Persistent Runtime Cache](../docs/development/runtime-cache.md) for PVC requirements, lifecycle, and troubleshooting.
+To reuse model and compilation caches after Pod restarts, set `workload.cache.claimName` to an existing PVC. The PVC must be mountable from every eligible node; multi-node deployments normally need `ReadWriteMany`. Leave it empty to disable persistent caching. See [Persistent Runtime Cache](../docs/development/runtime-cache.md) for the configuration example.
 
 ## Deploy and operate model services
 

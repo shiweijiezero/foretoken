@@ -92,26 +92,7 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 ### 持久化运行时缓存
 
-Foretoken 可以把一个已有 PVC 挂载为共享运行时缓存。模型服务器负责模型的下载和加载；同一个缓存还可以跨 Pod 重启保留 vLLM、TorchInductor、Triton 和其他 backend 的编译产物。运行 `FrontendService` 或 `ModelService` 的每个命名空间都需要存在同名 PVC，并且所有工作负载节点都必须能够挂载该存储；多节点部署通常需要 `ReadWriteMany` 存储。
-
-```yaml
-workload:
-  cache:
-    claimName: model-cache
-    mountPath: /var/cache/foretoken
-
-runtime:
-  vllm:
-    modelSource:
-      endpoint: https://model-source.example.com
-      tokenSecret:
-        name: model-source-token
-        key: token
-```
-
-`workload.cache` 只配置持久化存储。可选的 `runtime.vllm.modelSource` 会传给 vLLM model-server adapter，但不会在平台 API 中选择具体 provider。adapter 决定如何解释模型标识，以及在缓存根目录下使用哪些子目录。Foretoken 不创建 PVC、不选择 StorageClass，也不删除缓存文件。
-
-未配置 `claimName` 时，持久化缓存关闭，平台继续使用原有的临时运行时行为。PVC 要求、运行生命周期和排查方法见[持久化运行时缓存](../docs/development/runtime-cache_zh.md)。
+如需在 Pod 重启后复用模型和编译缓存，将 `workload.cache.claimName` 设置为已有 PVC。该 PVC 必须能被所有可能运行工作负载的节点挂载；多节点部署通常需要 `ReadWriteMany`。留空则关闭持久化缓存。配置示例见[持久化运行时缓存](../docs/development/runtime-cache_zh.md)。
 
 ## 部署和管理模型服务
 
