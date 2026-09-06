@@ -9,7 +9,7 @@ Foretoken publishes a Python distribution, OCI images, and a Helm Chart. Python 
 
 | Stage | Purpose | Python version | OCI and Helm version |
 | --- | --- | --- | --- |
-| Development | Identifiable local or CI snapshot | `0.0.1.dev1` | `latest` |
+| Development | Identifiable local or CI snapshot | `0.0.1.dev1` | `0.0.1-dev.1` |
 | Alpha | Early integration and interface testing | `0.0.1a1` | `0.0.1-alpha.1` |
 | Beta | Feature-complete compatibility and deployment testing | `0.0.1b1` | `0.0.1-beta.1` |
 | Release candidate | Final validation before a stable release | `0.0.1rc1` | `0.0.1-rc.1` |
@@ -24,7 +24,7 @@ Python orders these versions as follows:
 0.0.1.dev1 < 0.0.1a1 < 0.0.1b1 < 0.0.1rc1 < 0.0.1 < 0.0.1.post1
 ```
 
-Development snapshots are not GitHub Releases and are not published to PyPI. `latest` is a mutable OCI alias for normal source iteration, not a release version.
+Development snapshots are not GitHub Releases and are not published to PyPI. OCI images may additionally maintain `latest` as a mutable alias for normal source iteration; `latest` is not a Helm Chart version or a release version.
 
 ## Installing Python releases
 

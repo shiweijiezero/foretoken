@@ -7,13 +7,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "foretoken"
-version = "0.0.1"
+version = "0.0.1a1"
 description = "Command-line tools for installing and operating Foretoken"
 readme = "cli/README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [{ name = "Foretoken contributors" }]
 dependencies = [
+    "packaging>=24.0",
     "PyYAML>=6.0",
 ]
 

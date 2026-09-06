@@ -26,7 +26,7 @@ workload:
 frontend:
   enabled: false
   mode: local
-  image: ghcr.io/shiweijiezero/foretoken/frontend:0.0.1
+  image: ghcr.io/shiweijiezero/foretoken/frontend:0.0.1-alpha.1
   port: 8080
   gateway:
     # When enabled, the Chart creates an isolated GatewayClass and HTTP Gateway.
@@ -47,7 +47,7 @@ observability:
 # The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
 runtime:
   vllm:
-    image: ghcr.io/shiweijiezero/foretoken/model-server:0.0.1
+    image: ghcr.io/shiweijiezero/foretoken/model-server:0.0.1-alpha.1
     profileRevision: default
     modelServerPort: 9000
     gpu:

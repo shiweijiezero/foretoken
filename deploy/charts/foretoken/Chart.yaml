@@ -8,7 +8,7 @@ name: foretoken
 description: Kubernetes control plane for Foretoken.
 type: application
 kubeVersion: ">=1.29.0-0"
-version: 0.0.1
-appVersion: "0.0.1"
+version: 0.0.1-alpha.1
+appVersion: "0.0.1-alpha.1"
 annotations:
   org.opencontainers.image.source: https://github.com/shiweijiezero/foretoken

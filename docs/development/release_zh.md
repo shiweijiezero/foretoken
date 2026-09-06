@@ -9,7 +9,7 @@ Foretoken 会发布 Python distribution、OCI 镜像和 Helm Chart。Python pack
 
 | 阶段 | 用途 | Python 版本 | OCI 与 Helm 版本 |
 | --- | --- | --- | --- |
-| Development | 可识别的本地或 CI 开发快照 | `0.0.1.dev1` | `latest` |
+| Development | 可识别的本地或 CI 开发快照 | `0.0.1.dev1` | `0.0.1-dev.1` |
 | Alpha | 早期集成与接口验证 | `0.0.1a1` | `0.0.1-alpha.1` |
 | Beta | 功能完成后的兼容性与部署验证 | `0.0.1b1` | `0.0.1-beta.1` |
 | Release Candidate | 正式发布前的最终验证 | `0.0.1rc1` | `0.0.1-rc.1` |
@@ -24,7 +24,7 @@ Python 版本的先后顺序如下：
 0.0.1.dev1 < 0.0.1a1 < 0.0.1b1 < 0.0.1rc1 < 0.0.1 < 0.0.1.post1
 ```
 
-Development 版本只用于本地或 CI 快照，不创建 GitHub Release，也不上传 PyPI。`latest` 是日常源码迭代使用的可变 OCI 别名，不是发布版本。
+Development 版本只用于本地或 CI 快照，不创建 GitHub Release，也不上传 PyPI。OCI 镜像可以额外维护 `latest` 作为日常源码迭代使用的可变别名；`latest` 不是 Helm Chart 版本，也不是发布版本。
 
 ## 安装 Python 版本
 

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import yaml
 
-from foretoken import package_version
+from foretoken import platform_version
 from foretoken.manifest import DeploymentError
 
 
@@ -58,7 +58,7 @@ def default_platform_config() -> PlatformConfig:
         platform=ManagedChart(
             release_name="foretoken",
             source="oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken",
-            version=package_version(),
+            version=platform_version(),
         ),
         prometheus=ManagedChart(
             release_name="foretoken-prometheus",
