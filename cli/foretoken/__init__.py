@@ -23,4 +23,5 @@ def platform_version() -> str:
         return f"{base}-{stage_name}.{serial}"
     if parsed.dev is not None:
         return f"{base}-dev.{parsed.dev}"
+    # Stable and post-release packages use the stable platform assets.
     return base
