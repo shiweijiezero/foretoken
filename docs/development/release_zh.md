@@ -14,7 +14,7 @@ Foretoken 会发布 Python distribution、OCI 镜像和 Helm Chart。Python pack
 | Beta | 功能完成后的兼容性与部署验证 | `0.0.1b1` | `0.0.1-beta.1` |
 | Release Candidate | 正式发布前的最终验证 | `0.0.1rc1` | `0.0.1-rc.1` |
 | Stable | 面向普通安装路径的正式版本 | `0.0.1` | `0.0.1` |
-| Python post-release | 修正已发布的 Python 产物或其 metadata | `0.0.1.post1` | 不发布新的 OCI 或 Helm 版本 |
+| Python post-release | 修正已发布的 Python 产物或其 metadata | `0.0.1.post1` | 通常复用 `0.0.1`；平台产物变化时发布下一 patch |
 
 同一阶段再次发布时递增末尾序号，例如 `0.0.1a2`、`0.0.1b2` 或 `0.0.1rc2`。只有当前版本达到下一阶段的用途时，才进入下一阶段。
 
@@ -41,7 +41,7 @@ Stable 和 post-release 使用普通安装命令：
 pip install foretoken
 ```
 
-`.postN` 只用于修正已发布的 Python package 或 metadata，不用于承载常规代码变化。如果运行行为发生变化，或者需要发布新的 OCI 镜像和 Helm Chart，应提升发布版本，例如从 `0.0.1` 升到 `0.0.2`。
+`.postN` 通常复用对应 Stable 版本的平台产物，因为它只修正已发布的 Python package 或 metadata，不承载常规代码变化。如果运行行为或平台产物需要变化，应发布下一 patch，例如 `0.0.2`，而不是把这些变化放进 `.postN`。
 
 从仓库安装源码与发布版本相互独立：
 

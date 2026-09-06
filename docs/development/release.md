@@ -14,7 +14,7 @@ Foretoken publishes a Python distribution, OCI images, and a Helm Chart. Python 
 | Beta | Feature-complete compatibility and deployment testing | `0.0.1b1` | `0.0.1-beta.1` |
 | Release candidate | Final validation before a stable release | `0.0.1rc1` | `0.0.1-rc.1` |
 | Stable | Supported release for normal installation | `0.0.1` | `0.0.1` |
-| Python post-release | Correction to an already published Python artifact or its metadata | `0.0.1.post1` | No new OCI or Helm version |
+| Python post-release | Correction to an already published Python artifact or its metadata | `0.0.1.post1` | Normally reuse `0.0.1`; use the next patch if platform artifacts change |
 
 Increment the final number when publishing another build in the same stage: `0.0.1a2`, `0.0.1b2`, or `0.0.1rc2`. Move to the next stage only when the release meets that stage's purpose.
 
@@ -41,7 +41,7 @@ Stable and post-release versions use the normal installation command:
 pip install foretoken
 ```
 
-A `.postN` release is only for correcting the published Python package or its metadata. Do not use it for normal code changes. If runtime behavior changes or new OCI images and a Helm Chart are required, increment the release version, such as from `0.0.1` to `0.0.2`.
+A `.postN` release normally reuses the matching Stable platform artifacts because it only corrects the published Python package or its metadata. Do not use it for normal code changes. If runtime behavior or platform artifacts must change, publish the next patch version, such as `0.0.2`, instead of placing those changes in `.postN`.
 
 Installing from the repository is independent of published versions:
 
