@@ -18,6 +18,7 @@ impl RouteFilter for AllowAllFilter {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
+        routing_progress: &crate::RoutingProgress<'_>,
         customized_context: &mut (),
     ) -> Vec<CandidateIndex> {
         (0..candidates.len()).map(CandidateIndex).collect()

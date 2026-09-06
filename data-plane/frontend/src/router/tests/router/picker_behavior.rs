@@ -12,7 +12,8 @@ use super::support::{inventory, request, route};
 use foretoken_router::algorithm::{AllowAllFilter, UniformScorer};
 use foretoken_router::{
     CandidateIndex, PipelineRouter, RouteCandidate, RouteError, RouteFilter, RoutePicker,
-    RouteScore, RouteScorer, Router, RouterPipeline, RouterRequest, ScoredCandidate,
+    RouteScore, RouteScorer, Router, RouterPipeline, RouterRequest, RoutingProgress,
+    ScoredCandidate,
 };
 
 struct InvalidPicker;
@@ -23,6 +24,7 @@ impl RoutePicker for InvalidPicker {
         &self,
         request: &RouterRequest,
         scored_candidates: &[ScoredCandidate],
+        routing_progress: &RoutingProgress<'_>,
         customized_context: &mut (),
     ) -> Option<CandidateIndex> {
         Some(CandidateIndex(scored_candidates.len()))
@@ -37,6 +39,7 @@ impl RoutePicker for EmptyPicker {
         &self,
         request: &RouterRequest,
         scored_candidates: &[ScoredCandidate],
+        routing_progress: &RoutingProgress<'_>,
         customized_context: &mut (),
     ) -> Option<CandidateIndex> {
         None
@@ -52,6 +55,7 @@ impl RouteFilter for InvalidFilter {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
+        routing_progress: &RoutingProgress<'_>,
         customized_context: &mut (),
     ) -> Vec<CandidateIndex> {
         vec![CandidateIndex(candidates.len())]
@@ -67,6 +71,7 @@ impl RouteFilter for DuplicateFilter {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
+        routing_progress: &RoutingProgress<'_>,
         customized_context: &mut (),
     ) -> Vec<CandidateIndex> {
         vec![CandidateIndex(0), CandidateIndex(0)]
@@ -82,6 +87,7 @@ impl RouteScorer for InvalidScorer {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
+        routing_progress: &RoutingProgress<'_>,
         customized_context: &mut (),
     ) -> Vec<RouteScore> {
         vec![]

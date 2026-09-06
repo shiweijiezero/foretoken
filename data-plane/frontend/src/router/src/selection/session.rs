@@ -3,9 +3,35 @@
 
 //! Request-local routing state behavior and selection errors.
 
+use foretoken_model_protocol::ModelServerRole;
 use thiserror::Error;
 
 use crate::{RouteDecision, RouterRequest};
+
+/// Identifies the selection round visible to routing algorithms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoutingStage {
+    /// Selects the first route, which may be Aggregate, Prefill, or Encoder.
+    Initial,
+    /// Selects Prefill after an Encoder when the selected topology requires it.
+    Prefill,
+    /// Selects Decode after Prefill.
+    Decode,
+}
+
+/// Immutable E/P/D routing progress visible to algorithms for one selection round.
+///
+/// `RouteSession` owns and constructs this view; Filter, Scorer, and Picker may read it but cannot
+/// mutate routing progress or treat it as client input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoutingProgress<'a> {
+    /// Selection round currently being executed.
+    pub current_stage: RoutingStage,
+    /// Execution roles completed before this selection round.
+    pub completed_stages: &'a [ModelServerRole],
+    /// E/P/D route-set identity bound by an earlier selection, if any.
+    pub pipeline_scope_id: Option<&'a str>,
+}
 
 /// Holds request-local routing state for one generation request. Aggregate completes directly;
 /// P/D executes P→a fresh D choice, and E/P/D executes E→P→a fresh D choice within one E/P/D route set.

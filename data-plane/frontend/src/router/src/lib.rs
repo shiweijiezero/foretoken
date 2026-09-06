@@ -19,6 +19,6 @@ pub use route_target_stats::{RouteTargetLatencyStats, RouteTargetStats, RouteTar
 pub use selection::{
     AlgorithmName, CandidateIndex, FilterAlgorithm, FilterDescriptor, PickerAlgorithm,
     PickerDescriptor, PipelineRouter, RouteCandidate, RouteError, RouteScore, RouteSession, Router,
-    RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError, ScoredCandidate,
-    ScorerAlgorithm, ScorerDescriptor,
+    RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError, RoutingProgress, RoutingStage,
+    ScoredCandidate, ScorerAlgorithm, ScorerDescriptor,
 };

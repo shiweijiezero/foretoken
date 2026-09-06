@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use foretoken_kv_indexer::KvPrefixIndexer;
 use foretoken_model_protocol::ModelServerRole;
 
-use crate::{RouteCandidate, RouteScore, RouterRequest};
+use crate::{RouteCandidate, RouteScore, RouterRequest, RoutingProgress};
 
 // Each entry declares the module, re-exports the implementation, and binds its user-facing Scorer name.
 // For example, `kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded"` maps
@@ -27,9 +27,10 @@ declare_router_algorithms! {
 /// applies execution-stage and E/P/D route-set eligibility only after scores are available.
 ///
 /// - `request`: model, prompt tokens, sampling, multimodal, LoRA, and priority.
-/// - `candidates`: Filter output with route metadata and the Router's immutable current-round
-///   aggregate target observation, when telemetry is available.
+/// - `candidates`: Filter output with route metadata, candidate-specific future pipeline stages,
+///   and the Router's immutable current-round aggregate target observation, when available.
 /// - `kv_prefix_indexer`: query local or offloaded matched prompt tokens for any candidate.
+/// - `routing_progress`: immutable E/P/D selection round and progress supplied by `RouteSession`.
 /// - `customized_context`: user-defined `C`, created per request and shared by Prefill and Decode.
 ///
 /// Returns one score for every input candidate. A length mismatch is reported as a routing error.
@@ -39,6 +40,7 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
+        routing_progress: &RoutingProgress<'_>,
         customized_context: &mut C,
     ) -> Vec<RouteScore>;
 }

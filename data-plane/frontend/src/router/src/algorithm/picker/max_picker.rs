@@ -15,6 +15,7 @@ impl RoutePicker for MaxPicker {
         &self,
         request: &RouterRequest,
         scored_candidates: &[ScoredCandidate],
+        routing_progress: &crate::RoutingProgress<'_>,
         customized_context: &mut (),
     ) -> Option<CandidateIndex> {
         scored_candidates

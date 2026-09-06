@@ -18,6 +18,7 @@ impl RouteScorer for UniformScorer {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
+        routing_progress: &crate::RoutingProgress<'_>,
         customized_context: &mut (),
     ) -> Vec<RouteScore> {
         vec![RouteScore::default(); candidates.len()]

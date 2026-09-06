@@ -11,13 +11,22 @@ use foretoken_model_protocol::ModelServerRole;
 use super::support::{inventory, request, route};
 use foretoken_router::{
     CandidateIndex, PipelineRouter, RouteCandidate, RouteFilter, RoutePicker, RouteScore,
-    RouteScorer, Router, RouterPipeline, RouterRequest, ScoredCandidate,
+    RouteScorer, Router, RouterPipeline, RouterRequest, RoutingProgress, RoutingStage,
+    ScoredCandidate,
 };
+
+#[derive(Debug, PartialEq, Eq)]
+struct ScorerRound {
+    stage: RoutingStage,
+    completed_stages: Vec<ModelServerRole>,
+    pipeline_scope_id: Option<String>,
+    candidates: Vec<(ModelServerRole, Vec<ModelServerRole>)>,
+}
 
 #[derive(Default)]
 struct ContextTrace {
     events: Mutex<Vec<String>>,
-    scorer_roles: Mutex<Vec<Vec<ModelServerRole>>>,
+    scorer_rounds: Mutex<Vec<ScorerRound>>,
     picker_roles: Mutex<Vec<Vec<ModelServerRole>>>,
 }
 
@@ -36,6 +45,7 @@ impl RouteFilter<RoutingContext> for ContextFilter {
         _: &RouterRequest,
         candidates: &[RouteCandidate],
         _: &dyn KvPrefixIndexer,
+        _: &RoutingProgress<'_>,
         context: &mut RoutingContext,
     ) -> Vec<CandidateIndex> {
         context.rounds += 1;
@@ -57,6 +67,7 @@ impl RouteScorer<RoutingContext> for ContextScorer {
         _: &RouterRequest,
         candidates: &[RouteCandidate],
         _: &dyn KvPrefixIndexer,
+        routing_progress: &RoutingProgress<'_>,
         context: &mut RoutingContext,
     ) -> Vec<RouteScore> {
         // Consume the round established by Filter. Picker consumes this value below.
@@ -67,10 +78,18 @@ impl RouteScorer<RoutingContext> for ContextScorer {
         ));
         context
             .trace
-            .scorer_roles
+            .scorer_rounds
             .lock()
             .unwrap()
-            .push(candidates.iter().map(|candidate| candidate.role).collect());
+            .push(ScorerRound {
+                stage: routing_progress.current_stage,
+                completed_stages: routing_progress.completed_stages.to_vec(),
+                pipeline_scope_id: routing_progress.pipeline_scope_id.map(str::to_owned),
+                candidates: candidates
+                    .iter()
+                    .map(|candidate| (candidate.role, candidate.future_stages().to_vec()))
+                    .collect(),
+            });
         vec![RouteScore::default(); candidates.len()]
     }
 }
@@ -82,6 +101,7 @@ impl RoutePicker<RoutingContext> for ContextPicker {
         &self,
         _: &RouterRequest,
         scored_candidates: &[ScoredCandidate],
+        _: &RoutingProgress<'_>,
         context: &mut RoutingContext,
     ) -> Option<CandidateIndex> {
         assert_eq!(context.scorer_round, context.rounds);
@@ -99,9 +119,9 @@ impl RoutePicker<RoutingContext> for ContextPicker {
     }
 }
 
-// Protects request-local context sharing and stage narrowing across E/P/D routing.
+// Protects request-local algorithm state and explicit stage context across E/P/D routing.
 #[test]
-fn customized_context_is_request_owned_and_shared_by_filter_scorer_picker_across_epd() {
+fn algorithms_share_request_state_and_observe_each_epd_selection_stage() {
     let inventory = inventory(vec![
         route("e", ModelServerRole::Encoder),
         route("p", ModelServerRole::Prefill),
@@ -151,24 +171,37 @@ fn customized_context_is_request_owned_and_shared_by_filter_scorer_picker_across
             "request:picker:3",
         ]
     );
-    assert_eq!(
-        *trace.scorer_roles.lock().unwrap(),
+    let candidates = || {
         vec![
-            vec![
-                ModelServerRole::Decode,
+            (ModelServerRole::Decode, vec![]),
+            (
                 ModelServerRole::Encoder,
-                ModelServerRole::Prefill
-            ],
-            vec![
-                ModelServerRole::Decode,
-                ModelServerRole::Encoder,
-                ModelServerRole::Prefill
-            ],
-            vec![
-                ModelServerRole::Decode,
-                ModelServerRole::Encoder,
-                ModelServerRole::Prefill
-            ],
+                vec![ModelServerRole::Prefill, ModelServerRole::Decode],
+            ),
+            (ModelServerRole::Prefill, vec![ModelServerRole::Decode]),
+        ]
+    };
+    assert_eq!(
+        *trace.scorer_rounds.lock().unwrap(),
+        vec![
+            ScorerRound {
+                stage: RoutingStage::Initial,
+                completed_stages: vec![],
+                pipeline_scope_id: None,
+                candidates: candidates(),
+            },
+            ScorerRound {
+                stage: RoutingStage::Prefill,
+                completed_stages: vec![ModelServerRole::Encoder],
+                pipeline_scope_id: Some("pipeline-scope-a".into()),
+                candidates: candidates(),
+            },
+            ScorerRound {
+                stage: RoutingStage::Decode,
+                completed_stages: vec![ModelServerRole::Encoder, ModelServerRole::Prefill],
+                pipeline_scope_id: Some("pipeline-scope-a".into()),
+                candidates: candidates(),
+            },
         ]
     );
     assert_eq!(

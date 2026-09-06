@@ -14,7 +14,8 @@ use crate::inventory::supports_request;
 use crate::route_target_stats::NoopRouteTargetStatsReader;
 use crate::{
     RouteCandidate, RouteDecision, RouteError, RouteInventory, RouteSession,
-    RouteTargetStatsReader, Router, RouterPipeline, RouterRequest, ScoredCandidate,
+    RouteTargetStatsReader, Router, RouterPipeline, RouterRequest, RoutingProgress, RoutingStage,
+    ScoredCandidate,
 };
 
 /// Observation window used for every route target in one routing round.
@@ -99,6 +100,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
     fn select(
         &self,
         request: &RouterRequest,
+        routing_progress: &RoutingProgress<'_>,
         customized_context: &mut C,
         eligible: impl Fn(&RouteCandidate, &[ScoredCandidate]) -> bool,
         error: RouteError,
@@ -111,6 +113,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
             request,
             &candidates,
             self.kv_prefix_indexer.as_ref(),
+            routing_progress,
             customized_context,
         );
         let mut seen_indexes = BTreeSet::new();
@@ -130,6 +133,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
             request,
             &filtered,
             self.kv_prefix_indexer.as_ref(),
+            routing_progress,
             customized_context,
         );
         if scores.len() != filtered.len() {
@@ -154,12 +158,21 @@ impl<C: Send + 'static> PipelineRouter<C> {
         let picked = self
             .pipeline
             .picker
-            .pick(request, &selectable, customized_context)
+            .pick(request, &selectable, routing_progress, customized_context)
             .ok_or(RouteError::EmptyPickerResult)?;
         selectable
             .get(picked.0)
             .map(|candidate| candidate.candidate.clone())
             .ok_or(RouteError::InvalidPickerIndex { index: picked.0 })
+    }
+
+    fn future_stages_available(candidate: &RouteCandidate, scored: &[ScoredCandidate]) -> bool {
+        candidate.future_stages().iter().all(|role| {
+            scored.iter().any(|other| {
+                other.candidate.role == *role
+                    && other.candidate.pipeline_scope_id == candidate.pipeline_scope_id
+            })
+        })
     }
 
     fn pipeline_scope_has_encoder(&self, request: &RouterRequest, pipeline_scope_id: &str) -> bool {
@@ -176,10 +189,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
     fn select_initial(
         &self,
         request: &RouterRequest,
+        routing_progress: &RoutingProgress<'_>,
         context: &mut C,
     ) -> Result<RouteCandidate, RouteError> {
         self.select(
             request,
+            routing_progress,
             context,
             |candidate, scored| match candidate.role {
                 ModelServerRole::Aggregate => true,
@@ -189,28 +204,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
                         .as_ref()
                         .is_some_and(|pipeline_scope_id| {
                             !self.pipeline_scope_has_encoder(request, pipeline_scope_id)
-                                && scored.iter().any(|other| {
-                                    other.candidate.pipeline_scope_id.as_ref()
-                                        == Some(pipeline_scope_id)
-                                        && other.candidate.role == ModelServerRole::Decode
-                                })
+                                && Self::future_stages_available(candidate, scored)
                         })
                 }
                 ModelServerRole::Encoder => {
-                    candidate
-                        .pipeline_scope_id
-                        .as_ref()
-                        .is_some_and(|pipeline_scope_id| {
-                            scored.iter().any(|other| {
-                                other.candidate.pipeline_scope_id.as_ref()
-                                    == Some(pipeline_scope_id)
-                                    && other.candidate.role == ModelServerRole::Prefill
-                            }) && scored.iter().any(|other| {
-                                other.candidate.pipeline_scope_id.as_ref()
-                                    == Some(pipeline_scope_id)
-                                    && other.candidate.role == ModelServerRole::Decode
-                            })
-                        })
+                    candidate.pipeline_scope_id.is_some()
+                        && Self::future_stages_available(candidate, scored)
                 }
                 ModelServerRole::Decode => false,
             },
@@ -223,20 +222,20 @@ impl<C: Send + 'static> PipelineRouter<C> {
     fn select_prefill_in_pipeline_scope(
         &self,
         request: &RouterRequest,
+        routing_progress: &RoutingProgress<'_>,
         context: &mut C,
-        pipeline_scope_id: &str,
     ) -> Result<RouteCandidate, RouteError> {
+        let pipeline_scope_id = routing_progress
+            .pipeline_scope_id
+            .expect("prefill selection context has a pipeline scope");
         self.select(
             request,
+            routing_progress,
             context,
             |candidate, scored| {
                 candidate.role == ModelServerRole::Prefill
                     && candidate.pipeline_scope_id.as_deref() == Some(pipeline_scope_id)
-                    && scored.iter().any(|other| {
-                        other.candidate.role == ModelServerRole::Decode
-                            && other.candidate.pipeline_scope_id.as_deref()
-                                == Some(pipeline_scope_id)
-                    })
+                    && Self::future_stages_available(candidate, scored)
             },
             RouteError::NoMatchingRouteTarget {
                 model: request.model.clone(),
@@ -247,11 +246,15 @@ impl<C: Send + 'static> PipelineRouter<C> {
     fn select_decode_in_pipeline_scope(
         &self,
         request: &RouterRequest,
+        routing_progress: &RoutingProgress<'_>,
         context: &mut C,
-        pipeline_scope_id: &str,
     ) -> Result<RouteCandidate, RouteError> {
+        let pipeline_scope_id = routing_progress
+            .pipeline_scope_id
+            .expect("decode selection context has a pipeline scope");
         self.select(
             request,
+            routing_progress,
             context,
             |candidate, _| {
                 candidate.role == ModelServerRole::Decode
@@ -278,8 +281,13 @@ impl PipelineRouter<()> {
 #[derive(Clone)]
 enum SessionStage {
     Initial,
-    Encoder { pipeline_scope_id: String },
-    Prefill { pipeline_scope_id: String },
+    Encoder {
+        pipeline_scope_id: String,
+    },
+    Prefill {
+        pipeline_scope_id: String,
+        encoder_completed: bool,
+    },
     Complete,
 }
 
@@ -291,9 +299,16 @@ struct Session<C: Send + 'static> {
 }
 impl<C: Send + 'static> RouteSession for Session<C> {
     fn select_initial(&mut self) -> Result<RouteDecision, RouteError> {
-        let candidate = self
-            .router
-            .select_initial(&self.request, &mut self.customized_context)?;
+        let routing_progress = RoutingProgress {
+            current_stage: RoutingStage::Initial,
+            completed_stages: &[],
+            pipeline_scope_id: None,
+        };
+        let candidate = self.router.select_initial(
+            &self.request,
+            &routing_progress,
+            &mut self.customized_context,
+        )?;
         self.stage = match candidate.role {
             ModelServerRole::Encoder => SessionStage::Encoder {
                 pipeline_scope_id: candidate
@@ -306,6 +321,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
                     .pipeline_scope_id
                     .clone()
                     .expect("eligible prefill has a pipeline scope"),
+                encoder_completed: false,
             },
             ModelServerRole::Aggregate => SessionStage::Complete,
             ModelServerRole::Decode => unreachable!("initial eligibility rejects Decode"),
@@ -317,16 +333,22 @@ impl<C: Send + 'static> RouteSession for Session<C> {
         let SessionStage::Encoder { pipeline_scope_id } = &self.stage else {
             return Err(RouteError::PrefillBeforeEncoder);
         };
+        let routing_progress = RoutingProgress {
+            current_stage: RoutingStage::Prefill,
+            completed_stages: &[ModelServerRole::Encoder],
+            pipeline_scope_id: Some(pipeline_scope_id),
+        };
         let prefill = self.router.select_prefill_in_pipeline_scope(
             &self.request,
+            &routing_progress,
             &mut self.customized_context,
-            pipeline_scope_id,
         )?;
         self.stage = SessionStage::Prefill {
             pipeline_scope_id: prefill
                 .pipeline_scope_id
                 .clone()
                 .expect("eligible prefill has a pipeline scope"),
+            encoder_completed: true,
         };
         Ok(prefill.decision())
     }
@@ -334,13 +356,27 @@ impl<C: Send + 'static> RouteSession for Session<C> {
     fn select_decode(&mut self) -> Result<RouteDecision, RouteError> {
         // Decode selection builds a fresh healthy and telemetry snapshot rather than reusing
         // candidates observed for the earlier Prefill choice.
-        let SessionStage::Prefill { pipeline_scope_id } = &self.stage else {
+        let SessionStage::Prefill {
+            pipeline_scope_id,
+            encoder_completed,
+        } = &self.stage
+        else {
             return Err(RouteError::DecodeBeforePrefill);
+        };
+        let completed_stages: &[ModelServerRole] = if *encoder_completed {
+            &[ModelServerRole::Encoder, ModelServerRole::Prefill]
+        } else {
+            &[ModelServerRole::Prefill]
+        };
+        let routing_progress = RoutingProgress {
+            current_stage: RoutingStage::Decode,
+            completed_stages,
+            pipeline_scope_id: Some(pipeline_scope_id),
         };
         let decode = self.router.select_decode_in_pipeline_scope(
             &self.request,
+            &routing_progress,
             &mut self.customized_context,
-            pipeline_scope_id,
         )?;
         self.stage = SessionStage::Complete;
         Ok(decode.decision())

@@ -5,7 +5,7 @@
 
 use foretoken_kv_indexer::KvPrefixIndexer;
 
-use crate::{CandidateIndex, RouteCandidate, RouterRequest};
+use crate::{CandidateIndex, RouteCandidate, RouterRequest, RoutingProgress};
 
 // Each entry declares the module, re-exports the implementation, and binds its user-facing Filter name.
 // For example, `allow_all_filter => AllowAllFilter = "allow_all"` maps
@@ -22,9 +22,10 @@ declare_router_algorithms! {
 /// route-set eligibility after scoring.
 ///
 /// - `request`: model, prompt tokens, sampling, multimodal, LoRA, and priority.
-/// - `candidates`: routable ModelGroups with route metadata and the Router's immutable current-round
-///   aggregate target observation, when telemetry is available.
+/// - `candidates`: routable ModelGroups with route metadata, candidate-specific future pipeline
+///   stages, and the Router's immutable current-round aggregate target observation, when available.
 /// - `kv_prefix_indexer`: query local or offloaded matched prompt tokens for any candidate.
+/// - `routing_progress`: immutable E/P/D selection round and progress supplied by `RouteSession`.
 /// - `customized_context`: user-defined `C`, created per request and shared by Prefill and Decode.
 ///
 /// Returns indexes of candidates that may continue to scoring. Out-of-range or duplicate indexes
@@ -35,6 +36,7 @@ pub trait RouteFilter<C: Send + 'static = ()>: Send + Sync {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
+        routing_progress: &RoutingProgress<'_>,
         customized_context: &mut C,
     ) -> Vec<CandidateIndex>;
 }

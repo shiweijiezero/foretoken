@@ -21,6 +21,7 @@ impl RouteScorer for LeastLoadedScorer {
         request: &RouterRequest,
         candidates: &[RouteCandidate],
         kv_prefix_indexer: &dyn KvPrefixIndexer,
+        routing_progress: &crate::RoutingProgress<'_>,
         customized_context: &mut (),
     ) -> Vec<RouteScore> {
         // A Prefill eligible route option includes the lightest Decode load in its own E/P/D route set.

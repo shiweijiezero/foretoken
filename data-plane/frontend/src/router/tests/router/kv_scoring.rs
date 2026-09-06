@@ -14,7 +14,7 @@ use foretoken_model_protocol::{KvCacheLocality, KvPlacement, KvStorageTier, Mode
 use foretoken_router::algorithm::LeastLoadedScorer;
 use foretoken_router::{
     KvLeastLoadedScorer, PipelineRouter, RouteCandidate, RouteScorer, RouteTargetId,
-    RouteTargetStats, Router,
+    RouteTargetStats, Router, RoutingProgress, RoutingStage,
 };
 
 use super::support::{inventory, request, route};
@@ -90,6 +90,14 @@ fn kv_lookup_rejects_requests_with_separate_cache_semantics() {
     ));
 }
 
+fn initial_routing_progress() -> RoutingProgress<'static> {
+    RoutingProgress {
+        current_stage: RoutingStage::Initial,
+        completed_stages: &[],
+        pipeline_scope_id: None,
+    }
+}
+
 fn target_stats(running_requests: u64) -> Arc<RouteTargetStats> {
     Arc::new(RouteTargetStats {
         collected_at_unix_ms: 1,
@@ -133,7 +141,13 @@ fn kv_scoring_is_prefix_tier_locality_load_and_keeps_unavailable_candidates() {
         candidate("unavailable", ModelServerRole::Aggregate, 0),
         candidate("decode", ModelServerRole::Decode, 0),
     ];
-    let scored = KvLeastLoadedScorer.score(&request(), &candidates, &PrefixFacts, &mut ());
+    let scored = KvLeastLoadedScorer.score(
+        &request(),
+        &candidates,
+        &PrefixFacts,
+        &initial_routing_progress(),
+        &mut (),
+    );
     let score = |id: &str| {
         let index = [
             "remote",
@@ -176,8 +190,20 @@ fn prefill_downstream_load_is_scoped_to_its_pipeline_scope() {
     let request = request();
     let candidates = candidates();
     let scored = [
-        LeastLoadedScorer.score(&request, &candidates, &PrefixFacts, &mut ()),
-        KvLeastLoadedScorer.score(&request, &candidates, &PrefixFacts, &mut ()),
+        LeastLoadedScorer.score(
+            &request,
+            &candidates,
+            &PrefixFacts,
+            &initial_routing_progress(),
+            &mut (),
+        ),
+        KvLeastLoadedScorer.score(
+            &request,
+            &candidates,
+            &PrefixFacts,
+            &initial_routing_progress(),
+            &mut (),
+        ),
     ];
 
     for round in scored {
@@ -208,7 +234,13 @@ fn load_scoring_uses_scheduler_backlog_without_double_counting_admission() {
     queued_stats.scheduler_waiting_requests = Some(5);
 
     let candidates = vec![idle, queued];
-    let scores = LeastLoadedScorer.score(&request(), &candidates, &PrefixFacts, &mut ());
+    let scores = LeastLoadedScorer.score(
+        &request(),
+        &candidates,
+        &PrefixFacts,
+        &initial_routing_progress(),
+        &mut (),
+    );
 
     assert_eq!(scores[0].load, -1);
     assert_eq!(scores[1].load, -7);

@@ -18,6 +18,7 @@ impl RoutePicker for RoundRobinPicker {
         &self,
         request: &RouterRequest,
         scored_candidates: &[ScoredCandidate],
+        routing_progress: &crate::RoutingProgress<'_>,
         customized_context: &mut (),
     ) -> Option<CandidateIndex> {
         let best_score = scored_candidates

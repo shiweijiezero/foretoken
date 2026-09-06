@@ -16,4 +16,4 @@ pub use config::{
 };
 pub use pipeline::RouterPipeline;
 pub use pipeline_router::PipelineRouter;
-pub use session::{RouteError, RouteSession, Router};
+pub use session::{RouteError, RouteSession, Router, RoutingProgress, RoutingStage};

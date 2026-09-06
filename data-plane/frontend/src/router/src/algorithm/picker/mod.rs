@@ -3,7 +3,7 @@
 
 //! Scored-candidate selection and Picker implementations.
 
-use crate::{CandidateIndex, RouterRequest, ScoredCandidate};
+use crate::{CandidateIndex, RouterRequest, RoutingProgress, ScoredCandidate};
 
 // Each entry declares the module, re-exports the implementation, and binds its user-facing Picker name.
 // For example, `round_robin_picker => RoundRobinPicker = "round_robin"` maps
@@ -23,6 +23,7 @@ declare_router_algorithms! {
 /// - `request`: model, prompt tokens, sampling, multimodal, LoRA, and priority.
 /// - `scored_candidates`: current-stage candidates with route target metadata and `RouteScore` locality
 ///   and load values.
+/// - `routing_progress`: immutable E/P/D selection round and progress supplied by `RouteSession`.
 /// - `customized_context`: user-defined `C`, created per request and shared by Prefill and Decode.
 ///
 /// Returns the selected position in `scored_candidates`, or `None` when the list is empty.
@@ -31,6 +32,7 @@ pub trait RoutePicker<C: Send + 'static = ()>: Send + Sync {
         &self,
         request: &RouterRequest,
         scored_candidates: &[ScoredCandidate],
+        routing_progress: &RoutingProgress<'_>,
         customized_context: &mut C,
     ) -> Option<CandidateIndex>;
 }
