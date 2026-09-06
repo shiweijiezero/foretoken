@@ -1,43 +1,79 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# Release Versions
+# Release Versioning
 
-Foretoken uses Python packaging version notation for the Python distribution and the same release identifier for GitHub tags and OCI image tags.
+Foretoken publishes a Python distribution, OCI images, and a Helm Chart. Python packages follow PEP 440, while OCI images and Helm Charts use SemVer. A release keeps the same stage and sequence number across both formats even though their spelling differs.
 
-| Stage | Version | GitHub tag | Install from PyPI |
+## Version stages
+
+| Stage | Purpose | Python version | OCI and Helm version |
 | --- | --- | --- | --- |
-| Alpha | `0.0.1a1` | `v0.0.1a1` | `pip install --pre foretoken` |
-| Beta | `0.0.1b1` | `v0.0.1b1` | `pip install --pre foretoken` |
-| Release candidate | `0.0.1rc1` | `v0.0.1rc1` | `pip install --pre foretoken` |
-| Stable | `0.0.1` | `v0.0.1` | `pip install foretoken` |
+| Development | Identifiable local or CI snapshot | `0.0.1.dev1` | `latest` |
+| Alpha | Early integration and interface testing | `0.0.1a1` | `0.0.1-alpha.1` |
+| Beta | Feature-complete compatibility and deployment testing | `0.0.1b1` | `0.0.1-beta.1` |
+| Release candidate | Final validation before a stable release | `0.0.1rc1` | `0.0.1-rc.1` |
+| Stable | Supported release for normal installation | `0.0.1` | `0.0.1` |
+| Python post-release | Correction to an already published Python artifact or its metadata | `0.0.1.post1` | No new OCI or Helm version |
 
-`pip` does not select pre-release versions by default. Use `--pre` for Alpha, Beta, and Release Candidate builds, or request an exact version such as `foretoken==0.0.1a1`.
+Increment the final number when publishing another build in the same stage: `0.0.1a2`, `0.0.1b2`, or `0.0.1rc2`. Move to the next stage only when the release meets that stage's purpose.
 
-Source installation is separate from package releases:
+Python orders these versions as follows:
+
+```text
+0.0.1.dev1 < 0.0.1a1 < 0.0.1b1 < 0.0.1rc1 < 0.0.1 < 0.0.1.post1
+```
+
+Development snapshots are not GitHub Releases and are not published to PyPI. `latest` is a mutable OCI alias for normal source iteration, not a release version.
+
+## Installing Python releases
+
+Alpha, Beta, and Release Candidate versions are pre-releases. `pip` excludes them from normal version selection unless a pre-release is requested:
+
+```bash
+pip install --pre foretoken
+pip install foretoken==0.0.1a1
+```
+
+Stable and post-release versions use the normal installation command:
+
+```bash
+pip install foretoken
+```
+
+A `.postN` release is only for correcting the published Python package or its metadata. Do not use it for normal code changes. If runtime behavior changes or new OCI images and a Helm Chart are required, increment the release version, such as from `0.0.1` to `0.0.2`.
+
+Installing from the repository is independent of published versions:
 
 ```bash
 pip install -e .
 ```
 
-## OCI image tags
+## Tags and version ownership
 
-Use the same release identifier for the Foretoken images and Helm Chart:
+GitHub Releases use the Python version with a `v` prefix because the release workflow publishes that Python distribution:
 
 ```text
-0.0.1a1
-0.0.1b1
-0.0.1rc1
-0.0.1
+v0.0.1a1
+v0.0.1b1
+v0.0.1rc1
+v0.0.1
+v0.0.1.post1
 ```
 
-`latest` is a mutable development alias. Use an exact version tag for stable deployments, rollback, and reproducible installations.
+Each artifact has one authoritative version source:
+
+- `pyproject.toml` owns the Python distribution version.
+- `deploy/charts/foretoken/Chart.yaml` owns the Helm `version` and `appVersion`.
+- Foretoken OCI images and the Helm Chart package use the SemVer value for the same release stage.
+
+Published versions are immutable. Never rebuild and overwrite a version already present on PyPI or in an OCI registry. Increment the development, pre-release, post-release, or patch number as appropriate.
 
 ## Release sequence
 
-1. Update `pyproject.toml` to the next PEP 440 version.
-2. Build and verify the Python distribution and affected OCI images.
-3. Push the matching image and Chart tags.
-4. Create the matching GitHub tag and Release.
+1. Choose the release stage and update `pyproject.toml` and `Chart.yaml` using the mapping above.
+2. Build and verify the Python distribution, Helm Chart, and affected OCI images.
+3. Push the matching OCI image and Helm Chart tags.
+4. Create the matching GitHub tag and publish the GitHub Release.
 5. Let the release workflow publish the Python distribution to PyPI.
 6. Verify the published package, images, Chart, and a clean installation path.
