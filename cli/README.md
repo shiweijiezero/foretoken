@@ -109,7 +109,7 @@ The command waits for deletion and ignores resources that are already absent. Af
 foretoken uninstall
 ```
 
-The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain. It removes managed by the command-line tool monitoring and Gateway resources with the platform, while reused cluster components remain unchanged.
+The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain. It removes monitoring and Gateway resources managed by the command-line tool with the platform, while reused cluster components remain unchanged.
 
 Inspect the same deployment without applying it:
 
