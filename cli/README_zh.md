@@ -17,10 +17,13 @@ Foretoken 命令行工具 通过统一的 `foretoken` 入口安装 Kubernetes �
 
 ## 安装 命令行工具
 
-使用 pip 安装已经发布的 Foretoken 命令行工具 包：
+使用 pip 安装已经发布的 Foretoken 命令行工具包：
 
 ```bash
 pip install foretoken
+
+# 如果使用源码安装：
+# pip install -e .
 ```
 
 或使用 uv 创建并激活虚拟环境后安装：
@@ -146,7 +149,7 @@ Host 值在直接访问时是 URL authority，在 HTTP Gateway 模式下是配�
 ```bash
 pip install 'foretoken[bench]'
 
-# 如果使用源码：
+# 如果使用源码安装：
 # pip install -e .
 # pip install -e '.[bench]'
 ```

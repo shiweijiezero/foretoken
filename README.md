@@ -39,6 +39,9 @@ Install the published command-line tool package:
 
 ```bash
 pip install foretoken
+
+# For source installation from the repository:
+# pip install -e .
 ```
 
 ### 2. Install the Kubernetes platform
@@ -46,18 +49,14 @@ pip install foretoken
 By default, installation uses the Foretoken images published on GHCR:
 
 ```bash
+# Release images:
 foretoken install
+
+# Source installation from the repository:
+# foretoken install -e .
 ```
 
-This installs the Foretoken CRDs and controller in the `foretoken-platform` namespace and waits for the controller to become ready. The default mode exposes the frontend through a `LoadBalancer` Service.
-
-If you changed the source in this repository, install from source instead:
-
-```bash
-foretoken install -e .
-```
-
-This rebuilds the images and updates the cluster. To deploy the current source to a remote cluster, see the [source deployment guide](docs/custom-deployment.md).
+This installs the Foretoken CRDs and controller in the `foretoken-platform` namespace and waits for the controller to become ready. The default mode exposes the frontend through a `LoadBalancer` Service. Source installation rebuilds the images and updates the cluster; to deploy the current source to a remote cluster, see the [source deployment guide](docs/custom-deployment.md).
 
 ### 3. Deploy the Quick Start
 

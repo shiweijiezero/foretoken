@@ -21,6 +21,9 @@ Install the published Foretoken command-line tool package with pip:
 
 ```bash
 pip install foretoken
+
+# For source installation from the repository:
+# pip install -e .
 ```
 
 Or create and activate a virtual environment with uv:

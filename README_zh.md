@@ -39,6 +39,9 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ```bash
 pip install foretoken
+
+# 如果使用源码安装：
+# pip install -e .
 ```
 
 ### 2. 安装 Kubernetes 平台
@@ -46,18 +49,14 @@ pip install foretoken
 默认使用 Foretoken 发布在 GHCR 的镜像：
 
 ```bash
+# 使用发布镜像：
 foretoken install
+
+# 如果使用源码安装：
+# foretoken install -e .
 ```
 
-该命令会在 `foretoken-platform` 命名空间中安装 Foretoken CRD 和控制器，并等待控制器就绪。默认模式通过 `LoadBalancer` 类型的 Kubernetes `Service` 提供前端地址。
-
-如果修改了当前仓库中的源码，请改用源码安装：
-
-```bash
-foretoken install -e .
-```
-
-该命令会重新构建镜像并更新集群。如果要将当前源码部署到远程集群，请参阅[源码部署指南](docs/custom-deployment_zh.md)。
+该命令会在 `foretoken-platform` 命名空间中安装 Foretoken CRD 和控制器，并等待控制器就绪。默认模式通过 `LoadBalancer` 类型的 Kubernetes `Service` 提供前端地址。源码安装会重新构建镜像并更新集群；如果要将当前源码部署到远程集群，请参阅[源码部署指南](docs/custom-deployment_zh.md)。
 
 ### 3. 部署快速开始示例
 
@@ -83,7 +82,7 @@ curl --fail-with-body --no-buffer \
 ```bash
 pip install 'foretoken[bench]'
 
-# 如果使用源码：
+# 如果使用源码安装：
 # pip install -e .
 # pip install -e '.[bench]'
 foretoken bench examples/quickstart
@@ -154,7 +153,7 @@ foretoken uninstall
 
 ## 贡献
 
-欢迎通过代码、文档、测试、设计讨论、问题反馈等方式参与 Foretoken；部署、硬件、性能评测、路由和扩缩容等方向的改进都很有价值。
+欢迎通过代码、文档、测试、设计讨论、问题反馈等方式参与 Foretoken。
 性能相关变更需要附上测试条件、原始结果和可重复执行的命令。
 开发原则、协作约定和 Pull Request 流程见 [《为 Foretoken 做贡献》](CONTRIBUTING_zh.md)。
 

@@ -11,7 +11,7 @@
 ```bash
 pip install 'foretoken[bench]'
 
-# 如果使用源码：
+# 如果使用源码安装：
 # pip install -e .
 # pip install -e '.[bench]'
 ```
