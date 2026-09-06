@@ -73,40 +73,56 @@ class HelmClient:
         self._raise_command_error(command, completed)
 
     def is_cli_managed(self, release: ReleaseRef) -> bool:
-        """Return whether Helm storage assigns the release to this CLI."""
-        return bool(
-            self._list_releases(
-                release,
-                selector="=".join(self._config.management_label),
-            )
+        """Return whether Helm storage assigns the release to the current tool."""
+        return self._has_management_label(release, self._config.management_label)
+
+    def is_cleanup_managed(self, release: ReleaseRef) -> bool:
+        """Return whether the release can be removed by the current tool."""
+        return self.is_cli_managed(release) or self._has_management_label(
+            release, self._config.legacy_management_label
         )
 
-    def managed_envoy_gateway_releases(self) -> tuple[ReleaseRef, ...]:
-        """Return CLI-managed Envoy Gateway releases across the cluster."""
-        listed = _decode_json(
-            self.run(
-                [
-                    "list",
-                    "--all",
-                    "--all-namespaces",
-                    "--filter",
-                    f"^{re.escape(self._config.envoy_gateway.release_name)}$",
-                    "--selector",
-                    "=".join(self._config.management_label),
-                    "--output",
-                    "json",
-                ]
-            ).stdout
-        )
-        if not isinstance(listed, list) or not all(
-            isinstance(item, dict) for item in listed
-        ):
-            raise DeploymentError("helm list returned an unexpected JSON value")
-        return tuple(
-            ReleaseRef(str(item.get("name") or ""), str(item.get("namespace") or ""))
-            for item in listed
-            if item.get("name") and item.get("namespace")
-        )
+    def _has_management_label(
+        self, release: ReleaseRef, label: tuple[str, str]
+    ) -> bool:
+        """Return whether Helm storage carries one management label."""
+        return bool(self._list_releases(release, selector="=".join(label)))
+
+    def managed_envoy_gateway_releases(
+        self, *, include_legacy: bool = False
+    ) -> tuple[ReleaseRef, ...]:
+        """Return current, or optionally legacy, managed Envoy Gateway releases."""
+        labels = (self._config.management_label,)
+        if include_legacy:
+            labels += (self._config.legacy_management_label,)
+        releases: dict[tuple[str, str], ReleaseRef] = {}
+        for label in labels:
+            listed = _decode_json(
+                self.run(
+                    [
+                        "list",
+                        "--all",
+                        "--all-namespaces",
+                        "--filter",
+                        f"^{re.escape(self._config.envoy_gateway.release_name)}$",
+                        "--selector",
+                        "=".join(label),
+                        "--output",
+                        "json",
+                    ]
+                ).stdout
+            )
+            if not isinstance(listed, list) or not all(
+                isinstance(item, dict) for item in listed
+            ):
+                raise DeploymentError("helm list returned an unexpected JSON value")
+            for item in listed:
+                if item.get("name") and item.get("namespace"):
+                    release = ReleaseRef(
+                        str(item["name"]), str(item["namespace"])
+                    )
+                    releases[(release.namespace, release.name)] = release
+        return tuple(releases.values())
 
     def has_release_label(
         self, release: ReleaseRef, key: str, value: str

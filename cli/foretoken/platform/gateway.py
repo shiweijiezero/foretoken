@@ -69,9 +69,11 @@ class GatewayControllerLifecycle:
         self._helm = helm
         self._kubectl = kubectl
 
-    def _managed_release(self) -> ReleaseRef | None:
-        """Return the single CLI-managed Envoy Gateway release, when present."""
-        releases = self._helm.managed_envoy_gateway_releases()
+    def _managed_release(self, *, include_legacy: bool = False) -> ReleaseRef | None:
+        """Return one managed Envoy Gateway release, when present."""
+        releases = self._helm.managed_envoy_gateway_releases(
+            include_legacy=include_legacy
+        )
         if len(releases) > 1:
             names = ", ".join(release.display_name for release in releases)
             raise DeploymentError(
@@ -287,7 +289,7 @@ class GatewayControllerLifecycle:
         kubectl = self._kubectl
         release = helm.envoy_gateway_release()
         release_exists = helm.release_exists(release)
-        managed_release = self._managed_release()
+        managed_release = self._managed_release(include_legacy=True)
         controller_name = helm.envoy_gateway_controller
         config = (
             helm.platform_gateway_config(platform)

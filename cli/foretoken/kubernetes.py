@@ -27,7 +27,8 @@ _METRICS_SCRAPER_LABEL = "inference.foretoken.io/metrics-scraper"
 _METRICS_SCRAPER_OWNER_ANNOTATION = (
     "inference.foretoken.io/metrics-scraper-managed-by"
 )
-_METRICS_SCRAPER_OWNER = "foretoken-cli"
+_METRICS_SCRAPER_OWNER = "foretoken"
+_LEGACY_METRICS_SCRAPER_OWNER = "foretoken-cli"
 
 
 @dataclass(frozen=True)
@@ -327,7 +328,7 @@ def unmark_managed_metrics_scraper_namespace(kubectl: Kubectl, name: str) -> Non
     if (
         not isinstance(annotations, dict)
         or annotations.get(_METRICS_SCRAPER_OWNER_ANNOTATION)
-        != _METRICS_SCRAPER_OWNER
+        not in {_METRICS_SCRAPER_OWNER, _LEGACY_METRICS_SCRAPER_OWNER}
     ):
         return
     kubectl.remove_namespace_label(name, _METRICS_SCRAPER_LABEL)
