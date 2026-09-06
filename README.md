@@ -35,10 +35,10 @@ This Quick Start requires Python 3.10 or later, a Kubernetes cluster, `kubectl`,
 
 ### 1. Install the CLI
 
-From the repository root:
+Install the published CLI package:
 
 ```bash
-pip install -e .
+pip install foretoken
 ```
 
 ### 2. Install the Kubernetes platform
@@ -81,7 +81,7 @@ curl --fail-with-body --no-buffer \
 ### 5. Run a benchmark
 
 ```bash
-pip install -e '.[bench]'
+pip install 'foretoken[bench]'
 foretoken bench examples/quickstart
 ```
 

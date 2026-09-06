@@ -35,10 +35,10 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ### 1. 安装 CLI
 
-在仓库根目录运行：
+安装已经发布的 CLI 包：
 
 ```bash
-pip install -e .
+pip install foretoken
 ```
 
 ### 2. 安装 Kubernetes 平台
@@ -81,7 +81,7 @@ curl --fail-with-body --no-buffer \
 ### 5. 运行评测
 
 ```bash
-pip install -e '.[bench]'
+pip install 'foretoken[bench]'
 foretoken bench examples/quickstart
 ```
 

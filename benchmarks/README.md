@@ -9,7 +9,7 @@ Use `foretoken bench` to measure latency and throughput against a Foretoken depl
 Run benchmark commands from the repository root with Python 3.10 or later:
 
 ```bash
-pip install -e '.[bench]'
+pip install 'foretoken[bench]'
 ```
 
 For a Foretoken deployment, install the platform before benchmarking a Kustomize configuration:

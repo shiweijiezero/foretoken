@@ -17,10 +17,10 @@ You need Python 3.10 or later, an active Kubernetes context, `kubectl`, and Helm
 
 ## Install the CLI
 
-Install the Foretoken CLI with pip:
+Install the published Foretoken CLI package with pip:
 
 ```bash
-pip install -e .
+pip install foretoken
 ```
 
 Or create and activate a virtual environment with uv:
@@ -28,7 +28,7 @@ Or create and activate a virtual environment with uv:
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install -e .
+uv pip install foretoken
 ```
 
 This step only installs the `foretoken` command in the current Python environment; it does not change the Kubernetes cluster. Run `foretoken --version` to see the CLI and corresponding platform version.
@@ -144,13 +144,13 @@ The host value is the URL authority for direct access or the configured routing 
 Install the optional benchmark dependencies with pip:
 
 ```bash
-pip install -e '.[bench]'
+pip install 'foretoken[bench]'
 ```
 
 Or install the benchmark dependencies in the activated uv environment:
 
 ```bash
-uv pip install -e '.[bench]'
+uv pip install 'foretoken[bench]'
 ```
 
 Then run the benchmark:

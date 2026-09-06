@@ -17,10 +17,10 @@ Foretoken CLI 通过统一的 `foretoken` 入口安装 Kubernetes 平台、从 K
 
 ## 安装 CLI
 
-使用 pip 安装 Foretoken CLI：
+使用 pip 安装已经发布的 Foretoken CLI 包：
 
 ```bash
-pip install -e .
+pip install foretoken
 ```
 
 或使用 uv 创建并激活虚拟环境后安装：
@@ -28,7 +28,7 @@ pip install -e .
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install -e .
+uv pip install foretoken
 ```
 
 这一步只会在当前 Python 环境中安装 `foretoken` 命令，不会修改 Kubernetes 集群。运行 `foretoken --version` 可以查看 CLI 及其对应的平台版本。
@@ -144,13 +144,13 @@ Host 值在直接访问时是 URL authority，在 HTTP Gateway 模式下是配�
 使用 pip 安装可选的评测依赖：
 
 ```bash
-pip install -e '.[bench]'
+pip install 'foretoken[bench]'
 ```
 
 或在已经激活的 uv 虚拟环境中安装评测依赖：
 
 ```bash
-uv pip install -e '.[bench]'
+uv pip install 'foretoken[bench]'
 ```
 
 然后运行评测：
