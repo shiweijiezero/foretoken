@@ -56,7 +56,7 @@ func (profile RuntimeCacheProfile) Validate() error {
 	if profile.ClaimName == "" {
 		return nil
 	}
-	if profile.MountPath == "" || !strings.HasPrefix(profile.MountPath, "/") {
+	if profile.MountPath == "" || profile.MountPath == "/" || !strings.HasPrefix(profile.MountPath, "/") {
 		return fmt.Errorf("cache mount path must be absolute")
 	}
 	return nil

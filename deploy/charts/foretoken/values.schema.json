@@ -128,7 +128,8 @@
             },
             "mountPath": {
               "type": "string",
-              "pattern": "^/"
+              "pattern": "^/",
+              "minLength": 2
             }
           },
           "additionalProperties": false

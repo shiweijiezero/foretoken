@@ -414,7 +414,7 @@ spec:
                         type: string
                       mountPath:
                         maxLength: 1024
-                        minLength: 1
+                        minLength: 2
                         pattern: ^/
                         type: string
                     required:

@@ -63,7 +63,7 @@ type RuntimeCache struct {
 	// +kubebuilder:validation:MaxLength=253
 	ClaimName string `json:"claimName"`
 
-	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MinLength=2
 	// +kubebuilder:validation:MaxLength=1024
 	// +kubebuilder:validation:Pattern="^/"
 	MountPath string `json:"mountPath"`
