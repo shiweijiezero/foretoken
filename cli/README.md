@@ -90,24 +90,28 @@ Registry login authorizes the local image push. Private registries also need `im
 
 Repeatable `--values` files provide platform image, runtime, and hardware settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
 
-### Persistent model cache
+### Persistent runtime cache
 
-Clusters with limited Hugging Face access can prepare each model snapshot once in an existing namespace-local PVC. The same claim name must exist in every namespace that runs a `FrontendService` or `ModelService`, and the storage must be mountable from all workload nodes. Multi-node deployments normally require `ReadWriteMany` storage:
+Foretoken can mount one existing PVC as a shared runtime cache. The model server owns model download and loading; the same cache can also retain vLLM, TorchInductor, Triton, and backend compilation artifacts across Pod restarts. The claim must exist in every namespace that runs a `FrontendService` or `ModelService`, and every workload node must be able to mount it. Multi-node deployments normally require `ReadWriteMany` storage.
 
 ```yaml
 workload:
-  modelCache:
+  cache:
     claimName: model-cache
-    mountPath: /var/cache/foretoken/huggingface
-    offline: false
-    huggingFace:
-      endpoint: https://huggingface.example.com
+    mountPath: /var/cache/foretoken
+
+runtime:
+  vllm:
+    modelSource:
+      endpoint: https://model-source.example.com
       tokenSecret:
-        name: huggingface-token
+        name: model-source-token
         key: token
 ```
 
-The token Secret is read only by the preparation Job. After preparation, the frontend and model-server Pods use the shared cache without Hugging Face network access. Set `offline: true` only when the required snapshots are already present. Foretoken does not create the PVC or choose a default mirror.
+`workload.cache` only configures persistent storage. The optional `runtime.vllm.modelSource` values are passed to the vLLM model-server adapter; they do not select a provider in the platform API. The adapter decides how to interpret the model identifier and which subdirectories to use under the cache root. Foretoken does not create the PVC, choose a storage class, or delete cached data.
+
+If no `claimName` is configured, persistent caching is disabled and the platform keeps its normal ephemeral runtime behavior. See [Persistent Runtime Cache](../docs/development/runtime-cache.md) for PVC requirements, lifecycle, and troubleshooting.
 
 ## Deploy and operate model services
 

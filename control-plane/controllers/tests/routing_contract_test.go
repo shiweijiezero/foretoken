@@ -128,7 +128,7 @@ func TestFrontendLocalModeNeedsNoGateway(t *testing.T) {
 	c := controllerClient(t, frontend, staleRoute, model, pool, group)
 	r := &controllers.FrontendServiceReconciler{
 		Client: c, APIReader: c,
-		RuntimeProfile: controllers.FrontendRuntimeProfile{Image: "frontend:test", Port: 8080, ArtifactCache: &inferencev1alpha1.ModelArtifactCache{ClaimName: "model-cache", MountPath: "/cache/huggingface"}},
+		RuntimeProfile: controllers.FrontendRuntimeProfile{Image: "frontend:test", Port: 8080, RuntimeCache: &inferencev1alpha1.RuntimeCache{ClaimName: "model-cache", MountPath: "/cache"}},
 	}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(frontend)}
 	for range 2 {
@@ -145,7 +145,7 @@ func TestFrontendLocalModeNeedsNoGateway(t *testing.T) {
 	}
 	deployment := get(t, ctx, c, request.NamespacedName, new(appsv1.Deployment))
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
-		if volume.Name == "tokenizer-cache" && volume.PersistentVolumeClaim != nil {
+		if volume.Name == "runtime-cache" && volume.PersistentVolumeClaim != nil {
 			t.Fatalf("frontend switched cache before the selected model generation: %#v", volume)
 		}
 	}
@@ -168,7 +168,7 @@ func TestFrontendLocalModeNeedsNoGateway(t *testing.T) {
 
 	cachedGroup := modelGroup(pool, "local-model-r2-0", 0)
 	cachedGroup.Spec.Revision = "r2"
-	cachedGroup.Spec.Artifacts.Cache = &inferencev1alpha1.ModelArtifactCache{ClaimName: "model-cache", MountPath: "/cache/huggingface"}
+	cachedGroup.Spec.Artifacts.Cache = &inferencev1alpha1.RuntimeCache{ClaimName: "model-cache", MountPath: "/cache"}
 	markGroupReady(cachedGroup)
 	if err := c.Create(ctx, cachedGroup); err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestFrontendLocalModeNeedsNoGateway(t *testing.T) {
 	deployment = get(t, ctx, c, request.NamespacedName, new(appsv1.Deployment))
 	cacheMounted := false
 	for _, volume := range deployment.Spec.Template.Spec.Volumes {
-		if volume.Name == "tokenizer-cache" && volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == "model-cache" {
+		if volume.Name == "runtime-cache" && volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == "model-cache" {
 			cacheMounted = true
 		}
 	}

@@ -27,6 +27,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		pool := modelPool(service, "model-default", 1)
 		group := modelGroup(pool, "model-r1-0", 0)
 		group.Spec.Accelerator.RuntimeClassName = "nvidia"
+		group.Spec.Artifacts.Cache = &inferencev1alpha1.RuntimeCache{ClaimName: "runtime-cache", MountPath: "/cache"}
 		c := controllerClient(t, service, pool, group)
 		r := &controllers.ModelGroupReconciler{Client: c, ControlPlaneNamespace: "foretoken-system", ImagePullSecrets: []corev1.LocalObjectReference{{Name: "registry-auth"}}}
 		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(group)}
@@ -42,6 +43,22 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		}
 		if len(pod.ImagePullSecrets) != 1 || pod.ImagePullSecrets[0].Name != "registry-auth" {
 			t.Fatalf("model-server image pull secrets = %#v", pod.ImagePullSecrets)
+		}
+		env := make(map[string]corev1.EnvVar)
+		for _, item := range pod.Containers[0].Env {
+			env[item.Name] = item
+		}
+		if env["HF_HOME"].Value != "/cache/models" || env["VLLM_CACHE_ROOT"].Value != "/cache/vllm" || env["TORCHINDUCTOR_CACHE_DIR"].Value != "/cache/torch" || env["TRITON_CACHE_DIR"].Value != "/cache/triton" {
+			t.Fatalf("runtime cache environment = %#v", env)
+		}
+		cacheMounted := false
+		for _, volume := range pod.Volumes {
+			if volume.Name == "runtime-cache" && volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == "runtime-cache" {
+				cacheMounted = true
+			}
+		}
+		if !cacheMounted {
+			t.Fatalf("runtime cache volume = %#v", pod.Volumes)
 		}
 		serviceObject := get(t, ctx, c, request.NamespacedName, new(corev1.Service))
 		if !metav1.IsControlledBy(serviceObject, group) || serviceObject.Spec.Selector["inference.foretoken.io/model-group"] != group.Name || len(serviceObject.Spec.Ports) != 1 || serviceObject.Spec.Ports[0].Name != "model-server" {

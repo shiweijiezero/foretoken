@@ -90,24 +90,28 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，命令行工具不会自动接管。
 
-### 持久化模型缓存
+### 持久化运行时缓存
 
-Hugging Face 访问受限的集群可以把每个模型快照准备一次并保存到已有的命名空间内 PVC。运行 `FrontendService` 或 `ModelService` 的每个命名空间都需要存在同名 PVC，并且所有工作负载节点都必须能够挂载该存储；多节点部署通常需要 `ReadWriteMany` 存储：
+Foretoken 可以把一个已有 PVC 挂载为共享运行时缓存。模型服务器负责模型的下载和加载；同一个缓存还可以跨 Pod 重启保留 vLLM、TorchInductor、Triton 和其他 backend 的编译产物。运行 `FrontendService` 或 `ModelService` 的每个命名空间都需要存在同名 PVC，并且所有工作负载节点都必须能够挂载该存储；多节点部署通常需要 `ReadWriteMany` 存储。
 
 ```yaml
 workload:
-  modelCache:
+  cache:
     claimName: model-cache
-    mountPath: /var/cache/foretoken/huggingface
-    offline: false
-    huggingFace:
-      endpoint: https://huggingface.example.com
+    mountPath: /var/cache/foretoken
+
+runtime:
+  vllm:
+    modelSource:
+      endpoint: https://model-source.example.com
       tokenSecret:
-        name: huggingface-token
+        name: model-source-token
         key: token
 ```
 
-Token Secret 只由模型准备 Job 读取。准备完成后，Frontend 和 model-server Pod 从共享缓存加载，不再访问 Hugging Face。只有所需快照已经存在时才设置 `offline: true`。Foretoken 不创建 PVC，也不选择默认镜像站。
+`workload.cache` 只配置持久化存储。可选的 `runtime.vllm.modelSource` 会传给 vLLM model-server adapter，但不会在平台 API 中选择具体 provider。adapter 决定如何解释模型标识，以及在缓存根目录下使用哪些子目录。Foretoken 不创建 PVC、不选择 StorageClass，也不删除缓存文件。
+
+未配置 `claimName` 时，持久化缓存关闭，平台继续使用原有的临时运行时行为。PVC 要求、运行生命周期和排查方法见[持久化运行时缓存](../docs/development/runtime-cache_zh.md)。
 
 ## 部署和管理模型服务
 

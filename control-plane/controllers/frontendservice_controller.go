@@ -65,7 +65,7 @@ type FrontendRuntimeProfile struct {
 	Image            string
 	Port             int32
 	ImagePullSecrets []corev1.LocalObjectReference
-	ArtifactCache    *inferencev1alpha1.ModelArtifactCache
+	RuntimeCache     *inferencev1alpha1.RuntimeCache
 	Gateway          *GatewayParent
 }
 
@@ -106,8 +106,11 @@ func (reconciler *FrontendServiceReconciler) frontendsInNamespace(ctx context.Co
 	return requests
 }
 
-// servingArtifactCacheReady reports whether every selected ModelGroup revision uses the configured cache.
-func (reconciler *FrontendServiceReconciler) servingArtifactCacheReady(ctx context.Context, namespace string) (bool, error) {
+// servingCacheReady reports whether every selected ModelGroup revision uses the configured cache.
+func (reconciler *FrontendServiceReconciler) servingCacheReady(ctx context.Context, namespace string) (bool, error) {
+	if reconciler.RuntimeProfile.RuntimeCache == nil {
+		return true, nil
+	}
 	var services inferencev1alpha1.ModelServiceList
 	if err := reconciler.List(ctx, &services, client.InNamespace(namespace)); err != nil {
 		return false, fmt.Errorf("list ModelServices for frontend artifact cache: %w", err)
@@ -142,7 +145,7 @@ func (reconciler *FrontendServiceReconciler) servingArtifactCacheReady(ctx conte
 				group := &groups.Items[groupIndex]
 				if routingGroupOwnedBy(group, pool) && group.Spec.Revision == selected.Revision {
 					matched = true
-					if !reflect.DeepEqual(group.Spec.Artifacts.Cache, reconciler.RuntimeProfile.ArtifactCache) {
+					if !routingGroupReady(group) || !reflect.DeepEqual(group.Spec.Artifacts.Cache, reconciler.RuntimeProfile.RuntimeCache) {
 						return false, nil
 					}
 				}
@@ -174,20 +177,20 @@ func (reconciler *FrontendServiceReconciler) Reconcile(ctx context.Context, requ
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ServingSnapshotProjectionFailed", FailureMessage: err.Error()})
 	}
-	artifactCacheReady, err := reconciler.servingArtifactCacheReady(ctx, frontend.Namespace)
+	cacheReady, err := reconciler.servingCacheReady(ctx, frontend.Namespace)
 	if err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ArtifactCacheProjectionFailed", FailureMessage: err.Error()})
+		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeCacheProjectionFailed", FailureMessage: err.Error()})
 	}
 	profile := reconciler.RuntimeProfile
 	applyDeployment := true
-	if !artifactCacheReady {
+	if !cacheReady {
 		current := new(appsv1.Deployment)
 		if err := reconciler.Get(ctx, client.ObjectKeyFromObject(frontend), current); err == nil {
 			applyDeployment = false
 		} else if apierrors.IsNotFound(err) {
-			profile.ArtifactCache = nil
+			profile.RuntimeCache = nil
 		} else {
-			return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ArtifactCacheProjectionFailed", FailureMessage: err.Error()})
+			return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeCacheProjectionFailed", FailureMessage: err.Error()})
 		}
 	}
 

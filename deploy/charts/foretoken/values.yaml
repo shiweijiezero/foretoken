@@ -21,16 +21,10 @@ controller:
 # Each named Secret must exist in the namespace of the FrontendService or ModelService workload.
 workload:
   imagePullSecrets: []
-  # The named PVC and optional token Secret must exist in every workload namespace.
-  modelCache:
+  # The named PVC must exist in every workload namespace.
+  cache:
     claimName: ""
-    mountPath: /var/cache/foretoken/huggingface
-    offline: false
-    huggingFace:
-      endpoint: ""
-      tokenSecret:
-        name: ""
-        key: token
+    mountPath: /var/cache/foretoken
 
 # Local mode uses a LoadBalancer Service. Gateway mode attaches an HTTPRoute to a Gateway.
 frontend:
@@ -60,6 +54,12 @@ runtime:
     image: ghcr.io/shiweijiezero/foretoken/model-server:0.0.1-alpha.1
     profileRevision: default
     modelServerPort: 9000
+    # Optional source access is interpreted by the vLLM runtime adapter.
+    modelSource:
+      endpoint: ""
+      tokenSecret:
+        name: ""
+        key: token
     gpu:
       resourceName: nvidia.com/gpu
       runtimeClassName: ""

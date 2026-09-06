@@ -97,7 +97,7 @@
       "type": "object",
       "required": [
         "imagePullSecrets",
-        "modelCache"
+        "cache"
       ],
       "properties": {
         "imagePullSecrets": {
@@ -116,13 +116,11 @@
             "additionalProperties": false
           }
         },
-        "modelCache": {
+        "cache": {
           "type": "object",
           "required": [
             "claimName",
-            "mountPath",
-            "offline",
-            "huggingFace"
+            "mountPath"
           ],
           "properties": {
             "claimName": {
@@ -131,39 +129,6 @@
             "mountPath": {
               "type": "string",
               "pattern": "^/"
-            },
-            "offline": {
-              "type": "boolean"
-            },
-            "huggingFace": {
-              "type": "object",
-              "required": [
-                "endpoint",
-                "tokenSecret"
-              ],
-              "properties": {
-                "endpoint": {
-                  "type": "string"
-                },
-                "tokenSecret": {
-                  "type": "object",
-                  "required": [
-                    "name",
-                    "key"
-                  ],
-                  "properties": {
-                    "name": {
-                      "type": "string"
-                    },
-                    "key": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "additionalProperties": false
-                }
-              },
-              "additionalProperties": false
             }
           },
           "additionalProperties": false
@@ -269,7 +234,8 @@
             "image",
             "profileRevision",
             "modelServerPort",
-            "gpu"
+            "gpu",
+            "modelSource"
           ],
           "properties": {
             "image": {
@@ -562,6 +528,36 @@
                   }
                 }
               ]
+            },
+            "modelSource": {
+              "type": "object",
+              "required": [
+                "endpoint",
+                "tokenSecret"
+              ],
+              "properties": {
+                "endpoint": {
+                  "type": "string"
+                },
+                "tokenSecret": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "key"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

@@ -217,16 +217,6 @@ rules:
       - get
       - patch
   - apiGroups:
-      - batch
-    resources:
-      - jobs
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - delete
-  - apiGroups:
       - apps
     resources:
       - deployments

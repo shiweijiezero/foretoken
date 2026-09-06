@@ -10,10 +10,6 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/controllers"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
-	appsv1 "k8s.io/api/apps/v1"
-	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -23,121 +19,6 @@ import (
 // TestModelServingControllerLifecycle protects controller-owned pool and group materialization across serving revisions.
 func TestModelServingControllerLifecycle(t *testing.T) {
 	ctx := context.Background()
-	t.Run("model artifacts gate new Pools and feed shared serving cache", func(t *testing.T) {
-		service := modelService("cached", 1)
-		service.Generation = 2
-		pool := modelPool(service, "cached-default", 1)
-		pool.Spec.Template.ModelRevision = "old"
-		service.Status.ServingGeneration = 1
-		service.Status.ServingPoolRevisions = []inferencev1alpha1.ServingPoolRevision{{PoolName: "default", PoolUID: string(pool.UID), Revision: "old"}}
-		meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: readyCondition, Status: metav1.ConditionTrue, Reason: "Ready", ObservedGeneration: 1})
-		oldGroup := modelGroup(pool, "cached-old-0", 0)
-		oldGroup.Spec.Revision = "old"
-		markGroupReady(oldGroup)
-		profile := controllers.ModelArtifactProfile{
-			Image: "vllm:test", ClaimName: "model-cache", MountPath: "/cache/huggingface",
-			Endpoint: "https://hub.example", TokenSecretName: "hf-token", TokenSecretKey: "token",
-			ImagePullSecrets: []corev1.LocalObjectReference{{Name: "registry-auth"}},
-		}
-		c := controllerClient(t, service, pool, oldGroup)
-		r := &controllers.ModelServiceReconciler{Client: c, ArtifactProfile: profile}
-		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(service)}
-		for range 2 {
-			if _, err := r.Reconcile(ctx, request); err != nil {
-				t.Fatal(err)
-			}
-		}
-		job := get(t, ctx, c, client.ObjectKey{Namespace: service.Namespace, Name: "model-artifacts-cacheduid"}, new(batchv1.Job))
-		if !metav1.IsControlledBy(job, service) || job.Spec.Template.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "model-cache" || job.Spec.Template.Spec.Containers[0].Command[0] != "foretoken-prepare-hf-snapshot" {
-			t.Fatalf("artifact Job = %#v", job)
-		}
-		currentPool := get(t, ctx, c, client.ObjectKeyFromObject(pool), new(inferencev1alpha1.ModelPool))
-		if currentPool.Spec.Template.ModelRevision != "old" {
-			t.Fatalf("serving Pool changed before artifacts were ready: %#v", currentPool.Spec.Template)
-		}
-		currentService := get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.ModelService))
-		if condition := meta.FindStatusCondition(currentService.Status.Conditions, "ArtifactsReady"); condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "Preparing" {
-			t.Fatalf("artifact status while preparing = %#v", currentService.Status)
-		}
-		if condition := meta.FindStatusCondition(currentService.Status.Conditions, readyCondition); condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != "ServingPreviousGeneration" {
-			t.Fatalf("service readiness while preparing = %#v", currentService.Status)
-		}
-		oldGroup.Status.ReadyMembers = 0
-		oldGroup.Status.Conditions = nil
-		if err := c.Status().Update(ctx, oldGroup); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := r.Reconcile(ctx, request); err != nil {
-			t.Fatal(err)
-		}
-		currentService = get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.ModelService))
-		if condition := meta.FindStatusCondition(currentService.Status.Conditions, readyCondition); condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "PoolsNotReady" {
-			t.Fatalf("service retained stale readiness while artifacts prepared = %#v", currentService.Status)
-		}
-		markGroupReady(oldGroup)
-		if err := c.Status().Update(ctx, oldGroup); err != nil {
-			t.Fatal(err)
-		}
-		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
-		if err := c.Status().Update(ctx, job); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := r.Reconcile(ctx, request); err != nil {
-			t.Fatal(err)
-		}
-		currentPool = get(t, ctx, c, client.ObjectKeyFromObject(pool), new(inferencev1alpha1.ModelPool))
-		if currentPool.Spec.Template.ModelRevision != "main" || currentPool.Spec.Template.ArtifactCache == nil || currentPool.Spec.Template.ArtifactCache.ClaimName != "model-cache" || currentPool.Spec.Template.ArtifactCache.MountPath != "/cache/huggingface" {
-			t.Fatalf("target Pool was not applied after artifact preparation: %#v", currentPool.Spec.Template)
-		}
-		currentService = get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.ModelService))
-		if condition := meta.FindStatusCondition(currentService.Status.Conditions, "ArtifactsReady"); condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != "Prepared" {
-			t.Fatalf("prepared artifact status = %#v", currentService.Status)
-		}
-
-		group := modelGroup(currentPool, "cached-r1-0", 0)
-		if err := c.Create(ctx, group); err != nil {
-			t.Fatal(err)
-		}
-		groupReconciler := &controllers.ModelGroupReconciler{Client: c, ControlPlaneNamespace: "foretoken-system"}
-		groupRequest := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(group)}
-		for range 2 {
-			if _, err := groupReconciler.Reconcile(ctx, groupRequest); err != nil {
-				t.Fatal(err)
-			}
-		}
-		deployment := get(t, ctx, c, groupRequest.NamespacedName, new(appsv1.Deployment))
-		container := deployment.Spec.Template.Spec.Containers[0]
-		if deployment.Spec.Template.Spec.Volumes[3].PersistentVolumeClaim.ClaimName != "model-cache" || container.VolumeMounts[3].MountPath != "/cache/huggingface" {
-			t.Fatalf("model cache projection = %#v", deployment.Spec.Template.Spec)
-		}
-
-		failedService := modelService("failed-cache", 1)
-		if err := c.Create(ctx, failedService); err != nil {
-			t.Fatal(err)
-		}
-		failedRequest := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(failedService)}
-		for range 2 {
-			if _, err := r.Reconcile(ctx, failedRequest); err != nil {
-				t.Fatal(err)
-			}
-		}
-		failedJob := get(t, ctx, c, client.ObjectKey{Namespace: failedService.Namespace, Name: "model-artifacts-failedcacheuid"}, new(batchv1.Job))
-		failedJob.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
-		if err := c.Status().Update(ctx, failedJob); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := r.Reconcile(ctx, failedRequest); err != nil {
-			t.Fatal(err)
-		}
-		failedService = get(t, ctx, c, failedRequest.NamespacedName, new(inferencev1alpha1.ModelService))
-		if condition := meta.FindStatusCondition(failedService.Status.Conditions, "ArtifactsReady"); condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "PreparationFailed" {
-			t.Fatalf("failed artifact status = %#v", failedService.Status)
-		}
-		if err := c.Get(ctx, client.ObjectKey{Namespace: failedService.Namespace, Name: "failed-cache-default"}, new(inferencev1alpha1.ModelPool)); !apierrors.IsNotFound(err) {
-			t.Fatalf("failed artifact preparation materialized a ModelPool: %v", err)
-		}
-	})
-
 	t.Run("ModelService materializes owned Pool and aggregates readiness", func(t *testing.T) {
 		service := modelService("chat", 1)
 		c := controllerClient(t, service)

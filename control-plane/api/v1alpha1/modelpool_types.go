@@ -57,8 +57,8 @@ type NormalizedKVCache struct {
 	MooncakeStore *NormalizedMooncakeStore `json:"mooncakeStore,omitempty"`
 }
 
-// ModelArtifactCache identifies the persistent Hugging Face cache prepared for serving workloads.
-type ModelArtifactCache struct {
+// RuntimeCache identifies the persistent runtime cache shared by serving workloads.
+type RuntimeCache struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	ClaimName string `json:"claimName"`
@@ -67,6 +67,19 @@ type ModelArtifactCache struct {
 	// +kubebuilder:validation:MaxLength=1024
 	// +kubebuilder:validation:Pattern="^/"
 	MountPath string `json:"mountPath"`
+}
+
+// RuntimeSourceAccess contains optional source settings consumed by the runtime adapter.
+type RuntimeSourceAccess struct {
+	// Endpoint is interpreted by the selected runtime adapter.
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// TokenSecretName and TokenSecretKey identify an optional namespace-local credential.
+	// +optional
+	TokenSecretName string `json:"tokenSecretName,omitempty"`
+	// +optional
+	TokenSecretKey string `json:"tokenSecretKey,omitempty"`
 }
 
 // NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
@@ -93,9 +106,13 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MaxLength=256
 	TokenizerRevision string `json:"tokenizerRevision,omitempty"`
 
-	// ArtifactCache is set by the ModelService controller after the referenced snapshots are ready.
+	// RuntimeCache is set by the ModelService controller when persistent runtime caching is enabled.
 	// +optional
-	ArtifactCache *ModelArtifactCache `json:"artifactCache,omitempty"`
+	RuntimeCache *RuntimeCache `json:"runtimeCache,omitempty"`
+
+	// SourceAccess is set by the ModelService controller from the selected runtime profile.
+	// +optional
+	SourceAccess *RuntimeSourceAccess `json:"sourceAccess,omitempty"`
 
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`
