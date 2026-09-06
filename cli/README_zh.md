@@ -145,6 +145,10 @@ Host 值在直接访问时是 URL authority，在 HTTP Gateway 模式下是配�
 
 ```bash
 pip install 'foretoken[bench]'
+
+# 如果使用源码：
+# pip install -e .
+# pip install -e '.[bench]'
 ```
 
 或在已经激活的 uv 虚拟环境中安装评测依赖：

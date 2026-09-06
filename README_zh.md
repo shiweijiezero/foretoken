@@ -82,6 +82,10 @@ curl --fail-with-body --no-buffer \
 
 ```bash
 pip install 'foretoken[bench]'
+
+# 如果使用源码：
+# pip install -e .
+# pip install -e '.[bench]'
 foretoken bench examples/quickstart
 ```
 

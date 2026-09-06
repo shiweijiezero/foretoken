@@ -10,6 +10,10 @@
 
 ```bash
 pip install 'foretoken[bench]'
+
+# 如果使用源码：
+# pip install -e .
+# pip install -e '.[bench]'
 ```
 
 评测 Foretoken 部署时，先安装平台，再评测 Kustomize 配置：

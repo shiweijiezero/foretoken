@@ -51,7 +51,7 @@ def default_platform_config() -> PlatformConfig:
     """Return the version-aligned configuration owned by the installed CLI."""
     return PlatformConfig(
         namespace="foretoken-platform",
-        management_label=("foretoken.io/managed-by", "foretoken"),
+        management_label=("foretoken.io/managed-by", "foretoken-cli"),
         install_source_label="foretoken.io/install-source",
         platform=ManagedChart(
             release_name="foretoken",

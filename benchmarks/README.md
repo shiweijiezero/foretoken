@@ -10,6 +10,10 @@ Run benchmark commands from the repository root with Python 3.10 or later:
 
 ```bash
 pip install 'foretoken[bench]'
+
+# For a source checkout:
+# pip install -e .
+# pip install -e '.[bench]'
 ```
 
 For a Foretoken deployment, install the platform before benchmarking a Kustomize configuration:

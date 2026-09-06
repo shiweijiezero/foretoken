@@ -145,6 +145,10 @@ Install the optional benchmark dependencies with pip:
 
 ```bash
 pip install 'foretoken[bench]'
+
+# For a source checkout:
+# pip install -e .
+# pip install -e '.[bench]'
 ```
 
 Or install the benchmark dependencies in the activated uv environment:
