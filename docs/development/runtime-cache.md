@@ -12,14 +12,6 @@ workload:
   cache:
     claimName: model-cache
     mountPath: /var/cache/foretoken
-
-runtime:
-  vllm:
-    modelSource:
-      endpoint: https://model-source.example.com
-      tokenSecret:
-        name: model-source-token
-        key: token
 ```
 
 The PVC must already exist in every workload namespace and be mountable from every eligible node. Multi-node deployments normally require `ReadWriteMany`. `mountPath` is a container path, not a host path. Foretoken does not create or delete the PVC.

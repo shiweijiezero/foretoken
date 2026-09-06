@@ -12,14 +12,6 @@ workload:
   cache:
     claimName: model-cache
     mountPath: /var/cache/foretoken
-
-runtime:
-  vllm:
-    modelSource:
-      endpoint: https://model-source.example.com
-      tokenSecret:
-        name: model-source-token
-        key: token
 ```
 
 每个 workload namespace 都必须提前创建 PVC，并确保所有可能运行工作负载的节点都能挂载它。多节点部署通常需要 `ReadWriteMany`。`mountPath` 是容器内路径，不是宿主机路径。Foretoken 不创建或删除 PVC。
