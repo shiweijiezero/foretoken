@@ -8,13 +8,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from foretoken_cli.accelerators._exporter import object_name
-from foretoken_cli.accelerators.discovery import (
+from foretoken.accelerators._exporter import object_name
+from foretoken.accelerators.discovery import (
     AcceleratorMetricsDiscovery,
     ExporterMonitor,
 )
-from foretoken_cli.kubernetes import resource_ref
-from foretoken_cli.manifest import DeploymentError, ResourceRef
+from foretoken.kubernetes import resource_ref
+from foretoken.manifest import DeploymentError, ResourceRef
 
 
 @dataclass(frozen=True)

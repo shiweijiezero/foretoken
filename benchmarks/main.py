@@ -16,7 +16,7 @@ from benchmarks.arguments import parse_arguments
 from benchmarks.deployment import benchmark_deployment
 from benchmarks.logger.cli import configure_logging, print_endpoint
 from benchmarks.runner.select_runner import select_runner
-from foretoken_cli.manifest import DeploymentError
+from foretoken.manifest import DeploymentError
 
 logger = logging.getLogger(__name__)
 

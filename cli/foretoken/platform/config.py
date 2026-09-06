@@ -10,8 +10,8 @@ from pathlib import Path
 
 import yaml
 
-from foretoken_cli import package_version
-from foretoken_cli.manifest import DeploymentError
+from foretoken import package_version
+from foretoken.manifest import DeploymentError
 
 
 @dataclass(frozen=True)

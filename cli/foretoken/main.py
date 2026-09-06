@@ -10,7 +10,7 @@ import time
 from collections.abc import Sequence
 from urllib.parse import urlsplit
 
-from foretoken_cli.arguments import (
+from foretoken.arguments import (
     BenchCommand,
     DeleteCommand,
     DeployCommand,
@@ -20,7 +20,7 @@ from foretoken_cli.arguments import (
     UninstallCommand,
     parse_arguments,
 )
-from foretoken_cli.kubernetes import (
+from foretoken.kubernetes import (
     Kubectl,
     ResourceProgress,
     load_deployment,
@@ -30,8 +30,8 @@ from foretoken_cli.kubernetes import (
     timeout_seconds,
     wait_for_resources,
 )
-from foretoken_cli.manifest import DeploymentError, ResourceRef
-from foretoken_cli.platform import PlatformLifecycle
+from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.platform import PlatformLifecycle
 
 
 def _deployment_resources(
@@ -147,7 +147,7 @@ def _bench(arguments: Sequence[str]) -> None:
     try:
         from benchmarks.main import main as benchmark_main
     except ModuleNotFoundError as exc:
-        if exc.name and not exc.name.startswith(("benchmarks", "foretoken_cli")):
+        if exc.name and not exc.name.startswith(("benchmarks", "foretoken")):
             raise SystemExit(
                 "foretoken bench requires benchmark dependencies; "
                 "install them with: pip install 'foretoken[bench]'"

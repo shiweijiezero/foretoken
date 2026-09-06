@@ -154,7 +154,7 @@ Change to the Foretoken project directory:
 cd /path/to/your/foretoken
 ```
 
-Install the CLI with pip:
+Install the command-line tool with pip:
 
 ```bash
 pip install -e .
@@ -204,7 +204,7 @@ spec:
   hostname: foretoken.example.com
 ```
 
-Install Gateway mode and deploy the Quick Start from release images. The CLI installs Envoy Gateway automatically when the cluster has no accepted Envoy controller:
+Install Gateway mode and deploy the Quick Start from release images. The command-line tool installs Envoy Gateway automatically when the cluster has no accepted Envoy controller:
 
 ```bash
 foretoken install --frontend-mode gateway

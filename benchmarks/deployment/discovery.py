@@ -13,14 +13,14 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
-from foretoken_cli.kubernetes import (
+from foretoken.kubernetes import (
     FrontendEndpoint,
     Kubectl,
     resolve_frontend_endpoint,
     timeout_seconds,
     wait_for_resources,
 )
-from foretoken_cli.manifest import DeploymentError, ForetokenDeployment
+from foretoken.manifest import DeploymentError, ForetokenDeployment
 
 
 @dataclass(frozen=True)

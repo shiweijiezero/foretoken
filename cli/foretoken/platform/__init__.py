@@ -3,6 +3,6 @@
 
 """Foretoken platform installation and managed dependency lifecycle."""
 
-from foretoken_cli.platform.lifecycle import PlatformLifecycle
+from foretoken.platform.lifecycle import PlatformLifecycle
 
 __all__ = ["PlatformLifecycle"]

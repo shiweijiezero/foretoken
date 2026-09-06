@@ -8,8 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from foretoken_cli.kubernetes import Kubectl
-from foretoken_cli.manifest import DeploymentError
+from foretoken.kubernetes import Kubectl
+from foretoken.manifest import DeploymentError
 
 _PROMETHEUS_API_GROUP = "monitoring.coreos.com"
 _REQUIRED_PROMETHEUS_RESOURCES = frozenset(

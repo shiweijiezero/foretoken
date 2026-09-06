@@ -154,7 +154,7 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 cd /path/to/your/foretoken
 ```
 
-使用 pip 安装 CLI：
+使用 pip 安装命令行工具：
 
 ```bash
 pip install -e .
@@ -204,7 +204,7 @@ spec:
   hostname: foretoken.example.com
 ```
 
-安装网关模式并使用发布镜像部署快速开始示例。集群没有已就绪的 Envoy Controller 时，CLI 会自动安装 Envoy Gateway：
+安装网关模式并使用发布镜像部署快速开始示例。集群没有已就绪的 Envoy Controller 时，命令行工具会自动安装 Envoy Gateway：
 
 ```bash
 foretoken install --frontend-mode gateway

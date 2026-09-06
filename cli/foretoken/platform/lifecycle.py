@@ -5,11 +5,11 @@
 
 from __future__ import annotations
 
-from foretoken_cli.accelerators.discovery import ExporterDiscovery
-from foretoken_cli.accelerators.metax import MetaXMetricsDiscovery
-from foretoken_cli.accelerators.nvidia import NvidiaMetricsDiscovery
-from foretoken_cli.arguments import InstallCommand, UninstallCommand
-from foretoken_cli.kubernetes import (
+from foretoken.accelerators.discovery import ExporterDiscovery
+from foretoken.accelerators.metax import MetaXMetricsDiscovery
+from foretoken.accelerators.nvidia import NvidiaMetricsDiscovery
+from foretoken.arguments import InstallCommand, UninstallCommand
+from foretoken.kubernetes import (
     Kubectl,
     control_plane_deployments,
     mark_managed_metrics_scraper_namespace,
@@ -17,15 +17,15 @@ from foretoken_cli.kubernetes import (
     timeout_seconds,
     unmark_managed_metrics_scraper_namespace,
 )
-from foretoken_cli.manifest import DeploymentError
-from foretoken_cli.observability import PrometheusRef, select_prometheus
-from foretoken_cli.platform.config import (
+from foretoken.manifest import DeploymentError
+from foretoken.observability import PrometheusRef, select_prometheus
+from foretoken.platform.config import (
     default_platform_config,
     validate_platform_values,
 )
-from foretoken_cli.platform.gateway import GatewayControllerLifecycle
-from foretoken_cli.platform.helm import Helm
-from foretoken_cli.source import (
+from foretoken.platform.gateway import GatewayControllerLifecycle
+from foretoken.platform.helm import Helm
+from foretoken.source import (
     prepare_source_images,
     restart_changed_source_deployments,
 )

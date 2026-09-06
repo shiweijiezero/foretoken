@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from foretoken_cli.accelerators._exporter import object_name
-from foretoken_cli.accelerators.discovery import AcceleratorMetricsDiscovery, ExporterMonitor
-from foretoken_cli.manifest import DeploymentError
+from foretoken.accelerators._exporter import object_name
+from foretoken.accelerators.discovery import AcceleratorMetricsDiscovery, ExporterMonitor
+from foretoken.manifest import DeploymentError
 
 
 class MetaXMetricsDiscovery(AcceleratorMetricsDiscovery):

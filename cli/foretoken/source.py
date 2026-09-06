@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from foretoken_cli.kubernetes import Kubectl, resource_ref
-from foretoken_cli.manifest import DeploymentError
+from foretoken.kubernetes import Kubectl, resource_ref
+from foretoken.manifest import DeploymentError
 
 
 @dataclass(frozen=True)

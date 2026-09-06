@@ -33,9 +33,9 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 本快速开始需要 Python 3.10 或更高版本、Kubernetes 集群、`kubectl`、Helm 和至少一块可用 GPU。如需在单台机器上准备测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。
 
-### 1. 安装 CLI
+### 1. 安装命令行工具
 
-安装已经发布的 CLI 包：
+安装已经发布的命令行工具包：
 
 ```bash
 pip install foretoken
@@ -130,7 +130,7 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-要复用其他 Gateway Controller 管理的 Gateway、指定 listener 或配置 TLS，见 [CLI 使用指南](cli/README_zh.md)。
+要复用其他 Gateway Controller 管理的 Gateway、指定 listener 或配置 TLS，见[命令行工具使用指南](cli/README_zh.md)。
 
 ## 停止与卸载
 
@@ -142,7 +142,7 @@ foretoken delete examples/quickstart
 foretoken uninstall
 ```
 
-卸载时会保留 Foretoken CRD 和复用的集群组件，并删除平台以及由 CLI 管理的监控或 Gateway 资源。
+卸载时会保留 Foretoken CRD 和复用的集群组件，并删除平台以及由命令行工具管理的监控或 Gateway 资源。
 
 ## 相关项目
 
@@ -154,7 +154,7 @@ foretoken uninstall
 
 ## 贡献
 
-欢迎贡献部署基线、硬件适配、性能评测、路由算法、扩缩容算法、测试和文档。
+欢迎通过代码、文档、测试、设计讨论、问题反馈等方式参与 Foretoken；部署、硬件、性能评测、路由和扩缩容等方向的改进都很有价值。
 性能相关变更需要附上测试条件、原始结果和可重复执行的命令。
 开发原则、协作约定和 Pull Request 流程见 [《为 Foretoken 做贡献》](CONTRIBUTING_zh.md)。
 

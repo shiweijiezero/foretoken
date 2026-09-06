@@ -33,9 +33,9 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 This Quick Start requires Python 3.10 or later, a Kubernetes cluster, `kubectl`, Helm, and at least one available GPU. See the [k3d guide](docs/k3d-deployment.md) to prepare a single-machine test cluster.
 
-### 1. Install the CLI
+### 1. Install the command-line tool
 
-Install the published CLI package:
+Install the published command-line tool package:
 
 ```bash
 pip install foretoken
@@ -83,7 +83,7 @@ curl --fail-with-body --no-buffer \
 ```bash
 pip install 'foretoken[bench]'
 
-# For a source checkout:
+# For source installation from the repository:
 # pip install -e .
 # pip install -e '.[bench]'
 foretoken bench examples/quickstart
@@ -130,7 +130,7 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-See the [CLI guide](cli/README.md) to reuse a Gateway from another controller, select a listener, or configure TLS.
+See the [command-line tool guide](cli/README.md) to reuse a Gateway from another controller, select a listener, or configure TLS.
 
 ## Stop and Uninstall
 
@@ -142,7 +142,7 @@ foretoken delete examples/quickstart
 foretoken uninstall
 ```
 
-The uninstall command preserves Foretoken CRDs and reused cluster components. It removes the platform and the monitoring or Gateway resources managed by the CLI.
+The uninstall command preserves Foretoken CRDs and reused cluster components. It removes the platform and the monitoring or Gateway resources managed by the command-line tool.
 
 ## Related Projects
 
@@ -154,7 +154,7 @@ The uninstall command preserves Foretoken CRDs and reused cluster components. It
 
 ## Contributing
 
-Contributions to deployment baselines, hardware support, benchmarking, routing and autoscaling algorithms, tests, and documentation are welcome.
+Contributions of all kinds are welcome, including code, documentation, tests, design discussions, issue reports, and improvements to deployment, hardware, benchmarking, routing, and autoscaling.
 Performance-related changes should include the test setup, raw results, and reproducible commands.
 See [Contributing to Foretoken](CONTRIBUTING.md) for development principles, collaboration expectations, and the pull request workflow.
 

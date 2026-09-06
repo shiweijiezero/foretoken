@@ -9,16 +9,16 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
-from foretoken_cli.accelerators._exporter import (
+from foretoken.accelerators._exporter import (
     monitor_selects_service,
     object_name,
     owned_by_daemonset,
     pod_ready,
     service_selects_pods,
 )
-from foretoken_cli.kubernetes import Kubectl, resource_ref
-from foretoken_cli.manifest import DeploymentError, ResourceRef
-from foretoken_cli.observability import (
+from foretoken.kubernetes import Kubectl, resource_ref
+from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.observability import (
     PrometheusRef,
     prometheus_selects_service_monitor,
 )

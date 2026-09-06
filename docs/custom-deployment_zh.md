@@ -20,7 +20,7 @@ kubectl get nodes
 
 ## 2. 从源码构建镜像并安装平台
 
-使用 pip 从源码根目录安装 CLI：
+使用 pip 从源码根目录安装命令行工具：
 
 ```bash
 pip install -e .
@@ -83,7 +83,7 @@ Deployment 应显示所有期望副本均已 Ready。模型工作负载只会在
 
 快速开始工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。使用 k3d 时，先按[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)完成 GPU 配置，并确认当前 Kubernetes 上下文指向目标 k3d 集群。
 
-需要启动示例前端服务和 `Qwen/Qwen3-0.6B` 模型服务时，使用第 2 节已安装的 CLI 从仓库根目录部署：
+需要启动示例前端服务和 `Qwen/Qwen3-0.6B` 模型服务时，使用第 2 节已安装的命令行工具从仓库根目录部署：
 
 ```bash
 foretoken deploy examples/quickstart --timeout 6m

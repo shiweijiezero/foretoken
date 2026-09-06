@@ -7,12 +7,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from foretoken_cli.arguments import InstallCommand
-from foretoken_cli.kubernetes import Kubectl
-from foretoken_cli.manifest import DeploymentError
-from foretoken_cli.platform.helm import Helm
-from foretoken_cli.platform.types import PlatformGatewayConfig, ReleaseRef
-from foretoken_cli.platform.gateway_resources import (
+from foretoken.arguments import InstallCommand
+from foretoken.kubernetes import Kubectl
+from foretoken.manifest import DeploymentError
+from foretoken.platform.helm import Helm
+from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef
+from foretoken.platform.gateway_resources import (
     _gateway_classes_for_controller,
     _discover_gateway_class,
     _other_controller_gateway_classes,

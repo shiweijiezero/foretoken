@@ -14,8 +14,8 @@ from typing import Any
 import yaml
 
 from benchmarks.deployment.discovery import BenchmarkEndpoint, discover_endpoint
-from foretoken_cli.kubernetes import Kubectl, load_deployment
-from foretoken_cli.manifest import DeploymentError, ForetokenDeployment
+from foretoken.kubernetes import Kubectl, load_deployment
+from foretoken.manifest import DeploymentError, ForetokenDeployment
 
 logger = logging.getLogger(__name__)
 

@@ -13,9 +13,9 @@ import subprocess
 from collections.abc import Iterable
 from typing import Any, NoReturn
 
-from foretoken_cli.manifest import DeploymentError
-from foretoken_cli.platform.config import PlatformConfig
-from foretoken_cli.platform.types import ReleaseRef
+from foretoken.manifest import DeploymentError
+from foretoken.platform.config import PlatformConfig
+from foretoken.platform.types import ReleaseRef
 
 
 class HelmClient:

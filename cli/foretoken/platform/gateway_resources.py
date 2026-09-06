@@ -8,9 +8,9 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from foretoken_cli.kubernetes import Kubectl, timeout_seconds
-from foretoken_cli.manifest import DeploymentError, ResourceRef
-from foretoken_cli.platform.types import ReleaseRef
+from foretoken.kubernetes import Kubectl, timeout_seconds
+from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.platform.types import ReleaseRef
 
 def _gateway_class_accepted(value: dict[str, Any]) -> bool:
     """Return whether a GatewayClass is accepted for its current generation."""

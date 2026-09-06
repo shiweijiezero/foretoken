@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from foretoken_cli.observability import matches_label_selector
+from foretoken.observability import matches_label_selector
 
 
 def object_name(value: dict[str, Any]) -> str:

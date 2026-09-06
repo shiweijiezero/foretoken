@@ -9,7 +9,7 @@ import argparse
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from foretoken_cli import package_version
+from foretoken import package_version
 
 
 @dataclass(frozen=True)

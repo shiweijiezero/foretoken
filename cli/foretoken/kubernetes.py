@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from foretoken_cli.manifest import (
+from foretoken.manifest import (
     DeploymentError,
     ForetokenDeployment,
     ResourceRef,

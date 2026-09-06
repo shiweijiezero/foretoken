@@ -20,7 +20,7 @@ kubectl get nodes
 
 ## 2. Build images and install the platform from source
 
-Install the CLI from the source root with pip:
+Install the command-line tool from the source root with pip:
 
 ```bash
 pip install -e .
@@ -83,7 +83,7 @@ The Deployment should report all desired replicas as Ready. Model workloads appe
 
 The Quick Start workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. With k3d, first configure the GPUs as described in [Deploy Foretoken with k3d](k3d-deployment.md), then confirm that the current Kubernetes context points to the target k3d cluster.
 
-To start the example frontend and `Qwen/Qwen3-0.6B` model service, deploy from the repository root using the CLI installed in section 2:
+To start the example frontend and `Qwen/Qwen3-0.6B` model service, deploy from the repository root using the command-line tool installed in section 2:
 
 ```bash
 foretoken deploy examples/quickstart --timeout 6m

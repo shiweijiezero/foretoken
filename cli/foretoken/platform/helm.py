@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import json
 
-from foretoken_cli.manifest import DeploymentError
-from foretoken_cli.platform.helm_client import HelmClient
-from foretoken_cli.platform.types import PlatformGatewayConfig, ReleaseRef
-from foretoken_cli.source import SourceImages
+from foretoken.manifest import DeploymentError
+from foretoken.platform.helm_client import HelmClient
+from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef
+from foretoken.source import SourceImages
 
 
 class Helm(HelmClient):

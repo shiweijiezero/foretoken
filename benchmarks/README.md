@@ -11,7 +11,7 @@ Run benchmark commands from the repository root with Python 3.10 or later:
 ```bash
 pip install 'foretoken[bench]'
 
-# For a source checkout:
+# For source installation from the repository:
 # pip install -e .
 # pip install -e '.[bench]'
 ```
