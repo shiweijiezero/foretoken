@@ -44,6 +44,27 @@ The controller owns the evaluation schedule. `periodic` evaluates each complete,
 
 The scale-down window uses recent recommendations held by the current controller process. A controller restart or leadership change does not preserve that history, so it can shorten a pending scale-down delay.
 
+## Configure AIMD autoscaling
+
+AIMD adds a fixed number of replicas when aggregate queue depth exceeds the configured threshold. It reduces an idle target to a percentage of its current capacity when both queued and active requests are zero:
+
+```yaml
+spec:
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 8
+    decision:
+      algorithm: aimd
+      aimd:
+        additiveIncrease: 1
+        multiplicativeDecreasePercent: 50
+        scaleUpQueuedRequests: 0
+    adjustment:
+      algorithm: direct
+```
+
+With these values, any queued request recommends one additional replica, while an idle target recommends half of its current replicas. Integer multiplication rounds down, and the lifecycle resolver then applies `minReplicas` and `maxReplicas`. Use `direct` to apply the AIMD recommendation exactly; selecting `step` intentionally limits either direction to one replica per evaluation and may apply stabilization windows.
+
 ## Observe a decision
 
 Autoscaling results are published in `.status.autoscaling[]`, one entry for each scaling target. Query the maintained multi-model example with:

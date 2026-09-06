@@ -112,10 +112,38 @@ spec:
                     description: ModelAutoscalingDecisionConfig configures desired-capacity
                       calculation.
                     properties:
+                      aimd:
+                        description: ModelAutoscalingAIMDDecisionConfig configures
+                          additive growth and multiplicative idle reduction.
+                        properties:
+                          additiveIncrease:
+                            default: 1
+                            description: AdditiveIncrease is the number of replicas
+                              added when queue pressure exceeds the threshold.
+                            format: int32
+                            minimum: 1
+                            type: integer
+                          multiplicativeDecreasePercent:
+                            default: 50
+                            description: MultiplicativeDecreasePercent is the percentage
+                              of current replicas retained when idle.
+                            format: int32
+                            maximum: 99
+                            minimum: 1
+                            type: integer
+                          scaleUpQueuedRequests:
+                            default: 0
+                            description: ScaleUpQueuedRequests is the aggregate queue
+                              depth that must be exceeded to add capacity.
+                            format: int64
+                            minimum: 0
+                            type: integer
+                        type: object
                       algorithm:
                         description: AutoscalingDecisionAlgorithm selects how observed
                           demand is converted into desired replica capacity.
                         enum:
+                        - aimd
                         - queue
                         - queue_threshold
                         type: string
@@ -159,8 +187,11 @@ spec:
                     x-kubernetes-validations:
                     - message: autoscaling decision must configure exactly the selected
                         algorithm
-                      rule: 'self.algorithm == ''queue'' ? has(self.queue) && !has(self.queueThreshold)
-                        : has(self.queueThreshold) && !has(self.queue)'
+                      rule: (self.algorithm == 'aimd' && has(self.aimd) && !has(self.queue)
+                        && !has(self.queueThreshold)) || (self.algorithm == 'queue'
+                        && !has(self.aimd) && has(self.queue) && !has(self.queueThreshold))
+                        || (self.algorithm == 'queue_threshold' && !has(self.aimd)
+                        && !has(self.queue) && has(self.queueThreshold))
                   maxReplicas:
                     format: int32
                     minimum: 1

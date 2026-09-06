@@ -44,6 +44,27 @@ spec:
 
 缩容稳定窗口使用当前控制器进程保存的近期建议。控制器重启或 leader 切换不会保留这些历史，因此可能缩短等待缩容的延迟。
 
+## 配置 AIMD 自动扩缩容
+
+AIMD 在服务总排队深度超过阈值时增加固定数量的副本；当等待请求和活跃请求都为零时，将空闲目标缩减到当前容量的一定百分比：
+
+```yaml
+spec:
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 8
+    decision:
+      algorithm: aimd
+      aimd:
+        additiveIncrease: 1
+        multiplicativeDecreasePercent: 50
+        scaleUpQueuedRequests: 0
+    adjustment:
+      algorithm: direct
+```
+
+使用这些参数时，只要出现排队请求就建议增加一个副本，完全空闲时建议保留一半副本。整数乘法向下取整，随后由生命周期解析器应用 `minReplicas` 和 `maxReplicas`。使用 `direct` 可完整应用 AIMD 建议；选择 `step` 会有意将每次评估的变化限制为一个副本，并可能应用稳定窗口。
+
 ## 查看扩缩容决策
 
 自动扩缩容结果发布在 `.status.autoscaling[]` 中，每个扩缩目标对应一项。使用以下命令查询维护中的多模型示例：
