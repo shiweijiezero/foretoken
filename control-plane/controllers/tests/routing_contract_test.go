@@ -128,7 +128,7 @@ func TestFrontendLocalModeNeedsNoGateway(t *testing.T) {
 	c := controllerClient(t, frontend, staleRoute, model, pool, group)
 	r := &controllers.FrontendServiceReconciler{
 		Client: c, APIReader: c,
-		RuntimeProfile: controllers.FrontendRuntimeProfile{Image: "frontend:test", Port: 8080},
+		RuntimeProfile: controllers.FrontendRuntimeProfile{Image: "frontend:test", Port: 8080, ArtifactCache: &inferencev1alpha1.ModelArtifactCache{ClaimName: "model-cache", MountPath: "/cache/huggingface"}},
 	}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(frontend)}
 	for range 2 {
@@ -144,6 +144,11 @@ func TestFrontendLocalModeNeedsNoGateway(t *testing.T) {
 		t.Fatalf("local frontend Service type = %q", service.Spec.Type)
 	}
 	deployment := get(t, ctx, c, request.NamespacedName, new(appsv1.Deployment))
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		if volume.Name == "tokenizer-cache" && volume.PersistentVolumeClaim != nil {
+			t.Fatalf("frontend switched cache before the selected model generation: %#v", volume)
+		}
+	}
 	deployment.Status.ObservedGeneration = deployment.Generation
 	deployment.Status.AvailableReplicas = 1
 	deployment.Status.Conditions = []appsv1.DeploymentCondition{{Type: appsv1.DeploymentAvailable, Status: corev1.ConditionTrue}}
@@ -159,5 +164,31 @@ func TestFrontendLocalModeNeedsNoGateway(t *testing.T) {
 	}
 	if condition := meta.FindStatusCondition(current.Status.Conditions, "RouteAccepted"); condition == nil || condition.Status != metav1.ConditionTrue || condition.Reason != "NotRequired" {
 		t.Fatalf("local frontend route condition = %#v", current.Status)
+	}
+
+	cachedGroup := modelGroup(pool, "local-model-r2-0", 0)
+	cachedGroup.Spec.Revision = "r2"
+	cachedGroup.Spec.Artifacts.Cache = &inferencev1alpha1.ModelArtifactCache{ClaimName: "model-cache", MountPath: "/cache/huggingface"}
+	markGroupReady(cachedGroup)
+	if err := c.Create(ctx, cachedGroup); err != nil {
+		t.Fatal(err)
+	}
+	model = get(t, ctx, c, client.ObjectKeyFromObject(model), new(inferencev1alpha1.ModelService))
+	model.Status.ServingPoolRevisions[0].Revision = "r2"
+	if err := c.Status().Update(ctx, model); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	deployment = get(t, ctx, c, request.NamespacedName, new(appsv1.Deployment))
+	cacheMounted := false
+	for _, volume := range deployment.Spec.Template.Spec.Volumes {
+		if volume.Name == "tokenizer-cache" && volume.PersistentVolumeClaim != nil && volume.PersistentVolumeClaim.ClaimName == "model-cache" {
+			cacheMounted = true
+		}
+	}
+	if !cacheMounted {
+		t.Fatalf("frontend did not switch after the cached generation was selected: %#v", deployment.Spec.Template.Spec.Volumes)
 	}
 }

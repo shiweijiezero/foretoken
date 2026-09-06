@@ -111,6 +111,12 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- if and (ne (trim .Values.workload.modelCache.huggingFace.tokenSecret.name) "") (eq (trim .Values.workload.modelCache.huggingFace.tokenSecret.key) "") -}}
+{{- fail "workload.modelCache.huggingFace.tokenSecret.key is required when name is set" -}}
+{{- end -}}
+{{- if and (eq (trim .Values.workload.modelCache.claimName) "") (or .Values.workload.modelCache.offline (ne (trim .Values.workload.modelCache.huggingFace.endpoint) "") (ne (trim .Values.workload.modelCache.huggingFace.tokenSecret.name) "")) -}}
+{{- fail "workload.modelCache.claimName is required when model cache settings are configured" -}}
+{{- end -}}
 {{- if ne (trim .Values.runtime.vllm.image) "" -}}
 {{- if eq (trim .Values.runtime.vllm.gpu.resourceName) "" -}}
 {{- fail "runtime.vllm.gpu.resourceName is required when runtime.vllm.image is set" -}}

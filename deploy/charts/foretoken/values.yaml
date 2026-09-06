@@ -21,6 +21,16 @@ controller:
 # Each named Secret must exist in the namespace of the FrontendService or ModelService workload.
 workload:
   imagePullSecrets: []
+  # The named PVC and optional token Secret must exist in every workload namespace.
+  modelCache:
+    claimName: ""
+    mountPath: /var/cache/foretoken/huggingface
+    offline: false
+    huggingFace:
+      endpoint: ""
+      tokenSecret:
+        name: ""
+        key: token
 
 # Local mode uses a LoadBalancer Service. Gateway mode attaches an HTTPRoute to a Gateway.
 frontend:

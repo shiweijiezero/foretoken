@@ -94,6 +94,23 @@ spec:
                 description: ModelGroupArtifacts identifies immutable model and tokenizer
                   inputs.
                 properties:
+                  cache:
+                    description: Cache is the persistent Hugging Face cache prepared
+                      before this immutable Group revision was created.
+                    properties:
+                      claimName:
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      mountPath:
+                        maxLength: 1024
+                        minLength: 1
+                        pattern: ^/
+                        type: string
+                    required:
+                    - claimName
+                    - mountPath
+                    type: object
                   model:
                     maxLength: 1024
                     minLength: 1

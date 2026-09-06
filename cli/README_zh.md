@@ -88,7 +88,26 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 ### 安装选项
 
-重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，命令行工具 不会自动接管。
+重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，命令行工具不会自动接管。
+
+### 持久化模型缓存
+
+Hugging Face 访问受限的集群可以把每个模型快照准备一次并保存到已有的命名空间内 PVC。运行 `FrontendService` 或 `ModelService` 的每个命名空间都需要存在同名 PVC，并且所有工作负载节点都必须能够挂载该存储；多节点部署通常需要 `ReadWriteMany` 存储：
+
+```yaml
+workload:
+  modelCache:
+    claimName: model-cache
+    mountPath: /var/cache/foretoken/huggingface
+    offline: false
+    huggingFace:
+      endpoint: https://huggingface.example.com
+      tokenSecret:
+        name: huggingface-token
+        key: token
+```
+
+Token Secret 只由模型准备 Job 读取。准备完成后，Frontend 和 model-server Pod 从共享缓存加载，不再访问 Hugging Face。只有所需快照已经存在时才设置 `offline: true`。Foretoken 不创建 PVC，也不选择默认镜像站。
 
 ## 部署和管理模型服务
 

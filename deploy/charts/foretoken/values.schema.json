@@ -96,7 +96,8 @@
     "workload": {
       "type": "object",
       "required": [
-        "imagePullSecrets"
+        "imagePullSecrets",
+        "modelCache"
       ],
       "properties": {
         "imagePullSecrets": {
@@ -114,6 +115,58 @@
             },
             "additionalProperties": false
           }
+        },
+        "modelCache": {
+          "type": "object",
+          "required": [
+            "claimName",
+            "mountPath",
+            "offline",
+            "huggingFace"
+          ],
+          "properties": {
+            "claimName": {
+              "type": "string"
+            },
+            "mountPath": {
+              "type": "string",
+              "pattern": "^/"
+            },
+            "offline": {
+              "type": "boolean"
+            },
+            "huggingFace": {
+              "type": "object",
+              "required": [
+                "endpoint",
+                "tokenSecret"
+              ],
+              "properties": {
+                "endpoint": {
+                  "type": "string"
+                },
+                "tokenSecret": {
+                  "type": "object",
+                  "required": [
+                    "name",
+                    "key"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

@@ -18,6 +18,7 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/compiler"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
+	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -48,6 +49,7 @@ type ScalingMetricsProvider interface {
 type ModelServiceReconciler struct {
 	client.Client
 	MetricsProvider ScalingMetricsProvider
+	ArtifactProfile ModelArtifactProfile
 
 	recommendationHistoryOnce sync.Once
 	recommendationHistory     *core.RecommendationHistory
@@ -65,6 +67,7 @@ func (reconciler *ModelServiceReconciler) SetupWithManager(manager ctrl.Manager)
 	return ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelService{}).
 		Owns(&inferencev1alpha1.ModelPool{}).
+		Owns(&batchv1.Job{}).
 		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
 		Complete(reconciler)
 }
@@ -111,12 +114,32 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 			ready:    conditionState{metav1.ConditionFalse, "ScalingFailed", "ModelService capacity is invalid"},
 		})
 	}
+	artifacts, artifactErr := reconciler.reconcileModelArtifacts(ctx, service, compiledPools)
+	if artifactErr != nil {
+		artifacts = modelArtifactState{Reason: "PreparationFailed", Message: artifactErr.Error()}
+	}
+	artifactCondition := &conditionState{conditionStatus(artifacts.Ready), artifacts.Reason, artifacts.Message}
+	if !artifacts.Ready {
+		ready, readinessErr := reconciler.servingStateWhileArtifactsPrepare(ctx, service, compiledPools)
+		statusErr := reconciler.updateStatus(ctx, service, modelServiceState{
+			compiled:  conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
+			artifacts: artifactCondition,
+			pools:     conditionState{metav1.ConditionFalse, "ArtifactsNotReady", "No new ModelPools were materialized"},
+			ready:     ready,
+		})
+		return ctrl.Result{}, errors.Join(artifactErr, readinessErr, statusErr)
+	}
+	artifactCache := reconciler.ArtifactProfile.ServingCache()
+	for index := range compiledPools {
+		compiledPools[index].Template.ArtifactCache = artifactCache.DeepCopy()
+	}
 
 	if err := reconciler.reconcilePools(ctx, service, compiledPools); err != nil {
 		statusErr := reconciler.updateStatus(ctx, service, modelServiceState{
-			compiled: conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
-			pools:    conditionState{metav1.ConditionFalse, "ApplyFailed", "ModelPools were not fully materialized"},
-			ready:    conditionState{metav1.ConditionFalse, "PoolsNotReady", "ModelPools are not ready"},
+			compiled:  conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
+			artifacts: artifactCondition,
+			pools:     conditionState{metav1.ConditionFalse, "ApplyFailed", "ModelPools were not fully materialized"},
+			ready:     conditionState{metav1.ConditionFalse, "PoolsNotReady", "ModelPools are not ready"},
 		})
 		return ctrl.Result{}, errors.Join(err, statusErr)
 	}
@@ -130,6 +153,7 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 	pools := conditionState{metav1.ConditionTrue, "Applied", "All ModelPools were materialized"}
 	if err := reconciler.updateStatus(ctx, service, modelServiceState{
 		compiled:    conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
+		artifacts:   artifactCondition,
 		pools:       pools,
 		ready:       conditionState{conditionStatus(ready), readyReason, readyMessage},
 		autoscaling: &autoscalingStatus,
@@ -450,6 +474,7 @@ type conditionState struct {
 
 type modelServiceState struct {
 	compiled    conditionState
+	artifacts   *conditionState
 	pools       conditionState
 	ready       conditionState
 	autoscaling *[]inferencev1alpha1.AutoscalingTargetStatus
@@ -460,6 +485,9 @@ func (reconciler *ModelServiceReconciler) updateStatus(ctx context.Context, serv
 	base := service.DeepCopy()
 	service.Status.ObservedGeneration = service.Generation
 	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionIntentCompiled, Status: state.compiled.Status, Reason: state.compiled.Reason, Message: state.compiled.Message, ObservedGeneration: service.Generation})
+	if state.artifacts != nil {
+		meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionArtifactsReady, Status: state.artifacts.Status, Reason: state.artifacts.Reason, Message: state.artifacts.Message, ObservedGeneration: service.Generation})
+	}
 	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionPoolsMaterialized, Status: state.pools.Status, Reason: state.pools.Reason, Message: state.pools.Message, ObservedGeneration: service.Generation})
 	meta.SetStatusCondition(&service.Status.Conditions, metav1.Condition{Type: conditionReady, Status: state.ready.Status, Reason: state.ready.Reason, Message: state.ready.Message, ObservedGeneration: service.Generation})
 	if state.autoscaling != nil {

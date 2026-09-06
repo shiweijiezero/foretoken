@@ -65,6 +65,7 @@ type FrontendRuntimeProfile struct {
 	Image            string
 	Port             int32
 	ImagePullSecrets []corev1.LocalObjectReference
+	ArtifactCache    *inferencev1alpha1.ModelArtifactCache
 	Gateway          *GatewayParent
 }
 
@@ -105,6 +106,55 @@ func (reconciler *FrontendServiceReconciler) frontendsInNamespace(ctx context.Co
 	return requests
 }
 
+// servingArtifactCacheReady reports whether every selected ModelGroup revision uses the configured cache.
+func (reconciler *FrontendServiceReconciler) servingArtifactCacheReady(ctx context.Context, namespace string) (bool, error) {
+	var services inferencev1alpha1.ModelServiceList
+	if err := reconciler.List(ctx, &services, client.InNamespace(namespace)); err != nil {
+		return false, fmt.Errorf("list ModelServices for frontend artifact cache: %w", err)
+	}
+	var pools inferencev1alpha1.ModelPoolList
+	if err := reconciler.List(ctx, &pools, client.InNamespace(namespace)); err != nil {
+		return false, fmt.Errorf("list ModelPools for frontend artifact cache: %w", err)
+	}
+	var groups inferencev1alpha1.ModelGroupList
+	if err := reconciler.List(ctx, &groups, client.InNamespace(namespace)); err != nil {
+		return false, fmt.Errorf("list ModelGroups for frontend artifact cache: %w", err)
+	}
+	for serviceIndex := range services.Items {
+		service := &services.Items[serviceIndex]
+		if !service.DeletionTimestamp.IsZero() {
+			continue
+		}
+		for _, selected := range service.Status.ServingPoolRevisions {
+			var pool *inferencev1alpha1.ModelPool
+			for poolIndex := range pools.Items {
+				candidate := &pools.Items[poolIndex]
+				if candidate.Spec.PoolName == selected.PoolName && string(candidate.UID) == selected.PoolUID && routingPoolOwnedBy(candidate, service) {
+					pool = candidate
+					break
+				}
+			}
+			if pool == nil {
+				return false, nil
+			}
+			matched := false
+			for groupIndex := range groups.Items {
+				group := &groups.Items[groupIndex]
+				if routingGroupOwnedBy(group, pool) && group.Spec.Revision == selected.Revision {
+					matched = true
+					if !reflect.DeepEqual(group.Spec.Artifacts.Cache, reconciler.RuntimeProfile.ArtifactCache) {
+						return false, nil
+					}
+				}
+			}
+			if !matched {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
 // Reconcile applies frontend resources and keeps readiness fail-closed until a serving snapshot is installed.
 func (reconciler *FrontendServiceReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	frontend := new(inferencev1alpha1.FrontendService)
@@ -124,12 +174,31 @@ func (reconciler *FrontendServiceReconciler) Reconcile(ctx context.Context, requ
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ServingSnapshotProjectionFailed", FailureMessage: err.Error()})
 	}
+	artifactCacheReady, err := reconciler.servingArtifactCacheReady(ctx, frontend.Namespace)
+	if err != nil {
+		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ArtifactCacheProjectionFailed", FailureMessage: err.Error()})
+	}
+	profile := reconciler.RuntimeProfile
+	applyDeployment := true
+	if !artifactCacheReady {
+		current := new(appsv1.Deployment)
+		if err := reconciler.Get(ctx, client.ObjectKeyFromObject(frontend), current); err == nil {
+			applyDeployment = false
+		} else if apierrors.IsNotFound(err) {
+			profile.ArtifactCache = nil
+		} else {
+			return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ArtifactCacheProjectionFailed", FailureMessage: err.Error()})
+		}
+	}
 
-	deployment, service, route, err := frontendDesiredResources(frontend, reconciler.RuntimeProfile)
+	deployment, service, route, err := frontendDesiredResources(frontend, profile)
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
 	}
-	objects := []client.Object{deployment, service}
+	objects := []client.Object{service}
+	if applyDeployment {
+		objects = append([]client.Object{deployment}, objects...)
+	}
 	if route != nil {
 		objects = append(objects, route)
 	}

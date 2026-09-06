@@ -64,6 +64,20 @@ spec:
             {{- range .Values.workload.imagePullSecrets }}
             - {{ printf "--workload-image-pull-secret=%s" .name | quote }}
             {{- end }}
+            {{- with .Values.workload.modelCache.claimName }}
+            - {{ printf "--model-cache-claim=%s" . | quote }}
+            - {{ printf "--model-cache-mount-path=%s" $.Values.workload.modelCache.mountPath | quote }}
+            {{- if $.Values.workload.modelCache.offline }}
+            - --model-cache-offline=true
+            {{- end }}
+            {{- with $.Values.workload.modelCache.huggingFace.endpoint }}
+            - {{ printf "--hugging-face-endpoint=%s" . | quote }}
+            {{- end }}
+            {{- with $.Values.workload.modelCache.huggingFace.tokenSecret.name }}
+            - {{ printf "--hugging-face-token-secret-name=%s" . | quote }}
+            - {{ printf "--hugging-face-token-secret-key=%s" $.Values.workload.modelCache.huggingFace.tokenSecret.key | quote }}
+            {{- end }}
+            {{- end }}
             {{- if .Values.frontend.enabled }}
             - --frontend-enabled=true
             - {{ printf "--frontend-mode=%s" .Values.frontend.mode | quote }}

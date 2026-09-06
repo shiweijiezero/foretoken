@@ -90,6 +90,25 @@ Registry login authorizes the local image push. Private registries also need `im
 
 Repeatable `--values` files provide platform image, runtime, and hardware settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
 
+### Persistent model cache
+
+Clusters with limited Hugging Face access can prepare each model snapshot once in an existing namespace-local PVC. The same claim name must exist in every namespace that runs a `FrontendService` or `ModelService`, and the storage must be mountable from all workload nodes. Multi-node deployments normally require `ReadWriteMany` storage:
+
+```yaml
+workload:
+  modelCache:
+    claimName: model-cache
+    mountPath: /var/cache/foretoken/huggingface
+    offline: false
+    huggingFace:
+      endpoint: https://huggingface.example.com
+      tokenSecret:
+        name: huggingface-token
+        key: token
+```
+
+The token Secret is read only by the preparation Job. After preparation, the frontend and model-server Pods use the shared cache without Hugging Face network access. Set `offline: true` only when the required snapshots are already present. Foretoken does not create the PVC or choose a default mirror.
+
 ## Deploy and operate model services
 
 Deploy one frontend and all models rendered by a Kustomize root:

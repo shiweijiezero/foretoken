@@ -35,6 +35,7 @@ FROM ${INFERENCE_ENGINE_IMAGE}
 LABEL org.opencontainers.image.source="https://github.com/shiweijiezero/foretoken"
 
 COPY --from=builder /out/foretoken-model-server /usr/local/bin/foretoken-model-server
+COPY --chmod=0555 data-plane/model-server/prepare_hf_snapshot.py /usr/local/bin/foretoken-prepare-hf-snapshot
 
 # Preserve the inference engine image's runtime user and environment. The workload owns its
 # security context, cache environment, and writable volume mounts.

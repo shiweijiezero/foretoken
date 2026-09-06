@@ -46,6 +46,10 @@ type ModelGroupArtifacts struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
 	TokenizerRevision string `json:"tokenizerRevision"`
+
+	// Cache is the persistent Hugging Face cache prepared before this immutable Group revision was created.
+	// +optional
+	Cache *ModelArtifactCache `json:"cache,omitempty"`
 }
 
 // ModelGroupPDRuntimeConfig defines the resolved P/D transport runtime.

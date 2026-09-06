@@ -90,6 +90,23 @@ spec:
                   NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
                   Platform runtime and accelerator resolution may further constrain it before Groups are created.
                 properties:
+                  artifactCache:
+                    description: ArtifactCache is set by the ModelService controller
+                      after the referenced snapshots are ready.
+                    properties:
+                      claimName:
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                      mountPath:
+                        maxLength: 1024
+                        minLength: 1
+                        pattern: ^/
+                        type: string
+                    required:
+                    - claimName
+                    - mountPath
+                    type: object
                   backend:
                     enum:
                     - vllm

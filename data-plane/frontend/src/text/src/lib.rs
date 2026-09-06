@@ -13,7 +13,7 @@ use foretoken_chat::{
 use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_tokenizer::DynTokenizer;
 use hf_hub::api::tokio::ApiBuilder;
-use hf_hub::{Repo, RepoType, api::Siblings};
+use hf_hub::{Cache, Repo, RepoType, api::Siblings};
 use thiserror::Error;
 use vllm_text::backend::hf::HfTextBackend;
 
@@ -28,17 +28,26 @@ pub struct HfSnapshotRuntime {
 }
 
 const HF_TOKEN_ENV: &str = "HF_TOKEN";
+const HF_HUB_OFFLINE_ENV: &str = "HF_HUB_OFFLINE";
 const MODEL_FILES: &[&str] = &[
+    "added_tokens.json",
     "chat_template.json",
     "config.json",
     "generation_config.json",
+    "merges.txt",
     "preprocessor_config.json",
     "processor_config.json",
+    "sentencepiece.bpe.model",
+    "special_tokens_map.json",
+    "spiece.model",
     "tekken.json",
     "tiktoken.model",
     "tokenizer.json",
+    "tokenizer.model",
     "tokenizer_config.json",
     "video_preprocessor_config.json",
+    "vocab.json",
+    "vocab.txt",
 ];
 
 /// Loads a local tokenizer directory or downloads a pinned Hub revision into the HF cache.
@@ -56,6 +65,17 @@ pub async fn load_hf_text_backend(
         return HfTextBackend::from_model(model_id)
             .await
             .map_err(|_| TextBackendLoadError::LocalModel);
+    }
+    if let Some(snapshot) = cached_model_snapshot(model_id, revision) {
+        let snapshot = snapshot
+            .to_str()
+            .ok_or(TextBackendLoadError::NonUtf8CachePath)?;
+        return HfTextBackend::from_model(snapshot)
+            .await
+            .map_err(|_| TextBackendLoadError::CachedModel);
+    }
+    if std::env::var(HF_HUB_OFFLINE_ENV).is_ok_and(|value| value == "1") {
+        return Err(TextBackendLoadError::OfflineCacheMiss);
     }
 
     let mut builder = ApiBuilder::from_env().with_progress(false);
@@ -129,6 +149,19 @@ pub async fn load_hf_snapshot_runtime(
     })
 }
 
+fn cached_model_snapshot(model_id: &str, revision: &str) -> Option<std::path::PathBuf> {
+    let repo = Cache::from_env().repo(Repo::with_revision(
+        model_id.to_owned(),
+        RepoType::Model,
+        revision.to_owned(),
+    ));
+    MODEL_FILES
+        .iter()
+        .find_map(|file| repo.get(file))?
+        .parent()
+        .map(Path::to_path_buf)
+}
+
 fn files_for_local_hf_resolver(siblings: &[Siblings]) -> Vec<String> {
     siblings
         .iter()
@@ -160,6 +193,8 @@ pub enum TextBackendLoadError {
     LocalModel,
     #[error("could not initialize the Hugging Face client")]
     HubClient,
+    #[error("Hugging Face snapshot is not available in the offline cache")]
+    OfflineCacheMiss,
     #[error("could not retrieve Hugging Face repository metadata")]
     RepositoryInfo,
     #[error("could not download required tokenizer artifact {file}")]

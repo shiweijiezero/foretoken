@@ -9,6 +9,7 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -49,7 +50,7 @@ func controllerClient(t *testing.T, objects ...client.Object) client.Client {
 		&inferencev1alpha1.ModelGroup{}, &inferencev1alpha1.KVService{},
 		&inferencev1alpha1.KVPool{}, &inferencev1alpha1.KVGroup{},
 		&inferencev1alpha1.FrontendService{}, &appsv1.Deployment{},
-		&gatewayv1.HTTPRoute{},
+		&batchv1.Job{}, &gatewayv1.HTTPRoute{},
 	).WithObjects(objects...).Build()
 }
 
@@ -100,7 +101,7 @@ func modelGroup(pool *inferencev1alpha1.ModelPool, name string, ordinal int32) *
 		Spec: inferencev1alpha1.ModelGroupSpec{
 			ModelPoolRef: inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
 			Revision:     "r1", Ordinal: ordinal, Role: pool.Spec.Template.Role,
-			Artifacts: inferencev1alpha1.ModelGroupArtifacts{Model: pool.Spec.Template.Model, ModelRevision: "main", Tokenizer: pool.Spec.Template.Model, TokenizerRevision: "main"},
+			Artifacts: inferencev1alpha1.ModelGroupArtifacts{Model: pool.Spec.Template.Model, ModelRevision: pool.Spec.Template.ModelRevision, Tokenizer: pool.Spec.Template.Tokenizer, TokenizerRevision: pool.Spec.Template.TokenizerRevision, Cache: pool.Spec.Template.ArtifactCache.DeepCopy()},
 			Runtime: inferencev1alpha1.ModelGroupRuntime{
 				Backend:                               "vllm",
 				Image:                                 "vllm:test",

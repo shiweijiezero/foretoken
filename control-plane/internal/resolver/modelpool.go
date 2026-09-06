@@ -150,6 +150,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			ModelRevision:     effective.Revision,
 			Tokenizer:         effective.Tokenizer,
 			TokenizerRevision: effective.TokenizerRevision,
+			Cache:             template.ArtifactCache.DeepCopy(),
 		},
 		Runtime: inferencev1alpha1.ModelGroupRuntime{
 			Backend:                               template.Backend,
