@@ -17,16 +17,17 @@ spec:
   size: 100Gi
 ```
 
-将内容保存为 `runtime-cache.yaml`，并在部署模型前执行：
+将内容保存为部署目录中的 `cache.yaml`，并加入 `kustomization.yaml`：
 
-```bash
-kubectl apply -f runtime-cache.yaml
-kubectl wait --for=condition=Ready runtimecache/models \
-  --namespace foretoken-demo \
-  --timeout=5m
+```yaml
+resources:
+  - namespace.yaml
+  - cache.yaml
+  - frontend.yaml
+  - model.yaml
 ```
 
-使用 Kustomize 时，也可以把 `runtime-cache.yaml` 加入 `resources`，由 `foretoken deploy` 和其他 manifest 一起应用。
+然后照常运行 `foretoken deploy`。如果不使用 Kustomize，也可以执行 `kubectl apply -f cache.yaml`。
 
 Foretoken 默认创建 `ReadWriteMany` PVC，并使用 `Retain` 保留策略。命名空间的默认 `StorageClass` 必须支持所选访问模式。同一命名空间中的模型和 Frontend 工作负载会自动使用唯一且 Ready 的 `RuntimeCache`。
 

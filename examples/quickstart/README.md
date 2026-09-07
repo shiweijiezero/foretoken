@@ -7,7 +7,7 @@
 
 For two models with autoscaling, see [Multi-Model Quick Start](../multi-model-quickstart/README.md).
 
-This example deploys one frontend and one `Qwen/Qwen3-0.6B` model replica. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform.
+This example deploys one frontend and one `Qwen/Qwen3-0.6B` model replica. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. It also creates a 10 GiB runtime cache PVC through the namespace's default `StorageClass`.
 
 ## Deploy
 
