@@ -89,7 +89,7 @@ pub async fn serve(
         .await
 }
 
-/// Waits for the controller-maintained free-space reserve before starting model download and load.
+/// Waits for the controller-required free space before starting model download and load.
 pub async fn wait_until_ready(config: &Config) -> Result<(), String> {
     while filesystem_capacity(config)?.1 < config.minimum_available_bytes {
         tokio::time::sleep(Duration::from_secs(2)).await;

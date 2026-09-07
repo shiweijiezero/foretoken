@@ -10,9 +10,9 @@ use std::time::Instant;
 use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity};
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
-use foretoken_model_server::cache_agent;
 use foretoken_model_server::config::RuntimeConfig;
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
+use foretoken_model_server::runtime_cache;
 use foretoken_model_server::runtime_transport::LOOPBACK_HOST;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
@@ -32,20 +32,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Resolve the controller-owned launch plan before starting any engine or network task.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
     let cache_shutdown = Arc::new(Notify::new());
-    let cache_config = cache_agent::Config::from_env().map_err(std::io::Error::other)?;
+    let cache_config = runtime_cache::Config::from_env().map_err(std::io::Error::other)?;
     let mut cache_server = if let Some(server_config) = cache_config.clone() {
         let address = (config.listen_address.ip(), server_config.observation_port());
         let listener = TcpListener::bind(address).await?;
         let shutdown = cache_shutdown.clone();
         Some(tokio::spawn(async move {
-            cache_agent::serve(listener, server_config, shutdown).await
+            runtime_cache::serve(listener, server_config, shutdown).await
         }))
     } else {
         None
     };
     if let Some(cache_config) = &cache_config {
         tokio::select! {
-            result = cache_agent::wait_until_ready(cache_config) => result.map_err(std::io::Error::other)?,
+            result = runtime_cache::wait_until_ready(cache_config) => result.map_err(std::io::Error::other)?,
             reason = wait_cache_server(&mut cache_server) => return Err(std::io::Error::other(reason).into()),
         }
     }
