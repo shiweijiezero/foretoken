@@ -162,15 +162,18 @@ fn epd_snapshot() -> ServingSnapshot {
         pd_components: vec![],
         pd_pipeline_scopes: vec![],
         epd_components: vec![
-            epd_component("e", ModelServerRole::Encoder),
-            epd_component("p", ModelServerRole::Prefill),
-            epd_component("d", ModelServerRole::Decode),
+            epd_component("e0", ModelServerRole::Encoder),
+            epd_component("e1", ModelServerRole::Encoder),
+            epd_component("p0", ModelServerRole::Prefill),
+            epd_component("p1", ModelServerRole::Prefill),
+            epd_component("d0", ModelServerRole::Decode),
+            epd_component("d1", ModelServerRole::Decode),
         ],
         epd_pipeline_scopes: vec![SnapshotEpdPipelineScope {
             pipeline_scope_id: "epd-a".into(),
-            encoder_route_target_id: RouteTargetId::new("e"),
-            prefill_route_target_id: RouteTargetId::new("p"),
-            decode_route_target_id: RouteTargetId::new("d"),
+            encoder_route_target_ids: vec![RouteTargetId::new("e0"), RouteTargetId::new("e1")],
+            prefill_route_target_ids: vec![RouteTargetId::new("p0"), RouteTargetId::new("p1")],
+            decode_route_target_ids: vec![RouteTargetId::new("d0"), RouteTargetId::new("d1")],
         }],
     }
 }
@@ -182,7 +185,7 @@ fn runtime_metadata() -> RuntimeMetadataResponse {
             model: "model".into(),
             revision: "r1".into(),
         },
-        model_dtype: ModelDtype::BFloat16,
+        model_dtype: Some(ModelDtype::BFloat16),
         effective_max_model_len: 32_768,
         ec_transfer: None,
         capabilities: ["chat".into()].into_iter().collect(),
@@ -435,12 +438,12 @@ async fn pd_snapshot_projects_routing_readiness_and_kv_contracts() {
     );
 }
 
-// Protects E/P/D triplet projection and prefill-only KV event ownership.
+// Protects cross-group E/P/D compatibility-scope projection and prefill-only KV event ownership.
 #[test]
-fn epd_snapshot_projects_one_static_triplet_and_prefill_kv_source() {
+fn epd_snapshot_projects_all_compatible_routes_and_prefill_kv_sources() {
     let build = BackendRegistryBuild::from_snapshot(epd_snapshot()).unwrap();
     let routes = build.registry.model_routes().routes();
-    assert_eq!(routes.len(), 3);
+    assert_eq!(routes.len(), 6);
     assert!(
         routes
             .iter()
@@ -451,9 +454,10 @@ fn epd_snapshot_projects_one_static_triplet_and_prefill_kv_source() {
             route.admission_targets.targets() == std::slice::from_ref(&route.target)
         })
     );
-    assert_eq!(build.kv_runtime_config.route_bindings.len(), 1);
-    assert_eq!(build.kv_runtime_config.event_sources.len(), 1);
-    assert!(build.kv_runtime_config.route_bindings.contains_key("p"));
+    assert_eq!(build.kv_runtime_config.route_bindings.len(), 2);
+    assert_eq!(build.kv_runtime_config.event_sources.len(), 2);
+    assert!(build.kv_runtime_config.route_bindings.contains_key("p0"));
+    assert!(build.kv_runtime_config.route_bindings.contains_key("p1"));
 }
 
 // Protects atomic route withdrawal when the controller publishes an empty snapshot.
@@ -485,7 +489,7 @@ fn invalid_scaling_identity_or_pipeline_scope_is_rejected() {
     ));
 
     let mut epd = epd_snapshot();
-    epd.epd_pipeline_scopes[0].decode_route_target_id = RouteTargetId::new("other");
+    epd.epd_pipeline_scopes[0].decode_route_target_ids = vec![RouteTargetId::new("other")];
     assert!(matches!(
         BackendRegistry::from_snapshot(epd),
         Err(SnapshotError::InvalidEpdPipelineScope(_))

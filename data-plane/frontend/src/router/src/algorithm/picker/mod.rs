@@ -24,7 +24,7 @@ declare_router_algorithms! {
 /// - `scored_candidates`: current-stage candidates with route target metadata and `RouteScore` locality
 ///   and load values.
 /// - `routing_progress`: immutable E/P/D selection round and progress supplied by `RouteSession`.
-/// - `customized_context`: user-defined `C`, created per request and shared by Prefill and Decode.
+/// - `customized_context`: user-defined `C`, created per request and shared across E/P/D rounds.
 ///
 /// Returns the selected position in `scored_candidates`, or `None` when the list is empty.
 pub trait RoutePicker<C: Send + 'static = ()>: Send + Sync {

@@ -7,6 +7,18 @@
 
 本维护者指南说明手工镜像导入和原始 Helm 操作。除非另有说明，命令均从 Foretoken 仓库根目录执行。
 
+## 从公开源码构建 MetaX vLLM
+
+MetaX 将 [`vLLM-metax`](https://github.com/MetaX-MACA/vLLM-metax) 作为硬件插件发布，每个 `vX.Y.Z` tag 与相同版本的 upstream vLLM 对齐。以目标版本对应的 MetaX 官方 vLLM image 为基础，一条命令即可创建由 uv 管理的源码覆盖层，并构建 Foretoken model-server image：
+
+```bash
+METAX_BASE_IMAGE=<matching-metax-vllm-image> \
+VLLM_METAX_VERSION=0.24.0 \
+make image-model-server-metax
+```
+
+构建结果为 `foretoken-vllm-metax:0.24.0` 和 `foretoken-model-server:dev`。虚拟环境位于 `/opt/foretoken-vllm`，不会使用宿主机 Python 环境。基础镜像提供匹配的 MACA、PyTorch、mcoplib 和原生依赖，uv 在覆盖层中安装指定版本的公开 `vLLM-metax` 与 upstream vLLM tag。基础镜像应从 [vLLM-MetaX 版本矩阵](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html)选择。Foretoken 当前支持 MetaX 已公开发布的 0.20 至 0.24 版本。
+
 ## 直接导入本地镜像
 
 **选项 1：导入 Kind 集群。** 使用 Kind 验证控制平面、CRD、前端服务和调度逻辑时，可以直接创建集群。需要运行 GPU 模型服务时，使用选项 2 的 k3d，并按 [使用 k3d 部署 Foretoken](../k3d-deployment_zh.md) 指定可用 GPU。先安装 Kind：
@@ -40,7 +52,15 @@ kind create cluster \
   --config deploy/kind/multi-node.yaml
 ```
 
-创建集群后，构建并导入本地镜像。
+创建集群后，构建并导入本地镜像。vLLM adapter 支持 vLLM 0.20 至 0.28 提供的 EngineCore 协议。inference-engine image 通常通过 `python` 提供 Python 解释器；如果必须使用特定解释器路径，同时设置两个构建输入：
+
+```bash
+INFERENCE_ENGINE_IMAGE=<compatible-inference-engine-image> \
+FORETOKEN_VLLM_PYTHON=/absolute/path/to/python \
+make dev-build
+```
+
+否则直接使用默认值：
 
 ```bash
 # 预计执行时间：约 8 分钟

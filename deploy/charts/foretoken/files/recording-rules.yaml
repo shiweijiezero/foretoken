@@ -149,3 +149,507 @@ groups:
               "inference_foretoken_io_pd_pipeline_scope", "(.+)"
             )
           )
+
+      - record: foretoken:frontend_up:sum
+        expr: |
+          sum by (namespace, frontend_service) (
+            label_replace(
+              up{
+                endpoint="http",
+                inference_foretoken_io_frontend_service!=""
+              },
+              "frontend_service", "$1",
+              "inference_foretoken_io_frontend_service", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_up:sum
+        expr: |
+          sum by (namespace, model_group, model_role, pd_pipeline_scope) (
+            label_replace(
+              label_replace(
+                label_replace(
+                  up{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  },
+                  "model_group", "$1",
+                  "inference_foretoken_io_model_group", "(.+)"
+                ),
+                "model_role", "$1",
+                "inference_foretoken_io_model_role", "(.+)"
+              ),
+              "pd_pipeline_scope", "$1",
+              "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      - record: foretoken:frontend_http_request_duration_seconds:quantile5m
+        expr: |
+          label_replace(
+            histogram_quantile(
+              0.50,
+              sum by (namespace, frontend_service, handler, le) (
+                label_replace(
+                  rate(http_request_duration_seconds_bucket{
+                    endpoint="http",
+                    inference_foretoken_io_frontend_service!=""
+                  }[5m]),
+                  "frontend_service", "$1",
+                  "inference_foretoken_io_frontend_service", "(.+)"
+                )
+              )
+            ),
+            "quantile", "p50", "__name__", ".*"
+          )
+          or
+          label_replace(
+            histogram_quantile(
+              0.90,
+              sum by (namespace, frontend_service, handler, le) (
+                label_replace(
+                  rate(http_request_duration_seconds_bucket{
+                    endpoint="http",
+                    inference_foretoken_io_frontend_service!=""
+                  }[5m]),
+                  "frontend_service", "$1",
+                  "inference_foretoken_io_frontend_service", "(.+)"
+                )
+              )
+            ),
+            "quantile", "p90", "__name__", ".*"
+          )
+          or
+          label_replace(
+            histogram_quantile(
+              0.99,
+              sum by (namespace, frontend_service, handler, le) (
+                label_replace(
+                  rate(http_request_duration_seconds_bucket{
+                    endpoint="http",
+                    inference_foretoken_io_frontend_service!=""
+                  }[5m]),
+                  "frontend_service", "$1",
+                  "inference_foretoken_io_frontend_service", "(.+)"
+                )
+              )
+            ),
+            "quantile", "p99", "__name__", ".*"
+          )
+
+      - record: foretoken:frontend_upstream_queued_requests:sum
+        expr: |
+          sum by (namespace, frontend_service, target_kind, target_id) (
+            label_replace(
+              foretoken_upstream_queued_requests{
+                endpoint="http",
+                inference_foretoken_io_frontend_service!=""
+              },
+              "frontend_service", "$1",
+              "inference_foretoken_io_frontend_service", "(.+)"
+            )
+          )
+
+      - record: foretoken:frontend_kv_index_source_health_ratio:min
+        expr: |
+          min by (namespace, frontend_service) (
+            label_replace(
+              (
+                foretoken_kv_index_sources_healthy{
+                  endpoint="http",
+                  inference_foretoken_io_frontend_service!=""
+                }
+                /
+                clamp_min(
+                  foretoken_kv_index_sources_total{
+                    endpoint="http",
+                    inference_foretoken_io_frontend_service!=""
+                  },
+                  1
+                )
+              )
+              *
+              foretoken_kv_index_enabled{
+                endpoint="http",
+                inference_foretoken_io_frontend_service!=""
+              },
+              "frontend_service", "$1",
+              "inference_foretoken_io_frontend_service", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_completed_requests:rate5m
+        expr: |
+          sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, finished_reason) (
+            label_replace(
+              label_replace(
+                label_replace(
+                  rate(vllm:request_success_total{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1",
+                  "inference_foretoken_io_model_group", "(.+)"
+                ),
+                "model_role", "$1",
+                "inference_foretoken_io_model_role", "(.+)"
+              ),
+              "pd_pipeline_scope", "$1",
+              "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_e2e_request_latency_seconds:quantile5m
+        expr: |
+          label_replace(
+            histogram_quantile(
+              0.50,
+              sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+                label_replace(label_replace(label_replace(
+                  rate(vllm:e2e_request_latency_seconds_bucket{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+                ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+                ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+                )
+              )
+            ),
+            "quantile", "p50", "__name__", ".*"
+          )
+          or
+          label_replace(
+            histogram_quantile(
+              0.90,
+              sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+                label_replace(label_replace(label_replace(
+                  rate(vllm:e2e_request_latency_seconds_bucket{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+                ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+                ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+                )
+              )
+            ),
+            "quantile", "p90", "__name__", ".*"
+          )
+          or
+          label_replace(
+            histogram_quantile(
+              0.99,
+              sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+                label_replace(label_replace(label_replace(
+                  rate(vllm:e2e_request_latency_seconds_bucket{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+                ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+                ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+                )
+              )
+            ),
+            "quantile", "p99", "__name__", ".*"
+          )
+
+      - record: foretoken:model_server_time_to_first_token_seconds:quantile5m
+        expr: |
+          label_replace(
+            histogram_quantile(
+              0.50,
+              sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+                label_replace(label_replace(label_replace(
+                  rate(vllm:time_to_first_token_seconds_bucket{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+                ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+                ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+                )
+              )
+            ),
+            "quantile", "p50", "__name__", ".*"
+          )
+          or
+          label_replace(
+            histogram_quantile(
+              0.90,
+              sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+                label_replace(label_replace(label_replace(
+                  rate(vllm:time_to_first_token_seconds_bucket{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+                ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+                ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+                )
+              )
+            ),
+            "quantile", "p90", "__name__", ".*"
+          )
+          or
+          label_replace(
+            histogram_quantile(
+              0.99,
+              sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+                label_replace(label_replace(label_replace(
+                  rate(vllm:time_to_first_token_seconds_bucket{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+                ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+                ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+                )
+              )
+            ),
+            "quantile", "p99", "__name__", ".*"
+          )
+
+      - record: foretoken:model_server_time_per_output_token_seconds:quantile5m
+        expr: |
+          label_replace(
+            histogram_quantile(
+              0.50,
+              sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+                label_replace(label_replace(label_replace(
+                  rate(vllm:request_time_per_output_token_seconds_bucket{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+                ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+                ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+                )
+              )
+            ),
+            "quantile", "p50", "__name__", ".*"
+          )
+          or
+          label_replace(
+            histogram_quantile(
+              0.90,
+              sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+                label_replace(label_replace(label_replace(
+                  rate(vllm:request_time_per_output_token_seconds_bucket{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+                ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+                ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+                )
+              )
+            ),
+            "quantile", "p90", "__name__", ".*"
+          )
+          or
+          label_replace(
+            histogram_quantile(
+              0.99,
+              sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+                label_replace(label_replace(label_replace(
+                  rate(vllm:request_time_per_output_token_seconds_bucket{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+                ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+                ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+                )
+              )
+            ),
+            "quantile", "p99", "__name__", ".*"
+          )
+
+      - record: foretoken:model_server_prefix_cache_hit_ratio:rate5m
+        expr: |
+          label_replace(
+            sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name) (
+              label_replace(label_replace(label_replace(
+                rate(vllm:prefix_cache_hits_total{
+                  endpoint="model-server",
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                }[5m]),
+                "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+              ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+              ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+              )
+            )
+            /
+            clamp_min(
+              sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name) (
+                label_replace(label_replace(label_replace(
+                  rate(vllm:prefix_cache_queries_total{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+                ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+                ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+                )
+              ),
+              1e-9
+            ),
+            "cache", "local", "__name__", ".*"
+          )
+          or
+          label_replace(
+            sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name) (
+              label_replace(label_replace(label_replace(
+                rate(vllm:external_prefix_cache_hits_total{
+                  endpoint="model-server",
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                }[5m]),
+                "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+              ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+              ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+              )
+            )
+            /
+            clamp_min(
+              sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name) (
+                label_replace(label_replace(label_replace(
+                  rate(vllm:external_prefix_cache_queries_total{
+                    endpoint="model-server",
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }[5m]),
+                  "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+                ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+                ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+                )
+              ),
+              1e-9
+            ),
+            "cache", "external", "__name__", ".*"
+          )
+
+      - record: foretoken:model_server_runtime_cache_available_bytes:min
+        expr: |
+          min by (namespace, model_group, model_role, pd_pipeline_scope) (
+            label_replace(label_replace(label_replace(
+              foretoken_runtime_cache_available_bytes{
+                endpoint="model-server",
+                inference_foretoken_io_model_group!="",
+                inference_foretoken_io_model_role!=""
+              },
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_runtime_cache_usage_ratio:max
+        expr: |
+          max by (namespace, model_group, model_role, pd_pipeline_scope) (
+            label_replace(label_replace(label_replace(
+              1 - (
+                foretoken_runtime_cache_available_bytes{
+                  endpoint="model-server",
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                }
+                /
+                foretoken_runtime_cache_capacity_bytes{
+                  endpoint="model-server",
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                }
+              ),
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_runtime_cache_observation_success:min
+        expr: |
+          min by (namespace, model_group, model_role, pd_pipeline_scope) (
+            label_replace(label_replace(label_replace(
+              foretoken_runtime_cache_observation_success{
+                endpoint="model-server",
+                inference_foretoken_io_model_group!="",
+                inference_foretoken_io_model_role!=""
+              },
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_runtime_cache_temporary:max
+        expr: |
+          max by (namespace, model_group, model_role, pd_pipeline_scope) (
+            label_replace(label_replace(label_replace(
+              foretoken_runtime_cache_temporary{
+                endpoint="model-server",
+                inference_foretoken_io_model_group!="",
+                inference_foretoken_io_model_role!=""
+              },
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      - record: foretoken:accelerator_gpu_utilization_ratio
+        expr: |
+          max by (vendor, node, device_id) (
+            label_replace(label_replace(label_replace(
+              DCGM_FI_DEV_GPU_UTIL / 100,
+              "vendor", "nvidia", "__name__", ".*"
+            ), "node", "$1", "Hostname", "(.+)"
+            ), "device_id", "$1", "UUID", "(.+)"
+            )
+          )
+          or
+          max by (vendor, node, device_id) (
+            label_replace(label_replace(label_replace(
+              mx_gpu_usage / 100,
+              "vendor", "metax", "__name__", ".*"
+            ), "node", "$1", "Hostname", "(.+)"
+            ), "device_id", "$1", "uuid", "(.+)"
+            )
+          )
+
+      - record: foretoken:accelerator_gpu_memory_usage_ratio
+        expr: |
+          max by (vendor, node, device_id) (
+            label_replace(label_replace(label_replace(
+              DCGM_FI_DEV_FB_USED
+              /
+              clamp_min(DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE, 1),
+              "vendor", "nvidia", "__name__", ".*"
+            ), "node", "$1", "Hostname", "(.+)"
+            ), "device_id", "$1", "UUID", "(.+)"
+            )
+          )
+          or
+          max by (vendor, node, device_id) (
+            label_replace(label_replace(label_replace(
+              mx_memory_usage / 100,
+              "vendor", "metax", "__name__", ".*"
+            ), "node", "$1", "Hostname", "(.+)"
+            ), "device_id", "$1", "uuid", "(.+)"
+            )
+          )

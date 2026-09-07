@@ -145,8 +145,10 @@ impl BackendRegistry {
             })
             .filter_map(|route| self.metadata(&route.route_target_id))
             .map(|metadata| metadata.model_dtype);
-        let dtype = dtypes.next()?;
-        dtypes.all(|candidate| candidate == dtype).then_some(dtype)
+        let dtype = dtypes.next()??;
+        dtypes
+            .all(|candidate| candidate == Some(dtype))
+            .then_some(dtype)
     }
 
     /// Reports whether one logical model currently has an executable backend path.
