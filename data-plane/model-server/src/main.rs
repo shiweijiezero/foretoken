@@ -10,6 +10,7 @@ use std::time::Instant;
 use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity};
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
+use foretoken_model_server::cache_agent;
 use foretoken_model_server::config::RuntimeConfig;
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
 use foretoken_model_server::runtime_transport::LOOPBACK_HOST;
@@ -30,6 +31,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Resolve the controller-owned launch plan before starting any engine or network task.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
+    let cache_shutdown = Arc::new(Notify::new());
+    let cache_config = cache_agent::Config::from_env().map_err(std::io::Error::other)?;
+    let mut cache_server = if let Some(server_config) = cache_config.clone() {
+        let address = (config.listen_address.ip(), server_config.observation_port());
+        let listener = TcpListener::bind(address).await?;
+        let shutdown = cache_shutdown.clone();
+        Some(tokio::spawn(async move {
+            cache_agent::serve(listener, server_config, shutdown).await
+        }))
+    } else {
+        None
+    };
+    if let Some(cache_config) = &cache_config {
+        tokio::select! {
+            result = cache_agent::wait_until_ready(cache_config) => result.map_err(std::io::Error::other)?,
+            reason = wait_cache_server(&mut cache_server) => return Err(std::io::Error::other(reason).into()),
+        }
+    }
 
     // Resolve optional KV projection state now; connect only after the engine publisher is ready.
     let kv_events = match kv_event_adapter(&config) {
@@ -68,6 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = tokio::select! {
         result = EngineCoreClient::connect(client_config) => result.map_err(|error| std::io::Error::other(format!("could not connect to EngineCore: {error}"))),
         status = engine.wait_for_exit() => Err(std::io::Error::other(format!("managed EngineCore exited during startup: {status}"))),
+        reason = wait_cache_server(&mut cache_server) => Err(std::io::Error::other(format!("cache observation server stopped during startup: {reason}"))),
     };
     let client = match client {
         Ok(client) => client,
@@ -159,6 +179,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ClientUnhealthy(String),
         ChildExited(String),
         Server(String),
+        CacheServer(String),
     }
     let stop = tokio::select! {
         () = shutdown_signal() => Stop::Signal,
@@ -174,18 +195,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(()) => "HTTP server stopped unexpectedly".into(),
             Err(error) => format!("HTTP server failed: {error}"),
         }),
+        reason = wait_cache_server(&mut cache_server) => Stop::CacheServer(reason),
     };
     match &stop {
         Stop::Signal => info!("received shutdown signal"),
-        Stop::ClientUnhealthy(reason) | Stop::ChildExited(reason) | Stop::Server(reason) => {
-            warn!(%reason)
-        }
+        Stop::ClientUnhealthy(reason)
+        | Stop::ChildExited(reason)
+        | Stop::Server(reason)
+        | Stop::CacheServer(reason) => warn!(%reason),
     }
 
     // Stop new admission before draining HTTP handlers, the client, and finally the child process.
     health.set_accepting(false);
     health.set_client_healthy(false);
     shutdown.notify_waiters();
+    cache_shutdown.notify_waiters();
     let deadline = Instant::now() + config.launch.drain_timeout();
     if !matches!(&stop, Stop::Server(_)) {
         match tokio::time::timeout(config.launch.drain_timeout(), server.as_mut()).await {
@@ -208,9 +232,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match stop {
         Stop::Signal => Ok(()),
-        Stop::ClientUnhealthy(reason) | Stop::ChildExited(reason) | Stop::Server(reason) => {
-            Err(std::io::Error::other(reason).into())
-        }
+        Stop::ClientUnhealthy(reason)
+        | Stop::ChildExited(reason)
+        | Stop::Server(reason)
+        | Stop::CacheServer(reason) => Err(std::io::Error::other(reason).into()),
+    }
+}
+
+async fn wait_cache_server(
+    server: &mut Option<tokio::task::JoinHandle<std::io::Result<()>>>,
+) -> String {
+    let Some(server) = server else {
+        return std::future::pending().await;
+    };
+    match server.await {
+        Ok(Ok(())) => "cache observation server stopped unexpectedly".into(),
+        Ok(Err(error)) => format!("cache observation server failed: {error}"),
+        Err(error) => format!("cache observation task failed: {error}"),
     }
 }
 

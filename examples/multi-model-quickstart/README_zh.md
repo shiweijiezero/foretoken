@@ -10,7 +10,7 @@
 - `Qwen/Qwen3-0.6B` 根据请求队列从 1 个副本扩缩到 3 个副本。
 - `unsloth/Llama-3.2-1B-Instruct` 固定运行 1 个副本。
 
-每个副本使用 1 张 GPU。完整扩缩范围最多需要 4 张可调度 GPU：Qwen 最多 3 张，Llama 1 张。示例还会通过命名空间的默认 `StorageClass` 创建一个 100 GiB、`ReadWriteMany` 的运行时缓存 PVC。如需最小部署，请参阅[单模型快速开始](../quickstart/README_zh.md)。
+每个副本使用 1 张 GPU。完整扩缩范围最多需要 4 张可调度 GPU：Qwen 最多 3 张，Llama 1 张。示例还会通过命名空间的默认 `StorageClass` 创建一个从 10 GiB 起自动扩容的 `ReadWriteMany` 运行时缓存 PVC。如需最小部署，请参阅[单模型快速开始](../quickstart/README_zh.md)。
 
 ## 部署
 

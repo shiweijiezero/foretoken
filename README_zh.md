@@ -31,7 +31,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-本快速开始需要 Python 3.10 或更高版本、配置了默认 `StorageClass` 的 Kubernetes 集群、`kubectl`、Helm 和至少一块可用 GPU。如需在单台机器上准备测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。
+本快速开始需要 Python 3.10 或更高版本、配置了支持卷扩容的默认 `StorageClass` 的 Kubernetes 集群、`kubectl`、Helm 和至少一块可用 GPU。如需在单台机器上准备测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。
 
 ### 1. 安装命令行工具
 
@@ -64,7 +64,7 @@ foretoken install
 foretoken deploy examples/quickstart
 ```
 
-该示例部署一个前端服务、一个 `Qwen/Qwen3-0.6B` 模型副本和一个 100 GiB 运行时缓存 PVC。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
+该示例部署一个前端服务、一个 `Qwen/Qwen3-0.6B` 模型副本和一个从 10 GiB 起自动扩容的运行时缓存 PVC。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
 
 ### 4. 发送测试请求
 

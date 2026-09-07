@@ -5,6 +5,8 @@ package tests
 
 import (
 	"context"
+	"net"
+	"net/http"
 	"testing"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -189,15 +191,18 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 	})
 }
 
-// TestRuntimeCacheControllerLifecycle protects managed PVC creation, expansion, and retention cleanup.
+// TestRuntimeCacheControllerLifecycle protects managed PVC creation, workload binding, and retention cleanup.
 func TestRuntimeCacheControllerLifecycle(t *testing.T) {
 	ctx := context.Background()
 	cache := &inferencev1alpha1.RuntimeCache{
 		TypeMeta:   metav1.TypeMeta{APIVersion: inferencev1alpha1.GroupVersion.String(), Kind: "RuntimeCache"},
 		ObjectMeta: metav1.ObjectMeta{Name: "models", Namespace: "default", UID: "runtime-cache-uid", Generation: 1},
 		Spec: inferencev1alpha1.RuntimeCacheSpec{
-			Size: "10Gi", AccessMode: inferencev1alpha1.RuntimeCacheAccessModeReadWriteMany,
+			InitialSize: "10Gi", AccessMode: inferencev1alpha1.RuntimeCacheAccessModeReadWriteMany,
 			RetentionPolicy: inferencev1alpha1.RuntimeCacheRetentionPolicyRetain,
+			Expansion: &inferencev1alpha1.RuntimeCacheExpansion{
+				Mode: inferencev1alpha1.RuntimeCacheExpansionAutomatic, Reserve: "10Gi", MaxSize: "100Gi",
+			},
 		},
 	}
 	c := controllerClient(t, cache)
@@ -220,6 +225,11 @@ func TestRuntimeCacheControllerLifecycle(t *testing.T) {
 		t.Fatalf("managed runtime cache request = %s", initialRequest.String())
 	}
 	claim := &claims.Items[0]
+	// WaitForFirstConsumer claims must be projected before binding so a workload can trigger provisioning.
+	binding, usable, err := (controllers.RuntimeCacheProfile{MountPath: "/cache"}).Resolve(ctx, c, cache.Namespace)
+	if err != nil || !usable || binding == nil || binding.ClaimName != claim.Name {
+		t.Fatalf("pending runtime cache binding = %#v, usable = %v, error = %v", binding, usable, err)
+	}
 	claim.Status.Phase = corev1.ClaimBound
 	claim.Status.Capacity = corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("10Gi")}
 	if err := c.Status().Update(ctx, claim); err != nil {
@@ -231,31 +241,6 @@ func TestRuntimeCacheControllerLifecycle(t *testing.T) {
 	current := get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.RuntimeCache))
 	if condition := meta.FindStatusCondition(current.Status.Conditions, readyCondition); condition == nil || condition.Status != metav1.ConditionTrue || current.Status.ClaimName != claim.Name {
 		t.Fatalf("ready runtime cache status = %#v", current.Status)
-	}
-
-	current.Spec.Size = "20Gi"
-	current.Generation++
-	if err := c.Update(ctx, current); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.Reconcile(ctx, request); err != nil {
-		t.Fatal(err)
-	}
-	claim = get(t, ctx, c, client.ObjectKeyFromObject(claim), new(corev1.PersistentVolumeClaim))
-	expandedRequest := claim.Spec.Resources.Requests[corev1.ResourceStorage]
-	if expandedRequest.Cmp(resource.MustParse("20Gi")) != 0 {
-		t.Fatalf("expanded runtime cache request = %#v", claim.Spec.Resources.Requests)
-	}
-	current = get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.RuntimeCache))
-	if current.Status.Phase != inferencev1alpha1.RuntimeCachePhaseResizing {
-		t.Fatalf("resizing runtime cache status = %#v", current.Status)
-	}
-	claim.Status.Capacity[corev1.ResourceStorage] = resource.MustParse("20Gi")
-	if err := c.Status().Update(ctx, claim); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.Reconcile(ctx, request); err != nil {
-		t.Fatal(err)
 	}
 
 	service := modelService("managed-cache-model", 1)
@@ -270,8 +255,48 @@ func TestRuntimeCacheControllerLifecycle(t *testing.T) {
 		}
 	}
 	pool := get(t, ctx, c, client.ObjectKey{Namespace: service.Namespace, Name: "managed-cache-model-default"}, new(inferencev1alpha1.ModelPool))
-	if pool.Spec.Template.RuntimeCache == nil || pool.Spec.Template.RuntimeCache.ClaimName != claim.Name || pool.Spec.Template.RuntimeCache.MountPath != "/cache" {
+	if pool.Spec.Template.RuntimeCache == nil || pool.Spec.Template.RuntimeCache.ClaimName != claim.Name || pool.Spec.Template.RuntimeCache.MountPath != "/cache" || pool.Spec.Template.RuntimeCache.MinimumAvailableBytes != 10<<30 {
 		t.Fatalf("managed runtime cache binding = %#v", pool.Spec.Template.RuntimeCache)
+	}
+
+	// A mounted filesystem below reserve must grow before model loading proceeds.
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	observationServer := &http.Server{Handler: http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.Header().Set("Content-Type", "application/json")
+		_, _ = response.Write([]byte(`{"version":1,"pod_uid":"cache-pod-uid","capacity_bytes":10737418240,"available_bytes":5368709120}`))
+	})}
+	go func() { _ = observationServer.Serve(listener) }()
+	t.Cleanup(func() { _ = observationServer.Shutdown(context.Background()) })
+	observationPort := int32(listener.Addr().(*net.TCPAddr).Port)
+	group := modelGroup(pool, "managed-cache-group", 0)
+	group.Spec.Runtime.Port = observationPort - 1
+	if err := c.Create(ctx, group); err != nil {
+		t.Fatal(err)
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "managed-cache-pod", Namespace: group.Namespace, UID: "cache-pod-uid", Labels: map[string]string{
+			"inference.foretoken.io/model-group": group.Name,
+			"inference.foretoken.io/model-role":  string(group.Spec.Role),
+		}},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning, PodIP: "127.0.0.1"},
+	}
+	if err := c.Create(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Reconcile(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	claim = get(t, ctx, c, client.ObjectKeyFromObject(claim), new(corev1.PersistentVolumeClaim))
+	expandedRequest := claim.Spec.Resources.Requests[corev1.ResourceStorage]
+	if expandedRequest.Cmp(resource.MustParse("20Gi")) != 0 {
+		t.Fatalf("automatically expanded runtime cache request = %s", expandedRequest.String())
+	}
+	current = get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.RuntimeCache))
+	if current.Status.Phase != inferencev1alpha1.RuntimeCachePhaseResizing {
+		t.Fatalf("automatic expansion status = %#v", current.Status)
 	}
 
 	current = get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.RuntimeCache))

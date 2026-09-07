@@ -30,14 +30,41 @@ const (
 	RuntimeCacheRetentionPolicyRetain RuntimeCacheRetentionPolicy = "Retain"
 )
 
+// RuntimeCacheExpansionMode selects whether the controller may grow the managed PVC.
+// +enum
+// +kubebuilder:validation:Enum=Automatic;Disabled
+type RuntimeCacheExpansionMode string
+
+const (
+	RuntimeCacheExpansionAutomatic RuntimeCacheExpansionMode = "Automatic"
+	RuntimeCacheExpansionDisabled  RuntimeCacheExpansionMode = "Disabled"
+)
+
+// RuntimeCacheExpansion defines bounded automatic growth from filesystem observations.
+// +kubebuilder:validation:XValidation:rule="self.mode == 'Disabled' || (has(self.reserve) && quantity(self.reserve).compareTo(quantity('0')) > 0 && has(self.maxSize) && quantity(self.maxSize).compareTo(quantity('0')) > 0)",message="automatic expansion requires positive reserve and maxSize"
+// +kubebuilder:validation:XValidation:rule="self.mode == 'Automatic' || (!has(self.reserve) && !has(self.maxSize))",message="disabled expansion cannot set reserve or maxSize"
+// +kubebuilder:validation:XValidation:rule="self.mode != 'Automatic' || quantity(self.reserve).compareTo(quantity(self.maxSize)) <= 0",message="reserve must not exceed maxSize"
+type RuntimeCacheExpansion struct {
+	Mode RuntimeCacheExpansionMode `json:"mode"`
+
+	// Reserve is the minimum free filesystem capacity maintained for active workloads.
+	// +optional
+	Reserve ResourceQuantity `json:"reserve,omitempty"`
+
+	// MaxSize bounds the PVC request after automatic expansion.
+	// +optional
+	MaxSize ResourceQuantity `json:"maxSize,omitempty"`
+}
+
 // RuntimeCacheSpec defines one platform-managed persistent cache volume.
-// +kubebuilder:validation:XValidation:rule="quantity(self.size).compareTo(quantity('0')) > 0",message="size must be positive"
-// +kubebuilder:validation:XValidation:rule="has(self.storageClassName) == has(oldSelf.storageClassName) && (!has(self.storageClassName) || self.storageClassName == oldSelf.storageClassName) && self.accessMode == oldSelf.accessMode && self.retentionPolicy == oldSelf.retentionPolicy",message="only size is mutable"
+// +kubebuilder:validation:XValidation:rule="quantity(self.initialSize).compareTo(quantity('0')) > 0",message="initialSize must be positive"
+// +kubebuilder:validation:XValidation:rule="!has(self.expansion) || self.expansion.mode != 'Automatic' || quantity(self.expansion.maxSize).compareTo(quantity(self.initialSize)) >= 0",message="maxSize must not be smaller than initialSize"
+// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="RuntimeCache storage settings are immutable"
 type RuntimeCacheSpec struct {
 	// +optional
 	StorageClassName string `json:"storageClassName,omitempty"`
 
-	Size ResourceQuantity `json:"size"`
+	InitialSize ResourceQuantity `json:"initialSize"`
 
 	// +optional
 	// +kubebuilder:default=ReadWriteMany
@@ -46,6 +73,9 @@ type RuntimeCacheSpec struct {
 	// +optional
 	// +kubebuilder:default=Retain
 	RetentionPolicy RuntimeCacheRetentionPolicy `json:"retentionPolicy,omitempty"`
+
+	// +optional
+	Expansion *RuntimeCacheExpansion `json:"expansion,omitempty"`
 }
 
 // RuntimeCachePhase summarizes the managed PVC lifecycle.

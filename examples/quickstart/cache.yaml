@@ -6,6 +6,10 @@ kind: RuntimeCache
 metadata:
   name: models
 spec:
-  size: 100Gi # Initial requested capacity; increase this value to expand the PVC.
+  initialSize: 10Gi
   accessMode: ReadWriteOnce
   retentionPolicy: Delete
+  expansion:
+    mode: Automatic
+    reserve: 10Gi
+    maxSize: 100Gi

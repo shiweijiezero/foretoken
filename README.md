@@ -31,7 +31,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ## Quick Start
 
-This Quick Start requires Python 3.10 or later, a Kubernetes cluster with a default `StorageClass`, `kubectl`, Helm, and at least one available GPU. See the [k3d guide](docs/k3d-deployment.md) to prepare a single-machine test cluster.
+This Quick Start requires Python 3.10 or later, a Kubernetes cluster with a default `StorageClass` that supports volume expansion, `kubectl`, Helm, and at least one available GPU. See the [k3d guide](docs/k3d-deployment.md) to prepare a single-machine test cluster.
 
 ### 1. Install the command-line tool
 
@@ -64,7 +64,7 @@ This installs the Foretoken CRDs and controller in the `foretoken-platform` name
 foretoken deploy examples/quickstart
 ```
 
-This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and a 100 GiB runtime cache PVC. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
+This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and an automatically expanding runtime cache PVC starting at 10 GiB. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
 
 ### 4. Send a test request
 

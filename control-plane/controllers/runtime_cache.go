@@ -11,12 +11,18 @@ import (
 	"strings"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
-	"k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const runtimeCacheVolumeName = "runtime-cache"
+
+func runtimeCacheObservationPort(runtimePort int32) int32 {
+	if runtimePort < 65535 {
+		return runtimePort + 1
+	}
+	return runtimePort - 1
+}
 
 // RuntimeSourceProfile configures optional source access for the runtime adapter.
 type RuntimeSourceProfile struct {
@@ -47,7 +53,7 @@ type RuntimeCacheProfile struct {
 	MountPath string
 }
 
-// Resolve selects the configured existing claim or the single Ready managed cache in a namespace.
+// Resolve selects the configured existing claim or the single usable managed cache in a namespace.
 func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient client.Client, namespace string) (*inferencev1alpha1.RuntimeCacheBinding, bool, error) {
 	if profile.ClaimName != "" {
 		return &inferencev1alpha1.RuntimeCacheBinding{ClaimName: profile.ClaimName, MountPath: profile.MountPath}, true, nil
@@ -63,14 +69,25 @@ func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient clien
 		return nil, false, fmt.Errorf("namespace %q has multiple RuntimeCaches", namespace)
 	}
 	cache := &caches.Items[0]
-	if !cache.DeletionTimestamp.IsZero() {
-		return nil, true, nil
-	}
-	ready := meta.FindStatusCondition(cache.Status.Conditions, conditionReady)
-	if cache.Status.ObservedGeneration != cache.Generation || ready == nil || ready.Status != metav1.ConditionTrue || ready.ObservedGeneration != cache.Generation || cache.Status.ClaimName == "" {
+	if !cache.DeletionTimestamp.IsZero() || cache.Status.Phase == inferencev1alpha1.RuntimeCachePhaseDegraded || cache.Status.Phase == inferencev1alpha1.RuntimeCachePhaseTerminating {
 		return nil, false, nil
 	}
-	return &inferencev1alpha1.RuntimeCacheBinding{ClaimName: cache.Status.ClaimName, MountPath: profile.MountPath}, true, nil
+	if cache.Status.ObservedGeneration != cache.Generation || cache.Status.ClaimName == "" {
+		return nil, false, nil
+	}
+	binding := &inferencev1alpha1.RuntimeCacheBinding{ClaimName: cache.Status.ClaimName, MountPath: profile.MountPath}
+	if expansion := cache.Spec.Expansion; expansion != nil && expansion.Mode == inferencev1alpha1.RuntimeCacheExpansionAutomatic {
+		reserve, err := resource.ParseQuantity(string(expansion.Reserve))
+		if err != nil || reserve.Sign() <= 0 {
+			return nil, false, fmt.Errorf("RuntimeCache %q has invalid automatic expansion reserve", cache.Name)
+		}
+		bytes, exact := reserve.AsInt64()
+		if !exact {
+			return nil, false, fmt.Errorf("RuntimeCache %q expansion reserve must be an exact byte quantity", cache.Name)
+		}
+		binding.MinimumAvailableBytes = bytes
+	}
+	return binding, true, nil
 }
 
 // Validate rejects an invalid runtime cache mount path.

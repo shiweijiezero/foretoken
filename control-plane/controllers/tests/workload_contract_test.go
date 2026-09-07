@@ -48,7 +48,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		for _, item := range pod.Containers[0].Env {
 			env[item.Name] = item
 		}
-		if env["HF_HOME"].Value != "/cache/models" || env["VLLM_CACHE_ROOT"].Value != "/cache/vllm" || env["TORCHINDUCTOR_CACHE_DIR"].Value != "/cache/torch" || env["TRITON_CACHE_DIR"].Value != "/cache/triton" {
+		if env["HF_HOME"].Value != "/cache/models" || env["VLLM_CACHE_ROOT"].Value != "/cache/vllm" || env["TORCHINDUCTOR_CACHE_DIR"].Value != "/cache/torch" || env["TRITON_CACHE_DIR"].Value != "/cache/triton" || env["FORETOKEN_CACHE_OBSERVATION_PORT"].Value != "9001" {
 			t.Fatalf("runtime cache environment = %#v", env)
 		}
 		cacheMounted := false
@@ -65,12 +65,16 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 			t.Fatalf("service contract = %#v", serviceObject)
 		}
 		policy := get(t, ctx, c, request.NamespacedName, new(networkingv1.NetworkPolicy))
-		if !metav1.IsControlledBy(policy, group) || len(policy.Spec.Ingress) != 1 || len(policy.Spec.Ingress[0].From) != 3 {
+		if !metav1.IsControlledBy(policy, group) || len(policy.Spec.Ingress) != 2 || len(policy.Spec.Ingress[0].From) != 3 {
 			t.Fatalf("network policy = %#v", policy.Spec)
 		}
 		metricsPeer := policy.Spec.Ingress[0].From[2]
 		if metricsPeer.NamespaceSelector == nil || metricsPeer.NamespaceSelector.MatchLabels["inference.foretoken.io/metrics-scraper"] != "true" {
 			t.Fatalf("metrics peer = %#v", metricsPeer)
+		}
+		cacheIngress := policy.Spec.Ingress[1]
+		if len(cacheIngress.From) != 1 || len(cacheIngress.Ports) != 1 || cacheIngress.Ports[0].Port == nil || cacheIngress.Ports[0].Port.StrVal != "cache-observe" {
+			t.Fatalf("cache observation ingress = %#v", cacheIngress)
 		}
 		current := get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.ModelGroup))
 		if condition := meta.FindStatusCondition(current.Status.Conditions, "WorkloadMaterialized"); condition == nil || condition.Status != metav1.ConditionTrue {

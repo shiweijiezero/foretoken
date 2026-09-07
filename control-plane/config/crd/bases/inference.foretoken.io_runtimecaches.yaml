@@ -64,15 +64,50 @@ spec:
                 - ReadWriteOnce
                 - ReadWriteMany
                 type: string
-              retentionPolicy:
-                default: Retain
-                description: RuntimeCacheRetentionPolicy controls PVC cleanup when
-                  a RuntimeCache is deleted.
-                enum:
-                - Delete
-                - Retain
-                type: string
-              size:
+              expansion:
+                description: RuntimeCacheExpansion defines bounded automatic growth
+                  from filesystem observations.
+                properties:
+                  maxSize:
+                    description: MaxSize bounds the PVC request after automatic expansion.
+                    maxLength: 64
+                    minLength: 1
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid non-negative Kubernetes resource quantity
+                      rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                        >= 0
+                  mode:
+                    description: RuntimeCacheExpansionMode selects whether the controller
+                      may grow the managed PVC.
+                    enum:
+                    - Automatic
+                    - Disabled
+                    type: string
+                  reserve:
+                    description: Reserve is the minimum free filesystem capacity maintained
+                      for active workloads.
+                    maxLength: 64
+                    minLength: 1
+                    type: string
+                    x-kubernetes-validations:
+                    - message: must be a valid non-negative Kubernetes resource quantity
+                      rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                        >= 0
+                required:
+                - mode
+                type: object
+                x-kubernetes-validations:
+                - message: automatic expansion requires positive reserve and maxSize
+                  rule: self.mode == 'Disabled' || (has(self.reserve) && quantity(self.reserve).compareTo(quantity('0'))
+                    > 0 && has(self.maxSize) && quantity(self.maxSize).compareTo(quantity('0'))
+                    > 0)
+                - message: disabled expansion cannot set reserve or maxSize
+                  rule: self.mode == 'Automatic' || (!has(self.reserve) && !has(self.maxSize))
+                - message: reserve must not exceed maxSize
+                  rule: self.mode != 'Automatic' || quantity(self.reserve).compareTo(quantity(self.maxSize))
+                    <= 0
+              initialSize:
                 description: ResourceQuantity is a non-negative Kubernetes resource
                   quantity.
                 maxLength: 64
@@ -82,19 +117,28 @@ spec:
                 - message: must be a valid non-negative Kubernetes resource quantity
                   rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
                     >= 0
+              retentionPolicy:
+                default: Retain
+                description: RuntimeCacheRetentionPolicy controls PVC cleanup when
+                  a RuntimeCache is deleted.
+                enum:
+                - Delete
+                - Retain
+                type: string
               storageClassName:
                 type: string
             required:
-            - size
+            - initialSize
             type: object
             x-kubernetes-validations:
-            - message: size must be positive
-              rule: quantity(self.size).compareTo(quantity('0')) > 0
-            - message: only size is mutable
-              rule: has(self.storageClassName) == has(oldSelf.storageClassName) &&
-                (!has(self.storageClassName) || self.storageClassName == oldSelf.storageClassName)
-                && self.accessMode == oldSelf.accessMode && self.retentionPolicy ==
-                oldSelf.retentionPolicy
+            - message: initialSize must be positive
+              rule: quantity(self.initialSize).compareTo(quantity('0')) > 0
+            - message: maxSize must not be smaller than initialSize
+              rule: '!has(self.expansion) || self.expansion.mode != ''Automatic''
+                || quantity(self.expansion.maxSize).compareTo(quantity(self.initialSize))
+                >= 0'
+            - message: RuntimeCache storage settings are immutable
+              rule: self == oldSelf
           status:
             description: RuntimeCacheStatus publishes the managed claim and its observed
               capacity.

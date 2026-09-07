@@ -5,24 +5,23 @@
 
 English | [简体中文](runtime-cache_zh.md)
 
-Create one `RuntimeCache` in a workload namespace to preserve model and compilation caches across Pod restarts:
+Add `cache.yaml` to the same Kustomize deployment as the model resources:
 
 ```yaml
 apiVersion: inference.foretoken.io/v1alpha1
 kind: RuntimeCache
 metadata:
   name: models
-  namespace: foretoken-demo
 spec:
-  size: 100Gi # Initial capacity; increase this value to expand the PVC.
+  initialSize: 10Gi
+  expansion:
+    mode: Automatic
+    reserve: 10Gi
+    maxSize: 100Gi
 ```
 
-Save it as `cache.yaml` in the deployment directory and add it to the Kustomize `resources` list. It is then applied with the other manifests by `foretoken deploy`. Without Kustomize, apply it with `kubectl apply -f cache.yaml`.
+`foretoken deploy` creates the PVC through the namespace's default `StorageClass`. Automatic expansion maintains the configured free-space reserve up to `maxSize`; model loading waits until that reserve is available. PVC shrinking is not supported. Omit `expansion` to keep the initial size fixed.
 
-Foretoken creates the PVC with `ReadWriteMany` and `Retain` by default. The namespace's default `StorageClass` must support the selected access mode. Model and Frontend workloads automatically use the single Ready `RuntimeCache` in their namespace.
+The defaults are `ReadWriteMany` and `Retain`. The `StorageClass` must support the selected access mode and volume expansion. Set `retentionPolicy: Delete` to remove the PVC after workloads stop using it.
 
-Increase `spec.size` to expand the PVC. PVC shrinking is not supported.
-
-Deleting the `RuntimeCache` retains the PVC by default. Set `spec.retentionPolicy: Delete` to delete it after workloads stop using it.
-
-An administrator can instead configure `workload.cache.claimName` during platform installation to use an existing PVC. Foretoken never modifies or deletes an existing claim.
+An administrator can instead configure `workload.cache.claimName` during platform installation. Foretoken does not modify or delete an existing claim.
