@@ -14,14 +14,11 @@ metadata:
   name: models
 spec:
   initialSize: 10Gi
-  expansion:
-    mode: Automatic
-    reserve: 10Gi
-    maxSize: 100Gi
+  maxSize: 100Gi
 ```
 
-`foretoken deploy` creates the PVC through the namespace's default `StorageClass`. Automatic expansion maintains the configured free-space reserve up to `maxSize`; model loading waits until that reserve is available. PVC shrinking is not supported. Omit `expansion` to keep the initial size fixed.
+`foretoken deploy` creates the PVC through the namespace's default `StorageClass`. Set `maxSize` to grow it automatically; omit `maxSize` to keep `initialSize` fixed. With automatic expansion, new model processes wait until at least `initialSize` is free. PVC shrinking is not supported.
 
-The defaults are `ReadWriteMany` and `Retain`. The `StorageClass` must support the selected access mode and volume expansion. Set `retentionPolicy: Delete` to remove the PVC after workloads stop using it.
+The defaults are `ReadWriteMany` and `Retain`. The `StorageClass` must support the selected access mode and, when `maxSize` is set, volume expansion. Set `retentionPolicy: Delete` to remove the PVC after workloads stop using it.
 
 An administrator can instead configure `workload.cache.claimName` during platform installation. Foretoken does not modify or delete an existing claim.

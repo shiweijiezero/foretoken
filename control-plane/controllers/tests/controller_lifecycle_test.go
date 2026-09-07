@@ -200,9 +200,7 @@ func TestRuntimeCacheControllerLifecycle(t *testing.T) {
 		Spec: inferencev1alpha1.RuntimeCacheSpec{
 			InitialSize: "10Gi", AccessMode: inferencev1alpha1.RuntimeCacheAccessModeReadWriteMany,
 			RetentionPolicy: inferencev1alpha1.RuntimeCacheRetentionPolicyRetain,
-			Expansion: &inferencev1alpha1.RuntimeCacheExpansion{
-				Mode: inferencev1alpha1.RuntimeCacheExpansionAutomatic, Reserve: "10Gi", MaxSize: "100Gi",
-			},
+			MaxSize:         "100Gi",
 		},
 	}
 	c := controllerClient(t, cache)
@@ -259,7 +257,7 @@ func TestRuntimeCacheControllerLifecycle(t *testing.T) {
 		t.Fatalf("managed runtime cache binding = %#v", pool.Spec.Template.RuntimeCache)
 	}
 
-	// A mounted filesystem below reserve must grow before model loading proceeds.
+	// A mounted filesystem with less free space than the initial allocation must grow before model loading proceeds.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)

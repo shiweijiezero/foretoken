@@ -7,9 +7,6 @@ metadata:
   name: models
 spec:
   initialSize: 10Gi
+  maxSize: 100Gi
   accessMode: ReadWriteMany
   retentionPolicy: Delete
-  expansion:
-    mode: Automatic
-    reserve: 10Gi
-    maxSize: 100Gi

@@ -72,8 +72,8 @@ func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request
 		phase, reason, message = inferencev1alpha1.RuntimeCachePhaseReady, "Ready", "Runtime cache PVC is bound"
 	}
 	result := ctrl.Result{}
-	if expansion := cache.Spec.Expansion; ready && expansion != nil && expansion.Mode == inferencev1alpha1.RuntimeCacheExpansionAutomatic {
-		state, err := reconciler.reconcileAutomaticExpansion(ctx, cache, pvc, expansion)
+	if ready && cache.Spec.MaxSize != "" {
+		state, err := reconciler.reconcileAutomaticExpansion(ctx, cache, pvc)
 		if err != nil {
 			statusErr := reconciler.updateStatus(ctx, cache, inferencev1alpha1.RuntimeCachePhaseDegraded, false, "ExpansionFailed", err.Error(), pvc)
 			return ctrl.Result{}, errors.Join(fmt.Errorf("expand RuntimeCache PVC: %w", err), statusErr)
@@ -190,18 +190,18 @@ type runtimeCacheExpansionState struct {
 	message  string
 }
 
-// reconcileAutomaticExpansion doubles the current request when a mounted filesystem falls below its reserve.
-func (reconciler *RuntimeCacheReconciler) reconcileAutomaticExpansion(ctx context.Context, cache *inferencev1alpha1.RuntimeCache, pvc *corev1.PersistentVolumeClaim, expansion *inferencev1alpha1.RuntimeCacheExpansion) (runtimeCacheExpansionState, error) {
-	reserve, err := runtimeCacheQuantityBytes(expansion.Reserve, "reserve")
+// reconcileAutomaticExpansion doubles the current request when free space falls below the initial allocation.
+func (reconciler *RuntimeCacheReconciler) reconcileAutomaticExpansion(ctx context.Context, cache *inferencev1alpha1.RuntimeCache, pvc *corev1.PersistentVolumeClaim) (runtimeCacheExpansionState, error) {
+	minimumAvailable, err := runtimeCacheQuantityBytes(cache.Spec.InitialSize, "initialSize")
 	if err != nil {
 		return runtimeCacheExpansionState{}, err
 	}
-	maxSize, err := runtimeCacheQuantityBytes(expansion.MaxSize, "maxSize")
+	maxSize, err := runtimeCacheQuantityBytes(cache.Spec.MaxSize, "maxSize")
 	if err != nil {
 		return runtimeCacheExpansionState{}, err
 	}
-	if reserve > maxSize {
-		return runtimeCacheExpansionState{}, fmt.Errorf("automatic expansion reserve must not exceed maxSize")
+	if minimumAvailable >= maxSize {
+		return runtimeCacheExpansionState{}, fmt.Errorf("maxSize must be greater than initialSize")
 	}
 	observations, observationErr := observeRuntimeCache(ctx, reconciler.Client, cache, pvc.Name)
 	if observationErr != nil {
@@ -217,14 +217,14 @@ func (reconciler *RuntimeCacheReconciler) reconcileAutomaticExpansion(ctx contex
 	}
 	currentQuantity := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
 	currentRequest := currentQuantity.Value()
-	if available >= reserve {
+	if available >= minimumAvailable {
 		return runtimeCacheExpansionState{}, nil
 	}
 	used := capacity - available
-	if used > maxSize-reserve {
-		return runtimeCacheExpansionState{degraded: true, reason: "MaxSizeReached", message: "Runtime cache cannot maintain its free-space reserve within maxSize"}, nil
+	if used > maxSize-minimumAvailable {
+		return runtimeCacheExpansionState{degraded: true, reason: "MaxSizeReached", message: "Runtime cache does not have enough space within maxSize"}, nil
 	}
-	required := used + reserve
+	required := used + minimumAvailable
 	target := required
 	if currentRequest <= maxSize/2 {
 		target = max(target, currentRequest*2)
@@ -248,8 +248,8 @@ func runtimeCacheQuantityBytes(value inferencev1alpha1.ResourceQuantity, field s
 	if err != nil || quantity.Sign() <= 0 {
 		return 0, fmt.Errorf("automatic expansion %s must be a positive Kubernetes quantity", field)
 	}
-	bytes, exact := quantity.AsInt64()
-	if !exact {
+	bytes := quantity.Value()
+	if quantity.CmpInt64(bytes) != 0 {
 		return 0, fmt.Errorf("automatic expansion %s must be an exact byte quantity", field)
 	}
 	return bytes, nil

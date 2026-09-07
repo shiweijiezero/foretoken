@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -76,14 +75,10 @@ func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient clien
 		return nil, false, nil
 	}
 	binding := &inferencev1alpha1.RuntimeCacheBinding{ClaimName: cache.Status.ClaimName, MountPath: profile.MountPath}
-	if expansion := cache.Spec.Expansion; expansion != nil && expansion.Mode == inferencev1alpha1.RuntimeCacheExpansionAutomatic {
-		reserve, err := resource.ParseQuantity(string(expansion.Reserve))
-		if err != nil || reserve.Sign() <= 0 {
-			return nil, false, fmt.Errorf("RuntimeCache %q has invalid automatic expansion reserve", cache.Name)
-		}
-		bytes, exact := reserve.AsInt64()
-		if !exact {
-			return nil, false, fmt.Errorf("RuntimeCache %q expansion reserve must be an exact byte quantity", cache.Name)
+	if cache.Spec.MaxSize != "" {
+		bytes, err := runtimeCacheQuantityBytes(cache.Spec.InitialSize, "initialSize")
+		if err != nil {
+			return nil, false, fmt.Errorf("RuntimeCache %q: %w", cache.Name, err)
 		}
 		binding.MinimumAvailableBytes = bytes
 	}
