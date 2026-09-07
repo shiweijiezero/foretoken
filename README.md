@@ -23,7 +23,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 |---|---|---|
 | Benchmarking | Performance benchmarks and parameter sweeps, correctness evaluation, and SLO simulation | In development |
 | Profiling | Use PyTorch Profiler and Nsight to identify compute, communication, and CPU/GPU bottlenecks | Planned |
-| Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics | In development |
+| Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics; see [MetaX deployment](docs/metax-deployment.md) | In development |
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
 | Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP parallelism | Research |
 | Control plane | Model services, instance groups, autoscaling, updates, and failure recovery | In development |

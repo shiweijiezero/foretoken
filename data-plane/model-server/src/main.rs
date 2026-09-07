@@ -16,13 +16,16 @@ use foretoken_model_server::runtime_transport::LOOPBACK_HOST;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
-use vllm_engine_core_client::{EngineCoreClient, EngineCoreClientConfig, TransportMode};
+use vllm_engine_core_client::{
+    EngineCoreClient, EngineCoreClientConfig, EngineCoreProtocol, TransportMode,
+};
 use vllm_llm::Llm;
 use vllm_managed_engine::{ManagedEngineHandle, allocate_handshake_port};
 
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
 const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
+const LEGACY_ENGINE_MAX_CONCURRENT_REQUESTS: u64 = 1;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,13 +45,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // The model-server owns one managed engine and the loopback handshake used by its client.
     let handshake_port = allocate_handshake_port(LOOPBACK_HOST)?;
-    let engine = ManagedEngineHandle::spawn(
-        config
-            .launch
-            .managed_engine(handshake_port)
-            .map_err(std::io::Error::other)?,
-    )
-    .await?;
+    let managed_engine = config
+        .launch
+        .managed_engine(handshake_port)
+        .map_err(std::io::Error::other)?;
+    let engine_protocol = detect_engine_protocol(&managed_engine.python).await?;
+    let engine = ManagedEngineHandle::spawn(managed_engine).await?;
     let health = Arc::new(RuntimeHealth::new());
     health.set_process_alive(true);
 
@@ -66,7 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         client_index: 0,
     };
     let client = tokio::select! {
-        result = EngineCoreClient::connect(client_config) => result.map_err(|error| std::io::Error::other(format!("could not connect to EngineCore: {error}"))),
+        result = EngineCoreClient::connect_with_protocol(client_config, engine_protocol) => result.map_err(|error| std::io::Error::other(format!("could not connect to EngineCore: {error}"))),
         status = engine.wait_for_exit() => Err(std::io::Error::other(format!("managed EngineCore exited during startup: {status}"))),
     };
     let client = match client {
@@ -81,7 +83,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let max_concurrent_requests = client
         .ready_responses()
         .into_iter()
-        .try_fold(0_u64, |total, ready| total.checked_add(ready.max_num_seqs))
+        .try_fold(0_u64, |total, ready| {
+            total.checked_add(
+                ready
+                    .max_num_seqs
+                    .unwrap_or(LEGACY_ENGINE_MAX_CONCURRENT_REQUESTS),
+            )
+        })
         .ok_or_else(|| std::io::Error::other("EngineCore max_num_seqs sum overflowed"))?;
     let metadata = RuntimeMetadataResponse {
         version: 1,
@@ -89,7 +97,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             model: config.launch.artifacts.model.clone(),
             revision: config.launch.artifacts.revision.clone(),
         },
-        model_dtype: client.model_dtype(),
+        model_dtype: client.reported_model_dtype(),
         effective_max_model_len: client.max_model_len(),
         ec_transfer: config.launch.ec.runtime_metadata(),
         capabilities: if config.launch.ec.enabled() {
@@ -211,6 +219,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Stop::ClientUnhealthy(reason) | Stop::ChildExited(reason) | Stop::Server(reason) => {
             Err(std::io::Error::other(reason).into())
         }
+    }
+}
+
+/// 启动 EngineCore 前，用镜像内的 Python 识别 vLLM 版本并选择受支持的请求编码。
+async fn detect_engine_protocol(
+    python: &str,
+) -> Result<EngineCoreProtocol, Box<dyn std::error::Error>> {
+    let output = tokio::process::Command::new(python)
+        .args(["-c", "import vllm; print(vllm.__version__)"])
+        .output()
+        .await?;
+    if !output.status.success() {
+        return Err(format!("could not inspect vLLM version using {python}").into());
+    }
+    let version = String::from_utf8(output.stdout)?.trim().to_owned();
+    let mut parts = version.split('.');
+    let major = parts.next().and_then(|part| part.parse::<u64>().ok());
+    let minor = parts.next().and_then(|part| part.parse::<u64>().ok());
+    match (major, minor) {
+        (Some(0), Some(20)) => Ok(EngineCoreProtocol::V0_20),
+        (Some(0), Some(21..=27)) => Ok(EngineCoreProtocol::V0_21ToV0_27),
+        (Some(0), Some(28)) => Ok(EngineCoreProtocol::V0_28),
+        _ => Err(format!(
+            "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.28"
+        )
+        .into()),
     }
 }
 
