@@ -7,5 +7,5 @@ metadata:
   name: models
 spec:
   size: 100Gi # Initial requested capacity; increase this value to expand the PVC.
-  accessMode: ReadWriteOnce
+  accessMode: ReadWriteMany
   retentionPolicy: Delete

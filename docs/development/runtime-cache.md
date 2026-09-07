@@ -14,7 +14,7 @@ metadata:
   name: models
   namespace: foretoken-demo
 spec:
-  size: 100Gi
+  size: 100Gi # Initial capacity; increase this value to expand the PVC.
 ```
 
 Save it as `cache.yaml` in the deployment directory and add it to the Kustomize `resources` list. It is then applied with the other manifests by `foretoken deploy`. Without Kustomize, apply it with `kubectl apply -f cache.yaml`.

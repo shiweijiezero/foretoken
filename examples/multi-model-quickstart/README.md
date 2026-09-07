@@ -10,7 +10,7 @@ This example serves two models through one frontend:
 - `Qwen/Qwen3-0.6B` scales from one to three replicas from queue demand.
 - `unsloth/Llama-3.2-1B-Instruct` runs as one fixed replica.
 
-Each replica uses one GPU. The full scaling range needs four schedulable GPUs: up to three for Qwen and one for Llama. For the smallest deployment, see [Single-Model Quick Start](../quickstart/README.md).
+Each replica uses one GPU. The full scaling range needs four schedulable GPUs: up to three for Qwen and one for Llama. The example also creates a 100 GiB `ReadWriteMany` runtime cache PVC through the namespace's default `StorageClass`. For the smallest deployment, see [Single-Model Quick Start](../quickstart/README.md).
 
 ## Deploy
 

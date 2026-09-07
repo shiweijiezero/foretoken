@@ -14,7 +14,7 @@ metadata:
   name: models
   namespace: foretoken-demo
 spec:
-  size: 100Gi
+  size: 100Gi # 初始容量；增大该值即可扩容 PVC。
 ```
 
 将内容保存为部署目录中的 `cache.yaml`，并加入 `kustomization.yaml`：

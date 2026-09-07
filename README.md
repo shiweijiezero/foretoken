@@ -64,7 +64,7 @@ This installs the Foretoken CRDs and controller in the `foretoken-platform` name
 foretoken deploy examples/quickstart
 ```
 
-This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and a 10 GiB runtime cache PVC. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
+This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and a 100 GiB runtime cache PVC. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
 
 ### 4. Send a test request
 
