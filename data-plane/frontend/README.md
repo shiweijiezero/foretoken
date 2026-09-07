@@ -28,4 +28,4 @@ The default mode exposes the frontend through a `LoadBalancer` Service. Gateway 
 
 `/healthz` reports that the frontend process is running. `/readyz` reports that a serving configuration is active and the frontend can accept new requests. It does not prove every configured model has a healthy backend path. `/statusz` reports runtime and KV-index diagnostics for platform operators. `/metrics` is the Prometheus scrape endpoint.
 
-Model and routing updates take effect when the replacement configuration is ready. Until then, the frontend continues serving with the active configuration, and requests already executing finish with the configuration they started with.
+Model configuration updates are loaded within the running frontend once prepared; requests already executing retain their selected configuration. Changes to `FrontendService.spec.routerPipeline` roll out through the frontend Deployment.

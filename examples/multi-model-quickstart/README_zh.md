@@ -10,7 +10,9 @@
 - `Qwen/Qwen3-0.6B` 根据请求队列从 1 个副本扩缩到 3 个副本。
 - `unsloth/Llama-3.2-1B-Instruct` 固定运行 1 个副本。
 
-每个副本使用 1 张 GPU。完整扩缩范围最多需要 4 张可调度 GPU：Qwen 最多 3 张，Llama 1 张。示例还会通过命名空间的默认 `StorageClass` 创建一个从 10 GiB 起自动扩容的 `ReadWriteMany` 运行时缓存 PVC。如需最小部署，请参阅[单模型快速开始](../quickstart/README_zh.md)。
+初始工作负载请求 2 张 GPU、12 个 CPU 和 100 GiB 内存，已计入两个前端副本。扩容到上限时请求 4 张 GPU、20 个 CPU 和 196 GiB 内存；还需为平台预留额外容量。如需最小部署，请参阅[单模型快速开始](../quickstart/README_zh.md)。
+
+示例会创建一个从 10 GiB 起自动扩容的 `ReadWriteMany` 运行时缓存 PVC，集群的默认 `StorageClass` 必须支持 `ReadWriteMany` 和卷扩容。下文的状态查询命令还需要 `jq`。
 
 两个模型分别通过 [`model-qwen3-0.6b.yaml`](model-qwen3-0.6b.yaml) 和 [`model-llama3.2-1b.yaml`](model-llama3.2-1b.yaml) 中的 `ModelService` 配置，共享 [`cache.yaml`](cache.yaml) 中的 `RuntimeCache`，并由 [`frontend.yaml`](frontend.yaml) 中的 `FrontendService` 提供访问入口。Foretoken 会自动创建所需的 Kubernetes 工作负载。
 

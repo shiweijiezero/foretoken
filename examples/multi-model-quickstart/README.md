@@ -10,7 +10,9 @@ This example serves two models through one frontend:
 - `Qwen/Qwen3-0.6B` scales from one to three replicas from queue demand.
 - `unsloth/Llama-3.2-1B-Instruct` runs as one fixed replica.
 
-Each replica uses one GPU. The full scaling range needs four schedulable GPUs: up to three for Qwen and one for Llama. The example also creates an automatically expanding `ReadWriteMany` runtime cache PVC starting at 10 GiB through the namespace's default `StorageClass`. For the smallest deployment, see [Single-Model Quick Start](../quickstart/README.md).
+The initial workload requests two GPUs, 12 CPU, and 100 GiB memory, including both frontend replicas. At full scale it requests four GPUs, 20 CPU, and 196 GiB memory; allow additional capacity for the platform. For the smallest deployment, see [Single-Model Quick Start](../quickstart/README.md).
+
+The example creates an automatically expanding `ReadWriteMany` runtime cache PVC starting at 10 GiB. The cluster's default `StorageClass` must support `ReadWriteMany` and volume expansion. The status commands below also require `jq`.
 
 Each model has its own `ModelService` manifest: [`model-qwen3-0.6b.yaml`](model-qwen3-0.6b.yaml) and [`model-llama3.2-1b.yaml`](model-llama3.2-1b.yaml). Both use the `RuntimeCache` in [`cache.yaml`](cache.yaml) and are served through the `FrontendService` in [`frontend.yaml`](frontend.yaml). Foretoken creates the required Kubernetes workloads automatically.
 

@@ -104,20 +104,6 @@ foretoken deploy examples/multi-model-quickstart
 
 该命令会应用配置，在 `FrontendService` 和 `ModelService` 状态变化时输出进度，并在所有服务的当前配置均已就绪后退出。默认等待十分钟，可通过 `--timeout` 调整。
 
-删除同一配置渲染出的资源：
-
-```bash
-foretoken delete examples/multi-model-quickstart
-```
-
-该命令会等待删除完成，并忽略已经不存在的资源。删除全部 Foretoken 服务后，可以移除平台发布实例：
-
-```bash
-foretoken uninstall
-```
-
-该命令保留 Foretoken CRD，并在仍有用户服务时拒绝卸载。平台卸载时会一并删除由 命令行工具管理的监控和 Gateway 资源，复用的集群组件保持不变。
-
 不应用配置，直接查看同一部署的状态：
 
 ```bash
@@ -140,8 +126,7 @@ FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 HTTP Gateway 模式下，单独解析请求的 `Host`：
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --host)"
 ```
 
 直接访问时，`--host` 返回主机名或 IP，以及 URL 中包含的端口；HTTP Gateway 模式下返回配置的路由域名。`foretoken endpoint` 等待 LoadBalancer 或 Gateway 分配地址；要等待服务就绪，请使用 `foretoken deploy`。
@@ -167,7 +152,23 @@ uv pip install 'foretoken[bench]'
 然后运行评测：
 
 ```bash
-foretoken bench examples/quickstart
+foretoken bench examples/multi-model-quickstart --model Qwen/Qwen3-0.6B
 ```
 
 命令行工具使用当前 `kubectl` context，并遵循 `KUBECONFIG` 等标准 Kubernetes 配置。
+
+## 清理
+
+删除同一配置渲染出的资源：
+
+```bash
+foretoken delete examples/multi-model-quickstart
+```
+
+该命令会等待删除完成，并忽略已经不存在的资源。删除全部 Foretoken 服务后，可以移除平台发布实例：
+
+```bash
+foretoken uninstall
+```
+
+该命令保留 Foretoken CRD，并在仍有用户服务时拒绝卸载。平台卸载时会一并删除由命令行工具管理的监控和 Gateway 资源，复用的集群组件保持不变。

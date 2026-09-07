@@ -104,20 +104,6 @@ foretoken deploy examples/multi-model-quickstart
 
 The command applies the configuration, reports each `FrontendService` and `ModelService` state when it changes, and exits when every service reports Ready for its current configuration. Change the default ten-minute deadline with `--timeout`.
 
-Delete the resources rendered by the same configuration:
-
-```bash
-foretoken delete examples/multi-model-quickstart
-```
-
-The command waits for deletion and ignores resources that are already absent. After deleting all Foretoken services, remove the platform release:
-
-```bash
-foretoken uninstall
-```
-
-The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain. It removes monitoring and Gateway resources managed by the command-line tool with the platform, while reused cluster components remain unchanged.
-
 Inspect the same deployment without applying it:
 
 ```bash
@@ -140,8 +126,7 @@ FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 For an HTTP Gateway, resolve its request `Host` separately:
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --host)"
 ```
 
 `--host` returns the host and optional port for direct access, or the configured routing hostname for an HTTP Gateway. `foretoken endpoint` waits for the LoadBalancer or Gateway address; use `foretoken deploy` to wait for the services to become ready.
@@ -167,7 +152,23 @@ uv pip install 'foretoken[bench]'
 Then run the benchmark:
 
 ```bash
-foretoken bench examples/quickstart
+foretoken bench examples/multi-model-quickstart --model Qwen/Qwen3-0.6B
 ```
 
 The command-line tool uses the active `kubectl` context and honors standard Kubernetes configuration such as `KUBECONFIG`.
+
+## Clean up
+
+Delete the resources rendered by the same configuration:
+
+```bash
+foretoken delete examples/multi-model-quickstart
+```
+
+The command waits for deletion and ignores resources that are already absent. After deleting all Foretoken services, remove the platform release:
+
+```bash
+foretoken uninstall
+```
+
+The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain. It removes monitoring and Gateway resources managed by the command-line tool with the platform, while reused cluster components remain unchanged.

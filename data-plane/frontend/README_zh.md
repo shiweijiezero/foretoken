@@ -28,4 +28,4 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 `/healthz` 表示前端进程正在运行。`/readyz` 表示服务配置已生效，前端可以接收新请求，但不保证每个已配置模型都有健康后端路径。`/statusz` 为平台运维者提供运行状态和 KV 索引诊断信息。`/metrics` 是 Prometheus 抓取端点。
 
-新的模型和路由配置就绪后才会生效。在此之前，前端继续使用当前配置提供服务，已经开始执行的请求仍按开始时的配置完成。
+模型配置准备完成后，会在运行中的前端进程内更新；已经开始执行的请求保留其选定的配置。修改 `FrontendService.spec.routerPipeline` 则通过前端 Deployment 滚动更新生效。
