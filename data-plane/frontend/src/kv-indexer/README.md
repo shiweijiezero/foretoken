@@ -7,11 +7,11 @@ The KV prefix index gives the Router cache-locality observations for prompt pref
 
 ## Current behavior
 
-The current Controller projection publishes only local `Device` KV locality. Foretoken does not currently use CPU-memory or disk offload, remote cache sharing, or peer-to-peer cache transfer as a routing capability.
+KV-aware routing currently considers only cache held on a target's local accelerator. Foretoken does not currently use CPU-memory or disk offload, remote cache sharing, or peer-to-peer cache transfer as a routing capability.
 
 For an eligible request, the index can report a confirmed prefix match, a confirmed miss, or `Unavailable`. `Unavailable` means the index cannot answer reliably; it is not a miss. The Router treats it as no KV-locality preference and continues ordinary routing.
 
-A locality match is advisory. It represents complete token-block prefixes within the exact model revision, KV scope, and runtime partition. It is not a guarantee that the backend still has the cache when inference begins. Requests using cache salts, LoRA, unsupported multimodal features, or explicit prefix-cache opt-out do not use KV-prefix lookup.
+A locality match is advisory. It identifies a prompt prefix cached as complete token blocks for the same model deployment and a compatible cache configuration. It is not a guarantee that the backend still has the cache when inference begins. Requests using cache salts, LoRA, unsupported multimodal features, or explicit prefix-cache opt-out do not use KV-prefix lookup.
 
 ## Operations
 

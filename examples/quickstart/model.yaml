@@ -10,19 +10,14 @@ metadata:
 spec:
   model: Qwen/Qwen3-0.6B # Model artifact to serve, such as a Hugging Face repository or supported URI.
   backend: vllm # Inference backend selected for this model service.
-  # Every ModelGroup uses the same parallelism and per-Pod resource settings below.
-  # ModelPool
-  # ├── ModelGroup 1
-  # └── ModelGroup N (N = replicas)
-  replicas: 1 # Number of complete model replicas (ModelGroups).
-  nodes: 1 # The current v1 runtime supports one Kubernetes node per ModelGroup.
-  # Each ModelGroup uses resources.requests.gpu.count GPUs on that node.
-  resources: # Resources allocated to each ModelGroup runtime member Pod.
+  replicas: 1 # Number of complete model replicas.
+  nodes: 1 # Each replica currently runs on a single Kubernetes node.
+  resources: # Resources allocated to each model replica.
     requests:
       cpu: "4"
       memory: 48Gi
       gpu:
-        count: 1 # Accelerator devices requested by each runtime member Pod.
+        count: 1 # GPUs requested by each model replica.
     limits:
       cpu: "8"
       memory: 64Gi
@@ -30,15 +25,10 @@ spec:
     startup: 5m # Maximum time allowed for model loading and backend initialization.
     drain: 2m # Maximum time allowed for accepted requests to finish during shutdown.
   parallelism:
-    tp: 1 # Number of tensor-parallel ranks in each ModelGroup.
-    pp: 1 # Number of pipeline-parallel stages in each ModelGroup.
-    pcp: 1 # Prefill-context-parallel size in each ModelGroup.
-    dcp: 1 # Decode-context-parallel size in each ModelGroup.
-    # Qwen3-0.6B is a dense model, so EP is disabled. A MoE model can use:
-    # ep:
-    #   size: 16 # Requires resources.requests.gpu.count = 16.
-    #   backend: allgather_reducescatter
-    #   eplb: false
+    tp: 1 # Tensor-parallel size per replica.
+    pp: 1 # Pipeline-parallel size per replica.
+    pcp: 1 # Prefill-context-parallel size per replica.
+    dcp: 1 # Decode-context-parallel size per replica.
   # Backend arguments are listed last and override equivalent fields above.
   extraArgs:
     - --max-model-len=32768 # Maximum number of input and generated tokens in one request.

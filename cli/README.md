@@ -102,7 +102,7 @@ Deploy one frontend and all models rendered by a Kustomize root:
 foretoken deploy examples/multi-model-quickstart
 ```
 
-The command applies the configuration, reports each `FrontendService` and `ModelService` state when it changes, and exits when every resource is Ready for its current generation. Change the default ten-minute deadline with `--timeout`.
+The command applies the configuration, reports each `FrontendService` and `ModelService` state when it changes, and exits when every service reports Ready for its current configuration. Change the default ten-minute deadline with `--timeout`.
 
 Delete the resources rendered by the same configuration:
 

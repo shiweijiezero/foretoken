@@ -26,7 +26,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 | Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics | In development |
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
 | Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP parallelism | Research |
-| Control plane | Model services, instance groups, autoscaling, updates, and failure recovery | In development |
+| Control plane | Model services, replica management, autoscaling, updates, and failure recovery | In development |
 | [Observability](observability/README.md) | Collect runtime metrics, evaluate alerts, and profile CPU/GPU bottlenecks | In development |
 
 ## Quick Start

@@ -102,7 +102,7 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 foretoken deploy examples/multi-model-quickstart
 ```
 
-该命令会应用配置，在 `FrontendService` 和 `ModelService` 状态变化时输出进度，并在所有资源的当前 generation 就绪后退出。默认等待十分钟，可通过 `--timeout` 调整。
+该命令会应用配置，在 `FrontendService` 和 `ModelService` 状态变化时输出进度，并在所有服务的当前配置均已就绪后退出。默认等待十分钟，可通过 `--timeout` 调整。
 
 删除同一配置渲染出的资源：
 

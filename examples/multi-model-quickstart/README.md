@@ -12,6 +12,8 @@ This example serves two models through one frontend:
 
 Each replica uses one GPU. The full scaling range needs four schedulable GPUs: up to three for Qwen and one for Llama. The example also creates an automatically expanding `ReadWriteMany` runtime cache PVC starting at 10 GiB through the namespace's default `StorageClass`. For the smallest deployment, see [Single-Model Quick Start](../quickstart/README.md).
 
+Each model has its own `ModelService` manifest: [`model-qwen3-0.6b.yaml`](model-qwen3-0.6b.yaml) and [`model-llama3.2-1b.yaml`](model-llama3.2-1b.yaml). Both use the `RuntimeCache` in [`cache.yaml`](cache.yaml) and are served through the `FrontendService` in [`frontend.yaml`](frontend.yaml). Foretoken creates the required Kubernetes workloads automatically.
+
 ## Deploy
 
 Complete the platform installation in the [root Quick Start](../../README.md), then run:
@@ -24,11 +26,12 @@ foretoken deploy examples/multi-model-quickstart
 
 The Qwen service evaluates queue demand every five seconds. It starts with one replica, changes by at most one replica per evaluation, and delays scale down for five minutes. See the [autoscaling guide](../../docs/autoscaling.md) for the configuration and status contract.
 
-In one terminal, watch the Qwen capacity resources:
+In one terminal, watch the Qwen service's applied and ready replica counts:
 
 ```bash
-kubectl get modelpool,modelgroup \
+kubectl get modelservice multi-model-qwen3-0.6b \
   --namespace foretoken-multi-model-demo \
+  -o 'custom-columns=NAME:.metadata.name,APPLIED:.status.autoscaling[*].appliedReplicas,READY:.status.autoscaling[*].readyReplicas' \
   --watch
 ```
 
@@ -51,9 +54,6 @@ Queue pressure can add Qwen replicas while this workload runs. Whether it does d
 kubectl get modelservice multi-model-qwen3-0.6b \
   --namespace foretoken-multi-model-demo \
   -o json | jq '.status.autoscaling[] | {
-    id,
-    kind,
-    role,
     observationState,
     direction,
     desiredReplicas: .decision.desiredReplicas,

@@ -7,11 +7,11 @@ KV 前缀索引向 Router 提供 prompt 前缀的缓存位置。它是缓存目�
 
 ## 当前行为
 
-当前控制器投影只发布本地 `Device` KV 位置。Foretoken 当前不把 CPU 内存或磁盘 offload、远端缓存共享或点对点缓存传输作为路由能力。
+KV 感知路由目前只考虑目标实例本地加速器上的缓存。Foretoken 当前不把 CPU 内存或磁盘 offload、远端缓存共享或点对点缓存传输作为路由能力。
 
 对于支持查询的请求，索引可能返回已确认的前缀匹配、已确认的未命中，或 `Unavailable`。`Unavailable` 表示索引当前无法可靠回答，不等于未命中。Router 会把它视为没有 KV 位置偏好，继续常规路由。
 
-缓存位置只是提示。它表示精确模型 revision、KV scope 和运行时分区内的完整 token block 前缀，不保证推理真正开始时后端仍保有缓存。使用 cache salt、LoRA、不支持的多模态特性或显式跳过 prefix cache 的请求不会使用 KV 前缀查询。
+缓存位置只是提示。它表示同一模型部署、兼容缓存配置下按完整 token block 缓存的 prompt 前缀，不保证推理真正开始时后端仍保有缓存。使用 cache salt、LoRA、不支持的多模态特性或显式跳过 prefix cache 的请求不会使用 KV 前缀查询。
 
 ## 运维
 

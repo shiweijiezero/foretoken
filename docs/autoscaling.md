@@ -9,7 +9,7 @@ Autoscaling changes the capacity of a `ModelService` from request demand. Config
 
 ## Capacity units
 
-For an aggregate model service, one replica is one complete `ModelGroup`. For an E/P/D service, one replica is one encoder, prefill, and decode triplet that scales together. Set resource requests for the complete capacity unit: an E/P/D replica consumes the resources of all three groups.
+For an aggregate model service, each replica runs the complete model with its configured resources and parallelism. For a service with separate encoder, prefill, and decode stages (E/P/D), one replica includes all three stages, which scale together. Its resource requirements are the sum of the resources configured for those stages.
 
 `spec.replicas` provides the baseline capacity. When `autoscaling` is present, `minReplicas` and `maxReplicas` constrain the capacity created from the first reconciliation onward.
 
@@ -38,7 +38,7 @@ spec:
         stabilizationWindow: 300s
 ```
 
-The controller owns the evaluation schedule. `periodic` evaluates each complete, recent observation supplied by that schedule; it is not an in-process timer. Missing, stale, or incomplete observations keep the current capacity. Automatic scaling maintains at least one replica.
+`periodic` evaluates queue demand at the configured interval. Missing, stale, or incomplete observations keep the current capacity. Automatic scaling maintains at least one replica.
 
 `queue` calculates capacity from the average queued requests per replica. `queue_threshold` instead changes capacity by one replica at configured total-backlog boundaries. `direct` applies a recommendation after min/max bounds; `step` applies at most one replica per evaluation and supports independent stabilization windows.
 

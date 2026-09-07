@@ -9,6 +9,8 @@ For two models with autoscaling, see [Multi-Model Quick Start](../multi-model-qu
 
 This example deploys one frontend and one `Qwen/Qwen3-0.6B` model replica. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. It also creates an automatically expanding runtime cache PVC starting at 10 GiB through the namespace's default `StorageClass`.
 
+Configure the model, replica count, resources, and parallelism in [`model.yaml`](model.yaml) (`ModelService`), the runtime cache in [`cache.yaml`](cache.yaml) (`RuntimeCache`), and the frontend in [`frontend.yaml`](frontend.yaml) (`FrontendService`). Foretoken creates the required Kubernetes workloads automatically.
+
 ## Deploy
 
 First complete the [root Quick Start](../../README.md) through platform installation. Then deploy this example:

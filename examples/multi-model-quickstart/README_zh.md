@@ -12,6 +12,8 @@
 
 每个副本使用 1 张 GPU。完整扩缩范围最多需要 4 张可调度 GPU：Qwen 最多 3 张，Llama 1 张。示例还会通过命名空间的默认 `StorageClass` 创建一个从 10 GiB 起自动扩容的 `ReadWriteMany` 运行时缓存 PVC。如需最小部署，请参阅[单模型快速开始](../quickstart/README_zh.md)。
 
+两个模型分别通过 [`model-qwen3-0.6b.yaml`](model-qwen3-0.6b.yaml) 和 [`model-llama3.2-1b.yaml`](model-llama3.2-1b.yaml) 中的 `ModelService` 配置，共享 [`cache.yaml`](cache.yaml) 中的 `RuntimeCache`，并由 [`frontend.yaml`](frontend.yaml) 中的 `FrontendService` 提供访问入口。Foretoken 会自动创建所需的 Kubernetes 工作负载。
+
 ## 部署
 
 先完成[根目录快速开始](../../README_zh.md)中的平台安装，再运行：
@@ -24,11 +26,12 @@ foretoken deploy examples/multi-model-quickstart
 
 Qwen 服务每 5 秒评估一次队列负载，从 1 个副本开始，每次评估最多调整 1 个副本，缩容前等待 5 分钟。配置和状态说明见[自动扩缩容指南](../../docs/autoscaling_zh.md)。
 
-在一个终端中观察 Qwen 容量资源：
+在一个终端中观察 Qwen 服务已应用的副本数和就绪副本数：
 
 ```bash
-kubectl get modelpool,modelgroup \
+kubectl get modelservice multi-model-qwen3-0.6b \
   --namespace foretoken-multi-model-demo \
+  -o 'custom-columns=NAME:.metadata.name,APPLIED:.status.autoscaling[*].appliedReplicas,READY:.status.autoscaling[*].readyReplicas' \
   --watch
 ```
 
@@ -51,9 +54,6 @@ seq 1 32 | xargs -P8 -I{} sh -c '
 kubectl get modelservice multi-model-qwen3-0.6b \
   --namespace foretoken-multi-model-demo \
   -o json | jq '.status.autoscaling[] | {
-    id,
-    kind,
-    role,
     observationState,
     direction,
     desiredReplicas: .decision.desiredReplicas,
