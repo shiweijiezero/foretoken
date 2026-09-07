@@ -29,11 +29,11 @@ index d1c20ad58..a8714fcaa 100644
 @@ -275,7 +283,7 @@ impl EngineCoreClient {
              }
          };
- 
+
 -        Self::from_connected(config, connected).await
 +        Self::from_connected(config, connected, protocol).await
      }
- 
+
      /// Create a new client instance from the connected transport state after
 @@ -283,6 +291,7 @@ impl EngineCoreClient {
      async fn from_connected(
@@ -74,7 +74,7 @@ index d1c20ad58..a8714fcaa 100644
 +            .as_deref()
 +            .expect("EngineCore did not report vLLM version")
      }
- 
+
      /// Return the total number of GPU blocks summed across all connected
 @@ -449,6 +467,7 @@ impl EngineCoreClient {
              .expect("engine core client requires at least one engine")
@@ -82,7 +82,7 @@ index d1c20ad58..a8714fcaa 100644
              .world_size
 +            .expect("EngineCore did not report world size")
      }
- 
+
      /// Get the model name associated with this client used for metrics
 diff --git a/rust/src/engine-core-client/src/client/imp.rs b/rust/src/engine-core-client/src/client/imp.rs
 index 9c539bf18..6eb8db4df 100644
@@ -137,7 +137,7 @@ index 9c539bf18..6eb8db4df 100644
 +            EngineCoreProtocol::V0_28,
          )
      }
- 
+
 diff --git a/rust/src/engine-core-client/src/lib.rs b/rust/src/engine-core-client/src/lib.rs
 index 7b6020619..f2666c0c8 100644
 --- a/rust/src/engine-core-client/src/lib.rs
@@ -148,7 +148,7 @@ index 7b6020619..f2666c0c8 100644
  pub use error::{Error, Result};
 +pub use protocol::request::EngineCoreProtocol;
  pub use transport::{ENGINE_CORE_DEAD_SENTINEL, EngineId};
- 
+
  #[cfg(test)]
 diff --git a/rust/src/engine-core-client/src/mock_engine.rs b/rust/src/engine-core-client/src/mock_engine.rs
 index ee066635f..72ad1842e 100644
@@ -187,7 +187,7 @@ index ee066635f..72ad1842e 100644
          kv_cache_max_concurrency: None,
          kv_events_config: None,
 diff --git a/rust/src/engine-core-client/src/protocol/handshake.rs b/rust/src/engine-core-client/src/protocol/handshake.rs
-index a4e1cebde..9fb6bf1a9 100644
+index a4e1cebde..fea142b73 100644
 --- a/rust/src/engine-core-client/src/protocol/handshake.rs
 +++ b/rust/src/engine-core-client/src/protocol/handshake.rs
 @@ -53,36 +53,49 @@ pub struct EngineCoreReadyResponse {
@@ -265,44 +265,24 @@ index a4e1cebde..9fb6bf1a9 100644
      pub kv_cache_max_concurrency: Option<f64>,
      /// KV-event publisher configuration, if configured.
      #[serde(default)]
-@@ -113,3 +126,29 @@ pub struct HandshakeInitMessage {
-     pub addresses: HandshakeAddresses,
-     pub parallel_config: BTreeMap<String, OpaqueValue>,
- }
-+
-+#[cfg(test)]
-+mod tests {
-+    use std::collections::BTreeMap;
-+
-+    use rmpv::Value;
-+
-+    use super::EngineCoreReadyResponse;
-+
-+    // Protects startup with the three-field response emitted by vLLM 0.20 and 0.21.
-+    #[test]
-+    fn decodes_vllm_0_20_ready_response() {
-+        let payload = rmp_serde::to_vec_named(&BTreeMap::from([
-+            ("max_model_len", Value::from(4096)),
-+            ("num_gpu_blocks", Value::from(1024)),
-+            ("dp_stats_address", Value::Nil),
-+        ]))
-+        .unwrap();
-+        let response: EngineCoreReadyResponse = rmp_serde::from_slice(&payload).unwrap();
-+
-+        assert_eq!(response.max_model_len, 4096);
-+        assert_eq!(response.num_gpu_blocks, 1024);
-+        assert!(response.dtype.is_none());
-+        assert!(response.max_num_seqs.is_none());
-+    }
-+}
 diff --git a/rust/src/engine-core-client/src/protocol/request.rs b/rust/src/engine-core-client/src/protocol/request.rs
-index 8118b770e..68e497b02 100644
+index 8118b770e..0bc2cbffe 100644
 --- a/rust/src/engine-core-client/src/protocol/request.rs
 +++ b/rust/src/engine-core-client/src/protocol/request.rs
-@@ -129,7 +129,125 @@ pub struct EngineCoreRequest {
+@@ -4,7 +4,8 @@
+ use std::collections::{BTreeMap, HashMap};
+
+ use bytes::Bytes;
+-use serde::{Deserialize, Serialize};
++use serde::ser::SerializeTuple;
++use serde::{Deserialize, Serialize, Serializer};
+ use serde_default::DefaultFromSerde;
+ use serde_tuple::{Deserialize_tuple, Serialize_tuple};
+
+@@ -129,7 +130,70 @@ pub struct EngineCoreRequest {
      pub session_id: Option<String>,
  }
- 
+
 +/// Selects the positional EngineCore wire layout used by one vLLM release family.
 +#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 +pub enum EngineCoreProtocol {
@@ -314,154 +294,62 @@ index 8118b770e..68e497b02 100644
 +    V0_28,
 +}
 +
-+#[derive(Debug, Serialize_tuple)]
-+struct RequestV20<'a> {
-+    request_id: &'a String,
-+    prompt_token_ids: &'a Option<Vec<u32>>,
-+    mm_features: &'a Option<MmFeatures>,
-+    sampling_params: &'a Option<EngineCoreSamplingParams>,
-+    pooling_params: &'a Option<OpaqueValue>,
-+    arrival_time: f64,
-+    lora_request: &'a Option<lora::LoraRequest>,
-+    cache_salt: &'a Option<String>,
-+    data_parallel_rank: &'a Option<u32>,
-+    prompt_embeds: &'a Option<OpaqueValue>,
-+    client_index: u32,
-+    current_wave: u32,
-+    priority: i32,
-+    trace_headers: &'a Option<BTreeMap<String, String>>,
-+    resumable: bool,
-+    external_req_id: &'a Option<String>,
-+    reasoning_ended: &'a Option<bool>,
++/// 旧版引擎只改变字段布局，不复制请求数据或中转为动态值。
++#[derive(Debug)]
++struct VersionedRequest<'a> {
++    request: &'a EngineCoreRequest,
++    protocol: EngineCoreProtocol,
 +}
 +
-+impl<'a> From<&'a EngineCoreRequest> for RequestV20<'a> {
-+    fn from(request: &'a EngineCoreRequest) -> Self {
-+        Self {
-+            request_id: &request.request_id,
-+            prompt_token_ids: &request.prompt_token_ids,
-+            mm_features: &request.mm_features,
-+            sampling_params: &request.sampling_params,
-+            pooling_params: &request.pooling_params,
-+            arrival_time: request.arrival_time,
-+            lora_request: &request.lora_request,
-+            cache_salt: &request.cache_salt,
-+            data_parallel_rank: &request.data_parallel_rank,
-+            prompt_embeds: &request.prompt_embeds,
-+            client_index: request.client_index,
-+            current_wave: request.current_wave,
-+            priority: request.priority,
-+            trace_headers: &request.trace_headers,
-+            resumable: request.resumable,
-+            external_req_id: &request.external_req_id,
-+            reasoning_ended: &request.reasoning_ended,
++impl Serialize for VersionedRequest<'_> {
++    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
++        if self.protocol == EngineCoreProtocol::V0_28 {
++            return self.request.serialize(serializer);
 +        }
-+    }
-+}
-+
-+#[derive(Debug, Serialize_tuple)]
-+struct RequestV21ToV0_27<'a> {
-+    request_id: &'a String,
-+    prompt_token_ids: &'a Option<Vec<u32>>,
-+    mm_features: &'a Option<MmFeatures>,
-+    sampling_params: &'a Option<EngineCoreSamplingParams>,
-+    pooling_params: &'a Option<OpaqueValue>,
-+    arrival_time: f64,
-+    lora_request: &'a Option<lora::LoraRequest>,
-+    cache_salt: &'a Option<String>,
-+    data_parallel_rank: &'a Option<u32>,
-+    prompt_embeds: &'a Option<OpaqueValue>,
-+    prompt_is_token_ids: &'a Option<Vec<bool>>,
-+    client_index: u32,
-+    current_wave: u32,
-+    priority: i32,
-+    trace_headers: &'a Option<BTreeMap<String, String>>,
-+    resumable: bool,
-+    external_req_id: &'a Option<String>,
-+    reasoning_ended: &'a Option<bool>,
-+    reasoning_parser_kwargs: &'a Option<ReasoningParserKwargs>,
-+    abort_immediately: bool,
-+}
-+
-+impl<'a> From<&'a EngineCoreRequest> for RequestV21ToV0_27<'a> {
-+    fn from(request: &'a EngineCoreRequest) -> Self {
-+        Self {
-+            request_id: &request.request_id,
-+            prompt_token_ids: &request.prompt_token_ids,
-+            mm_features: &request.mm_features,
-+            sampling_params: &request.sampling_params,
-+            pooling_params: &request.pooling_params,
-+            arrival_time: request.arrival_time,
-+            lora_request: &request.lora_request,
-+            cache_salt: &request.cache_salt,
-+            data_parallel_rank: &request.data_parallel_rank,
-+            prompt_embeds: &request.prompt_embeds,
-+            prompt_is_token_ids: &request.prompt_is_token_ids,
-+            client_index: request.client_index,
-+            current_wave: request.current_wave,
-+            priority: request.priority,
-+            trace_headers: &request.trace_headers,
-+            resumable: request.resumable,
-+            external_req_id: &request.external_req_id,
-+            reasoning_ended: &request.reasoning_ended,
-+            reasoning_parser_kwargs: &request.reasoning_parser_kwargs,
-+            abort_immediately: request.abort_immediately,
++        let request = self.request;
++        let legacy = self.protocol == EngineCoreProtocol::V0_20;
++        let mut fields = serializer.serialize_tuple(if legacy { 17 } else { 20 })?;
++        fields.serialize_element(&request.request_id)?;
++        fields.serialize_element(&request.prompt_token_ids)?;
++        fields.serialize_element(&request.mm_features)?;
++        fields.serialize_element(&request.sampling_params)?;
++        fields.serialize_element(&request.pooling_params)?;
++        fields.serialize_element(&request.arrival_time)?;
++        fields.serialize_element(&request.lora_request)?;
++        fields.serialize_element(&request.cache_salt)?;
++        fields.serialize_element(&request.data_parallel_rank)?;
++        fields.serialize_element(&request.prompt_embeds)?;
++        // 0.21 在 client_index 前插入掩码，不能仅截断新版数组。
++        if !legacy {
++            fields.serialize_element(&request.prompt_is_token_ids)?;
 +        }
++        fields.serialize_element(&request.client_index)?;
++        fields.serialize_element(&request.current_wave)?;
++        fields.serialize_element(&request.priority)?;
++        fields.serialize_element(&request.trace_headers)?;
++        fields.serialize_element(&request.resumable)?;
++        fields.serialize_element(&request.external_req_id)?;
++        fields.serialize_element(&request.reasoning_ended)?;
++        if !legacy {
++            fields.serialize_element(&request.reasoning_parser_kwargs)?;
++            fields.serialize_element(&request.abort_immediately)?;
++        }
++        fields.end()
 +    }
 +}
 +
  impl EngineCoreRequest {
 +    /// Encode this request with the field layout expected by the selected vLLM release.
 +    pub fn encode_for(&self, protocol: EngineCoreProtocol) -> Result<Vec<u8>> {
-+        match protocol {
-+            EngineCoreProtocol::V0_20 => crate::protocol::encode_msgpack(&RequestV20::from(self)),
-+            EngineCoreProtocol::V0_21ToV0_27 => {
-+                crate::protocol::encode_msgpack(&RequestV21ToV0_27::from(self))
-+            }
-+            EngineCoreProtocol::V0_28 => crate::protocol::encode_msgpack(self),
-+        }
++        crate::protocol::encode_msgpack(&VersionedRequest {
++            request: self,
++            protocol,
++        })
 +    }
 +
      /// Validate fields intentionally not supported in the first-stage client.
      pub fn validate(&self) -> Result<()> {
          if self.prompt_embeds.is_some() {
-@@ -167,8 +285,9 @@ mod tests {
- 
-     const AUX_FRAME_THRESHOLD: usize = 256;
- 
-+    // 保持各版本 client_index 的数组位置，避免旧引擎将新增的可选字段解码为整数。
-     #[test]
--    fn engine_core_request_serializes_as_full_array() {
-+    fn engine_core_request_serializes_versioned_wire_layouts() {
-         let request = EngineCoreRequest {
-             request_id: "req-1".to_string(),
-             prompt_token_ids: Some(vec![1, 2, 3]),
-@@ -196,6 +315,25 @@ mod tests {
-         assert_eq!(array[10], Value::Nil);
-         assert_eq!(array[11], Value::from(7));
-         assert_eq!(array[20], Value::from("session-1"));
-+
-+        let encoded = request.encode_for(EngineCoreProtocol::V0_20).unwrap();
-+        let array = match decode_value(&encoded).unwrap() {
-+            Value::Array(array) => array,
-+            other => panic!("expected array, got {other:?}"),
-+        };
-+        assert_eq!(array.len(), 17);
-+        assert_eq!(array[9], Value::Nil);
-+        assert_eq!(array[10], Value::from(7));
-+
-+        let encoded = request.encode_for(EngineCoreProtocol::V0_21ToV0_27).unwrap();
-+        let array = match decode_value(&encoded).unwrap() {
-+            Value::Array(array) => array,
-+            other => panic!("expected array, got {other:?}"),
-+        };
-+        assert_eq!(array.len(), 20);
-+        assert_eq!(array[9], Value::Nil);
-+        assert_eq!(array[10], Value::Nil);
-+        assert_eq!(array[11], Value::from(7));
-     }
- 
-     #[test]
 diff --git a/rust/src/server/src/grpc/control.rs b/rust/src/server/src/grpc/control.rs
 index 201d8ace9..7fd506571 100644
 --- a/rust/src/server/src/grpc/control.rs
@@ -469,7 +357,7 @@ index 201d8ace9..7fd506571 100644
 @@ -26,20 +26,30 @@ impl ControlServiceImpl {
          self.state.engine_core_client().ready_response()
      }
- 
+
 -    fn parallelism_info(&self) -> pb::ParallelismInfo {
 +    fn parallelism_info(&self) -> Result<pb::ParallelismInfo, Status> {
          let ready = self.ready();
@@ -494,9 +382,9 @@ index 201d8ace9..7fd506571 100644
 +        })
      }
  }
- 
+
  const GRPC_API_VERSION: &str = "vllm";
- 
+
 +fn required<T>(value: Option<T>, field: &'static str) -> Result<T, Status> {
 +    value.ok_or_else(|| Status::failed_precondition(format!("EngineCore did not report {field}")))
 +}
@@ -526,7 +414,7 @@ index 201d8ace9..7fd506571 100644
 +            max_batched_tokens: required(ready.max_num_batched_tokens, "max_num_batched_tokens")?,
          }))
      }
- 
+
 @@ -125,7 +136,7 @@ pub(super) fn kv_event_source(response: &EngineCoreReadyResponse) -> Option<pb::
          endpoint: config.endpoint.clone(),
          topic: config.topic.clone(),
@@ -546,7 +434,7 @@ index 7eabd2701..4f5d2b1a3 100644
      ready_0.num_gpu_blocks = 10;
 -    ready_0.data_parallel_size = 2;
 +    ready_0.data_parallel_size = Some(2);
- 
+
      let mut ready_1 = default_ready_response();
      ready_1.max_model_len = 4_096;
      ready_1.num_gpu_blocks = 20;
@@ -554,7 +442,7 @@ index 7eabd2701..4f5d2b1a3 100644
 -    ready_1.data_parallel_rank = 1;
 +    ready_1.data_parallel_size = Some(2);
 +    ready_1.data_parallel_rank = Some(1);
- 
+
      let engine_tasks = [ready_0, ready_1].map(|ready| {
          let engine_id = EngineId::from_engine_index(
 -            ready.data_parallel_rank.try_into().expect("test rank fits engine identity"),
