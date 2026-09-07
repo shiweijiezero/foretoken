@@ -2,82 +2,33 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-ARG METAX_BASE_IMAGE
-FROM ${METAX_BASE_IMAGE} AS builder
+ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.9.10
+ARG METAX_SDK_IMAGE
+FROM ${UV_IMAGE} AS uv
+FROM ${METAX_SDK_IMAGE}
 
+ARG VLLM_VERSION
 ARG MACA_PATH=/opt/maca
-ARG METAX_PYTHON=/opt/conda/bin/python
-ARG UV_VERSION=0.9.10
-ARG VLLM_VERSION=0.24.0
-ARG PYPI_INDEX_URL=https://pypi.org/simple
-ARG METAX_INDEX_URL=https://repos.metax-tech.com/r/maca-pypi/simple
 
-ENV MACA_PATH=${MACA_PATH}
-ENV CUCC_PATH=${MACA_PATH}/tools/cu-bridge \
-    CUDA_PATH=/root/cu-bridge/CUDA_DIR \
-    CUCC_CMAKE_ENTRY=2
-ENV PATH=${MACA_PATH}/mxgpu_llvm/bin:${MACA_PATH}/bin:${CUCC_PATH}/tools:${CUCC_PATH}/bin:${PATH} \
-    LD_LIBRARY_PATH=${MACA_PATH}/lib:${MACA_PATH}/ompi/lib:${MACA_PATH}/mxgpu_llvm/lib:${LD_LIBRARY_PATH}
-ENV UV_INDEX_URL=${PYPI_INDEX_URL} \
-    UV_EXTRA_INDEX_URL=${METAX_INDEX_URL} \
-    UV_INDEX_STRATEGY=unsafe-best-match \
-    VIRTUAL_ENV=/opt/foretoken-vllm \
-    FORETOKEN_VLLM_PYTHON=/opt/foretoken-vllm/bin/python
-
+# SDK 镜像只需提供 MACA 工具链与共享库；Python 包由独立安装脚本求解。
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && ${METAX_PYTHON} -m pip install --no-cache-dir \
-      --index-url ${PYPI_INDEX_URL} \
-      uv==${UV_VERSION} \
-    && ln -sf \
-      "$(${METAX_PYTHON} -c 'import sysconfig; print(sysconfig.get_path("scripts"))')/uv" \
-      /usr/local/bin/uv \
-    && uv venv ${VIRTUAL_ENV} \
-      --python ${METAX_PYTHON} \
-      --system-site-packages
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      bash build-essential ca-certificates curl patch python3-dev \
+      libelf1 libnuma1 libglib2.0-0 libpng-dev libjpeg-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /opt/src
+COPY --from=uv /uv /usr/local/bin/uv
+COPY install.sh /usr/local/lib/foretoken/install-vllm-metax.sh
+COPY xgrammar-0.24.patch constraints-0.24.txt /usr/local/lib/foretoken/
 
-RUN mkdir vLLM-metax vllm \
-    && curl --fail --location --output /tmp/vllm-metax.tar.gz \
-      https://github.com/MetaX-MACA/vLLM-metax/archive/refs/tags/v${VLLM_VERSION}.tar.gz \
-    && tar --extract --gzip --strip-components=1 \
-      --file /tmp/vllm-metax.tar.gz \
-      --directory vLLM-metax \
-    && curl --fail --location --output /tmp/vllm.tar.gz \
-      https://github.com/vllm-project/vllm/archive/refs/tags/v${VLLM_VERSION}.tar.gz \
-    && tar --extract --gzip --strip-components=1 \
-      --file /tmp/vllm.tar.gz \
-      --directory vllm
+ENV MACA_PATH=${MACA_PATH} \
+    UV_PYTHON=/usr/bin/python3
+RUN bash /usr/local/lib/foretoken/install-vllm-metax.sh \
+    /opt/foretoken-vllm ${VLLM_VERSION}
 
-WORKDIR /opt/src/vLLM-metax
-
-RUN uv pip install --python ${FORETOKEN_VLLM_PYTHON} \
-      -r requirements/build.txt \
-    && SETUPTOOLS_SCM_PRETEND_VERSION=${VLLM_VERSION} \
-      uv pip install --python ${FORETOKEN_VLLM_PYTHON} \
-      --no-build-isolation \
-      --no-deps \
-      .
-
-WORKDIR /opt/src/vllm
-
-RUN VLLM_TARGET_DEVICE=empty \
-    VLLM_VERSION_OVERRIDE=${VLLM_VERSION} \
-    uv pip install --python ${FORETOKEN_VLLM_PYTHON} \
-      --no-build-isolation \
-      --no-deps \
-      . \
-    && ${FORETOKEN_VLLM_PYTHON} -c \
-      'import vllm, vllm_metax; print(vllm.__version__)'
-
-FROM ${METAX_BASE_IMAGE}
-
-ENV VIRTUAL_ENV=/opt/foretoken-vllm \
-    PATH=/opt/foretoken-vllm/bin:${PATH} \
-    FORETOKEN_VLLM_PYTHON=/opt/foretoken-vllm/bin/python
-
-COPY --from=builder /opt/foretoken-vllm /opt/foretoken-vllm
+ENV VIRTUAL_ENV=/opt/foretoken-vllm/.venv \
+    PATH=/opt/foretoken-vllm/.venv/bin:${PATH} \
+    LD_LIBRARY_PATH=${MACA_PATH}/lib:${MACA_PATH}/ompi/lib:${MACA_PATH}/mxgpu_llvm/lib:${LD_LIBRARY_PATH} \
+    FORETOKEN_VLLM_PYTHON=/opt/foretoken-vllm/.venv/bin/python
 
 WORKDIR /workspace

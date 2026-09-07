@@ -26,12 +26,6 @@ VLLM_PATCHES := \
 
 VLLM_METAX_VERSION ?= 0.24.0
 VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)
-VLLM_METAX_PYTHON ?= /opt/foretoken-vllm/bin/python
-MACA_PATH ?= /opt/maca
-METAX_PYTHON ?= /opt/conda/bin/python
-UV_VERSION ?= 0.9.10
-PYPI_INDEX_URL ?= https://pypi.org/simple
-METAX_INDEX_URL ?= https://repos.metax-tech.com/r/maca-pypi/simple
 
 .PHONY: vllm-source build-data-plane verify-data-plane dev-build dev-deploy \
 	image-frontend image-vllm-metax image-model-server image-model-server-metax \
@@ -67,18 +61,14 @@ image-frontend: vllm-source
 	docker build -f data-plane/frontend/Dockerfile -t foretoken-frontend:dev .
 
 image-vllm-metax:
-	@test -n "$(METAX_BASE_IMAGE)" || \
-		(printf '%s\n' 'Set METAX_BASE_IMAGE to a matching released MetaX vLLM image.' >&2; exit 1)
+	@test -n "$(METAX_SDK_IMAGE)" || \
+		(printf '%s\n' 'Set METAX_SDK_IMAGE to an Ubuntu/Debian image with the matching MACA SDK.' >&2; exit 1)
 	docker build \
-		--build-arg METAX_BASE_IMAGE="$(METAX_BASE_IMAGE)" \
+		--build-arg METAX_SDK_IMAGE="$(METAX_SDK_IMAGE)" \
 		--build-arg MACA_PATH \
-		--build-arg METAX_PYTHON \
-		--build-arg UV_VERSION \
+		--build-arg UV_IMAGE \
 		--build-arg VLLM_VERSION="$(VLLM_METAX_VERSION)" \
-		--build-arg PYPI_INDEX_URL \
-		--build-arg METAX_INDEX_URL \
-		-f deploy/inference-engines/vllm-metax/Dockerfile \
-		-t "$(VLLM_METAX_IMAGE)" .
+		-t "$(VLLM_METAX_IMAGE)" deploy/inference-engines/vllm-metax
 
 image-model-server: vllm-source
 	@test -n "$(INFERENCE_ENGINE_IMAGE)" || \
@@ -90,7 +80,7 @@ image-model-server: vllm-source
 image-model-server-metax: image-vllm-metax
 	$(MAKE) image-model-server \
 		INFERENCE_ENGINE_IMAGE="$(VLLM_METAX_IMAGE)" \
-		FORETOKEN_VLLM_PYTHON="$(VLLM_METAX_PYTHON)"
+		FORETOKEN_VLLM_PYTHON=/opt/foretoken-vllm/.venv/bin/python
 
 image-benchmark:
 	docker build -f benchmarks/Dockerfile -t foretoken-benchmark:dev .

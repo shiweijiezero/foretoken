@@ -9,15 +9,9 @@
 
 ## 从公开源码构建 MetaX vLLM
 
-MetaX 将 [`vLLM-metax`](https://github.com/MetaX-MACA/vLLM-metax) 作为硬件插件发布，每个 `vX.Y.Z` tag 与相同版本的 upstream vLLM 对齐。以目标版本对应的 MetaX 官方 vLLM image 为基础，一条命令即可创建由 uv 管理的源码覆盖层，并构建 Foretoken model-server image：
+宿主机与容器统一调用 `deploy/inference-engines/vllm-metax/install.sh`。脚本下载同版本的公开 vLLM-metax 与 upstream vLLM tag，在新的 uv 环境中求解并安装 Python 依赖；主机或 SDK 镜像只提供 MACA SDK 和系统编译工具。
 
-```bash
-METAX_BASE_IMAGE=<matching-metax-vllm-image> \
-VLLM_METAX_VERSION=0.24.0 \
-make image-model-server-metax
-```
-
-构建结果为 `foretoken-vllm-metax:0.24.0` 和 `foretoken-model-server:dev`。虚拟环境位于 `/opt/foretoken-vllm`，不会使用宿主机 Python 环境。基础镜像提供匹配的 MACA、PyTorch、mcoplib 和原生依赖，uv 在覆盖层中安装指定版本的公开 `vLLM-metax` 与 upstream vLLM tag。基础镜像应从 [vLLM-MetaX 版本矩阵](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html)选择。Foretoken 当前支持 MetaX 已公开发布的 0.20 至 0.24 版本。
+`make image-model-server-metax` 接收 `METAX_SDK_IMAGE` 与 `VLLM_METAX_VERSION`，并复用既有 model-server 镜像构建流程，不要求预装 vLLM 镜像。默认 0.24 组合包含上游 XGrammar 依赖修正及兼容的 Python 依赖版本；环境准备、支持的工作负载、单机安装和镜像分发见[沐曦部署指南](../metax-deployment_zh.md)。
 
 ## 直接导入本地镜像
 

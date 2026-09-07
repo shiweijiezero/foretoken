@@ -9,15 +9,9 @@ This maintainer guide covers manual image import and raw Helm operations. Run co
 
 ## Build MetaX vLLM from public source
 
-MetaX publishes [`vLLM-metax`](https://github.com/MetaX-MACA/vLLM-metax) as a hardware plugin, with each `vX.Y.Z` tag aligned to the same upstream vLLM tag. Starting from MetaX's released vLLM image for the selected version, one command creates a uv-managed source overlay and builds the Foretoken model-server image:
+Use `deploy/inference-engines/vllm-metax/install.sh` for both host and container installation. It downloads matching public vLLM-metax and upstream vLLM tags and resolves their Python dependencies into a new uv environment; only the MACA SDK and system build tools are supplied by the host or SDK image.
 
-```bash
-METAX_BASE_IMAGE=<matching-metax-vllm-image> \
-VLLM_METAX_VERSION=0.24.0 \
-make image-model-server-metax
-```
-
-The build creates `foretoken-vllm-metax:0.24.0` and `foretoken-model-server:dev`. Its virtual environment is stored in `/opt/foretoken-vllm`; the host Python environment is not used. The base image supplies the matching MACA, PyTorch, mcoplib, and native dependencies, while uv installs the selected public `vLLM-metax` and upstream vLLM tags into the overlay. Select the base image from the [vLLM-MetaX release matrix](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html). Foretoken currently supports the public MetaX releases from 0.20 through 0.24.
+`make image-model-server-metax` accepts `METAX_SDK_IMAGE` and `VLLM_METAX_VERSION` and composes the result with the existing model-server image build. A preinstalled vLLM image is not required. The default 0.24 combination includes an upstream XGrammar dependency correction and compatible Python dependency versions; see [MetaX deployment](../metax-deployment.md) for prerequisites, supported workloads, standalone installation, and image distribution.
 
 ## Import local images directly
 
