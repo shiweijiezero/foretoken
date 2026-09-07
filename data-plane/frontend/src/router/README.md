@@ -25,7 +25,7 @@ Each pipeline stage selects an algorithm by name. Deployments with additional ro
 
 `kv_least_loaded` prefers confirmed local KV-prefix locality, then lower load. `least_loaded` ignores KV locality and ranks by current request load. `uniform` gives every candidate the same score; `round_robin` then rotates deterministically among tied targets, while `max` chooses a deterministic tied target.
 
-A request becomes a candidate only when its model, input limit, requested capabilities, and target health are compatible. The Router evaluates aggregate and disaggregated topologies published by the Controller. In Prefill/Decode and Encoder/Prefill/Decode topologies, it keeps stage selections within their controller-defined pipeline scope.
+A request becomes a candidate only when its model, input limit, requested capabilities, and target health are compatible. The Router evaluates aggregate and disaggregated topologies published by the Controller. In Prefill/Decode and Encoder/Prefill/Decode topologies, it keeps stage selections within a controller-defined connector compatibility scope. A scope can contain multiple ModelGroups for each stage; it does not pair groups by ordinal.
 
 KV locality is an advisory routing signal. `Unavailable` means the index cannot answer reliably; it is not a cache miss and does not exclude a target. A preferred route is not a guarantee that the inference backend still has the cache when execution begins. See the [KV prefix index](../kv-indexer/README.md) for current KV locality and degradation behavior.
 

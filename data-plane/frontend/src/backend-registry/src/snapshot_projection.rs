@@ -312,16 +312,36 @@ pub(crate) fn project_registry(
         }
     }
 
-    // E/P/D projection first assembles complete encoder, prefill, and decode triplets.
-    // Cross-role artifact and transport checks run before any triplet becomes routable.
+    // E/P/D scopes list every route that can participate in the same connector-compatible
+    // service pipeline. Algorithms may choose any E, P, and D combination within that boundary.
     let mut epd_pipeline_scopes = BTreeMap::new();
     for pipeline_scope in &snapshot.epd_pipeline_scopes {
+        let members = (
+            pipeline_scope
+                .encoder_route_target_ids
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            pipeline_scope
+                .prefill_route_target_ids
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            pipeline_scope
+                .decode_route_target_ids
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+        );
         if pipeline_scope.pipeline_scope_id.is_empty()
-            || pipeline_scope.encoder_route_target_id.as_str().is_empty()
-            || pipeline_scope.prefill_route_target_id.as_str().is_empty()
-            || pipeline_scope.decode_route_target_id.as_str().is_empty()
+            || members.0.is_empty()
+            || members.1.is_empty()
+            || members.2.is_empty()
+            || members.0.len() != pipeline_scope.encoder_route_target_ids.len()
+            || members.1.len() != pipeline_scope.prefill_route_target_ids.len()
+            || members.2.len() != pipeline_scope.decode_route_target_ids.len()
             || epd_pipeline_scopes
-                .insert(pipeline_scope.pipeline_scope_id.clone(), pipeline_scope)
+                .insert(pipeline_scope.pipeline_scope_id.clone(), members)
                 .is_some()
         {
             return Err(SnapshotError::InvalidEpdPipelineScope(
@@ -329,8 +349,15 @@ pub(crate) fn project_registry(
             ));
         }
     }
-    let mut epd_pipeline_scope_members =
-        BTreeMap::<String, [Option<&crate::snapshot::SnapshotEpdComponent>; 3]>::new();
+    let mut epd_pipeline_scope_members = BTreeMap::<
+        String,
+        (
+            Vec<&crate::snapshot::SnapshotEpdComponent>,
+            Vec<&crate::snapshot::SnapshotEpdComponent>,
+            Vec<&crate::snapshot::SnapshotEpdComponent>,
+        ),
+    >::new();
+    let mut epd_route_target_ids = BTreeSet::new();
     for component in &snapshot.epd_components {
         if component.service_uid.is_empty()
             || component.pool_uid.is_empty()
@@ -344,89 +371,87 @@ pub(crate) fn project_registry(
                 component.route_target_id.clone(),
             ));
         }
-        let Some(pipeline_scope) = epd_pipeline_scopes.get(&component.pipeline_scope_id) else {
+        if !epd_route_target_ids.insert(component.route_target_id.clone()) {
+            return Err(SnapshotError::DuplicateRouteTarget(
+                component.route_target_id.clone(),
+            ));
+        }
+        let Some(declared) = epd_pipeline_scopes.get(&component.pipeline_scope_id) else {
             return Err(SnapshotError::InvalidEpdPipelineScope(
                 component.pipeline_scope_id.clone(),
             ));
         };
-        let (index, expected_id) = match component.role {
-            ModelServerRole::Encoder => (0, &pipeline_scope.encoder_route_target_id),
-            ModelServerRole::Prefill => (1, &pipeline_scope.prefill_route_target_id),
-            ModelServerRole::Decode => (2, &pipeline_scope.decode_route_target_id),
-            ModelServerRole::Aggregate => {
+        let members = epd_pipeline_scope_members
+            .entry(component.pipeline_scope_id.clone())
+            .or_default();
+        match component.role {
+            ModelServerRole::Encoder if declared.0.contains(&component.route_target_id) => {
+                members.0.push(component)
+            }
+            ModelServerRole::Prefill if declared.1.contains(&component.route_target_id) => {
+                members.1.push(component)
+            }
+            ModelServerRole::Decode if declared.2.contains(&component.route_target_id) => {
+                members.2.push(component)
+            }
+            ModelServerRole::Aggregate
+            | ModelServerRole::Encoder
+            | ModelServerRole::Prefill
+            | ModelServerRole::Decode => {
                 return Err(SnapshotError::InvalidEpdPipelineScope(
                     component.pipeline_scope_id.clone(),
                 ));
             }
-        };
-        if &component.route_target_id != expected_id
-            || epd_pipeline_scope_members
-                .entry(component.pipeline_scope_id.clone())
-                .or_insert([None, None, None])[index]
-                .replace(component)
-                .is_some()
-        {
-            return Err(SnapshotError::InvalidEpdPipelineScope(
-                component.pipeline_scope_id.clone(),
-            ));
         }
     }
-    for (pipeline_scope_id, pipeline_scope) in &epd_pipeline_scopes {
-        let Some([Some(encoder), Some(prefill), Some(decode)]) =
-            epd_pipeline_scope_members.get(pipeline_scope_id)
+    for (pipeline_scope_id, declared) in &epd_pipeline_scopes {
+        let Some((encoders, prefills, decodes)) = epd_pipeline_scope_members.get(pipeline_scope_id)
         else {
             return Err(SnapshotError::InvalidEpdPipelineScope(
                 pipeline_scope_id.clone(),
             ));
         };
-        // A pipeline is one model artifact with matched EC on encoder/prefill and
-        // matched Mooncake KV transport on prefill/decode; decode never participates in EC.
-        if aggregate_models.contains(&encoder.model)
-            || pd_models.contains(&encoder.model)
-            || encoder.model != prefill.model
-            || encoder.model != decode.model
-            || encoder.revision != prefill.revision
-            || encoder.revision != decode.revision
-            || encoder.tokenizer != prefill.tokenizer
-            || encoder.tokenizer != decode.tokenizer
-            || encoder.tokenizer_revision != prefill.tokenizer_revision
-            || encoder.tokenizer_revision != decode.tokenizer_revision
-            || !encoder.profile_name.is_empty()
-            || !encoder.profile_revision.is_empty()
-            || !encoder.connector.is_empty()
-            || !encoder.protocol.is_empty()
-            || prefill.profile_name.is_empty()
-            || decode.profile_name.is_empty()
-            || prefill.profile_name != decode.profile_name
-            || prefill.profile_revision.is_empty()
-            || decode.profile_revision.is_empty()
-            || prefill.profile_revision != decode.profile_revision
-            || prefill.connector != "MooncakeConnector"
-            || decode.connector != "MooncakeConnector"
-            || prefill.protocol != "rdma"
-            || decode.protocol != "rdma"
-            || prefill.kv_scope_id.is_empty()
-            || decode.kv_scope_id.is_empty()
-            || prefill.kv_scope_id != decode.kv_scope_id
-            || encoder.ec_profile_name.is_empty()
-            || prefill.ec_profile_name.is_empty()
-            || encoder.ec_profile_name != prefill.ec_profile_name
-            || encoder.ec_profile_revision.is_empty()
-            || prefill.ec_profile_revision.is_empty()
-            || encoder.ec_profile_revision != prefill.ec_profile_revision
-            || encoder.ec_connector != "ECExampleConnector"
-            || prefill.ec_connector != "ECExampleConnector"
-            || encoder.ec_connector != prefill.ec_connector
-            || !decode.ec_profile_name.is_empty()
-            || !decode.ec_profile_revision.is_empty()
-            || !decode.ec_connector.is_empty()
+        let observed = (
+            encoders
+                .iter()
+                .map(|component| component.route_target_id.clone())
+                .collect::<BTreeSet<_>>(),
+            prefills
+                .iter()
+                .map(|component| component.route_target_id.clone())
+                .collect::<BTreeSet<_>>(),
+            decodes
+                .iter()
+                .map(|component| component.route_target_id.clone())
+                .collect::<BTreeSet<_>>(),
+        );
+        if &observed != declared {
+            return Err(SnapshotError::InvalidEpdPipelineScope(
+                pipeline_scope_id.clone(),
+            ));
+        }
+        let reference_encoder = encoders[0];
+        let reference_prefill = prefills[0];
+        let reference_decode = decodes[0];
+        if aggregate_models.contains(&reference_encoder.model)
+            || pd_models.contains(&reference_encoder.model)
+            || encoders
+                .iter()
+                .any(|encoder| !compatible_encoder_prefill(encoder, reference_prefill))
+            || prefills.iter().any(|prefill| {
+                !compatible_encoder_prefill(reference_encoder, prefill)
+                    || !compatible_prefill_decode(prefill, reference_decode)
+            })
+            || decodes
+                .iter()
+                .any(|decode| !compatible_prefill_decode(reference_prefill, decode))
         {
             return Err(SnapshotError::InvalidEpdPipelineScope(
-                pipeline_scope.pipeline_scope_id.clone(),
+                pipeline_scope_id.clone(),
             ));
         }
     }
-    // Only fully validated triplets are materialized into executable components and
+    // Only fully validated compatibility scopes are materialized into executable components and
     // service-scoped admission targets.
     for component in snapshot.epd_components {
         let target = ScalingTarget {
@@ -472,4 +497,52 @@ pub(crate) fn project_registry(
         routes.push(route);
     }
     Ok((ModelRouteTable::new(routes), components))
+}
+
+fn compatible_encoder_prefill(
+    encoder: &crate::snapshot::SnapshotEpdComponent,
+    prefill: &crate::snapshot::SnapshotEpdComponent,
+) -> bool {
+    encoder.service_uid == prefill.service_uid
+        && encoder.model == prefill.model
+        && encoder.revision == prefill.revision
+        && encoder.tokenizer == prefill.tokenizer
+        && encoder.tokenizer_revision == prefill.tokenizer_revision
+        && encoder.profile_name.is_empty()
+        && encoder.profile_revision.is_empty()
+        && encoder.connector.is_empty()
+        && encoder.protocol.is_empty()
+        && !encoder.ec_profile_name.is_empty()
+        && encoder.ec_profile_name == prefill.ec_profile_name
+        && !encoder.ec_profile_revision.is_empty()
+        && encoder.ec_profile_revision == prefill.ec_profile_revision
+        && encoder.ec_connector == "ECExampleConnector"
+        && encoder.ec_connector == prefill.ec_connector
+}
+
+fn compatible_prefill_decode(
+    prefill: &crate::snapshot::SnapshotEpdComponent,
+    decode: &crate::snapshot::SnapshotEpdComponent,
+) -> bool {
+    prefill.service_uid == decode.service_uid
+        && prefill.model == decode.model
+        && prefill.revision == decode.revision
+        && prefill.tokenizer == decode.tokenizer
+        && prefill.tokenizer_revision == decode.tokenizer_revision
+        && !prefill.profile_name.is_empty()
+        && prefill.profile_name == decode.profile_name
+        && !prefill.profile_revision.is_empty()
+        && prefill.profile_revision == decode.profile_revision
+        && prefill.connector == "MooncakeConnector"
+        && prefill.connector == decode.connector
+        && prefill.protocol == "rdma"
+        && prefill.protocol == decode.protocol
+        && prefill.kv_scope_id == decode.kv_scope_id
+        && prefill.prefill_bootstrap_endpoint.is_some()
+        && !prefill.ec_profile_name.is_empty()
+        && !prefill.ec_profile_revision.is_empty()
+        && prefill.ec_connector == "ECExampleConnector"
+        && decode.ec_profile_name.is_empty()
+        && decode.ec_profile_revision.is_empty()
+        && decode.ec_connector.is_empty()
 }
