@@ -19,7 +19,7 @@ index cf247c3b8..45f6a33fa 100644
              handshake_address = %config.handshake_address(),
 @@ -93,7 +101,11 @@ impl ManagedEngineHandle {
          );
-
+ 
          let mut command = Command::from(command);
 -        command.stdin(Stdio::null()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
 +        command
@@ -27,5 +27,6 @@ index cf247c3b8..45f6a33fa 100644
 +            .stdin(Stdio::null())
 +            .stdout(Stdio::inherit())
 +            .stderr(Stdio::inherit());
-
+ 
          process_group::configure(&mut command);
+ 
