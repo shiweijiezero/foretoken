@@ -17,8 +17,10 @@ spec:
   maxSize: 100Gi
 ```
 
-`foretoken deploy` creates the PVC through the namespace's default `StorageClass`. Set `maxSize` to grow it automatically; omit `maxSize` to keep `initialSize` fixed. With automatic expansion, new model processes wait until at least `initialSize` is free. PVC shrinking is not supported.
+`foretoken deploy` creates the PVC through the namespace's default `StorageClass`. `initialSize` is only the first PVC request. Setting `maxSize` enables automatic growth: Foretoken requests more capacity when the lowest observed free-space ratio reaches 20%, doubling the request up to `maxSize`. This is an early-growth policy, not a guarantee that an active download cannot fill the filesystem before expansion completes. You can increase `maxSize` later, but cannot reduce or remove it. PVC shrinking is not supported.
 
-The defaults are `ReadWriteMany` and `Retain`. The `StorageClass` must support the selected access mode and, when `maxSize` is set, volume expansion. Set `retentionPolicy: Delete` to remove the PVC after workloads stop using it.
+If the persistent cache becomes unwritable while a new model-server is starting, Foretoken stops that EngineCore process and retries once with cache directories under the Pod's temporary `/tmp` volume. A frontend whose persistent snapshot is missing downloads its tokenizer files into its own temporary volume. Foretoken does not clear the PVC, move already-running instances, or switch EngineCore paths without restarting the failed child process. Temporary caches are lost with their Pods.
+
+The defaults are `ReadWriteMany` and `Retain`. The `StorageClass` must support the selected access mode. Automatic growth requires online volume and filesystem expansion; Foretoken does not restart Pods to complete offline filesystem resize. Set `retentionPolicy: Delete` to remove the PVC after workloads stop using it.
 
 An administrator can instead configure `workload.cache.claimName` during platform installation. Foretoken does not modify or delete an existing claim.

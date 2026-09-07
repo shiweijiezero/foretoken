@@ -34,15 +34,16 @@ const (
 // +kubebuilder:validation:XValidation:rule="quantity(self.initialSize).compareTo(quantity('0')) > 0",message="initialSize must be positive"
 // +kubebuilder:validation:XValidation:rule="!has(self.maxSize) || quantity(self.maxSize).compareTo(quantity('0')) > 0",message="maxSize must be positive"
 // +kubebuilder:validation:XValidation:rule="!has(self.maxSize) || quantity(self.maxSize).compareTo(quantity(self.initialSize)) > 0",message="maxSize must be greater than initialSize"
-// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="RuntimeCache storage settings are immutable"
+// +kubebuilder:validation:XValidation:rule="has(self.storageClassName) == has(oldSelf.storageClassName) && (!has(self.storageClassName) || self.storageClassName == oldSelf.storageClassName) && self.initialSize == oldSelf.initialSize && self.accessMode == oldSelf.accessMode && self.retentionPolicy == oldSelf.retentionPolicy",message="only maxSize may change"
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.maxSize) || (has(self.maxSize) && quantity(self.maxSize).compareTo(quantity(oldSelf.maxSize)) >= 0)",message="maxSize cannot be removed or decreased"
 type RuntimeCacheSpec struct {
 	// +optional
 	StorageClassName string `json:"storageClassName,omitempty"`
 
-	// InitialSize is the first PVC request and, with MaxSize, the free space required before model loading.
+	// InitialSize is the first PVC request.
 	InitialSize ResourceQuantity `json:"initialSize"`
 
-	// MaxSize enables automatic expansion when set.
+	// MaxSize enables automatic expansion when set and may only be increased.
 	// +optional
 	MaxSize ResourceQuantity `json:"maxSize,omitempty"`
 

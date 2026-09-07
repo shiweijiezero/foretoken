@@ -24,9 +24,10 @@ import (
 )
 
 const (
-	runtimeCacheFinalizer           = "inference.foretoken.io/runtimecache-protection"
-	runtimeCacheLabel               = "inference.foretoken.io/runtime-cache"
-	runtimeCacheRetentionAnnotation = "inference.foretoken.io/runtime-cache-retention"
+	runtimeCacheFinalizer                       = "inference.foretoken.io/runtimecache-protection"
+	runtimeCacheLabel                           = "inference.foretoken.io/runtime-cache"
+	runtimeCacheRetentionAnnotation             = "inference.foretoken.io/runtime-cache-retention"
+	runtimeCacheExpansionFreeSpaceDivisor int64 = 5
 )
 
 // RuntimeCacheReconciler owns the PVC lifecycle for one RuntimeCache.
@@ -63,7 +64,17 @@ func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request
 		statusErr := reconciler.updateStatus(ctx, cache, inferencev1alpha1.RuntimeCachePhaseDegraded, false, "ApplyFailed", err.Error(), nil)
 		return ctrl.Result{}, errors.Join(fmt.Errorf("reconcile RuntimeCache PVC: %w", err), statusErr)
 	}
-	ready := pvc.Status.Phase == corev1.ClaimBound && pvcCapacityAtLeastRequest(pvc)
+	if message, failed := pvcResizeFailure(pvc); failed {
+		phase, usable := inferencev1alpha1.RuntimeCachePhaseDegraded, false
+		if pvcHasUsableCapacity(pvc) {
+			phase, usable = inferencev1alpha1.RuntimeCachePhaseReady, true
+		}
+		if err := reconciler.updateStatus(ctx, cache, phase, usable, "ResizeFailed", message, pvc); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: runtimeCachePollInterval}, nil
+	}
+	ready := pvc.Status.Phase == corev1.ClaimBound && pvcCapacityAtLeastRequest(pvc) && !pvcResizePending(pvc)
 	phase, reason, message := inferencev1alpha1.RuntimeCachePhasePending, "WaitingForBinding", "Runtime cache PVC is not bound"
 	if resizing || pvc.Status.Phase == corev1.ClaimBound && !ready {
 		phase, reason, message = inferencev1alpha1.RuntimeCachePhaseResizing, "Resizing", "Runtime cache PVC is expanding"
@@ -72,18 +83,24 @@ func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request
 		phase, reason, message = inferencev1alpha1.RuntimeCachePhaseReady, "Ready", "Runtime cache PVC is bound"
 	}
 	result := ctrl.Result{}
+	if cache.Spec.MaxSize != "" && pvc.Status.Phase == corev1.ClaimBound && !ready {
+		result.RequeueAfter = runtimeCachePollInterval
+	}
 	if ready && cache.Spec.MaxSize != "" {
 		state, err := reconciler.reconcileAutomaticExpansion(ctx, cache, pvc)
 		if err != nil {
-			statusErr := reconciler.updateStatus(ctx, cache, inferencev1alpha1.RuntimeCachePhaseDegraded, false, "ExpansionFailed", err.Error(), pvc)
+			statusErr := reconciler.updateStatus(ctx, cache, inferencev1alpha1.RuntimeCachePhaseReady, true, "ExpansionFailed", err.Error(), pvc)
 			return ctrl.Result{}, errors.Join(fmt.Errorf("expand RuntimeCache PVC: %w", err), statusErr)
 		}
 		result.RequeueAfter = runtimeCachePollInterval
 		if state.resizing {
 			phase, ready, reason, message = inferencev1alpha1.RuntimeCachePhaseResizing, false, "Resizing", "Runtime cache PVC is expanding"
 		}
-		if state.degraded {
-			phase, ready, reason, message = inferencev1alpha1.RuntimeCachePhaseDegraded, false, state.reason, state.message
+		if state.maxSizeReached {
+			reason, message = "MaxSizeReached", "Runtime cache reached maxSize; workloads can continue while filesystem space remains"
+		}
+		if state.noSpace {
+			reason, message = "NoSpaceAvailable", "Runtime cache reached maxSize with no available filesystem space; new model processes may use Pod-scoped temporary cache storage"
 		}
 	}
 	if err := reconciler.updateStatus(ctx, cache, phase, ready, reason, message, pvc); err != nil {
@@ -183,25 +200,51 @@ func pvcCapacityAtLeastRequest(pvc *corev1.PersistentVolumeClaim) bool {
 	return capacity.Cmp(requested) >= 0
 }
 
-type runtimeCacheExpansionState struct {
-	resizing bool
-	degraded bool
-	reason   string
-	message  string
+func pvcHasUsableCapacity(pvc *corev1.PersistentVolumeClaim) bool {
+	capacity := pvc.Status.Capacity[corev1.ResourceStorage]
+	return pvc.Status.Phase == corev1.ClaimBound && capacity.Sign() > 0
 }
 
-// reconcileAutomaticExpansion doubles the current request when free space falls below the initial allocation.
-func (reconciler *RuntimeCacheReconciler) reconcileAutomaticExpansion(ctx context.Context, cache *inferencev1alpha1.RuntimeCache, pvc *corev1.PersistentVolumeClaim) (runtimeCacheExpansionState, error) {
-	minimumAvailable, err := runtimeCacheQuantityBytes(cache.Spec.InitialSize, "initialSize")
-	if err != nil {
-		return runtimeCacheExpansionState{}, err
+func pvcResizePending(pvc *corev1.PersistentVolumeClaim) bool {
+	for _, condition := range pvc.Status.Conditions {
+		if condition.Status == corev1.ConditionTrue && (condition.Type == corev1.PersistentVolumeClaimResizing || condition.Type == corev1.PersistentVolumeClaimFileSystemResizePending) {
+			return true
+		}
 	}
+	status := pvc.Status.AllocatedResourceStatuses[corev1.ResourceStorage]
+	return status == corev1.PersistentVolumeClaimControllerResizeInProgress ||
+		status == corev1.PersistentVolumeClaimNodeResizePending ||
+		status == corev1.PersistentVolumeClaimNodeResizeInProgress
+}
+
+func pvcResizeFailure(pvc *corev1.PersistentVolumeClaim) (string, bool) {
+	for _, condition := range pvc.Status.Conditions {
+		if condition.Status != corev1.ConditionTrue || condition.Type != corev1.PersistentVolumeClaimControllerResizeError && condition.Type != corev1.PersistentVolumeClaimNodeResizeError {
+			continue
+		}
+		if condition.Message != "" {
+			return condition.Message, true
+		}
+		return "Kubernetes reported a runtime cache resize error", true
+	}
+	status := pvc.Status.AllocatedResourceStatuses[corev1.ResourceStorage]
+	if status == corev1.PersistentVolumeClaimControllerResizeInfeasible || status == corev1.PersistentVolumeClaimNodeResizeInfeasible {
+		return "Kubernetes reported that the runtime cache resize cannot complete", true
+	}
+	return "", false
+}
+
+type runtimeCacheExpansionState struct {
+	resizing       bool
+	maxSizeReached bool
+	noSpace        bool
+}
+
+// reconcileAutomaticExpansion applies the controller's proactive growth policy.
+func (reconciler *RuntimeCacheReconciler) reconcileAutomaticExpansion(ctx context.Context, cache *inferencev1alpha1.RuntimeCache, pvc *corev1.PersistentVolumeClaim) (runtimeCacheExpansionState, error) {
 	maxSize, err := runtimeCacheQuantityBytes(cache.Spec.MaxSize, "maxSize")
 	if err != nil {
 		return runtimeCacheExpansionState{}, err
-	}
-	if minimumAvailable >= maxSize {
-		return runtimeCacheExpansionState{}, fmt.Errorf("maxSize must be greater than initialSize")
 	}
 	observations, observationErr := observeRuntimeCache(ctx, reconciler.Client, cache, pvc.Name)
 	if observationErr != nil {
@@ -210,30 +253,27 @@ func (reconciler *RuntimeCacheReconciler) reconcileAutomaticExpansion(ctx contex
 	if len(observations) == 0 {
 		return runtimeCacheExpansionState{}, nil
 	}
-	capacity, available := observations[0].CapacityBytes, observations[0].AvailableBytes
-	for _, observation := range observations[1:] {
-		capacity = min(capacity, observation.CapacityBytes)
+	available := observations[0].AvailableBytes
+	shouldExpand := false
+	for _, observation := range observations {
 		available = min(available, observation.AvailableBytes)
+		if observation.AvailableBytes <= observation.CapacityBytes/runtimeCacheExpansionFreeSpaceDivisor {
+			shouldExpand = true
+		}
+	}
+	// Twenty percent is an early-growth policy, not a guarantee that concurrent
+	// downloads cannot consume the remaining space before online expansion completes.
+	if !shouldExpand {
+		return runtimeCacheExpansionState{}, nil
 	}
 	currentQuantity := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
 	currentRequest := currentQuantity.Value()
-	if available >= minimumAvailable {
-		return runtimeCacheExpansionState{}, nil
+	if currentRequest >= maxSize {
+		return runtimeCacheExpansionState{maxSizeReached: available > 0, noSpace: available == 0}, nil
 	}
-	used := capacity - available
-	if used > maxSize-minimumAvailable {
-		return runtimeCacheExpansionState{degraded: true, reason: "MaxSizeReached", message: "Runtime cache does not have enough space within maxSize"}, nil
-	}
-	required := used + minimumAvailable
-	target := required
+	target := maxSize
 	if currentRequest <= maxSize/2 {
-		target = max(target, currentRequest*2)
-	} else {
-		target = maxSize
-	}
-	target = min(target, maxSize)
-	if target <= currentRequest {
-		return runtimeCacheExpansionState{degraded: true, reason: "MaxSizeReached", message: "Runtime cache reached maxSize with insufficient free space"}, nil
+		target = currentRequest * 2
 	}
 	base := pvc.DeepCopy()
 	pvc.Spec.Resources.Requests[corev1.ResourceStorage] = *resource.NewQuantity(target, resource.BinarySI)

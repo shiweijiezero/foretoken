@@ -7,6 +7,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"testing"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -253,18 +254,23 @@ func TestRuntimeCacheControllerLifecycle(t *testing.T) {
 		}
 	}
 	pool := get(t, ctx, c, client.ObjectKey{Namespace: service.Namespace, Name: "managed-cache-model-default"}, new(inferencev1alpha1.ModelPool))
-	if pool.Spec.Template.RuntimeCache == nil || pool.Spec.Template.RuntimeCache.ClaimName != claim.Name || pool.Spec.Template.RuntimeCache.MountPath != "/cache" || pool.Spec.Template.RuntimeCache.MinimumAvailableBytes != 10<<30 {
+	if pool.Spec.Template.RuntimeCache == nil || pool.Spec.Template.RuntimeCache.ClaimName != claim.Name || pool.Spec.Template.RuntimeCache.MountPath != "/cache" {
 		t.Fatalf("managed runtime cache binding = %#v", pool.Spec.Template.RuntimeCache)
 	}
 
-	// A mounted filesystem with less free space than the initial allocation must grow before model loading proceeds.
+	// Automatic growth leaves a fresh filesystem at initialSize, then starts at the free-space threshold.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	var lowSpace atomic.Bool
 	observationServer := &http.Server{Handler: http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"version":1,"pod_uid":"cache-pod-uid","capacity_bytes":10737418240,"available_bytes":5368709120}`))
+		if lowSpace.Load() {
+			_, _ = response.Write([]byte(`{"version":1,"pod_uid":"cache-pod-uid","capacity_bytes":10737418240,"available_bytes":1073741824}`))
+			return
+		}
+		_, _ = response.Write([]byte(`{"version":1,"pod_uid":"cache-pod-uid","capacity_bytes":10737418240,"available_bytes":9663676416}`))
 	})}
 	go func() { _ = observationServer.Serve(listener) }()
 	t.Cleanup(func() { _ = observationServer.Shutdown(context.Background()) })
@@ -284,6 +290,15 @@ func TestRuntimeCacheControllerLifecycle(t *testing.T) {
 	if err := c.Create(ctx, pod); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := r.Reconcile(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	claim = get(t, ctx, c, client.ObjectKeyFromObject(claim), new(corev1.PersistentVolumeClaim))
+	freshRequest := claim.Spec.Resources.Requests[corev1.ResourceStorage]
+	if freshRequest.Cmp(resource.MustParse("10Gi")) != 0 {
+		t.Fatalf("fresh runtime cache request = %s", freshRequest.String())
+	}
+	lowSpace.Store(true)
 	if _, err := r.Reconcile(ctx, request); err != nil {
 		t.Fatal(err)
 	}

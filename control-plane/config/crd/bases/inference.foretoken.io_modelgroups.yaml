@@ -102,12 +102,6 @@ spec:
                         maxLength: 253
                         minLength: 1
                         type: string
-                      minimumAvailableBytes:
-                        description: MinimumAvailableBytes delays model loading until
-                          automatic expansion establishes its reserve.
-                        format: int64
-                        minimum: 0
-                        type: integer
                       mountPath:
                         maxLength: 1024
                         minLength: 2

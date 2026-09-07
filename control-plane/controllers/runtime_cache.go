@@ -68,21 +68,16 @@ func (profile RuntimeCacheProfile) Resolve(ctx context.Context, kubeClient clien
 		return nil, false, fmt.Errorf("namespace %q has multiple RuntimeCaches", namespace)
 	}
 	cache := &caches.Items[0]
-	if !cache.DeletionTimestamp.IsZero() || cache.Status.Phase == inferencev1alpha1.RuntimeCachePhaseDegraded || cache.Status.Phase == inferencev1alpha1.RuntimeCachePhaseTerminating {
+	if !cache.DeletionTimestamp.IsZero() {
+		return nil, true, nil
+	}
+	if cache.Status.Phase == inferencev1alpha1.RuntimeCachePhaseDegraded {
 		return nil, false, nil
 	}
 	if cache.Status.ObservedGeneration != cache.Generation || cache.Status.ClaimName == "" {
 		return nil, false, nil
 	}
-	binding := &inferencev1alpha1.RuntimeCacheBinding{ClaimName: cache.Status.ClaimName, MountPath: profile.MountPath}
-	if cache.Spec.MaxSize != "" {
-		bytes, err := runtimeCacheQuantityBytes(cache.Spec.InitialSize, "initialSize")
-		if err != nil {
-			return nil, false, fmt.Errorf("RuntimeCache %q: %w", cache.Name, err)
-		}
-		binding.MinimumAvailableBytes = bytes
-	}
-	return binding, true, nil
+	return &inferencev1alpha1.RuntimeCacheBinding{ClaimName: cache.Status.ClaimName, MountPath: profile.MountPath}, true, nil
 }
 
 // Validate rejects an invalid runtime cache mount path.

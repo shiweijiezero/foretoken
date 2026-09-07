@@ -13,7 +13,8 @@ use foretoken_model_protocol::RuntimeEcTransferMetadata;
 
 use crate::runtime_transport::{KV_EVENT_ENDPOINT, KV_EVENT_TOPIC, LOOPBACK_HOST};
 
-const PYTHON: &str = "python3";
+const VLLM_PYTHON_ENV: &str = "FORETOKEN_VLLM_PYTHON";
+const DEFAULT_VLLM_PYTHON: &str = "python";
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -341,10 +342,14 @@ impl LaunchPlanV1 {
 
     /// Builds the owned managed-engine configuration consumed by model-server startup.
     ///
-    /// The process handle takes this configuration; the plan only contributes validated vLLM flags.
+    /// The model-server image selects Python through `FORETOKEN_VLLM_PYTHON`; the process handle
+    /// takes the resulting configuration, while the plan contributes validated vLLM flags.
     pub fn managed_engine(&self, handshake_port: u16) -> Result<ManagedEngineConfig, String> {
         Ok(ManagedEngineConfig {
-            python: PYTHON.into(),
+            python: std::env::var(VLLM_PYTHON_ENV)
+                .ok()
+                .filter(|python| !python.is_empty())
+                .unwrap_or_else(|| DEFAULT_VLLM_PYTHON.into()),
             model: self.artifacts.model.clone(),
             handshake_host: LOOPBACK_HOST.into(),
             handshake_port,
@@ -390,10 +395,6 @@ impl LaunchPlanV1 {
         if let Some(config) = self.ec.transfer_config() {
             args.push(format!("--ec-transfer-config={config}"));
         }
-        args.push(format!(
-            "--shutdown-timeout={}",
-            self.lifecycle.drain_seconds
-        ));
         Ok(args)
     }
 }

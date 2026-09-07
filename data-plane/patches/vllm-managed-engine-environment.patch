@@ -1,0 +1,31 @@
+diff --git a/rust/src/managed-engine/src/process.rs b/rust/src/managed-engine/src/process.rs
+index cf247c3b8..45f6a33fa 100644
+--- a/rust/src/managed-engine/src/process.rs
++++ b/rust/src/managed-engine/src/process.rs
+@@ -85,6 +85,14 @@ impl ManagedEngineHandle {
+     /// Spawn one managed Python headless engine and return a handle for
+     /// monitoring it.
+     pub async fn spawn(config: ManagedEngineConfig) -> Result<Self> {
++        Self::spawn_with_env(config, std::iter::empty()).await
++    }
++
++    /// Spawn one managed engine with caller-owned child-process environment overrides.
++    pub async fn spawn_with_env(
++        config: ManagedEngineConfig,
++        environment: impl IntoIterator<Item = (String, String)>,
++    ) -> Result<Self> {
+         let command = config.to_command();
+         info!(
+             handshake_address = %config.handshake_address(),
+@@ -93,7 +101,11 @@ impl ManagedEngineHandle {
+         );
+
+         let mut command = Command::from(command);
+-        command.stdin(Stdio::null()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
++        command
++            .envs(environment)
++            .stdin(Stdio::null())
++            .stdout(Stdio::inherit())
++            .stderr(Stdio::inherit());
+
+         process_group::configure(&mut command);

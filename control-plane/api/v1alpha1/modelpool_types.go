@@ -67,11 +67,6 @@ type RuntimeCacheBinding struct {
 	// +kubebuilder:validation:MaxLength=1024
 	// +kubebuilder:validation:Pattern="^/"
 	MountPath string `json:"mountPath"`
-
-	// MinimumAvailableBytes delays model loading until automatic expansion establishes its reserve.
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	MinimumAvailableBytes int64 `json:"minimumAvailableBytes,omitempty"`
 }
 
 // RuntimeSourceAccess contains optional source settings consumed by the runtime adapter.

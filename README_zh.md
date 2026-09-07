@@ -23,7 +23,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 |---|---|---|
 | 评测 | 性能压测与参数扫描、正确性评测和 SLO 仿真 | 开发中 |
 | 性能剖析 | PyTorch Profiler 和 Nsight 定位计算、通信及 CPU/GPU 性能瓶颈 | 规划中 |
-| 硬件适配 | 统一设备能力、运行时、通信和指标接口 | 开发中 |
+| 硬件适配 | 统一设备能力、运行时、通信和指标接口；参阅[沐曦部署指南](docs/metax-deployment_zh.md) | 开发中 |
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
 | 分布式推理 | 聚合部署、Prefill/Decode 分离和 WideEP 并行策略 | 研究中 |
 | 控制面 | 模型服务、副本管理、扩缩容、更新和故障恢复 | 开发中 |
@@ -31,7 +31,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-本快速开始需要 Python 3.10 或更高版本、配置了支持卷扩容的默认 `StorageClass` 的 Kubernetes 集群、`kubectl`、Helm 和至少一块可用 GPU。如需在单台机器上准备测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。
+本快速开始需要 Python 3.10 以上版本、配置了可扩容默认 `StorageClass` 的 Kubernetes 集群、`kubectl`、Helm、至少一块 GPU，以及可用的 `LoadBalancer`（k3d 使用 k3s ServiceLB 即可）。如需准备单机测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。
 
 ### 1. 安装命令行工具
 
@@ -134,7 +134,7 @@ curl --fail-with-body --no-buffer \
 ## 停止与卸载
 
 ```bash
-# 删除快速开始部署的前端和模型服务
+# 删除快速开始的资源，包括命名空间和运行时缓存 PVC
 foretoken delete examples/quickstart
 
 # 卸载 Foretoken 平台

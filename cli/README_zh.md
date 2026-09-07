@@ -96,7 +96,7 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 ## 部署和管理模型服务
 
-部署一个 Kustomize 根目录中渲染出的前端服务和全部模型：
+部署一个 Kustomize 根目录中渲染出的前端服务和全部模型。多模型示例最多需要 4 张 GPU、12 个 CPU 核心、100 GiB 内存，以及支持 `ReadWriteMany` 和在线扩容的默认 `StorageClass`；最小路径请使用 `examples/quickstart`。
 
 ```bash
 foretoken deploy examples/multi-model-quickstart

@@ -20,9 +20,9 @@ fn rejects_invalid_topology() {
     assert!(invalid.validate().is_err());
 }
 
-// Protects controller-owned vLLM flags from duplicate rendering.
+// Protects the supported controller-owned vLLM argument contract.
 #[test]
-fn renders_owned_arguments_once() {
+fn renders_supported_owned_arguments() {
     let args = plan().render_vllm_args().unwrap();
     for flag in [
         "--revision=",
@@ -31,7 +31,6 @@ fn renders_owned_arguments_once() {
         "--pipeline-parallel-size=",
         "--prefill-context-parallel-size=",
         "--decode-context-parallel-size=",
-        "--shutdown-timeout=",
     ] {
         assert_eq!(
             args.iter().filter(|arg| arg.starts_with(flag)).count(),
@@ -40,6 +39,12 @@ fn renders_owned_arguments_once() {
         );
     }
     assert!(args.iter().any(|arg| arg == "--max-model-len=32768"));
+    assert!(
+        !args
+            .iter()
+            .any(|arg| arg.starts_with("--shutdown-timeout=")),
+        "{args:?}"
+    );
 
     let event_config = args
         .iter()

@@ -65,8 +65,7 @@ spec:
                 - ReadWriteMany
                 type: string
               initialSize:
-                description: InitialSize is the first PVC request and, with MaxSize,
-                  the free space required before model loading.
+                description: InitialSize is the first PVC request.
                 maxLength: 64
                 minLength: 1
                 type: string
@@ -75,7 +74,8 @@ spec:
                   rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
                     >= 0
               maxSize:
-                description: MaxSize enables automatic expansion when set.
+                description: MaxSize enables automatic expansion when set and may
+                  only be increased.
                 maxLength: 64
                 minLength: 1
                 type: string
@@ -105,8 +105,14 @@ spec:
             - message: maxSize must be greater than initialSize
               rule: '!has(self.maxSize) || quantity(self.maxSize).compareTo(quantity(self.initialSize))
                 > 0'
-            - message: RuntimeCache storage settings are immutable
-              rule: self == oldSelf
+            - message: only maxSize may change
+              rule: has(self.storageClassName) == has(oldSelf.storageClassName) &&
+                (!has(self.storageClassName) || self.storageClassName == oldSelf.storageClassName)
+                && self.initialSize == oldSelf.initialSize && self.accessMode == oldSelf.accessMode
+                && self.retentionPolicy == oldSelf.retentionPolicy
+            - message: maxSize cannot be removed or decreased
+              rule: '!has(oldSelf.maxSize) || (has(self.maxSize) && quantity(self.maxSize).compareTo(quantity(oldSelf.maxSize))
+                >= 0)'
           status:
             description: RuntimeCacheStatus publishes the managed claim and its observed
               capacity.

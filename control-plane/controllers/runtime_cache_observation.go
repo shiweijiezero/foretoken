@@ -48,10 +48,7 @@ func observeRuntimeCache(ctx context.Context, kubeClient client.Client, cache *i
 			failures = append(failures, err)
 		}
 	}
-	if len(observations) > 0 {
-		return observations, nil
-	}
-	return nil, errors.Join(failures...)
+	return observations, errors.Join(failures...)
 }
 
 // observeGroupCache reads Pod IPs rather than Service endpoints so startup is observable.
