@@ -7,15 +7,15 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken 命令行工具 通过统一的 `foretoken` 入口安装 Kubernetes 平台、从 Kustomize 配置部署模型服务、查看服务就绪状态、解析前端访问入口并运行评测。
+Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平台、从 Kustomize 配置部署模型服务、查看服务就绪状态、解析前端访问入口并运行评测。
 
-新集群从“安装 命令行工具”开始。如果 `foretoken --version` 已经可用，直接安装平台；如果集群已经安装 Foretoken 平台，直接部署模型服务。
+新集群从“安装命令行工具”开始。如果 `foretoken --version` 已经可用，直接安装平台；如果集群已经安装 Foretoken 平台，直接部署模型服务。
 
 ## 开始前
 
 需要准备 Python 3.10 或更高版本、当前 Kubernetes context、`kubectl` 和 Helm。GPU 节点需要预先安装厂商驱动和 Kubernetes device plugin。源码安装还需要 Docker 和 Make，以及本地 kind/k3d 集群或所有目标节点都能访问的 OCI registry。
 
-## 安装 命令行工具
+## 安装命令行工具
 
 使用 pip 安装已经发布的 Foretoken 命令行工具包：
 
@@ -34,7 +34,7 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-这一步只会在当前 Python 环境中安装 `foretoken` 命令，不会修改 Kubernetes 集群。运行 `foretoken --version` 可以查看 命令行工具 及其对应的平台版本。
+这一步只会在当前 Python 环境中安装 `foretoken` 命令，不会修改 Kubernetes 集群。运行 `foretoken --version` 可以查看命令行工具及其对应的平台版本。
 
 ## 安装 Kubernetes 平台
 
@@ -48,11 +48,11 @@ uv pip install foretoken
 foretoken install
 ```
 
-安装过程中，命令行工具 会发现 Prometheus 和加速器指标 exporter。它会复用兼容的共享实例，按需安装由 命令行工具 管理的 Prometheus 和 NVIDIA DCGM Exporter，并接入沐曦集群已经提供的 mxExporter。命令行工具 不安装 GPU 驱动、device plugin 或厂商 Operator。监控实例存在歧义或配置不完整时，安装会给出可操作的错误；选择规则见[可观测性](../observability/README_zh.md)。
+安装过程中，命令行工具会发现 Prometheus 和加速器指标 exporter，复用兼容的共享实例，按需安装 Prometheus 和 NVIDIA DCGM Exporter，并接入沐曦集群已经提供的 mxExporter。监控选择与配置见[可观测性](../observability/README_zh.md)。
 
 ### 网关模式
 
-只有集群运行 Envoy Gateway 时，命令行工具 才会创建专用的 `GatewayClass` 和 `Gateway`：
+只有集群运行 Envoy Gateway 时，命令行工具才会创建专用的 `GatewayClass` 和 `Gateway`：
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -116,7 +116,7 @@ foretoken delete examples/multi-model-quickstart
 foretoken uninstall
 ```
 
-该命令保留 Foretoken CRD，并在仍有用户服务时拒绝卸载。平台卸载时会一并删除由 命令行工具 管理的监控和 Gateway 资源，复用的集群组件保持不变。
+该命令保留 Foretoken CRD，并在仍有用户服务时拒绝卸载。平台卸载时会一并删除由 命令行工具管理的监控和 Gateway 资源，复用的集群组件保持不变。
 
 不应用配置，直接查看同一部署的状态：
 
@@ -144,7 +144,7 @@ FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
 FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
-Host 值在直接访问时是 URL authority，在 HTTP Gateway 模式下是配置的路由域名。该命令负责等待 LoadBalancer 或 Gateway 地址，服务就绪仍由 `foretoken deploy` 负责。
+直接访问时，`--host` 返回主机名或 IP，以及 URL 中包含的端口；HTTP Gateway 模式下返回配置的路由域名。`foretoken endpoint` 等待 LoadBalancer 或 Gateway 分配地址；要等待服务就绪，请使用 `foretoken deploy`。
 
 ## 运行评测
 
@@ -170,4 +170,4 @@ uv pip install 'foretoken[bench]'
 foretoken bench examples/quickstart
 ```
 
-命令行工具 使用当前 `kubectl` context，并遵循 `KUBECONFIG` 等标准 Kubernetes 配置。
+命令行工具使用当前 `kubectl` context，并遵循 `KUBECONFIG` 等标准 Kubernetes 配置。

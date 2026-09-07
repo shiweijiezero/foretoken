@@ -3,22 +3,18 @@
 
 # KV Prefix Index
 
-The KV prefix index gives the Router cache-locality observations for prompt prefixes. It is a directory, not a cache: the inference backend owns KV blocks, and the index neither stores, restores, nor transfers them.
+When several requests start with the same long system prompt, a model instance may still hold the KV cache from processing that prefix. The KV prefix index tells the Router where that prefix was observed, helping it choose an instance that can reuse the work. The cache itself stays with the inference backend; routing currently considers cache on the target's local accelerator.
 
-## Current behavior
+With the [`kv_least_loaded` routing scorer](../router/README.md), lookup results affect selection as follows:
 
-KV-aware routing currently considers only cache held on a target's local accelerator. Foretoken does not currently use CPU-memory or disk offload, remote cache sharing, or peer-to-peer cache transfer as a routing capability.
+- **Match:** prefer longer cached prefixes, then lower load.
+- **Miss:** no reusable prefix was found in the index for that target, so it receives no cache preference.
+- **`Unavailable`:** the index cannot give a reliable answer. This is not a miss; the target receives no cache preference, but remains eligible for ordinary routing.
 
-For an eligible request, the index can report a confirmed prefix match, a confirmed miss, or `Unavailable`. `Unavailable` means the index cannot answer reliably; it is not a miss. The Router treats it as no KV-locality preference and continues ordinary routing.
-
-A locality match is advisory. It identifies a prompt prefix cached as complete token blocks for the same model deployment and a compatible cache configuration. It is not a guarantee that the backend still has the cache when inference begins. Requests using cache salts, LoRA, unsupported multimodal features, or explicit prefix-cache opt-out do not use KV-prefix lookup.
+Targets must still be healthy and compatible with the request. A match makes reuse more likely, but the backend may evict the cache before execution begins.
 
 ## Operations
 
-The Frontend refreshes KV locality from model-server events. If an event source is unavailable, lacks its key, or reports an inconsistent cursor or epoch, serving continues but KV-aware routing becomes unavailable or degraded for that source.
+Use the frontend's `/statusz` endpoint to inspect KV-index health and any degradation reason, and `/metrics` for Prometheus monitoring. If the index remains degraded, use the reported reason to investigate model-server cache updates. See [frontend endpoint access](../../README.md#endpoint-access).
 
-Platform operators can inspect the Frontend's cluster-local `/statusz` endpoint for KV-index state and source health, and `/metrics` for Prometheus scraping. Application clients do not need to repair KV synchronization; investigate the model-server event source and serving configuration with the platform operator.
-
-The Router uses this signal with load and request compatibility. See the [Router guide](../router/README.md) for routing behavior.
-
-Generic placement vocabulary, event sequencing, index implementations, and backend adapter requirements are documented for maintainers in [KV index maintenance](MAINTAINER.md).
+Protocol details and backend integration are covered in [KV index maintenance](MAINTAINER.md).

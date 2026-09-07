@@ -3,7 +3,7 @@
 
 # Router
 
-The Router selects a compatible, healthy model target for each inference request. It does not execute inference, store KV cache, or move cache between instances.
+The Router selects a compatible, healthy model target for each inference request.
 
 Configure routing in `FrontendService.spec.routerPipeline`:
 
@@ -27,6 +27,6 @@ Each pipeline stage selects an algorithm by name. Deployments with additional ro
 
 A target is eligible only when it is healthy and supports the requested model, input length, and capabilities. For services with separate prefill/decode or encoder/prefill/decode stages, routing keeps the selected stages compatible with one another.
 
-KV locality is an advisory routing signal. `Unavailable` means the index cannot answer reliably; it is not a cache miss and does not exclude a target. A preferred route is not a guarantee that the inference backend still has the cache when execution begins. See the [KV prefix index](../kv-indexer/README.md) for current KV locality and degradation behavior.
+When the KV index reports `Unavailable`, the target remains eligible and receives no KV-prefix preference; routing still considers its load. See the [KV prefix index](../kv-indexer/README.md) for locality and degradation behavior.
 
 For compiled-in routing algorithms and exact Filter, Scorer, and Picker contracts, see [Router maintenance](MAINTAINER.md).

@@ -3,7 +3,7 @@
 
 # Router
 
-Router 为每个推理请求选择兼容且健康的模型目标。它不执行推理、不保存 KV cache，也不在实例之间搬运缓存。
+Router 为每个推理请求选择兼容且健康的模型目标。
 
 在 `FrontendService.spec.routerPipeline` 中配置路由策略：
 
@@ -27,6 +27,6 @@ spec:
 
 只有健康且支持请求指定模型、输入长度和所需能力的目标才会成为候选项。对于预填充/解码分离或编码/预填充/解码分离的服务，路由会确保选中的各阶段彼此兼容。
 
-KV 位置只是路由信号。`Unavailable` 表示索引当前无法可靠回答，不等于缓存未命中，也不会排除目标。即使某个目标被优先选择，推理后端在真正执行时仍可能没有对应缓存。当前 KV 位置与退化行为见 [KV 前缀索引](../kv-indexer/README_zh.md)。
+KV 索引返回 `Unavailable` 时，目标仍可参与路由，但不获得 KV 前缀匹配优先权；路由仍会考虑其负载。位置查询和退化行为见 [KV 前缀索引](../kv-indexer/README_zh.md)。
 
 编译进二进制的路由算法，以及 Filter、Scorer 和 Picker 的精确维护契约见 [Router 维护指南](MAINTAINER_zh.md)。

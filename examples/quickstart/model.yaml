@@ -29,6 +29,6 @@ spec:
     pp: 1 # Pipeline-parallel size per replica.
     pcp: 1 # Prefill-context-parallel size per replica.
     dcp: 1 # Decode-context-parallel size per replica.
-  # Backend arguments are listed last and override equivalent fields above.
+  # Additional vLLM options, such as the maximum request length.
   extraArgs:
     - --max-model-len=32768 # Maximum number of input and generated tokens in one request.
