@@ -3,182 +3,54 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Deploy Foretoken on MetaX GPUs
+# Deploy a model on MetaX GPUs
 
 English | [简体中文](metax-deployment_zh.md)
 
-Foretoken uses MetaX GPUs through the [`vLLM-metax`](https://github.com/MetaX-MACA/vLLM-metax) hardware plugin. On a machine with a compatible driver and MACA SDK, install public source into an independent uv environment for text inference, or package the same environment for Kubernetes. A prebuilt MetaX vLLM image is not required.
+Once a Foretoken cluster is configured for MetaX GPUs, deploying a model follows the same workflow as on other GPUs: prepare its configuration, run `foretoken deploy`, and send an HTTP request. Foretoken manages deployment and request routing; the MetaX runtime in the model image executes the model on the GPU. Model users do not need to install vLLM, PyTorch, or MACA themselves.
 
-## Install vLLM in an independent uv environment
+This guide uses `Qwen/Qwen3-0.6B`. If the cluster is not ready yet, its administrator should complete [MetaX platform setup](development/metax-platform.md) first.
 
-The host needs a MetaX C-series GPU, compatible driver and MACA SDK, Python 3.12 with development headers, C/C++ build tools, Bash, curl, tar, patch, and uv. An administrator provides the SDK and its system libraries, including libelf, libnuma, GLib, libpng, and libjpeg. Python dependencies come from PyPI and the [MetaX package index](https://repos.metax-tech.com/r/maca-pypi/simple/); source downloads also require access to GitHub.
+## Before you start
 
-The example selects vLLM-metax 0.24.0, MetaX PyTorch 2.10, and mcoplib 0.4.9. This release line uses MACA 3.8.2.x; select the driver and SDK using the [official release matrix](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html).
+You need the Foretoken CLI, kubectl, curl, cluster access supplied by your administrator, and a checkout of the Foretoken examples. Run commands from the repository root. If the CLI is not installed, follow the [CLI installation instructions](../cli/README.md#install-the-command-line-tool).
 
-Run from the Foretoken repository root, choosing an installation directory that does not already exist:
+Confirm the following with the administrator:
 
-```bash
-export MACA_PATH=/opt/maca
-export UV_PYTHON=3.12
-export VLLM_ENV="$PWD/.gpu_cache/metax-vllm-0.24.0"
+- The platform has MetaX-compatible images, GPU resources, and storage for the model cache. The default example requests one GPU, 8 CPU, and 52 GiB memory.
+- This guide uses the `foretoken-demo` namespace and Gateway access. Confirm that you may use that namespace and obtain a hostname assigned to this model service.
 
-bash deploy/inference-engines/vllm-metax/install.sh "$VLLM_ENV" 0.24.0
-source "$VLLM_ENV/activate"
-```
+If the platform exposes services directly through a `LoadBalancer` instead of Gateway, omit the `hostname` setting below. The deployment and request commands remain the same.
 
-The installer downloads matching vLLM-metax and upstream vLLM tags, installs Python dependencies in `$VLLM_ENV/.venv`, and retains sources under `$VLLM_ENV/third_party`. It neither inherits system site-packages nor skips dependency resolution. The MetaX plugin and mcoplib provide native kernels; upstream vLLM is built with `VLLM_TARGET_DEVICE=empty` rather than installed from an NVIDIA CUDA wheel.
+## 1. Deploy the example model
 
-After a complete installation succeeds, check the environment and GPU:
+The example already includes the model, cache, and frontend service. No vLLM launch command is needed.
 
-```bash
-uv pip check --python "$VLLM_ENV/.venv/bin/python"
-python -c 'import torch, vllm; print(torch.__version__, vllm.__version__); print(torch.cuda.is_available())'
-```
-
-For standalone use, start the inference service directly:
-
-```bash
-vllm serve Qwen/Qwen3-0.6B
-```
-
-This environment runs on its installation host. Kubernetes Pods do not read a host venv; build an image for cluster deployment.
-
-### Version scope
-
-The validated independent source combination is 0.24.0. The installer backports [MetaX's XGrammar dependency correction](https://github.com/MetaX-MACA/vLLM-metax/commit/1331d8ad37da9a69fe1140b7759633d509b722a9); the plugin distribution includes `+foretoken.1` to distinguish it from the original release. Transformers 5.5.3, XGrammar 0.2.1, and TVM FFI 0.1.9 preserve text import and TileLang native API compatibility. Full dependency resolution and `uv pip check` still run.
-
-This combination has been validated for text generation and JSON-constrained output, not audio inference: the published torchaudio 2.4.1 wheel has a load-time ABI mismatch with PyTorch 2.10. Foretoken's EngineCore adapter accepts vLLM 0.20–0.28; this does not mean every version has passed independent installation or GPU validation.
-
-## Build a Kubernetes image
-
-### Build from a MACA SDK image
-
-Provide an Ubuntu 24.04 image with a matching MACA SDK, or a Debian-based image whose system Python and development headers are 3.12. It does not need PyTorch, mcoplib, or vLLM installed. Building requires Docker with BuildKit:
-
-```bash
-METAX_SDK_IMAGE=<maca-sdk-image> \
-VLLM_METAX_VERSION=0.24.0 \
-make image-model-server-metax
-```
-
-The image build runs the same `install.sh` and produces `foretoken-vllm-metax:0.24.0` and `foretoken-model-server:dev`. model-server uses `/opt/foretoken-vllm/.venv/bin/python` inside the image without mounting a host venv.
-
-### Optional: reuse an existing MetaX vLLM image
-
-When a working runtime image is already available, skip source and dependency installation and add only the Foretoken model-server:
-
-```bash
-INFERENCE_ENGINE_IMAGE=<metax-vllm-image> \
-FORETOKEN_VLLM_PYTHON=/opt/conda/bin/python \
-make image-model-server
-```
-
-Use the actual interpreter path that provides vLLM in the selected image. This also produces `foretoken-model-server:dev`.
-
-## Build the platform images
-
-Build the frontend and controller from the same checkout as model-server. The controller image includes the CRDs used by the maintained examples:
-
-```bash
-make image-frontend
-docker build -f control-plane/Dockerfile -t foretoken-control-plane:dev .
-```
-
-Replace `<registry>/<project>` with a registry reachable by the GPU nodes:
-
-```bash
-export MODEL_SERVER_IMAGE=<registry>/<project>/foretoken-model-server:metax-v0.24.0
-export FRONTEND_IMAGE=<registry>/<project>/foretoken-frontend:metax-v0.24.0
-export CONTROL_PLANE_IMAGE=<registry>/<project>/foretoken-control-plane:metax-v0.24.0
-
-docker tag foretoken-model-server:dev "$MODEL_SERVER_IMAGE"
-docker tag foretoken-frontend:dev "$FRONTEND_IMAGE"
-docker tag foretoken-control-plane:dev "$CONTROL_PLANE_IMAGE"
-docker push "$MODEL_SERVER_IMAGE"
-docker push "$FRONTEND_IMAGE"
-docker push "$CONTROL_PLANE_IMAGE"
-```
-
-For offline clusters, a node administrator can import all three images as described in the [source image lifecycle guide](development/source-image-lifecycle.md). Configure the exact imported names and tags below.
-
-## Configure and install Foretoken
-
-The cluster needs Kubernetes 1.29 or later, a default `StorageClass` supporting the example's ReadWriteMany access and online expansion, and a MetaX device plugin publishing `metax-tech.com/gpu`. Prepare Prometheus with Prometheus Operator, the `ServiceMonitor` and `PrometheusRule` CRDs, and mxExporter covering the MetaX nodes. Prometheus selectors must include the Foretoken platform and workload namespaces; use `observability.additionalLabels` if a release selector requires labels. See [Observability](../observability/README.md). The workstation needs the Foretoken CLI, kubectl, and Helm.
-
-The maintained single-model example runs two frontend replicas and one model replica, requesting a total of one GPU, 8 CPU, and 52 GiB memory.
-
-Create `metax-values.yaml`, using the complete image name published or imported above:
-
-```yaml
-image:
-  repository: <registry>/<project>/foretoken-control-plane
-  tag: metax-v0.24.0
-frontend:
-  enabled: true
-  mode: gateway
-  gateway:
-    create: true
-  image: <registry>/<project>/foretoken-frontend:metax-v0.24.0
-runtime:
-  vllm:
-    image: <registry>/<project>/foretoken-model-server:metax-v0.24.0
-    gpu:
-      resourceName: metax-tech.com/gpu
-      runtimeClassName: ""
-```
-
-For a private registry, configure `imagePullSecrets` for the controller namespace and `workload.imagePullSecrets` for each workload namespace.
-
-Install Envoy Gateway, then install the chart from the same checkout. Its controller initializes the matching CRDs before starting:
-
-```bash
-helm upgrade --install envoy-gateway \
-  oci://docker.io/envoyproxy/gateway-helm \
-  --namespace envoy-gateway-system \
-  --create-namespace \
-  --wait
-
-helm upgrade --install foretoken ./deploy/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --values metax-values.yaml \
-  --wait
-```
-
-Reuse a shared platform configured by its administrator instead of installing it again.
-
-## Deploy and send a request
-
-Add a hostname under the existing `spec` in `examples/quickstart/frontend.yaml`:
+Add `hostname` under the existing `spec` in `examples/quickstart/frontend.yaml`. Replace the example hostname with the one assigned by your administrator and keep the other settings:
 
 ```yaml
 spec:
   hostname: foretoken.example.com
 ```
 
-Deploy and inspect readiness:
+Deploy the example:
 
 ```bash
 foretoken deploy examples/quickstart
-foretoken status examples/quickstart
-kubectl get pods --namespace foretoken-demo --output wide
 ```
 
-The example's `resources.requests.gpu.count: 1` maps to a `metax-tech.com/gpu` request. The device plugin injects the assigned devices; ordinary Pods do not need `privileged` or a mount of the host's complete `/dev`.
+Foretoken prepares the model cache and starts the services. The command exits when the current configuration is Ready. The first deployment downloads the model, so startup time depends on network and storage performance.
 
-Resolve the endpoint and list model identifiers:
+To select another model, edit `examples/quickstart/model.yaml`. See the [single-model example](../examples/quickstart/README.md) for resources and cache settings. If you need a different namespace in a shared cluster, update both `namespace.yaml` and `kustomization.yaml`; changing only kubectl's default namespace does not change these manifests.
+
+## 2. Send a request
+
+Resolve the service URL and HTTP Host. Gateway uses the Host to route the request to the correct service:
 
 ```bash
 FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
 FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 
-curl --fail-with-body "$FORETOKEN_FRONTEND_URL/v1/models" \
-  -H "Host: $FORETOKEN_REQUEST_HOST"
-```
-
-The default example publishes `Qwen/Qwen3-0.6B`. If the model was changed, use the identifier returned by `/v1/models`:
-
-```bash
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
   -H "Host: $FORETOKEN_REQUEST_HOST" \
@@ -186,15 +58,34 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-A completed stream ends with `data: [DONE]`.
+The response arrives in chunks and ends with `data: [DONE]`. This confirms that a request completed through Foretoken, not merely that the model container started.
 
-## Cleanup and troubleshooting
+If you changed the model, update the request's `model` value as well. To list the names available from this service:
 
-Delete the example with `foretoken delete examples/quickstart`. If this guide was used to install a dedicated platform, its owner can remove the Helm release with `helm uninstall foretoken --namespace foretoken-platform`. CRDs remain installed; the RuntimeCache retention policy controls PVC cleanup. Envoy Gateway, monitoring, local uv environments, and images remain under their respective owners.
+```bash
+curl --fail-with-body "$FORETOKEN_FRONTEND_URL/v1/models" \
+  -H "Host: $FORETOKEN_REQUEST_HOST"
+```
 
-- **Installation fails:** inspect the original download, build, or dependency error. The incomplete directory is retained for diagnosis; retry with a new installation directory after resolving the cause. For dependency conflicts, check the release matrix rather than skipping required packages.
-- **MACA libraries cannot load:** source the installation's `activate` script and check SDK/driver compatibility. Container devices and driver libraries must be provided by the device plugin or container runtime.
-- **A Pod remains Pending:** use `kubectl describe pod` to check GPU and other resource availability.
-- **`torch` or `vllm` cannot be imported:** inspect the environment selected by `FORETOKEN_VLLM_PYTHON`; a host interpreter path does not configure a Pod's environment.
-- **Gateway 404 or `model_not_found`:** check the request Host and the model identifier returned by `/v1/models`, respectively.
-- **Frontend 503:** check ModelGroup and model-server Pod readiness first.
+## 3. Inspect or remove the deployment
+
+```bash
+foretoken status examples/quickstart
+kubectl get pods --namespace foretoken-demo
+```
+
+When finished, remove the resources created by the same configuration:
+
+```bash
+foretoken delete examples/quickstart
+```
+
+The example includes its namespace, so deletion also removes resources and the example cache within it. Use this cleanup command only for a namespace dedicated to the example, not a shared namespace. The platform remains under its administrator's care; it does not need to be installed or uninstalled for each model deployment.
+
+## If the request does not succeed
+
+- **Deployment keeps waiting or a Pod is Pending:** run `kubectl describe pod --namespace foretoken-demo <pod-name>`. Share events about unavailable GPU, CPU, memory, or unbound cache volumes with the administrator.
+- **HTTP 404:** check that the configured `hostname` matches the request Host. A `model_not_found` response instead means the model name is wrong; check `/v1/models`.
+- **HTTP 503:** inspect `foretoken status` and Pod logs to confirm that the model loaded and the services are Ready before investigating the access endpoint.
+
+The MetaX source environment described here has been validated for text generation and JSON-constrained output, not audio inference. Image versions, source installation, and runtime dependencies are covered in [platform setup](development/metax-platform.md).

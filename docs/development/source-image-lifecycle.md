@@ -7,7 +7,7 @@ English | [简体中文](source-image-lifecycle_zh.md)
 
 This maintainer guide covers manual image import and raw Helm operations. Run commands from the Foretoken repository root unless stated otherwise.
 
-For hardware-specific prerequisites and image preparation, see the [deployment guides](../../README.md#deployment-guides).
+For MetaX image preparation, see [Prepare Foretoken for MetaX GPUs](metax-platform.md#build-the-images).
 
 ## Import local images directly
 

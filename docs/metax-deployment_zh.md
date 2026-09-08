@@ -3,182 +3,54 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# 在沐曦 GPU 上部署 Foretoken
+# 在沐曦 GPU 上部署模型
 
 [English](metax-deployment.md) | 简体中文
 
-Foretoken 通过 [`vLLM-metax`](https://github.com/MetaX-MACA/vLLM-metax) 硬件插件使用沐曦 GPU。可以在已有驱动和 MACA SDK 的机器上，从公开源码创建独立 uv 环境运行文本推理，也可以将同一环境构建为 Kubernetes 镜像；不需要预装完整 MetaX vLLM 镜像。
+在配置好沐曦 GPU 的 Foretoken 集群中，部署模型与使用其他 GPU 的操作相同：准备模型配置，执行 `foretoken deploy`，然后通过 HTTP 调用。Foretoken 负责部署和请求路由，镜像中的沐曦运行环境负责在 GPU 上执行模型；普通部署用户不需要自己安装 vLLM、PyTorch 或 MACA。
 
-## 在独立 uv 环境中安装 vLLM
+本文以 `Qwen/Qwen3-0.6B` 为例。如果集群还没有准备好，由管理员先完成[沐曦平台准备](development/metax-platform_zh.md)，再执行下面的步骤。
 
-主机需要沐曦 C 系列 GPU、匹配的驱动与 MACA SDK、Python 3.12 及开发头文件、C/C++ 编译工具、Bash、curl、tar、patch 和 uv。MACA SDK 及其 libelf、libnuma、GLib、libpng、libjpeg 系统依赖由管理员安装；Python 包从 PyPI 和 [MetaX 软件源](https://repos.metax-tech.com/r/maca-pypi/simple/)获取。构建机器还需能够访问 GitHub。
+## 开始前
 
-以下示例使用 vLLM-metax 0.24.0、MetaX PyTorch 2.10 和 mcoplib 0.4.9。该发布线对应 MACA 3.8.2.x，驱动与 SDK 需符合[官方版本矩阵](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html)。
+准备好 Foretoken CLI、kubectl、curl，以及管理员提供的集群访问配置和 Foretoken 示例源码。命令均在仓库根目录执行。CLI 尚未安装时，按[命令行工具指南](../cli/README_zh.md#安装命令行工具)安装。
 
-从 Foretoken 仓库根目录执行，安装目录必须尚不存在：
+和管理员确认两件事：
 
-```bash
-export MACA_PATH=/opt/maca
-export UV_PYTHON=3.12
-export VLLM_ENV="$PWD/.gpu_cache/metax-vllm-0.24.0"
+- 平台已配置沐曦镜像、GPU 和模型缓存存储。默认示例申请 1 张 GPU、8 个 CPU 和 52 GiB 内存。
+- 本文使用 `foretoken-demo` namespace 和 Gateway 访问方式。确认可以使用该 namespace，并取得分配给本次模型服务的访问域名。
 
-bash deploy/inference-engines/vllm-metax/install.sh "$VLLM_ENV" 0.24.0
-source "$VLLM_ENV/activate"
-```
+如果平台使用 `LoadBalancer` 直接访问而不是 Gateway，无需设置下面的 `hostname`；部署和调用步骤不变。
 
-安装器下载相同版本的 `vLLM-metax` 和 upstream vLLM tag，在 `$VLLM_ENV/.venv` 中安装全部 Python 依赖，并保留源码到 `$VLLM_ENV/third_party`。它不继承系统 site-packages，也不跳过依赖求解。MACA 原生内核由插件和 mcoplib 提供，upstream vLLM 使用 `VLLM_TARGET_DEVICE=empty` 构建，不安装 NVIDIA CUDA 版 vLLM wheel。
+## 1. 部署示例模型
 
-完整安装成功后，检查环境和 GPU：
+示例配置已经包含模型、缓存和前端服务，无需添加底层 vLLM 启动命令。
 
-```bash
-uv pip check --python "$VLLM_ENV/.venv/bin/python"
-python -c 'import torch, vllm; print(torch.__version__, vllm.__version__); print(torch.cuda.is_available())'
-```
-
-单机使用可以直接启动推理服务：
-
-```bash
-vllm serve Qwen/Qwen3-0.6B
-```
-
-宿主机独立环境用于本机运行。Kubernetes Pod 不会读取宿主机 venv，需按下一节构建镜像。
-
-### 版本范围
-
-独立源码安装的验证组合为 0.24.0。安装器为该版本回移 [MetaX 的 XGrammar 依赖修正](https://github.com/MetaX-MACA/vLLM-metax/commit/1331d8ad37da9a69fe1140b7759633d509b722a9)，插件安装版本含 `+foretoken.1`，与原始发布包区分。Transformers 5.5.3、XGrammar 0.2.1 和 TVM FFI 0.1.9 用于保持文本导入及 TileLang 原生接口兼容；仍执行完整依赖求解和 `uv pip check`。
-
-该组合已验证文本和 JSON 约束输出，不用于音频推理：官方 torchaudio 2.4.1 wheel 与 PyTorch 2.10 存在加载时 ABI 冲突。EngineCore 协议适配接受 vLLM 0.20–0.28，但不等于这些版本都已通过独立安装或 GPU 验证。
-
-## 构建 Kubernetes 镜像
-
-### 从 MACA SDK 镜像构建
-
-准备一个安装了匹配 MACA SDK 的 Ubuntu 24.04 镜像，或系统 Python 和开发头文件为 3.12 的 Debian 系镜像。不要求镜像含有 PyTorch、mcoplib 或 vLLM。构建需要支持 BuildKit 的 Docker：
-
-```bash
-METAX_SDK_IMAGE=<maca-sdk-image> \
-VLLM_METAX_VERSION=0.24.0 \
-make image-model-server-metax
-```
-
-镜像构建调用同一个 `install.sh`，生成 `foretoken-vllm-metax:0.24.0` 与 `foretoken-model-server:dev`。model-server 使用镜像内的 `/opt/foretoken-vllm/.venv/bin/python`，不挂载宿主机 venv。
-
-### 可选：复用已准备好的 MetaX vLLM 镜像
-
-已经有可用运行时镜像时，可以省去源码和 Python 依赖安装，只加入 Foretoken model-server：
-
-```bash
-INFERENCE_ENGINE_IMAGE=<metax-vllm-image> \
-FORETOKEN_VLLM_PYTHON=/opt/conda/bin/python \
-make image-model-server
-```
-
-将解释器路径改为目标镜像实际提供 vLLM 的 Python 路径。构建结果同样为 `foretoken-model-server:dev`。
-
-## 构建平台镜像
-
-从 model-server 所在的同一份源码构建 frontend 和 controller。控制面镜像同时包含示例需要的 CRD：
-
-```bash
-make image-frontend
-docker build -f control-plane/Dockerfile -t foretoken-control-plane:dev .
-```
-
-将 `<registry>/<project>` 替换为 GPU 节点可访问的镜像仓库：
-
-```bash
-export MODEL_SERVER_IMAGE=<registry>/<project>/foretoken-model-server:metax-v0.24.0
-export FRONTEND_IMAGE=<registry>/<project>/foretoken-frontend:metax-v0.24.0
-export CONTROL_PLANE_IMAGE=<registry>/<project>/foretoken-control-plane:metax-v0.24.0
-
-docker tag foretoken-model-server:dev "$MODEL_SERVER_IMAGE"
-docker tag foretoken-frontend:dev "$FRONTEND_IMAGE"
-docker tag foretoken-control-plane:dev "$CONTROL_PLANE_IMAGE"
-docker push "$MODEL_SERVER_IMAGE"
-docker push "$FRONTEND_IMAGE"
-docker push "$CONTROL_PLANE_IMAGE"
-```
-
-离线集群可由节点管理员导入这三个镜像，具体方式见[源码镜像生命周期](development/source-image-lifecycle_zh.md)。下面的配置必须使用实际导入的镜像名称和 tag。
-
-## 配置并安装 Foretoken
-
-集群需要 Kubernetes 1.29 或更高版本、支持示例所需 ReadWriteMany 访问和在线扩容的默认 `StorageClass`，以及发布 `metax-tech.com/gpu` 的 MetaX device plugin。监控需准备 Prometheus、Prometheus Operator、`ServiceMonitor` 和 `PrometheusRule` CRD，以及覆盖沐曦节点的 mxExporter。Prometheus 的选择器需包含平台与工作负载 namespace；选择器要求额外 release 标签时，通过 `observability.additionalLabels` 配置。详见[可观测性指南](../observability/README_zh.md)。工作站需要 Foretoken CLI、kubectl 和 Helm。
-
-维护中的单模型示例部署两个 frontend 副本和一个模型副本，合计申请 1 张 GPU、8 个 CPU 和 52 GiB 内存。
-
-创建 `metax-values.yaml`，把 image 改为上一步发布或导入的完整名称：
-
-```yaml
-image:
-  repository: <registry>/<project>/foretoken-control-plane
-  tag: metax-v0.24.0
-frontend:
-  enabled: true
-  mode: gateway
-  gateway:
-    create: true
-  image: <registry>/<project>/foretoken-frontend:metax-v0.24.0
-runtime:
-  vllm:
-    image: <registry>/<project>/foretoken-model-server:metax-v0.24.0
-    gpu:
-      resourceName: metax-tech.com/gpu
-      runtimeClassName: ""
-```
-
-私有仓库需要为控制面 namespace 配置 `imagePullSecrets`，并为各工作负载 namespace 配置 `workload.imagePullSecrets`。
-
-先安装 Envoy Gateway，再安装同一份源码中的 Chart。控制面启动前会初始化配套的 CRD：
-
-```bash
-helm upgrade --install envoy-gateway \
-  oci://docker.io/envoyproxy/gateway-helm \
-  --namespace envoy-gateway-system \
-  --create-namespace \
-  --wait
-
-helm upgrade --install foretoken ./deploy/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --values metax-values.yaml \
-  --wait
-```
-
-共享平台由管理员统一配置时，直接复用，不重复安装。
-
-## 部署模型并发送请求
-
-在 `examples/quickstart/frontend.yaml` 已有的 `spec` 中增加 hostname：
+在 `examples/quickstart/frontend.yaml` 已有的 `spec` 中加入 `hostname`，将示例域名替换为管理员分配的域名，保留其余配置：
 
 ```yaml
 spec:
   hostname: foretoken.example.com
 ```
 
-部署并查看状态：
+然后部署：
 
 ```bash
 foretoken deploy examples/quickstart
-foretoken status examples/quickstart
-kubectl get pods --namespace foretoken-demo --output wide
 ```
 
-示例的 `resources.requests.gpu.count: 1` 会映射为 `metax-tech.com/gpu` 请求。设备由 MetaX device plugin 注入，无需给普通 Pod 添加 `privileged` 或挂载完整 `/dev`。
+Foretoken 会准备模型缓存并启动服务，命令在当前配置 Ready 后退出。首次运行需要下载模型，耗时取决于网络和存储。
 
-获取入口并查看模型标识：
+若要使用其他模型，修改 `examples/quickstart/model.yaml`；资源和缓存配置说明见[单模型示例](../examples/quickstart/README_zh.md)。在共享集群中使用其他 namespace 时，需要同时调整示例的 `namespace.yaml` 和 `kustomization.yaml`，不能只修改本机 kubectl 默认 namespace。
+
+## 2. 发送请求
+
+取得服务地址和 HTTP Host。Host 用于让 Gateway 将请求送到正确的服务：
 
 ```bash
 FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
 FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 
-curl --fail-with-body "$FORETOKEN_FRONTEND_URL/v1/models" \
-  -H "Host: $FORETOKEN_REQUEST_HOST"
-```
-
-默认示例的模型 ID 为 `Qwen/Qwen3-0.6B`；修改过模型时，使用 `/v1/models` 返回的 ID：
-
-```bash
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
   -H "Host: $FORETOKEN_REQUEST_HOST" \
@@ -186,15 +58,34 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-流式响应以 `data: [DONE]` 结束。
+回答会逐段返回，最后出现 `data: [DONE]`。这表示请求已通过 Foretoken 完成，而不只是模型容器启动成功。
 
-## 清理与排障
+修改过模型时，请求中的 `model` 也要相应修改。可以查询当前服务提供的模型名称：
 
-使用 `foretoken delete examples/quickstart` 删除示例。按本指南安装的独占平台，由负责人执行 `helm uninstall foretoken --namespace foretoken-platform` 卸载；CRD 保留，PVC 清理由 RuntimeCache 保留策略决定。Envoy Gateway、监控、本机 uv 环境和镜像仍由各自的负责人管理。
+```bash
+curl --fail-with-body "$FORETOKEN_FRONTEND_URL/v1/models" \
+  -H "Host: $FORETOKEN_REQUEST_HOST"
+```
 
-- **安装失败：** 先查看下载、构建或依赖求解的原始错误。未完成的目录会保留供排查；解决原因后，用新的安装目录重试。依赖冲突应核对官方版本矩阵，不跳过必需包。
-- **无法加载 MACA 库：** 确认已激活安装目录中的 `activate`，SDK 与驱动兼容；容器需要由设备插件或运行时提供驱动与设备。
-- **Pod 一直 Pending：** 用 `kubectl describe pod` 检查 GPU 和其他资源是否足够。
-- **无法导入 `torch` 或 `vllm`：** 检查 `FORETOKEN_VLLM_PYTHON` 指向的环境，不要使用宿主机的解释器路径配置 Pod。
-- **Gateway 404 或 `model_not_found`：** 分别检查请求 Host 和 `/v1/models` 返回的 ID。
-- **Frontend 503：** 先检查 ModelGroup 和 model-server Pod 是否 Ready。
+## 3. 查看状态或删除示例
+
+```bash
+foretoken status examples/quickstart
+kubectl get pods --namespace foretoken-demo
+```
+
+使用完后，删除同一份配置创建的资源：
+
+```bash
+foretoken delete examples/quickstart
+```
+
+该示例包含 namespace，删除时也会删除其中的资源和示例缓存。只在本示例独占的 namespace 中使用这条清理命令，不要用它清理共享 namespace。平台本身由管理员维护，不需要每次部署都安装或卸载。
+
+## 请求未成功时
+
+- **部署一直等待或 Pod 为 Pending：** 查看 `kubectl describe pod --namespace foretoken-demo <pod-name>`。GPU、CPU、内存不足或缓存卷无法绑定时，将具体事件交给管理员处理。
+- **返回 404：** 检查配置中的 `hostname` 和请求的 Host 是否一致；`model_not_found` 则表示模型名称不匹配，使用 `/v1/models` 查询。
+- **返回 503：** 先查看 `foretoken status` 和 Pod 日志，确认模型已加载、服务已 Ready，再检查访问入口。
+
+本文的沐曦源码环境已验证文本生成和 JSON 约束输出，不用于音频推理。镜像版本、源码安装和底层依赖由[平台准备指南](development/metax-platform_zh.md)说明。
