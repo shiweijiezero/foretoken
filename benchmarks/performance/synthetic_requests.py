@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import random
 import re
 from functools import lru_cache
@@ -36,17 +37,50 @@ _TOKENIZER_ALLOW_PATTERNS = (
 )
 
 
+def _configured_hub_cache_dir() -> str | None:
+    """Return the cache directory selected by the current runtime environment."""
+    for variable in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
+        value = os.environ.get(variable)
+        if value:
+            return str(Path(value).expanduser())
+
+    home = os.environ.get("HF_HOME")
+    if home:
+        return str(Path(home).expanduser() / "hub")
+
+    xdg_cache = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache:
+        return str(Path(xdg_cache).expanduser() / "huggingface" / "hub")
+    return None
+
+
 def resolve_tokenizer_path(tokenizer_path: str) -> str:
-    """解析本地 tokenizer 目录，或从 Hub 下载必要文件。"""
+    """Resolve a local tokenizer or download a Hub tokenizer at runtime."""
     local = Path(tokenizer_path).expanduser()
     if local.exists():
         return str(local.resolve())
+    if local.is_absolute() or tokenizer_path.startswith(("./", "../", "~")):
+        raise ValueError(
+            f"Tokenizer path does not exist locally: {tokenizer_path!r}; "
+            "pass an existing directory or a Hugging Face repository ID"
+        )
 
-    logger.info("Resolving tokenizer from Hugging Face repo %r", tokenizer_path)
-    return snapshot_download(
-        repo_id=tokenizer_path,
-        allow_patterns=list(_TOKENIZER_ALLOW_PATTERNS),
+    cache_dir = _configured_hub_cache_dir()
+    logger.info(
+        "Resolving tokenizer from Hugging Face repo %r%s",
+        tokenizer_path,
+        f" into {cache_dir!r}" if cache_dir else "",
     )
+    download_args: dict[str, Any] = {
+        "repo_id": tokenizer_path,
+        "allow_patterns": list(_TOKENIZER_ALLOW_PATTERNS),
+    }
+    if cache_dir:
+        # Pass the runtime-selected directory explicitly.  Hugging Face reads
+        # its default cache at import time, which can retain a path inherited
+        # from the machine that launched a remote benchmark.
+        download_args["cache_dir"] = cache_dir
+    return snapshot_download(**download_args)
 
 
 def _load_tokenizer(tokenizer_path: str) -> Any:
