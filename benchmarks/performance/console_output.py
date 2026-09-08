@@ -92,7 +92,7 @@ def format_benchmark_config(benchmark: HttpBenchmarkConfig) -> str:
         )
         concurrency_name = (
             "Concurrent conversations"
-            if dataset.is_multi_turn
+            if benchmark.is_multi_turn
             else "Concurrency"
         )
         concurrency_line = f"  {concurrency_name}: {concurrency_label}\n"
@@ -113,10 +113,10 @@ def format_benchmark_config(benchmark: HttpBenchmarkConfig) -> str:
         )
         trace_lines = ""
 
-    count_name = "Conversations" if dataset.is_multi_turn else "Requests"
+    count_name = "Conversations" if benchmark.is_multi_turn else "Requests"
     max_turns_line = (
         f"  Max turns  : {'dataset-defined' if dataset.max_turns == -1 else dataset.max_turns}\n"
-        if dataset.is_multi_turn
+        if benchmark.is_multi_turn
         else ""
     )
     return (

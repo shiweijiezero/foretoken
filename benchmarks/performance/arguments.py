@@ -213,8 +213,8 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=_default(ChatRequestDataset, "max_turns"),
         help=(
-            "Maximum user turns per conversation; -1 uses the complete "
-            "dataset conversation and any value enables conversation mode"
+            "Maximum user turns per conversation; positive values explicitly "
+            "enable conversation mode, while -1 uses complete known conversations"
         ),
     )
     parser.add_argument(

@@ -54,7 +54,7 @@ foretoken bench \
 
 ## Interactive multi-turn conversations
 
-When each dataset row is an interactive conversation, pass `--max-turns N` to limit its user turns; this is the only switch that enables multi-turn mode. Use `--max-turns -1` for the complete dataset-defined conversation. `--number` counts conversations and `--parallel` counts concurrently active conversations. Foretoken does not infer execution mode from a generic `messages` or ShareGPT-shaped row because the same history can also represent one independent request.
+Every non-trace dataset row is executed as a conversation; a single user turn is the one-turn case. The default is `max_turns=-1` (use all turns), while `--max-turns N` truncates to the first N user turns. `--number` counts conversation rows and `--parallel` counts concurrently active conversations. Assistant messages in `messages` and verified ShareGPT rows are reference boundaries whose content is replaced by the model's answer. This is the dataset contract, not an inference of user intent from arbitrary history; tool definitions, tool calls, and `tool` role messages are rejected.
 
 ```bash
 foretoken bench \

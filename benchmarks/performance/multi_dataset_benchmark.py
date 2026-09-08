@@ -138,7 +138,7 @@ class MultiDatasetBenchmark:
             request_count=total_requests,
             reported_concurrency=load_record["resolved_parallel"],
         )
-        if self.benchmark.request_dataset.is_multi_turn:
+        if self.benchmark.is_multi_turn:
             empty_distribution = {
                 "mean": None,
                 "p50": None,

@@ -6,10 +6,10 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterator, Optional
+from typing import TYPE_CHECKING, Any, Iterator, Optional
 
-from datasets import get_dataset_config_names, get_dataset_split_names, load_dataset
-from huggingface_hub import hf_hub_download
+if TYPE_CHECKING:
+    from datasets import Dataset
 
 _HF_DATASETS_PREFIX = "hf://datasets/"
 _HF_FILE_URI_FORMAT = "hf://datasets/<org>/<repo>[@<revision>]/<path>"
@@ -67,6 +67,8 @@ def parse_hf_file_uri(uri: str) -> tuple[str, Optional[str], str]:
 
 def resolve_hf_file_uri(uri: str) -> str:
     """缓存 Hugging Face 数据集仓库文件并返回本地路径。"""
+    from huggingface_hub import hf_hub_download
+
     repo_id, revision, filename = parse_hf_file_uri(uri)
     return hf_hub_download(
         repo_id=repo_id,
@@ -129,6 +131,8 @@ def _load_hf_data(dataset_id: str, split: str) -> Any:
     部分数据集把选择器作为 builder config，且该配置只包含 ``train`` split；
     此时 CLI 选择器表示 config 名称。
     """
+    from datasets import get_dataset_config_names, get_dataset_split_names, load_dataset
+
     configs = get_dataset_config_names(dataset_id)
     if split in configs:
         data_splits = get_dataset_split_names(dataset_id, split)

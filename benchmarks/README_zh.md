@@ -40,7 +40,7 @@ foretoken bench \
 
 不指定 `--output` 时，评测会打印汇总、在 `results/` 下保存本地产物，并尝试上传 W&B。W&B 不可用时，本地结果仍会保留。
 
-标准请求负载使用 EvalScope 负责负载调度、HTTP 执行以及时延和 token 指标，同时保留本地或 Hub 数据中的完整请求体。只有 `--max-turns` 会启用多轮模式；使用 `--max-turns -1` 执行数据集定义的完整对话。此时每行数据表示一段交互式对话，每轮模型的真实回答会在发送下一轮用户消息前加入上下文。对应本地目录会同时保存 Foretoken 的 `config.json`、`metrics.json`，以及 EvalScope 的 `benchmark_args.json`、`benchmark_summary.json`、`benchmark_percentile.json`、`benchmark_data.db` 和 `benchmark.log`；多轮运行还会保存 `trace_summary.json`、`workload_throughput.json` 和 `workload_timeline.json`。轨迹回放会写入额外包含回放延迟字段的 `raw_output.json`。
+标准请求负载统一使用 EvalScope 的 conversation runner 负责负载调度、HTTP 执行以及时延和 token 指标，同时保留本地或 Hub 数据中的完整请求体。所有非轨迹数据行都会规范化为 conversation：单个 user turn 就是单轮特例，`max_turns=-1` 使用全部轮次，`--max-turns N` 截取前 N 个 user turn。`messages` 或已核验 ShareGPT 行中的 assistant 内容只用于标记轮次边界；发送下一轮前会替换为模型真实回答。工具定义、tool call 和 `tool` role 暂不支持。轨迹回放仍是独立请求负载。对应本地目录会同时保存 Foretoken 的 `config.json`、`metrics.json`，以及 EvalScope 的 `benchmark_args.json`、`benchmark_summary.json`、`benchmark_percentile.json`、`benchmark_data.db` 和 `benchmark.log`；多轮运行还会保存 `trace_summary.json`、`workload_throughput.json` 和 `workload_timeline.json`。轨迹回放会写入额外包含回放延迟字段的 `raw_output.json`。
 
 标准负载的逐请求产物由原来的 `raw_output.json` 迁移为 `benchmark_data.db`；请求失败详情写入 `benchmark.log`。参数扫描和 W&B 继续消费字段稳定的 `metrics.json`。结果中的 `mode` 也改用职责名称：`run_benchmark` 改为 `standard_load`，`sweep` 改为 `parameter_sweep`；多数据集结果中的 `dataset_numbers` 改为 `dataset_request_counts`。多轮结果新增 `multi_turn: true` 和 `conversation` 对象；原有 `request_num`、`success_num`、时延和吞吐量字段继续表示逐轮 HTTP 请求。组合多个多轮数据集时，顶层会精确聚合逐轮指标与尝试对话吞吐量；由于 EvalScope 1.11.1 的 SQLite 请求记录不保存对话 ID，对话分位数保留在 `conversation.per_dataset`，不会将各数据集分位数平均成伪造的全局值。
 

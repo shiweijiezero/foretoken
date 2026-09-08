@@ -54,7 +54,7 @@ foretoken bench \
 
 ## 交互式多轮对话
 
-当数据集的每一行表示一段交互式对话时，可用 `--max-turns N` 限制用户轮数；该参数是启用多轮模式的唯一开关。使用 `--max-turns -1` 执行数据集定义的完整对话。此时 `--number` 表示对话数，`--parallel` 表示同时推进的对话数。Foretoken 不会根据通用 `messages` 或 ShareGPT 行结构猜测执行模式，因为同一段历史也可能表示一个独立请求。
+所有非轨迹数据行都按 conversation 执行；单个 user turn 是单轮特例。默认值为 `max_turns=-1`（使用全部轮次），`--max-turns N` 截取前 N 个 user turn。`--number` 表示对话行数，`--parallel` 表示同时推进的对话数。`messages` 和已核验 ShareGPT 行中的 assistant 内容只作为参考边界，发送下一轮前会替换为模型回答。这是数据集契约，不是根据任意历史猜测用户意图；工具定义、tool call 和 `tool` role 会被拒绝。
 
 ```bash
 foretoken bench \

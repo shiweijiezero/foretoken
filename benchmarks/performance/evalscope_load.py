@@ -18,52 +18,43 @@ if TYPE_CHECKING:
     from evalscope.perf.utils.trace_metrics import TraceLevelSummary
 
 from benchmarks.performance.benchmark_config import HttpBenchmarkConfig
-from benchmarks.performance.chat_client import ChatRequestContent
 from benchmarks.performance.request_datasets import (
     load_chat_conversations,
-    load_chat_requests,
+    split_chat_conversation,
 )
 from benchmarks.performance.request_metrics import (
     generation_tokens_per_second_per_user,
 )
 
 
-def uses_evalscope_standard_load(benchmark: HttpBenchmarkConfig) -> bool:
-    """返回该标准负载是否符合 EvalScope 的公开负载参数契约。"""
-    schedule = benchmark.load_schedule
-    return not (
-        schedule.unbounded_concurrency and schedule.arrival_rate == -1
-    )
-
-
-def _request_body(request: ChatRequestContent) -> dict[str, Any]:
-    messages = request.messages
-    if messages is None:
-        if request.prompt is None:
-            raise ValueError("Either prompt or messages must be provided")
-        messages = [{"role": "user", "content": request.prompt}]
-    body: dict[str, Any] = {"messages": messages}
-    if request.tools:
-        body["tools"] = request.tools
-    return body
-
-
 def _materialize_evalscope_request_dataset(
     benchmark: HttpBenchmarkConfig,
     output_dir: str,
-) -> str:
-    """把本地或 Hub 数据解析为 EvalScope 官方数据集插件输入。"""
+) -> tuple[str, str]:
+    """规范化 conversation，并选择 EvalScope 的单轮或多轮插件。"""
+    conversations = load_chat_conversations(benchmark)
+    turn_lists = [split_chat_conversation(messages) for messages in conversations]
+    effective_turn_lists = [
+        turns[: benchmark.request_dataset.max_turns]
+        if benchmark.request_dataset.max_turns is not None
+        and benchmark.request_dataset.max_turns > 0
+        else turns
+        for turns in turn_lists
+    ]
+    dataset_name = (
+        "custom_multi_turn"
+        if any(len(turns) > 1 for turns in effective_turn_lists)
+        else "line_by_line"
+    )
     path = Path(output_dir) / "request_dataset.jsonl"
     with path.open("w", encoding="utf-8") as file:
-        if benchmark.request_dataset.is_multi_turn:
-            for messages in load_chat_conversations(benchmark):
+        for messages, turns in zip(conversations, effective_turn_lists):
+            if dataset_name == "line_by_line":
+                json.dump({"messages": turns[0]}, file, ensure_ascii=False)
+            else:
                 json.dump(messages, file, ensure_ascii=False)
-                file.write("\n")
-        else:
-            for request in load_chat_requests(benchmark):
-                json.dump(_request_body(request), file, ensure_ascii=False)
-                file.write("\n")
-    return str(path)
+            file.write("\n")
+    return str(path), dataset_name
 
 
 def _evalscope_arguments(
@@ -85,6 +76,17 @@ def _evalscope_arguments(
     schedule = benchmark.load_schedule
     generation = benchmark.generation
     dataset = benchmark.request_dataset
+    dataset_path, dataset_name = _materialize_evalscope_request_dataset(
+        benchmark, output_dir
+    )
+    if dataset_name == "custom_multi_turn" and (
+        schedule.unbounded_concurrency or schedule.arrival_rate != -1
+    ):
+        Path(dataset_path).unlink(missing_ok=True)
+        raise ValueError(
+            "Multi-turn conversations require --rate -1 and no --open-loop; "
+            "rate schedules independent requests"
+        )
     omit_temperature = (
         generation.temperature is None
         and "temperature" not in generation.extra_body
@@ -131,29 +133,23 @@ def _evalscope_arguments(
         "no_timestamp": True,
         "name": "evalscope",
         "visualizer": None,
-        "multi_turn": dataset.is_multi_turn,
+        "multi_turn": dataset_name == "custom_multi_turn",
         # EvalScope uses None for an unbounded custom conversation; -1 is
         # Foretoken's explicit complete-conversation spelling.
-        "max_turns": None if dataset.max_turns == -1 else dataset.max_turns,
+        "max_turns": (
+            None
+            if dataset_name == "line_by_line" or dataset.max_turns == -1
+            else dataset.max_turns
+        ),
         "omit_temperature": omit_temperature,
     }
-    if dataset.fixed_prompt:
-        argument_values["prompt"] = dataset.fixed_prompt
-    else:
-        # Foretoken owns source selection and row normalization. EvalScope owns
-        # either independent line-by-line requests or the interactive conversation
-        # loop that appends each real model response before the next turn.
-        argument_values.update(
-            {
-                "dataset": (
-                    "custom_multi_turn" if dataset.is_multi_turn else "line_by_line"
-                ),
-                "dataset_path": _materialize_evalscope_request_dataset(
-                    benchmark, output_dir
-                ),
-                "dataset_offset": 0,
-            }
-        )
+    argument_values.update(
+        {
+            "dataset": dataset_name,
+            "dataset_path": dataset_path,
+            "dataset_offset": 0,
+        }
+    )
     return ForetokenEvalScopeArguments(**argument_values)
 
 
@@ -274,7 +270,7 @@ def _map_evalscope_metrics(
         "number": int(schedule.request_count),
         "parallel": reported_concurrency,
     }
-    if benchmark.request_dataset.is_multi_turn:
+    if benchmark.is_multi_turn:
         metrics["multi_turn"] = True
         conversation_count = int(schedule.request_count)
         benchmark_time = float(summary.time_taken)

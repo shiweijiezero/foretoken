@@ -5,27 +5,15 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 from contextlib import nullcontext
 from tempfile import TemporaryDirectory
 from typing import Any, Optional
 
-from tqdm.asyncio import tqdm as tqdm_asyncio
-
 from benchmarks.performance.benchmark_config import HttpBenchmarkConfig
-from benchmarks.performance.chat_client import (
-    ChatCompletionsLoadClient,
-    ChatRequestContent,
-)
 from benchmarks.performance.console_output import log_benchmark_summary
-from benchmarks.performance.evalscope_load import (
-    run_evalscope_standard_load,
-    uses_evalscope_standard_load,
-)
+from benchmarks.performance.evalscope_load import run_evalscope_standard_load
 from benchmarks.performance.local_results import LocalResultDirectory
-from benchmarks.performance.request_datasets import load_chat_requests
 from benchmarks.performance.request_metrics import (
     attach_user_throughput,
     summarize_request_measurements,
@@ -71,7 +59,7 @@ def build_benchmark_run_record(
             "rate": load_record["rate"],
         },
     }
-    if benchmark.request_dataset.is_multi_turn:
+    if benchmark.is_multi_turn:
         record["multi_turn"] = True
         record["max_turns"] = benchmark.request_dataset.max_turns
     if benchmark.request_dataset.dataset_selectors == ["random"]:
@@ -154,48 +142,6 @@ def publish_benchmark_results(
         logger.info("Results saved: %s", result_directory.output_dir)
 
 
-async def dispatch_unbounded_requests(
-    benchmark: HttpBenchmarkConfig,
-    client: ChatCompletionsLoadClient,
-    requests: list[ChatRequestContent],
-) -> dict[str, Any]:
-    """为 EvalScope 参数契约外的无限速 open-loop 立即派发全部请求。"""
-    request_count = len(requests)
-    results: list[Optional[dict[str, Any]]] = [None] * request_count
-    started_at = time.perf_counter()
-    progress_bar = tqdm_asyncio(
-        total=request_count,
-        desc="Benchmarking",
-        disable=benchmark.outputs.includes("quiet"),
-    )
-
-    async def send_one(index: int, request: ChatRequestContent) -> None:
-        try:
-            measurement = await client.send(request)
-            measurement["end_time"] = time.perf_counter() - started_at
-            results[index] = measurement
-        finally:
-            progress_bar.update(1)
-
-    try:
-        await asyncio.gather(
-            *[
-                send_one(index, request)
-                for index, request in enumerate(requests)
-            ]
-        )
-    finally:
-        progress_bar.close()
-
-    logger.info("Benchmark finished!")
-    if any(result is None for result in results):
-        raise RuntimeError("dispatch finished with missing request results")
-    return {
-        "results": results,
-        "total_time": time.perf_counter() - started_at,
-    }
-
-
 class StandardHttpLoadBenchmark:
     """拥有一次标准 HTTP 负载的请求、结果和外部 run 生命周期。"""
 
@@ -241,37 +187,11 @@ class StandardHttpLoadBenchmark:
                 group=self.wandb_group,
             )
             try:
-                if uses_evalscope_standard_load(self.benchmark):
-                    metrics, request_measurements = (
-                        await run_evalscope_standard_load(
-                            self.benchmark,
-                            execution_dir,
-                            collect_request_measurements=(
-                                self.collect_request_measurements
-                            ),
-                        )
-                    )
-                else:
-                    requests = load_chat_requests(self.benchmark)
-                    async with ChatCompletionsLoadClient(
-                        self.benchmark,
-                        max_concurrency=load_record["parallel"],
-                        request_count=load_record["number"],
-                    ) as client:
-                        request_measurements = await dispatch_unbounded_requests(
-                            self.benchmark,
-                            client,
-                            requests,
-                        )
-                    metrics = summarize_http_measurements(
-                        self.benchmark,
-                        request_measurements,
-                        arrival_rate=load_record["rate"],
-                        request_count=load_record["number"],
-                        reported_concurrency=load_record[
-                            "resolved_parallel"
-                        ],
-                    )
+                metrics, request_measurements = await run_evalscope_standard_load(
+                    self.benchmark,
+                    execution_dir,
+                    collect_request_measurements=self.collect_request_measurements,
+                )
                 publish_benchmark_results(
                     self.benchmark,
                     result_directory,

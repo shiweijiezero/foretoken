@@ -132,17 +132,13 @@ class ChatRequestDataset:
     maximum_prompt_tokens: int = 131072
     shared_prefix_tokens: int = 0
     fixed_prompt: str = ""
-    max_turns: Optional[int] = None
+    # -1 means the complete conversation; positive values truncate turns.
+    max_turns: Optional[int] = -1
 
     @property
     def has_multiple_datasets(self) -> bool:
         """返回该负载是否声明了多个请求数据集。"""
         return len(self.dataset_selectors) > 1
-
-    @property
-    def is_multi_turn(self) -> bool:
-        """返回是否执行交互式对话；指定轮数上限即明确该语义。"""
-        return self.max_turns is not None
 
 
 @dataclass
@@ -218,6 +214,14 @@ class HttpBenchmarkConfig:
     )
     serving_gpu_count: int = 1
 
+    @property
+    def is_multi_turn(self) -> bool:
+        """返回是否使用统一 conversation runner；trace 仍是独立请求。"""
+        return bool(
+            self.request_dataset.max_turns is not None
+            and not self.arrival_trace.trace_selector
+        )
+
     def validate(self) -> None:
         """在获取资源前校验所选 HTTP 性能负载。"""
         self.load_schedule.validate()
@@ -234,34 +238,19 @@ class HttpBenchmarkConfig:
         dataset = self.request_dataset
         trace = self.arrival_trace
         has_trace = bool(trace.trace_selector)
-        if dataset.max_turns is not None and dataset.max_turns != -1 and dataset.max_turns < 1:
-            raise ValueError("--max-turns must be -1 (complete conversation) or >= 1")
-        if dataset.is_multi_turn:
+        if (
+            dataset.max_turns is not None
+            and dataset.max_turns != -1
+            and dataset.max_turns < 1
+        ):
+            raise ValueError(
+                "--max-turns must be -1 (complete conversation) or >= 1"
+            )
+        if self.is_multi_turn:
             if has_trace:
                 raise ValueError(
                     "Multi-turn mode cannot be combined with --trace; trace replay "
                     "treats recorded rows as independent requests"
-                )
-            if dataset.fixed_prompt:
-                raise ValueError(
-                    "Multi-turn mode requires a dataset conversation; --prompt is "
-                    "a single independent request"
-                )
-            if self.load_schedule.unbounded_concurrency:
-                raise ValueError(
-                    "Multi-turn mode cannot be combined with --open-loop because "
-                    "each turn waits for the previous model response"
-                )
-            if self.load_schedule.arrival_rate != -1:
-                raise ValueError(
-                    "Multi-turn mode currently requires --rate -1; EvalScope's "
-                    "multi-turn rate is a per-worker inter-turn delay, not the "
-                    "global request arrival rate exposed by Foretoken"
-                )
-            if dataset.dataset_selectors == ["random"]:
-                raise ValueError(
-                    "--dataset random is not supported with conversation mode; use "
-                    "a local or Hugging Face conversation dataset"
                 )
             unsupported_body_fields = {
                 "messages",
@@ -288,6 +277,11 @@ class HttpBenchmarkConfig:
         if trace.synthetic_prefix_reuse and not has_trace:
             raise ValueError("--trace-synthetic-prefix-reuse requires --trace")
         if has_trace:
+            if dataset.max_turns not in (None, -1):
+                raise ValueError(
+                    "--max-turns cannot be combined with --trace; trace replay "
+                    "uses independent recorded requests"
+                )
             if len(dataset.dataset_selectors) != 1:
                 raise ValueError("--trace requires exactly one --dataset source")
             same_dataset = dataset.dataset_selectors[0] == trace.trace_selector
@@ -405,7 +399,7 @@ class HttpBenchmarkConfig:
                 self.arrival_trace.synthetic_prefix_reuse
             ),
         }
-        if self.request_dataset.is_multi_turn:
+        if self.is_multi_turn:
             dataset["multi_turn"] = True
             dataset["max_turns"] = self.request_dataset.max_turns
         output = {

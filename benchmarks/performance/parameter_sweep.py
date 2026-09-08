@@ -350,7 +350,7 @@ class ParameterSweepBenchmark:
                 point["parameter_group"] = str(combination[_PARAMETER_GROUP])
                 point["run_number"] = run_number
                 point["gpu_count"] = point_benchmark.serving_gpu_count
-                if point_benchmark.request_dataset.is_multi_turn:
+                if point_benchmark.is_multi_turn:
                     point["multi_turn"] = True
                 point["bench"] = dict(combination)
                 point["label"] = f"{combination_name}|p={point['parallel']}"

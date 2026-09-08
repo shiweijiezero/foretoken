@@ -117,10 +117,25 @@ def _normalize_chat_conversation(
             messages = row["messages"]
         elif "conversations" in row:
             messages = _sharegpt_messages(row, dataset_path, line_number)
+        elif "prompt" in row:
+            messages = [{"role": "user", "content": str(row["prompt"])}]
+        elif "user" in row:
+            if row["user"] is None or str(row["user"]) == "":
+                raise ValueError(
+                    f"Empty user field at {dataset_path}:{line_number}"
+                )
+            messages = []
+            system_message = row.get("system")
+            if system_message is not None and str(system_message) != "":
+                messages.append(
+                    {"role": "system", "content": str(system_message)}
+                )
+            messages.append({"role": "user", "content": str(row["user"])})
         else:
             raise ValueError(
-                "Multi-turn rows must contain 'messages' or verified ShareGPT "
-                f"'conversations' at {dataset_path}:{line_number}"
+                "Conversation rows must contain 'messages', verified ShareGPT "
+                "'conversations', 'prompt', or 'user' at "
+                f"{dataset_path}:{line_number}"
             )
     else:
         raise ValueError(
@@ -184,6 +199,24 @@ def _normalize_chat_conversation(
             f"{dataset_path}:{line_number}"
         )
     return messages
+
+
+def split_chat_conversation(
+    messages: list[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    """按 reference assistant 边界拆分为 EvalScope 的 user-turn 增量。"""
+    turns: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    for message in messages:
+        if message["role"] == "assistant":
+            if current:
+                turns.append(current)
+                current = []
+        else:
+            current.append(message)
+    if current:
+        turns.append(current)
+    return turns
 
 
 def _load_jsonl_requests(
@@ -286,19 +319,31 @@ def load_chat_conversations(
 ) -> list[list[dict[str, Any]]]:
     """读取 EvalScope 普通交互式多轮执行所需的完整对话脚本。"""
     dataset = benchmark.request_dataset
-    if len(dataset.dataset_selectors) != 1:
-        raise ValueError(
-            "A multi-turn child run requires exactly one dataset source"
-        )
-    dataset_selector = dataset.dataset_selectors[0]
     conversation_count = benchmark.load_schedule.request_count
     row_offset = int(dataset.row_offset)
+    if dataset.fixed_prompt and not dataset.dataset_selectors:
+        return [
+            [{"role": "user", "content": dataset.fixed_prompt}]
+            for _ in range(conversation_count)
+        ]
 
-    if dataset_selector == "random":
+    if len(dataset.dataset_selectors) != 1:
         raise ValueError(
-            "--dataset random is not supported with conversation mode; use a "
-            "local or Hugging Face conversation dataset"
+            "A conversation child run requires exactly one dataset source"
         )
+    dataset_selector = dataset.dataset_selectors[0]
+    if dataset_selector == "random":
+        from benchmarks.performance.synthetic_requests import generate_random_requests
+
+        requests = generate_random_requests(
+            benchmark, request_count=conversation_count
+        )
+        return [
+            request.messages
+            if request.messages is not None
+            else [{"role": "user", "content": request.prompt}]
+            for request in requests
+        ]
     if is_hf_file_uri(dataset_selector) or dataset_selector.startswith("hf://"):
         local_path = resolve_hf_file_uri(dataset_selector)
         return _load_jsonl_conversations(
