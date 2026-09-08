@@ -41,6 +41,8 @@ foretoken install --prometheus monitoring/prometheus
 
 ## 验证采集
 
+查看 Foretoken 的 ServiceMonitor 和 PrometheusRule：
+
 ```bash
 # 查看 Foretoken 的 ServiceMonitor 和记录规则
 kubectl get servicemonitor,prometheusrule -A \
@@ -53,7 +55,7 @@ kubectl port-forward \
   9090:9090
 ```
 
-打开 <http://127.0.0.1:9090/targets>，确认 Foretoken target 为 `UP`；再打开 <http://127.0.0.1:9090/rules>，确认 `foretoken.recording` 已加载。复用已有 Prometheus 时，通过其平台提供的访问方式执行相同检查。
+打开 <http://127.0.0.1:9090/targets>，确认 Foretoken target 为 `UP`；再打开 <http://127.0.0.1:9090/rules>，确认 `foretoken.recording` 和 `foretoken.alerting` 均已加载。复用已有 Prometheus 时，通过平台原有的访问方式执行相同检查。
 
 以下查询可以查看 Frontend 请求量：
 
@@ -87,8 +89,6 @@ kubectl port-forward \
 
 如果 Foretoken 复用已有 Prometheus，Grafana 仍由原平台管理。能够发现 `grafana_dashboard=1` ConfigMap 的 Grafana sidecar 可以从 `foretoken-platform` 命名空间自动加载该 Dashboard。否则先导出 JSON，再按照平台已有流程导入：
 
-启用可观测性后，Chart 还会安装四条告警规则：指标目标无法抓取、Frontend 持续出现响应开始阶段的 5xx、model-server 调度器持续有排队请求，以及 KV Cache 使用率过高。每条告警都带有通用的 `service=foretoken` 标签，并要求条件持续一段时间后才会触发。通知接收方、分组和路由由 Alertmanager 管理。
-
 ```bash
 kubectl get configmap \
   --namespace foretoken-platform \
@@ -96,6 +96,12 @@ kubectl get configmap \
   --output jsonpath='{.data.foretoken-system-overview\.json}' \
   > /tmp/foretoken-system-overview.json
 ```
+
+启用可观测性后，Chart 还会安装四条 warning 规则：指标目标无法抓取、Frontend 持续出现响应开始阶段的 5xx、model-server 调度器持续有排队请求，以及 KV Cache 使用率过高。每条告警都带有通用的 `service=foretoken` 标签，并要求条件持续一段时间后才会触发。通知接收方、分组和路由由 Alertmanager 管理。收到告警后按照[告警排障手册](runbooks/alerts_zh.md)理解和检查信号，不要把单条告警直接视为已经发生用户故障。
+
+如需通过现有 Alertmanager 把这些告警发送给 Lark 自定义机器人，安装可选的 [Lark 通知集成](integrations/lark/README_zh.md)。路由和消息模板进入版本控制，webhook URL 仍然只保存在集群 Secret 中。
+
+Foretoken 暂不定义通用的 GPU 温度、功耗、利用率或显存压力告警。对应指标和安全阈值取决于设备平台及真实 workload 的测量结果。
 
 ## 指标与记录规则
 

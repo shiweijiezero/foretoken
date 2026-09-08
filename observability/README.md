@@ -41,6 +41,8 @@ The Prometheus platform owns this namespace label and removes it when collection
 
 ## Verify collection
 
+List the Foretoken monitors and Prometheus rules:
+
 ```bash
 # List the Foretoken monitors and recording rules
 kubectl get servicemonitor,prometheusrule -A \
@@ -53,7 +55,7 @@ kubectl port-forward \
   9090:9090
 ```
 
-Open <http://127.0.0.1:9090/targets> and confirm Foretoken targets are `UP`. Open <http://127.0.0.1:9090/rules> and confirm `foretoken.recording` is loaded. Reused Prometheus instances use their platform-provided access path.
+Open <http://127.0.0.1:9090/targets> and confirm that the Foretoken targets are `UP`. Then open <http://127.0.0.1:9090/rules> and confirm that `foretoken.recording` and `foretoken.alerting` are loaded. When reusing Prometheus, perform the same checks through its existing access path.
 
 A minimal query for frontend request volume is:
 
@@ -87,8 +89,6 @@ Open <http://127.0.0.1:3000>, then select **Dashboards** and open **Foretoken Sy
 
 When Foretoken reuses an existing Prometheus, Grafana remains owned by that platform. A Grafana sidecar that discovers ConfigMaps labeled `grafana_dashboard=1` can load the dashboard from the `foretoken-platform` namespace. Otherwise, extract the JSON and import it through the platform's normal dashboard workflow:
 
-When observability is enabled, the Chart also installs four alert rules: a metrics target that cannot be scraped, sustained Frontend response-start 5xx errors, a model-server scheduler backlog, and high KV-cache usage. Each alert carries the common `service=foretoken` label and requires the condition to persist before firing. Alertmanager owns notification receivers, grouping, and routing.
-
 ```bash
 kubectl get configmap \
   --namespace foretoken-platform \
@@ -96,6 +96,12 @@ kubectl get configmap \
   --output jsonpath='{.data.foretoken-system-overview\.json}' \
   > /tmp/foretoken-system-overview.json
 ```
+
+When observability is enabled, the Chart also installs four warning rules: a metrics target that cannot be scraped, sustained Frontend response-start 5xx errors, a model-server scheduler backlog, and high KV-cache usage. Each alert carries the common `service=foretoken` label and requires the condition to persist before firing. Alertmanager owns notification receivers, grouping, and routing. Use the [alert runbooks](runbooks/alerts.md) to interpret each signal and investigate it without treating it as proof of a user-visible outage.
+
+To route these alerts through an existing Alertmanager to a Lark custom bot, install the optional [Lark notification integration](integrations/lark/README.md). The integration keeps its routing and message template in version control while the webhook URL remains in a cluster Secret.
+
+Foretoken does not define generic GPU temperature, power, utilization, or memory-pressure alerts. Those metrics and safe thresholds depend on the device platform and measured workload behavior.
 
 ## Metrics and recording rules
 

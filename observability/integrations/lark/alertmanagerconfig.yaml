@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Optional Alertmanager receiver for Foretoken alerts. The referenced Secret
+# and the AlertmanagerConfig must exist in the same namespace.
+
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: foretoken-lark
+spec:
+  route:
+    groupBy:
+      - alertname
+    groupWait: 5s
+    groupInterval: 30s
+    repeatInterval: 1h
+    matchers:
+      - name: service
+        matchType: "="
+        value: foretoken
+    receiver: lark
+  receivers:
+    - name: lark
+      webhookConfigs:
+        - urlSecret:
+            name: foretoken-lark-webhook
+            key: url
+          sendResolved: true
+          maxAlerts: 5
+          timeout: 10s
+          payload: |
+            {{- $text := printf "Foretoken 告警通知 | 触发 %d · 解除 %d\n本条展示 %d 个目标（每条最多 5 个）" (len .Alerts.Firing) (len .Alerts.Resolved) (len .Alerts) -}}
+            {{- range .Alerts -}}
+            {{- $state := "触发" -}}
+            {{- if eq .Status "resolved" }}{{ $state = "解除" }}{{ end -}}
+            {{- $text = printf "%s\n\n[%s] %s\n级别：%s" $text $state .Labels.alertname .Labels.severity -}}
+            {{- with .Labels.namespace }}{{ $text = printf "%s\nNamespace：%s" $text . }}{{ end -}}
+            {{- with .Labels.pod }}{{ $text = printf "%s\nPod：%s" $text . }}{{ end -}}
+            {{- with .Labels.instance }}{{ $text = printf "%s\nInstance：%s" $text . }}{{ end -}}
+            {{- with .Labels.endpoint }}{{ $text = printf "%s\nEndpoint：%s" $text . }}{{ end -}}
+            {{- with .Labels.model_role }}{{ $text = printf "%s\nModel role：%s" $text . }}{{ end -}}
+            {{- with .Labels.inference_foretoken_io_model_role }}{{ $text = printf "%s\nModel role：%s" $text . }}{{ end -}}
+            {{- with .Labels.inference_foretoken_io_frontend_service }}{{ $text = printf "%s\nFrontend：%s" $text . }}{{ end -}}
+            {{- with .Labels.frontend_service }}{{ $text = printf "%s\nFrontend：%s" $text . }}{{ end -}}
+            {{- with .Labels.model_group }}{{ $text = printf "%s\nModel group：%s" $text . }}{{ end -}}
+            {{- with .Labels.inference_foretoken_io_model_group }}{{ $text = printf "%s\nModel group：%s" $text . }}{{ end -}}
+            {{- with .Labels.pd_pipeline_scope }}{{ $text = printf "%s\nPipeline scope：%s" $text . }}{{ end -}}
+            {{- with .Labels.inference_foretoken_io_pd_pipeline_scope }}{{ $text = printf "%s\nPipeline scope：%s" $text . }}{{ end -}}
+            {{- $text = printf "%s\n告警开始：%s" $text (.StartsAt | tz "Asia/Shanghai" | date "2006-01-02 15:04:05 -0700") -}}
+            {{- if eq .Status "resolved" -}}
+            {{- $text = printf "%s\n告警解除：%s" $text (.EndsAt | tz "Asia/Shanghai" | date "2006-01-02 15:04:05 -0700") -}}
+            {{- end -}}
+            {{- with .Annotations.summary }}{{ $text = printf "%s\n摘要：%s" $text . }}{{ end -}}
+            {{- with .Annotations.description }}{{ $text = printf "%s\n详情：%s" $text . }}{{ end -}}
+            {{- with .Annotations.runbook_url }}{{ $text = printf "%s\nRunbook：%s" $text . }}{{ end -}}
+            {{- if and (eq .Status "resolved") (eq .Labels.alertname "ForetokenMetricsTargetDown") -}}
+            {{- $text = printf "%s\n说明：抓取失败告警已解除；可能是抓取恢复，也可能是旧目标被移除，不代表原 Pod 或节点已恢复。" $text -}}
+            {{- end -}}
+            {{- end -}}
+            {{- dict "msg_type" "text" "content" (dict "text" $text) | toJson -}}
