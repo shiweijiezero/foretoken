@@ -1,4 +1,4 @@
-# Benchmark Examples
+# HTTP Performance Benchmark Examples
 
 English | [简体中文](examples_zh.md)
 
@@ -12,7 +12,7 @@ org/dataset:train
 hf://datasets/org/dataset@main/path/to/conversation.jsonl
 ```
 
-Multiple sources may be comma-separated. A Hub file URI must include the `datasets` repository type.
+Multiple dataset selectors may be comma-separated. A Hub file URI must include the `datasets` repository type.
 
 ## Random prompts
 
@@ -29,6 +29,8 @@ foretoken bench \
   --parallel 4 --number 20 --max-tokens 64 \
   --rate 5
 ```
+
+The configured lengths shape the synthetic token sequence before it is decoded to text. Use the server-reported input-token metrics as the measured request size, because decoding and tokenizing the text again may change it slightly.
 
 ## Hugging Face and local datasets
 
@@ -49,6 +51,31 @@ foretoken bench \
   --parallel 4 \
   --number 20
 ```
+
+## Interactive multi-turn conversations
+
+When each dataset row is an interactive conversation, pass `--max-turns N` to limit its user turns; this is the only switch that enables multi-turn mode. Use `--max-turns -1` for the complete dataset-defined conversation. `--number` counts conversations and `--parallel` counts concurrently active conversations. Foretoken does not infer execution mode from a generic `messages` or ShareGPT-shaped row because the same history can also represent one independent request.
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen/Qwen3-0.6B \
+  --dataset kth8/multi-turn-conversation-50000x:train \
+  --max-turns 4 \
+  --parallel 2 --number 10
+```
+
+Local JSONL and Hugging Face rows may use an OpenAI-style `messages` field. A bare messages array is also accepted in local JSONL:
+
+```jsonl
+{"messages":[{"role":"system","content":"Answer briefly."},{"role":"user","content":"Name a primary color."},{"role":"assistant","content":"Red."},{"role":"user","content":"Name another one."},{"role":"assistant","content":"Blue."}]}
+```
+
+Verified ShareGPT rows using `conversations` with `from: human|gpt` and `value` are also accepted. Reference assistant messages only mark turn boundaries: EvalScope discards their content, appends the model's actual answer, and then sends the next user turn. A reference assistant message after the final user message therefore closes that final turn; it is not sent back to the model.
+
+System messages and structured Chat Completions content such as image content arrays remain part of the message history. Tool definitions, tool calls, and `tool` role messages are rejected because this ordinary conversation runner does not execute a tool loop. Multi-turn currently cannot be combined with trace replay, open-loop mode, or a positive `--rate`.
+
+Multiple multi-turn datasets still divide `--number` in selector order. The compatibility field `dataset_request_counts` therefore contains allocated conversation counts in this mode. Their top-level result exactly combines HTTP turn metrics, elapsed time, and attempted-conversation throughput; each dataset's conversation distributions remain under `conversation.per_dataset`. Parameter sweeps reuse the same multi-turn runner, and `max_turns` in a bench-params row also enables multi-turn mode for that point.
 
 ## Trace replay
 
@@ -84,7 +111,7 @@ foretoken bench \
 
 ## Multiple datasets
 
-Sources run in order and their results are merged. `--number` is shared across the sources and divided in source order; earlier sources receive one extra request when division is uneven.
+Datasets run in order and their results are merged. `--number` is shared across the datasets and divided in selector order; earlier datasets receive one extra request when division is uneven.
 
 ```bash
 foretoken bench \

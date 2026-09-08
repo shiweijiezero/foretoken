@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Foretoken 评测命令族；各评测领域保持独立生命周期。"""
+"""OpenAI-compatible HTTP 性能负载、指标与实验编排。"""

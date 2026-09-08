@@ -239,7 +239,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "bench",
         add_help=False,
-        help="Benchmark a Foretoken or OpenAI-compatible service",
+        help="Measure HTTP latency and throughput for an inference service",
     )
     return parser
 
@@ -248,7 +248,7 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
     """Parse CLI arguments into the command consumed by the execution layer."""
     arguments = tuple(argv)
     if arguments and arguments[0] == "bench":
-        return BenchCommand(arguments)
+        return BenchCommand(arguments[1:])
 
     parser = _build_parser()
     parsed_args = parser.parse_args(arguments)
@@ -293,5 +293,13 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
     if parsed_args.command == "status":
         if bool(parsed_args.kustomize_path) == bool(parsed_args.namespace):
             parser.error("status requires either PATH or --namespace")
-        return StatusCommand(parsed_args.kustomize_path, parsed_args.namespace, parsed_args.watch)
-    return EndpointCommand(parsed_args.kustomize_path, parsed_args.timeout, parsed_args.host)
+        return StatusCommand(
+            parsed_args.kustomize_path,
+            parsed_args.namespace,
+            parsed_args.watch,
+        )
+    return EndpointCommand(
+        parsed_args.kustomize_path,
+        parsed_args.timeout,
+        parsed_args.host,
+    )
