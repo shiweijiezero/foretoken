@@ -1,7 +1,7 @@
-# Transformers 5.16 在文本模型导入时加载 torchaudio，触发 MetaX 2.4.1 wheel 与 Torch 2.10 的 ABI 冲突。
-# 5.5.3 符合 vLLM 和 vLLM-metax 0.24 的依赖声明，并保持音频按需加载。
+# Transformers 5.16 imports torchaudio for text models, exposing the MetaX 2.4.1 wheel ABI mismatch with Torch 2.10.
+# Version 5.5.3 satisfies vLLM and vLLM-metax 0.24 requirements and keeps audio imports lazy.
 transformers==5.5.3
-# TVM FFI 0.1.9 同时支持 XGrammar 0.2.1 和 MetaX TileLang 0.1.9+maca。
-# 0.1.13 的对象注册 API 无法加载后者内置的 TVM。
+# TVM FFI 0.1.9 supports both XGrammar 0.2.1 and MetaX TileLang 0.1.9+maca.
+# The object registration API in 0.1.13 cannot load the TVM bundled with that TileLang release.
 xgrammar==0.2.1
 apache-tvm-ffi==0.1.9

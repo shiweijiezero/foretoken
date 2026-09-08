@@ -294,7 +294,7 @@ index 8118b770e..0bc2cbffe 100644
 +    V0_28,
 +}
 +
-+/// 旧版引擎只改变字段布局，不复制请求数据或中转为动态值。
++/// Encode legacy field layouts without copying request data or using intermediate dynamic values.
 +#[derive(Debug)]
 +struct VersionedRequest<'a> {
 +    request: &'a EngineCoreRequest,
@@ -319,7 +319,7 @@ index 8118b770e..0bc2cbffe 100644
 +        fields.serialize_element(&request.cache_salt)?;
 +        fields.serialize_element(&request.data_parallel_rank)?;
 +        fields.serialize_element(&request.prompt_embeds)?;
-+        // 0.21 在 client_index 前插入掩码，不能仅截断新版数组。
++        // v0.21 inserts a mask before client_index; truncating the current array is insufficient.
 +        if !legacy {
 +            fields.serialize_element(&request.prompt_is_token_ids)?;
 +        }

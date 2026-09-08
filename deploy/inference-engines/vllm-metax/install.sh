@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# 在已有 MACA SDK 的 Linux 主机或构建容器中创建独立的 vLLM Python 环境。
+# Create an isolated vLLM Python environment on a Linux host or build container with the MACA SDK.
 set -euo pipefail
 
 if [[ $# != 2 ]]; then
@@ -14,7 +14,7 @@ prefix=$1
 version=$2
 maca_path=${MACA_PATH:-/opt/maca}
 
-# 目标目录由本次安装独占，不覆盖已有环境或源码。
+# Create a new installation directory without overwriting existing environments or source trees.
 mkdir -p "$(dirname "$prefix")"
 mkdir "$prefix"
 prefix=$(cd "$prefix" && pwd)
@@ -47,7 +47,7 @@ if [[ "$version" == 0.24.0 ]]; then
   constraints=(--constraint "$installer_dir/constraints-0.24.txt")
 fi
 
-# 官方环境脚本配置编译器与共享库；激活脚本也用于后续直接运行 vLLM。
+# The vendor script configures compilers and shared libraries; activation also supports running vLLM.
 {
   printf 'source %q %q\n' "$prefix/third_party/vllm-metax/env.sh" "$maca_path"
   printf 'export CPATH=%q${CPATH:+:$CPATH}\n' "$maca_path/include:$maca_path/include/mcr"
@@ -64,8 +64,8 @@ export UV_INDEX_STRATEGY=unsafe-best-match
 uv pip install --python "$python" \
   -r "$prefix/third_party/vllm-metax/requirements/build.txt"
 
-# MetaX 插件使用 CUDA-compatible 编译目标；upstream 只提供 Python 层。
-# 先构建插件 wheel，再和 upstream 源码一起求解全部运行依赖，避免共享构建环境变量。
+# Build the MetaX plugin for the CUDA-compatible target; upstream supplies only the Python layer.
+# Build the plugin wheel first, then resolve it with upstream source to keep build environments separate.
 SETUPTOOLS_SCM_PRETEND_VERSION="$plugin_version" VLLM_TARGET_DEVICE=cuda \
 uv build --python "$python" --wheel --no-build-isolation \
   --out-dir "$prefix/wheels" "$prefix/third_party/vllm-metax"

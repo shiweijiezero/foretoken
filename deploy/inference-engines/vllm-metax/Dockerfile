@@ -10,7 +10,7 @@ FROM ${METAX_SDK_IMAGE}
 ARG VLLM_VERSION
 ARG MACA_PATH=/opt/maca
 
-# SDK 镜像只需提供 MACA 工具链与共享库；Python 包由独立安装脚本求解。
+# The SDK image supplies MACA tools and shared libraries; the installer resolves Python packages.
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       bash build-essential ca-certificates curl patch python3-dev \

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-# 回移 MetaX 的 xgrammar 依赖修正；0.24 同样复用 upstream 的结构化输出后端。
-# 来源：https://github.com/MetaX-MACA/vLLM-metax/commit/1331d8ad37da9a69fe1140b7759633d509b722a9
+# Backport the MetaX xgrammar dependency fix; 0.24 also uses the upstream structured-output backend.
+# Source: https://github.com/MetaX-MACA/vLLM-metax/commit/1331d8ad37da9a69fe1140b7759633d509b722a9
 --- a/requirements/common.txt
 +++ b/requirements/common.txt
 @@ -25,1 +25,1 @@

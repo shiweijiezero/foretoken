@@ -222,7 +222,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// 启动 EngineCore 前，用镜像内的 Python 识别 vLLM 版本并选择受支持的请求编码。
+/// Select the request encoding from the installed Python vLLM version before engine startup.
 async fn detect_engine_protocol(
     python: &str,
 ) -> Result<EngineCoreProtocol, Box<dyn std::error::Error>> {
