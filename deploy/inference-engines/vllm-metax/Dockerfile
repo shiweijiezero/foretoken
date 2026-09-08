@@ -28,7 +28,6 @@ RUN bash /usr/local/lib/foretoken/install-vllm-metax.sh \
 
 ENV VIRTUAL_ENV=/opt/foretoken-vllm/.venv \
     PATH=/opt/foretoken-vllm/.venv/bin:${PATH} \
-    LD_LIBRARY_PATH=${MACA_PATH}/lib:${MACA_PATH}/ompi/lib:${MACA_PATH}/mxgpu_llvm/lib:${LD_LIBRARY_PATH} \
-    FORETOKEN_VLLM_PYTHON=/opt/foretoken-vllm/.venv/bin/python
+    LD_LIBRARY_PATH=${MACA_PATH}/lib:${MACA_PATH}/ompi/lib:${MACA_PATH}/mxgpu_llvm/lib:${LD_LIBRARY_PATH}
 
 WORKDIR /workspace

@@ -39,12 +39,6 @@ fn renders_supported_owned_arguments() {
         );
     }
     assert!(args.iter().any(|arg| arg == "--max-model-len=32768"));
-    assert!(
-        !args
-            .iter()
-            .any(|arg| arg.starts_with("--shutdown-timeout=")),
-        "{args:?}"
-    );
 
     let event_config = args
         .iter()

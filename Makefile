@@ -79,8 +79,7 @@ image-model-server: vllm-source
 
 image-model-server-metax: image-vllm-metax
 	$(MAKE) image-model-server \
-		INFERENCE_ENGINE_IMAGE="$(VLLM_METAX_IMAGE)" \
-		FORETOKEN_VLLM_PYTHON=/opt/foretoken-vllm/.venv/bin/python
+		INFERENCE_ENGINE_IMAGE="$(VLLM_METAX_IMAGE)"
 
 image-benchmark:
 	docker build -f benchmarks/Dockerfile -t foretoken-benchmark:dev .
