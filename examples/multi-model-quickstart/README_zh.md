@@ -36,6 +36,8 @@ kubectl get modelpool,modelgroup \
 在另一个终端运行有界并发负载。该命令发送 32 个请求，同时最多运行 8 个：
 
 ```bash
+export FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
+
 seq 1 32 | xargs -P8 -I{} sh -c '
   curl --fail --silent --show-error \
     "$FRONTEND_URL/v1/chat/completions" \

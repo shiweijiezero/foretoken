@@ -96,7 +96,7 @@ Create one `RuntimeCache` in a workload namespace to let Foretoken provision and
 
 ## Deploy and operate model services
 
-Deploy one frontend and all models rendered by a Kustomize root. The multi-model example needs up to four GPUs, 12 CPU cores, 100 GiB memory, and a default `ReadWriteMany` StorageClass with online expansion; use `examples/quickstart` for the smallest path.
+Deploy one frontend and all models rendered by a Kustomize root. The multi-model example starts with two GPUs, 12 CPU cores, and 100 GiB memory, and can scale to four GPUs. It also needs a default `ReadWriteMany` StorageClass with online expansion; see the [multi-model example](../examples/multi-model-quickstart/README.md), or use `examples/quickstart` for the smallest path.
 
 ```bash
 foretoken deploy examples/multi-model-quickstart
