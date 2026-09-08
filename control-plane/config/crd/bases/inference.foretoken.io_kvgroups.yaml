@@ -90,6 +90,12 @@ spec:
                     - retentionPolicy
                     - size
                     type: object
+                  fsGroup:
+                    description: FSGroup preserves the resolved volume access group
+                      for the client Pod.
+                    format: int64
+                    minimum: 0
+                    type: integer
                   image:
                     type: string
                   memoryCapacityBytes:
@@ -188,6 +194,23 @@ spec:
                     - message: resources.requests.memory must not exceed resources.limits.memory
                       rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                         <= 0'
+                  storageRegistration:
+                    description: StorageRegistration enables provider registration
+                      checks for a Store client.
+                    properties:
+                      enabled:
+                        description: Enabled requests provider registration checks
+                          instead of infrastructure-only readiness.
+                        type: boolean
+                      port:
+                        default: 9300
+                        description: Port is the client HTTP management port used
+                          for registration checks.
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                    type: object
                 required:
                 - disk
                 - image
@@ -215,6 +238,11 @@ spec:
                 - name
                 - uid
                 type: object
+              masterAdminPort:
+                format: int32
+                maximum: 65535
+                minimum: 1
+                type: integer
               masterRPCPort:
                 format: int32
                 maximum: 65535
@@ -270,8 +298,8 @@ spec:
               rule: self == oldSelf
           status:
             description: |-
-              KVGroupStatus reports requested capacity and Kubernetes infrastructure only.
-              It never represents Mooncake registration or usable Store capacity.
+              KVGroupStatus reports requested capacity, Kubernetes infrastructure, and optional
+              provider registration when storageRegistration is enabled.
             properties:
               conditions:
                 items:

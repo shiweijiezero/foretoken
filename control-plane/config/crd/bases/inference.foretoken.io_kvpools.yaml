@@ -75,6 +75,13 @@ spec:
                 - name
                 - uid
                 type: object
+              masterAdminPort:
+                description: MasterAdminPort is the resolved Master HTTP admin port
+                  used by enabled Groups.
+                format: int32
+                maximum: 65535
+                minimum: 1
+                type: integer
               poolName:
                 type: string
               revision:
@@ -121,6 +128,12 @@ spec:
                         required:
                         - size
                         type: object
+                      fsGroup:
+                        description: FSGroup sets the group used to access client
+                          volumes without changing the image user.
+                        format: int64
+                        minimum: 0
+                        type: integer
                       image:
                         minLength: 1
                         type: string
@@ -138,14 +151,15 @@ spec:
                         minimum: 1
                         type: integer
                       protocol:
-                        description: Protocol 同时用于存储客户端和绑定此 KVService 的模型请求端。
+                        description: Protocol is shared by storage clients and model
+                          requesters bound to this KVService.
                         enum:
                         - tcp
                         - rdma
                         type: string
                       rdmaResourceCount:
-                        description: RDMAResourceCount 省略时由控制器为 RDMA 客户端解析为 1；TCP
-                          不使用此字段。
+                        description: RDMAResourceCount defaults to one during RDMA
+                          client normalization and is unused for TCP.
                         format: int32
                         minimum: 1
                         type: integer
@@ -222,6 +236,23 @@ spec:
                           rule: '!has(self.limits) || !has(self.limits.memory) ||
                             quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                             <= 0'
+                      storageRegistration:
+                        description: StorageRegistration enables provider registration
+                          checks for a Store client.
+                        properties:
+                          enabled:
+                            description: Enabled requests provider registration checks
+                              instead of infrastructure-only readiness.
+                            type: boolean
+                          port:
+                            default: 9300
+                            description: Port is the client HTTP management port used
+                              for registration checks.
+                            format: int32
+                            maximum: 65535
+                            minimum: 1
+                            type: integer
+                        type: object
                     required:
                     - image
                     - memoryCapacity
@@ -263,7 +294,7 @@ spec:
             - template
             type: object
             x-kubernetes-validations:
-            - message: only KVPool desiredGroups is mutable
+            - message: only KVPool desiredGroups and masterAdminPort are mutable
               rule: self.kvServiceRef == oldSelf.kvServiceRef && self.poolName ==
                 oldSelf.poolName && self.revision == oldSelf.revision && self.template
                 == oldSelf.template

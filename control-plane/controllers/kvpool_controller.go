@@ -79,7 +79,7 @@ type kvGroupState struct {
 	reason, message                string
 }
 
-// reconcileGroups 先观察兼容实例，再按删除、创建顺序收敛容量；写入错误携带现存可用状态返回。
+// reconcileGroups observes compatible instances before converging deletion and creation; write errors retain observed availability.
 func (reconciler *KVPoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.KVPool, service *inferencev1alpha1.KVService) (kvGroupState, error) {
 	groups, err := reconciler.ownedGroups(ctx, pool)
 	if err != nil {
@@ -106,6 +106,14 @@ func (reconciler *KVPoolReconciler) reconcileGroups(ctx context.Context, pool *i
 		spec := desired
 		spec.Ordinal = group.Spec.Ordinal
 		if !reflect.DeepEqual(group.Spec, spec) {
+			// Resolved Master admin settings can change without changing requester revision.
+			adminPortOnly := group.Spec
+			adminPortOnly.MasterAdminPort = spec.MasterAdminPort
+			if reflect.DeepEqual(adminPortOnly, spec) {
+				retiring = append(retiring, group)
+				materialized = false
+				continue
+			}
 			return kvGroupState{}, fmt.Errorf("KVGroup %q has an unexpected immutable spec", group.Name)
 		}
 		current[group.Spec.Ordinal] = group
@@ -116,7 +124,7 @@ func (reconciler *KVPoolReconciler) reconcileGroups(ctx context.Context, pool *i
 			readyCount++
 		}
 	}
-	// 先观察保留实例，再增删容量；写入失败不抹掉已确认的可用性，观测错误不推测 Ready。
+	// Observe retained instances before changing capacity; write errors retain confirmed availability.
 	state := kvGroupState{ready: readyCount > 0}
 	for _, group := range retiring {
 		if err := reconciler.Delete(ctx, group); err != nil && !apierrors.IsNotFound(err) {
@@ -151,7 +159,7 @@ func (reconciler *KVPoolReconciler) reconcileGroups(ctx context.Context, pool *i
 	return state, nil
 }
 
-// desiredKVGroupSpec 为 Pool 解析共同的客户端配置与 Master 地址；调用方为每个实例设置 ordinal。
+// desiredKVGroupSpec resolves shared client and Master configuration; callers set each ordinal.
 func desiredKVGroupSpec(pool *inferencev1alpha1.KVPool, service *inferencev1alpha1.KVService) (inferencev1alpha1.KVGroupSpec, error) {
 	client := pool.Spec.Template.Client
 	if client.Disk == nil {
@@ -161,13 +169,44 @@ func desiredKVGroupSpec(pool *inferencev1alpha1.KVPool, service *inferencev1alph
 		return inferencev1alpha1.KVGroupSpec{}, fmt.Errorf("KVPool %q requires rdmaResourceName", pool.Name)
 	}
 	_, _, _, masterService := kvMasterNames(service)
-	rpc, _, _ := masterPorts(service.Spec.Master)
-	revision := pool.Spec.Revision
-	retention := client.Disk.RetentionPolicy
+	rpcPort, _, _ := masterPorts(service.Spec.Master)
+	masterDNS := fmt.Sprintf("%s.%s.svc.cluster.local", masterService, pool.Namespace)
+	adminPort := pool.Spec.MasterAdminPort
+	if client.StorageRegistration == nil || !client.StorageRegistration.Enabled {
+		adminPort = 0
+	}
+	disk := client.Disk
+	retention := disk.RetentionPolicy
 	if retention == "" {
 		retention = inferencev1alpha1.RetentionPolicyDelete
 	}
-	return inferencev1alpha1.KVGroupSpec{KVPoolRef: inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)}, Revision: revision, MasterServiceDNS: fmt.Sprintf("%s.%s.svc.cluster.local", masterService, pool.Namespace), MasterRPCPort: rpc, Client: inferencev1alpha1.KVGroupClientConfig{Image: client.Image, Protocol: client.Protocol, Port: client.Port, Resources: client.Resources, RDMAResourceName: client.RDMAResourceName, RDMAResourceCount: client.RDMAResourceCount, MemoryCapacityBytes: client.MemoryCapacity, Disk: inferencev1alpha1.KVGroupDisk{StorageClassName: client.Disk.StorageClassName, Size: client.Disk.Size, RetentionPolicy: retention}, NodeSelector: pool.Spec.Template.NodeSelector}, Timeouts: service.Spec.Timeouts}, nil
+	groupClient := inferencev1alpha1.KVGroupClientConfig{
+		Image:               client.Image,
+		FSGroup:             client.FSGroup,
+		Protocol:            client.Protocol,
+		Port:                client.Port,
+		Resources:           client.Resources,
+		RDMAResourceName:    client.RDMAResourceName,
+		RDMAResourceCount:   client.RDMAResourceCount,
+		MemoryCapacityBytes: client.MemoryCapacity,
+		Disk: inferencev1alpha1.KVGroupDisk{
+			StorageClassName: disk.StorageClassName,
+			Size:             disk.Size,
+			RetentionPolicy:  retention,
+		},
+		NodeSelector:        pool.Spec.Template.NodeSelector,
+		StorageRegistration: client.StorageRegistration,
+	}
+	return inferencev1alpha1.KVGroupSpec{
+		KVPoolRef:        inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
+		Revision:         pool.Spec.Revision,
+		Ordinal:          0,
+		MasterServiceDNS: masterDNS,
+		MasterRPCPort:    rpcPort,
+		MasterAdminPort:  adminPort,
+		Client:           groupClient,
+		Timeouts:         service.Spec.Timeouts,
+	}, nil
 }
 
 func kvPoolRevision(template inferencev1alpha1.NormalizedKVPoolTemplate, masterService string, rpcPort int32) string {

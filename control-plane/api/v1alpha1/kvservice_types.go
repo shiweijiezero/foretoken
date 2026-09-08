@@ -52,6 +52,10 @@ type SnapshotStorage struct {
 type KVMasterSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
+	// FSGroup sets the group used to access the mounted Master volumes; omitted values preserve image and driver behavior.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	FSGroup *int64 `json:"fsGroup,omitempty"`
 	// +optional
 	// +kubebuilder:default=50051
 	// +kubebuilder:validation:Minimum=1
@@ -93,6 +97,22 @@ type KVDisk struct {
 	RetentionPolicy RetentionPolicy `json:"retentionPolicy,omitempty"`
 }
 
+// DefaultStorageRegistrationPort is the client management port used when omitted.
+const DefaultStorageRegistrationPort int32 = 9300
+
+// StorageRegistration enables provider registration checks for a Store client.
+type StorageRegistration struct {
+	// Enabled requests provider registration checks instead of infrastructure-only readiness.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+	// Port is the client HTTP management port used for registration checks.
+	// +optional
+	// +kubebuilder:default=9300
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	Port int32 `json:"port,omitempty"`
+}
+
 // KVClientTemplate is immutable normalized intent for homogeneous future clients.
 // This standalone Store profile enables SSD offload, so disk is required. The
 // user-provided gap between capacity and memory resources reserves runtime overhead;
@@ -104,7 +124,11 @@ type KVDisk struct {
 type KVClientTemplate struct {
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
-	// Protocol 同时用于存储客户端和绑定此 KVService 的模型请求端。
+	// FSGroup sets the group used to access client volumes without changing the image user.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	FSGroup *int64 `json:"fsGroup,omitempty"`
+	// Protocol is shared by storage clients and model requesters bound to this KVService.
 	// +kubebuilder:validation:Enum=tcp;rdma
 	Protocol string `json:"protocol"`
 	// +optional
@@ -116,13 +140,15 @@ type KVClientTemplate struct {
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	RDMAResourceName string `json:"rdmaResourceName,omitempty"`
-	// RDMAResourceCount 省略时由控制器为 RDMA 客户端解析为 1；TCP 不使用此字段。
+	// RDMAResourceCount defaults to one during RDMA client normalization and is unused for TCP.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	RDMAResourceCount int32        `json:"rdmaResourceCount,omitempty"`
 	MemoryCapacity    ByteQuantity `json:"memoryCapacity"`
 	// +optional
 	Disk *KVDisk `json:"disk,omitempty"`
+	// +optional
+	StorageRegistration *StorageRegistration `json:"storageRegistration,omitempty"`
 }
 
 // KVStoragePoolTemplate names one homogeneous future client capacity Pool.
@@ -162,7 +188,7 @@ type KVServiceBinding struct {
 }
 
 // KVServiceSpec declares a Foretoken-owned Mooncake standalone Store.
-// 所有存储池使用相同协议，使模型请求端与任一存储客户端采用一致的传输方式。
+// All storage pools use one protocol so requesters and storage clients share the same transport.
 // +kubebuilder:validation:XValidation:rule="self.storagePools.all(pool, pool.client.protocol == self.storagePools[0].client.protocol)",message="storagePools must use the same client protocol"
 // +kubebuilder:validation:XValidation:rule="self.storagePools.all(pool, self.storagePools.exists(other, other.name == pool.name) ? self.storagePools.filter(other, other.name == pool.name).size() == 1 : true)",message="storagePools names must be unique"
 type KVServiceSpec struct {
@@ -178,8 +204,8 @@ type KVServiceSpec struct {
 	Requester    KVRequesterSpec         `json:"requester"`
 }
 
-// KVServiceStatus reports infrastructure and Pool materialization only; it does
-// not claim provider registration, usable Store state, or available capacity.
+// KVServiceStatus reports infrastructure and Pool materialization. Provider
+// registration is reflected by the dependent KVGroups when explicitly enabled.
 type KVServiceStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -216,13 +242,18 @@ type NormalizedKVPoolTemplate struct {
 
 // KVPoolSpec is controller-owned normalized client Pool intent. desiredGroups is
 // deliberately mutable for in-place scale; all revision-defining fields are immutable.
-// +kubebuilder:validation:XValidation:rule="self.kvServiceRef == oldSelf.kvServiceRef && self.poolName == oldSelf.poolName && self.revision == oldSelf.revision && self.template == oldSelf.template",message="only KVPool desiredGroups is mutable"
+// +kubebuilder:validation:XValidation:rule="self.kvServiceRef == oldSelf.kvServiceRef && self.poolName == oldSelf.poolName && self.revision == oldSelf.revision && self.template == oldSelf.template",message="only KVPool desiredGroups and masterAdminPort are mutable"
 type KVPoolSpec struct {
 	KVServiceRef LocalObjectReference `json:"kvServiceRef"`
 	PoolName     string               `json:"poolName"`
 	// Revision identifies the immutable Group template generated by this Pool.
 	// +kubebuilder:validation:MinLength=1
 	Revision string `json:"revision"`
+	// MasterAdminPort is the resolved Master HTTP admin port used by enabled Groups.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	MasterAdminPort int32 `json:"masterAdminPort,omitempty"`
 	// +kubebuilder:validation:Minimum=0
 	DesiredGroups int32                    `json:"desiredGroups"`
 	Template      NormalizedKVPoolTemplate `json:"template"`

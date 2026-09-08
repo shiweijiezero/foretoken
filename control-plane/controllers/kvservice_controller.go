@@ -100,7 +100,8 @@ func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ct
 			ready:          kvServiceCondition{reason: "ObservationFailed", message: "Client availability could not be determined"},
 		}))
 	}
-	// 使用同一次完整观察生成可用状态与写入目标，新增或移除 Pool 失败不撤销其他兼容容量。
+	// Use one complete observation for availability and writes so a Pool
+	// create or delete failure does not revoke other compatible capacity.
 	applyErr := reconciler.reconcilePools(ctx, service, pools)
 	ready := infrastructureReady && capacityAvailable
 	phase := inferencev1alpha1.KVServicePhaseProgressing
@@ -153,8 +154,10 @@ func (reconciler *KVServiceReconciler) reconcileInfrastructure(ctx context.Conte
 	return desiredKVServiceBinding(service, requesterName), nil
 }
 
-// reconcileRequesterConfig 按实际连接配置复用已有版本；已被模型引用的配置只创建、不原地更新。
-// 查询资源而非仅依赖 status，使创建后重启或暂时失去 Ready 不会生成另一份相同配置。
+// reconcileRequesterConfig reuses a configuration with the same connection
+// settings. Referenced configurations are created once and never updated in place.
+// Querying resources instead of relying only on status avoids duplicate versions
+// after a restart or a temporary loss of readiness.
 func (reconciler *KVServiceReconciler) reconcileRequesterConfig(ctx context.Context, service *inferencev1alpha1.KVService, desired *corev1.ConfigMap) (string, error) {
 	configs := new(corev1.ConfigMapList)
 	if err := reconciler.List(ctx, configs, client.InNamespace(service.Namespace), client.MatchingLabels(desired.Labels)); err != nil {
@@ -264,7 +267,8 @@ func (reconciler *KVServiceReconciler) applyOwned(ctx context.Context, owner *in
 		return err
 	}
 	if _, ok := desired.(*appsv1.Deployment); ok {
-		// 接管旧 Update writer 声明的 workload 字段，保留 Deployment controller 的 revision 注解。
+		// Take ownership of workload fields previously written by Update while
+		// preserving the Deployment controller's revision annotation.
 		return reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner("foretoken-kvservice"), client.ForceOwnership)
 	}
 	if missing {
@@ -315,12 +319,13 @@ func (reconciler *KVServiceReconciler) reconcilePools(ctx context.Context, servi
 			continue
 		}
 		if pool.Spec.KVServiceRef == desiredSpec.KVServiceRef && pool.Spec.PoolName == desiredSpec.PoolName && pool.Spec.Revision == desiredSpec.Revision && reflect.DeepEqual(pool.Spec.Template, desiredSpec.Template) {
-			// Scaling is the sole mutable KVPool field. Keep the Pool, Groups 0..N-1,
-			// and their PVCs intact; KVPool reconciles only the ordinal delta.
+			// Keep the Pool, Groups 0..N-1, and their PVCs intact while updating
+			// mutable capacity or the resolved Master admin port.
 			base := pool.DeepCopy()
 			pool.Spec.DesiredGroups = desiredSpec.DesiredGroups
+			pool.Spec.MasterAdminPort = desiredSpec.MasterAdminPort
 			if err := reconciler.Patch(ctx, pool, client.MergeFrom(base)); err != nil {
-				return fmt.Errorf("scale KVPool %q: %w", pool.Name, err)
+				return fmt.Errorf("update KVPool %q: %w", pool.Name, err)
 			}
 			continue
 		}
@@ -342,7 +347,7 @@ func (reconciler *KVServiceReconciler) reconcilePools(ctx context.Context, servi
 	return nil
 }
 
-// normalizedKVPoolSpec 为新 Pool 固化客户端配置；显式零副本保留，RDMA 默认值不进入 TCP 配置。
+// normalizedKVPoolSpec freezes client configuration and the resolved admin port for a KVPool.
 func normalizedKVPoolSpec(service *inferencev1alpha1.KVService, template inferencev1alpha1.KVStoragePoolTemplate) inferencev1alpha1.KVPoolSpec {
 	if template.Client.Port == 0 {
 		template.Client.Port = 50052
@@ -350,10 +355,21 @@ func normalizedKVPoolSpec(service *inferencev1alpha1.KVService, template inferen
 	if template.Client.Protocol == "rdma" && template.Client.RDMAResourceCount == 0 {
 		template.Client.RDMAResourceCount = 1
 	}
+	if template.Client.StorageRegistration != nil {
+		registration := *template.Client.StorageRegistration
+		if registration.Port == 0 {
+			registration.Port = inferencev1alpha1.DefaultStorageRegistrationPort
+		}
+		template.Client.StorageRegistration = &registration
+	}
 	normalized := inferencev1alpha1.NormalizedKVPoolTemplate{Client: template.Client, NodeSelector: template.NodeSelector}
 	_, _, _, masterService := kvMasterNames(service)
 	rpcPort, _, _ := masterPorts(service.Spec.Master)
-	return inferencev1alpha1.KVPoolSpec{KVServiceRef: inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)}, PoolName: template.Name, Revision: kvPoolRevision(normalized, masterService, rpcPort), DesiredGroups: template.Replicas, Template: normalized}
+	adminPort := int32(0)
+	if template.Client.StorageRegistration != nil && template.Client.StorageRegistration.Enabled {
+		_, _, adminPort = masterPorts(service.Spec.Master)
+	}
+	return inferencev1alpha1.KVPoolSpec{KVServiceRef: inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)}, PoolName: template.Name, Revision: kvPoolRevision(normalized, masterService, rpcPort), MasterAdminPort: adminPort, DesiredGroups: template.Replicas, Template: normalized}
 }
 
 func poolObjectName(service *inferencev1alpha1.KVService, poolName string) string {
@@ -396,7 +412,8 @@ func (reconciler *KVServiceReconciler) infrastructureReady(ctx context.Context, 
 	return frontendDeploymentAvailable(deployment), nil
 }
 
-// kvPoolState 在写入前验证完整 Pool 观察，分别汇总目标收敛与兼容客户端的 Kubernetes 可用性。
+// kvPoolState validates the complete Pool observation before writes and reports
+// convergence separately from compatible client Kubernetes availability.
 func kvPoolState(service *inferencev1alpha1.KVService, pools []inferencev1alpha1.KVPool) (bool, bool, error) {
 	byName := make(map[string]*inferencev1alpha1.KVPool, len(pools))
 	for index := range pools {
@@ -410,12 +427,14 @@ func kvPoolState(service *inferencev1alpha1.KVService, pools []inferencev1alpha1
 	for _, template := range service.Spec.StoragePools {
 		pool := byName[template.Name]
 		desired := normalizedKVPoolSpec(service, template)
-		if pool == nil || !pool.DeletionTimestamp.IsZero() || pool.Spec.KVServiceRef != desired.KVServiceRef || pool.Spec.Revision != desired.Revision || !reflect.DeepEqual(pool.Spec.Template, desired.Template) {
+		if pool == nil || !pool.DeletionTimestamp.IsZero() || pool.Spec.KVServiceRef != desired.KVServiceRef || pool.Spec.Revision != desired.Revision || pool.Spec.MasterAdminPort != desired.MasterAdminPort || !reflect.DeepEqual(pool.Spec.Template, desired.Template) {
 			converged = false
 			continue
 		}
-		// Pool 模板不可变，只有数量能变化；上轮可用性不会因扩容 generation 增加而失效。
-		// 模板或 transport 已变化的旧 Pool 已在上方排除，零目标 Pool 不提供容量。
+		// Pool templates are immutable; only capacity changes. A previous
+		// availability result remains valid when the desired count grows.
+		// Pools with changed templates or transports were excluded above, and a
+		// zero-target Pool provides no capacity.
 		condition := meta.FindStatusCondition(pool.Status.Conditions, conditionReady)
 		if template.Replicas > 0 && condition != nil && condition.Status == metav1.ConditionTrue {
 			available = true
@@ -546,7 +565,8 @@ func (reconciler *KVServiceReconciler) updateStatus(ctx context.Context, service
 	return reconciler.Status().Patch(ctx, service, client.MergeFrom(base))
 }
 
-// desiredKVServiceBinding 将已选定的配置版本投影给模型；副本数量不改变该版本。
+// desiredKVServiceBinding projects the selected configuration version to model
+// consumers; changing the replica count does not change that version.
 func desiredKVServiceBinding(service *inferencev1alpha1.KVService, requesterName string) *inferencev1alpha1.KVServiceBinding {
 	_, _, _, masterService := kvMasterNames(service)
 	rpcPort, _, _ := masterPorts(service.Spec.Master)
