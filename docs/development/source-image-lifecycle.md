@@ -7,11 +7,7 @@ English | [简体中文](source-image-lifecycle_zh.md)
 
 This maintainer guide covers manual image import and raw Helm operations. Run commands from the Foretoken repository root unless stated otherwise.
 
-## Build MetaX vLLM from public source
-
-Use `deploy/inference-engines/vllm-metax/install.sh` for both host and container installation. It downloads matching public vLLM-metax and upstream vLLM tags and resolves their Python dependencies into a new uv environment; only the MACA SDK and system build tools are supplied by the host or SDK image.
-
-`make image-model-server-metax` accepts `METAX_SDK_IMAGE` and `VLLM_METAX_VERSION` and composes the result with the existing model-server image build. A preinstalled vLLM image is not required. The default 0.24 combination includes an upstream XGrammar dependency correction and compatible Python dependency versions; see [MetaX deployment](../metax-deployment.md) for prerequisites, supported workloads, standalone installation, and image distribution.
+For hardware-specific prerequisites and image preparation, see the [deployment guides](../../README.md#deployment-guides).
 
 ## Import local images directly
 

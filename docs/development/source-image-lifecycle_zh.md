@@ -7,11 +7,7 @@
 
 本维护者指南说明手工镜像导入和原始 Helm 操作。除非另有说明，命令均从 Foretoken 仓库根目录执行。
 
-## 从公开源码构建 MetaX vLLM
-
-宿主机与容器统一调用 `deploy/inference-engines/vllm-metax/install.sh`。脚本下载同版本的公开 vLLM-metax 与 upstream vLLM tag，在新的 uv 环境中求解并安装 Python 依赖；主机或 SDK 镜像只提供 MACA SDK 和系统编译工具。
-
-`make image-model-server-metax` 接收 `METAX_SDK_IMAGE` 与 `VLLM_METAX_VERSION`，并复用既有 model-server 镜像构建流程，不要求预装 vLLM 镜像。默认 0.24 组合包含上游 XGrammar 依赖修正及兼容的 Python 依赖版本；环境准备、支持的工作负载、单机安装和镜像分发见[沐曦部署指南](../metax-deployment_zh.md)。
+各硬件平台的环境要求和镜像准备方式见[部署指南](../../README_zh.md#部署指南)。
 
 ## 直接导入本地镜像
 
