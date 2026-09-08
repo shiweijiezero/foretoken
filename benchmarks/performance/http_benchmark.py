@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""执行一个标准 OpenAI-compatible HTTP 性能负载。"""
+"""Run one standard OpenAI-compatible HTTP workload."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 
 def resolved_load_record(benchmark: HttpBenchmarkConfig) -> dict[str, Any]:
-    """把内部负载配置映射为既有结果字段使用的标量字典。"""
+    """Map internal workload settings to scalar fields used by existing results."""
     schedule = benchmark.load_schedule
     max_concurrency = int(schedule.max_concurrency)
     return {
@@ -43,7 +43,7 @@ def build_benchmark_run_record(
     mode: str,
     load_record: dict[str, Any],
 ) -> dict[str, Any]:
-    """构造控制台和本地结果共同使用的单次运行记录。"""
+    """Build the run record shared by console and local results."""
     record = {
         "mode": mode,
         "model": benchmark.endpoint.model,
@@ -71,7 +71,7 @@ def open_local_result_directory(
     benchmark: HttpBenchmarkConfig,
     output_dir: Optional[str] = None,
 ) -> LocalResultDirectory:
-    """为一次运行或实验根目录解析唯一的本地结果目录。"""
+    """Resolve the unique local result directory for one run or experiment root."""
     enabled = benchmark.outputs.includes("local")
     if output_dir is not None:
         return LocalResultDirectory(output_dir=output_dir, enabled=enabled)
@@ -90,7 +90,7 @@ def summarize_http_measurements(
     reported_concurrency: int,
     include_user_throughput: bool = True,
 ) -> dict[str, Any]:
-    """聚合逐请求观测并附加该次负载的公开坐标。"""
+    """Aggregate per-request observations and attach the workload coordinates for this run."""
     metrics = summarize_request_measurements(request_measurements)
     configured_stream = bool(benchmark.generation.stream)
     if metrics["stream"] != configured_stream:
@@ -117,7 +117,7 @@ def publish_benchmark_results(
     trace_measurements: Optional[list[dict[str, Any]]] = None,
     config_snapshot: Optional[dict[str, Any]] = None,
 ) -> None:
-    """按当前输出选择发布控制台、JSON 和 W&B 性能结果。"""
+    """Publish console, JSON, and W&B benchmark results according to the selected outputs."""
     if not benchmark.outputs.includes("quiet"):
         log_benchmark_summary(run_record, metrics)
     persisted_config = (
@@ -143,7 +143,7 @@ def publish_benchmark_results(
 
 
 class StandardHttpLoadBenchmark:
-    """拥有一次标准 HTTP 负载的请求、结果和外部 run 生命周期。"""
+    """Own the request, result, and external-run lifecycle for one standard HTTP workload."""
 
     def __init__(
         self,
@@ -161,7 +161,7 @@ class StandardHttpLoadBenchmark:
         self.collect_request_measurements = collect_request_measurements
 
     async def run(self) -> dict[str, Any]:
-        """执行一次标准 HTTP 负载并返回既有结果字典。"""
+        """Run one standard HTTP workload and return the existing result dictionary."""
         load_record = resolved_load_record(self.benchmark)
         result_directory = open_local_result_directory(
             self.benchmark, self.output_dir

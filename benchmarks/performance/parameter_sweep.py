@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""解析并执行当前 HTTP 性能评测的参数扫描。"""
+"""Parse and run the parameter sweep for the current HTTP benchmark."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ _PARAMETER_GROUP = "_parameter_group"
 
 
 def sweep_point_name(point: SweepPoint) -> str:
-    """返回显式名称，或按参数顺序构造一个负载点名称。"""
+    """Return the explicit name or build a workload point name in parameter order."""
     if _BENCHMARK_NAME in point:
         return str(point[_BENCHMARK_NAME])
     return "-".join(
@@ -46,7 +46,7 @@ def sweep_point_name(point: SweepPoint) -> str:
 
 
 def sweep_directory_name(name: str) -> str:
-    """把一个参数点名称转换为既有结果目录名称。"""
+    """Convert a parameter point name into an existing result directory name."""
     return name.replace("/", "_").replace("..", "__").strip("'\"")
 
 
@@ -60,7 +60,7 @@ def _preserve_value(value: Any) -> Any:
     return value
 
 
-# 同一部署实验只允许改变请求和负载选择；目标、凭据、轨迹和输出归属保持不变。
+# One deployment experiment may change only request and workload choices; endpoint, credentials, traces, and output ownership remain fixed.
 _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "parallel": ("load_schedule", "max_concurrency", int),
     "number": ("load_schedule", "request_count", int),
@@ -120,7 +120,7 @@ def _axis_value_for_point(values: list[Any] | None, index: int) -> Any | None:
 
 
 def expand_load_points(item: SweepPoint) -> list[SweepPoint]:
-    """把列表形式的负载轴展开为标量参数点。"""
+    """Expand list-valued workload axes into scalar parameter points."""
     record = dict(item)
     axes = {
         key: _load_axis_values(record, key, caster)
@@ -211,7 +211,7 @@ def expand_load_points(item: SweepPoint) -> list[SweepPoint]:
 
 
 def load_sweep_points(path: str) -> list[SweepPoint]:
-    """读取 JSONL 并展开为可执行的 HTTP 性能参数点。"""
+    """Read JSONL and expand it into executable HTTP benchmark points."""
     if not path:
         raise ValueError("Parameter sweep requires --bench-params PATH")
 
@@ -244,7 +244,7 @@ def apply_sweep_point(
     benchmark: HttpBenchmarkConfig,
     sweep_point: SweepPoint,
 ) -> HttpBenchmarkConfig:
-    """复制性能配置并应用一个经过 allowlist 的参数点。"""
+    """Copy the benchmark configuration and apply an allowlisted parameter point."""
     section_updates: dict[str, dict[str, Any]] = {}
     for raw_key, raw_value in sweep_point.items():
         if raw_key in {_BENCHMARK_NAME, _PARAMETER_GROUP}:
@@ -271,13 +271,13 @@ def apply_sweep_point(
 
 
 class ParameterSweepBenchmark:
-    """拥有参数点展开、重复运行、W&B 分组和 Pareto 产物。"""
+    """Own parameter expansion, repeated runs, W&B grouping, and Pareto artifacts."""
 
     def __init__(self, benchmark: HttpBenchmarkConfig) -> None:
         self.benchmark = benchmark
 
     async def run(self) -> dict[str, Any]:
-        """执行全部参数点，并返回吞吐量最高点作为兼容 metrics 结果。"""
+        """Run all parameter points and return the highest-throughput point as the compatible metrics result."""
         sweep = self.benchmark.parameter_sweep
         if sweep.num_runs < 1:
             raise ValueError(f"--num-runs must be >= 1, got {sweep.num_runs}")

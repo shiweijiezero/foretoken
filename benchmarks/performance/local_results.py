@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""在一个确定目录中保存 HTTP 性能评测产物。"""
+"""Save HTTP benchmark artifacts in a designated directory."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 
 class LocalResultDirectory:
-    """拥有一次负载点或参数实验的本地 JSON 产物目录。"""
+    """Own the local JSON artifact directory for one workload point or parameter experiment."""
 
     def __init__(
         self,
@@ -30,7 +30,7 @@ class LocalResultDirectory:
             os.makedirs(self.output_dir, exist_ok=True)
 
     def save_json(self, filename: str, data: Any) -> Optional[str]:
-        """启用本地输出时写入一个 JSON 产物并返回路径。"""
+        """Write a JSON artifact and return its path when local output is enabled."""
         if not self.enabled:
             return None
         path = os.path.join(self.output_dir, filename)

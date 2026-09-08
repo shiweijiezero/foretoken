@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""解析性能负载使用的 Hugging Face 数据集选择器和文件 URI。"""
+"""Parse Hugging Face dataset selectors and file URIs used by benchmark workloads."""
 
 from __future__ import annotations
 
@@ -16,14 +16,14 @@ _HF_FILE_URI_FORMAT = "hf://datasets/<org>/<repo>[@<revision>]/<path>"
 
 
 def is_hf_file_uri(source: str) -> bool:
-    """返回该来源是否为规范的 ``hf://datasets/...`` 文件 URI。"""
+    """Return whether the source is a canonical ``hf://datasets/...`` file URI."""
     return source.startswith(_HF_DATASETS_PREFIX)
 
 
 def parse_hf_file_uri(uri: str) -> tuple[str, Optional[str], str]:
-    """解析 ``hf://datasets/{repo_id}[@{revision}]/{path}``。
+    """Parse ``hf://datasets/{repo_id}[@{revision}]/{path}``.
 
-    返回 ``(repo_id, revision_or_none, filename)``。
+    Return ``(repo_id, revision_or_none, filename)``.
     """
     if not uri.startswith(_HF_DATASETS_PREFIX):
         raise ValueError(
@@ -66,7 +66,7 @@ def parse_hf_file_uri(uri: str) -> tuple[str, Optional[str], str]:
 
 
 def resolve_hf_file_uri(uri: str) -> str:
-    """缓存 Hugging Face 数据集仓库文件并返回本地路径。"""
+    """Cache a file from a Hugging Face dataset repository and return its local path."""
     from huggingface_hub import hf_hub_download
 
     repo_id, revision, filename = parse_hf_file_uri(uri)
@@ -84,10 +84,10 @@ _DEFAULT_SELECTORS = {
 
 
 def parse_hf_dataset_spec(spec: str) -> tuple[str, str]:
-    """把支持的数据集选择器解析为 ``(dataset_id, selector)``。
+    """Parse a supported dataset selector into ``(dataset_id, selector)``.
 
-    selector 可以是 split 或 builder config。已知轨迹数据集具有默认值，
-    其他数据集必须使用 ``org/name:split``。
+    The selector can be a split or builder config. Known trace datasets have defaults;
+    other datasets must use ``org/name:split``.
     """
     if ":" not in spec:
         selector = _DEFAULT_SELECTORS.get(spec)
@@ -107,7 +107,7 @@ def parse_hf_dataset_spec(spec: str) -> tuple[str, str]:
 
 
 def is_hf_dataset_spec(spec: str) -> bool:
-    """返回 ``spec`` 是否为支持的 Hugging Face 数据集选择器。"""
+    """Return whether ``spec`` is a supported Hugging Face dataset selector."""
     try:
         parse_hf_dataset_spec(spec)
     except ValueError:
@@ -116,7 +116,7 @@ def is_hf_dataset_spec(spec: str) -> bool:
 
 
 def same_dataset_selector(left: str, right: str) -> bool:
-    """返回两个选择器是否解析到同一数据集来源。"""
+    """Return whether two selectors resolve to the same dataset source."""
     if left == right:
         return True
     try:
@@ -126,10 +126,10 @@ def same_dataset_selector(left: str, right: str) -> bool:
 
 
 def _load_hf_data(dataset_id: str, split: str) -> Any:
-    """流式读取 ``dataset_id`` 和 ``split`` 指定的数据。
+    """Stream data selected by ``dataset_id`` and ``split``.
 
-    部分数据集把选择器作为 builder config，且该配置只包含 ``train`` split；
-    此时 CLI 选择器表示 config 名称。
+    Some datasets use the selector as a builder config with only a ``train`` split;
+    in that case, the CLI selector is the config name.
     """
     from datasets import get_dataset_config_names, get_dataset_split_names, load_dataset
 
@@ -151,7 +151,7 @@ def _load_hf_data(dataset_id: str, split: str) -> Any:
 
 
 def iter_hf_rows(spec: str) -> Iterator[tuple[int, Any]]:
-    """按 Hugging Face 数据集选择器逐行返回索引和值。"""
+    """Yield row indexes and values from a Hugging Face dataset selector."""
     dataset_id, split = parse_hf_dataset_spec(spec)
     data = _load_hf_data(dataset_id, split)
     for row_index, row in enumerate(data):

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""按记录时间回放独立 Chat Completions 请求并测量调度偏差。"""
+"""Replay independent Chat Completions requests by recorded time and measure scheduling delay."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from benchmarks.performance.wandb_results import WandbBenchmarkRun
 
 
 class ArrivalTraceBenchmark:
-    """拥有记录时间调度、并发上限和轨迹性能结果生命周期。"""
+    """Own the lifecycle of recorded-time scheduling, concurrency limits, and trace results."""
 
     def __init__(self, benchmark: HttpBenchmarkConfig) -> None:
         self.benchmark = benchmark
@@ -92,7 +92,7 @@ class ArrivalTraceBenchmark:
         max_concurrency: int | None,
         trace_window_start: float,
     ) -> dict[str, Any]:
-        """按绝对记录偏移调度请求，并把并发等待计入 replay delay。"""
+        """Schedule requests by absolute recorded offset and include concurrency waits in replay delay."""
         completed_tasks: asyncio.Queue[
             asyncio.Task[tuple[int, dict[str, Any]]]
         ] = asyncio.Queue()
@@ -164,7 +164,7 @@ class ArrivalTraceBenchmark:
         }
 
     async def run(self) -> dict[str, Any]:
-        """回放所选轨迹窗口并发布兼容的 trace 结果结构。"""
+        """Replay the selected trace window and publish the compatible trace result structure."""
         trace = self.benchmark.arrival_trace
         (
             trace_window_start,

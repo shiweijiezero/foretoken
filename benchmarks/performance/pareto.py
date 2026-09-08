@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""绘制 HTTP 性能参数扫描的 Pareto 图。"""
+"""Plot the Pareto frontier for an HTTP benchmark parameter sweep."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from benchmarks.performance.request_metrics import (
 
 
 def _pareto_coordinates(item: dict[str, Any]) -> dict[str, Any]:
-    """从一个扫描指标字典构造散点数据。"""
+    """Build scatter data from one sweep metrics dictionary."""
     parallel = int(item["parallel"])
     user_count = configured_user_denominator(parallel)
     gpu_count = int(item["gpu_count"])
@@ -43,7 +43,7 @@ def _pareto_frontier(
     *,
     epsilon: float = 1e-9,
 ) -> list[dict[str, Any]]:
-    """返回每用户和每 GPU 输出吞吐量上未被支配的点。"""
+    """Return points not dominated on per-user and per-GPU output throughput."""
     ordered = sorted(
         points,
         key=lambda row: (
@@ -63,12 +63,12 @@ def _pareto_frontier(
 
 
 def _marker_area(user_count: float) -> float:
-    """根据并发数计算散点面积。"""
+    """Compute scatter area from concurrency."""
     return 36.0 + 18.0 * user_count
 
 
 def _plot_pareto_scatter(fig_path: Path, points: list[dict[str, Any]]) -> None:
-    """按参数组着色，并按并发数设置散点大小。"""
+    """Color points by parameter group and size them by concurrency."""
     import matplotlib.pyplot as plt
 
     groups = sorted({str(row["param_group"]) for row in points})
@@ -128,10 +128,10 @@ def plot_sweep_pareto(
     results: list[dict[str, Any]],
     output_dir: str | Path,
 ) -> Path:
-    """绘制每用户与每 GPU 输出吞吐量的 Pareto 图。
+    """Plot the Pareto frontier for per-user and per-GPU output throughput.
 
-    颜色表示参数组合，散点大小表示并发数；结果写入
-    ``output_dir/pareto/PARETO.png``。
+    Colors represent parameter combinations and point size represents concurrency;
+    write the result to ``output_dir/pareto/PARETO.png``.
     """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)

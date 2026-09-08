@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""为 HTTP 性能评测发现、临时部署并清理 Foretoken 服务。"""
+"""Discover, temporarily deploy, and clean up a Foretoken service for HTTP benchmarks."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class DeployedBenchmarkEndpoint:
-    """保存从 Foretoken 部署发现的公开 Chat Completions 测量目标。"""
+    """Store the public Chat Completions endpoint discovered from a Foretoken deployment."""
 
     url: str
     model: str
@@ -86,7 +86,7 @@ def select_benchmark_model(
     deployment: ForetokenDeployment,
     requested_model: str,
 ) -> tuple[str, int]:
-    """返回本次性能评测选择的公开模型和部署 GPU 总数。"""
+    """Return the public model selected for this benchmark and the deployment GPU count."""
     model = _select_model(deployment.models.values(), requested_model)
     return model, _model_gpu_count(deployment, model)
 
@@ -143,7 +143,7 @@ def discover_benchmark_endpoint(
     requested_model: str,
     api_key: str,
 ) -> DeployedBenchmarkEndpoint:
-    """等待已渲染服务就绪并返回公开的 HTTP 性能测量目标。"""
+    """Wait for the rendered service to become ready and return the public HTTP benchmark endpoint."""
     wait_seconds = timeout_seconds(timeout)
     model, gpu_count = select_benchmark_model(deployment, requested_model)
     wait_for_resources(deployment.service_refs(), kubectl, timeout)
@@ -215,7 +215,7 @@ def _delete_objects(
     objects: tuple[dict[str, Any], ...],
     timeout: str,
 ) -> None:
-    """先删除命名空间内对象，再删除本次评测创建的 Namespace。"""
+    """Delete namespaced objects first, then delete the Namespace created for this benchmark."""
     namespaced = tuple(
         document for document in objects if document.get("kind") != "Namespace"
     )
@@ -235,7 +235,7 @@ def benchmark_endpoint_from_kustomize(
     requested_model: str,
     api_key: str,
 ) -> Iterator[DeployedBenchmarkEndpoint]:
-    """复用完整部署，或只创建并清理本次性能评测缺失的对象。"""
+    """Reuse a complete deployment, or create and clean up only objects missing for this benchmark."""
     kubectl = Kubectl()
     deployment = load_deployment(kustomize_path, kubectl)
     presence = _service_presence(deployment, kubectl)

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""为随机负载和 Mooncake 轨迹生成确定性的 token 形状提示词。"""
+"""Generate deterministic token-shaped prompts for random workloads and Mooncake traces."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 _MOONCAKE_BLOCK_TOKENS = 512
 _BYTE_FALLBACK_TOKEN = re.compile(r"<0x[0-9A-Fa-f]{2}>")
 
-# 远程 tokenizer 只下载分词与解码所需文件。
+# Remote tokenizers download only files needed for tokenization and decoding.
 _TOKENIZER_ALLOW_PATTERNS = (
     "tokenizer*",
     "vocab*",
@@ -88,7 +88,7 @@ def _load_tokenizer(tokenizer_path: str) -> Any:
 
 
 def _allowed_token_ids(tokenizer: Any) -> list[int]:
-    """返回可稳定解码为合成文本的非特殊 token。"""
+    """Return non-special tokens that decode reliably into synthetic text."""
     special_ids = set(tokenizer.all_special_ids)
     allowed = []
     for token_id in range(len(tokenizer)):
@@ -117,7 +117,7 @@ def _decode_prompt(tokenizer: Any, token_ids: list[int]) -> str:
 
 
 class RandomChatRequestGenerator:
-    """拥有一个随机负载点的 tokenizer、随机状态和共享前缀。"""
+    """Own the tokenizer, random state, and shared prefix for one random workload point."""
 
     def __init__(
         self,
@@ -149,14 +149,14 @@ class RandomChatRequestGenerator:
         minimum: int,
         maximum: int,
     ) -> list[int]:
-        """为一个负载点采样闭区间内的内部提示词长度。"""
+        """Sample inner prompt lengths from an inclusive range for one workload point."""
         return [
             int(value)
             for value in self.rng.integers(minimum, maximum + 1, size=count)
         ]
 
     def generate_requests(self, input_lengths: list[int]) -> list[ChatRequestContent]:
-        """按给定内部长度生成共享同一前缀的聊天请求内容。"""
+        """Generate chat request content with a shared prefix for the given inner lengths."""
         vocabulary_size = len(self.allowed_token_ids)
         requests: list[ChatRequestContent] = []
         for index, input_length in enumerate(input_lengths):
@@ -179,7 +179,7 @@ def generate_random_requests(
     request_count: int | None = None,
     input_lengths: list[int] | None = None,
 ) -> list[ChatRequestContent]:
-    """为普通负载或到达轨迹生成确定性随机请求内容。"""
+    """Generate deterministic random request content for a standard workload or arrival trace."""
     dataset = benchmark.request_dataset
     if not dataset.tokenizer:
         raise ValueError("tokenizer_path is required for random data generation")
@@ -212,7 +212,7 @@ def generate_synthetic_prefix_reuse_requests(
     input_lengths: list[int],
     hash_id_lists: list[list[int] | None],
 ) -> list[ChatRequestContent]:
-    """根据 Mooncake hash ID 构造可重复的 512-token 前缀块。"""
+    """Build reproducible 512-token prefix blocks from Mooncake hash IDs."""
     dataset = benchmark.request_dataset
     if not dataset.tokenizer:
         raise ValueError("tokenizer_path is required for random data generation")

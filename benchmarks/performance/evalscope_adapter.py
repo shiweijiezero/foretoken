@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""定义固定 EvalScope 参数与 OpenAI API 插件适配。"""
+"""Define fixed EvalScope arguments and the OpenAI API plugin adapter."""
 
 from __future__ import annotations
 
@@ -17,17 +17,17 @@ EVALSCOPE_API = "foretoken_openai"
 
 
 class ForetokenEvalScopeArguments(Arguments):
-    """携带 Foretoken 请求字段省略语义的 EvalScope 参数。"""
+    """EvalScope arguments carrying Foretoken request-field omission semantics."""
 
     omit_temperature: bool = Field(default=False, exclude=True, repr=False)
 
 
 @register_api(EVALSCOPE_API)
 class ForetokenOpenaiPlugin(OpenaiPlugin):
-    """复用 EvalScope OpenAI 执行，仅省略未配置的 temperature。"""
+    """Reuse EvalScope OpenAI execution while omitting an unset temperature."""
 
     def build_request(self, messages: Any, param: Any = None) -> dict[str, Any]:
-        """构造 EvalScope 请求，并恢复 Foretoken 的可选 temperature 语义。"""
+        """Build an EvalScope request and restore Foretoken optional-temperature semantics."""
         request = super().build_request(messages, param)
         if self.param.omit_temperature:
             request.pop("temperature", None)

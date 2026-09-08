@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""把 Foretoken 标准 HTTP 负载映射到 EvalScope 公共性能接口。"""
+"""Map Foretoken standard HTTP workloads to EvalScope public benchmark APIs."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def _materialize_evalscope_request_dataset(
     benchmark: HttpBenchmarkConfig,
     output_dir: str,
 ) -> tuple[str, str]:
-    """规范化 conversation，并选择 EvalScope 的单轮或多轮插件。"""
+    """Normalize conversations and select the EvalScope single-turn or multi-turn plugin."""
     conversations = load_chat_conversations(benchmark)
     turn_lists = [split_chat_conversation(messages) for messages in conversations]
     effective_turn_lists = [
@@ -61,7 +61,7 @@ def _evalscope_arguments(
     benchmark: HttpBenchmarkConfig,
     output_dir: str,
 ) -> Any:
-    """把一个 Foretoken 标准负载映射为 EvalScope 单点参数。"""
+    """Map one Foretoken standard workload to EvalScope point arguments."""
     try:
         from benchmarks.performance.evalscope_adapter import (
             EVALSCOPE_API,
@@ -184,7 +184,7 @@ def _trace_metric_distribution(
     trace_summary: TraceLevelSummary | None,
     metric_name: str,
 ) -> dict[str, float | None]:
-    """从 EvalScope per-trace 汇总读取一个对话级指标分布。"""
+    """Read a conversation-level metric distribution from the EvalScope per-trace summary."""
     if trace_summary is not None:
         for row in trace_summary.rows:
             if row.metric == metric_name:
@@ -203,7 +203,7 @@ def _map_evalscope_metrics(
     percentiles: PercentileResult,
     trace_summary: TraceLevelSummary | None = None,
 ) -> dict[str, Any]:
-    """把 EvalScope 类型化结果映射到 Foretoken 当前指标字段。"""
+    """Map typed EvalScope results to Foretoken metric fields."""
     schedule = benchmark.load_schedule
     reported_concurrency = (
         -1 if schedule.unbounded_concurrency else schedule.max_concurrency
@@ -319,7 +319,7 @@ def _read_evalscope_request_measurements(
     output_dir: str,
     total_time: float,
 ) -> dict[str, Any]:
-    """读取 EvalScope 1.11.1 SQLite 记录，供多数据集合并使用。
+    """Read EvalScope 1.11.1 SQLite records for multi-dataset merging.
 
     ``run_one_benchmark`` returns aggregate types only.  Multi-dataset runs
     need the per-request rows to combine success counts and latency samples,
@@ -379,7 +379,7 @@ async def run_evalscope_standard_load(
     *,
     collect_request_measurements: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """通过 EvalScope 公共单点入口执行标准负载并返回映射结果。"""
+    """Run a standard workload through EvalScope public point execution and return mapped results."""
     try:
         from evalscope.perf.main import run_one_benchmark
         from evalscope.utils.logger import configure_logging

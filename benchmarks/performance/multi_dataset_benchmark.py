@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""依次执行多个聊天请求数据集并合并 HTTP 性能结果。"""
+"""Run multiple chat request datasets in order and merge the HTTP benchmark results."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def _allocate_request_counts(
     request_count: int,
     dataset_count: int,
 ) -> list[int]:
-    """按数据集顺序尽量均匀地分配总请求数。"""
+    """Distribute the total request count as evenly as possible in dataset order."""
     base_count, remainder = divmod(request_count, dataset_count)
     return [
         base_count + (1 if index < remainder else 0)
@@ -44,13 +44,13 @@ def _allocate_request_counts(
 
 
 class MultiDatasetBenchmark:
-    """拥有多数据集请求分配、子负载顺序和合并结果。"""
+    """Own multi-dataset request allocation, child workload order, and merged results."""
 
     def __init__(self, benchmark: HttpBenchmarkConfig) -> None:
         self.benchmark = benchmark
 
     async def run(self) -> dict[str, Any]:
-        """依次评测各数据集并发布一次兼容的合并性能结果。"""
+        """Benchmark each dataset in order and publish one compatible merged result."""
         load_record = resolved_load_record(self.benchmark)
         dataset_selectors = list(
             self.benchmark.request_dataset.dataset_selectors

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 
-"""把 HTTP 性能结果写入独立的 Weights & Biases run。"""
+"""Write HTTP benchmark results to an independent Weights & Biases run."""
 
 from __future__ import annotations
 
@@ -63,18 +63,18 @@ _TRACE_HISTORY_KEYS = {
 
 
 def wandb_run_timestamp() -> str:
-    """返回 W&B 名称和分组使用的本地时间戳。"""
+    """Return a local timestamp for W&B names and grouping."""
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 def wandb_group_name(config: HttpBenchmarkConfig) -> str:
-    """返回配置的 W&B 名称，或模型与时间组成的默认名称。"""
+    """Return the configured W&B name or a default name from the model and timestamp."""
     run_name = config.wandb.run_name.strip()
     return run_name or f"{config.endpoint.model}_{wandb_run_timestamp()}"
 
 
 def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
-    """把最终性能指标映射到既有 W&B 图表字段。"""
+    """Map final benchmark metrics to existing W&B chart fields."""
     throughput = metrics["throughput"]
     message = {
         _TIME_TAKEN: round(float(metrics["benchmark_time"]), 4),
@@ -138,7 +138,7 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
 def _trace_bucket_rows(
     results: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """按计划发送时间分桶并构造 p95 时间序列。"""
+    """Bucket by scheduled send time and build a p95 time series."""
     if not results:
         return []
     max_offset = max(float(result["trace_offset_s"]) for result in results)
@@ -176,7 +176,7 @@ def _trace_bucket_rows(
 
 
 class WandbBenchmarkRun:
-    """拥有单个性能负载点对应的可选 W&B run 生命周期。"""
+    """Own the optional W&B run lifecycle for one benchmark workload point."""
 
     def __init__(self) -> None:
         self._active = False
@@ -192,7 +192,7 @@ class WandbBenchmarkRun:
         name_suffix: Optional[str] = None,
         group: Optional[str] = None,
     ) -> None:
-        """启用 W&B 输出时创建该负载点的独立 run。"""
+        """Create an independent run for the workload point when W&B output is enabled."""
         wandb_config: WandbRunConfig = config.wandb
         if not config.outputs.includes("wandb"):
             return
@@ -233,7 +233,7 @@ class WandbBenchmarkRun:
         )
 
     def log_metrics(self, metrics: dict[str, Any]) -> None:
-        """发布最终聚合的 HTTP 性能指标。"""
+        """Publish the final aggregated HTTP benchmark metrics."""
         if not self._active:
             return
         message = wandb_metric_fields(metrics)
@@ -245,7 +245,7 @@ class WandbBenchmarkRun:
             self._run.log(message)
 
     def log_trace_measurements(self, results: list[dict[str, Any]]) -> None:
-        """在回放结束后上传按计划时间组织的轨迹历史。"""
+        """Upload trace history organized by scheduled time after replay completes."""
         if not self._active or self._run is None:
             return
         rows = _trace_bucket_rows(results)
@@ -273,7 +273,7 @@ class WandbBenchmarkRun:
         )
 
     def finish(self) -> None:
-        """只结束本对象拥有的 run，不影响进程中的其他 W&B run。"""
+        """Finish only the run owned by this object; leave other W&B runs in the process unchanged."""
         if self._active and self._run is not None:
             self._run.finish()
         self._active = False

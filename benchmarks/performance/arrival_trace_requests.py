@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""把到达轨迹事件绑定到最终的独立聊天请求。"""
+"""Bind arrival trace events to their final independent chat requests."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def bind_arrival_trace_requests(
     benchmark: HttpBenchmarkConfig,
     events: list[ArrivalTraceEvent],
 ) -> tuple[str, list[ArrivalTraceEvent]]:
-    """为所选到达事件绑定原生、随机或外部数据集请求。"""
+    """Bind native, random, or external-dataset requests to the selected arrival events."""
     request_origin = _request_origin(benchmark)
     dataset = benchmark.request_dataset
     trace = benchmark.arrival_trace
@@ -97,7 +97,7 @@ def bind_arrival_trace_requests(
 def load_arrival_trace_requests(
     benchmark: HttpBenchmarkConfig,
 ) -> tuple[float, str, str, list[ArrivalTraceEvent]]:
-    """读取轨迹窗口并为每个到达事件绑定最终聊天请求。"""
+    """Read the trace window and bind a final chat request to each arrival event."""
     trace = benchmark.arrival_trace
     reader = ArrivalTraceReader(trace.trace_selector)
     trace_window_start, events = reader.read_window(

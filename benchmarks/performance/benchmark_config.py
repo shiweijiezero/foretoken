@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""定义并校验当前 HTTP 性能评测配置。"""
+"""Define and validate the current HTTP benchmark configuration."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ OutputTokenLimit = int | list[int]
 
 
 def normalize_output_token_limit(value: int | list[int]) -> OutputTokenLimit:
-    """把 CLI 中的固定 max-tokens 或闭区间规范化为内部表示。"""
+    """Normalize a fixed CLI max-tokens value or range into the internal representation."""
     if isinstance(value, int):
         if value < 0:
             raise ValueError(f"max-tokens must be >= 0, got {value}")
@@ -34,7 +34,7 @@ def normalize_output_token_limit(value: int | list[int]) -> OutputTokenLimit:
 
 @dataclass
 class ChatCompletionsEndpoint:
-    """保存 OpenAI-compatible Chat Completions 地址和传输选项。"""
+    """Store the OpenAI-compatible Chat Completions endpoint and transport options."""
 
     url: str
     model: str
@@ -45,17 +45,17 @@ class ChatCompletionsEndpoint:
 
 @dataclass
 class HttpLoadSchedule:
-    """保存标准 HTTP 负载的工作量、并发上限和到达率。"""
+    """Store the standard HTTP workload, concurrency limit, and arrival rate."""
 
     max_concurrency: int = 1
     request_count: int = 100
-    # -1 表示尽快发送；正数表示泊松到达率。
+    # -1 sends as fast as possible; positive values use a Poisson arrival rate.
     arrival_rate: float = -1.0
     unbounded_concurrency: bool = False
 
     @staticmethod
     def validate_coordinates(*, max_concurrency: int, arrival_rate: float) -> None:
-        """拒绝会阻塞或无法表达预期节奏的负载坐标。"""
+        """Reject workload coordinates that would block or cannot express the requested schedule."""
         if max_concurrency < 1:
             raise ValueError(
                 f"--parallel must be >= 1; got {max_concurrency}"
@@ -68,7 +68,7 @@ class HttpLoadSchedule:
             )
 
     def validate(self) -> None:
-        """校验一个已配置的标准 HTTP 负载。"""
+        """Validate a configured standard HTTP workload."""
         self.validate_coordinates(
             max_concurrency=int(self.max_concurrency),
             arrival_rate=float(self.arrival_rate),
@@ -81,7 +81,7 @@ class HttpLoadSchedule:
 
 @dataclass
 class ChatCompletionsGeneration:
-    """保存应用到每个测量请求的 Chat Completions 生成参数。"""
+    """Store Chat Completions generation parameters applied to each measured request."""
 
     max_tokens: OutputTokenLimit = 128
     stream: bool = True
@@ -98,13 +98,13 @@ class ChatCompletionsGeneration:
         self.max_tokens = normalize_output_token_limit(self.max_tokens)
 
     def sample_max_tokens(self) -> int:
-        """返回固定上限，或从配置的闭区间中采样。"""
+        """Return the fixed limit or sample from the configured inclusive range."""
         if isinstance(self.max_tokens, list):
             return random.randint(self.max_tokens[0], self.max_tokens[1])
         return self.max_tokens
 
     def request_overrides(self) -> dict[str, Any]:
-        """返回生成请求字段，并让 ``extra_body`` 最后覆盖。"""
+        """Return generation request fields, with ``extra_body`` applied last."""
         sampling = {
             "top_p": self.top_p,
             "top_k": self.top_k,
@@ -122,7 +122,7 @@ class ChatCompletionsGeneration:
 
 @dataclass
 class ChatRequestDataset:
-    """保存 Chat Completions 请求或交互式对话的数据集选择。"""
+    """Store the dataset selection for Chat Completions requests or interactive conversations."""
 
     dataset_selectors: list[str] = field(default_factory=list)
     row_offset: int = 0
@@ -137,13 +137,13 @@ class ChatRequestDataset:
 
     @property
     def has_multiple_datasets(self) -> bool:
-        """返回该负载是否声明了多个请求数据集。"""
+        """Return whether the workload declares multiple request datasets."""
         return len(self.dataset_selectors) > 1
 
 
 @dataclass
 class ArrivalTraceSchedule:
-    """保存记录时间回放的轨迹选择、时间窗口和在途请求上限。"""
+    """Store the trace selection, time window, and in-flight request limit for timestamp replay."""
 
     trace_selector: str = ""
     start_offset_seconds: float = 0.0
@@ -154,17 +154,17 @@ class ArrivalTraceSchedule:
 
 @dataclass
 class BenchmarkOutputConfig:
-    """保存 HTTP 性能结果目标和本地目录。"""
+    """Store HTTP benchmark output destinations and the local directory."""
 
     destinations: tuple[str, ...] = ("local", "wandb")
     output_dir: str = "results"
 
     def includes(self, destination: str) -> bool:
-        """返回指定输出目标是否启用。"""
+        """Return whether the specified output destination is enabled."""
         return destination in self.destinations
 
     def validate(self) -> None:
-        """校验已选择的 HTTP 性能结果目标。"""
+        """Validate the selected HTTP benchmark output destinations."""
         if not self.destinations:
             raise ValueError("--output must select at least one output option")
         allowed = {"local", "wandb", "quiet"}
@@ -176,7 +176,7 @@ class BenchmarkOutputConfig:
 
 @dataclass
 class WandbRunConfig:
-    """保存性能测量使用的 Weights & Biases run 设置。"""
+    """Store the Weights & Biases run settings used for benchmark measurements."""
 
     project: str = "foretoken-bench"
     entity: str = ""
@@ -185,7 +185,7 @@ class WandbRunConfig:
 
 @dataclass
 class ParameterSweepConfig:
-    """保存一个 Foretoken 部署实验的 JSONL 参数扫描设置。"""
+    """Store JSONL parameter sweep settings for a Foretoken deployment experiment."""
 
     bench_params: str = ""
     num_runs: int = 1
@@ -194,7 +194,7 @@ class ParameterSweepConfig:
 
 @dataclass
 class HttpBenchmarkConfig:
-    """保存当前 HTTP 性能评测的服务、负载和结果配置。"""
+    """Store the service, workload, and output configuration for the current HTTP benchmark."""
 
     endpoint: ChatCompletionsEndpoint
     load_schedule: HttpLoadSchedule = field(default_factory=HttpLoadSchedule)
@@ -216,14 +216,14 @@ class HttpBenchmarkConfig:
 
     @property
     def is_multi_turn(self) -> bool:
-        """返回是否使用统一 conversation runner；trace 仍是独立请求。"""
+        """Return whether the shared conversation runner is used; traces remain independent requests."""
         return bool(
             self.request_dataset.max_turns is not None
             and not self.arrival_trace.trace_selector
         )
 
     def validate(self) -> None:
-        """在获取资源前校验所选 HTTP 性能负载。"""
+        """Validate the selected HTTP workload before acquiring resources."""
         self.load_schedule.validate()
         self.outputs.validate()
         if "stream" in self.generation.extra_body:
@@ -371,7 +371,7 @@ class HttpBenchmarkConfig:
             )
 
     def to_dict(self) -> dict[str, Any]:
-        """返回不含凭据且兼容现有结果文件的配置结构。"""
+        """Return a credential-free configuration structure compatible with existing result files."""
         endpoint = asdict(self.endpoint)
         endpoint.pop("api_key", None)
         endpoint["timeout"] = endpoint.pop("timeout_seconds")

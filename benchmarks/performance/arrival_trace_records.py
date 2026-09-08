@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""把 StudyChat 和 Mooncake 数据解析为 HTTP 请求到达事件。"""
+"""Parse StudyChat and Mooncake data into HTTP request arrival events."""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ArrivalTraceEvent:
-    """保存一个请求的到达时间、数据行身份和可选聊天内容。"""
+    """Store a request arrival time, source row identity, and optional chat content."""
 
     timestamp_seconds: float
     source_row_index: int
@@ -43,7 +43,7 @@ def _parse_studychat_event(
     line_number: int,
     source_row_index: int,
 ) -> ArrivalTraceEvent:
-    """解析一行 StudyChat 数据并保留其完整消息上下文。"""
+    """Parse one StudyChat row while preserving its complete message context."""
     if not isinstance(row, dict):
         raise ValueError(f"Expected an object at {dataset_path}:{line_number}")
 
@@ -102,7 +102,7 @@ def _parse_mooncake_event(
     line_number: int,
     source_row_index: int,
 ) -> ArrivalTraceEvent:
-    """解析一行 Mooncake 数据，但不在该阶段构造请求文本。"""
+    """Parse one Mooncake row without constructing request text at this stage."""
     if not isinstance(row, dict):
         raise ValueError(f"Expected an object at {dataset_path}:{line_number}")
     if "timestamp" not in row or "input_length" not in row:
@@ -152,7 +152,7 @@ _TRACE_ROW_PARSERS: dict[str, TraceRowParser] = {
 
 
 class ArrivalTraceReader:
-    """拥有轨迹定位、格式识别、时间窗口选择和稳定排序。"""
+    """Own trace resolution, format detection, time-window selection, and stable sorting."""
 
     def __init__(self, trace_selector: str | Path) -> None:
         self.trace_selector = str(trace_selector)
@@ -243,7 +243,7 @@ class ArrivalTraceReader:
         start_offset_seconds: float = 0.0,
         duration_seconds: float | None = None,
     ) -> tuple[float, list[ArrivalTraceEvent]]:
-        """选择相对首个时间戳的半开时间窗口并按到达时间排序。"""
+        """Select a half-open window relative to the first timestamp and sort by arrival time."""
         self.trace_format = None
         first_timestamp = None
         for event in self._iter_events():

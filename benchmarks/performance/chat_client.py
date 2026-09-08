@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""发送并测量 OpenAI-compatible Chat Completions 请求。"""
+"""Send and measure OpenAI-compatible Chat Completions requests."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from benchmarks.performance.request_metrics import compute_tpot
 
 @dataclass(frozen=True)
 class ChatRequestContent:
-    """表示一个独立的 Chat Completions 请求内容，不承担 episode 状态。"""
+    """Represent one independent Chat Completions request without owning episode state."""
 
     prompt: str | None = None
     messages: list[dict[str, Any]] | None = None
@@ -30,7 +30,7 @@ def _openai_base_url(chat_completions_url: str) -> str:
 
 
 class ChatCompletionsLoadClient:
-    """拥有一个 HTTP 负载点的 Chat Completions client 和生成设置。"""
+    """Own the Chat Completions client and generation settings for one HTTP workload point."""
 
     def __init__(
         self,
@@ -51,7 +51,7 @@ class ChatCompletionsLoadClient:
             max_keepalive_connections=connection_limit,
         )
         endpoint = benchmark.endpoint
-        # 一个测量请求必须对应一次服务请求；重试会改变到达率、失败率和时延。
+        # Each measured request must map to one service request; retries change arrival rate, failure rate, and latency.
         self._client = AsyncOpenAI(
             base_url=_openai_base_url(endpoint.url),
             api_key=endpoint.api_key,
@@ -71,7 +71,7 @@ class ChatCompletionsLoadClient:
         await self._client.close()
 
     async def send(self, request: ChatRequestContent) -> dict[str, Any]:
-        """发送一个独立聊天请求并返回该请求的性能观测值。"""
+        """Send one independent chat request and return its benchmark observations."""
         messages = request.messages
         if messages is None:
             if request.prompt is None:
@@ -119,7 +119,7 @@ class ChatCompletionsLoadClient:
             error_message = str(exc)
 
         latency = time.perf_counter() - started_at
-        # TTFT 和 TPOT 只对流式 token 到达过程有定义。
+        # TTFT and TPOT are defined only for streamed token arrivals.
         if not stream:
             ttft = None
         return {

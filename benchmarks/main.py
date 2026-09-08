@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""顶层 benchmark 命令入口；当前只分发已实现的 HTTP 性能评测。"""
+"""Top-level benchmark command entry point; currently dispatches the implemented HTTP benchmark."""
 
 from benchmarks.performance.main import main
 

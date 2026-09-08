@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""解析当前 HTTP 性能评测命令并构造领域配置。"""
+"""Parse the current HTTP benchmark command and build the domain configuration."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ from benchmarks.performance.benchmark_config import (
 
 @dataclass(frozen=True)
 class HttpBenchmarkCommand:
-    """保存一次 HTTP 性能评测的服务来源、配置和部署等待时间。"""
+    """Store the service source, configuration, and deployment wait timeout for one HTTP benchmark."""
 
     kustomize_path: str
     benchmark: HttpBenchmarkConfig
@@ -47,7 +47,7 @@ def _output_destinations(value: str) -> tuple[str, ...]:
 
 
 def _json_object(value: str) -> dict[str, Any]:
-    """只接受 JSON object，避免其他 JSON 值进入请求体覆盖配置。"""
+    """Accept only a JSON object so other JSON values cannot override request-body configuration."""
     parsed = json.loads(value)
     if not isinstance(parsed, dict):
         raise argparse.ArgumentTypeError("must be a JSON object")
@@ -59,7 +59,7 @@ def _dataset_selectors(value: str) -> list[str]:
 
 
 def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
-    # 服务来源
+    # Service source
     parser.add_argument(
         "kustomize_path",
         nargs="?",
@@ -93,7 +93,7 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
         help="Timeout for each deployment readiness stage",
     )
 
-    # HTTP 负载
+    # HTTP workload
     parser.add_argument(
         "--parallel",
         type=int,
@@ -128,7 +128,7 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
         help="Remove the concurrency limit; positive --rate still schedules arrivals",
     )
 
-    # Chat Completions 生成参数
+    # Chat Completions generation parameters
     parser.add_argument(
         "--max-tokens",
         type=int,
@@ -198,7 +198,7 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
 
-    # 独立请求内容与到达轨迹
+    # Independent request content and arrival traces
     parser.add_argument(
         "--dataset",
         type=_dataset_selectors,
@@ -297,7 +297,7 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
         help="Fixed prompt text; overrides dataset",
     )
 
-    # 性能结果
+    # Benchmark results
     parser.add_argument(
         "--output",
         type=_output_destinations,
@@ -310,7 +310,7 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
         help="Directory for JSON and W&B artifacts",
     )
 
-    # W&B 目标
+    # W&B destinations
     parser.add_argument(
         "--wandb-project",
         default=_default(WandbRunConfig, "project"),
@@ -330,7 +330,7 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
         ),
     )
 
-    # 参数扫描
+    # Parameter sweep
     parser.add_argument(
         "--bench-params",
         default=_default(ParameterSweepConfig, "bench_params"),
@@ -415,7 +415,7 @@ def _http_benchmark_config(namespace: argparse.Namespace) -> HttpBenchmarkConfig
 def parse_http_benchmark_arguments(
     argv: Sequence[str] | None = None,
 ) -> HttpBenchmarkCommand:
-    """解析顶层 ``foretoken bench`` 之后的 HTTP 性能评测参数。"""
+    """Parse HTTP benchmark arguments after top-level ``foretoken bench``."""
     parser = argparse.ArgumentParser(
         prog="foretoken bench",
         description=(

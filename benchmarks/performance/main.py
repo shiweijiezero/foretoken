@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""当前 ``foretoken bench`` HTTP 性能评测入口。"""
+"""Current ``foretoken bench`` HTTP benchmark entry point."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 async def run_http_benchmark(
     benchmark: HttpBenchmarkConfig,
 ) -> dict[str, Any]:
-    """按当前 HTTP 性能配置选择唯一的具体负载生命周期并运行。"""
+    """Select and run the single workload lifecycle for the current HTTP benchmark configuration."""
     benchmark.validate()
     if benchmark.arrival_trace.trace_selector:
         return await ArrivalTraceBenchmark(benchmark).run()
@@ -44,7 +44,7 @@ async def run_http_benchmark(
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """解析并运行当前 HTTP 性能评测，供顶层 CLI 延迟导入。"""
+    """Parse and run the current HTTP benchmark for lazy import by the top-level CLI."""
     try:
         command = parse_http_benchmark_arguments(argv)
         benchmark = command.benchmark

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""从固定提示词、JSONL 或 Hugging Face 数据构造请求与对话。"""
+"""Build requests and conversations from a fixed prompt, JSONL, or Hugging Face data."""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ def _sharegpt_messages(
     dataset_path: Path,
     line_number: int,
 ) -> list[dict[str, Any]]:
-    """把已核验的 ShareGPT ``conversations/from/value`` 行转为消息。"""
+    """Convert a verified ShareGPT ``conversations/from/value`` row into messages."""
     conversations = row.get("conversations")
     if not isinstance(conversations, list) or not conversations:
         raise ValueError(
@@ -107,7 +107,7 @@ def _normalize_chat_conversation(
     dataset_path: Path,
     line_number: int,
 ) -> list[dict[str, Any]]:
-    """读取一条 OpenAI 或 ShareGPT 记录供 EvalScope 推进真实对话。"""
+    """Read one OpenAI or ShareGPT record for EvalScope to run as a real conversation."""
     if isinstance(row, list):
         messages = row
         tools = None
@@ -204,7 +204,7 @@ def _normalize_chat_conversation(
 def split_chat_conversation(
     messages: list[dict[str, Any]],
 ) -> list[list[dict[str, Any]]]:
-    """按 reference assistant 边界拆分为 EvalScope 的 user-turn 增量。"""
+    """Split at reference assistant boundaries into EvalScope user-turn increments."""
     turns: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
     for message in messages:
@@ -317,7 +317,7 @@ def _load_huggingface_conversations(
 def load_chat_conversations(
     benchmark: HttpBenchmarkConfig,
 ) -> list[list[dict[str, Any]]]:
-    """读取 EvalScope 普通交互式多轮执行所需的完整对话脚本。"""
+    """Read complete conversation scripts for EvalScope interactive multi-turn runs."""
     dataset = benchmark.request_dataset
     conversation_count = benchmark.load_schedule.request_count
     row_offset = int(dataset.row_offset)
@@ -363,7 +363,7 @@ def load_indexed_chat_requests(
     dataset_selector: str,
     row_indexes: list[int],
 ) -> list[ChatRequestContent]:
-    """按数据集行号读取聊天请求，并保持 ``row_indexes`` 的顺序。"""
+    """Read chat requests by dataset row index while preserving ``row_indexes`` order."""
     if not row_indexes:
         return []
     if dataset_selector == "random":
@@ -408,7 +408,7 @@ def load_chat_requests(
     dataset_selector: Optional[str] = None,
     request_count: Optional[int] = None,
 ) -> list[ChatRequestContent]:
-    """读取一个 HTTP 负载需要的独立 Chat Completions 请求。"""
+    """Read the independent Chat Completions requests required by one HTTP workload."""
     dataset: ChatRequestDataset = benchmark.request_dataset
     count = (
         benchmark.load_schedule.request_count

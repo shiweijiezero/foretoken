@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""配置控制台日志并输出 HTTP 性能配置与结果。"""
+"""Configure console logging and print HTTP benchmark configuration and results."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def configure_logging(console_enabled: bool) -> None:
-    """配置控制台日志级别，并避免 HTTP 库日志干扰进度条。"""
+    """Configure console logging and keep HTTP library logs from interfering with progress output."""
     logging.basicConfig(
         level=logging.INFO if console_enabled else logging.WARNING,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
@@ -29,7 +29,7 @@ def print_benchmark_endpoint(
     models: tuple[str, ...],
     hostname: str,
 ) -> None:
-    """输出从 Foretoken 部署选择的公开性能测量目标。"""
+    """Print the public benchmark endpoint selected from the Foretoken deployment."""
     print(f"Endpoint: {endpoint_url}")
     if hostname:
         print(f"Hostname: {hostname}")
@@ -37,7 +37,7 @@ def print_benchmark_endpoint(
 
 
 def format_benchmark_config(benchmark: HttpBenchmarkConfig) -> str:
-    """构造用户可见的 HTTP 性能配置摘要。"""
+    """Build a user-visible HTTP benchmark configuration summary."""
     dataset = benchmark.request_dataset
     trace = benchmark.arrival_trace
     if trace.trace_selector:
@@ -136,7 +136,7 @@ def format_benchmark_config(benchmark: HttpBenchmarkConfig) -> str:
 
 
 def _format_metric(value: Any, digits: int = 4) -> str:
-    """把指标值格式化为固定小数，缺失值显示为破折号。"""
+    """Format a metric value with fixed precision, displaying missing values as a dash."""
     if value is None:
         return "—"
     try:
@@ -146,7 +146,7 @@ def _format_metric(value: Any, digits: int = 4) -> str:
 
 
 def _percentile_row(name: str, stats: dict[str, Any], unit: str = "s") -> str:
-    """构造一个指标的 mean、p50、p95 和 p99 输出行。"""
+    """Build an output row with the mean, p50, p95, and p99 for one metric."""
     return (
         f"  {name:<12} mean={_format_metric(stats['mean'])}{unit}  "
         f"p50={_format_metric(stats['p50'])}{unit}  "
@@ -156,7 +156,7 @@ def _percentile_row(name: str, stats: dict[str, Any], unit: str = "s") -> str:
 
 
 def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -> None:
-    """输出负载配置、成功率、时延和吞吐量摘要。"""
+    """Print a summary of workload settings, success rate, latency, and throughput."""
     resolved = run_record["resolved"]
     parallel = metrics["parallel"]
     throughput = metrics["throughput"]
@@ -280,7 +280,7 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
 
 
 def log_sweep_results(results: list[dict[str, Any]]) -> None:
-    """为每个参数扫描结果输出一行摘要。"""
+    """Print one summary row for each parameter sweep result."""
     multi_turn = bool(results and results[0].get("multi_turn"))
     concurrency_name = "Concurrent conv." if multi_turn else "Concurrency"
     count_name = "Conversations" if multi_turn else "Requests"

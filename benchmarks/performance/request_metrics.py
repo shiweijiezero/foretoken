@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""聚合 HTTP 请求观测值并计算性能指标。"""
+"""Aggregate HTTP request observations and compute benchmark metrics."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import numpy as np
 
 
 def percentile_summary(values: list[float]) -> dict[str, float | None]:
-    """计算性能汇总使用的均值和固定分位数。"""
+    """Compute the mean and fixed percentiles used by benchmark summaries."""
     if not values:
         return {"mean": None, "p50": None, "p95": None, "p99": None}
     array = np.asarray(values, dtype=float)
@@ -28,7 +28,7 @@ def compute_tpot(
     ttft: Optional[float],
     output_tokens: int,
 ) -> Optional[float]:
-    """根据一次流式请求的时延和 token 数计算 TPOT。"""
+    """Compute TPOT from the latency and token count of one streamed request."""
     if ttft is None:
         return None
     denominator = int(output_tokens) - 1
@@ -38,7 +38,7 @@ def compute_tpot(
 
 
 def configured_user_denominator(parallel: int) -> int:
-    """返回每用户吞吐量分母；无限并发的 open-loop 使用一。"""
+    """Return the denominator for per-user throughput; unbounded open-loop uses one."""
     return 1 if parallel < 0 else int(parallel)
 
 
@@ -46,7 +46,7 @@ def generation_tokens_per_second_per_user(
     generation_tokens_per_second: float,
     parallel: int,
 ) -> float:
-    """按配置的 closed-loop 并发数归一化输出吞吐量。"""
+    """Normalize output throughput by the configured closed-loop concurrency."""
     return float(generation_tokens_per_second) / float(
         configured_user_denominator(parallel)
     )
@@ -56,7 +56,7 @@ def generation_tokens_per_second_per_gpu(
     generation_tokens_per_second: float,
     gpu_count: int,
 ) -> float:
-    """按当前负载点对应的 GPU 数归一化输出吞吐量。"""
+    """Normalize output throughput by the GPU count for the current workload point."""
     if gpu_count < 1:
         raise ValueError(f"gpu_count must be >= 1, got {gpu_count}")
     return float(generation_tokens_per_second) / float(gpu_count)
@@ -67,7 +67,7 @@ def attach_user_throughput(
     *,
     parallel: int,
 ) -> dict[str, Any]:
-    """向现有指标字典附加并发数和每用户输出吞吐量。"""
+    """Add concurrency and per-user output throughput to an existing metrics dictionary."""
     metrics["parallel"] = int(parallel)
     throughput = metrics["throughput"]
     generation_tokens_per_second = float(throughput["generation_tokens_per_second"])
@@ -83,7 +83,7 @@ def attach_user_throughput(
 def merge_request_measurements(
     dataset_measurements: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """按数据集顺序合并请求结果，并累加各数据集的运行时间。"""
+    """Merge request results in dataset order and add the runtime of each dataset."""
     if not dataset_measurements:
         raise ValueError(
             "merge_request_measurements requires at least one dataset"
@@ -97,7 +97,7 @@ def merge_request_measurements(
 
 
 def summarize_request_measurements(output: dict[str, Any]) -> dict[str, Any]:
-    """把一个 HTTP 负载点的逐请求结果聚合为既有指标结构。"""
+    """Aggregate per-request results for one HTTP workload point into the existing metrics structure."""
     results = output["results"]
     successful = [result for result in results if result["success"]]
 
