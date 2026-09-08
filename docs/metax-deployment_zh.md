@@ -75,12 +75,13 @@ make image-model-server
 
 将解释器路径改为目标镜像实际提供 vLLM 的 Python 路径。构建结果同样为 `foretoken-model-server:dev`。
 
-## 构建前端并将镜像提供给集群
+## 构建平台镜像
 
-无论选择哪条 model-server 构建路径，都需要从同一份 Foretoken 源码构建 frontend：
+从 model-server 所在的同一份源码构建 frontend 和 controller。控制面镜像同时包含示例需要的 CRD：
 
 ```bash
 make image-frontend
+docker build -f control-plane/Dockerfile -t foretoken-control-plane:dev .
 ```
 
 将 `<registry>/<project>` 替换为 GPU 节点可访问的镜像仓库：
@@ -88,25 +89,35 @@ make image-frontend
 ```bash
 export MODEL_SERVER_IMAGE=<registry>/<project>/foretoken-model-server:metax-v0.24.0
 export FRONTEND_IMAGE=<registry>/<project>/foretoken-frontend:metax-v0.24.0
+export CONTROL_PLANE_IMAGE=<registry>/<project>/foretoken-control-plane:metax-v0.24.0
 
 docker tag foretoken-model-server:dev "$MODEL_SERVER_IMAGE"
 docker tag foretoken-frontend:dev "$FRONTEND_IMAGE"
+docker tag foretoken-control-plane:dev "$CONTROL_PLANE_IMAGE"
 docker push "$MODEL_SERVER_IMAGE"
 docker push "$FRONTEND_IMAGE"
+docker push "$CONTROL_PLANE_IMAGE"
 ```
 
-离线集群可由节点管理员导入这两个镜像，具体方式见[源码镜像生命周期](development/source-image-lifecycle_zh.md)。`frontend.image` 与 `runtime.vllm.image` 必须与实际导入的镜像名称和 tag 一致。
+离线集群可由节点管理员导入这三个镜像，具体方式见[源码镜像生命周期](development/source-image-lifecycle_zh.md)。下面的配置必须使用实际导入的镜像名称和 tag。
 
 ## 配置并安装 Foretoken
 
-集群需要 Kubernetes 1.29 或更高版本、默认 `StorageClass`、发布 `metax-tech.com/gpu` 的 MetaX device plugin，以及覆盖沐曦节点的 mxExporter 和兼容 `ServiceMonitor`。Foretoken 只发现和复用已有 mxExporter，安装前请按[可观测性指南](../observability/README_zh.md)准备。工作站需要 Foretoken CLI、kubectl 和 Helm。
+集群需要 Kubernetes 1.29 或更高版本、支持示例所需 ReadWriteMany 访问和在线扩容的默认 `StorageClass`，以及发布 `metax-tech.com/gpu` 的 MetaX device plugin。监控需准备 Prometheus、Prometheus Operator、`ServiceMonitor` 和 `PrometheusRule` CRD，以及覆盖沐曦节点的 mxExporter。Prometheus 的选择器需包含平台与工作负载 namespace；选择器要求额外 release 标签时，通过 `observability.additionalLabels` 配置。详见[可观测性指南](../observability/README_zh.md)。工作站需要 Foretoken CLI、kubectl 和 Helm。
 
 维护中的单模型示例部署两个 frontend 副本和一个模型副本，合计申请 1 张 GPU、8 个 CPU 和 52 GiB 内存。
 
 创建 `metax-values.yaml`，把 image 改为上一步发布或导入的完整名称：
 
 ```yaml
+image:
+  repository: <registry>/<project>/foretoken-control-plane
+  tag: metax-v0.24.0
 frontend:
+  enabled: true
+  mode: gateway
+  gateway:
+    create: true
   image: <registry>/<project>/foretoken-frontend:metax-v0.24.0
 runtime:
   vllm:
@@ -116,9 +127,9 @@ runtime:
       runtimeClassName: ""
 ```
 
-私有仓库需要在工作负载 namespace 中创建 image pull Secret，并配置 `workload.imagePullSecrets`。
+私有仓库需要为控制面 namespace 配置 `imagePullSecrets`，并为各工作负载 namespace 配置 `workload.imagePullSecrets`。
 
-先安装 Envoy Gateway，再安装 Foretoken：
+先安装 Envoy Gateway，再安装同一份源码中的 Chart。控制面启动前会初始化配套的 CRD：
 
 ```bash
 helm upgrade --install envoy-gateway \
@@ -127,7 +138,11 @@ helm upgrade --install envoy-gateway \
   --create-namespace \
   --wait
 
-foretoken install --frontend-mode gateway --values metax-values.yaml
+helm upgrade --install foretoken ./deploy/charts/foretoken \
+  --namespace foretoken-platform \
+  --create-namespace \
+  --values metax-values.yaml \
+  --wait
 ```
 
 共享平台由管理员统一配置时，直接复用，不重复安装。
@@ -175,7 +190,7 @@ curl --fail-with-body --no-buffer \
 
 ## 清理与排障
 
-使用 `foretoken delete examples/quickstart` 删除示例。只有平台安装负责人才能执行 `foretoken uninstall`；本机 uv 环境和构建镜像由创建者管理。
+使用 `foretoken delete examples/quickstart` 删除示例。按本指南安装的独占平台，由负责人执行 `helm uninstall foretoken --namespace foretoken-platform` 卸载；CRD 保留，PVC 清理由 RuntimeCache 保留策略决定。Envoy Gateway、监控、本机 uv 环境和镜像仍由各自的负责人管理。
 
 - **安装失败：** 先查看下载、构建或依赖求解的原始错误。未完成的目录会保留供排查；解决原因后，用新的安装目录重试。依赖冲突应核对官方版本矩阵，不跳过必需包。
 - **无法加载 MACA 库：** 确认已激活安装目录中的 `activate`，SDK 与驱动兼容；容器需要由设备插件或运行时提供驱动与设备。

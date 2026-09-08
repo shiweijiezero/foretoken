@@ -75,12 +75,13 @@ make image-model-server
 
 Use the actual interpreter path that provides vLLM in the selected image. This also produces `foretoken-model-server:dev`.
 
-## Build the frontend and distribute images
+## Build the platform images
 
-Both model-server build paths require a frontend from the same Foretoken checkout:
+Build the frontend and controller from the same checkout as model-server. The controller image includes the CRDs used by the maintained examples:
 
 ```bash
 make image-frontend
+docker build -f control-plane/Dockerfile -t foretoken-control-plane:dev .
 ```
 
 Replace `<registry>/<project>` with a registry reachable by the GPU nodes:
@@ -88,25 +89,35 @@ Replace `<registry>/<project>` with a registry reachable by the GPU nodes:
 ```bash
 export MODEL_SERVER_IMAGE=<registry>/<project>/foretoken-model-server:metax-v0.24.0
 export FRONTEND_IMAGE=<registry>/<project>/foretoken-frontend:metax-v0.24.0
+export CONTROL_PLANE_IMAGE=<registry>/<project>/foretoken-control-plane:metax-v0.24.0
 
 docker tag foretoken-model-server:dev "$MODEL_SERVER_IMAGE"
 docker tag foretoken-frontend:dev "$FRONTEND_IMAGE"
+docker tag foretoken-control-plane:dev "$CONTROL_PLANE_IMAGE"
 docker push "$MODEL_SERVER_IMAGE"
 docker push "$FRONTEND_IMAGE"
+docker push "$CONTROL_PLANE_IMAGE"
 ```
 
-For offline clusters, a node administrator can import both images as described in the [source image lifecycle guide](development/source-image-lifecycle.md). `frontend.image` and `runtime.vllm.image` must match the exact imported names and tags.
+For offline clusters, a node administrator can import all three images as described in the [source image lifecycle guide](development/source-image-lifecycle.md). Configure the exact imported names and tags below.
 
 ## Configure and install Foretoken
 
-The cluster needs Kubernetes 1.29 or later, a default `StorageClass`, a MetaX device plugin publishing `metax-tech.com/gpu`, and mxExporter with a compatible `ServiceMonitor` covering the MetaX nodes. Foretoken discovers and reuses mxExporter rather than installing it; prepare monitoring using the [observability guide](../observability/README.md). The workstation needs the Foretoken CLI, kubectl, and Helm.
+The cluster needs Kubernetes 1.29 or later, a default `StorageClass` supporting the example's ReadWriteMany access and online expansion, and a MetaX device plugin publishing `metax-tech.com/gpu`. Prepare Prometheus with Prometheus Operator, the `ServiceMonitor` and `PrometheusRule` CRDs, and mxExporter covering the MetaX nodes. Prometheus selectors must include the Foretoken platform and workload namespaces; use `observability.additionalLabels` if a release selector requires labels. See [Observability](../observability/README.md). The workstation needs the Foretoken CLI, kubectl, and Helm.
 
 The maintained single-model example runs two frontend replicas and one model replica, requesting a total of one GPU, 8 CPU, and 52 GiB memory.
 
 Create `metax-values.yaml`, using the complete image name published or imported above:
 
 ```yaml
+image:
+  repository: <registry>/<project>/foretoken-control-plane
+  tag: metax-v0.24.0
 frontend:
+  enabled: true
+  mode: gateway
+  gateway:
+    create: true
   image: <registry>/<project>/foretoken-frontend:metax-v0.24.0
 runtime:
   vllm:
@@ -116,9 +127,9 @@ runtime:
       runtimeClassName: ""
 ```
 
-For a private registry, create an image pull Secret in the workload namespace and configure `workload.imagePullSecrets`.
+For a private registry, configure `imagePullSecrets` for the controller namespace and `workload.imagePullSecrets` for each workload namespace.
 
-Install Envoy Gateway, then Foretoken:
+Install Envoy Gateway, then install the chart from the same checkout. Its controller initializes the matching CRDs before starting:
 
 ```bash
 helm upgrade --install envoy-gateway \
@@ -127,7 +138,11 @@ helm upgrade --install envoy-gateway \
   --create-namespace \
   --wait
 
-foretoken install --frontend-mode gateway --values metax-values.yaml
+helm upgrade --install foretoken ./deploy/charts/foretoken \
+  --namespace foretoken-platform \
+  --create-namespace \
+  --values metax-values.yaml \
+  --wait
 ```
 
 Reuse a shared platform configured by its administrator instead of installing it again.
@@ -175,7 +190,7 @@ A completed stream ends with `data: [DONE]`.
 
 ## Cleanup and troubleshooting
 
-Delete the example with `foretoken delete examples/quickstart`. Only the platform owner should run `foretoken uninstall`. Local uv environments and images remain under the responsibility of their creator.
+Delete the example with `foretoken delete examples/quickstart`. If this guide was used to install a dedicated platform, its owner can remove the Helm release with `helm uninstall foretoken --namespace foretoken-platform`. CRDs remain installed; the RuntimeCache retention policy controls PVC cleanup. Envoy Gateway, monitoring, local uv environments, and images remain under their respective owners.
 
 - **Installation fails:** inspect the original download, build, or dependency error. The incomplete directory is retained for diagnosis; retry with a new installation directory after resolving the cause. For dependency conflicts, check the release matrix rather than skipping required packages.
 - **MACA libraries cannot load:** source the installation's `activate` script and check SDK/driver compatibility. Container devices and driver libraries must be provided by the device plugin or container runtime.

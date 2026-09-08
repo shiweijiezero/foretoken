@@ -120,6 +120,24 @@ jobs:
             crd/modelgroups.inference.foretoken.io \
             --timeout=1m
           kubectl create namespace foretoken-demo
+          # kind has no default StorageClass. This static volume exercises the
+          # RuntimeCache binding path without adding an external provisioner.
+          kubectl apply -f - <<'EOF'
+          apiVersion: v1
+          kind: PersistentVolume
+          metadata:
+            name: foretoken-runtime-cache-test
+          spec:
+            capacity:
+              storage: 100Gi
+            accessModes:
+              - ReadWriteOnce
+            persistentVolumeReclaimPolicy: Retain
+            storageClassName: ""
+            hostPath:
+              path: /var/lib/foretoken-runtime-cache
+              type: DirectoryOrCreate
+          EOF
           kubectl apply --server-side --namespace foretoken-demo -k examples/quickstart
           kubectl wait --for=condition=PoolsMaterialized \
             modelservice/quickstart-qwen3-0.6b \

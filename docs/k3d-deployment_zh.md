@@ -40,7 +40,13 @@ Pod 不指定宿主机 GPU 编号。k3d 可以在创建 Kubernetes 节点容器�
 - 可使用 NVIDIA 运行时的 Docker；
 - k3d、kubectl 和 Helm。
 
-## 1. 选择 GPU 并命名集群
+## 1. 进入仓库并选择 GPU
+
+后续命令都在 Foretoken 仓库根目录执行：
+
+```bash
+cd /path/to/your/foretoken
+```
 
 查看 GPU：
 
@@ -112,7 +118,8 @@ done
 
 ```bash
 if k3d cluster get "$CLUSTER" >/dev/null 2>&1; then
-  k3d cluster delete "$CLUSTER"
+  printf '集群 %s 已存在，请更换名称或显式删除已有集群。\n' "$CLUSTER" >&2
+  exit 1
 fi
 
 k3d cluster create "$CLUSTER" \
@@ -147,12 +154,6 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 ```
 
 ## 4. 安装并访问 Foretoken
-
-进入 Foretoken 项目路径：
-
-```bash
-cd /path/to/your/foretoken
-```
 
 使用 pip 安装命令行工具：
 

@@ -26,6 +26,14 @@ func validateGroupRuntime(group *inferencev1alpha1.ModelGroup) error {
 	if group.Spec.NodeCount != 1 || group.Spec.MemberCount != 1 || group.Spec.Runtime.Backend != "vllm" {
 		return fmt.Errorf("only single-member vLLM Groups are currently supported")
 	}
+	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill && group.Spec.PDRuntime != nil {
+		if group.Spec.PDRuntime.BootstrapPort == group.Spec.Runtime.Port {
+			return fmt.Errorf("Mooncake bootstrap port conflicts with the model-server port")
+		}
+		if group.Spec.Artifacts.Cache != nil && group.Spec.PDRuntime.BootstrapPort == runtimeCacheObservationPort(group.Spec.Runtime.Port) {
+			return fmt.Errorf("Mooncake bootstrap port conflicts with the runtime cache observation port")
+		}
+	}
 	return nil
 }
 

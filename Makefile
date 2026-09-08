@@ -20,9 +20,6 @@ DATA_PLANE_PACKAGES := \
 	foretoken-tokenizer \
 	foretoken-tracing
 DATA_PLANE_FMT_PACKAGES := $(foreach package,$(DATA_PLANE_PACKAGES),--package $(package))
-VLLM_PATCHES := \
-	../../patches/vllm-chat-request-processor.patch \
-	../../patches/vllm-engine-core-version-compatibility.patch
 
 VLLM_METAX_VERSION ?= 0.24.0
 VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)
@@ -34,12 +31,13 @@ VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)
 vllm-source:
 	@test -f data-plane/third_party/vllm/rust/Cargo.toml || \
 		git submodule update --init data-plane/third_party/vllm
-	@for patch in $(VLLM_PATCHES); do \
-		if git -C data-plane/third_party/vllm apply --reverse --check \
-			"$$patch" >/dev/null 2>&1; then \
-			:; \
-		else \
-			git -C data-plane/third_party/vllm apply "$$patch" || exit $$?; \
+	@set -e; for patch in \
+		vllm-chat-request-processor.patch \
+		vllm-engine-core-version-compatibility.patch \
+		vllm-managed-engine-environment.patch; do \
+		if ! git -C data-plane/third_party/vllm apply --reverse --check \
+			"../../patches/$$patch" >/dev/null 2>&1; then \
+			git -C data-plane/third_party/vllm apply "../../patches/$$patch"; \
 		fi; \
 	done
 

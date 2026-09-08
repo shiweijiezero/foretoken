@@ -81,7 +81,7 @@ type servingSnapshotPDPipelineScope struct {
 	DecodeRouteTargetIDs  []string `json:"decode_route_target_ids"`
 }
 
-// servingSnapshotEPDComponent is one component of an atomic 1E:1P:1D triplet.
+// servingSnapshotEPDComponent is one route in an E/P/D compatibility scope.
 type servingSnapshotEPDComponent struct {
 	RouteTargetID            string   `json:"route_target_id"`
 	ServiceUID               string   `json:"service_uid"`
@@ -109,8 +109,8 @@ type servingSnapshotEPDComponent struct {
 }
 
 type servingSnapshotEPDPipelineScope struct {
-	PipelineScopeID      string `json:"pipeline_scope_id"`
-	EncoderRouteTargetID string `json:"encoder_route_target_id"`
-	PrefillRouteTargetID string `json:"prefill_route_target_id"`
-	DecodeRouteTargetID  string `json:"decode_route_target_id"`
+	PipelineScopeID       string   `json:"pipeline_scope_id"`
+	EncoderRouteTargetIDs []string `json:"encoder_route_target_ids"`
+	PrefillRouteTargetIDs []string `json:"prefill_route_target_ids"`
+	DecodeRouteTargetIDs  []string `json:"decode_route_target_ids"`
 }

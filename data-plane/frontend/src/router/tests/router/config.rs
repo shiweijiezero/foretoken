@@ -15,6 +15,7 @@ fn every_compiled_builtin_name_parses_and_builds() {
         ("allow_all", "uniform", "max"),
         ("allow_all", "least_loaded", "round_robin"),
         ("allow_all", "kv_least_loaded", "round_robin"),
+        ("allow_all", "queue_depth", "round_robin"),
     ] {
         let config = RouterPipelineConfig {
             filter: filter.parse().unwrap(),

@@ -1284,6 +1284,7 @@ dependencies = [
  "http-body-util",
  "rmp-serde",
  "rmpv",
+ "rustix",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

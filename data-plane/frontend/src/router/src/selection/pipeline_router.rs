@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Fixed physical route selection for Aggregate, P/D, and E/P/D route sets.
+//! Connector-compatible stage selection for Aggregate, P/D, and E/P/D routes.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;

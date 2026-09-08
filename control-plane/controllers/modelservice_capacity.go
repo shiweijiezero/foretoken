@@ -31,42 +31,38 @@ func modelPoolReplicaState(service *inferencev1alpha1.ModelService, pool *infere
 	return replicaState
 }
 
-// epdPipelineReplicaState counts one unit only when its encoder, prefill, and decode
-// members form an ordinal-complete active revision triplet. This deliberately does
-// not apply to P/D: P and D retain their independent Pool scaling targets.
+// epdPipelineReplicaState reports the number of complete E/P/D executions available from
+// the three compatible role pools. Routing is free across ordinals, so usable capacity is
+// the least Ready role count rather than the number of ordinal-aligned triplets.
 func epdPipelineReplicaState(service *inferencev1alpha1.ModelService, pools map[string]*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, requested int32) core.ReplicaState {
-	byRoleOrdinal := map[inferencev1alpha1.ModelRole]map[int32]*inferencev1alpha1.ModelGroup{
+	readyOrdinals := map[inferencev1alpha1.ModelRole]map[int32]struct{}{
 		inferencev1alpha1.ModelRoleEncoder: {},
 		inferencev1alpha1.ModelRolePrefill: {},
 		inferencev1alpha1.ModelRoleDecode:  {},
 	}
+	transitioning := false
 	for index := range groups {
 		group := &groups[index]
 		pool := poolForEPDGroup(pools, group)
 		if pool == nil || group.Spec.Revision != serviceServingRevision(service, pool) || group.Spec.Ordinal >= requested {
 			continue
 		}
-		roleGroups := byRoleOrdinal[group.Spec.Role]
-		if _, found := roleGroups[group.Spec.Ordinal]; found {
-			// A duplicate ordinal cannot represent a complete, safely routeable triplet.
-			roleGroups[group.Spec.Ordinal] = nil
-			continue
+		if group.DeletionTimestamp.IsZero() && group.Status.Phase == inferencev1alpha1.ModelGroupPhaseReady && routingGroupReady(group) {
+			readyOrdinals[group.Spec.Role][group.Spec.Ordinal] = struct{}{}
+		} else {
+			transitioning = true
 		}
-		roleGroups[group.Spec.Ordinal] = group
 	}
 
-	var replicaState core.ReplicaState
-	for ordinal := int32(0); ordinal < requested; ordinal++ {
-		encoder := byRoleOrdinal[inferencev1alpha1.ModelRoleEncoder][ordinal]
-		prefill := byRoleOrdinal[inferencev1alpha1.ModelRolePrefill][ordinal]
-		decode := byRoleOrdinal[inferencev1alpha1.ModelRoleDecode][ordinal]
-		if encoder == nil || prefill == nil || decode == nil {
-			replicaState.PendingReplicas++
-			continue
-		}
-		addTripletLifecycle(&replicaState, encoder, prefill, decode)
+	ready := requested
+	for _, role := range []inferencev1alpha1.ModelRole{inferencev1alpha1.ModelRoleEncoder, inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode} {
+		ready = min(ready, int32(len(readyOrdinals[role])))
 	}
-	return replicaState
+	return core.ReplicaState{
+		ReadyReplicas:    ready,
+		RoutableReplicas: ready,
+		Transitioning:    transitioning || ready < requested,
+	}
 }
 
 func poolForEPDGroup(pools map[string]*inferencev1alpha1.ModelPool, group *inferencev1alpha1.ModelGroup) *inferencev1alpha1.ModelPool {
@@ -95,40 +91,6 @@ func addGroupLifecycle(replicaState *core.ReplicaState, group *inferencev1alpha1
 		return
 	}
 	addLifecycle(replicaState, group)
-}
-
-func addTripletLifecycle(replicaState *core.ReplicaState, groups ...*inferencev1alpha1.ModelGroup) {
-	allReady := true
-	for _, group := range groups {
-		allReady = allReady && group.DeletionTimestamp.IsZero() && group.Status.Phase == inferencev1alpha1.ModelGroupPhaseReady && routingGroupReady(group)
-	}
-	if allReady {
-		replicaState.ReadyReplicas++
-		replicaState.RoutableReplicas++
-		return
-	}
-	for _, group := range groups {
-		if !group.DeletionTimestamp.IsZero() {
-			addLifecycle(replicaState, group)
-			return
-		}
-	}
-	for _, group := range groups {
-		if group.Status.Phase == inferencev1alpha1.ModelGroupPhaseFailed {
-			replicaState.FailedReplicas++
-			replicaState.Transitioning = true
-			return
-		}
-	}
-	for _, group := range groups {
-		if group.Status.Phase == inferencev1alpha1.ModelGroupPhaseProvisioning {
-			replicaState.ProvisioningReplicas++
-			replicaState.Transitioning = true
-			return
-		}
-	}
-	replicaState.PendingReplicas++
-	replicaState.Transitioning = true
 }
 
 func addLifecycle(replicaState *core.ReplicaState, group *inferencev1alpha1.ModelGroup) {

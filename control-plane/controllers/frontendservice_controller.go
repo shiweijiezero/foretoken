@@ -65,7 +65,7 @@ type FrontendRuntimeProfile struct {
 	Image            string
 	Port             int32
 	ImagePullSecrets []corev1.LocalObjectReference
-	RuntimeCache     *inferencev1alpha1.RuntimeCache
+	RuntimeCache     *inferencev1alpha1.RuntimeCacheBinding
 	Gateway          *GatewayParent
 }
 
@@ -74,6 +74,7 @@ type FrontendServiceReconciler struct {
 	client.Client
 	APIReader      client.Reader
 	RuntimeProfile FrontendRuntimeProfile
+	CacheProfile   RuntimeCacheProfile
 }
 
 // SetupWithManager watches each resource whose state contributes to frontend readiness.
@@ -90,6 +91,7 @@ func (reconciler *FrontendServiceReconciler) SetupWithManager(manager ctrl.Manag
 		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Watches(&inferencev1alpha1.ModelPool{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Watches(&inferencev1alpha1.ModelGroup{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
+		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.frontendsInNamespace)).
 		Complete(reconciler)
 }
 
@@ -107,21 +109,18 @@ func (reconciler *FrontendServiceReconciler) frontendsInNamespace(ctx context.Co
 }
 
 // servingCacheReady reports whether every selected ModelGroup revision uses the configured cache.
-func (reconciler *FrontendServiceReconciler) servingCacheReady(ctx context.Context, namespace string) (bool, error) {
-	if reconciler.RuntimeProfile.RuntimeCache == nil {
-		return true, nil
-	}
+func (reconciler *FrontendServiceReconciler) servingCacheReady(ctx context.Context, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding) (bool, error) {
 	var services inferencev1alpha1.ModelServiceList
 	if err := reconciler.List(ctx, &services, client.InNamespace(namespace)); err != nil {
-		return false, fmt.Errorf("list ModelServices for frontend artifact cache: %w", err)
+		return false, fmt.Errorf("list ModelServices for frontend runtime cache: %w", err)
 	}
 	var pools inferencev1alpha1.ModelPoolList
 	if err := reconciler.List(ctx, &pools, client.InNamespace(namespace)); err != nil {
-		return false, fmt.Errorf("list ModelPools for frontend artifact cache: %w", err)
+		return false, fmt.Errorf("list ModelPools for frontend runtime cache: %w", err)
 	}
 	var groups inferencev1alpha1.ModelGroupList
 	if err := reconciler.List(ctx, &groups, client.InNamespace(namespace)); err != nil {
-		return false, fmt.Errorf("list ModelGroups for frontend artifact cache: %w", err)
+		return false, fmt.Errorf("list ModelGroups for frontend runtime cache: %w", err)
 	}
 	for serviceIndex := range services.Items {
 		service := &services.Items[serviceIndex]
@@ -145,7 +144,7 @@ func (reconciler *FrontendServiceReconciler) servingCacheReady(ctx context.Conte
 				group := &groups.Items[groupIndex]
 				if routingGroupOwnedBy(group, pool) && group.Spec.Revision == selected.Revision {
 					matched = true
-					if !routingGroupReady(group) || !reflect.DeepEqual(group.Spec.Artifacts.Cache, reconciler.RuntimeProfile.RuntimeCache) {
+					if !routingGroupReady(group) || !reflect.DeepEqual(group.Spec.Artifacts.Cache, cache) {
 						return false, nil
 					}
 				}
@@ -177,11 +176,20 @@ func (reconciler *FrontendServiceReconciler) Reconcile(ctx context.Context, requ
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "ServingSnapshotProjectionFailed", FailureMessage: err.Error()})
 	}
-	cacheReady, err := reconciler.servingCacheReady(ctx, frontend.Namespace)
+	runtimeCache, cacheReady, err := reconciler.CacheProfile.Resolve(ctx, reconciler.Client, frontend.Namespace)
 	if err != nil {
-		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeCacheProjectionFailed", FailureMessage: err.Error()})
+		statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeCacheProjectionFailed", FailureMessage: err.Error()})
+		return ctrl.Result{}, errors.Join(err, statusErr)
+	}
+	if cacheReady {
+		cacheReady, err = reconciler.servingCacheReady(ctx, frontend.Namespace, runtimeCache)
+		if err != nil {
+			statusErr := reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeCacheProjectionFailed", FailureMessage: err.Error()})
+			return ctrl.Result{}, errors.Join(err, statusErr)
+		}
 	}
 	profile := reconciler.RuntimeProfile
+	profile.RuntimeCache = runtimeCache
 	applyDeployment := true
 	if !cacheReady {
 		current := new(appsv1.Deployment)

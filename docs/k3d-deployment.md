@@ -40,7 +40,13 @@ The host needs:
 - Docker configured to use the NVIDIA runtime; and
 - k3d, kubectl, and Helm.
 
-## 1. Select GPUs and name the cluster
+## 1. Enter the repository and select GPUs
+
+Run the remaining commands from the Foretoken repository root:
+
+```bash
+cd /path/to/your/foretoken
+```
 
 List GPUs:
 
@@ -112,7 +118,8 @@ Create a single-server cluster:
 
 ```bash
 if k3d cluster get "$CLUSTER" >/dev/null 2>&1; then
-  k3d cluster delete "$CLUSTER"
+  printf 'Cluster %s already exists; choose another name or delete it explicitly.\n' "$CLUSTER" >&2
+  exit 1
 fi
 
 k3d cluster create "$CLUSTER" \
@@ -147,12 +154,6 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 ```
 
 ## 4. Install and access Foretoken
-
-Change to the Foretoken project directory:
-
-```bash
-cd /path/to/your/foretoken
-```
 
 Install the command-line tool with pip:
 

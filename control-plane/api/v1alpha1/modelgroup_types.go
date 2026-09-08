@@ -49,7 +49,7 @@ type ModelGroupArtifacts struct {
 
 	// Cache is the persistent runtime cache selected for this immutable Group revision.
 	// +optional
-	Cache *RuntimeCache `json:"cache,omitempty"`
+	Cache *RuntimeCacheBinding `json:"cache,omitempty"`
 
 	// SourceAccess contains runtime-adapter settings for loading the model.
 	// +optional

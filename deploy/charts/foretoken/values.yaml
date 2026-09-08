@@ -21,7 +21,7 @@ controller:
 # Each named Secret must exist in the namespace of the FrontendService or ModelService workload.
 workload:
   imagePullSecrets: []
-  # The named PVC must exist in every workload namespace.
+  # Set claimName to override namespace RuntimeCache discovery with an existing PVC.
   cache:
     claimName: ""
     mountPath: /var/cache/foretoken
