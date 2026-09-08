@@ -7,6 +7,18 @@ English | [简体中文](source-image-lifecycle_zh.md)
 
 This maintainer guide covers manual image import and raw Helm operations. Run commands from the Foretoken repository root unless stated otherwise.
 
+## Build MetaX vLLM from public source
+
+MetaX publishes [`vLLM-metax`](https://github.com/MetaX-MACA/vLLM-metax) as a hardware plugin, with each `vX.Y.Z` tag aligned to the same upstream vLLM tag. Starting from MetaX's released vLLM image for the selected version, one command creates a uv-managed source overlay and builds the Foretoken model-server image:
+
+```bash
+METAX_BASE_IMAGE=<matching-metax-vllm-image> \
+VLLM_METAX_VERSION=0.24.0 \
+make image-model-server-metax
+```
+
+The build creates `foretoken-vllm-metax:0.24.0` and `foretoken-model-server:dev`. Its virtual environment is stored in `/opt/foretoken-vllm`; the host Python environment is not used. The base image supplies the matching MACA, PyTorch, mcoplib, and native dependencies, while uv installs the selected public `vLLM-metax` and upstream vLLM tags into the overlay. Select the base image from the [vLLM-MetaX release matrix](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html). Foretoken currently supports the public MetaX releases from 0.20 through 0.24.
+
 ## Import local images directly
 
 **Option 1: Import into a Kind cluster.** Create a Kind cluster directly to validate the control plane, CRDs, frontend, and scheduling behavior. To run a GPU model service, use k3d in option 2 and select the available GPUs as described in [Deploy Foretoken with k3d](../k3d-deployment.md). Install Kind first:
@@ -40,7 +52,15 @@ kind create cluster \
   --config deploy/kind/multi-node.yaml
 ```
 
-After creating the cluster, build and import the local images.
+After creating the cluster, build and import the local images. The vLLM adapter supports the EngineCore protocols shipped by vLLM 0.20 through 0.28. The inference-engine image normally provides its Python executable as `python`. If it requires a specific executable, set both build inputs:
+
+```bash
+INFERENCE_ENGINE_IMAGE=<compatible-inference-engine-image> \
+FORETOKEN_VLLM_PYTHON=/absolute/path/to/python \
+make dev-build
+```
+
+Otherwise, use the defaults:
 
 ```bash
 # Expected runtime: about 8 minutes

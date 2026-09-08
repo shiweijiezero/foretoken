@@ -35,6 +35,7 @@ rules:
       - kvpools.inference.foretoken.io
       - kvgroups.inference.foretoken.io
       - modelservices.inference.foretoken.io
+      - runtimecaches.inference.foretoken.io
       - modelpools.inference.foretoken.io
       - modelgroups.inference.foretoken.io
     verbs:
@@ -160,6 +161,22 @@ rules:
       - inference.foretoken.io
     resources:
       - kvgroups/status
+    verbs:
+      - get
+      - patch
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - runtimecaches
+    verbs:
+      - get
+      - list
+      - watch
+      - patch
+  - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - runtimecaches/status
     verbs:
       - get
       - patch

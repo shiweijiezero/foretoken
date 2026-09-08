@@ -68,6 +68,7 @@ func (reconciler *ModelServiceReconciler) SetupWithManager(manager ctrl.Manager)
 		For(&inferencev1alpha1.ModelService{}).
 		Owns(&inferencev1alpha1.ModelPool{}).
 		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
+		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace)).
 		Complete(reconciler)
 }
 
@@ -113,7 +114,27 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 			ready:    conditionState{metav1.ConditionFalse, "ScalingFailed", "ModelService capacity is invalid"},
 		})
 	}
-	runtimeCache := reconciler.CacheProfile.RuntimeCache()
+	runtimeCache, cacheReady, err := reconciler.CacheProfile.Resolve(ctx, reconciler.Client, service.Namespace)
+	if err != nil {
+		statusErr := reconciler.updateStatus(ctx, service, modelServiceState{
+			compiled: conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
+			pools:    conditionState{metav1.ConditionFalse, "CacheResolutionFailed", "Runtime cache could not be resolved"},
+			ready:    conditionState{metav1.ConditionFalse, "CacheResolutionFailed", err.Error()},
+		})
+		return ctrl.Result{}, errors.Join(err, statusErr)
+	}
+	if !cacheReady {
+		ready, reason, message, readinessErr := reconciler.serviceReadiness(ctx, service, compiledPools)
+		if ready {
+			reason, message = "ServingPreviousGeneration", "The previous complete ModelService generation remains ready while runtime cache storage is preparing"
+		}
+		statusErr := reconciler.updateStatus(ctx, service, modelServiceState{
+			compiled: conditionState{metav1.ConditionTrue, "Compiled", "ModelService intent was compiled"},
+			pools:    conditionState{metav1.ConditionFalse, "CacheNotReady", "No new ModelPools were materialized"},
+			ready:    conditionState{conditionStatus(ready), reason, message},
+		})
+		return ctrl.Result{}, errors.Join(readinessErr, statusErr)
+	}
 	runtimeSource := reconciler.SourceProfile.RuntimeSource()
 	for index := range compiledPools {
 		compiledPools[index].Template.RuntimeCache = runtimeCache.DeepCopy()
@@ -520,6 +541,19 @@ func modelServicePoolStore(service *inferencev1alpha1.ModelService, name string)
 		}
 	}
 	return nil
+}
+
+// modelServicesInNamespace maps shared platform resource changes to every ModelService in the namespace.
+func (reconciler *ModelServiceReconciler) modelServicesInNamespace(ctx context.Context, object client.Object) []reconcile.Request {
+	var services inferencev1alpha1.ModelServiceList
+	if err := reconciler.List(ctx, &services, client.InNamespace(object.GetNamespace())); err != nil {
+		return nil
+	}
+	requests := make([]reconcile.Request, 0, len(services.Items))
+	for index := range services.Items {
+		requests = append(requests, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&services.Items[index])})
+	}
+	return requests
 }
 
 // modelServicesForKVService maps a KVService update to ModelServices that reference it.

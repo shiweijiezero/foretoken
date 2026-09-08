@@ -95,42 +95,16 @@ fn pd_snapshot() -> ServingSnapshot {
 }
 
 fn epd_component(id: &str, role: ModelServerRole) -> SnapshotEpdComponent {
-    let pd = role != ModelServerRole::Encoder;
-    let ec = role != ModelServerRole::Decode;
     SnapshotEpdComponent {
         service_uid: "service".into(),
         pool_uid: "pool".into(),
         pool_name: "pool".into(),
         route_target_id: RouteTargetId::new(id),
         role,
-        pipeline_scope_id: "epd-a".into(),
         model: "model".into(),
         revision: "r1".into(),
         tokenizer: "tokenizer".into(),
         tokenizer_revision: "r1".into(),
-        profile_name: if pd {
-            "pd-profile".into()
-        } else {
-            String::new()
-        },
-        profile_revision: if pd { "r1".into() } else { String::new() },
-        connector: if pd {
-            "MooncakeConnector".into()
-        } else {
-            String::new()
-        },
-        protocol: if pd { "rdma".into() } else { String::new() },
-        ec_profile_name: if ec {
-            "ec-profile".into()
-        } else {
-            String::new()
-        },
-        ec_profile_revision: if ec { "r1".into() } else { String::new() },
-        ec_connector: if ec {
-            "ECExampleConnector".into()
-        } else {
-            String::new()
-        },
         capabilities: ["chat".into()].into_iter().collect(),
         max_input_tokens: None,
         endpoint: "http://127.0.0.1:1".into(),
@@ -185,7 +159,7 @@ fn runtime_metadata() -> RuntimeMetadataResponse {
             model: "model".into(),
             revision: "r1".into(),
         },
-        model_dtype: ModelDtype::BFloat16,
+        model_dtype: Some(ModelDtype::BFloat16),
         effective_max_model_len: 32_768,
         ec_transfer: None,
         capabilities: ["chat".into()].into_iter().collect(),

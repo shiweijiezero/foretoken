@@ -61,28 +61,78 @@ kubectl port-forward \
 sum(foretoken:frontend_http_response_starts:rate5m)
 ```
 
+## 打开 Grafana Dashboard
+
+由 CLI 管理的 kube-prometheus-stack 会自动加载 **Foretoken System Overview**。获取自动生成的管理员凭据，并在本机打开 Grafana：
+
+```bash
+GRAFANA_USER="$(kubectl get secret \
+  --namespace foretoken-platform \
+  foretoken-prometheus-grafana \
+  --output jsonpath='{.data.admin-user}' | base64 --decode)"
+GRAFANA_PASSWORD="$(kubectl get secret \
+  --namespace foretoken-platform \
+  foretoken-prometheus-grafana \
+  --output jsonpath='{.data.admin-password}' | base64 --decode)"
+printf 'Grafana user: %s\nGrafana password: %s\n' \
+  "$GRAFANA_USER" "$GRAFANA_PASSWORD"
+
+kubectl port-forward \
+  --namespace foretoken-platform \
+  service/foretoken-prometheus-grafana \
+  3000:80
+```
+
+打开 <http://127.0.0.1:3000>，进入 **Dashboards** 并选择 **Foretoken System Overview**。这一套 Dashboard 按请求链路依次展示 Frontend 流量和准入、model-server 延迟与吞吐、调度状态、KV Cache 与 RuntimeCache、加速器利用率和服务容器资源。页面提供命名空间、Frontend 服务、模型组、模型角色和模型筛选。
+
+如果 Foretoken 复用已有 Prometheus，Grafana 仍由原平台管理。能够发现 `grafana_dashboard=1` ConfigMap 的 Grafana sidecar 可以从 `foretoken-platform` 命名空间自动加载该 Dashboard。否则先导出 JSON，再按照平台已有流程导入：
+
+```bash
+kubectl get configmap \
+  --namespace foretoken-platform \
+  foretoken-control-plane-system-dashboard \
+  --output jsonpath='{.data.foretoken-system-overview\.json}' \
+  > /tmp/foretoken-system-overview.json
+```
+
 ## 指标与记录规则
 
 | 来源 | 内容 |
 | --- | --- |
 | Frontend `/metrics` | HTTP 请求、准入队列、路由和运行状态 |
-| model-server `/metrics` | 当前推理后端提供的原生指标 |
+| model-server `/metrics` | 当前推理后端的原生指标和已挂载 RuntimeCache 的文件系统状态 |
 | DCGM Exporter | NVIDIA 利用率、显存、功耗、温度和 XID 错误 |
 | mxExporter | 沐曦利用率和显存指标 |
 | kubelet/cAdvisor | 容器 CPU、内存、文件系统和网络 |
 | kube-state-metrics | Kubernetes 资源状态 |
 
-以下稳定记录规则目前由 Frontend 指标和 vLLM model-server 指标族生成，不是其他推理后端的统一指标契约。
+以下稳定记录规则构成系统级 Dashboard 使用的查询层。模型服务规则目前基于 vLLM 指标族生成，不是其他推理后端的统一指标契约。
 
-| 记录规则 | 含义 |
-| --- | --- |
-| `foretoken:frontend_http_response_starts:rate5m` | Frontend 每秒开始的 HTTP 响应数 |
-| `foretoken:frontend_http_response_start_5xx_ratio:rate5m` | 响应开始时的 5xx 比例，不是推理失败率 |
-| `foretoken:model_server_prompt_tokens:rate5m` | vLLM 每秒处理的输入 token 数 |
-| `foretoken:model_server_generation_tokens:rate5m` | vLLM 每秒生成的输出 token 数 |
-| `foretoken:model_server_requests_running:sum` | vLLM 当前运行中的请求数 |
-| `foretoken:model_server_requests_waiting:sum` | vLLM 调度器中等待的请求数 |
-| `foretoken:model_server_kv_cache_usage_ratio:max` | 最高 vLLM KV Cache 使用比例 |
+| 范围 | 记录规则 | 含义 |
+| --- | --- | --- |
+| Frontend | `foretoken:frontend_up:sum` | 正在上报的 Frontend target 数量 |
+| Frontend | `foretoken:frontend_http_response_starts:rate5m` | 每秒开始的 HTTP 响应数 |
+| Frontend | `foretoken:frontend_http_response_start_5xx_ratio:rate5m` | 响应开始时的 5xx 比例，不是推理失败率 |
+| Frontend | `foretoken:frontend_http_request_duration_seconds:quantile5m` | 请求延迟，通过 `quantile` 标签区分 `p50`、`p90` 和 `p99` |
+| Frontend | `foretoken:frontend_upstream_queued_requests:sum` | 按扩缩容目标统计的准入等待请求数 |
+| Frontend | `foretoken:frontend_kv_index_source_health_ratio:min` | Frontend 副本中最低的 KV 事件源健康比例 |
+| 模型服务 | `foretoken:model_server_up:sum` | 正在上报的 model-server target 数量 |
+| 模型服务 | `foretoken:model_server_completed_requests:rate5m` | 按结束原因统计的每秒完成请求数 |
+| 模型服务 | `foretoken:model_server_prompt_tokens:rate5m` | 每秒处理的输入 Token 数 |
+| 模型服务 | `foretoken:model_server_generation_tokens:rate5m` | 每秒生成的输出 Token 数 |
+| 模型服务 | `foretoken:model_server_requests_running:sum` | 当前运行中的请求数 |
+| 模型服务 | `foretoken:model_server_requests_waiting:sum` | 调度器中等待的请求数 |
+| 模型服务 | `foretoken:model_server_e2e_request_latency_seconds:quantile5m` | E2E 延迟的 `p50`、`p90` 和 `p99` 序列 |
+| 模型服务 | `foretoken:model_server_time_to_first_token_seconds:quantile5m` | TTFT 的 `p50`、`p90` 和 `p99` 序列 |
+| 模型服务 | `foretoken:model_server_time_per_output_token_seconds:quantile5m` | TPOT 的 `p50`、`p90` 和 `p99` 序列 |
+| Cache | `foretoken:model_server_kv_cache_usage_ratio:max` | 最高引擎内 KV Cache 使用率 |
+| Cache | `foretoken:model_server_prefix_cache_hit_ratio:rate5m` | 本地或外部 Prefix Cache 的 Token 命中率 |
+| Cache | `foretoken:model_server_runtime_cache_available_bytes:min` | RuntimeCache 上报的最低可用空间 |
+| Cache | `foretoken:model_server_runtime_cache_usage_ratio:max` | RuntimeCache 上报的最高文件系统使用率 |
+| Cache | `foretoken:model_server_runtime_cache_observation_success:min` | 是否能够检查所有上报的 RuntimeCache 挂载点 |
+| Cache | `foretoken:model_server_runtime_cache_temporary:max` | 是否有 model-server 正在使用 Pod 临时缓存 |
+| 加速器 | `foretoken:accelerator_gpu_utilization_ratio` | NVIDIA 或沐曦设备利用率 |
+| 加速器 | `foretoken:accelerator_gpu_memory_usage_ratio` | NVIDIA 或沐曦设备显存使用率 |
 
 记录规则保留 namespace、Frontend 服务、模型组、模型角色、模型名称和可选的 Prefill/Decode pipeline scope。计数器会先计算可处理重置的五分钟速率，再执行聚合。原始后端指标的名称、单位和标签以 `/metrics` 中的 `HELP` 和 `TYPE` 元数据为准。
 

@@ -8,5 +8,6 @@ kind: Kustomization
 namespace: foretoken-demo
 resources:
   - namespace.yaml
+  - cache.yaml
   - frontend.yaml
   - model.yaml

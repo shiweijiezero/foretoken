@@ -63,6 +63,7 @@ def prepare_source_images(
             "DEV_TIMEOUT",
             "IMAGE_PULL_SECRET",
             "INFERENCE_ENGINE_IMAGE",
+            "FORETOKEN_VLLM_PYTHON",
             "LOCAL_IMAGE_PREFIX",
             "K3D_CONFIG",
             "TAG",

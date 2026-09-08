@@ -3,9 +3,9 @@
 
 # Router
 
-Router 为每个推理请求选择兼容且健康的模型目标。它不执行推理、不保存 KV cache，也不在实例之间搬运缓存。
+Router 为每个推理请求选择兼容且健康的模型目标。
 
-Foretoken 控制器通过 `FrontendService.spec.routerPipeline` 配置 Router：
+在 `FrontendService.spec.routerPipeline` 中配置路由策略：
 
 ```yaml
 spec:
@@ -25,8 +25,8 @@ spec:
 
 `kv_least_loaded` 优先考虑已确认的本地 KV 前缀位置，再选择负载较低的目标。`least_loaded` 忽略 KV 位置，只按当前请求负载评分。`uniform` 为所有候选项赋予相同分数；`round_robin` 会在同分目标之间按确定顺序轮转，`max` 则选择一个确定的同分目标。
 
-只有模型、输入限制、请求能力和目标健康状态都兼容时，请求才会成为候选项。Router 会根据控制器发布的聚合或分离式拓扑选择目标。在 Prefill/Decode 和 Encoder/Prefill/Decode 拓扑中，各阶段选择必须位于控制器定义的同一 connector compatibility scope 中。一个 scope 可以包含每个阶段的多个 ModelGroup，不按 ordinal 固定配对。
+只有健康且支持请求指定模型、输入长度和所需能力的目标才会成为候选项。对于预填充/解码分离或编码/预填充/解码分离的服务，路由会确保选中的各阶段彼此兼容。
 
-KV 位置只是路由信号。`Unavailable` 表示索引当前无法可靠回答，不等于缓存未命中，也不会排除目标。即使某个目标被优先选择，推理后端在真正执行时仍可能没有对应缓存。当前 KV 位置与退化行为见 [KV 前缀索引](../kv-indexer/README_zh.md)。
+KV 索引返回 `Unavailable` 时，目标仍可参与路由，但不获得 KV 前缀匹配优先权；路由仍会考虑其负载。位置查询和退化行为见 [KV 前缀索引](../kv-indexer/README_zh.md)。
 
 编译进二进制的路由算法，以及 Filter、Scorer 和 Picker 的精确维护契约见 [Router 维护指南](MAINTAINER_zh.md)。

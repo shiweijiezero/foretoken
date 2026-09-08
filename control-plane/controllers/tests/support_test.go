@@ -10,6 +10,7 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -49,8 +50,8 @@ func controllerClient(t *testing.T, objects ...client.Object) client.Client {
 		&inferencev1alpha1.ModelService{}, &inferencev1alpha1.ModelPool{},
 		&inferencev1alpha1.ModelGroup{}, &inferencev1alpha1.KVService{},
 		&inferencev1alpha1.KVPool{}, &inferencev1alpha1.KVGroup{},
-		&inferencev1alpha1.FrontendService{}, &appsv1.Deployment{},
-		&batchv1.Job{}, &gatewayv1.HTTPRoute{},
+		&inferencev1alpha1.FrontendService{}, &inferencev1alpha1.RuntimeCache{}, &appsv1.Deployment{},
+		&batchv1.Job{}, &corev1.PersistentVolumeClaim{}, &gatewayv1.HTTPRoute{},
 	).WithObjects(objects...).Build()
 }
 

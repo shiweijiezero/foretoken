@@ -13,7 +13,7 @@ import (
 )
 
 // RuntimeCacheEnv returns vLLM model, source, and compilation cache environment for one ModelGroup.
-func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCache, source *inferencev1alpha1.RuntimeSourceAccess) []corev1.EnvVar {
+func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, source *inferencev1alpha1.RuntimeSourceAccess) []corev1.EnvVar {
 	env := make([]corev1.EnvVar, 0, 6)
 	if cache != nil {
 		env = append(env,

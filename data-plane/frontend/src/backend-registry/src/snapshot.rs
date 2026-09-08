@@ -44,25 +44,10 @@ pub struct SnapshotEpdComponent {
     pub pool_name: String,
     pub route_target_id: RouteTargetId,
     pub role: ModelServerRole,
-    pub pipeline_scope_id: String,
     pub model: String,
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
-    #[serde(default)]
-    pub profile_name: String,
-    #[serde(default)]
-    pub profile_revision: String,
-    #[serde(default)]
-    pub connector: String,
-    #[serde(default)]
-    pub protocol: String,
-    #[serde(default)]
-    pub ec_profile_name: String,
-    #[serde(default)]
-    pub ec_profile_revision: String,
-    #[serde(default)]
-    pub ec_connector: String,
     #[serde(default)]
     pub capabilities: BTreeSet<String>,
     #[serde(default)]

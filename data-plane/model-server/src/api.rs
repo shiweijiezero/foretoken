@@ -21,6 +21,7 @@ use serde::Serialize;
 
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
 use crate::kv_event_adapter::{KvDeltaError, KvEventAdapter};
+use crate::runtime_cache;
 use foretoken_model_protocol::{
     AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, TelemetryResponse,
 };
@@ -125,6 +126,7 @@ pub struct AppState {
     health: Arc<RuntimeHealth>,
     metadata: RuntimeMetadataResponse,
     kv_events: Option<Arc<KvEventAdapter>>,
+    runtime_cache: Option<runtime_cache::Config>,
 }
 impl AppState {
     /// Builds state consumed by internal HTTP handlers; the server owns the supplied backend state.
@@ -138,6 +140,7 @@ impl AppState {
             health,
             metadata,
             kv_events: None,
+            runtime_cache: None,
         }
     }
     /// Attaches the shared KV delta source used by the index endpoint and returns updated state.
@@ -145,6 +148,12 @@ impl AppState {
     /// The router owns this state while its handlers retain cloned adapter references.
     pub fn with_kv_events(mut self, adapter: Arc<KvEventAdapter>) -> Self {
         self.kv_events = Some(adapter);
+        self
+    }
+
+    /// Attaches RuntimeCache filesystem telemetry rendered with backend metrics.
+    pub fn with_runtime_cache(mut self, config: runtime_cache::Config) -> Self {
+        self.runtime_cache = Some(config);
         self
     }
 }
@@ -177,14 +186,23 @@ async fn readyz(State(state): State<AppState>) -> StatusCode {
 
 async fn metrics(State(state): State<AppState>) -> Response {
     match state.backend.render_openmetrics() {
-        Ok(body) => (
-            [(
-                header::CONTENT_TYPE,
-                HeaderValue::from_static(OPENMETRICS_CONTENT_TYPE),
-            )],
-            body,
-        )
-            .into_response(),
+        Ok(mut body) => {
+            if let Some(cache) = &state.runtime_cache {
+                if let Some(without_eof) = body.strip_suffix("# EOF\n") {
+                    body = without_eof.to_owned();
+                }
+                body.push_str(&cache.render_openmetrics());
+                body.push_str("# EOF\n");
+            }
+            (
+                [(
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static(OPENMETRICS_CONTENT_TYPE),
+                )],
+                body,
+            )
+                .into_response()
+        }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

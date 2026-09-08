@@ -7,15 +7,15 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken 命令行工具 通过统一的 `foretoken` 入口安装 Kubernetes 平台、从 Kustomize 配置部署模型服务、查看服务就绪状态、解析前端访问入口并运行评测。
+Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平台、从 Kustomize 配置部署模型服务、查看服务就绪状态、解析前端访问入口并运行评测。
 
-新集群从“安装 命令行工具”开始。如果 `foretoken --version` 已经可用，直接安装平台；如果集群已经安装 Foretoken 平台，直接部署模型服务。
+新集群从“安装命令行工具”开始。如果 `foretoken --version` 已经可用，直接安装平台；如果集群已经安装 Foretoken 平台，直接部署模型服务。
 
 ## 开始前
 
 需要准备 Python 3.10 或更高版本、当前 Kubernetes context、`kubectl` 和 Helm。GPU 节点需要预先安装厂商驱动和 Kubernetes device plugin。源码安装还需要 Docker 和 Make，以及本地 kind/k3d 集群或所有目标节点都能访问的 OCI registry。
 
-## 安装 命令行工具
+## 安装命令行工具
 
 使用 pip 安装已经发布的 Foretoken 命令行工具包：
 
@@ -34,7 +34,7 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-这一步只会在当前 Python 环境中安装 `foretoken` 命令，不会修改 Kubernetes 集群。运行 `foretoken --version` 可以查看 命令行工具 及其对应的平台版本。
+这一步只会在当前 Python 环境中安装 `foretoken` 命令，不会修改 Kubernetes 集群。运行 `foretoken --version` 可以查看命令行工具及其对应的平台版本。
 
 ## 安装 Kubernetes 平台
 
@@ -48,11 +48,11 @@ uv pip install foretoken
 foretoken install
 ```
 
-安装过程中，命令行工具 会发现 Prometheus 和加速器指标 exporter。它会复用兼容的共享实例，按需安装由 命令行工具 管理的 Prometheus 和 NVIDIA DCGM Exporter，并接入沐曦集群已经提供的 mxExporter。命令行工具 不安装 GPU 驱动、device plugin 或厂商 Operator。监控实例存在歧义或配置不完整时，安装会给出可操作的错误；选择规则见[可观测性](../observability/README_zh.md)。
+安装过程中，命令行工具会发现 Prometheus 和加速器指标 exporter，复用兼容的共享实例，按需安装 Prometheus 和 NVIDIA DCGM Exporter，并接入沐曦集群已经提供的 mxExporter。监控选择与配置见[可观测性](../observability/README_zh.md)。
 
 ### 网关模式
 
-只有集群运行 Envoy Gateway 时，命令行工具 才会创建专用的 `GatewayClass` 和 `Gateway`：
+只有集群运行 Envoy Gateway 时，命令行工具才会创建专用的 `GatewayClass` 和 `Gateway`：
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -92,31 +92,17 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 ### 持久化运行时缓存
 
-如需在 Pod 重启后复用模型和编译缓存，将 `workload.cache.claimName` 设置为已有 PVC。该 PVC 必须能被所有可能运行工作负载的节点挂载；多节点部署通常需要 `ReadWriteMany`。留空则关闭持久化缓存。配置示例见[持久化运行时缓存](../docs/development/runtime-cache_zh.md)。
+在 workload namespace 中创建一个 `RuntimeCache`，Foretoken 即可自动创建并管理共享缓存 PVC。已有 PVC 仍可通过 `workload.cache.claimName` 使用。详见[持久化运行时缓存](../docs/development/runtime-cache_zh.md)。
 
 ## 部署和管理模型服务
 
-部署一个 Kustomize 根目录中渲染出的前端服务和全部模型：
+部署一个 Kustomize 根目录中渲染出的前端服务和全部模型。多模型示例最多需要 4 张 GPU、12 个 CPU 核心、100 GiB 内存，以及支持 `ReadWriteMany` 和在线扩容的默认 `StorageClass`；最小路径请使用 `examples/quickstart`。
 
 ```bash
 foretoken deploy examples/multi-model-quickstart
 ```
 
-该命令会应用配置，在 `FrontendService` 和 `ModelService` 状态变化时输出进度，并在所有资源的当前 generation 就绪后退出。默认等待十分钟，可通过 `--timeout` 调整。
-
-删除同一配置渲染出的资源：
-
-```bash
-foretoken delete examples/multi-model-quickstart
-```
-
-该命令会等待删除完成，并忽略已经不存在的资源。删除全部 Foretoken 服务后，可以移除平台发布实例：
-
-```bash
-foretoken uninstall
-```
-
-该命令保留 Foretoken CRD，并在仍有用户服务时拒绝卸载。平台卸载时会一并删除由 命令行工具 管理的监控和 Gateway 资源，复用的集群组件保持不变。
+该命令会应用配置，在 `FrontendService` 和 `ModelService` 状态变化时输出进度，并在所有服务的当前配置均已就绪后退出。默认等待十分钟，可通过 `--timeout` 调整。
 
 不应用配置，直接查看同一部署的状态：
 
@@ -140,11 +126,10 @@ FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 HTTP Gateway 模式下，单独解析请求的 `Host`：
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --host)"
 ```
 
-Host 值在直接访问时是 URL authority，在 HTTP Gateway 模式下是配置的路由域名。该命令负责等待 LoadBalancer 或 Gateway 地址，服务就绪仍由 `foretoken deploy` 负责。
+直接访问时，`--host` 返回主机名或 IP，以及 URL 中包含的端口；HTTP Gateway 模式下返回配置的路由域名。`foretoken endpoint` 等待 LoadBalancer 或 Gateway 分配地址；要等待服务就绪，请使用 `foretoken deploy`。
 
 ## 运行评测
 
@@ -167,7 +152,23 @@ uv pip install 'foretoken[bench]'
 然后运行评测：
 
 ```bash
-foretoken bench examples/quickstart
+foretoken bench examples/multi-model-quickstart --model Qwen/Qwen3-0.6B
 ```
 
-命令行工具 使用当前 `kubectl` context，并遵循 `KUBECONFIG` 等标准 Kubernetes 配置。
+命令行工具使用当前 `kubectl` context，并遵循 `KUBECONFIG` 等标准 Kubernetes 配置。
+
+## 清理
+
+删除同一配置渲染出的资源：
+
+```bash
+foretoken delete examples/multi-model-quickstart
+```
+
+该命令会等待删除完成，并忽略已经不存在的资源。删除全部 Foretoken 服务后，可以移除平台发布实例：
+
+```bash
+foretoken uninstall
+```
+
+该命令保留 Foretoken CRD，并在仍有用户服务时拒绝卸载。平台卸载时会一并删除由命令行工具管理的监控和 Gateway 资源，复用的集群组件保持不变。

@@ -10,7 +10,7 @@ This example serves two models through one frontend:
 - `Qwen/Qwen3-0.6B` scales from one to three replicas from queue demand.
 - `unsloth/Llama-3.2-1B-Instruct` runs as one fixed replica.
 
-Each replica uses one GPU. The full scaling range needs four schedulable GPUs: up to three for Qwen and one for Llama. For the smallest deployment, see [Single-Model Quick Start](../quickstart/README.md).
+Each replica uses one GPU. The full scaling range needs four schedulable GPUs: up to three for Qwen and one for Llama. The example also creates an automatically expanding `ReadWriteMany` runtime cache PVC starting at 10 GiB through the namespace's default `StorageClass`. For the smallest deployment, see [Single-Model Quick Start](../quickstart/README.md).
 
 ## Deploy
 
@@ -18,6 +18,7 @@ Complete the platform installation in the [root Quick Start](../../README.md), t
 
 ```bash
 foretoken deploy examples/multi-model-quickstart
+export FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 ```
 
 ## Observe queue autoscaling
@@ -35,8 +36,6 @@ kubectl get modelpool,modelgroup \
 In another terminal, run a bounded concurrent workload. It sends 32 requests with at most eight in flight:
 
 ```bash
-export FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
-
 seq 1 32 | xargs -P8 -I{} sh -c '
   curl --fail --silent --show-error \
     "$FRONTEND_URL/v1/chat/completions" \

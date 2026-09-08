@@ -19,6 +19,7 @@ build_dev_images() {
 
   docker build \
     --build-arg INFERENCE_ENGINE_IMAGE="$INFERENCE_ENGINE_IMAGE" \
+    --build-arg FORETOKEN_VLLM_PYTHON \
     -f data-plane/model-server/Dockerfile \
     -t "$MODEL_SERVER_IMAGE" \
     .

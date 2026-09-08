@@ -23,15 +23,15 @@ If you only need to serve a single model on one GPU, using an inference engine s
 |---|---|---|
 | Benchmarking | Performance benchmarks and parameter sweeps, correctness evaluation, and SLO simulation | In development |
 | Profiling | Use PyTorch Profiler and Nsight to identify compute, communication, and CPU/GPU bottlenecks | Planned |
-| Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics | In development |
+| Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics; see [MetaX deployment](docs/metax-deployment.md) | In development |
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
 | Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP parallelism | Research |
-| Control plane | Model services, instance groups, autoscaling, updates, and failure recovery | In development |
+| Control plane | Model services, replica management, autoscaling, updates, and failure recovery | In development |
 | [Observability](observability/README.md) | Collect runtime metrics, evaluate alerts, and profile CPU/GPU bottlenecks | In development |
 
 ## Quick Start
 
-This Quick Start requires Python 3.10 or later, a Kubernetes cluster, `kubectl`, Helm, and at least one available GPU. See the [k3d guide](docs/k3d-deployment.md) to prepare a single-machine test cluster.
+This Quick Start requires Python 3.10+, Kubernetes with an expandable default `StorageClass`, `kubectl`, Helm, one GPU, and a working `LoadBalancer` (k3s ServiceLB is sufficient for k3d). See the [k3d guide](docs/k3d-deployment.md) for a single-machine test cluster.
 
 ### 1. Install the command-line tool
 
@@ -64,7 +64,7 @@ This installs the Foretoken CRDs and controller in the `foretoken-platform` name
 foretoken deploy examples/quickstart
 ```
 
-This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
+This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and an automatically expanding runtime cache PVC starting at 10 GiB. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
 
 ### 4. Send a test request
 
@@ -134,7 +134,7 @@ See the [command-line tool guide](cli/README.md) to reuse a Gateway from another
 ## Stop and Uninstall
 
 ```bash
-# Delete the frontend and model service deployed by the Quick Start
+# Delete the Quick Start resources, including its namespace and runtime cache PVC
 foretoken delete examples/quickstart
 
 # Uninstall the Foretoken platform
