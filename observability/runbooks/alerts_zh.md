@@ -9,6 +9,19 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 Foretoken 告警表示异常信号已经持续了一段时间。告警不会自动修复系统，也不能单独证明用户请求已经中断。排查时先读取告警标签，再用当前 Kubernetes 状态确认信号。
 
+所有规则集中在一个源文件中；先用下表选择对应的排障章节，不需要为每种算法寻找单独文件：
+
+| 告警 | 信号 | 默认持续时间 |
+| --- | --- | --- |
+| `ForetokenMetricsTargetDown` | 已发现的 Frontend 或 model-server `/metrics` 目标无法抓取 | 5 分钟 |
+| `ForetokenFrontendHTTPResponseStart5xxRatioHigh` | 在存在流量时，Frontend 响应开始 5xx 比例偏高 | 10 分钟 |
+| `ForetokenModelServerSchedulerBacklog` | 聚合后的 vLLM stage scheduler waiting 队列不为空 | 10 分钟 |
+| `ForetokenModelServerKVCachePressureHigh` | vLLM KV Cache 最高使用率偏高 | 10 分钟 |
+| `ForetokenAcceleratorGPUUtilizationHigh` | NVIDIA 或沐曦的标准化 GPU 利用率偏高 | 15 分钟 |
+| `ForetokenAcceleratorGPUMemoryUsageHigh` | NVIDIA 或沐曦的标准化显存使用率偏高 | 10 分钟 |
+| `ForetokenNVIDIAGPUTemperatureHigh` | NVIDIA GPU 温度超过配置阈值 | 10 分钟 |
+| `ForetokenNVIDIAGPUPowerUsageHigh` | NVIDIA GPU 功耗超过配置阈值 | 10 分钟 |
+
 首先查看告警所在命名空间中的资源：
 
 ```bash
@@ -59,6 +72,22 @@ Frontend 的 HTTP 响应开始事件中，5xx 比例在至少每秒 0.1 个响�
 
 记录指标在每次计算时取所有 engine 的最大值，而不是集群平均值；贡献最大值的 engine 可能随时间改变。95% 是初始 warning 策略，后续应根据真实 workload 的测量结果调整。
 
-## 为什么暂时没有通用 GPU 阈值告警
+## ForetokenAcceleratorGPUUtilizationHigh
 
-Foretoken 当前没有定义跨平台的温度、功耗、利用率或显存压力告警。不同设备厂商提供的指标不同，安全阈值也取决于硬件和 workload。GPU exporter 所属的平台应该根据实际设备限制定义硬件策略。等 Foretoken 拥有稳定的跨平台信号和明确的处置方法后，再增加 accelerator 告警。
+标准化的 NVIDIA 或沐曦利用率已超过配置阈值。扩容前先检查近期请求量、scheduler waiting 与 running requests，以及受影响的节点或设备。
+
+## ForetokenAcceleratorGPUMemoryUsageHigh
+
+标准化的 GPU 显存使用率已超过配置阈值。检查 KV Cache 压力、请求长度、模型副本和单设备热点；显存使用率高本身不能说明故障原因。
+
+## ForetokenNVIDIAGPUTemperatureHigh
+
+NVIDIA DCGM 温度读数已超过配置阈值。检查节点散热、设备健康、功耗和 workload 放置情况。如果集群没有暴露 NVIDIA DCGM 指标，这条规则不会产生告警。
+
+## ForetokenNVIDIAGPUPowerUsageHigh
+
+NVIDIA DCGM 功耗读数已超过配置阈值。先将读数与设备功耗上限和 workload 对比，再检查温度和节点健康状态；没有 DCGM 指标时，这条规则不会产生告警。
+
+## GPU 阈值策略
+
+Chart 为标准化利用率、显存压力以及 NVIDIA 温度和功耗读数提供默认阈值。安装 Chart 时可以通过 `observability.alerts.thresholds` 覆盖这些值。利用率和显存规则覆盖 NVIDIA 与沐曦的标准化指标；温度和功耗规则只在集群存在 NVIDIA DCGM 指标时生效。这些告警用于容量和散热检查，不会自动修复系统。

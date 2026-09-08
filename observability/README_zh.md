@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken 会为服务和加速器指标安装 Prometheus 采集、记录规则以及四条可选告警规则。Alertmanager 路由和通知继续由平台团队负责。
+Foretoken 会为服务和加速器指标安装 Prometheus 采集、记录规则以及可选告警规则。Alertmanager 路由和通知继续由平台团队负责。
 
 ## 安装采集
 
@@ -97,12 +97,6 @@ kubectl get configmap \
   > /tmp/foretoken-system-overview.json
 ```
 
-启用可观测性后，Chart 还会安装四条 warning 规则：指标目标无法抓取、Frontend 持续出现响应开始阶段的 5xx、model-server 调度器持续有排队请求，以及 KV Cache 使用率过高。每条告警都带有通用的 `service=foretoken` 标签，并要求条件持续一段时间后才会触发。通知接收方、分组和路由由 Alertmanager 管理。收到告警后按照[告警排障手册](runbooks/alerts_zh.md)理解和检查信号，不要把单条告警直接视为已经发生用户故障。
-
-如需通过现有 Alertmanager 把这些告警发送给 Lark 自定义机器人，安装可选的 [Lark 通知集成](integrations/lark/README_zh.md)。路由和消息模板进入版本控制，webhook URL 仍然只保存在集群 Secret 中。
-
-Foretoken 暂不定义通用的 GPU 温度、功耗、利用率或显存压力告警。对应指标和安全阈值取决于设备平台及真实 workload 的测量结果。
-
 ## 指标与记录规则
 
 | 来源 | 内容 |
@@ -146,9 +140,30 @@ Foretoken 暂不定义通用的 GPU 温度、功耗、利用率或显存压力�
 
 流式响应可能先以 `2xx` 开始、后续再失败，因此 `foretoken:frontend_http_response_start_5xx_ratio:rate5m` 不能作为推理成功率 SLO。
 
-## 告警与性能剖析
+## 告警、Lark 与性能剖析
 
-Foretoken 在 Chart 中提供告警表达式和阈值。请在平台团队负责的 Prometheus 与 Alertmanager 配置中定义通知接收方、分组和路由。
+启用可观测性后，Chart 会和记录规则一起渲染告警规则。查看实现的最短路径如下：
+
+1. 在 `deploy/charts/foretoken/values.yaml` 中将 `observability.mode` 设为 `enabled`（或使用 `auto`）。
+2. 在同一个文件中查看阈值和语言选项。
+3. 在 `deploy/charts/foretoken/files/alerting-rules.yaml` 查看规则定义，在 `deploy/charts/foretoken/templates/alertingrule.yaml` 查看 Chart 如何渲染它。
+4. 用[告警排障手册](runbooks/alerts_zh.md)执行排查，用 [Lark 通知集成](integrations/lark/README_zh.md)查看路由和消息格式。
+
+Lark 集成支持 `zh`、`en` 和 `bilingual` 三种消息语言。一次部署的共享告警只选择一种语言；同一条分组消息不能针对不同接收人分别翻译。
+
+例如，保留默认阈值并选择英文消息：
+
+```yaml
+observability:
+  mode: enabled
+  alerts:
+    language: en
+    thresholds:
+      acceleratorMemoryUsageRatio: 0.90
+      nvidiaTemperatureCelsius: 80
+```
+
+Alertmanager 负责通知接收方、分组和路由。Foretoken 提供告警表达式和默认阈值；如果设备或 workload 需要不同限制，可以通过 Chart values 覆盖。
 
 Foretoken 不管理性能剖析流程。调查可复现实验时，使用受控负载，并通过模型运行环境和硬件平台使用 PyTorch Profiler、Nsight Systems 或 Nsight Compute。性能剖析会影响服务性能，应记录模型、负载、硬件和运行参数。
 

@@ -11,6 +11,13 @@ This optional integration routes alerts labeled `service=foretoken` from an exis
 
 The manifest is a deployment source, not a second Alertmanager. Applying it creates an `AlertmanagerConfig` in the cluster. Keep the webhook URL in a Kubernetes Secret and never add it to this repository.
 
+The Chart adds a `notification_language` label to each alert. Set
+`observability.alerts.language` to `zh`, `en`, or `bilingual` when installing
+the Chart. The payload uses that label to render Chinese, English, or both
+languages. Because one Alertmanager message can contain several alerts, the
+choice applies to the deployment's shared messages rather than to individual
+recipients.
+
 ## Prerequisites
 
 - Prometheus Operator selects `AlertmanagerConfig` resources for the target Alertmanager;
@@ -43,7 +50,7 @@ If the Secret already exists, update it through the platform's secret-management
 
 ## Message contract
 
-The route selects `service=foretoken`, the common label installed by Foretoken's alert rules. The payload groups alerts by alert name, lists each affected target, reports firing and resolved timestamps in `Asia/Shanghai`, and includes `summary`, `description`, and `runbook_url` from each alert rule.
+The route selects `service=foretoken`, the common label installed by Foretoken's alert rules. The payload groups alerts by alert name, lists each affected target, reports firing and resolved timestamps in `Asia/Shanghai`, and selects the language-specific `summary` and `description` fields from each alert rule.
 
 Both normalized recording-rule labels such as `model_group` and raw ServiceMonitor labels such as `inference_foretoken_io_model_group` are handled because scrape failures occur before recording-rule normalization.
 

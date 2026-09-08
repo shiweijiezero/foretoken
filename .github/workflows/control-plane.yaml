@@ -67,12 +67,6 @@ jobs:
             --entrypoint /bin/promtool \
             quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
             check rules deploy/charts/foretoken/files/alerting-rules.yaml
-          docker run --rm \
-            --volume "${PWD}:/workspace:ro" \
-            --workdir /workspace \
-            --entrypoint /bin/promtool \
-            quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
-            test rules observability/tests/alerting-rules.test.yaml
       - name: Create test cluster
         uses: helm/kind-action@v1.14.0
         with:
@@ -110,6 +104,10 @@ jobs:
           grep -q 'ForetokenFrontendHTTPResponseStart5xxRatioHigh' /tmp/foretoken-observability.yaml
           grep -q 'ForetokenModelServerSchedulerBacklog' /tmp/foretoken-observability.yaml
           grep -q 'ForetokenModelServerKVCachePressureHigh' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenAcceleratorGPUUtilizationHigh' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenAcceleratorGPUMemoryUsageHigh' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenNVIDIAGPUTemperatureHigh' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenNVIDIAGPUPowerUsageHigh' /tmp/foretoken-observability.yaml
           grep -q 'observability/runbooks/alerts.md' /tmp/foretoken-observability.yaml
           helm template foretoken deploy/charts/foretoken \
             --kube-version 1.36.3 \

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Foretoken installs Prometheus collection, recording rules, and four optional alert rules for service metrics. Alertmanager routing and notifications remain owned by the platform team.
+Foretoken installs Prometheus collection, recording rules, and optional alert rules for service and accelerator signals. Alertmanager routing and notifications remain owned by the platform team.
 
 ## Install collection
 
@@ -97,12 +97,6 @@ kubectl get configmap \
   > /tmp/foretoken-system-overview.json
 ```
 
-When observability is enabled, the Chart also installs four warning rules: a metrics target that cannot be scraped, sustained Frontend response-start 5xx errors, a model-server scheduler backlog, and high KV-cache usage. Each alert carries the common `service=foretoken` label and requires the condition to persist before firing. Alertmanager owns notification receivers, grouping, and routing. Use the [alert runbooks](runbooks/alerts.md) to interpret each signal and investigate it without treating it as proof of a user-visible outage.
-
-To route these alerts through an existing Alertmanager to a Lark custom bot, install the optional [Lark notification integration](integrations/lark/README.md). The integration keeps its routing and message template in version control while the webhook URL remains in a cluster Secret.
-
-Foretoken does not define generic GPU temperature, power, utilization, or memory-pressure alerts. Those metrics and safe thresholds depend on the device platform and measured workload behavior.
-
 ## Metrics and recording rules
 
 | Source | Contents |
@@ -146,9 +140,30 @@ Rules preserve namespace, Frontend service, model group, model role, model name,
 
 A response may begin with `2xx` and fail later while streaming. Do not use `foretoken:frontend_http_response_start_5xx_ratio:rate5m` as an inference-success SLO.
 
-## Alerts and profiling
+## Alerts, Lark, and profiling
 
-Foretoken provides the alert expressions and thresholds in its Chart. Define notification receivers, grouping, and routing in the Prometheus and Alertmanager configuration owned by the platform team.
+When observability is enabled, the Chart renders alert rules alongside the recording rules. The shortest path to the implementation is:
+
+1. Set `observability.mode=enabled` (or use `auto`) in `deploy/charts/foretoken/values.yaml`.
+2. Read the thresholds and language options in `deploy/charts/foretoken/values.yaml`.
+3. Read the rule definitions in `deploy/charts/foretoken/files/alerting-rules.yaml` and their Chart rendering in `deploy/charts/foretoken/templates/alertingrule.yaml`.
+4. Use the [alert runbooks](runbooks/alerts.md) for operator actions, and the [Lark integration](integrations/lark/README.md) for routing and message formatting.
+
+The Lark integration supports `zh`, `en`, and `bilingual` messages. One deployment chooses one language for its shared alerts; a single grouped message cannot be translated differently for individual recipients.
+
+For example, keep the default thresholds but choose English messages:
+
+```yaml
+observability:
+  mode: enabled
+  alerts:
+    language: en
+    thresholds:
+      acceleratorMemoryUsageRatio: 0.90
+      nvidiaTemperatureCelsius: 80
+```
+
+Alertmanager owns notification receivers, grouping, and routing. Foretoken provides the alert expressions and default thresholds; override them through the Chart values when the device and workload require different limits.
 
 Foretoken does not manage a profiling workflow. For a reproducible investigation, run a controlled workload and use PyTorch Profiler, Nsight Systems, or Nsight Compute through the model runtime and hardware platform. Profiling changes serving performance; record the model, load, hardware, and runtime settings with the result.
 

@@ -12,5 +12,11 @@ metadata:
   labels:
     {{- include "foretoken.observabilityLabels" . | nindent 4 }}
 spec:
-{{ .Files.Get "files/alerting-rules.yaml" | nindent 2 }}
+{{- $rules := .Files.Get "files/alerting-rules.yaml" -}}
+{{- $rules = replace "foretoken_alert_language" (.Values.observability.alerts.language | toString) $rules -}}
+{{- $rules = replace "foretoken_alert_threshold_accelerator_utilization_ratio" (.Values.observability.alerts.thresholds.acceleratorUtilizationRatio | toString) $rules -}}
+{{- $rules = replace "foretoken_alert_threshold_accelerator_memory_usage_ratio" (.Values.observability.alerts.thresholds.acceleratorMemoryUsageRatio | toString) $rules -}}
+{{- $rules = replace "foretoken_alert_threshold_nvidia_temperature_celsius" (.Values.observability.alerts.thresholds.nvidiaTemperatureCelsius | toString) $rules -}}
+{{- $rules = replace "foretoken_alert_threshold_nvidia_power_watts" (.Values.observability.alerts.thresholds.nvidiaPowerWatts | toString) $rules -}}
+{{ $rules | nindent 2 }}
 {{- end }}

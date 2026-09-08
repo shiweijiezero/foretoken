@@ -11,6 +11,20 @@ Foretoken alerts are sustained warning signals. They do not trigger remediation
 and do not by themselves prove a user-visible outage. Start with the labels on
 the alert, then confirm the signal against the current Kubernetes state.
 
+The rules stay in one source file; use this table to choose the relevant
+runbook instead of looking for one file per algorithm:
+
+| Alert | Signal | Default persistence |
+| --- | --- | --- |
+| `ForetokenMetricsTargetDown` | A discovered Frontend or model-server `/metrics` target cannot be scraped | 5 minutes |
+| `ForetokenFrontendHTTPResponseStart5xxRatioHigh` | Frontend response-start 5xx ratio is high while traffic exists | 10 minutes |
+| `ForetokenModelServerSchedulerBacklog` | Aggregated vLLM stage scheduler waiting queue is nonzero | 10 minutes |
+| `ForetokenModelServerKVCachePressureHigh` | Maximum vLLM KV-cache usage is high | 10 minutes |
+| `ForetokenAcceleratorGPUUtilizationHigh` | Normalized NVIDIA or MetaX GPU utilization is high | 15 minutes |
+| `ForetokenAcceleratorGPUMemoryUsageHigh` | Normalized NVIDIA or MetaX GPU memory usage is high | 10 minutes |
+| `ForetokenNVIDIAGPUTemperatureHigh` | NVIDIA GPU temperature exceeds the configured threshold | 10 minutes |
+| `ForetokenNVIDIAGPUPowerUsageHigh` | NVIDIA GPU power usage exceeds the configured threshold | 10 minutes |
+
 Inspect the resources in the affected namespace:
 
 ```bash
@@ -81,11 +95,36 @@ fleet average; the engine contributing the maximum can change over time. The
 95% threshold is an initial warning policy and should be tuned from measured
 workload behavior.
 
-## Why there are no generic GPU threshold alerts
+## ForetokenAcceleratorGPUUtilizationHigh
 
-Foretoken does not currently define portable temperature, power, utilization,
-or memory-pressure alerts. Device vendors expose different metrics, and safe
-thresholds depend on the hardware and workload. The platform that owns the GPU
-exporter should define hardware-specific policy from measured limits. Foretoken
-can add accelerator alerts after it has a stable cross-platform signal and a
-clear operator response.
+Normalized NVIDIA or MetaX utilization has stayed above the configured
+threshold. Check recent request rate, scheduler waiting and running requests,
+and the affected node or device before adding capacity.
+
+## ForetokenAcceleratorGPUMemoryUsageHigh
+
+Normalized GPU memory usage has stayed above the configured threshold. Check
+KV-cache pressure, request lengths, model replicas, and per-device hotspots;
+high memory use alone does not identify the cause of a failure.
+
+## ForetokenNVIDIAGPUTemperatureHigh
+
+An NVIDIA DCGM temperature reading has stayed above the configured threshold.
+Check node airflow, device health, power usage, and workload placement. This
+rule is absent when the cluster does not expose the NVIDIA DCGM metric.
+
+## ForetokenNVIDIAGPUPowerUsageHigh
+
+An NVIDIA DCGM power reading has stayed above the configured threshold. Compare
+the reading with the device power limit and workload, then inspect thermal and
+node health before changing capacity. This rule is absent without the DCGM
+metric.
+
+## GPU threshold policy
+
+The Chart provides default thresholds for normalized utilization and memory
+pressure, plus NVIDIA temperature and power readings. Override them in
+`observability.alerts.thresholds` when installing the Chart. Utilization and
+memory rules cover NVIDIA and MetaX normalized metrics; temperature and power
+currently apply only when the NVIDIA DCGM metrics exist. These are warning
+signals for capacity and thermal review, not automatic remediation.

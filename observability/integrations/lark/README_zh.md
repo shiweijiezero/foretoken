@@ -11,6 +11,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 这里的清单是部署来源，不会创建第二套 Alertmanager。应用清单后，集群中会生成一个 `AlertmanagerConfig`。Webhook URL 必须保存在 Kubernetes Secret 中，不得写入仓库。
 
+Chart 会为每条告警添加 `notification_language` 标签。安装 Chart 时将
+`observability.alerts.language` 设为 `zh`、`en` 或 `bilingual`，Payload 就会选择中文、英文或双语消息。由于一条 Alertmanager 消息可能包含多条告警，这个选择作用于一次部署共享的消息，不能针对同一条消息中的不同接收人单独选择语言。
+
 ## 前提条件
 
 - Prometheus Operator 会为目标 Alertmanager 选择 `AlertmanagerConfig`；
@@ -43,7 +46,7 @@ kubectl apply \
 
 ## 消息契约
 
-路由选择 Foretoken 告警规则统一添加的 `service=foretoken` 标签。Payload 按告警名称分组，逐一列出受影响目标，以 `Asia/Shanghai` 显示触发和解除时间，并显示每条告警规则提供的 `summary`、`description` 和 `runbook_url`。
+路由选择 Foretoken 告警规则统一添加的 `service=foretoken` 标签。Payload 按告警名称分组，逐一列出受影响目标，以 `Asia/Shanghai` 显示触发和解除时间，并根据语言选择每条告警规则的中文或英文 `summary`、`description` 和 `runbook_url`。
 
 模板同时处理 `model_group` 这类记录规则标准化标签，以及 `inference_foretoken_io_model_group` 这类 ServiceMonitor 原始标签，因为抓取失败发生在记录规则标准化之前。
 
