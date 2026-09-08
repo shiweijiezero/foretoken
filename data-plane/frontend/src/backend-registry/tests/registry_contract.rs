@@ -212,7 +212,7 @@ fn telemetry(at_ms: u64, tokens: u64, histogram: CumulativeHistogram) -> Telemet
         collected_at_unix_ms: at_ms,
         accepting: true,
         running_requests: 0,
-        max_concurrent_requests: 1,
+        max_concurrent_requests: Some(1),
         scheduler_running_requests: Some(0),
         scheduler_waiting_requests: Some(0),
         kv_cache_usage: Some(0.0),
@@ -328,7 +328,7 @@ async fn aggregate_readiness_preserves_frontend_owned_capabilities() {
     );
     assert_eq!(registry.effective_max_model_len("model"), Some(32_768));
     assert_eq!(
-        registry.effective_model_dtype("model"),
+        registry.effective_model_dtype("model").unwrap(),
         Some(ModelDtype::BFloat16)
     );
 }

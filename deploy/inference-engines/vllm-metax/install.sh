@@ -49,13 +49,13 @@ fi
 
 # The vendor script configures compilers and shared libraries; activation also supports running vLLM.
 {
+  printf 'export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}\n'
   printf 'source %q %q\n' "$prefix/third_party/vllm-metax/env.sh" "$maca_path"
   printf 'export CPATH=%q${CPATH:+:$CPATH}\n' "$maca_path/include:$maca_path/include/mcr"
   printf 'export CUBRIDGE_HOME=%q\n' "$prefix"
   printf 'export CUDA_PATH=%q\n' "$prefix/cu-bridge/CUDA_DIR"
   printf 'source %q\n' "$prefix/.venv/bin/activate"
 } > "$prefix/activate"
-export LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-}
 # shellcheck source=/dev/null
 source "$prefix/activate"
 

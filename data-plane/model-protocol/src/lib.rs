@@ -169,7 +169,8 @@ pub struct TelemetryResponse {
     pub collected_at_unix_ms: u64,
     pub accepting: bool,
     pub running_requests: u64,
-    pub max_concurrent_requests: u64,
+    /// Sum of engine-reported scheduler capacities, or `None` when any capacity is unknown.
+    pub max_concurrent_requests: Option<u64>,
     pub scheduler_running_requests: Option<u64>,
     pub scheduler_waiting_requests: Option<u64>,
     pub kv_cache_usage: Option<f64>,

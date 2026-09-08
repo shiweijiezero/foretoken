@@ -134,9 +134,10 @@ impl BackendRegistry {
             .min()
     }
 
-    /// Returns one consistent engine-reported dtype across healthy components.
-    pub fn effective_model_dtype(&self, model: &str) -> Option<ModelDtype> {
-        let mut dtypes = self
+    /// Resolves runtime preparation's shared dtype, retaining text-only operation when it is unknown.
+    /// Conflicting reported values are an invalid model configuration, not missing metadata.
+    pub fn effective_model_dtype(&self, model: &str) -> Result<Option<ModelDtype>, String> {
+        let dtypes = self
             .model_routes
             .routes()
             .iter()
@@ -145,10 +146,20 @@ impl BackendRegistry {
             })
             .filter_map(|route| self.metadata(&route.route_target_id))
             .map(|metadata| metadata.model_dtype);
-        let dtype = dtypes.next()??;
-        dtypes
-            .all(|candidate| candidate == Some(dtype))
-            .then_some(dtype)
+        let mut effective = None;
+        let mut unknown = false;
+        for dtype in dtypes {
+            match dtype {
+                Some(dtype) => {
+                    if effective.is_some_and(|previous| previous != dtype) {
+                        return Err(format!("conflicting runtime dtypes for model {model}"));
+                    }
+                    effective = Some(dtype);
+                }
+                None => unknown = true,
+            }
+        }
+        Ok(effective.filter(|_| !unknown))
     }
 
     /// Reports whether one logical model currently has an executable backend path.

@@ -1,5 +1,5 @@
 diff --git a/rust/src/engine-core-client/src/client.rs b/rust/src/engine-core-client/src/client.rs
-index d1c20ad58..a8714fcaa 100644
+index d1c20ad58..8a4c9b9df 100644
 --- a/rust/src/engine-core-client/src/client.rs
 +++ b/rust/src/engine-core-client/src/client.rs
 @@ -17,7 +17,7 @@ use crate::error::{Error, Result};
@@ -43,7 +43,7 @@ index d1c20ad58..a8714fcaa 100644
      ) -> Result<Self> {
          let (output_tx, output_rx) = mpsc::channel(64);
          let (abort_tx, abort_rx) = mpsc::unbounded_channel();
-@@ -293,6 +302,7 @@ impl EngineCoreClient {
+@@ -293,10 +302,12 @@ impl EngineCoreClient {
              runtime.handle().clone(),
              config.model_name.clone(),
              &engines,
@@ -51,7 +51,20 @@ index d1c20ad58..a8714fcaa 100644
          ));
          let output_task = AbortOnDropHandle::new(runtime.spawn(transport::run_output_loop(
              connected.output_socket,
-@@ -406,7 +416,14 @@ impl EngineCoreClient {
+             output_tx,
++            protocol,
+         )));
+         let dispatcher_task = AbortOnDropHandle::new(
+             runtime.spawn(run_output_dispatcher_loop(inner.clone(), output_rx)),
+@@ -318,6 +329,7 @@ impl EngineCoreClient {
+                     AbortOnDropHandle::new(runtime.spawn(transport::run_output_loop(
+                         coordinator_transport.output_socket,
+                         coordinator_output_tx,
++                        protocol,
+                     )));
+                 let coordinator_task = AbortOnDropHandle::new(
+                     runtime.spawn(runner.run(coordinator_output_rx, inner.clone())),
+@@ -406,7 +418,14 @@ impl EngineCoreClient {
              .ready_response
      }
      /// Return the engine-reported effective model dtype.
@@ -66,7 +79,7 @@ index d1c20ad58..a8714fcaa 100644
          self.engines
              .first()
              .expect("engine core client requires at least one engine")
-@@ -421,7 +438,8 @@ impl EngineCoreClient {
+@@ -421,7 +440,8 @@ impl EngineCoreClient {
              .expect("engine core client requires at least one engine")
              .ready_response
              .vllm_version
@@ -76,7 +89,7 @@ index d1c20ad58..a8714fcaa 100644
      }
 
      /// Return the total number of GPU blocks summed across all connected
-@@ -449,6 +467,7 @@ impl EngineCoreClient {
+@@ -449,6 +469,7 @@ impl EngineCoreClient {
              .expect("engine core client requires at least one engine")
              .ready_response
              .world_size
@@ -265,8 +278,65 @@ index a4e1cebde..fea142b73 100644
      pub kv_cache_max_concurrency: Option<f64>,
      /// KV-event publisher configuration, if configured.
      #[serde(default)]
+diff --git a/rust/src/engine-core-client/src/protocol/output.rs b/rust/src/engine-core-client/src/protocol/output.rs
+index a9695bd1c..d7add5448 100644
+--- a/rust/src/engine-core-client/src/protocol/output.rs
++++ b/rust/src/engine-core-client/src/protocol/output.rs
+@@ -12,6 +12,7 @@ use serde_tuple::{Deserialize_tuple, Serialize_tuple};
+ use super::utility::UtilityOutput;
+ use crate::error::{Error, Result, ext_value_decode};
+ use crate::protocol::logprobs::MaybeWireLogprobs;
++use crate::protocol::request::EngineCoreProtocol;
+ use crate::protocol::stats::{PrefillStats, SchedulerStats};
+ use crate::protocol::{OpaqueValue, decode_msgpack};
+
+@@ -364,9 +365,42 @@ pub fn decode_engine_core_outputs<Frame>(frames: &[Frame]) -> Result<EngineCoreO
+ where
+     Frame: AsRef<[u8]>,
+ {
+-    let first_frame = frames.first().ok_or_else(|| ext_value_decode!("missing output frame"))?;
++    decode_engine_core_outputs_for(frames, EngineCoreProtocol::V0_28)
++}
+
+-    let mut outputs: EngineCoreOutputs = decode_msgpack(first_frame.as_ref())?;
++/// Decode a release-specific output layout while keeping tensor auxiliary-frame indices unchanged.
++pub fn decode_engine_core_outputs_for<Frame>(
++    frames: &[Frame],
++    protocol: EngineCoreProtocol,
++) -> Result<EngineCoreOutputs>
++where
++    Frame: AsRef<[u8]>,
++{
++    let first_frame = frames.first().ok_or_else(|| ext_value_decode!("missing output frame"))?;
++    let mut outputs: EngineCoreOutputs = if matches!(
++        protocol,
++        EngineCoreProtocol::V0_20 | EngineCoreProtocol::V0_21ToV0_25
++    ) {
++        // v0.26 inserted EC metadata at position 9; normalize older arrays before typed decoding.
++        let mut value = crate::protocol::decode_value(first_frame.as_ref())?;
++        if let rmpv::Value::Array(envelope) = &mut value
++            && let Some(rmpv::Value::Array(batch)) = envelope.get_mut(1)
++        {
++            for output in batch {
++                if let rmpv::Value::Array(fields) = output
++                    && fields.len() > 9
++                {
++                    fields.insert(9, rmpv::Value::Nil);
++                }
++            }
++        }
++        rmpv::ext::from_value(value).map_err(|error| Error::Decode {
++            target_type: "EngineCoreOutputs",
++            message: error.to_string(),
++        })?
++    } else {
++        decode_msgpack(first_frame.as_ref())?
++    };
+     outputs.resolve_in_place(frames)?;
+     Ok(outputs)
+ }
 diff --git a/rust/src/engine-core-client/src/protocol/request.rs b/rust/src/engine-core-client/src/protocol/request.rs
-index 8118b770e..0bc2cbffe 100644
+index 8118b770e..cab093d56 100644
 --- a/rust/src/engine-core-client/src/protocol/request.rs
 +++ b/rust/src/engine-core-client/src/protocol/request.rs
 @@ -4,7 +4,8 @@
@@ -279,7 +349,7 @@ index 8118b770e..0bc2cbffe 100644
  use serde_default::DefaultFromSerde;
  use serde_tuple::{Deserialize_tuple, Serialize_tuple};
 
-@@ -129,7 +130,70 @@ pub struct EngineCoreRequest {
+@@ -129,7 +130,100 @@ pub struct EngineCoreRequest {
      pub session_id: Option<String>,
  }
 
@@ -288,8 +358,10 @@ index 8118b770e..0bc2cbffe 100644
 +pub enum EngineCoreProtocol {
 +    /// vLLM 0.20 places `client_index` directly after `prompt_embeds`.
 +    V0_20,
-+    /// vLLM 0.21 through 0.27 include `prompt_is_token_ids` before `client_index`.
-+    V0_21ToV0_27,
++    /// vLLM 0.21 through 0.25 add `prompt_is_token_ids` to requests.
++    V0_21ToV0_25,
++    /// vLLM 0.26 and 0.27 also add `ec_transfer_params` to outputs.
++    V0_26ToV0_27,
 +    /// vLLM 0.28 appends `session_id` to the request.
 +    V0_28,
 +}
@@ -341,6 +413,34 @@ index 8118b770e..0bc2cbffe 100644
  impl EngineCoreRequest {
 +    /// Encode this request with the field layout expected by the selected vLLM release.
 +    pub fn encode_for(&self, protocol: EngineCoreProtocol) -> Result<Vec<u8>> {
++        let legacy = protocol == EngineCoreProtocol::V0_20;
++        // Defaults can be omitted, but unsupported request semantics must not disappear on the wire.
++        for (field, unsupported) in [
++            (
++                "session_id",
++                protocol != EngineCoreProtocol::V0_28 && self.session_id.is_some(),
++            ),
++            (
++                "prompt_is_token_ids",
++                legacy && self.prompt_is_token_ids.is_some(),
++            ),
++            ("abort_immediately", legacy && self.abort_immediately),
++            (
++                "reasoning_parser_kwargs",
++                legacy
++                    && self
++                        .reasoning_parser_kwargs
++                        .as_ref()
++                        .is_some_and(|kwargs| !kwargs.chat_template_kwargs.is_empty()),
++            ),
++        ] {
++            if unsupported {
++                return Err(Error::UnsupportedField {
++                    context: "selected EngineCore protocol",
++                    field,
++                });
++            }
++        }
 +        crate::protocol::encode_msgpack(&VersionedRequest {
 +            request: self,
 +            protocol,
@@ -350,6 +450,37 @@ index 8118b770e..0bc2cbffe 100644
      /// Validate fields intentionally not supported in the first-stage client.
      pub fn validate(&self) -> Result<()> {
          if self.prompt_embeds.is_some() {
+diff --git a/rust/src/engine-core-client/src/transport.rs b/rust/src/engine-core-client/src/transport.rs
+index 7aac8774c..a27bee516 100644
+--- a/rust/src/engine-core-client/src/transport.rs
++++ b/rust/src/engine-core-client/src/transport.rs
+@@ -21,7 +21,8 @@ use crate::error::{Error, Result, bail_unexpected_handshake_message};
+ use crate::protocol::handshake::{
+     EngineCoreReadyResponse, HandshakeAddresses, HandshakeInitMessage, ReadyMessage,
+ };
+-use crate::protocol::output::{EngineCoreOutputs, decode_engine_core_outputs};
++use crate::protocol::output::{EngineCoreOutputs, decode_engine_core_outputs_for};
++use crate::protocol::request::EngineCoreProtocol;
+ use crate::protocol::{decode_msgpack, encode_msgpack};
+
+ /// Dedicated single-frame sentinel emitted by Python `EngineCoreProc` when the
+@@ -553,6 +554,7 @@ pub async fn send_message(
+ pub async fn run_output_loop(
+     mut output_socket: PullSocket,
+     tx: mpsc::Sender<Result<EngineCoreOutputs>>,
++    protocol: EngineCoreProtocol,
+ ) {
+     loop {
+         let message = match output_socket.recv().await {
+@@ -577,7 +579,7 @@ pub async fn run_output_loop(
+             let _ = tx.send(Err(Error::EngineCoreDead)).await;
+             return;
+         }
+-        let decoded = match decode_engine_core_outputs(&frames) {
++        let decoded = match decode_engine_core_outputs_for(&frames, protocol) {
+             Ok(decoded) => {
+                 trace!(frame_len, outputs = ?decoded, "decoded output message");
+                 Ok(decoded)
 diff --git a/rust/src/server/src/grpc/control.rs b/rust/src/server/src/grpc/control.rs
 index 201d8ace9..7fd506571 100644
 --- a/rust/src/server/src/grpc/control.rs

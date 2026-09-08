@@ -53,7 +53,7 @@ vllm serve Qwen/Qwen3-0.6B
 
 ### 从 MACA SDK 镜像构建
 
-准备一个安装了匹配 MACA SDK 的 Ubuntu/Debian 镜像，不要求它含有 PyTorch、mcoplib 或 vLLM。构建需要支持 BuildKit 的 Docker：
+准备一个安装了匹配 MACA SDK 的 Ubuntu 24.04 镜像，或系统 Python 和开发头文件为 3.12 的 Debian 系镜像。不要求镜像含有 PyTorch、mcoplib 或 vLLM。构建需要支持 BuildKit 的 Docker：
 
 ```bash
 METAX_SDK_IMAGE=<maca-sdk-image> \
@@ -75,18 +75,27 @@ make image-model-server
 
 将解释器路径改为目标镜像实际提供 vLLM 的 Python 路径。构建结果同样为 `foretoken-model-server:dev`。
 
-## 将镜像提供给集群
+## 构建前端并将镜像提供给集群
+
+无论选择哪条 model-server 构建路径，都需要从同一份 Foretoken 源码构建 frontend：
+
+```bash
+make image-frontend
+```
 
 将 `<registry>/<project>` 替换为 GPU 节点可访问的镜像仓库：
 
 ```bash
 export MODEL_SERVER_IMAGE=<registry>/<project>/foretoken-model-server:metax-v0.24.0
+export FRONTEND_IMAGE=<registry>/<project>/foretoken-frontend:metax-v0.24.0
 
 docker tag foretoken-model-server:dev "$MODEL_SERVER_IMAGE"
+docker tag foretoken-frontend:dev "$FRONTEND_IMAGE"
 docker push "$MODEL_SERVER_IMAGE"
+docker push "$FRONTEND_IMAGE"
 ```
 
-离线集群可由节点管理员导入镜像，具体方式见[源码镜像生命周期](development/source-image-lifecycle_zh.md)。`runtime.vllm.image` 必须与实际导入的镜像名称和 tag 一致。
+离线集群可由节点管理员导入这两个镜像，具体方式见[源码镜像生命周期](development/source-image-lifecycle_zh.md)。`frontend.image` 与 `runtime.vllm.image` 必须与实际导入的镜像名称和 tag 一致。
 
 ## 配置并安装 Foretoken
 
@@ -97,6 +106,8 @@ docker push "$MODEL_SERVER_IMAGE"
 创建 `metax-values.yaml`，把 image 改为上一步发布或导入的完整名称：
 
 ```yaml
+frontend:
+  image: <registry>/<project>/foretoken-frontend:metax-v0.24.0
 runtime:
   vllm:
     image: <registry>/<project>/foretoken-model-server:metax-v0.24.0
@@ -166,7 +177,7 @@ curl --fail-with-body --no-buffer \
 
 使用 `foretoken delete examples/quickstart` 删除示例。只有平台安装负责人才能执行 `foretoken uninstall`；本机 uv 环境和构建镜像由创建者管理。
 
-- **安装依赖冲突：** 检查所选 release 与官方矩阵，保留 uv 的原始依赖错误，不跳过依赖或随意降级原生库。
+- **安装失败：** 先查看下载、构建或依赖求解的原始错误。未完成的目录会保留供排查；解决原因后，用新的安装目录重试。依赖冲突应核对官方版本矩阵，不跳过必需包。
 - **无法加载 MACA 库：** 确认已激活安装目录中的 `activate`，SDK 与驱动兼容；容器需要由设备插件或运行时提供驱动与设备。
 - **Pod 一直 Pending：** 用 `kubectl describe pod` 检查 GPU 和其他资源是否足够。
 - **无法导入 `torch` 或 `vllm`：** 检查 `FORETOKEN_VLLM_PYTHON` 指向的环境，不要使用宿主机的解释器路径配置 Pod。

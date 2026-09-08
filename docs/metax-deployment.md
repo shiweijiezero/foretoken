@@ -53,7 +53,7 @@ This combination has been validated for text generation and JSON-constrained out
 
 ### Build from a MACA SDK image
 
-Provide an Ubuntu/Debian image with a matching MACA SDK. It does not need PyTorch, mcoplib, or vLLM installed. Building requires Docker with BuildKit:
+Provide an Ubuntu 24.04 image with a matching MACA SDK, or a Debian-based image whose system Python and development headers are 3.12. It does not need PyTorch, mcoplib, or vLLM installed. Building requires Docker with BuildKit:
 
 ```bash
 METAX_SDK_IMAGE=<maca-sdk-image> \
@@ -75,18 +75,27 @@ make image-model-server
 
 Use the actual interpreter path that provides vLLM in the selected image. This also produces `foretoken-model-server:dev`.
 
-## Distribute the image
+## Build the frontend and distribute images
+
+Both model-server build paths require a frontend from the same Foretoken checkout:
+
+```bash
+make image-frontend
+```
 
 Replace `<registry>/<project>` with a registry reachable by the GPU nodes:
 
 ```bash
 export MODEL_SERVER_IMAGE=<registry>/<project>/foretoken-model-server:metax-v0.24.0
+export FRONTEND_IMAGE=<registry>/<project>/foretoken-frontend:metax-v0.24.0
 
 docker tag foretoken-model-server:dev "$MODEL_SERVER_IMAGE"
+docker tag foretoken-frontend:dev "$FRONTEND_IMAGE"
 docker push "$MODEL_SERVER_IMAGE"
+docker push "$FRONTEND_IMAGE"
 ```
 
-For offline clusters, a node administrator can import the image as described in the [source image lifecycle guide](development/source-image-lifecycle.md). `runtime.vllm.image` must match the exact imported image name and tag.
+For offline clusters, a node administrator can import both images as described in the [source image lifecycle guide](development/source-image-lifecycle.md). `frontend.image` and `runtime.vllm.image` must match the exact imported names and tags.
 
 ## Configure and install Foretoken
 
@@ -97,6 +106,8 @@ The maintained single-model example runs two frontend replicas and one model rep
 Create `metax-values.yaml`, using the complete image name published or imported above:
 
 ```yaml
+frontend:
+  image: <registry>/<project>/foretoken-frontend:metax-v0.24.0
 runtime:
   vllm:
     image: <registry>/<project>/foretoken-model-server:metax-v0.24.0
@@ -166,7 +177,7 @@ A completed stream ends with `data: [DONE]`.
 
 Delete the example with `foretoken delete examples/quickstart`. Only the platform owner should run `foretoken uninstall`. Local uv environments and images remain under the responsibility of their creator.
 
-- **Dependency resolution fails:** check the release matrix and retain uv's original diagnostic. Do not skip dependencies or arbitrarily downgrade native libraries.
+- **Installation fails:** inspect the original download, build, or dependency error. The incomplete directory is retained for diagnosis; retry with a new installation directory after resolving the cause. For dependency conflicts, check the release matrix rather than skipping required packages.
 - **MACA libraries cannot load:** source the installation's `activate` script and check SDK/driver compatibility. Container devices and driver libraries must be provided by the device plugin or container runtime.
 - **A Pod remains Pending:** use `kubectl describe pod` to check GPU and other resource availability.
 - **`torch` or `vllm` cannot be imported:** inspect the environment selected by `FORETOKEN_VLLM_PYTHON`; a host interpreter path does not configure a Pod's environment.

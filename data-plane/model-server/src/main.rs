@@ -25,7 +25,6 @@ use vllm_managed_engine::{ManagedEngineHandle, allocate_handshake_port};
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
 const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
-const LEGACY_ENGINE_MAX_CONCURRENT_REQUESTS: u64 = 1;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -80,17 +79,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut client_health = client.subscribe_health();
-    let max_concurrent_requests = client
-        .ready_responses()
-        .into_iter()
-        .try_fold(0_u64, |total, ready| {
-            total.checked_add(
-                ready
-                    .max_num_seqs
-                    .unwrap_or(LEGACY_ENGINE_MAX_CONCURRENT_REQUESTS),
-            )
-        })
-        .ok_or_else(|| std::io::Error::other("EngineCore max_num_seqs sum overflowed"))?;
+    let max_concurrent_requests =
+        client
+            .ready_responses()
+            .into_iter()
+            .try_fold(Some(0_u64), |total, ready| {
+                let (Some(total), Some(limit)) = (total, ready.max_num_seqs) else {
+                    return Ok(None);
+                };
+                total
+                    .checked_add(limit)
+                    .map(Some)
+                    .ok_or_else(|| std::io::Error::other("EngineCore max_num_seqs sum overflowed"))
+            })?;
     let metadata = RuntimeMetadataResponse {
         version: 1,
         model: RuntimeModelIdentity {
@@ -222,7 +223,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-/// Select the request encoding from the installed Python vLLM version before engine startup.
+/// Select request and output layouts from the installed Python vLLM version before engine startup.
 async fn detect_engine_protocol(
     python: &str,
 ) -> Result<EngineCoreProtocol, Box<dyn std::error::Error>> {
@@ -239,7 +240,8 @@ async fn detect_engine_protocol(
     let minor = parts.next().and_then(|part| part.parse::<u64>().ok());
     match (major, minor) {
         (Some(0), Some(20)) => Ok(EngineCoreProtocol::V0_20),
-        (Some(0), Some(21..=27)) => Ok(EngineCoreProtocol::V0_21ToV0_27),
+        (Some(0), Some(21..=25)) => Ok(EngineCoreProtocol::V0_21ToV0_25),
+        (Some(0), Some(26..=27)) => Ok(EngineCoreProtocol::V0_26ToV0_27),
         (Some(0), Some(28)) => Ok(EngineCoreProtocol::V0_28),
         _ => Err(format!(
             "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.28"
