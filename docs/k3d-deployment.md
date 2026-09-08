@@ -117,11 +117,6 @@ done
 Create a single-server cluster:
 
 ```bash
-if k3d cluster get "$CLUSTER" >/dev/null 2>&1; then
-  printf 'Cluster %s already exists; choose another name or delete it explicitly.\n' "$CLUSTER" >&2
-  exit 1
-fi
-
 k3d cluster create "$CLUSTER" \
   --config deploy/k3d/config.yaml \
   --gpus "\"device=$GPU_INDICES\"" \
@@ -177,6 +172,8 @@ uv pip install -e .
 ```bash
 foretoken install -e .
 foretoken deploy examples/quickstart --timeout 6m
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
 ### 4.2 Local mode

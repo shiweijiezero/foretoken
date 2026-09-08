@@ -327,9 +327,9 @@ async fn readiness_requires_runtime_metadata() {
     assert!(!registry.is_route_target_healthy(&RouteTargetId::new("a")));
 }
 
-// Protects rate windows, histogram aggregation, and counter-reset invalidation.
+// Protects rate windows and histogram reset handling while keeping current gauges available.
 #[tokio::test]
-async fn telemetry_history_derives_windows_and_rejects_counter_resets() {
+async fn telemetry_history_derives_windows_and_resets_counter_history() {
     let telemetry_state = Arc::new(Mutex::new(telemetry(1_000, 100, histogram(2, 0.2, 1))));
     let endpoint = serve_model_server_with_telemetry(telemetry_state.clone()).await;
     let registry = BackendRegistry::from_snapshot(aggregate_snapshot(endpoint)).unwrap();
@@ -347,7 +347,11 @@ async fn telemetry_history_derives_windows_and_rejects_counter_resets() {
 
     *telemetry_state.lock().unwrap() = telemetry(302_000, 10, histogram(1, 0.1, 1));
     registry.refresh_backend_readiness().await;
-    assert!(registry.stats(&target, Duration::from_secs(150)).is_none());
+    let stats = registry.stats(&target, Duration::from_secs(150)).unwrap();
+    assert_eq!(stats.observed_window, Duration::ZERO);
+    assert_eq!(stats.scheduler_running_requests, Some(0));
+    assert_eq!(stats.prompt_tokens_per_second, None);
+    assert_eq!(stats.ttft, None);
 
     telemetry_state.lock().unwrap().accepting = false;
     registry.refresh_backend_readiness().await;

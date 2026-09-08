@@ -117,11 +117,6 @@ done
 创建包含单个 server 节点的集群：
 
 ```bash
-if k3d cluster get "$CLUSTER" >/dev/null 2>&1; then
-  printf '集群 %s 已存在，请更换名称或显式删除已有集群。\n' "$CLUSTER" >&2
-  exit 1
-fi
-
 k3d cluster create "$CLUSTER" \
   --config deploy/k3d/config.yaml \
   --gpus "\"device=$GPU_INDICES\"" \
@@ -172,11 +167,13 @@ uv pip install -e .
 ### 4.1 选择部署方式
 
 - **使用发布镜像**：继续执行 [第 4.2 节：本地模式](#42-本地模式) 或 [第 4.3 节：网关模式](#43-网关模式)。
-- **以本地模式部署源码**：执行下面的完整命令，然后直接进入[第 4.4 节：发送请求](#44-发送-openai-api-兼容请求)。
+- **以本地模式部署源码**：执行下面的完整命令，然后直接进入[第 4.4 节：发送请求](#44-发送-openai-api-兼容格式的请求)。
 
 ```bash
 foretoken install -e .
 foretoken deploy examples/quickstart --timeout 6m
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
 ### 4.2 本地模式

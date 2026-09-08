@@ -36,6 +36,8 @@ kubectl get modelpool,modelgroup \
 In another terminal, run a bounded concurrent workload. It sends 32 requests with at most eight in flight:
 
 ```bash
+export FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
+
 seq 1 32 | xargs -P8 -I{} sh -c '
   curl --fail --silent --show-error \
     "$FRONTEND_URL/v1/chat/completions" \
