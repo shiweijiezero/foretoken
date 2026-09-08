@@ -110,6 +110,7 @@ spec:
                     type: integer
                   protocol:
                     enum:
+                    - tcp
                     - rdma
                     type: string
                   rdmaResourceCount:
@@ -193,10 +194,13 @@ spec:
                 - memoryCapacityBytes
                 - port
                 - protocol
-                - rdmaResourceCount
-                - rdmaResourceName
                 - resources
                 type: object
+                x-kubernetes-validations:
+                - message: resolved RDMA clients require resource name and count;
+                    TCP must omit RDMA resources
+                  rule: 'self.protocol == ''rdma'' ? has(self.rdmaResourceName) &&
+                    has(self.rdmaResourceCount) : !has(self.rdmaResourceName) && !has(self.rdmaResourceCount)'
               kvPoolRef:
                 description: LocalObjectReference identifies an object in the same
                   namespace by stable UID.

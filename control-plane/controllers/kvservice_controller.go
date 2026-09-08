@@ -203,20 +203,26 @@ func (reconciler *KVServiceReconciler) applyOwned(ctx context.Context, owner *in
 	current := desired.DeepCopyObject().(client.Object)
 	key := client.ObjectKeyFromObject(desired)
 	err := reconciler.Get(ctx, key, current)
-	if apierrors.IsNotFound(err) {
-		if err := controllerutil.SetControllerReference(owner, desired, reconciler.Scheme()); err != nil {
-			return err
-		}
-		return reconciler.Create(ctx, desired)
-	}
-	if err != nil {
+	missing := apierrors.IsNotFound(err)
+	if err != nil && !missing {
 		return err
 	}
-	if !metav1.IsControlledBy(current, owner) {
+	if !missing && !metav1.IsControlledBy(current, owner) {
 		return fmt.Errorf("%T %q is not controlled by KVService", current, current.GetName())
+	}
+	if err := controllerutil.SetControllerReference(owner, desired, reconciler.Scheme()); err != nil {
+		return err
+	}
+	if _, ok := desired.(*appsv1.Deployment); ok {
+		// 接管旧 Update writer 声明的 workload 字段，保留 Deployment controller 的 revision 注解。
+		return reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner("foretoken-kvservice"), client.ForceOwnership)
+	}
+	if missing {
+		return reconciler.Create(ctx, desired)
 	}
 	if desiredPVC, ok := desired.(*corev1.PersistentVolumeClaim); ok {
 		currentPVC := current.(*corev1.PersistentVolumeClaim)
+		preservePVCBindingAndMetadata(desiredPVC, currentPVC)
 		if retention, recorded := currentPVC.Annotations[snapshotRetentionAnnotation]; recorded {
 			desiredPVC.Annotations[snapshotRetentionAnnotation] = retention
 		}
@@ -229,9 +235,6 @@ func (reconciler *KVServiceReconciler) applyOwned(ctx context.Context, owner *in
 		desiredService.Spec.IPFamilyPolicy = currentService.Spec.IPFamilyPolicy
 	}
 	desired.SetResourceVersion(current.GetResourceVersion())
-	if err := controllerutil.SetControllerReference(owner, desired, reconciler.Scheme()); err != nil {
-		return err
-	}
 	return reconciler.Update(ctx, desired)
 }
 
@@ -296,13 +299,12 @@ func (reconciler *KVServiceReconciler) reconcilePools(ctx context.Context, servi
 	return nil
 }
 
+// normalizedKVPoolSpec 为新 Pool 固化客户端配置；显式零副本保留，RDMA 默认值不进入 TCP 配置。
 func normalizedKVPoolSpec(service *inferencev1alpha1.KVService, template inferencev1alpha1.KVStoragePoolTemplate) inferencev1alpha1.KVPoolSpec {
-	if template.Replicas == 0 { /* explicit zero is preserved; API defaulting supplies omitted value */
-	}
 	if template.Client.Port == 0 {
 		template.Client.Port = 50052
 	}
-	if template.Client.RDMAResourceCount == 0 {
+	if template.Client.Protocol == "rdma" && template.Client.RDMAResourceCount == 0 {
 		template.Client.RDMAResourceCount = 1
 	}
 	normalized := inferencev1alpha1.NormalizedKVPoolTemplate{Client: template.Client, NodeSelector: template.NodeSelector}

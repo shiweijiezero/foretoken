@@ -53,8 +53,9 @@ spec:
           metadata:
             type: object
           spec:
-            description: KVServiceSpec declares a Foretoken-owned Mooncake standalone
-              Store.
+            description: |-
+              KVServiceSpec declares a Foretoken-owned Mooncake standalone Store.
+              所有存储池使用相同协议，使模型请求端与任一存储客户端采用一致的传输方式。
             properties:
               backend:
                 enum:
@@ -272,11 +273,14 @@ spec:
                           minimum: 1
                           type: integer
                         protocol:
+                          description: Protocol 同时用于存储客户端和绑定此 KVService 的模型请求端。
                           enum:
+                          - tcp
                           - rdma
                           type: string
                         rdmaResourceCount:
-                          default: 1
+                          description: RDMAResourceCount 省略时由控制器为 RDMA 客户端解析为 1；TCP
+                            不使用此字段。
                           format: int32
                           minimum: 1
                           type: integer
@@ -358,13 +362,16 @@ spec:
                       - image
                       - memoryCapacity
                       - protocol
-                      - rdmaResourceName
                       - resources
                       type: object
                       x-kubernetes-validations:
                       - message: client.disk is required when standalone Store offload
                           is enabled
                         rule: has(self.disk)
+                      - message: RDMA requires rdmaResourceName; TCP must omit RDMA
+                          resources
+                        rule: 'self.protocol == ''rdma'' ? has(self.rdmaResourceName)
+                          : !has(self.rdmaResourceName) && !has(self.rdmaResourceCount)'
                       - message: client.memoryCapacity must be less than client.resources.requests.memory
                           to reserve runtime overhead
                         rule: quantity(self.memoryCapacity).compareTo(quantity(self.resources.requests.memory))
@@ -430,6 +437,8 @@ spec:
             - timeouts
             type: object
             x-kubernetes-validations:
+            - message: storagePools must use the same client protocol
+              rule: self.storagePools.all(pool, pool.client.protocol == self.storagePools[0].client.protocol)
             - message: storagePools names must be unique
               rule: 'self.storagePools.all(pool, self.storagePools.exists(other, other.name
                 == pool.name) ? self.storagePools.filter(other, other.name == pool.name).size()
