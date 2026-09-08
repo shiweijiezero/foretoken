@@ -20,8 +20,17 @@ members = [
     "frontend/src/tracing",
     "model-protocol",
     "model-server",
+    "xtask",
 ]
 exclude = ["third_party/vllm"]
+
+[workspace.metadata.foretoken]
+vllm_source = "third_party/vllm"
+vllm_patches = [
+    "patches/vllm-chat-request-processor.patch",
+    "patches/vllm-engine-core-version-compatibility.patch",
+    "patches/vllm-managed-engine-environment.patch",
+]
 
 [workspace.package]
 version = "0.0.1"

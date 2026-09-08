@@ -3,51 +3,26 @@
 
 # Provides build and verification entrypoints for the Rust data plane.
 
-DATA_PLANE_PACKAGES := \
-	foretoken-backend-registry \
-	foretoken-chat \
-	foretoken-frontend \
-	foretoken-kv-indexer \
-	foretoken-llm-facade \
-	foretoken-metrics \
-	foretoken-model-protocol \
-	foretoken-model-server \
-	foretoken-parser \
-	foretoken-router \
-	foretoken-runtime-builder \
-	foretoken-server \
-	foretoken-text \
-	foretoken-tokenizer \
-	foretoken-tracing
-DATA_PLANE_FMT_PACKAGES := $(foreach package,$(DATA_PLANE_PACKAGES),--package $(package))
-
 VLLM_METAX_VERSION ?= 0.24.0
 VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)
 
-.PHONY: vllm-source build-data-plane verify-data-plane dev-build dev-deploy \
+.PHONY: vllm-source build-data-plane format verify-data-plane dev-build dev-deploy \
 	image-frontend image-vllm-metax image-model-server image-model-server-metax \
 	image-benchmark
 
 vllm-source:
 	@test -f data-plane/third_party/vllm/rust/Cargo.toml || \
 		git submodule update --init data-plane/third_party/vllm
-	@set -e; for patch in \
-		vllm-chat-request-processor.patch \
-		vllm-engine-core-version-compatibility.patch \
-		vllm-managed-engine-environment.patch; do \
-		if ! git -C data-plane/third_party/vllm apply --reverse --check \
-			"../../patches/$$patch" >/dev/null 2>&1; then \
-			git -C data-plane/third_party/vllm apply "../../patches/$$patch"; \
-		fi; \
-	done
+	cd data-plane && cargo xtask prepare-vllm
 
 build-data-plane: vllm-source
-	cargo build --manifest-path data-plane/Cargo.toml --workspace --locked
+	cd data-plane && cargo xtask build
+
+format:
+	cd data-plane && cargo fmt --all
 
 verify-data-plane: vllm-source
-	cargo fmt --manifest-path data-plane/Cargo.toml $(DATA_PLANE_FMT_PACKAGES) -- --check
-	cargo test --manifest-path data-plane/Cargo.toml --workspace --locked
-	cargo clippy --manifest-path data-plane/Cargo.toml --workspace --all-targets --locked -- -D warnings
+	cd data-plane && cargo xtask check
 
 dev-build:
 	./deploy/dev-build
