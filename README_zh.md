@@ -31,16 +31,12 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-本快速开始需要 Python 3.10 以上版本、Git、配置了可扩容默认 `StorageClass` 的 Kubernetes 集群、`kubectl`、Helm、至少一块受支持的 GPU，以及可用的 `LoadBalancer`（k3d 使用 k3s ServiceLB 即可）。如需准备单机测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。默认运行时镜像适配 NVIDIA GPU；沐曦 GPU 使用[沐曦部署指南](docs/metax-deployment_zh.md)中的运行时镜像和平台配置。
+本快速开始需要 Python 3.10 以上版本、配置了可扩容默认 `StorageClass` 的 Kubernetes 集群、`kubectl`、Helm、至少一块受支持的 GPU，以及可用的 `LoadBalancer`（k3d 使用 k3s ServiceLB 即可）。如需准备单机测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。默认运行时镜像适配 NVIDIA GPU；沐曦 GPU 使用[沐曦部署指南](docs/metax-deployment_zh.md)中的运行时镜像和平台配置。
 
-### 1. 获取示例并安装命令行工具
-
-克隆发布版本以获取 Kubernetes 示例，后续命令均在仓库根目录执行。如果已有该版本的仓库，直接进入对应目录即可。
+### 1. 安装命令行工具
 
 ```bash
-git clone --depth 1 --branch v0.0.2 https://github.com/shiweijiezero/foretoken.git
-cd foretoken
-pip install foretoken==0.0.2
+pip install foretoken
 
 # 如果使用源码安装：
 # pip install -e .
@@ -61,6 +57,17 @@ foretoken install
 该命令会在 `foretoken-platform` 命名空间中安装 Foretoken CRD 和控制器，并等待控制器就绪。默认模式通过 `LoadBalancer` 类型的 Kubernetes `Service` 提供前端地址。源码安装会重新构建镜像并更新集群；如果要将当前源码部署到远程集群，请参阅[源码部署指南](docs/custom-deployment_zh.md)。
 
 ### 3. 部署快速开始示例
+
+下载示例配置：
+
+```bash
+mkdir -p examples/quickstart
+for file in kustomization.yaml namespace.yaml cache.yaml frontend.yaml model.yaml; do
+  curl --fail --location \
+    "https://raw.githubusercontent.com/shiweijiezero/foretoken/v0.0.2/examples/quickstart/$file" \
+    --output "examples/quickstart/$file"
+done
+```
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m

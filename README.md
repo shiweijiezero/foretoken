@@ -31,16 +31,12 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ## Quick Start
 
-This Quick Start requires Python 3.10+, Git, Kubernetes with an expandable default `StorageClass`, `kubectl`, Helm, at least one supported GPU, and a working `LoadBalancer` (k3s ServiceLB is sufficient for k3d). See the [k3d guide](docs/k3d-deployment.md) for a single-machine test cluster. The default runtime image targets NVIDIA GPUs; for MetaX GPUs, use the runtime image and platform values in the [MetaX deployment guide](docs/metax-deployment.md).
+This Quick Start requires Python 3.10+, Kubernetes with an expandable default `StorageClass`, `kubectl`, Helm, at least one supported GPU, and a working `LoadBalancer` (k3s ServiceLB is sufficient for k3d). See the [k3d guide](docs/k3d-deployment.md) for a single-machine test cluster. The default runtime image targets NVIDIA GPUs; for MetaX GPUs, use the runtime image and platform values in the [MetaX deployment guide](docs/metax-deployment.md).
 
-### 1. Get the examples and install the command-line tool
-
-Clone the release to obtain the Kubernetes examples, then run the remaining commands from its root directory. If you already have this checkout, use that directory instead.
+### 1. Install the command-line tool
 
 ```bash
-git clone --depth 1 --branch v0.0.2 https://github.com/shiweijiezero/foretoken.git
-cd foretoken
-pip install foretoken==0.0.2
+pip install foretoken
 
 # For source installation from the repository:
 # pip install -e .
@@ -61,6 +57,17 @@ foretoken install
 This installs the Foretoken CRDs and controller in the `foretoken-platform` namespace and waits for the controller to become ready. The default mode exposes the frontend through a `LoadBalancer` Service. Source installation rebuilds the images and updates the cluster; to deploy the current source to a remote cluster, see the [source deployment guide](docs/custom-deployment.md).
 
 ### 3. Deploy the Quick Start
+
+Download the example configuration:
+
+```bash
+mkdir -p examples/quickstart
+for file in kustomization.yaml namespace.yaml cache.yaml frontend.yaml model.yaml; do
+  curl --fail --location \
+    "https://raw.githubusercontent.com/shiweijiezero/foretoken/v0.0.2/examples/quickstart/$file" \
+    --output "examples/quickstart/$file"
+done
+```
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m
