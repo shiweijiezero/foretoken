@@ -46,8 +46,8 @@ packages = [
     "benchmarks",
     "benchmarks.config",
     "benchmarks.datasets",
-    "benchmarks.serving",
-    "benchmarks.experiments",
+    "benchmarks.request_execution",
+    "benchmarks.benchmark_compositions",
     "benchmarks.results",
 ]
 package-dir = { foretoken = "cli/foretoken", benchmarks = "benchmarks" }

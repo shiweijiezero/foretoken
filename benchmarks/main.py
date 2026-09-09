@@ -12,7 +12,7 @@ from contextlib import nullcontext
 from typing import Any
 
 from benchmarks.config.cli import parse_http_benchmark_arguments
-from benchmarks.serving.trace import ArrivalTraceBenchmark
+from benchmarks.request_execution.trace import ArrivalTraceBenchmark
 from benchmarks.config import HttpBenchmarkConfig
 from benchmarks.results.console import (
     configure_logging,
@@ -24,9 +24,9 @@ from benchmarks.deployment import (
     benchmark_endpoint_from_kustomize,
     direct_benchmark_endpoint,
 )
-from benchmarks.serving.standard import StandardHttpLoadBenchmark
-from benchmarks.experiments.multi_dataset import MultiDatasetBenchmark
-from benchmarks.experiments.sweep import ParameterSweepBenchmark
+from benchmarks.request_execution.standard import StandardHttpLoadBenchmark
+from benchmarks.benchmark_compositions.multi_dataset import MultiDatasetBenchmark
+from benchmarks.benchmark_compositions.sweep import ParameterSweepBenchmark
 from foretoken.manifest import DeploymentError
 
 logger = logging.getLogger(__name__)

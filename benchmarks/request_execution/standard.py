@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 from benchmarks.config import HttpBenchmarkConfig
 from benchmarks.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.serving.evalscope import run_evalscope_standard_load
+from benchmarks.request_execution.evalscope import run_evalscope_standard_load
 from benchmarks.results.publication import (
     ResultPublication,
     build_benchmark_run_record,

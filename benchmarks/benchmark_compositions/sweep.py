@@ -18,7 +18,7 @@ from benchmarks.config.sweep import (
     sweep_point_name,
 )
 from benchmarks.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.serving.standard import StandardHttpLoadBenchmark
+from benchmarks.request_execution.standard import StandardHttpLoadBenchmark
 from benchmarks.results.publication import open_local_result_directory
 from benchmarks.results.console import log_sweep_results
 from benchmarks.results.pareto import plot_sweep_pareto

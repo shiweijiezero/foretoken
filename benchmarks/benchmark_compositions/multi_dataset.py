@@ -13,7 +13,7 @@ from typing import Any
 
 from benchmarks.config import HttpBenchmarkConfig
 from benchmarks.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.serving.standard import StandardHttpLoadBenchmark
+from benchmarks.request_execution.standard import StandardHttpLoadBenchmark
 from benchmarks.results.metrics import (
     merge_request_measurements,
     summarize_http_measurements,
