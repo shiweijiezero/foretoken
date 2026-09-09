@@ -21,6 +21,7 @@ from benchmarks.performance.config import HttpBenchmarkConfig
 from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
 from benchmarks.performance.conversation import (
     load_chat_conversations,
+    resolve_tokenizer_path,
     split_chat_conversation,
 )
 from benchmarks.performance.metrics import generation_tokens_per_second_per_user
@@ -53,12 +54,15 @@ def _evalscope_arguments_type() -> tuple[str, type]:
 
     @register_api(EVALSCOPE_API)
     class ForetokenOpenaiPlugin(OpenaiPlugin):
-        """Reuse EvalScope OpenAI execution while omitting an unset temperature."""
+        """Adapt EvalScope requests to Foretoken's Chat Completions semantics."""
 
         def build_request(self, messages: Any, param: Any = None) -> dict[str, Any]:
-            """Build a request and restore Foretoken optional-temperature semantics."""
-            request = super().build_request(messages, param)
-            if self.param.omit_temperature:
+            """Wrap random text as one user turn and omit an unset temperature."""
+            effective_param = param or self.param
+            if isinstance(messages, str) and not effective_param.tokenize_prompt:
+                messages = [{"role": "user", "content": messages}]
+            request = super().build_request(messages, effective_param)
+            if effective_param.omit_temperature:
                 request.pop("temperature", None)
             return request
 
@@ -107,17 +111,7 @@ def _evalscope_arguments(
     schedule = benchmark.load_schedule
     generation = benchmark.generation
     dataset = benchmark.request_dataset
-    dataset_path, dataset_name = _materialize_evalscope_request_dataset(
-        benchmark, output_dir
-    )
-    if dataset_name == "custom_multi_turn" and (
-        schedule.unbounded_concurrency or schedule.arrival_rate != -1
-    ):
-        Path(dataset_path).unlink(missing_ok=True)
-        raise ValueError(
-            "Multi-turn conversations require --rate -1 and no --open-loop; "
-            "rate schedules independent requests"
-        )
+    is_random = dataset.dataset_selectors == ["random"]
     omit_temperature = (
         generation.temperature is None
         and "temperature" not in generation.extra_body
@@ -139,7 +133,7 @@ def _evalscope_arguments(
         "stream": generation.stream,
         "top_p": generation.top_p,
         "top_k": generation.top_k,
-        # EvalScope 1.11.1 requires a float here.  The Foretoken plugin removes
+        # EvalScope 1.11.1 requires a float here. The Foretoken plugin removes
         # this placeholder from the final request when no temperature was set.
         "temperature": (
             0.0 if generation.temperature is None else generation.temperature
@@ -164,23 +158,51 @@ def _evalscope_arguments(
         "no_timestamp": True,
         "name": "evalscope",
         "visualizer": None,
-        "multi_turn": dataset_name == "custom_multi_turn",
-        # EvalScope uses None for an unbounded custom conversation; -1 is
-        # Foretoken's explicit complete-conversation spelling.
-        "max_turns": (
-            None
-            if dataset_name == "line_by_line" or dataset.max_turns == -1
-            else dataset.max_turns
-        ),
         "omit_temperature": omit_temperature,
     }
-    argument_values.update(
-        {
-            "dataset": dataset_name,
-            "dataset_path": dataset_path,
-            "dataset_offset": 0,
-        }
-    )
+    if is_random:
+        argument_values.update(
+            {
+                "dataset": "random",
+                "dataset_offset": dataset.row_offset,
+                "tokenizer_path": resolve_tokenizer_path(dataset.tokenizer),
+                "min_prompt_length": dataset.minimum_prompt_tokens,
+                "max_prompt_length": dataset.maximum_prompt_tokens,
+                "prefix_length": dataset.shared_prefix_tokens,
+                # Random lengths describe generated user content plus the shared
+                # prefix, not tokenizer-specific chat framing.
+                "apply_chat_template": False,
+                "multi_turn": False,
+                "max_turns": None,
+            }
+        )
+    else:
+        dataset_path, dataset_name = _materialize_evalscope_request_dataset(
+            benchmark, output_dir
+        )
+        if dataset_name == "custom_multi_turn" and (
+            schedule.unbounded_concurrency or schedule.arrival_rate != -1
+        ):
+            Path(dataset_path).unlink(missing_ok=True)
+            raise ValueError(
+                "Multi-turn conversations require --rate -1 and no --open-loop; "
+                "rate schedules independent requests"
+            )
+        argument_values.update(
+            {
+                "dataset": dataset_name,
+                "dataset_path": dataset_path,
+                "dataset_offset": 0,
+                "multi_turn": dataset_name == "custom_multi_turn",
+                # EvalScope uses None for an unbounded custom conversation; -1
+                # is Foretoken's explicit complete-conversation spelling.
+                "max_turns": (
+                    None
+                    if dataset_name == "line_by_line" or dataset.max_turns == -1
+                    else dataset.max_turns
+                ),
+            }
+        )
     return ForetokenEvalScopeArguments(**argument_values)
 
 

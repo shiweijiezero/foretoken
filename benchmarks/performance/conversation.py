@@ -6,11 +6,36 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
 
 from benchmarks.performance.config import ChatRequestDataset, HttpBenchmarkConfig
-from benchmarks.performance.chat_client import ChatRequestContent
+
+logger = logging.getLogger(__name__)
+
+# Remote tokenizers download only files needed for tokenization and decoding.
+_TOKENIZER_ALLOW_PATTERNS = (
+    "tokenizer*",
+    "vocab*",
+    "merges*",
+    "special_tokens_map*",
+    "added_tokens*",
+    "chat_template*",
+    "tokenization*",
+    "config.json",
+)
+
+
+@dataclass(frozen=True)
+class ChatRequestContent:
+    """Represent one independent Chat Completions request without episode state."""
+
+    prompt: str | None = None
+    messages: list[dict[str, Any]] | None = None
+    tools: list[dict[str, Any]] | None = None
 
 
 _HF_DATASETS_PREFIX = "hf://datasets/"
@@ -42,6 +67,53 @@ def iter_jsonl_rows(
                 ) from error
             yield jsonl_path, line_number, row_index, row
             row_index += 1
+
+
+def _configured_hub_cache_dir() -> str | None:
+    """Return the Hugging Face cache directory selected by the runtime environment."""
+    for variable in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
+        value = os.environ.get(variable)
+        if value:
+            return str(Path(value).expanduser())
+
+    home = os.environ.get("HF_HOME")
+    if home:
+        return str(Path(home).expanduser() / "hub")
+
+    xdg_cache = os.environ.get("XDG_CACHE_HOME")
+    if xdg_cache:
+        return str(Path(xdg_cache).expanduser() / "huggingface" / "hub")
+    return None
+
+
+def resolve_tokenizer_path(tokenizer_path: str) -> str:
+    """Return a local tokenizer path, downloading a Hub repository when needed."""
+    local = Path(tokenizer_path).expanduser()
+    if local.exists():
+        return str(local.resolve())
+    if local.is_absolute() or tokenizer_path.startswith(("./", "../", "~")):
+        raise ValueError(
+            f"Tokenizer path does not exist locally: {tokenizer_path!r}; "
+            "pass an existing directory or a Hugging Face repository ID"
+        )
+
+    from huggingface_hub import snapshot_download
+
+    cache_dir = _configured_hub_cache_dir()
+    logger.info(
+        "Resolving tokenizer from Hugging Face repo %r%s",
+        tokenizer_path,
+        f" into {cache_dir!r}" if cache_dir else "",
+    )
+    download_args: dict[str, Any] = {
+        "repo_id": tokenizer_path,
+        "allow_patterns": list(_TOKENIZER_ALLOW_PATTERNS),
+    }
+    if cache_dir:
+        # Hugging Face resolves its default cache during import, so pass the
+        # runtime-selected directory explicitly for remote benchmark processes.
+        download_args["cache_dir"] = cache_dir
+    return snapshot_download(**download_args)
 
 
 def is_hf_file_uri(source: str) -> bool:
@@ -430,17 +502,7 @@ def load_chat_conversations(
         )
     dataset_selector = dataset.dataset_selectors[0]
     if dataset_selector == "random":
-        from benchmarks.performance.synthetic_requests import generate_random_requests
-
-        requests = generate_random_requests(
-            benchmark, request_count=conversation_count
-        )
-        return [
-            request.messages
-            if request.messages is not None
-            else [{"role": "user", "content": request.prompt}]
-            for request in requests
-        ]
+        raise ValueError("EvalScope owns standard random dataset generation")
     return _load_dataset_conversations(
         dataset_selector, conversation_count, row_offset
     )
@@ -512,8 +574,6 @@ def load_chat_requests(
         dataset_selector = dataset.dataset_selectors[0]
 
     if dataset_selector == "random":
-        from benchmarks.performance.synthetic_requests import generate_random_requests
-
-        return generate_random_requests(benchmark, request_count=count)
+        raise ValueError("EvalScope owns standard random dataset generation")
 
     return _load_dataset_requests(dataset_selector, count, row_offset)

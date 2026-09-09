@@ -82,6 +82,11 @@ class HttpLoadSchedule:
             max_concurrency=int(self.max_concurrency),
             arrival_rate=float(self.arrival_rate),
         )
+        if self.unbounded_concurrency and float(self.arrival_rate) == -1:
+            raise ValueError(
+                "--open-loop requires a positive --rate; EvalScope does not "
+                "define an unbounded as-fast-as-possible schedule"
+            )
         if self.request_count < 1:
             raise ValueError(
                 f"--number must be >= 1, got {self.request_count}"
@@ -242,11 +247,15 @@ class HttpBenchmarkConfig:
 
     @property
     def is_multi_turn(self) -> bool:
-        """Return whether the shared conversation runner is used; traces remain independent requests."""
-        return bool(
-            self.request_dataset.max_turns is not None
-            and not self.arrival_trace.trace_selector
-        )
+        """Return whether a dataset row owns a conversation lifecycle."""
+        dataset = self.request_dataset
+        if self.arrival_trace.trace_selector:
+            return False
+        if dataset.fixed_prompt and not dataset.dataset_selectors:
+            return False
+        if dataset.dataset_selectors == ["random"]:
+            return False
+        return dataset.max_turns is not None
 
     def validate(self) -> None:
         """Validate the selected HTTP workload before acquiring resources."""

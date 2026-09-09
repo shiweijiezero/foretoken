@@ -30,7 +30,7 @@ foretoken bench \
   --rate 5
 ```
 
-The configured lengths shape the synthetic token sequence before it is decoded to text. Use the server-reported input-token metrics as the measured request size, because decoding and tokenizing the text again may change it slightly.
+Standard random loads use EvalScope 1.11.1's public `random` dataset plugin. `--random-seed` seeds its prompt-length, offset, and vocabulary sampling; `--min-prompt-length` and `--max-prompt-length` are inclusive bounds for the generated inner token sequence, while `--prefix-length` adds the shared prefix before decoding. The generated text is sent as one user message with `apply_chat_template=False`, so the server-reported input-token metrics remain the measured request size after decoding and chat-template processing.
 
 ## Hugging Face and local datasets
 

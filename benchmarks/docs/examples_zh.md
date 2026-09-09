@@ -30,7 +30,7 @@ foretoken bench \
   --rate 5
 ```
 
-配置的长度用于生成合成 token 序列，序列随后会被解码成文本。文本再次分词后长度可能略有变化，因此请求规模以服务端返回的输入 token 指标为准。
+标准 random 负载使用 EvalScope 1.11.1 公开的 `random` 数据集插件。`--random-seed` 固定其提示词长度、偏移和词表采样；`--min-prompt-length` 与 `--max-prompt-length` 是生成的 inner token 序列闭区间，`--prefix-length` 则在解码前增加共享前缀。生成文本会以一个 user message 发送，并使用 `apply_chat_template=False`，因此解码和服务端 chat template 处理后的实际请求规模仍以服务端返回的输入 token 指标为准。
 
 ## Hugging Face 与本地数据集
 

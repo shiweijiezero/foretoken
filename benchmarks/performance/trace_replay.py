@@ -19,9 +19,9 @@ from typing import Any, Optional
 import httpx
 from openai import APIError, AsyncOpenAI
 
-from benchmarks.performance.chat_client import ChatRequestContent
 from benchmarks.performance.config import HttpBenchmarkConfig
 from benchmarks.performance.conversation import (
+    ChatRequestContent,
     iter_dataset_rows,
     load_chat_requests,
     load_indexed_chat_requests,
@@ -38,11 +38,10 @@ from benchmarks.performance.results import (
     build_benchmark_run_record,
 )
 from benchmarks.performance.synthetic_requests import (
-    _allowed_token_ids,
-    _decode_prompt,
-    _load_tokenizer,
-    generate_random_requests,
+    create_trace_random_dataset_plugin,
+    generate_trace_random_requests,
 )
+
 logger = logging.getLogger(__name__)
 
 
@@ -374,19 +373,23 @@ _MOONCAKE_BLOCK_TOKENS = 512
 
 def generate_synthetic_prefix_reuse_requests(
     benchmark: HttpBenchmarkConfig,
+    endpoint: BenchmarkRuntimeEndpoint,
     *,
     input_lengths: list[int],
     hash_id_lists: list[list[int] | None],
 ) -> list[ChatRequestContent]:
     """Build reproducible 512-token prefix blocks from Mooncake hash IDs."""
     dataset = benchmark.request_dataset
-    if not dataset.tokenizer:
-        raise ValueError("tokenizer_path is required for random data generation")
     if len(input_lengths) != len(hash_id_lists):
         raise ValueError("input_lengths must match hash_id_lists")
 
-    tokenizer = _load_tokenizer(dataset.tokenizer)
-    allowed_token_ids = _allowed_token_ids(tokenizer)
+    plugin = create_trace_random_dataset_plugin(
+        benchmark,
+        endpoint,
+        len(input_lengths),
+    )
+    tokenizer = plugin.tokenizer
+    allowed_token_ids = [int(token_id) for token_id in plugin.allowed_tokens]
 
     @lru_cache(maxsize=1024)
     def block_for(hash_id: int) -> tuple[int, ...]:
@@ -417,9 +420,14 @@ def generate_synthetic_prefix_reuse_requests(
             for hash_id in hash_ids
             for token_id in block_for(hash_id)
         ][:input_length]
-        requests.append(
-            ChatRequestContent(prompt=_decode_prompt(tokenizer, prompt_token_ids))
+        prompt = tokenizer.decode(
+            prompt_token_ids,
+            skip_special_tokens=False,
+            clean_up_tokenization_spaces=False,
         )
+        if not prompt:
+            raise ValueError("Tokenizer produced an empty Mooncake payload")
+        requests.append(ChatRequestContent(prompt=prompt))
     return requests
 
 
@@ -433,6 +441,7 @@ def _request_origin(benchmark: HttpBenchmarkConfig) -> str:
 
 def bind_arrival_trace_requests(
     benchmark: HttpBenchmarkConfig,
+    endpoint: BenchmarkRuntimeEndpoint,
     events: list[ArrivalTraceEvent],
 ) -> tuple[str, list[ArrivalTraceEvent]]:
     """Bind native, random, or external-dataset requests to the selected arrival events."""
@@ -455,12 +464,14 @@ def bind_arrival_trace_requests(
                 )
             requests = generate_synthetic_prefix_reuse_requests(
                 benchmark,
+                endpoint,
                 input_lengths=[int(length) for length in input_lengths],
                 hash_id_lists=[event.hash_ids for event in events],
             )
         else:
-            requests = generate_random_requests(
+            requests = generate_trace_random_requests(
                 benchmark,
+                endpoint,
                 request_count=len(events),
                 input_lengths=(
                     [int(length) for length in input_lengths]
@@ -649,7 +660,9 @@ class ArrivalTraceBenchmark:
         if trace_format is None:
             raise RuntimeError("Trace format was not detected")
         request_origin, events = bind_arrival_trace_requests(
-            self.benchmark, events
+            self.benchmark,
+            self.endpoint,
+            events,
         )
         request_count = len(events)
 
