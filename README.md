@@ -31,7 +31,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ## Quick Start
 
-This Quick Start requires Python 3.10+, Git, Kubernetes with an expandable default `StorageClass`, `kubectl`, Helm, one NVIDIA GPU, and a working `LoadBalancer` (k3s ServiceLB is sufficient for k3d). See the [k3d guide](docs/k3d-deployment.md) for a single-machine test cluster. For MetaX GPUs, use the runtime image and platform values in the [MetaX deployment guide](docs/metax-deployment.md).
+This Quick Start requires Python 3.10+, Git, Kubernetes with an expandable default `StorageClass`, `kubectl`, Helm, at least one supported GPU, and a working `LoadBalancer` (k3s ServiceLB is sufficient for k3d). See the [k3d guide](docs/k3d-deployment.md) for a single-machine test cluster. The default runtime image targets NVIDIA GPUs; for MetaX GPUs, use the runtime image and platform values in the [MetaX deployment guide](docs/metax-deployment.md).
 
 ### 1. Get the examples and install the command-line tool
 

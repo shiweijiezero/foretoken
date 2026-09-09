@@ -31,7 +31,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-本快速开始需要 Python 3.10 以上版本、Git、配置了可扩容默认 `StorageClass` 的 Kubernetes 集群、`kubectl`、Helm、至少一块 NVIDIA GPU，以及可用的 `LoadBalancer`（k3d 使用 k3s ServiceLB 即可）。如需准备单机测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。沐曦 GPU 请使用[沐曦部署指南](docs/metax-deployment_zh.md)中的运行时镜像和平台配置。
+本快速开始需要 Python 3.10 以上版本、Git、配置了可扩容默认 `StorageClass` 的 Kubernetes 集群、`kubectl`、Helm、至少一块受支持的 GPU，以及可用的 `LoadBalancer`（k3d 使用 k3s ServiceLB 即可）。如需准备单机测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。默认运行时镜像适配 NVIDIA GPU；沐曦 GPU 使用[沐曦部署指南](docs/metax-deployment_zh.md)中的运行时镜像和平台配置。
 
 ### 1. 获取示例并安装命令行工具
 
