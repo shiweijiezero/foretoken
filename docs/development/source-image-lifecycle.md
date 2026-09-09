@@ -7,6 +7,8 @@ English | [简体中文](source-image-lifecycle_zh.md)
 
 This maintainer guide covers manual image import and raw Helm operations. Run commands from the Foretoken repository root unless stated otherwise.
 
+For MetaX image preparation, see [Prepare Foretoken for MetaX GPUs](metax-platform.md#build-the-images).
+
 ## Import local images directly
 
 **Option 1: Import into a Kind cluster.** Create a Kind cluster directly to validate the control plane, CRDs, frontend, and scheduling behavior. To run a GPU model service, use k3d in option 2 and select the available GPUs as described in [Deploy Foretoken with k3d](../k3d-deployment.md). Install Kind first:
@@ -40,7 +42,15 @@ kind create cluster \
   --config deploy/kind/multi-node.yaml
 ```
 
-After creating the cluster, build and import the local images.
+After creating the cluster, build and import the local images. The vLLM adapter supports the EngineCore protocols shipped by vLLM 0.20 through 0.28. The inference-engine image normally provides its Python executable as `python`. If it requires a specific executable, set both build inputs:
+
+```bash
+INFERENCE_ENGINE_IMAGE=<compatible-inference-engine-image> \
+FORETOKEN_VLLM_PYTHON=/absolute/path/to/python \
+make dev-build
+```
+
+Otherwise, use the defaults:
 
 ```bash
 # Expected runtime: about 8 minutes

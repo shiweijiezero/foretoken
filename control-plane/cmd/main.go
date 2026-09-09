@@ -269,6 +269,10 @@ func main() {
 	}
 
 	// Controllers are registered explicitly so each resource keeps one lifecycle owner.
+	if err := (&controllers.RuntimeCacheReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+		ctrl.Log.Error(err, "unable to register RuntimeCache controller")
+		os.Exit(1)
+	}
 	if frontendEnabled {
 		var gateway *controllers.GatewayParent
 		if frontendMode == frontendModeGateway {
@@ -279,13 +283,13 @@ func main() {
 			}
 		}
 		frontendReconciler := &controllers.FrontendServiceReconciler{
-			Client:    manager.GetClient(),
-			APIReader: manager.GetAPIReader(),
+			Client:       manager.GetClient(),
+			APIReader:    manager.GetAPIReader(),
+			CacheProfile: cacheProfile,
 			RuntimeProfile: controllers.FrontendRuntimeProfile{
 				Image:            frontendImage,
 				Port:             int32(frontendPort),
 				ImagePullSecrets: workloadImagePullSecrets,
-				RuntimeCache:     cacheProfile.RuntimeCache(),
 				Gateway:          gateway,
 			},
 		}

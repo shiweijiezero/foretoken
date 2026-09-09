@@ -21,7 +21,7 @@ controller:
 # Each named Secret must exist in the namespace of the FrontendService or ModelService workload.
 workload:
   imagePullSecrets: []
-  # The named PVC must exist in every workload namespace.
+  # Set claimName to override namespace RuntimeCache discovery with an existing PVC.
   cache:
     claimName: ""
     mountPath: /var/cache/foretoken
@@ -47,6 +47,14 @@ observability:
   additionalLabels: {}
   interval: ""
   scrapeTimeout: ""
+  alerts:
+    # The language is attached to alert labels so a shared Lark receiver can render one language consistently.
+    language: zh
+    thresholds:
+      acceleratorUtilizationRatio: 0.95
+      acceleratorMemoryUsageRatio: 0.95
+      nvidiaTemperatureCelsius: 85
+      nvidiaPowerWatts: 300
 
 # The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
 runtime:

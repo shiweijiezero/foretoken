@@ -40,7 +40,13 @@ Pod 不指定宿主机 GPU 编号。k3d 可以在创建 Kubernetes 节点容器�
 - 可使用 NVIDIA 运行时的 Docker；
 - k3d、kubectl 和 Helm。
 
-## 1. 选择 GPU 并命名集群
+## 1. 进入仓库并选择 GPU
+
+后续命令都在 Foretoken 仓库根目录执行：
+
+```bash
+cd /path/to/your/foretoken
+```
 
 查看 GPU：
 
@@ -111,10 +117,6 @@ done
 创建包含单个 server 节点的集群：
 
 ```bash
-if k3d cluster get "$CLUSTER" >/dev/null 2>&1; then
-  k3d cluster delete "$CLUSTER"
-fi
-
 k3d cluster create "$CLUSTER" \
   --config deploy/k3d/config.yaml \
   --gpus "\"device=$GPU_INDICES\"" \
@@ -148,12 +150,6 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 
 ## 4. 安装并访问 Foretoken
 
-进入 Foretoken 项目路径：
-
-```bash
-cd /path/to/your/foretoken
-```
-
 使用 pip 安装命令行工具：
 
 ```bash
@@ -171,11 +167,13 @@ uv pip install -e .
 ### 4.1 选择部署方式
 
 - **使用发布镜像**：继续执行 [第 4.2 节：本地模式](#42-本地模式) 或 [第 4.3 节：网关模式](#43-网关模式)。
-- **以本地模式部署源码**：执行下面的完整命令，然后直接进入[第 4.4 节：发送请求](#44-发送-openai-api-兼容请求)。
+- **以本地模式部署源码**：执行下面的完整命令，然后直接进入[第 4.4 节：发送请求](#44-发送-openai-api-兼容格式的请求)。
 
 ```bash
 foretoken install -e .
 foretoken deploy examples/quickstart --timeout 20m
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
 ### 4.2 本地模式

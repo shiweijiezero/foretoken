@@ -147,6 +147,12 @@ foretoken uninstall
 
 The uninstall command preserves Foretoken CRDs and reused cluster components. It removes the platform and the monitoring or Gateway resources managed by the command-line tool.
 
+## Deployment Guides
+
+- [Source builds and private registries](docs/custom-deployment.md)
+- [Single-machine GPU clusters with k3d](docs/k3d-deployment.md)
+- [MetaX GPUs](docs/metax-deployment.md)
+
 ## Related Projects
 
 - [vLLM](https://github.com/vllm-project/vllm)

@@ -8,6 +8,7 @@ kind: Kustomization
 namespace: foretoken-multi-model-demo
 resources:
   - namespace.yaml
+  - cache.yaml
   - frontend.yaml
   - model-qwen3-0.6b.yaml
   - model-llama3.2-1b.yaml

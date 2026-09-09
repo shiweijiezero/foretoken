@@ -48,7 +48,7 @@ The default uses release images and local access through a `LoadBalancer` Servic
 foretoken install
 ```
 
-During installation, the command-line tool discovers Prometheus and accelerator metric exporters. It reuses compatible shared instances, installs managed Prometheus and NVIDIA DCGM Exporter releases when needed, and connects to the mxExporter already provided by a MetaX cluster. It never installs GPU drivers, device plugins, or vendor operators. Ambiguous or incomplete monitoring stops installation with an actionable error; see [Observability](../observability/README.md) for the selection rules.
+During installation, the command-line tool discovers Prometheus and accelerator metric exporters. It reuses compatible shared instances, installs managed Prometheus and NVIDIA DCGM Exporter releases when needed, and connects to the mxExporter already provided by a MetaX cluster. See [Observability](../observability/README.md) for monitoring selection and configuration.
 
 ### Gateway mode
 
@@ -92,31 +92,17 @@ Repeatable `--values` files provide platform image, runtime, and hardware settin
 
 ### Persistent runtime cache
 
-To reuse model and compilation caches after Pod restarts, set `workload.cache.claimName` to an existing PVC. The PVC must be mountable from every eligible node; multi-node deployments normally need `ReadWriteMany`. Leave it empty to disable persistent caching. See [Persistent Runtime Cache](../docs/development/runtime-cache.md) for the configuration example.
+Create one `RuntimeCache` in a workload namespace to let Foretoken provision and manage a shared cache PVC. Existing PVCs remain supported through `workload.cache.claimName`. See [Persistent Runtime Cache](../docs/development/runtime-cache.md).
 
 ## Deploy and operate model services
 
-Deploy one frontend and all models rendered by a Kustomize root:
+Deploy one frontend and all models rendered by a Kustomize root. The multi-model example starts with two GPUs, 12 CPU cores, and 100 GiB memory, and can scale to four GPUs. It also needs a default `ReadWriteMany` StorageClass with online expansion; see the [multi-model example](../examples/multi-model-quickstart/README.md), or use `examples/quickstart` for the smallest path.
 
 ```bash
 foretoken deploy examples/multi-model-quickstart
 ```
 
-The command applies the configuration, reports each `FrontendService` and `ModelService` state when it changes, and exits when every resource is Ready for its current generation. Change the default ten-minute deadline with `--timeout`.
-
-Delete the resources rendered by the same configuration:
-
-```bash
-foretoken delete examples/multi-model-quickstart
-```
-
-The command waits for deletion and ignores resources that are already absent. After deleting all Foretoken services, remove the platform release:
-
-```bash
-foretoken uninstall
-```
-
-The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain. It removes monitoring and Gateway resources managed by the command-line tool with the platform, while reused cluster components remain unchanged.
+The command applies the configuration, reports each `FrontendService` and `ModelService` state when it changes, and exits when every service reports Ready for its current configuration. Change the default ten-minute deadline with `--timeout`.
 
 Inspect the same deployment without applying it:
 
@@ -140,11 +126,10 @@ FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 For an HTTP Gateway, resolve its request `Host` separately:
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --host)"
 ```
 
-The host value is the URL authority for direct access or the configured routing hostname for an HTTP Gateway. The command waits for the LoadBalancer or Gateway address, but serving readiness remains owned by `foretoken deploy`.
+`--host` returns the host and optional port for direct access, or the configured routing hostname for an HTTP Gateway. `foretoken endpoint` waits for the LoadBalancer or Gateway address; use `foretoken deploy` to wait for the services to become ready.
 
 ## Run benchmarks
 
@@ -167,7 +152,23 @@ uv pip install 'foretoken[bench]'
 Then run the benchmark:
 
 ```bash
-foretoken bench examples/quickstart
+foretoken bench examples/multi-model-quickstart --model Qwen/Qwen3-0.6B
 ```
 
 The command-line tool uses the active `kubectl` context and honors standard Kubernetes configuration such as `KUBECONFIG`.
+
+## Clean up
+
+Delete the resources rendered by the same configuration:
+
+```bash
+foretoken delete examples/multi-model-quickstart
+```
+
+The command waits for deletion and ignores resources that are already absent. After deleting all Foretoken services, remove the platform release:
+
+```bash
+foretoken uninstall
+```
+
+The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain. It removes monitoring and Gateway resources managed by the command-line tool with the platform, while reused cluster components remain unchanged.

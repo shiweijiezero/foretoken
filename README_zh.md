@@ -147,6 +147,12 @@ foretoken uninstall
 
 卸载时会保留 Foretoken CRD 和复用的集群组件，并删除平台以及由命令行工具管理的监控或 Gateway 资源。
 
+## 部署指南
+
+- [源码构建与私有镜像仓库](docs/custom-deployment_zh.md)
+- [使用 k3d 创建单机 GPU 集群](docs/k3d-deployment_zh.md)
+- [沐曦 GPU](docs/metax-deployment_zh.md)
+
 ## 相关项目
 
 - [vLLM](https://github.com/vllm-project/vllm)

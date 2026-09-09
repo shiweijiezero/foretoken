@@ -21,10 +21,10 @@ declare_router_algorithms! {
 /// empty result for a nonempty slice as a routing error.
 ///
 /// - `request`: model, prompt tokens, sampling, multimodal, LoRA, and priority.
-/// - `scored_candidates`: current-stage candidates with route target metadata and `RouteScore` locality
-///   and load values.
+/// - `scored_candidates`: current-stage candidates with route target metadata and numeric or
+///   lexicographic `RouteScore` preferences.
 /// - `routing_progress`: immutable E/P/D selection round and progress supplied by `RouteSession`.
-/// - `customized_context`: user-defined `C`, created per request and shared by Prefill and Decode.
+/// - `customized_context`: user-defined `C`, created per request and shared across E/P/D rounds.
 ///
 /// Returns the selected position in `scored_candidates`, or `None` when the list is empty.
 pub trait RoutePicker<C: Send + 'static = ()>: Send + Sync {

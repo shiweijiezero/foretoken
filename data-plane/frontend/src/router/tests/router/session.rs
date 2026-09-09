@@ -19,7 +19,7 @@ fn target_stats(running_requests: u64) -> RouteTargetStats {
         collected_at_unix_ms: 1,
         observed_window: Duration::from_secs(60),
         running_requests,
-        max_concurrent_requests: 8,
+        max_concurrent_requests: Some(8),
         scheduler_running_requests: Some(1),
         scheduler_waiting_requests: Some(2),
         kv_cache_usage: Some(0.5),

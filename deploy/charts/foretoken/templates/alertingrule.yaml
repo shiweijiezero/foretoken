@@ -1,0 +1,22 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
+
+{{/* Installs Foretoken alert rules into an existing Prometheus Operator. */}}
+
+{{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "foretoken.compactName" (printf "%s-alerting-rules" (include "foretoken.fullname" .)) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.observabilityLabels" . | nindent 4 }}
+spec:
+{{- $rules := .Files.Get "files/alerting-rules.yaml" -}}
+{{- $rules = replace "foretoken_alert_language" (.Values.observability.alerts.language | toString) $rules -}}
+{{- $rules = replace "foretoken_alert_threshold_accelerator_utilization_ratio" (.Values.observability.alerts.thresholds.acceleratorUtilizationRatio | toString) $rules -}}
+{{- $rules = replace "foretoken_alert_threshold_accelerator_memory_usage_ratio" (.Values.observability.alerts.thresholds.acceleratorMemoryUsageRatio | toString) $rules -}}
+{{- $rules = replace "foretoken_alert_threshold_nvidia_temperature_celsius" (.Values.observability.alerts.thresholds.nvidiaTemperatureCelsius | toString) $rules -}}
+{{- $rules = replace "foretoken_alert_threshold_nvidia_power_watts" (.Values.observability.alerts.thresholds.nvidiaPowerWatts | toString) $rules -}}
+{{ $rules | nindent 2 }}
+{{- end }}

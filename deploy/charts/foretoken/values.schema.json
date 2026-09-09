@@ -219,6 +219,54 @@
         },
         "scrapeTimeout": {
           "type": "string"
+        },
+        "alerts": {
+          "type": "object",
+          "required": [
+            "language",
+            "thresholds"
+          ],
+          "properties": {
+            "language": {
+              "type": "string",
+              "enum": [
+                "zh",
+                "en",
+                "bilingual"
+              ]
+            },
+            "thresholds": {
+              "type": "object",
+              "required": [
+                "acceleratorUtilizationRatio",
+                "acceleratorMemoryUsageRatio",
+                "nvidiaTemperatureCelsius",
+                "nvidiaPowerWatts"
+              ],
+              "properties": {
+                "acceleratorUtilizationRatio": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "acceleratorMemoryUsageRatio": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "nvidiaTemperatureCelsius": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "nvidiaPowerWatts": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

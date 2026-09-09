@@ -44,25 +44,10 @@ pub struct SnapshotEpdComponent {
     pub pool_name: String,
     pub route_target_id: RouteTargetId,
     pub role: ModelServerRole,
-    pub pipeline_scope_id: String,
     pub model: String,
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
-    #[serde(default)]
-    pub profile_name: String,
-    #[serde(default)]
-    pub profile_revision: String,
-    #[serde(default)]
-    pub connector: String,
-    #[serde(default)]
-    pub protocol: String,
-    #[serde(default)]
-    pub ec_profile_name: String,
-    #[serde(default)]
-    pub ec_profile_revision: String,
-    #[serde(default)]
-    pub ec_connector: String,
     #[serde(default)]
     pub capabilities: BTreeSet<String>,
     #[serde(default)]
@@ -76,9 +61,9 @@ pub struct SnapshotEpdComponent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotEpdPipelineScope {
     pub pipeline_scope_id: String,
-    pub encoder_route_target_id: RouteTargetId,
-    pub prefill_route_target_id: RouteTargetId,
-    pub decode_route_target_id: RouteTargetId,
+    pub encoder_route_target_ids: Vec<RouteTargetId>,
+    pub prefill_route_target_ids: Vec<RouteTargetId>,
+    pub decode_route_target_ids: Vec<RouteTargetId>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotPdComponent {
@@ -281,8 +266,6 @@ pub enum SnapshotError {
     InvalidEndpoint { endpoint: String, message: String },
     #[error("routing snapshot has incomplete E/P/D component {0:?}")]
     IncompleteEpdComponent(RouteTargetId),
-    #[error(
-        "routing configuration E/P/D linked processing unit {0:?} is incomplete, inconsistent, or not a static triplet"
-    )]
+    #[error("routing configuration E/P/D compatibility scope {0:?} is incomplete or inconsistent")]
     InvalidEpdPipelineScope(String),
 }
