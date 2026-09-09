@@ -349,7 +349,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(foretoken:frontend_http_response_starts:rate5m{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\",status=\"5xx\"}) / clamp_min(sum(foretoken:frontend_http_response_starts:rate5m{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"}), 1e-9)",
+          "expr": "(sum(foretoken:frontend_http_response_starts:rate5m{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\",status=\"5xx\"}) or 0 * sum(foretoken:frontend_http_response_starts:rate5m{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"})) / clamp_min(sum(foretoken:frontend_http_response_starts:rate5m{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"}), 1e-9)",
           "instant": false,
           "legendFormat": "5xx ratio",
           "range": true,
