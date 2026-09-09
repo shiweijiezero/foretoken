@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
@@ -7,7 +8,7 @@
 # an image-specific executable; model-server otherwise uses `python`. The
 # current vLLM adapter uses vllm.entrypoints.cli.main.
 
-ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye@sha256:b015aa055657c177e783b690c79b0517cda38fae1fa677b133a954d61f4afdc3
+ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye
 ARG INFERENCE_ENGINE_IMAGE=ghcr.io/shiweijiezero/foretoken/model-server:0.0.1
 ARG FORETOKEN_VLLM_PYTHON
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.9.10
