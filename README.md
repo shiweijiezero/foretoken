@@ -95,7 +95,7 @@ See [Benchmarking](benchmarks/README.md) for datasets, remote endpoints, result 
 
 Gateway mode provides a shared entry point through Kubernetes Gateway and a hostname. It suits clusters that already use Gateway or manage external traffic centrally.
 
-Foretoken creates its default Gateway for Envoy Gateway. Install Envoy Gateway, then add the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
+Add the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
 
 ```yaml
 spec:
@@ -105,13 +105,6 @@ spec:
 Then run:
 
 ```bash
-# Install Envoy Gateway
-helm upgrade --install envoy-gateway \
-  oci://docker.io/envoyproxy/gateway-helm \
-  --namespace envoy-gateway-system \
-  --create-namespace \
-  --wait
-
 # Install the platform in Gateway mode
 foretoken install --frontend-mode gateway
 
@@ -130,7 +123,7 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-See the [command-line tool guide](cli/README.md) to reuse a Gateway from another controller, select a listener, or configure TLS.
+The command installs Envoy Gateway when needed. See the [command-line tool guide](cli/README.md) to reuse an existing Gateway or select a listener.
 
 ## Stop and Uninstall
 

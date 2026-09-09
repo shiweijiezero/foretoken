@@ -13,10 +13,10 @@
 
 ## 部署
 
-先完成根目录[快速开始](../../README_zh.md)中的平台安装，再部署本示例：
+先按[快速开始](../../README_zh.md)安装平台并获取仓库，再从仓库根目录部署：
 
 ```bash
-foretoken deploy examples/quickstart
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 该命令会在服务状态变化时输出进度，并在当前配置就绪后退出。

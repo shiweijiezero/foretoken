@@ -13,8 +13,7 @@ Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平
 
 ## 开始前
 
-需要准备 Python 3.10 或更高版本、当前 Kubernetes context、`kubectl` 和 Helm。GPU 节点需要预先安装厂商驱动和 Kubernetes device plugin。源码安装还需要 Docker 和 Make，以及本地 kind/k3d 集群或所有目标节点都能访问的 OCI registry。
-
+需要准备 Python 3.10 或更高版本、当前 Kubernetes context、`kubectl` 和 Helm。GPU 节点需要预先安装厂商驱动和 Kubernetes device plugin。
 ## 安装命令行工具
 
 使用 pip 安装已经发布的 Foretoken 命令行工具包：
@@ -34,7 +33,7 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-这一步只会在当前 Python 环境中安装 `foretoken` 命令，不会修改 Kubernetes 集群。运行 `foretoken --version` 可以查看命令行工具及其对应的平台版本。
+运行 `foretoken --version` 查看已安装的命令行工具版本。
 
 ## 安装 Kubernetes 平台
 
@@ -52,7 +51,7 @@ foretoken install
 
 ### 网关模式
 
-只有集群运行 Envoy Gateway 时，命令行工具才会创建专用的 `GatewayClass` 和 `Gateway`：
+网关模式会创建专用的 `GatewayClass` 和 `Gateway`，集群没有可复用的控制器时自动安装 Envoy Gateway：
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -71,7 +70,7 @@ foretoken install \
 
 ### 当前源码
 
-从当前源码构建 Foretoken 镜像，并配置平台使用这些镜像：
+按[源码部署指南](../docs/custom-deployment_zh.md)准备构建工具，再从仓库根目录安装：
 
 ```bash
 foretoken install -e .
@@ -96,13 +95,20 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 ## 部署和管理模型服务
 
-部署一个 Kustomize 根目录中渲染出的前端服务和全部模型。多模型示例起步需要 2 张 GPU、12 个 CPU 核心和 100 GiB 内存，扩容后最多需要 4 张 GPU；此外还需要支持 `ReadWriteMany` 和在线扩容的默认 `StorageClass`。完整配置见[多模型示例](../examples/multi-model-quickstart/README_zh.md)，最小路径请使用 `examples/quickstart`。
+部署一个 Kustomize 根目录中的前端服务和全部模型。以下命令在仓库根目录执行；尚未获取配置时，先运行：
 
 ```bash
-foretoken deploy examples/multi-model-quickstart
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 ```
 
-该命令会应用配置，在 `FrontendService` 和 `ModelService` 状态变化时输出进度，并在所有服务的当前配置均已就绪后退出。默认等待十分钟，可通过 `--timeout` 调整。
+资源和存储要求见[多模型示例](../examples/multi-model-quickstart/README_zh.md)。单模型部署使用 `examples/quickstart`。
+
+```bash
+foretoken deploy examples/multi-model-quickstart --timeout 20m
+```
+
+该命令会应用配置、输出服务状态变化，并在所有服务就绪后退出。未指定 `--timeout` 时最多等待十分钟。
 
 不应用配置，直接查看同一部署的状态：
 

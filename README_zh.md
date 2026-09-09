@@ -95,7 +95,7 @@ foretoken bench examples/quickstart
 
 网关模式通过 Kubernetes Gateway 和域名提供统一入口，适合已经使用 Gateway 或需要集中管理外部流量的集群。
 
-Foretoken 默认创建的 Gateway 使用 Envoy Gateway。先安装 Envoy Gateway，并在 `examples/quickstart/frontend.yaml` 的 `spec` 中添加访问域名：
+在 `examples/quickstart/frontend.yaml` 的 `spec` 中添加访问域名：
 
 ```yaml
 spec:
@@ -105,13 +105,6 @@ spec:
 然后运行：
 
 ```bash
-# 安装 Envoy Gateway
-helm upgrade --install envoy-gateway \
-  oci://docker.io/envoyproxy/gateway-helm \
-  --namespace envoy-gateway-system \
-  --create-namespace \
-  --wait
-
 # 安装平台并启用网关模式
 foretoken install --frontend-mode gateway
 
@@ -130,7 +123,7 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-要复用其他 Gateway Controller 管理的 Gateway、指定 listener 或配置 TLS，见[命令行工具使用指南](cli/README_zh.md)。
+命令会按需安装 Envoy Gateway。复用已有 Gateway 或指定 listener，见[命令行工具使用指南](cli/README_zh.md)。
 
 ## 停止与卸载
 

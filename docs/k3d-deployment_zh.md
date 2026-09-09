@@ -153,7 +153,7 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 使用 pip 安装命令行工具：
 
 ```bash
-pip install -e .
+pip install foretoken
 ```
 
 或使用 uv 创建并激活虚拟环境后安装：
@@ -161,15 +161,16 @@ pip install -e .
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install -e .
+uv pip install foretoken
 ```
 
 ### 4.1 选择部署方式
 
 - **使用发布镜像**：继续执行 [第 4.2 节：本地模式](#42-本地模式) 或 [第 4.3 节：网关模式](#43-网关模式)。
-- **以本地模式部署源码**：执行下面的完整命令，然后直接进入[第 4.4 节：发送请求](#44-发送-openai-api-兼容格式的请求)。
+- **以本地模式部署源码**：按[源码部署指南](custom-deployment_zh.md)准备构建工具，执行下面的命令，再进入[第 4.4 节：发送请求](#44-发送-openai-api-兼容格式的请求)。
 
 ```bash
+pip install -e .
 foretoken install -e .
 foretoken deploy examples/quickstart --timeout 20m
 FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
