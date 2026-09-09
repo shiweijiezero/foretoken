@@ -26,6 +26,7 @@ const ROUTE_TARGET_STATS_RETENTION: Duration = Duration::from_secs(300);
 pub struct BackendRegistry {
     model_routes: ModelRouteTable,
     configured_models: BTreeSet<String>,
+    model_sources: BTreeMap<String, foretoken_model_protocol::ModelSource>,
     components: BTreeMap<RouteTargetId, Component>,
     health: BTreeMap<RouteTargetId, AtomicBool>,
     stats: Mutex<BTreeMap<RouteTargetId, RouteTargetStatsHistory>>,
@@ -72,6 +73,8 @@ impl BackendRegistry {
     /// Startup retains the registry for routing, readiness refresh, and facade resolution; the input snapshot is consumed.
     pub fn from_snapshot(snapshot: ServingSnapshot) -> Result<Self, SnapshotError> {
         let configured_models = snapshot.admission_target_sets()?.into_keys().collect();
+        let model_sources = snapshot.model_identities()?.into_iter()
+            .map(|(model, identity)| (model, identity.source)).collect();
         let (model_routes, components) = crate::snapshot_projection::project_registry(snapshot)?;
         let health = components
             .keys()
@@ -80,6 +83,7 @@ impl BackendRegistry {
         Ok(Self {
             model_routes,
             configured_models,
+            model_sources,
             components,
             health,
             stats: Mutex::new(BTreeMap::new()),
@@ -116,9 +120,17 @@ impl BackendRegistry {
     ) -> bool {
         self.model_routes.routes().iter().any(|route| {
             route.route_target_id == *id
+                && self.model_sources.get(&route.model) == Some(&metadata.model.source)
                 && metadata.model.model == route.model
                 && metadata.model.revision == route.revision
         })
+    }
+
+    /// Returns the download origin selected by a healthy model runtime for frontend preparation.
+    pub fn model_source_endpoint(&self, model: &str) -> Option<String> {
+        self.model_routes.routes().iter().filter(|route| route.model == model)
+            .filter(|route| self.is_route_target_healthy(&route.route_target_id))
+            .find_map(|route| self.metadata(&route.route_target_id)?.model_source_endpoint)
     }
 
     /// Returns the safe effective context limit across healthy components for a model.

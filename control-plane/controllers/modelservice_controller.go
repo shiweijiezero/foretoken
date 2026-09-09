@@ -136,6 +136,9 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 		return ctrl.Result{}, errors.Join(readinessErr, statusErr)
 	}
 	runtimeSource := reconciler.SourceProfile.RuntimeSource()
+	if service.Spec.Source == inferencev1alpha1.ModelSourceModelScope {
+		runtimeSource = nil
+	}
 	for index := range compiledPools {
 		compiledPools[index].Template.RuntimeCache = runtimeCache.DeepCopy()
 		compiledPools[index].Template.SourceAccess = runtimeSource.DeepCopy()

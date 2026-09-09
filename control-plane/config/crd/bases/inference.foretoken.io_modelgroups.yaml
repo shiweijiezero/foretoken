@@ -119,6 +119,13 @@ spec:
                     maxLength: 256
                     minLength: 1
                     type: string
+                  source:
+                    description: ModelSource identifies the repository service used
+                      for model and tokenizer files.
+                    enum:
+                    - huggingface
+                    - modelscope
+                    type: string
                   sourceAccess:
                     description: SourceAccess contains runtime-adapter settings for
                       loading the model.
@@ -575,6 +582,13 @@ spec:
                   port:
                     description: Port is the internal Foretoken model-server transport
                       port.
+                    format: int32
+                    maximum: 65535
+                    minimum: 1
+                    type: integer
+                  runtimeCacheObservationPort:
+                    description: RuntimeCacheObservationPort is the controller-selected
+                      filesystem observation listener.
                     format: int32
                     maximum: 65535
                     minimum: 1

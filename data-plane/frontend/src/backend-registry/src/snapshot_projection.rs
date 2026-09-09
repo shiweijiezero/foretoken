@@ -504,6 +504,7 @@ fn compatible_encoder_prefill(
     prefill: &crate::snapshot::SnapshotEpdComponent,
 ) -> bool {
     encoder.service_uid == prefill.service_uid
+        && encoder.source == prefill.source
         && encoder.model == prefill.model
         && encoder.revision == prefill.revision
         && encoder.tokenizer == prefill.tokenizer
@@ -525,6 +526,7 @@ fn compatible_prefill_decode(
     decode: &crate::snapshot::SnapshotEpdComponent,
 ) -> bool {
     prefill.service_uid == decode.service_uid
+        && prefill.source == decode.source
         && prefill.model == decode.model
         && prefill.revision == decode.revision
         && prefill.tokenizer == decode.tokenizer

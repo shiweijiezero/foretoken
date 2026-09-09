@@ -92,6 +92,9 @@ type NormalizedPoolTemplate struct {
 	Model string `json:"model"`
 
 	// +optional
+	Source ModelSource `json:"source,omitempty"`
+
+	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
 	ModelRevision string `json:"modelRevision,omitempty"`

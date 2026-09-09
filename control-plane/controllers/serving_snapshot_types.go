@@ -5,6 +5,8 @@
 
 package controllers
 
+import inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+
 const servingSnapshotKey = "serving.json"
 
 type servingSnapshot struct {
@@ -20,6 +22,7 @@ type servingSnapshot struct {
 type servingSnapshotModel struct {
 	ServiceUID          string                           `json:"service_uid"`
 	Model               string                           `json:"model"`
+	Source inferencev1alpha1.ModelSource `json:"source,omitempty"`
 	Revision            string                           `json:"revision"`
 	Tokenizer           string                           `json:"tokenizer"`
 	TokenizerRevision   string                           `json:"tokenizer_revision"`
@@ -41,6 +44,7 @@ type servingSnapshotGroup struct {
 	PoolUID           string   `json:"pool_uid"`
 	PoolName          string   `json:"pool_name"`
 	Model             string   `json:"model"`
+	Source inferencev1alpha1.ModelSource `json:"source,omitempty"`
 	Revision          string   `json:"revision"`
 	Tokenizer         string   `json:"tokenizer"`
 	TokenizerRevision string   `json:"tokenizer_revision"`
@@ -60,6 +64,7 @@ type servingSnapshotPDComponent struct {
 	Role                     string   `json:"role"`
 	PipelineScopeID          string   `json:"pipeline_scope_id"`
 	Model                    string   `json:"model"`
+	Source inferencev1alpha1.ModelSource `json:"source,omitempty"`
 	Revision                 string   `json:"revision"`
 	Tokenizer                string   `json:"tokenizer"`
 	TokenizerRevision        string   `json:"tokenizer_revision"`
@@ -90,6 +95,7 @@ type servingSnapshotEPDComponent struct {
 	Role                     string   `json:"role"`
 	PipelineScopeID          string   `json:"pipeline_scope_id"`
 	Model                    string   `json:"model"`
+	Source inferencev1alpha1.ModelSource `json:"source,omitempty"`
 	Revision                 string   `json:"revision"`
 	Tokenizer                string   `json:"tokenizer"`
 	TokenizerRevision        string   `json:"tokenizer_revision"`

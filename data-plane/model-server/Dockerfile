@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
@@ -8,7 +7,7 @@
 # an image-specific executable; model-server otherwise uses `python`. The
 # current vLLM adapter uses vllm.entrypoints.cli.main.
 
-ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye
+ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye@sha256:b015aa055657c177e783b690c79b0517cda38fae1fa677b133a954d61f4afdc3
 ARG INFERENCE_ENGINE_IMAGE=ghcr.io/shiweijiezero/foretoken/model-server:0.0.1
 ARG FORETOKEN_VLLM_PYTHON
 
@@ -32,6 +31,9 @@ FROM ${INFERENCE_ENGINE_IMAGE}
 
 ARG FORETOKEN_VLLM_PYTHON
 ENV FORETOKEN_VLLM_PYTHON=${FORETOKEN_VLLM_PYTHON}
+ARG PYPI_INDEX_URL=https://pypi.org/simple
+RUN ${FORETOKEN_VLLM_PYTHON:-python} -m pip install --no-cache-dir \
+      --index-url "${PYPI_INDEX_URL}" modelscope==1.35.3
 
 LABEL org.opencontainers.image.source="https://github.com/shiweijiezero/foretoken"
 

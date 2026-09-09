@@ -294,7 +294,7 @@ class Helm(HelmClient):
         """Install or update the CLI-managed Envoy Gateway release."""
         args = self._managed_chart_args(
             release,
-            self._config.envoy_gateway.source,
+            self._downloads.public_chart(self._config.envoy_gateway.source),
             self._config.envoy_gateway.version,
             timeout,
         )
@@ -305,6 +305,14 @@ class Helm(HelmClient):
                 + self._config.envoy_gateway_controller,
             ]
         )
+        # Include the generated proxy and rate-limit workloads, not only the controller.
+        # These references are the upstream v1.9.1 release artifacts.
+        for name, image in (
+            ("envoyGateway", "docker.io/envoyproxy/gateway:v1.9.1@sha256:0049bcb384c591c6a6dd043fe5c9929ef6e74f230e12dd678d2d3701df9b301e"),
+            ("envoyProxy", "docker.io/envoyproxy/envoy:distroless-v1.39.1@sha256:eb2c01c13125d1629637cb4e4cce7207009fb7cc2c8027f9742758549d15b6f4"),
+            ("ratelimit", "docker.io/envoyproxy/ratelimit:8fe6ea42@sha256:a61547259607d40aff153050c2a87873ca1676d1d9f5f06937d412000dcc2df1"),
+        ):
+            args.extend(["--set-string", f"global.images.{name}.image={self._downloads.public_image(image)}"])
         self.run(args)
 
     def install_prometheus(
@@ -364,6 +372,18 @@ class Helm(HelmClient):
                 + json.dumps(namespace_selector, separators=(",", ":")),
             ]
         )
+        grafana = self._downloads.public_image(
+            "docker.io/grafana/grafana:13.2.0@sha256:3fd54ae1214669f8355f065ec9f6445d5279a3d77095ab048ca045685272429b"
+        )
+        registry, repository = grafana.split("/", 1)
+        repository_tag, digest = repository.split("@", 1)
+        repository, tag = repository_tag.rsplit(":", 1)
+        args.extend([
+            "--set-string", f"grafana.image.registry={registry}",
+            "--set-string", f"grafana.image.repository={repository}",
+            "--set-string", f"grafana.image.tag={tag}",
+            "--set-string", f"grafana.image.sha={digest}",
+        ])
         self.run(args)
 
     def install_dcgm_exporter(

@@ -66,6 +66,7 @@ type FrontendRuntimeProfile struct {
 	Port             int32
 	ImagePullSecrets []corev1.LocalObjectReference
 	RuntimeCache     *inferencev1alpha1.RuntimeCacheBinding
+	SourceAccess     *inferencev1alpha1.RuntimeSourceAccess
 	Gateway          *GatewayParent
 }
 

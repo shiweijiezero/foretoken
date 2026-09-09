@@ -14,6 +14,7 @@ from collections.abc import Iterable
 from typing import Any, NoReturn
 
 from foretoken.manifest import DeploymentError
+from foretoken.downloads import DownloadSources
 from foretoken.platform.config import PlatformConfig
 from foretoken.platform.types import ReleaseRef
 
@@ -25,6 +26,7 @@ class HelmClient:
         if shutil.which("helm") is None:
             raise DeploymentError("helm is required to install the Foretoken platform")
         self._config = config
+        self._downloads = DownloadSources()
 
     def run(self, args: Iterable[str]) -> subprocess.CompletedProcess[str]:
         """Execute Helm and preserve its diagnostic output on failure."""

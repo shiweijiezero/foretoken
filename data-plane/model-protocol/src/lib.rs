@@ -14,6 +14,16 @@ use vllm_engine_core_client::protocol::request::ReasoningParserKwargs;
 use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
 use vllm_llm::{FinishReason, GenerateOutput, GenerateRequest};
 
+/// Repository service shared by model weights and frontend processing files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ModelSource {
+    #[default]
+    #[serde(rename = "huggingface")]
+    HuggingFace,
+    #[serde(rename = "modelscope")]
+    ModelScope,
+}
+
 /// Execution responsibility of one routable ModelGroup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -127,6 +137,8 @@ impl From<GenerateOutput> for TokenOutput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeModelIdentity {
+    #[serde(default)]
+    pub source: ModelSource,
     pub model: String,
     pub revision: String,
 }
@@ -142,6 +154,9 @@ pub struct RuntimeEcTransferMetadata {
 pub struct RuntimeMetadataResponse {
     pub version: u8,
     pub model: RuntimeModelIdentity,
+    /// Download origin selected by this runtime; frontend artifacts use the same origin.
+    #[serde(default)]
+    pub model_source_endpoint: Option<String>,
     #[serde(default)]
     pub model_dtype: Option<ModelDtype>,
     pub effective_max_model_len: u32,

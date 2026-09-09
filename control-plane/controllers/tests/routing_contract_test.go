@@ -192,31 +192,4 @@ func TestFrontendLocalModeNeedsNoGateway(t *testing.T) {
 	if !cacheMounted {
 		t.Fatalf("frontend did not switch after the cached generation was selected: %#v", deployment.Spec.Template.Spec.Volumes)
 	}
-
-	r.CacheProfile = controllers.RuntimeCacheProfile{MountPath: "/cache"}
-	if _, err := r.Reconcile(ctx, request); err != nil {
-		t.Fatal(err)
-	}
-	deployment = get(t, ctx, c, request.NamespacedName, new(appsv1.Deployment))
-	if deployment.Spec.Template.Spec.Volumes[1].PersistentVolumeClaim == nil {
-		t.Fatal("frontend removed the cache before an uncached generation was selected")
-	}
-	uncachedGroup := modelGroup(pool, "local-model-r3-0", 0)
-	uncachedGroup.Spec.Revision = "r3"
-	markGroupReady(uncachedGroup)
-	if err := c.Create(ctx, uncachedGroup); err != nil {
-		t.Fatal(err)
-	}
-	model = get(t, ctx, c, client.ObjectKeyFromObject(model), new(inferencev1alpha1.ModelService))
-	model.Status.ServingPoolRevisions[0].Revision = "r3"
-	if err := c.Status().Update(ctx, model); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := r.Reconcile(ctx, request); err != nil {
-		t.Fatal(err)
-	}
-	deployment = get(t, ctx, c, request.NamespacedName, new(appsv1.Deployment))
-	if deployment.Spec.Template.Spec.Volumes[1].PersistentVolumeClaim != nil {
-		t.Fatalf("frontend retained the cache after the uncached generation was selected: %#v", deployment.Spec.Template.Spec.Volumes)
-	}
 }

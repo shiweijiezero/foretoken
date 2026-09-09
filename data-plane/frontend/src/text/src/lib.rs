@@ -3,6 +3,9 @@
 
 //! vLLM text lowering reused by the Foretoken routing data path.
 
+mod modelscope;
+
+use foretoken_model_protocol::ModelSource;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,8 +31,8 @@ pub struct HfSnapshotRuntime {
 }
 
 const HF_TOKEN_ENV: &str = "HF_TOKEN";
-const HF_HUB_OFFLINE_ENV: &str = "HF_HUB_OFFLINE";
-const TEMPORARY_HF_CACHE_DIR_ENV: &str = "FORETOKEN_TEMPORARY_HF_CACHE_DIR";
+const RUNTIME_CACHE_ROOT_ENV: &str = "FORETOKEN_CACHE_MOUNT_PATH";
+const TEMPORARY_CACHE_ROOT_ENV: &str = "FORETOKEN_TEMPORARY_CACHE_ROOT";
 const MODEL_FILES: &[&str] = &[
     "added_tokens.json",
     "chat_template.json",
@@ -55,9 +58,11 @@ const MODEL_FILES: &[&str] = &[
 ///
 /// Remote files use the standard `HF_HOME` cache, or the controller-projected Pod cache when
 /// persistent storage is offline, and are then loaded through vLLM's local resolver.
-pub async fn load_hf_text_backend(
+pub async fn load_text_backend(
     model_id: &str,
     revision: &str,
+    source: ModelSource,
+    source_endpoint: Option<&str>,
 ) -> std::result::Result<HfTextBackend, TextBackendLoadError> {
     if model_id.is_empty() || revision.is_empty() {
         return Err(TextBackendLoadError::MissingModelOrRevision);
@@ -67,6 +72,15 @@ pub async fn load_hf_text_backend(
             .await
             .map_err(|_| TextBackendLoadError::LocalModel);
     }
+    if source == ModelSource::ModelScope {
+        let cache = std::env::var_os(TEMPORARY_CACHE_ROOT_ENV)
+            .or_else(|| std::env::var_os(RUNTIME_CACHE_ROOT_ENV))
+            .map(PathBuf::from)
+            .unwrap_or_else(|| Cache::from_env().path().clone());
+        let snapshot = modelscope::snapshot(model_id, revision, &cache).await?;
+        return HfTextBackend::from_model(snapshot.to_str().ok_or(TextBackendLoadError::NonUtf8CachePath)?)
+            .await.map_err(|_| TextBackendLoadError::CachedModel);
+    }
     if let Some(snapshot) = cached_model_snapshot(model_id, revision) {
         let snapshot = snapshot
             .to_str()
@@ -75,18 +89,35 @@ pub async fn load_hf_text_backend(
             .await
             .map_err(|_| TextBackendLoadError::CachedModel);
     }
-    if std::env::var(HF_HUB_OFFLINE_ENV).is_ok_and(|value| value == "1") {
+    if foretoken_model_source::offline() {
         return Err(TextBackendLoadError::OfflineCacheMiss);
     }
 
-    let mut builder = ApiBuilder::from_env().with_progress(false);
-    if let Some(cache_dir) = std::env::var(TEMPORARY_HF_CACHE_DIR_ENV)
+    let hub_cache = runtime_hf_cache();
+    let endpoint = match source_endpoint {
+        Some(endpoint) => endpoint.to_owned(),
+        None => foretoken_model_source::hugging_face_endpoint(
+            model_id, revision, hub_cache.token_path().parent().ok_or(TextBackendLoadError::NonUtf8CachePath)?,
+        ).await?,
+    };
+    let credential_endpoint = std::env::var("HF_ENDPOINT").ok().filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "https://huggingface.co".into());
+    let send_credentials = endpoint.trim_end_matches('/') == credential_endpoint.trim_end_matches('/');
+    let mut builder = ApiBuilder::from_env()
+        .with_endpoint(endpoint)
+        .with_cache_dir(runtime_hf_cache().path().clone())
+        .with_progress(false);
+    if let Some(cache_root) = std::env::var(TEMPORARY_CACHE_ROOT_ENV)
         .ok()
         .filter(|path| !path.is_empty())
     {
-        builder = builder.with_cache_dir(PathBuf::from(cache_dir));
+        builder = builder.with_cache_dir(hf_cache_dir(PathBuf::from(cache_root)));
+    }
+    if !send_credentials {
+        builder = builder.with_token(None);
     }
     if let Ok(token) = std::env::var(HF_TOKEN_ENV)
+        && send_credentials
         && !token.is_empty()
     {
         builder = builder.with_token(Some(token));
@@ -124,13 +155,15 @@ pub async fn load_hf_text_backend(
 }
 
 /// Builds text lowering and HF chat rendering from the same pinned local snapshot.
-pub async fn load_hf_snapshot_runtime(
+pub async fn load_model_runtime(
     model_id: &str,
     revision: &str,
+    source: ModelSource,
+    source_endpoint: Option<&str>,
     max_model_len: u32,
     model_dtype: Option<ModelDtype>,
 ) -> std::result::Result<HfSnapshotRuntime, TextBackendLoadError> {
-    let text_backend = load_hf_text_backend(model_id, revision).await?;
+    let text_backend = load_text_backend(model_id, revision, source, source_endpoint).await?;
     let tokenizer = text_backend.tokenizer();
     let chat_backend = HfChatBackend::from_resolved_model_files(
         text_backend.resolved_model_files().clone(),
@@ -158,8 +191,20 @@ pub async fn load_hf_snapshot_runtime(
     })
 }
 
+fn hf_cache_dir(root: PathBuf) -> PathBuf {
+    root.join("models/hub")
+}
+
+fn runtime_hf_cache() -> Cache {
+    std::env::var_os(RUNTIME_CACHE_ROOT_ENV)
+        .map(PathBuf::from)
+        .map(hf_cache_dir)
+        .map(Cache::new)
+        .unwrap_or_else(Cache::from_env)
+}
+
 fn cached_model_snapshot(model_id: &str, revision: &str) -> Option<std::path::PathBuf> {
-    let repo = Cache::from_env().repo(Repo::with_revision(
+    let repo = runtime_hf_cache().repo(Repo::with_revision(
         model_id.to_owned(),
         RepoType::Model,
         revision.to_owned(),
@@ -171,13 +216,15 @@ fn cached_model_snapshot(model_id: &str, revision: &str) -> Option<std::path::Pa
         .map(Path::to_path_buf)
 }
 
+fn is_model_file(name: &str) -> bool {
+    MODEL_FILES.contains(&name) || name.ends_with(".tiktoken") || name.ends_with(".jinja")
+}
+
 fn files_for_local_hf_resolver(siblings: &[Siblings]) -> Vec<String> {
     siblings
         .iter()
         .map(|sibling| sibling.rfilename.as_str())
-        .filter(|name| {
-            MODEL_FILES.contains(name) || name.ends_with(".tiktoken") || name.ends_with(".jinja")
-        })
+        .filter(|name| is_model_file(name))
         .collect::<BTreeSet<_>>()
         .into_iter()
         .map(str::to_owned)
@@ -196,6 +243,14 @@ fn cache_snapshot_dir(path: &Path) -> Option<std::path::PathBuf> {
 /// Failures preparing tokenizer artifacts at the frontend boundary.
 #[derive(Debug, Error)]
 pub enum TextBackendLoadError {
+    #[error(transparent)]
+    Source(#[from] foretoken_model_source::SourceError),
+    #[error("ModelScope request failed: {0}")]
+    ModelScopeRequest(#[from] reqwest::Error),
+    #[error("ModelScope repository returned an invalid file listing")]
+    ModelScopeListing,
+    #[error("could not prepare model files: {0}")]
+    Storage(#[from] std::io::Error),
     #[error("tokenizer model and revision must not be empty")]
     MissingModelOrRevision,
     #[error("could not load tokenizer files from the local model directory")]

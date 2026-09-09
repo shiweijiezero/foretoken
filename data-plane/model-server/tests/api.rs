@@ -104,9 +104,11 @@ fn metadata() -> RuntimeMetadataResponse {
     RuntimeMetadataResponse {
         version: 1,
         model: RuntimeModelIdentity {
+            source: Default::default(),
             model: "model".into(),
             revision: "r1".into(),
         },
+        model_source_endpoint: None,
         model_dtype: Some(ModelDtype::BFloat16),
         effective_max_model_len: 32_768,
         ec_transfer: None,

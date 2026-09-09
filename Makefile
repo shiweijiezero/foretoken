@@ -12,6 +12,7 @@ DATA_PLANE_PACKAGES := \
 	foretoken-metrics \
 	foretoken-model-protocol \
 	foretoken-model-server \
+	foretoken-model-source \
 	foretoken-parser \
 	foretoken-router \
 	foretoken-runtime-builder \
@@ -62,12 +63,12 @@ dev-deploy:
 	./deploy/dev-deploy
 
 image-frontend: vllm-source
-	docker build -f data-plane/frontend/Dockerfile -t foretoken-frontend:dev .
+	python3 cli/foretoken/downloads.py -f data-plane/frontend/Dockerfile -t foretoken-frontend:dev .
 
 image-vllm-metax:
 	@test -n "$(METAX_BASE_IMAGE)" || \
 		(printf '%s\n' 'Set METAX_BASE_IMAGE to a matching released MetaX vLLM image.' >&2; exit 1)
-	docker build \
+	python3 cli/foretoken/downloads.py \
 		--build-arg METAX_BASE_IMAGE="$(METAX_BASE_IMAGE)" \
 		--build-arg MACA_PATH \
 		--build-arg METAX_PYTHON \
@@ -81,7 +82,7 @@ image-vllm-metax:
 image-model-server: vllm-source
 	@test -n "$(INFERENCE_ENGINE_IMAGE)" || \
 		(printf '%s\n' 'Set INFERENCE_ENGINE_IMAGE to a compatible inference engine image.' >&2; exit 1)
-	docker build --build-arg INFERENCE_ENGINE_IMAGE="$(INFERENCE_ENGINE_IMAGE)" \
+	python3 cli/foretoken/downloads.py --build-arg INFERENCE_ENGINE_IMAGE="$(INFERENCE_ENGINE_IMAGE)" \
 		--build-arg FORETOKEN_VLLM_PYTHON \
 		-f data-plane/model-server/Dockerfile -t foretoken-model-server:dev .
 
@@ -91,4 +92,4 @@ image-model-server-metax: image-vllm-metax
 		FORETOKEN_VLLM_PYTHON="$(VLLM_METAX_PYTHON)"
 
 image-benchmark:
-	docker build -f benchmarks/Dockerfile -t foretoken-benchmark:dev .
+	python3 cli/foretoken/downloads.py -f benchmarks/Dockerfile -t foretoken-benchmark:dev .

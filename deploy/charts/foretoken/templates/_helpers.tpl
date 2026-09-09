@@ -114,9 +114,6 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- if and (ne (trim .Values.runtime.vllm.modelSource.tokenSecret.name) "") (eq (trim .Values.runtime.vllm.modelSource.tokenSecret.key) "") -}}
 {{- fail "runtime.vllm.modelSource.tokenSecret.key is required when name is set" -}}
 {{- end -}}
-{{- if and (eq (trim .Values.workload.cache.claimName) "") (or (ne (trim .Values.runtime.vllm.modelSource.endpoint) "") (ne (trim .Values.runtime.vllm.modelSource.tokenSecret.name) "")) -}}
-{{- fail "workload.cache.claimName is required when runtime.vllm.modelSource is configured" -}}
-{{- end -}}
 {{- if ne (trim .Values.runtime.vllm.image) "" -}}
 {{- if eq (trim .Values.runtime.vllm.gpu.resourceName) "" -}}
 {{- fail "runtime.vllm.gpu.resourceName is required when runtime.vllm.image is set" -}}

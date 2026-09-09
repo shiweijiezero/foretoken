@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The model-server owns one startup deadline across the persistent attempt and one
     // Pod-scoped temporary retry, including complete teardown of a failed child process.
     let startup_deadline = Instant::now() + config.launch.startup_timeout();
-    let (engine, client) = match start_engine_attempt(
+    let (engine, client, model_source_endpoint) = match start_engine_attempt(
         &config,
         cache_config.as_ref(),
         runtime_cache::Mode::Persistent,
@@ -69,14 +69,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .await
     {
         Ok(started) => started,
-        Err(EngineStartupFailure::PersistentCache { context, source }) => {
+        Err(EngineStartupFailure::PersistentCache(error)) => {
             let cache = cache_config
                 .as_ref()
                 .expect("persistent cache failure requires a mounted RuntimeCache");
             warn!(
                 cache_mode = runtime_cache::Mode::Temporary.as_str(),
-                error = %source,
-                %context,
+                %error,
                 "persistent RuntimeCache became unavailable; retrying EngineCore with Pod-scoped temporary storage"
             );
             match start_engine_attempt(
@@ -126,9 +125,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let metadata = RuntimeMetadataResponse {
         version: 1,
         model: RuntimeModelIdentity {
+            source: config.launch.artifacts.source,
             model: config.launch.artifacts.model.clone(),
             revision: config.launch.artifacts.revision.clone(),
         },
+        model_source_endpoint,
         model_dtype: client.reported_model_dtype(),
         effective_max_model_len: client.max_model_len(),
         ec_transfer: config.launch.ec.runtime_metadata(),
@@ -263,17 +264,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 enum EngineStartupFailure {
-    PersistentCache { context: String, source: io::Error },
+    PersistentCache(io::Error),
     Other(io::Error),
 }
 
 impl EngineStartupFailure {
     fn into_error(self) -> io::Error {
         match self {
-            Self::PersistentCache { context, source } => {
-                io::Error::new(source.kind(), format!("{context}: {source}"))
-            }
-            Self::Other(error) => error,
+            Self::PersistentCache(error) | Self::Other(error) => error,
         }
     }
 }
@@ -283,14 +281,11 @@ fn cache_mode_failure(
     context: impl Into<String>,
     source: io::Error,
 ) -> EngineStartupFailure {
-    let context = context.into();
+    let error = io::Error::new(source.kind(), format!("{}: {source}", context.into()));
     if mode == runtime_cache::Mode::Persistent {
-        EngineStartupFailure::PersistentCache { context, source }
+        EngineStartupFailure::PersistentCache(error)
     } else {
-        EngineStartupFailure::Other(io::Error::new(
-            source.kind(),
-            format!("{context}: {source}"),
-        ))
+        EngineStartupFailure::Other(error)
     }
 }
 
@@ -327,8 +322,8 @@ async fn start_engine_attempt(
     mode: runtime_cache::Mode,
     startup_deadline: Instant,
     cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
-) -> Result<(ManagedEngineHandle, EngineCoreClient), EngineStartupFailure> {
-    let environment = if let Some(cache) = cache {
+) -> Result<(ManagedEngineHandle, EngineCoreClient, Option<String>), EngineStartupFailure> {
+    let mut environment = if let Some(cache) = cache {
         cache.set_mode(mode);
         cache
             .prepare(mode)
@@ -337,6 +332,27 @@ async fn start_engine_attempt(
     } else {
         Vec::new()
     };
+    // Resolve downloads in the Pod's network, not the installer's network. The selected
+    // environment is scoped to the child and retained through all vLLM imports.
+    match config.launch.artifacts.source {
+        foretoken_model_protocol::ModelSource::ModelScope => {
+            environment.push(("VLLM_USE_MODELSCOPE".into(), "1".into()));
+        }
+        foretoken_model_protocol::ModelSource::HuggingFace => {
+            let hub_home = environment.iter().find(|(name, _)| name == "HF_HOME")
+                .map(|(_, home)| std::path::PathBuf::from(home))
+                .unwrap_or_else(foretoken_model_source::hugging_face_home);
+            let endpoint = tokio::time::timeout(
+                startup_deadline.saturating_duration_since(Instant::now()),
+                foretoken_model_source::hugging_face_endpoint(
+                    &config.launch.artifacts.model, &config.launch.artifacts.revision, &hub_home,
+                ),
+            ).await.map_err(|_| EngineStartupFailure::Other(io::Error::other("model source selection exceeded the startup deadline")))?
+                .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+            environment.push(("HF_ENDPOINT".into(), endpoint));
+            environment.push(("VLLM_USE_MODELSCOPE".into(), "0".into()));
+        }
+    }
     let handshake_port = allocate_handshake_port(LOOPBACK_HOST)
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
     let managed_engine = config
@@ -360,6 +376,7 @@ async fn start_engine_attempt(
         ))
     })?
     .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
+    let source_endpoint = environment.iter().find(|(name, _)| name == "HF_ENDPOINT").map(|(_, value)| value.clone());
     let engine = ManagedEngineHandle::spawn_with_env(managed_engine, environment)
         .await
         .map_err(|error| {
@@ -399,7 +416,7 @@ async fn start_engine_attempt(
         error = wait_cache_write_failure(cache, mode) => Err(cache_mode_failure(mode, format!("{} cache became unwritable during EngineCore startup", mode.as_str()), error)),
     };
     match client {
-        Ok(client) => Ok((engine, client)),
+        Ok(client) => Ok((engine, client, source_endpoint)),
         Err(error) => {
             let _ = engine.shutdown(config.launch.drain_timeout()).await;
             Err(error)

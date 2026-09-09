@@ -14,14 +14,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const runtimeCacheVolumeName = "runtime-cache"
-
-func runtimeCacheObservationPort(runtimePort int32) int32 {
-	if runtimePort < 65535 {
-		return runtimePort + 1
-	}
-	return runtimePort - 1
-}
+const (
+	runtimeCacheVolumeName        = "runtime-cache"
+	runtimeCacheRootEnv           = "FORETOKEN_CACHE_MOUNT_PATH"
+	temporaryRuntimeCacheRootEnv  = "FORETOKEN_TEMPORARY_CACHE_ROOT"
+	temporaryRuntimeCacheRootPath = "/tmp/foretoken-runtime-cache"
+)
 
 // RuntimeSourceProfile configures optional source access for the runtime adapter.
 type RuntimeSourceProfile struct {

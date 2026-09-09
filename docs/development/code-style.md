@@ -24,7 +24,7 @@ Use the smallest maintainable implementation that completely expresses the requi
 - Introduce a trait, interface, factory, builder, or registry only when it represents a real ownership boundary or multiple current implementations.
 - Keep one owner for each lifecycle. Resource creation, use, cleanup, and state publication should stay together unless ownership transfer is explicit in the API.
 - Do not copy a complete lifecycle into multiple runners, controllers, or adapters. Share the common execution path and keep each caller responsible only for its distinct policy or input.
-- Shared protocol values, defaults, state transitions, and derived calculations must have one authoritative definition. Consumers should use a typed contract or shared helper instead of copying strings, numbers, or algorithms.
+- Shared decisions, defaults, state transitions, and derived values must have one authoritative owner. The owner resolves them once, and consumers use the result instead of independently reconstructing the same decision.
 
 Foretoken integrates with mature inference engines and Kubernetes projects. Reuse their public interfaces and owning paths where they fit. Keep version-sensitive or backend-specific behavior in a thin adapter; platform APIs and common control flow should use inference-engine-neutral domain types.
 
@@ -32,10 +32,11 @@ Do not build compatibility probes, fallback implementations, or plugin framework
 
 ## Public interfaces and configuration
 
-Public configuration includes CLI flags, YAML fields, environment variables, CRD fields, API fields, status fields, and persistent output schemas. Each addition must represent a choice users currently need to make and must have an execution path that consumes it.
+Public configuration includes CLI flags, YAML fields, environment variables, CRD fields, API fields, status fields, and persistent output schemas. Each addition must represent a choice users currently need to make and must have an execution path that consumes it. A first-time user should understand configuration, defaults, operations, and degraded states without learning the internal implementation.
 
 - Do not expose internal revisions, temporary paths, controller-owned state, runtime identities, intermediate results, or orchestration context as ordinary user configuration.
 - Derive values from the model identifier, Kubernetes resource, Helm release, namespace, or another authoritative input when possible.
+- Reducing field count is not simplification when a remaining field acquires unrelated responsibilities. Field names and documentation must match actual behavior, and each field should express one coherent user decision.
 - Do not automatically expose every struct or dataclass field through reflection. CLI, configuration, and sweep surfaces require an explicit field mapping.
 - Keep one source for each default. Do not repeat the same default in a schema, parser, controller, adapter, and example.
 - Define user and runtime defaults at the configuration or lifecycle boundary that owns them. Decoders and consumers must not replace missing required state with empty strings, empty collections, zero values, or other convenient fallbacks; fail at the owning boundary so the broken contract remains visible. Represent absence explicitly only when it is valid domain state.
@@ -63,6 +64,8 @@ When such a mechanism is necessary, identify:
 4. why types, versions, primary keys, transactions, upstream validation, or ordinary tests are insufficient.
 
 Validate once at the boundary that owns the invariant. Do not repeat the same check in every downstream layer. Required state and protocol failures should surface clearly rather than being converted to empty results or silent defaults.
+
+Recovery belongs to the component that owns the failed work. It should preserve unaffected work, limit fallback to the failed scope, and expose the original or final actionable error when recovery cannot complete.
 
 Catch only errors the caller can handle. Broad exception handling must not turn programming errors, invalid SDK usage, or broken invariants into ordinary remote failures.
 
@@ -108,20 +111,20 @@ Follow the surrounding code and the executable checks for each subtree.
 
 Generated files must identify or have a documented source. Change the source and regenerate the artifact; do not maintain generated output as a second implementation.
 
+Validate the complete, reproducible combination of source, dependencies, generated artifacts, and packaged outputs that will actually be delivered. Results from a different or partially committed composition are not completion evidence.
+
 ## Testing
 
-Do not add tests by default. Before writing test code, a human contributor must review its motivation and identify the important behavior or concrete regression it protects, why existing integration or end-to-end validation is insufficient, and why the maintenance cost is justified. If those questions have no clear answer, do not add the test.
+Do not add tests by default. A code change, new feature, function, branch, or pull request does not by itself justify a new test. First run and adapt the existing validation. A new test requires prior explicit human approval, a concrete behavior or regression to protect, and an explanation of why existing integration, end-to-end execution, or direct measurement is insufficient. A persistent test must fit an established validation workflow with a clear owner; do not add CI merely to host it.
 
-Test code is maintained code and can expand quickly. Use the smallest set that protects behavior maintainers and users actually rely on.
+When an interface changes, update the calls, inputs, and expected outcomes of existing tests so they continue protecting their original contract. This does not authorize a new test file, test case, subtest, or independent scenario appended to an existing test.
 
-- Prefer end-to-end, integration, and cross-module contract tests that cover substantial real behavior.
-- Give every retained non-trivial test a descriptive name and a short preceding comment that states the protected contract, concrete failure, or reason the test exists. Document the structure of large fixtures and multi-stage scenarios.
-- Extend an existing scenario, fixture, or contract test before creating a new test module.
-- Add focused tests for important algorithms, concurrency, state transitions, recovery paths, or regressions that have occurred and can recur.
-- Test stable observable outcomes such as API responses, CRD status, protocol events, metrics, resource lifecycle, and generated deployment behavior.
-- Do not test plain getters, field forwarding, constant mappings, branch-free thin wrappers, framework wiring, or behavior already owned by an upstream library.
-- Do not add a test merely because a function, branch, loader, state machine, or public method was added. Complexity and coverage numbers are not sufficient reasons.
-- Do not expand a public API only to make private implementation details testable.
+Test code is maintained code. Keep the smallest approved set that protects behavior maintainers and users rely on.
+
+- Prefer end-to-end, integration, and cross-module contract tests that cover substantial observable behavior.
+- Give every retained non-trivial test a descriptive name and a short preceding comment that states the protected contract or concrete failure.
+- Assert stable outcomes such as API responses, status, metrics, resource lifecycle, and generated deployment behavior.
+- Do not test private helpers, plain accessors, field forwarding, constant mappings, branch-free wrappers, framework wiring, or upstream-owned behavior. Do not hide such checks inside a larger test or expand a public API to make them testable.
 
 When a change affects model quality, serving performance, GPU behavior, or distributed deployment, code tests do not replace the relevant measurement or end-to-end execution.
 

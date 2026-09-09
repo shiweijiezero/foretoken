@@ -1,12 +1,11 @@
-# syntax=docker/dockerfile:1
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Build from the repository root so Cargo uses the data-plane workspace and
 # its official vLLM submodule.
 
-ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bookworm
-ARG RUNTIME_IMAGE=docker.io/library/debian:bookworm-slim
+ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bookworm@sha256:2775a09d208ff0d7c1f50490c45b62db929e87ba1dcbc3f2132ac71a704bcdd3
+ARG RUNTIME_IMAGE=docker.io/library/debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 
 FROM ${RUST_BUILDER_IMAGE} AS builder
 

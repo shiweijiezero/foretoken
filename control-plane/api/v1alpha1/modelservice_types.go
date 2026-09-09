@@ -291,6 +291,15 @@ type ModelAutoscalingConfig struct {
 	Adjustment *ModelAutoscalingAdjustmentConfig `json:"adjustment,omitempty"`
 }
 
+// ModelSource identifies the repository service used for model and tokenizer files.
+// +kubebuilder:validation:Enum=huggingface;modelscope
+type ModelSource string
+
+const (
+	ModelSourceHuggingFace ModelSource = "huggingface"
+	ModelSourceModelScope ModelSource = "modelscope"
+)
+
 // ModelServiceSpec defines the desired state of a model service.
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !(has(self.replicas) || has(self.nodes) || has(self.resources) || has(self.parallelism) || has(self.maxInputTokens) || has(self.kvCache) || has(self.features))",message="spec.modelPools is mutually exclusive with top-level replicas, nodes, resources, parallelism, maxInputTokens, kvCache, and features"
 // +kubebuilder:validation:XValidation:rule="has(self.modelPools) || (has(self.resources) && has(self.parallelism))",message="top-level resources and parallelism are required when spec.modelPools is omitted"
@@ -304,6 +313,11 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Model string `json:"model"`
+
+	// Source selects the repository service for model and tokenizer; local paths bypass downloads.
+	// +optional
+	// +kubebuilder:default=huggingface
+	Source ModelSource `json:"source,omitempty"`
 
 	// Tokenizer defaults to model when omitted.
 	// +optional

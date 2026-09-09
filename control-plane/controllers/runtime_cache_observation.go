@@ -64,7 +64,7 @@ func observeGroupCache(ctx context.Context, kubeClient client.Client, group *inf
 		if !pod.DeletionTimestamp.IsZero() || pod.Status.PodIP == "" || pod.Status.Phase != corev1.PodRunning {
 			continue
 		}
-		endpoint := "http://" + net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(int(runtimeCacheObservationPort(group.Spec.Runtime.Port))))
+		endpoint := "http://" + net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(int(group.Spec.Runtime.RuntimeCacheObservationPort)))
 		observation, err := readRuntimeCacheObservation(ctx, endpoint, string(pod.UID))
 		if err != nil {
 			failures = append(failures, fmt.Errorf("cache observation for Pod %s: %w", pod.Name, err))

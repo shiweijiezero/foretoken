@@ -12,6 +12,7 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -64,12 +65,10 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	if routerFilter == "" || routerScorer == "" || routerPicker == "" {
 		return nil, nil, nil, fmt.Errorf("frontend routerPipeline was not defaulted")
 	}
-	tokenizerCachePath := "/var/cache/foretoken/models"
 	cacheMountPath := "/var/cache/foretoken"
 	frontendEnv := []corev1.EnvVar{
 		{Name: "FORETOKEN_LISTEN_ADDRESS", Value: fmt.Sprintf("0.0.0.0:%d", profile.Port)},
 		{Name: "FORETOKEN_SERVING_SNAPSHOT", Value: "/etc/foretoken/serving/serving.json"},
-		{Name: "HF_HOME", Value: tokenizerCachePath},
 		{Name: "FORETOKEN_REQUEST_TIMEOUT_SECONDS", Value: strconv.FormatInt(requestTimeoutSeconds, 10)},
 		{Name: "FORETOKEN_STREAM_IDLE_SECONDS", Value: strconv.FormatInt(streamIdleSeconds, 10)},
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
@@ -77,14 +76,14 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_ROUTER_SCORER", Value: string(routerScorer)},
 		{Name: "FORETOKEN_ROUTER_PICKER", Value: string(routerPicker)},
 	}
+	frontendEnv = append(frontendEnv, vllmconfig.RuntimeSourceEnv(profile.SourceAccess)...)
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {
-		tokenizerCachePath = profile.RuntimeCache.MountPath + "/models"
 		cacheMountPath = profile.RuntimeCache.MountPath
-		frontendEnv[2].Value = tokenizerCachePath
-		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: "FORETOKEN_TEMPORARY_HF_CACHE_DIR", Value: "/tmp/foretoken-runtime-cache/models/hub"})
+		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: temporaryRuntimeCacheRootEnv, Value: temporaryRuntimeCacheRootPath})
 		cacheVolume.VolumeSource = corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: profile.RuntimeCache.ClaimName}}
 	}
+	frontendEnv = append(frontendEnv, corev1.EnvVar{Name: runtimeCacheRootEnv, Value: cacheMountPath})
 	volumes := []corev1.Volume{
 		{Name: "serving", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: servingConfigMap}}}},
 		cacheVolume,
@@ -97,7 +96,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	}
 	if profile.RuntimeCache != nil {
 		volumes = append(volumes, corev1.Volume{Name: "runtime-cache-temporary", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}})
-		mounts = append(mounts, corev1.VolumeMount{Name: "runtime-cache-temporary", MountPath: "/tmp/foretoken-runtime-cache"})
+		mounts = append(mounts, corev1.VolumeMount{Name: "runtime-cache-temporary", MountPath: temporaryRuntimeCacheRootPath})
 	}
 
 	deployment := &appsv1.Deployment{

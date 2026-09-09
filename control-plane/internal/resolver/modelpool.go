@@ -91,6 +91,13 @@ type ModelGroupTemplate struct {
 	Network        string
 }
 
+func runtimeCacheObservationPort(runtimePort int32) int32 {
+	if runtimePort < 65535 {
+		return runtimePort + 1
+	}
+	return runtimePort - 1
+}
+
 // ResolveModelPool resolves one supported vLLM execution profile into a Group contract.
 func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
 	if template.Role != inferencev1alpha1.ModelRoleAggregate && template.Role != inferencev1alpha1.ModelRoleEncoder && template.Role != inferencev1alpha1.ModelRolePrefill && template.Role != inferencev1alpha1.ModelRoleDecode {
@@ -125,6 +132,18 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if err != nil {
 		return ModelGroupTemplate{}, err
 	}
+	cacheObservationPort := int32(0)
+	if template.RuntimeCache != nil {
+		cacheObservationPort = runtimeCacheObservationPort(profile.ModelServerPort)
+	}
+	if template.Role == inferencev1alpha1.ModelRolePrefill && pdRuntime != nil {
+		if pdRuntime.BootstrapPort == profile.ModelServerPort {
+			return ModelGroupTemplate{}, fmt.Errorf("Mooncake bootstrap port conflicts with the model-server port")
+		}
+		if pdRuntime.BootstrapPort == cacheObservationPort {
+			return ModelGroupTemplate{}, fmt.Errorf("Mooncake bootstrap port conflicts with the runtime cache observation port")
+		}
+	}
 	ecRuntime, err := resolveECRuntime(template, effective.Parallelism, profile.EC)
 	if err != nil {
 		return ModelGroupTemplate{}, err
@@ -147,6 +166,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		Role: template.Role,
 		Artifacts: inferencev1alpha1.ModelGroupArtifacts{
 			Model:             effective.Model,
+			Source:            template.Source,
 			ModelRevision:     effective.Revision,
 			Tokenizer:         effective.Tokenizer,
 			TokenizerRevision: effective.TokenizerRevision,
@@ -157,6 +177,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			Backend:                               template.Backend,
 			Image:                                 profile.Image,
 			Port:                                  profile.ModelServerPort,
+			RuntimeCacheObservationPort:           cacheObservationPort,
 			Args:                                  append([]inferencev1alpha1.BackendArg(nil), effective.ExtraArgs...),
 			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,
 		},

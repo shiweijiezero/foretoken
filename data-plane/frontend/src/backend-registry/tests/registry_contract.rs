@@ -36,6 +36,7 @@ fn pd_component(id: &str, role: ModelServerRole) -> SnapshotPdComponent {
         role,
         pipeline_scope_id: "service-a".into(),
         model: "model".into(),
+            source: Default::default(),
         revision: "r1".into(),
         tokenizer: "tokenizer".into(),
         tokenizer_revision: "r1".into(),
@@ -73,6 +74,7 @@ fn pd_snapshot() -> ServingSnapshot {
         models: vec![SnapshotModel {
             service_uid: "service".into(),
             model: "model".into(),
+            source: Default::default(),
             revision: "r1".into(),
             tokenizer: "tokenizer".into(),
             tokenizer_revision: "r1".into(),
@@ -105,6 +107,7 @@ fn epd_component(id: &str, role: ModelServerRole) -> SnapshotEpdComponent {
         role,
         pipeline_scope_id: "epd-a".into(),
         model: "model".into(),
+            source: Default::default(),
         revision: "r1".into(),
         tokenizer: "tokenizer".into(),
         tokenizer_revision: "r1".into(),
@@ -147,6 +150,7 @@ fn epd_snapshot() -> ServingSnapshot {
         models: vec![SnapshotModel {
             service_uid: "service".into(),
             model: "model".into(),
+            source: Default::default(),
             revision: "r1".into(),
             tokenizer: "tokenizer".into(),
             tokenizer_revision: "r1".into(),
@@ -183,8 +187,10 @@ fn runtime_metadata() -> RuntimeMetadataResponse {
         version: 1,
         model: RuntimeModelIdentity {
             model: "model".into(),
+            source: Default::default(),
             revision: "r1".into(),
         },
+        model_source_endpoint: None,
         model_dtype: Some(ModelDtype::BFloat16),
         effective_max_model_len: 32_768,
         ec_transfer: None,
@@ -283,6 +289,7 @@ fn aggregate_snapshot(endpoint: String) -> ServingSnapshot {
         models: vec![SnapshotModel {
             service_uid: "service".into(),
             model: "model".into(),
+            source: Default::default(),
             revision: "r1".into(),
             tokenizer: "tokenizer".into(),
             tokenizer_revision: "r1".into(),
@@ -300,6 +307,7 @@ fn aggregate_snapshot(endpoint: String) -> ServingSnapshot {
             pool_name: "pool".into(),
             route_target_id: RouteTargetId::new("a"),
             model: "model".into(),
+            source: Default::default(),
             revision: "r1".into(),
             tokenizer: "tokenizer".into(),
             tokenizer_revision: "r1".into(),

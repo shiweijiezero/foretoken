@@ -421,6 +421,13 @@ spec:
                     - claimName
                     - mountPath
                     type: object
+                  source:
+                    description: ModelSource identifies the repository service used
+                      for model and tokenizer files.
+                    enum:
+                    - huggingface
+                    - modelscope
+                    type: string
                   sourceAccess:
                     description: SourceAccess is set by the ModelService controller
                       from the selected runtime profile.

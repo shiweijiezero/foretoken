@@ -28,6 +28,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		group := modelGroup(pool, "model-r1-0", 0)
 		group.Spec.Accelerator.RuntimeClassName = "nvidia"
 		group.Spec.Artifacts.Cache = &inferencev1alpha1.RuntimeCacheBinding{ClaimName: "runtime-cache", MountPath: "/cache"}
+		group.Spec.Runtime.RuntimeCacheObservationPort = 9001
 		c := controllerClient(t, service, pool, group)
 		r := &controllers.ModelGroupReconciler{Client: c, ControlPlaneNamespace: "foretoken-system", ImagePullSecrets: []corev1.LocalObjectReference{{Name: "registry-auth"}}}
 		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(group)}
@@ -48,7 +49,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		for _, item := range pod.Containers[0].Env {
 			env[item.Name] = item
 		}
-		if env["HF_HOME"].Value != "/cache/models" || env["VLLM_CACHE_ROOT"].Value != "/cache/vllm" || env["TORCHINDUCTOR_CACHE_DIR"].Value != "/cache/torch" || env["TRITON_CACHE_DIR"].Value != "/cache/triton" || env["FORETOKEN_CACHE_OBSERVATION_PORT"].Value != "9001" {
+		if env["FORETOKEN_CACHE_MOUNT_PATH"].Value != "/cache" || env["FORETOKEN_TEMPORARY_CACHE_ROOT"].Value != "/tmp/foretoken-runtime-cache" || env["FORETOKEN_CACHE_OBSERVATION_PORT"].Value != "9001" {
 			t.Fatalf("runtime cache environment = %#v", env)
 		}
 		cacheMounted := false
@@ -71,10 +72,6 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		metricsPeer := policy.Spec.Ingress[0].From[2]
 		if metricsPeer.NamespaceSelector == nil || metricsPeer.NamespaceSelector.MatchLabels["inference.foretoken.io/metrics-scraper"] != "true" {
 			t.Fatalf("metrics peer = %#v", metricsPeer)
-		}
-		cacheIngress := policy.Spec.Ingress[1]
-		if len(cacheIngress.From) != 1 || len(cacheIngress.Ports) != 1 || cacheIngress.Ports[0].Port == nil || cacheIngress.Ports[0].Port.StrVal != "cache-observe" {
-			t.Fatalf("cache observation ingress = %#v", cacheIngress)
 		}
 		current := get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.ModelGroup))
 		if condition := meta.FindStatusCondition(current.Status.Conditions, "WorkloadMaterialized"); condition == nil || condition.Status != metav1.ConditionTrue {

@@ -63,10 +63,11 @@ func ensureKVIndexerSecret(ctx context.Context, c client.Client, namespace strin
 func kvScopeID(group *inferencev1alpha1.ModelGroup) string {
 	payload := struct {
 		Model, Revision, Tokenizer, TokenizerRevision string
+		Source inferencev1alpha1.ModelSource
 		Parallelism                                   inferencev1alpha1.CompiledParallelism
 		RuntimeArgs                                   []inferencev1alpha1.BackendArg
 		KVRuntime                                     *inferencev1alpha1.ModelGroupKVRuntimeConfig
-	}{group.Spec.Artifacts.Model, group.Spec.Artifacts.ModelRevision, group.Spec.Artifacts.Tokenizer, group.Spec.Artifacts.TokenizerRevision, group.Spec.Parallelism, group.Spec.Runtime.Args, group.Spec.KVRuntime}
+	}{group.Spec.Artifacts.Model, group.Spec.Artifacts.ModelRevision, group.Spec.Artifacts.Tokenizer, group.Spec.Artifacts.TokenizerRevision, group.Spec.Artifacts.Source, group.Spec.Parallelism, group.Spec.Runtime.Args, group.Spec.KVRuntime}
 	encoded, _ := json.Marshal(payload)
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])

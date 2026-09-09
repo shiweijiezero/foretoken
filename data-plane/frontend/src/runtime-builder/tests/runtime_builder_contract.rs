@@ -19,6 +19,7 @@ async fn logical_only_snapshot_publishes_a_ready_scale_from_zero_runtime() {
     let snapshot = ServingSnapshot {
         version: 1,
         models: vec![SnapshotModel {
+            source: Default::default(),
             service_uid: "service".into(),
             model: "model".into(),
             revision: "r1".into(),

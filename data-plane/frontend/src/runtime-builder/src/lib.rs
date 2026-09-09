@@ -17,7 +17,7 @@ use foretoken_server::{
     KvIndexDiagnostics, ModelRuntime, RuntimeBundle, RuntimeControl, RuntimeGeneration,
     RuntimeState,
 };
-use foretoken_text::{HfSnapshotRuntime, load_hf_snapshot_runtime};
+use foretoken_text::{HfSnapshotRuntime, load_model_runtime};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy)]
@@ -231,9 +231,11 @@ async fn model_runtimes(
             tokenizer,
             chat_processor,
             supports_multimodal,
-        } = load_hf_snapshot_runtime(
+        } = load_model_runtime(
             &identity.tokenizer,
             &identity.tokenizer_revision,
+            identity.source,
+            registry.model_source_endpoint(&model).as_deref(),
             max_model_len,
             model_dtype,
         )

@@ -38,6 +38,8 @@ pub struct LaunchPlanV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Artifacts {
+    #[serde(default)]
+    pub source: foretoken_model_protocol::ModelSource,
     pub model: String,
     pub revision: String,
     pub tokenizer: String,

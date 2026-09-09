@@ -74,8 +74,10 @@ def default_platform_config() -> PlatformConfig:
         ),
         envoy_gateway=ManagedChart(
             release_name="foretoken-envoy-gateway",
-            source="oci://docker.io/envoyproxy/gateway-helm",
-            version="v1.9.1",
+            source=(
+                "oci://docker.io/envoyproxy/gateway-helm"
+                "@sha256:91bae9aedb91ab34731e987afe01a3ccf454393015abeca705eea8ee15553e86"
+            ),
         ),
         envoy_gateway_default_controller=(
             "gateway.envoyproxy.io/gatewayclass-controller"

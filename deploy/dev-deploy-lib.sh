@@ -5,19 +5,19 @@
 build_dev_images() {
   export DOCKER_BUILDKIT=1
 
-  docker build \
+  python3 "$ROOT/cli/foretoken/downloads.py" \
     -f control-plane/Dockerfile \
     -t "$CONTROL_PLANE_IMAGE" \
     .
 
   make vllm-source
 
-  docker build \
+  python3 "$ROOT/cli/foretoken/downloads.py" \
     -f data-plane/frontend/Dockerfile \
     -t "$FRONTEND_IMAGE" \
     .
 
-  docker build \
+  python3 "$ROOT/cli/foretoken/downloads.py" \
     --build-arg INFERENCE_ENGINE_IMAGE="$INFERENCE_ENGINE_IMAGE" \
     --build-arg FORETOKEN_VLLM_PYTHON \
     -f data-plane/model-server/Dockerfile \

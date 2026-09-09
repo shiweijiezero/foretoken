@@ -35,6 +35,9 @@ type ModelGroupArtifacts struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Model string `json:"model"`
 
+	// +optional
+	Source ModelSource `json:"source,omitempty"`
+
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
 	ModelRevision string `json:"modelRevision"`
@@ -183,6 +186,12 @@ type ModelGroupRuntime struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port"`
+
+	// RuntimeCacheObservationPort is the controller-selected filesystem observation listener.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=65535
+	RuntimeCacheObservationPort int32 `json:"runtimeCacheObservationPort,omitempty"`
 
 	// Args contains inference-engine flags not represented by the typed Group specification.
 	// +optional

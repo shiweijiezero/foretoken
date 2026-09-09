@@ -290,6 +290,7 @@ func main() {
 				Image:            frontendImage,
 				Port:             int32(frontendPort),
 				ImagePullSecrets: workloadImagePullSecrets,
+				SourceAccess:     sourceProfile.RuntimeSource(),
 				Gateway:          gateway,
 			},
 		}

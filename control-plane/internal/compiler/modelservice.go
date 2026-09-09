@@ -15,8 +15,7 @@ import (
 )
 
 const (
-	defaultPoolName         = "default"
-	defaultArtifactRevision = "main"
+	defaultPoolName = "default"
 )
 
 // ModelPool is one normalized Pool produced from ModelService intent.
@@ -146,6 +145,18 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, name string, role infe
 	if err != nil {
 		return ModelPool{}, err
 	}
+	source := spec.Source
+	if source == "" {
+		source = inferencev1alpha1.ModelSourceHuggingFace
+	}
+	revision := "main"
+	switch source {
+	case inferencev1alpha1.ModelSourceHuggingFace:
+	case inferencev1alpha1.ModelSourceModelScope:
+		revision = "master"
+	default:
+		return ModelPool{}, fmt.Errorf("unsupported model source %q", source)
+	}
 	tokenizer := spec.Tokenizer
 	if tokenizer == "" {
 		tokenizer = spec.Model
@@ -155,9 +166,10 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, name string, role infe
 		DesiredGroups: replicas,
 		Template: inferencev1alpha1.NormalizedPoolTemplate{
 			Model:                                 spec.Model,
-			ModelRevision:                         defaultArtifactRevision,
+			Source:                                source,
+			ModelRevision:                         revision,
 			Tokenizer:                             tokenizer,
-			TokenizerRevision:                     defaultArtifactRevision,
+			TokenizerRevision:                     revision,
 			Backend:                               spec.Backend,
 			Role:                                  role,
 			NodeCount:                             nodes,

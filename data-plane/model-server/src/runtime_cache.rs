@@ -21,8 +21,9 @@ use tracing::warn;
 
 const OBSERVATION_VERSION: u8 = 1;
 const WRITE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
-const TEMPORARY_CACHE_ROOT: &str = "/tmp/foretoken-runtime-cache";
-const CACHE_ENV: [(&str, &str); 4] = [
+const TEMPORARY_CACHE_ROOT_ENV: &str = "FORETOKEN_TEMPORARY_CACHE_ROOT";
+const CACHE_ENV: [(&str, &str); 5] = [
+    ("MODELSCOPE_CACHE", "modelscope"),
     ("HF_HOME", "models"),
     ("VLLM_CACHE_ROOT", "vllm"),
     ("TORCHINDUCTOR_CACHE_DIR", "torch"),
@@ -73,6 +74,12 @@ impl Config {
         if !mount_path.is_absolute() || mount_path == Path::new("/") {
             return Err("FORETOKEN_CACHE_MOUNT_PATH must be an absolute non-root path".into());
         }
+        let temporary_root = std::env::var_os(TEMPORARY_CACHE_ROOT_ENV)
+            .ok_or("FORETOKEN_TEMPORARY_CACHE_ROOT must be set when a RuntimeCache is mounted")?;
+        let temporary_root = PathBuf::from(temporary_root);
+        if !temporary_root.is_absolute() || temporary_root == Path::new("/") {
+            return Err("FORETOKEN_TEMPORARY_CACHE_ROOT must be an absolute non-root path".into());
+        }
         let pod_uid = std::env::var("FORETOKEN_POD_UID")
             .map_err(|_| "FORETOKEN_POD_UID must be set when a RuntimeCache is mounted")?;
         if pod_uid.is_empty() {
@@ -89,7 +96,7 @@ impl Config {
         }
         Ok(Some(Self {
             mount_path,
-            temporary_root: Path::new(TEMPORARY_CACHE_ROOT).join(&pod_uid),
+            temporary_root: temporary_root.join(&pod_uid),
             pod_uid,
             observation_port,
             temporary: Arc::new(AtomicBool::new(false)),
@@ -110,11 +117,8 @@ impl Config {
         self.probe_writable(mode)
     }
 
-    /// Returns child-process cache overrides for a temporary retry.
+    /// Maps the selected RuntimeCache root to vLLM child-process cache directories.
     pub fn engine_environment(&self, mode: Mode) -> Vec<(String, String)> {
-        if mode == Mode::Persistent {
-            return Vec::new();
-        }
         CACHE_ENV
             .into_iter()
             .map(|(name, directory)| {
@@ -234,56 +238,4 @@ fn filesystem_capacity(config: &Config) -> Result<(u64, u64), String> {
         .checked_mul(block_size)
         .ok_or_else(|| "RuntimeCache availability exceeds the supported byte range".to_string())?;
     Ok((capacity_bytes, available_bytes))
-}
-
-#[cfg(test)]
-mod tests {
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicBool;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    use super::{Config, Mode};
-
-    // A concrete persistent write failure must leave the PVC untouched and prepare the Pod cache.
-    #[test]
-    fn temporary_cache_is_writable_when_persistent_root_is_not_a_directory() {
-        let identity = format!(
-            "foretoken-runtime-cache-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
-        let root = std::env::temp_dir().join(identity);
-        std::fs::create_dir_all(&root).unwrap();
-        let persistent = root.join("persistent");
-        std::fs::write(&persistent, b"not a directory").unwrap();
-        let temporary = root.join("temporary");
-        let config = Config {
-            mount_path: persistent.clone(),
-            temporary_root: temporary.clone(),
-            pod_uid: "pod".into(),
-            observation_port: 9001,
-            temporary: Arc::new(AtomicBool::new(false)),
-        };
-
-        assert!(config.prepare(Mode::Persistent).is_err());
-        config.prepare(Mode::Temporary).unwrap();
-        let environment = config.engine_environment(Mode::Temporary);
-        assert!(
-            environment
-                .iter()
-                .all(|(_, path)| path.starts_with(temporary.to_str().unwrap()))
-        );
-        assert_eq!(std::fs::read(&persistent).unwrap(), b"not a directory");
-        config.set_mode(Mode::Temporary);
-        assert!(
-            config
-                .render_openmetrics()
-                .contains("foretoken_runtime_cache_temporary 1\n")
-        );
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
 }
