@@ -176,7 +176,7 @@ uv pip install -e .
 
 ```bash
 foretoken install -e .
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 ### 4.2 本地模式
@@ -186,7 +186,7 @@ foretoken deploy examples/quickstart --timeout 6m
 ```bash
 foretoken install
 
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 解析 k3s ServiceLB 为前端服务分配的地址：
@@ -209,7 +209,7 @@ spec:
 
 ```bash
 foretoken install --frontend-mode gateway
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 解析已配置的 Gateway 入口：
