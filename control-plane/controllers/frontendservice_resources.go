@@ -82,7 +82,10 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		tokenizerCachePath = profile.RuntimeCache.MountPath + "/models"
 		cacheMountPath = profile.RuntimeCache.MountPath
 		frontendEnv[2].Value = tokenizerCachePath
-		frontendEnv = append(frontendEnv, corev1.EnvVar{Name: "FORETOKEN_TEMPORARY_HF_CACHE_DIR", Value: "/tmp/foretoken-runtime-cache/models/hub"})
+		frontendEnv = append(frontendEnv,
+			corev1.EnvVar{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cacheMountPath},
+			corev1.EnvVar{Name: "FORETOKEN_TEMPORARY_HF_CACHE_DIR", Value: "/tmp/foretoken-runtime-cache/models/hub"},
+		)
 		cacheVolume.VolumeSource = corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: profile.RuntimeCache.ClaimName}}
 	}
 	volumes := []corev1.Volume{

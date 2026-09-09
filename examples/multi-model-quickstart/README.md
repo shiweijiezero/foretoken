@@ -10,13 +10,16 @@ This example serves two models through one frontend:
 - `Qwen/Qwen3-0.6B` scales from one to three replicas from queue demand.
 - `unsloth/Llama-3.2-1B-Instruct` runs as one fixed replica.
 
-Each replica uses one GPU. The full scaling range needs four schedulable GPUs: up to three for Qwen and one for Llama. The example also creates an automatically expanding `ReadWriteMany` runtime cache PVC starting at 10 GiB through the namespace's default `StorageClass`. For the smallest deployment, see [Single-Model Quick Start](../quickstart/README.md).
+Each replica uses one GPU. The full scaling range needs four schedulable GPUs: up to three for Qwen and one for Llama. The example's `ReadWriteMany` `RuntimeCache` uses `./data` for preloaded model files and runtime caches and is materialized as a static directory PV. On other Kubernetes clusters, set an absolute path that is already shared on every node; remove `directory` and set `initialSize` to use a dynamic PVC instead. See the [cache guide](../../docs/development/runtime-cache.md). For the smallest deployment, see [Single-Model Quick Start](../quickstart/README.md).
+
+Directory mode requires the current-source CLI and matching images, not the published 0.0.2 package.
 
 ## Deploy
 
-Complete the platform installation in the [root Quick Start](../../README.md), then run:
+Complete the platform installation in the [root Quick Start](../../README.md). For k3d, bind this directory into the node when creating the cluster as described in the [k3d guide](../../docs/k3d-deployment.md):
 
 ```bash
+mkdir -p examples/multi-model-quickstart/data
 foretoken deploy examples/multi-model-quickstart
 export FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 ```

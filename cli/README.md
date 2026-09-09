@@ -90,13 +90,13 @@ Registry login authorizes the local image push. Private registries also need `im
 
 Repeatable `--values` files provide platform image, runtime, and hardware settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
 
-### Persistent runtime cache
+### RuntimeCache directory deployment
 
-Create one `RuntimeCache` in a workload namespace to let Foretoken provision and manage a shared cache PVC. Existing PVCs remain supported through `workload.cache.claimName`. See [Persistent Runtime Cache](../docs/development/runtime-cache.md).
+Directory mode requires the current-source CLI and matching controller, not the published 0.0.2 package. Add `directory: ./data` to the deployment's `RuntimeCache` in `cache.yaml` to use one local directory for preloaded model files and runtime caches. `foretoken deploy` resolves the path relative to the Kustomize root and creates a static `hostPath` PV and matching PVC. k3d clusters must bind the directory into the node when created. On ordinary Kubernetes, the `directory` field explicitly declares that a shared filesystem already exposes the resolved absolute path on every target node; the command does not upload or install storage. Remove `directory` and set `initialSize` for dynamic PVC provisioning. Remote Kubernetes requires an absolute node path instead of a client-relative directory. See [Persistent Runtime Cache](../docs/development/runtime-cache.md).
 
 ## Deploy and operate model services
 
-Deploy one frontend and all models rendered by a Kustomize root. The multi-model example starts with two GPUs, 12 CPU cores, and 100 GiB memory, and can scale to four GPUs. It also needs a default `ReadWriteMany` StorageClass with online expansion; see the [multi-model example](../examples/multi-model-quickstart/README.md), or use `examples/quickstart` for the smallest path.
+Deploy one frontend and all models rendered by a Kustomize root. The multi-model example starts with two GPUs, 12 CPU cores, and 100 GiB memory, and can scale to four GPUs. It also needs a prepared directory or storage supporting `ReadWriteMany`; online expansion is optional; see the [multi-model example](../examples/multi-model-quickstart/README.md), or use `examples/quickstart` for the smallest path.
 
 ```bash
 foretoken deploy examples/multi-model-quickstart

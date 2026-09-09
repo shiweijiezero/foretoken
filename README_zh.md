@@ -31,29 +31,22 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-本快速开始需要 Python 3.10 以上版本、配置了可扩容默认 `StorageClass` 的 Kubernetes 集群、`kubectl`、Helm、至少一块 GPU，以及可用的 `LoadBalancer`（k3d 使用 k3s ServiceLB 即可）。如需准备单机测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。
+本快速开始面向当前源码，需要 Python 3.10 以上版本、用于构建镜像的 Docker 和 Make、Kubernetes 集群、`kubectl`、Helm、至少一块 GPU，以及可用的 `LoadBalancer`（k3d 使用 k3s ServiceLB 即可）。先按[目录存储指南](docs/development/runtime-cache_zh.md)准备示例的 `./data`，或选择其中的动态 PVC 配置。如需准备单机测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。
 
 ### 1. 安装命令行工具
 
-安装已经发布的命令行工具包：
+从当前 checkout 安装命令行工具。目录模式示例需要匹配的当前源码镜像，已发布的 0.0.2 包不支持该模式：
 
 ```bash
-pip install foretoken
-
-# 如果使用源码安装：
-# pip install -e .
+pip install -e .
 ```
 
 ### 2. 安装 Kubernetes 平台
 
-默认使用 Foretoken 发布在 GHCR 的镜像：
+构建并安装与当前 checkout 一致的镜像：
 
 ```bash
-# 使用发布镜像：
-foretoken install
-
-# 如果使用源码安装：
-# foretoken install -e .
+foretoken install -e .
 ```
 
 该命令会在 `foretoken-platform` 命名空间中安装 Foretoken CRD 和控制器，并等待控制器就绪。默认模式通过 `LoadBalancer` 类型的 Kubernetes `Service` 提供前端地址。源码安装会重新构建镜像并更新集群；如果要将当前源码部署到远程集群，请参阅[源码部署指南](docs/custom-deployment_zh.md)。
@@ -64,7 +57,7 @@ foretoken install
 foretoken deploy examples/quickstart
 ```
 
-该示例部署一个前端服务、一个 `Qwen/Qwen3-0.6B` 模型副本和一个从 10 GiB 起自动扩容的运行时缓存 PVC。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
+该示例部署一个前端服务、一个 `Qwen/Qwen3-0.6B` 模型副本和一个保留数据的目录型运行时缓存。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
 
 ### 4. 发送测试请求
 
@@ -112,7 +105,7 @@ helm upgrade --install envoy-gateway \
   --wait
 
 # 安装平台并启用网关模式
-foretoken install --frontend-mode gateway
+foretoken install -e . --frontend-mode gateway
 
 # 部署快速开始示例
 foretoken deploy examples/quickstart

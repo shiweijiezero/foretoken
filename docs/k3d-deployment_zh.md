@@ -112,6 +112,14 @@ for LDCONFIG_PATH in \
   /usr/sbin/ldconfig.real; do
   add_k3d_mount "$LDCONFIG_PATH"
 done
+
+# RuntimeCache 目录模式会在节点中复用这些宿主机目录。
+for DATA_DIR in \
+  "$PWD/examples/quickstart/data" \
+  "$PWD/examples/multi-model-quickstart/data"; do
+  mkdir -p "$DATA_DIR"
+  add_k3d_mount "$(realpath "$DATA_DIR")"
+done
 ```
 
 创建包含单个 server 节点的集群：

@@ -241,6 +241,11 @@ class Kubectl:
         return tuple(line.strip() for line in output.splitlines() if line.strip())
 
 
+    def current_context(self) -> str:
+        """Return the active kubeconfig context used by deployment operations."""
+        return self.run(["config", "current-context"]).stdout.strip()
+
+
 def _decode_object(output: str) -> dict[str, Any]:
     """Decode the Kubernetes object contract returned by kubectl JSON output."""
     try:

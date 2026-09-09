@@ -90,13 +90,13 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，命令行工具不会自动接管。
 
-### 持久化运行时缓存
+### RuntimeCache 目录部署
 
-在 workload namespace 中创建一个 `RuntimeCache`，Foretoken 即可自动创建并管理共享缓存 PVC。已有 PVC 仍可通过 `workload.cache.claimName` 使用。详见[持久化运行时缓存](../docs/development/runtime-cache_zh.md)。
+目录模式需要当前源码 CLI 和匹配的控制器，不适用于已发布的 0.0.2 包。在部署目录的 `cache.yaml` 中为 `RuntimeCache` 增加 `directory: ./data`，即可使用同一个本地目录保存预加载模型文件和运行时缓存。`foretoken deploy` 会以 Kustomize 根目录为基准解析路径，并创建静态 `hostPath` PV 和匹配的 PVC。k3d 集群必须在创建节点时绑定该目录。普通 Kubernetes 中，`directory` 字段明确表示共享文件系统已经在所有目标节点的相同绝对路径提供该目录；命令不会上传文件或安装存储系统。删除 `directory` 并设置 `initialSize` 后即可动态创建 PVC。普通远程 Kubernetes 需要填写节点绝对路径，不能直接提交客户端相对路径。详见[持久化运行时缓存](../docs/development/runtime-cache_zh.md)。
 
 ## 部署和管理模型服务
 
-部署一个 Kustomize 根目录中渲染出的前端服务和全部模型。多模型示例起步需要 2 张 GPU、12 个 CPU 核心和 100 GiB 内存，扩容后最多需要 4 张 GPU；此外还需要支持 `ReadWriteMany` 和在线扩容的默认 `StorageClass`。完整配置见[多模型示例](../examples/multi-model-quickstart/README_zh.md)，最小路径请使用 `examples/quickstart`。
+部署一个 Kustomize 根目录中渲染出的前端服务和全部模型。多模型示例起步需要 2 张 GPU、12 个 CPU 核心和 100 GiB 内存，扩容后最多需要 4 张 GPU；此外需按缓存指南准备目录或支持 `ReadWriteMany` 的存储；在线扩容为可选能力。完整配置见[多模型示例](../examples/multi-model-quickstart/README_zh.md)，最小路径请使用 `examples/quickstart`。
 
 ```bash
 foretoken deploy examples/multi-model-quickstart

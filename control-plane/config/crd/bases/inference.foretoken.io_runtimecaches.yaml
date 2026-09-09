@@ -64,8 +64,18 @@ spec:
                 - ReadWriteOnce
                 - ReadWriteMany
                 type: string
+              directory:
+                description: |-
+                  Directory is a deployment-root-relative directory for a static hostPath PV.
+                  Declaring it means the resolved path is already shared at the same location on every target node.
+                  The deploy command resolves the path but never uploads its contents or installs shared storage.
+                maxLength: 4096
+                minLength: 1
+                type: string
               initialSize:
-                description: InitialSize is the first PVC request.
+                description: |-
+                  InitialSize is the first PVC request for dynamic storage. Directory mode uses
+                  an internal bookkeeping capacity when this field is omitted.
                 maxLength: 64
                 minLength: 1
                 type: string
@@ -93,26 +103,33 @@ spec:
                 type: string
               storageClassName:
                 type: string
-            required:
-            - initialSize
             type: object
             x-kubernetes-validations:
             - message: initialSize must be positive
-              rule: quantity(self.initialSize).compareTo(quantity('0')) > 0
+              rule: '!has(self.initialSize) || quantity(self.initialSize).compareTo(quantity(''0''))
+                > 0'
             - message: maxSize must be positive
               rule: '!has(self.maxSize) || quantity(self.maxSize).compareTo(quantity(''0''))
                 > 0'
             - message: maxSize must be greater than initialSize
-              rule: '!has(self.maxSize) || quantity(self.maxSize).compareTo(quantity(self.initialSize))
+              rule: '!has(self.maxSize) || !has(self.initialSize) || quantity(self.maxSize).compareTo(quantity(self.initialSize))
                 > 0'
+            - message: initialSize is required when directory is not set
+              rule: has(self.directory) || has(self.initialSize)
             - message: only maxSize may change
               rule: has(self.storageClassName) == has(oldSelf.storageClassName) &&
                 (!has(self.storageClassName) || self.storageClassName == oldSelf.storageClassName)
-                && self.initialSize == oldSelf.initialSize && self.accessMode == oldSelf.accessMode
-                && self.retentionPolicy == oldSelf.retentionPolicy
+                && has(self.initialSize) == has(oldSelf.initialSize) && (!has(self.initialSize)
+                || self.initialSize == oldSelf.initialSize) && self.accessMode ==
+                oldSelf.accessMode && self.retentionPolicy == oldSelf.retentionPolicy
+                && has(self.directory) == has(oldSelf.directory) && (!has(self.directory)
+                || self.directory == oldSelf.directory)
             - message: maxSize cannot be removed or decreased
               rule: '!has(oldSelf.maxSize) || (has(self.maxSize) && quantity(self.maxSize).compareTo(quantity(oldSelf.maxSize))
                 >= 0)'
+            - message: directory cannot be combined with PVC size or storageClassName
+              rule: '!has(self.directory) || (!has(self.maxSize) && !has(self.initialSize)
+                && !has(self.storageClassName))'
           status:
             description: RuntimeCacheStatus publishes the managed claim and its observed
               capacity.

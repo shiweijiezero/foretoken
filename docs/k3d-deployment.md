@@ -112,6 +112,14 @@ for LDCONFIG_PATH in \
   /usr/sbin/ldconfig.real; do
   add_k3d_mount "$LDCONFIG_PATH"
 done
+
+# RuntimeCache directory mode reuses these host directories inside the node.
+for DATA_DIR in \
+  "$PWD/examples/quickstart/data" \
+  "$PWD/examples/multi-model-quickstart/data"; do
+  mkdir -p "$DATA_DIR"
+  add_k3d_mount "$(realpath "$DATA_DIR")"
+done
 ```
 
 Create a single-server cluster:

@@ -31,6 +31,17 @@ class ResourceRef:
 
 
 @dataclass(frozen=True)
+class RuntimeCacheManifest:
+    """One RuntimeCache manifest that may request a local directory volume."""
+
+    name: str
+    namespace: str
+    directory: str
+    access_mode: str
+    retention_policy: str
+
+
+@dataclass(frozen=True)
 class ForetokenDeployment:
     """Rendered Kustomize payload and its user-facing Foretoken services."""
 
@@ -40,6 +51,7 @@ class ForetokenDeployment:
     frontend: str
     hostname: str
     models: dict[str, str]
+    runtime_caches: tuple[RuntimeCacheManifest, ...]
     objects: tuple[dict[str, Any], ...]
 
     def service_refs(self) -> tuple[ResourceRef, ...]:
@@ -75,6 +87,7 @@ def parse_deployment(path: Path, rendered: str) -> ForetokenDeployment:
 
     frontends: list[dict[str, Any]] = []
     models: dict[str, str] = {}
+    runtime_caches: list[RuntimeCacheManifest] = []
     namespaces: set[str] = set()
     for index, document in enumerate(documents, start=1):
         if not isinstance(document, dict):
@@ -84,12 +97,61 @@ def parse_deployment(path: Path, rendered: str) -> ForetokenDeployment:
         metadata = document.get("metadata") or {}
         api_version = str(document.get("apiVersion") or "")
         kind = document.get("kind")
-        if kind not in {"FrontendService", "ModelService"}:
-            continue
         if not api_version.startswith("inference.foretoken.io/"):
             continue
 
-        namespaces.add(str(metadata.get("namespace") or "").strip())
+        namespace = str(metadata.get("namespace") or "").strip()
+        if kind == "RuntimeCache":
+            name = str(metadata.get("name") or "").strip()
+            spec = document.get("spec") or {}
+            if not name or not namespace or not isinstance(spec, dict):
+                raise DeploymentError(
+                    "RuntimeCache requires metadata.name, metadata.namespace, and spec"
+                )
+            initial_size = str(spec.get("initialSize") or "").strip()
+            directory = spec.get("directory", "")
+            if not isinstance(directory, str) or (
+                "directory" in spec and not directory
+            ):
+                raise DeploymentError(
+                    f"RuntimeCache/{name} directory must be a nonempty path string"
+                )
+            if directory and any(
+                field in spec
+                for field in ("initialSize", "maxSize", "storageClassName")
+            ):
+                raise DeploymentError(
+                    f"RuntimeCache/{name} directory cannot be combined with PVC size or storageClassName"
+                )
+            if spec.get("accessMode", "ReadWriteMany") not in {
+                "ReadWriteOnce",
+                "ReadWriteMany",
+            }:
+                raise DeploymentError(
+                    f"RuntimeCache/{name} has an unsupported accessMode"
+                )
+            if spec.get("retentionPolicy", "Retain") not in {"Delete", "Retain"}:
+                raise DeploymentError(
+                    f"RuntimeCache/{name} has an unsupported retentionPolicy"
+                )
+            if not initial_size and not directory:
+                raise DeploymentError(
+                    f"RuntimeCache/{name} requires spec.initialSize without directory"
+                )
+            runtime_caches.append(
+                RuntimeCacheManifest(
+                    name=name,
+                    namespace=namespace,
+                    directory=directory,
+                    access_mode=str(spec.get("accessMode") or "ReadWriteMany"),
+                    retention_policy=str(spec.get("retentionPolicy") or "Retain"),
+                )
+            )
+            continue
+        if kind not in {"FrontendService", "ModelService"}:
+            continue
+
+        namespaces.add(namespace)
         if kind == "FrontendService":
             frontends.append(document)
             continue
@@ -120,13 +182,21 @@ def parse_deployment(path: Path, rendered: str) -> ForetokenDeployment:
     name = str(metadata.get("name") or "").strip()
     if not name:
         raise DeploymentError("FrontendService requires metadata.name")
+    namespace = next(iter(namespaces))
+    if any(cache.namespace != namespace for cache in runtime_caches):
+        raise DeploymentError(
+            "RuntimeCache resources must share the FrontendService and ModelService namespace"
+        )
+    if len(runtime_caches) > 1:
+        raise DeploymentError("a deployment may render at most one RuntimeCache")
     hostname = str((frontend.get("spec") or {}).get("hostname") or "").strip()
     return ForetokenDeployment(
         path=path,
         rendered=rendered,
-        namespace=next(iter(namespaces)),
+        namespace=namespace,
         frontend=name,
         hostname=hostname,
         models=models,
+        runtime_caches=tuple(runtime_caches),
         objects=tuple(documents),
     )

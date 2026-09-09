@@ -62,8 +62,10 @@ pub async fn load_hf_text_backend(
     if model_id.is_empty() || revision.is_empty() {
         return Err(TextBackendLoadError::MissingModelOrRevision);
     }
-    if Path::new(model_id).is_dir() {
-        return HfTextBackend::from_model(model_id)
+    if let Some(local) =
+        local_artifact_path(model_id).map_err(TextBackendLoadError::LocalModelPath)?
+    {
+        return HfTextBackend::from_model(&local)
             .await
             .map_err(|_| TextBackendLoadError::LocalModel);
     }
@@ -158,6 +160,49 @@ pub async fn load_hf_snapshot_runtime(
     })
 }
 
+/// Resolve mounted directories before asking the Hub; vLLM owns tokenizer format validation.
+fn local_artifact_path(identifier: &str) -> std::result::Result<Option<String>, String> {
+    let path = Path::new(identifier);
+    if path.is_absolute() {
+        if !path.is_dir() {
+            return Err(format!(
+                "local artifact {identifier:?} must be a model or tokenizer directory"
+            ));
+        }
+        return Ok(Some(identifier.to_owned()));
+    }
+    let Some(root) = std::env::var_os("FORETOKEN_CACHE_MOUNT_PATH").map(PathBuf::from) else {
+        return Ok(path.is_dir().then(|| identifier.to_owned()));
+    };
+    if path
+        .components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err(format!(
+            "artifact {identifier:?} must stay below the RuntimeCache directory"
+        ));
+    }
+    let candidate = match std::fs::canonicalize(root.join(path)) {
+        Ok(path) => path,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "could not resolve artifact {identifier:?}: {error}"
+            ));
+        }
+    };
+    let root = std::fs::canonicalize(root).map_err(|error| error.to_string())?;
+    if !candidate.starts_with(root) || !candidate.is_dir() {
+        return Err(format!(
+            "artifact {identifier:?} must be a directory within the RuntimeCache"
+        ));
+    }
+    candidate
+        .to_str()
+        .map(|path| Some(path.to_owned()))
+        .ok_or_else(|| "local artifact path is not UTF-8".into())
+}
+
 fn cached_model_snapshot(model_id: &str, revision: &str) -> Option<std::path::PathBuf> {
     let repo = Cache::from_env().repo(Repo::with_revision(
         model_id.to_owned(),
@@ -200,6 +245,8 @@ pub enum TextBackendLoadError {
     MissingModelOrRevision,
     #[error("could not load tokenizer files from the local model directory")]
     LocalModel,
+    #[error("invalid local model path: {0}")]
+    LocalModelPath(String),
     #[error("could not initialize the Hugging Face client")]
     HubClient,
     #[error("Hugging Face snapshot is not available in the offline cache")]

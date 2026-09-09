@@ -10,13 +10,16 @@
 - `Qwen/Qwen3-0.6B` 根据请求队列从 1 个副本扩缩到 3 个副本。
 - `unsloth/Llama-3.2-1B-Instruct` 固定运行 1 个副本。
 
-每个副本使用 1 张 GPU。完整扩缩范围最多需要 4 张可调度 GPU：Qwen 最多 3 张，Llama 1 张。示例还会通过命名空间的默认 `StorageClass` 创建一个从 10 GiB 起自动扩容的 `ReadWriteMany` 运行时缓存 PVC。如需最小部署，请参阅[单模型快速开始](../quickstart/README_zh.md)。
+每个副本使用 1 张 GPU。完整扩缩范围最多需要 4 张可调度 GPU：Qwen 最多 3 张，Llama 1 张。示例中的 `ReadWriteMany` `RuntimeCache` 使用 `./data` 保存预加载模型文件和运行时缓存，并创建静态目录 PV。普通 Kubernetes 需填写绝对路径，多节点时该目录必须已经通过共享文件系统挂载到所有节点；删除 `directory` 并设置 `initialSize` 可改用动态 PVC，具体权限、目录准备和保留规则见[缓存指南](../../docs/development/runtime-cache_zh.md)。如需最小部署，请参阅[单模型快速开始](../quickstart/README_zh.md)。
+
+目录模式需要当前源码 CLI 和匹配镜像，不适用于已发布的 0.0.2 包。
 
 ## 部署
 
-先完成[根目录快速开始](../../README_zh.md)中的平台安装，再运行：
+先完成[根目录快速开始](../../README_zh.md)中的平台安装。使用 k3d 时，请按 [k3d 指南](../../docs/k3d-deployment_zh.md) 在创建集群时将该目录绑定到节点：
 
 ```bash
+mkdir -p examples/multi-model-quickstart/data
 foretoken deploy examples/multi-model-quickstart
 export FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 ```

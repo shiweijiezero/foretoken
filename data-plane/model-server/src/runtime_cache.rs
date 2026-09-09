@@ -101,6 +101,50 @@ impl Config {
         self.observation_port
     }
 
+    /// Resolve a user-provided model or tokenizer directory within the mounted cache.
+    ///
+    /// Hub identifiers without a corresponding directory remain remote. Local files are not
+    /// rewritten to their parent; the inference engine owns model-format validation.
+    pub fn local_artifact_path(&self, identifier: &str) -> Result<Option<String>, String> {
+        let relative = Path::new(identifier);
+        if relative.is_absolute() {
+            if !relative.is_dir() {
+                return Err(format!(
+                    "local artifact {identifier:?} must be a model or tokenizer directory"
+                ));
+            }
+            return Ok(Some(identifier.to_owned()));
+        }
+        if relative
+            .components()
+            .any(|component| matches!(component, std::path::Component::ParentDir))
+        {
+            return Err(format!(
+                "artifact {identifier:?} must stay below the RuntimeCache directory"
+            ));
+        }
+        let unresolved = self.mount_path.join(relative);
+        let candidate = match fs::canonicalize(&unresolved) {
+            Ok(path) => path,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(format!(
+                    "could not resolve artifact {identifier:?}: {error}"
+                ));
+            }
+        };
+        let root = fs::canonicalize(&self.mount_path).map_err(|error| error.to_string())?;
+        if !candidate.starts_with(root) || !candidate.is_dir() {
+            return Err(format!(
+                "artifact {identifier:?} must be a directory within the RuntimeCache"
+            ));
+        }
+        candidate
+            .to_str()
+            .map(|path| Some(path.to_owned()))
+            .ok_or_else(|| "local artifact path is not UTF-8".into())
+    }
+
     /// Creates the selected cache directories and verifies that the child can write them.
     pub fn prepare(&self, mode: Mode) -> io::Result<()> {
         let root = self.root(mode);

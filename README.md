@@ -31,29 +31,22 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ## Quick Start
 
-This Quick Start requires Python 3.10+, Kubernetes with an expandable default `StorageClass`, `kubectl`, Helm, one GPU, and a working `LoadBalancer` (k3s ServiceLB is sufficient for k3d). See the [k3d guide](docs/k3d-deployment.md) for a single-machine test cluster.
+This current-source Quick Start requires Python 3.10+, Docker and Make for source images, `kubectl`, Helm, Kubernetes, one GPU, and a working `LoadBalancer` (k3s ServiceLB is sufficient for k3d). Prepare the example’s `./data` directory using the [directory storage guide](docs/development/runtime-cache.md), or select its dynamic PVC alternative. See the [k3d guide](docs/k3d-deployment.md) for a single-machine test cluster.
 
 ### 1. Install the command-line tool
 
-Install the published command-line tool package:
+Install the command-line tool from the current checkout. Directory-mode examples require matching current-source images and are not supported by the published 0.0.2 package:
 
 ```bash
-pip install foretoken
-
-# For source installation from the repository:
-# pip install -e .
+pip install -e .
 ```
 
 ### 2. Install the Kubernetes platform
 
-By default, installation uses the Foretoken images published on GHCR:
+Build and install images matching this checkout:
 
 ```bash
-# Release images:
-foretoken install
-
-# Source installation from the repository:
-# foretoken install -e .
+foretoken install -e .
 ```
 
 This installs the Foretoken CRDs and controller in the `foretoken-platform` namespace and waits for the controller to become ready. The default mode exposes the frontend through a `LoadBalancer` Service. Source installation rebuilds the images and updates the cluster; to deploy the current source to a remote cluster, see the [source deployment guide](docs/custom-deployment.md).
@@ -64,7 +57,7 @@ This installs the Foretoken CRDs and controller in the `foretoken-platform` name
 foretoken deploy examples/quickstart
 ```
 
-This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and an automatically expanding runtime cache PVC starting at 10 GiB. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
+This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and a retained directory-backed runtime cache. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
 
 ### 4. Send a test request
 
@@ -111,8 +104,8 @@ helm upgrade --install envoy-gateway \
   --create-namespace \
   --wait
 
-# Install the platform in Gateway mode
-foretoken install --frontend-mode gateway
+# Install the current-source platform in Gateway mode
+foretoken install -e . --frontend-mode gateway
 
 # Deploy the Quick Start
 foretoken deploy examples/quickstart
