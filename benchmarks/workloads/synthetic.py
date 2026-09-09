@@ -8,12 +8,12 @@ from __future__ import annotations
 from itertools import islice
 from typing import Any
 
-from benchmarks.performance.config import HttpBenchmarkConfig
-from benchmarks.performance.conversation import (
+from benchmarks.config import HttpBenchmarkConfig
+from benchmarks.workloads.datasets import (
     ChatRequestContent,
     resolve_tokenizer_path,
 )
-from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
+from benchmarks.deployment import BenchmarkRuntimeEndpoint
 
 
 def create_trace_random_dataset_plugin(
@@ -32,7 +32,7 @@ def create_trace_random_dataset_plugin(
             "dependencies with: pip install 'foretoken[bench]'"
         ) from error
 
-    dataset = benchmark.request_dataset
+    dataset = benchmark.resolved_dataset
     seed_everything(dataset.random_seed)
     arguments = Arguments(
         model=endpoint.model,
@@ -86,7 +86,7 @@ def generate_trace_random_requests(
             raise ValueError("request_count must match input_lengths")
         if any(length < 0 for length in input_lengths):
             raise ValueError("trace input lengths must be >= 0")
-        offset = benchmark.request_dataset.row_offset
+        offset = benchmark.resolved_dataset.row_offset
         messages = [
             plugin.generate_token_sequence(length, offset, index)[0]
             for index, length in enumerate(input_lengths)

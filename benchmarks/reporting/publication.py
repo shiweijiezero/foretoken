@@ -12,10 +12,10 @@ from datetime import datetime
 from tempfile import TemporaryDirectory
 from typing import Any, Optional
 
-from benchmarks.performance.config import HttpBenchmarkConfig
-from benchmarks.performance.console_output import log_benchmark_summary
-from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.performance.wandb import WandbBenchmarkRun
+from benchmarks.config import HttpBenchmarkConfig
+from benchmarks.reporting.console import log_benchmark_summary
+from benchmarks.deployment import BenchmarkRuntimeEndpoint
+from benchmarks.reporting.wandb import WandbBenchmarkRun
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +89,9 @@ def build_benchmark_run_record(
     }
     if benchmark.is_multi_turn:
         record["multi_turn"] = True
-        record["max_turns"] = benchmark.request_dataset.max_turns
-    if benchmark.request_dataset.dataset_selectors == ["random"]:
-        record["random_seed"] = benchmark.request_dataset.random_seed
+        record["max_turns"] = benchmark.resolved_dataset.max_turns
+    if benchmark.resolved_dataset.dataset_selectors == ["random"]:
+        record["random_seed"] = benchmark.resolved_dataset.random_seed
     return record
 
 

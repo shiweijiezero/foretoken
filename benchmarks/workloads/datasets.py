@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
 
-from benchmarks.performance.config import ChatRequestDataset, HttpBenchmarkConfig
+from benchmarks.config import ChatRequestDataset, HttpBenchmarkConfig
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +40,6 @@ class ChatRequestContent:
 
 _HF_DATASETS_PREFIX = "hf://datasets/"
 _HF_FILE_URI_FORMAT = "hf://datasets/<org>/<repo>[@<revision>]/<path>"
-_DEFAULT_SELECTORS = {
-    "KrisQ/StudyChat": "train",
-    "valeriol29/mooncake-traces": "conversation",
-}
 
 
 def iter_jsonl_rows(
@@ -170,9 +166,6 @@ def resolve_hf_file_uri(uri: str) -> str:
 def parse_hf_dataset_spec(spec: str) -> tuple[str, str]:
     """Parse a Hugging Face dataset selector into dataset ID and split/config."""
     if ":" not in spec:
-        selector = _DEFAULT_SELECTORS.get(spec)
-        if selector is not None:
-            return spec, selector
         raise ValueError(
             f"Invalid Hugging Face dataset spec {spec!r}. "
             "Use 'org/name:split' (split is required)."
@@ -192,16 +185,6 @@ def is_hf_dataset_spec(spec: str) -> bool:
     except ValueError:
         return False
     return True
-
-
-def same_dataset_selector(left: str, right: str) -> bool:
-    """Return whether two selectors resolve to the same Hugging Face dataset."""
-    if left == right:
-        return True
-    try:
-        return parse_hf_dataset_spec(left) == parse_hf_dataset_spec(right)
-    except ValueError:
-        return False
 
 
 def _load_hf_data(dataset_id: str, split: str) -> Any:
@@ -487,7 +470,7 @@ def load_chat_conversations(
     benchmark: HttpBenchmarkConfig,
 ) -> list[list[dict[str, Any]]]:
     """Read complete conversation scripts for EvalScope interactive multi-turn runs."""
-    dataset = benchmark.request_dataset
+    dataset = benchmark.resolved_dataset
     conversation_count = benchmark.load_schedule.request_count
     row_offset = int(dataset.row_offset)
     if dataset.fixed_prompt and not dataset.dataset_selectors:
@@ -546,7 +529,7 @@ def load_chat_requests(
     request_count: Optional[int] = None,
 ) -> list[ChatRequestContent]:
     """Read the independent Chat Completions requests required by one HTTP workload."""
-    dataset: ChatRequestDataset = benchmark.request_dataset
+    dataset: ChatRequestDataset = benchmark.resolved_dataset
     count = (
         benchmark.load_schedule.request_count
         if request_count is None

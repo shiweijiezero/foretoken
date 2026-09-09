@@ -7,10 +7,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from benchmarks.performance.config import HttpBenchmarkConfig
-from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.performance.evalscope import run_evalscope_standard_load
-from benchmarks.performance.results import (
+from benchmarks.config import HttpBenchmarkConfig
+from benchmarks.deployment import BenchmarkRuntimeEndpoint
+from benchmarks.load.evalscope import run_evalscope_standard_load
+from benchmarks.reporting.publication import (
     ResultPublication,
     build_benchmark_run_record,
     resolved_load_record,
@@ -37,7 +37,7 @@ class StandardHttpLoadBenchmark:
         self.wandb_group = wandb_group
         self.collect_request_measurements = collect_request_measurements
 
-    async def run(self) -> dict[str, Any]:
+    def run(self) -> dict[str, Any]:
         """Run one standard HTTP workload and return the existing result dictionary."""
         load_record = resolved_load_record(self.benchmark)
         run_record = build_benchmark_run_record(
@@ -52,7 +52,7 @@ class StandardHttpLoadBenchmark:
             wandb_group=self.wandb_group,
         )
         with publication:
-            metrics, request_measurements = await run_evalscope_standard_load(
+            metrics, request_measurements = run_evalscope_standard_load(
                 self.benchmark,
                 self.endpoint,
                 publication.execution_dir,

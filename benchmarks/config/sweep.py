@@ -1,31 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Parse and run the parameter sweep for the current HTTP benchmark."""
+"""Read and expand explicit benchmark parameter combinations."""
 
 from __future__ import annotations
 
-import logging
-import os
 from collections import Counter
 from dataclasses import replace
 from typing import Any, Callable
 
-from benchmarks.performance.config import (
-    HttpBenchmarkConfig,
-    ParameterSweepConfig,
-    HttpLoadSchedule,
-    normalize_output_token_limit,
-)
-from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.performance.conversation import iter_jsonl_rows
-from benchmarks.performance.pareto import plot_sweep_pareto
-from benchmarks.performance.http_benchmark import StandardHttpLoadBenchmark
-from benchmarks.performance.results import open_local_result_directory
-from benchmarks.performance.console_output import log_sweep_results
-from benchmarks.performance.wandb import wandb_group_name
-
-logger = logging.getLogger(__name__)
+from benchmarks.config import HttpBenchmarkConfig, normalize_output_token_limit
+from benchmarks.workloads.datasets import iter_jsonl_rows
 
 SweepPoint = dict[str, object]
 _LOAD_CAST = {"parallel": int, "number": int, "rate": float}
@@ -108,6 +93,8 @@ def _load_axis_values(
         return None
     value = record[key]
     if isinstance(value, list):
+        if not value:
+            raise ValueError(f"Sweep axis {key!r} cannot be empty")
         return [caster(item) for item in value]
     return [caster(value)]
 
@@ -174,19 +161,6 @@ def expand_load_points(item: SweepPoint) -> list[SweepPoint]:
                 if values is not None
             },
         }
-        parallel = point.get("parallel")
-        rate = point.get("rate")
-        number = point.get("number")
-        if parallel is not None or rate is not None:
-            HttpLoadSchedule.validate_coordinates(
-                max_concurrency=(
-                    int(parallel) if parallel is not None else 1
-                ),
-                arrival_rate=float(rate) if rate is not None else -1.0,
-            )
-        if number is not None and int(number) < 1:
-            raise ValueError(f"number must be >= 1, got {number}")
-
         point[_PARAMETER_GROUP] = parameter_group
         if base_name is not None:
             if count > 1:
@@ -267,126 +241,3 @@ def apply_sweep_point(
             **{section: replace(section_value, **updates)},
         )
     return updated_benchmark
-
-
-class ParameterSweepBenchmark:
-    """Own parameter expansion, repeated runs, W&B grouping, and Pareto artifacts."""
-
-    def __init__(
-        self,
-        benchmark: HttpBenchmarkConfig,
-        endpoint: BenchmarkRuntimeEndpoint,
-    ) -> None:
-        self.benchmark = benchmark
-        self.endpoint = endpoint
-
-    async def run(self) -> dict[str, Any]:
-        """Run all parameter points and return the highest-throughput point as the compatible metrics result."""
-        sweep = self.benchmark.parameter_sweep
-        if sweep.num_runs < 1:
-            raise ValueError(f"--num-runs must be >= 1, got {sweep.num_runs}")
-
-        combinations = load_sweep_points(sweep.bench_params)
-        if not combinations:
-            raise ValueError("Parameter sweep contains no combinations")
-
-        experiment_name = sweep.experiment_name.strip().replace("/", "-")
-        experiment_dir = (
-            os.path.join(self.benchmark.outputs.output_dir, experiment_name)
-            if experiment_name
-            else None
-        )
-        result_directory = open_local_result_directory(self.benchmark, experiment_dir)
-        experiment_dir = result_directory.output_dir
-        wandb_enabled = self.benchmark.outputs.includes("wandb")
-        wandb_group = (
-            wandb_group_name(self.benchmark, self.endpoint)
-            if wandb_enabled
-            else None
-        )
-
-        plan = {
-            "mode": "parameter_sweep",
-            "bench_params": sweep.bench_params,
-            "num_runs": sweep.num_runs,
-            "wandb_group": wandb_group,
-            "combinations": [
-                {
-                    "dir": sweep_directory_name(sweep_point_name(point)),
-                    "bench": dict(point),
-                }
-                for point in combinations
-            ],
-            "base": self.benchmark.to_dict(),
-        }
-        result_directory.save_json("config.json", plan)
-
-        all_points: list[dict[str, Any]] = []
-        for combination in combinations:
-            combination_name = sweep_directory_name(sweep_point_name(combination))
-            combination_root = os.path.join(experiment_dir, combination_name)
-            point_benchmark = apply_sweep_point(self.benchmark, combination)
-            point_benchmark.validate()
-            point_benchmark = replace(
-                point_benchmark,
-                parameter_sweep=ParameterSweepConfig(),
-            )
-
-            for run_number in range(sweep.num_runs):
-                logger.info(
-                    "Sweep %s run=%s/%s bench=%s",
-                    combination_name,
-                    run_number + 1,
-                    sweep.num_runs,
-                    dict(combination),
-                )
-                run_dir = os.path.join(combination_root, f"run={run_number}")
-                label = (
-                    f"{combination_name}-run{run_number}"
-                    if sweep.num_runs > 1
-                    else combination_name
-                )
-                result = await StandardHttpLoadBenchmark(
-                    point_benchmark,
-                    self.endpoint,
-                    label=label,
-                    output_dir=run_dir,
-                    wandb_group=wandb_group,
-                ).run()
-                point = dict(result["metrics"])
-                point["combination"] = combination_name
-                point["parameter_group"] = str(combination[_PARAMETER_GROUP])
-                point["run_number"] = run_number
-                point["gpu_count"] = self.endpoint.gpu_count
-                if point_benchmark.is_multi_turn:
-                    point["multi_turn"] = True
-                point["bench"] = dict(combination)
-                point["label"] = f"{combination_name}|p={point['parallel']}"
-                all_points.append(point)
-
-        if len(all_points) > 1:
-            fig_path = plot_sweep_pareto(all_points, result_directory.output_dir)
-            log_sweep_results(all_points)
-            logger.info("Pareto plot: %s", fig_path)
-
-        result_directory.save_json("sweep_points.json", all_points)
-        best = max(
-            all_points,
-            key=lambda item: item["throughput"][
-                "generation_tokens_per_second"
-            ],
-        )
-        logger.info(
-            "Sweep done: %s combinations, %s points, output_dir=%s",
-            len(combinations),
-            len(all_points),
-            experiment_dir,
-        )
-        return {
-            "mode": "parameter_sweep",
-            "metrics": best,
-            "results": all_points,
-            "output_dir": experiment_dir,
-            "combinations": len(combinations),
-            "wandb_group": wandb_group,
-        }

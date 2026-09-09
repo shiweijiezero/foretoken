@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""OpenAI-compatible HTTP workloads, metrics, and experiment orchestration."""
+"""Benchmark measurements, artifacts, and publication."""

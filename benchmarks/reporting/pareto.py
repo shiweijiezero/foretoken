@@ -10,7 +10,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from benchmarks.performance.metrics import (
+from benchmarks.reporting.metrics import (
     generation_tokens_per_second_per_gpu,
     generation_tokens_per_second_per_user,
     configured_user_denominator,

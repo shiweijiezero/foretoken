@@ -232,30 +232,22 @@ class HttpBenchmarkConfig:
         default_factory=ParameterSweepConfig
     )
 
-    def __post_init__(self) -> None:
-        """Resolve the deployment's default workload before any runner consumes it."""
+    @property
+    def resolved_dataset(self) -> ChatRequestDataset:
+        """Resolve prompt precedence and deployment defaults without changing user input."""
         dataset = self.request_dataset
-        if (
-            self.deployment.kustomize_path
-            and not dataset.fixed_prompt
-            and not dataset.dataset_selectors
-        ):
-            self.request_dataset = replace(
-                dataset,
-                fixed_prompt=DEFAULT_DEPLOYMENT_PROMPT,
-            )
+        if self.arrival_trace.trace_selector:
+            return dataset
+        if dataset.fixed_prompt:
+            return replace(dataset, dataset_selectors=[])
+        if self.deployment.kustomize_path and not dataset.dataset_selectors:
+            return replace(dataset, fixed_prompt=DEFAULT_DEPLOYMENT_PROMPT)
+        return dataset
 
     @property
     def is_multi_turn(self) -> bool:
         """Return whether a dataset row owns a conversation lifecycle."""
-        dataset = self.request_dataset
-        if self.arrival_trace.trace_selector:
-            return False
-        if dataset.fixed_prompt and not dataset.dataset_selectors:
-            return False
-        if dataset.dataset_selectors == ["random"]:
-            return False
-        return dataset.max_turns is not None
+        return not self.arrival_trace.trace_selector
 
     def validate(self) -> None:
         """Validate the selected HTTP workload before acquiring resources."""
@@ -275,7 +267,7 @@ class HttpBenchmarkConfig:
                 "stream must be set via --stream/--no-stream, not extra_body"
             )
 
-        dataset = self.request_dataset
+        dataset = self.resolved_dataset
         trace = self.arrival_trace
         has_trace = bool(trace.trace_selector)
         if (
@@ -286,12 +278,7 @@ class HttpBenchmarkConfig:
             raise ValueError(
                 "--max-turns must be -1 (complete conversation) or >= 1"
             )
-        if self.is_multi_turn:
-            if has_trace:
-                raise ValueError(
-                    "Multi-turn mode cannot be combined with --trace; trace replay "
-                    "treats recorded rows as independent requests"
-                )
+        if not has_trace:
             unsupported_body_fields = {
                 "messages",
                 "tools",
@@ -325,18 +312,6 @@ class HttpBenchmarkConfig:
             if len(dataset.dataset_selectors) != 1:
                 raise ValueError("--trace requires exactly one --dataset source")
             same_dataset = dataset.dataset_selectors[0] == trace.trace_selector
-            if (
-                not same_dataset
-                and "/" in dataset.dataset_selectors[0]
-                and "/" in trace.trace_selector
-                and not dataset.dataset_selectors[0].startswith("/")
-                and not trace.trace_selector.startswith("/")
-            ):
-                from benchmarks.performance.conversation import same_dataset_selector
-
-                same_dataset = same_dataset_selector(
-                    dataset.dataset_selectors[0], trace.trace_selector
-                )
 
             if self.parameter_sweep.bench_params:
                 raise ValueError("--trace cannot be combined with --bench-params")
@@ -421,14 +396,14 @@ class HttpBenchmarkConfig:
             "open_loop": self.load_schedule.unbounded_concurrency,
         }
         dataset = {
-            "dataset": list(self.request_dataset.dataset_selectors),
-            "dataset_offset": self.request_dataset.row_offset,
-            "tokenizer_path": self.request_dataset.tokenizer,
-            "random_seed": self.request_dataset.random_seed,
-            "min_prompt_length": self.request_dataset.minimum_prompt_tokens,
-            "max_prompt_length": self.request_dataset.maximum_prompt_tokens,
-            "prefix_length": self.request_dataset.shared_prefix_tokens,
-            "prompt": self.request_dataset.fixed_prompt,
+            "dataset": list(self.resolved_dataset.dataset_selectors),
+            "dataset_offset": self.resolved_dataset.row_offset,
+            "tokenizer_path": self.resolved_dataset.tokenizer,
+            "random_seed": self.resolved_dataset.random_seed,
+            "min_prompt_length": self.resolved_dataset.minimum_prompt_tokens,
+            "max_prompt_length": self.resolved_dataset.maximum_prompt_tokens,
+            "prefix_length": self.resolved_dataset.shared_prefix_tokens,
+            "prompt": self.resolved_dataset.fixed_prompt,
             "trace_path": self.arrival_trace.trace_selector,
             "trace_start": self.arrival_trace.start_offset_seconds,
             "trace_duration": self.arrival_trace.duration_seconds,
@@ -439,7 +414,7 @@ class HttpBenchmarkConfig:
         }
         if self.is_multi_turn:
             dataset["multi_turn"] = True
-            dataset["max_turns"] = self.request_dataset.max_turns
+            dataset["max_turns"] = self.resolved_dataset.max_turns
         output = asdict(self.outputs)
         return {
             "deployment": asdict(self.deployment),

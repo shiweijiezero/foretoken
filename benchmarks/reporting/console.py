@@ -8,9 +8,9 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from benchmarks.performance.config import HttpBenchmarkConfig
-from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.performance.metrics import generation_tokens_per_second_per_gpu
+from benchmarks.config import HttpBenchmarkConfig
+from benchmarks.deployment import BenchmarkRuntimeEndpoint
+from benchmarks.reporting.metrics import generation_tokens_per_second_per_gpu
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ def print_benchmark_endpoint(
     hostname: str,
 ) -> None:
     """Print the public benchmark endpoint selected from the Foretoken deployment."""
-    print(f"Endpoint: {endpoint_url}")
+    print(f"Model service: {endpoint_url}")
     if hostname:
         print(f"Hostname: {hostname}")
     print(f"Models: {', '.join(models)}")
@@ -42,7 +42,7 @@ def format_benchmark_config(
     endpoint: BenchmarkRuntimeEndpoint,
 ) -> str:
     """Build a user-visible HTTP benchmark configuration summary."""
-    dataset = benchmark.request_dataset
+    dataset = benchmark.resolved_dataset
     trace = benchmark.arrival_trace
     if trace.trace_selector:
         dataset_label = (

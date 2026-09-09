@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-The Foretoken command-line tool installs the shared Kubernetes platform, deploys model services from Kustomize configurations, reports serving readiness, resolves frontend endpoints, and runs benchmarks through one `foretoken` entry point.
+The Foretoken command-line tool installs the shared Kubernetes platform, deploys model services from Kustomize configurations, reports serving readiness, resolves frontend URLs, and runs benchmarks through one `foretoken` entry point.
 
 For a new cluster, start by installing the command-line tool. If `foretoken --version` already works, go straight to platform installation. If the cluster already has the Foretoken platform, start with model deployment.
 
@@ -146,28 +146,8 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 
 The host value is the URL authority for direct access or the configured routing hostname for an HTTP Gateway. The command waits for the LoadBalancer or Gateway address, but serving readiness remains owned by `foretoken deploy`.
 
-## Run benchmarks
+## Benchmark model services
 
-Install the optional benchmark dependencies with pip:
+`foretoken bench` measures a Foretoken Kustomize deployment or an existing model service through the same command-line entry point. See [Model Service Benchmarks](../benchmarks/README.md) for installation, the first successful run, datasets, load controls, result metrics, trace replay, and parameter sweeps.
 
-```bash
-pip install 'foretoken[bench]'
-
-# For source installation from the repository:
-# pip install -e .
-# pip install -e '.[bench]'
-```
-
-Or install the benchmark dependencies in the activated uv environment:
-
-```bash
-uv pip install 'foretoken[bench]'
-```
-
-Then run the benchmark:
-
-```bash
-foretoken bench examples/quickstart
-```
-
-The command-line tool uses the active `kubectl` context and honors standard Kubernetes configuration such as `KUBECONFIG`.
+Kustomize benchmarks use the active `kubectl` context and honor standard Kubernetes configuration such as `KUBECONFIG`.

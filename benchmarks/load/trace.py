@@ -19,25 +19,24 @@ from typing import Any, Optional
 import httpx
 from openai import APIError, AsyncOpenAI
 
-from benchmarks.performance.config import HttpBenchmarkConfig
-from benchmarks.performance.conversation import (
+from benchmarks.config import HttpBenchmarkConfig
+from benchmarks.workloads.datasets import (
     ChatRequestContent,
     iter_dataset_rows,
     load_chat_requests,
     load_indexed_chat_requests,
-    same_dataset_selector,
 )
-from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.performance.metrics import (
+from benchmarks.deployment import BenchmarkRuntimeEndpoint
+from benchmarks.reporting.metrics import (
     compute_tpot,
     percentile_summary,
     summarize_http_measurements,
 )
-from benchmarks.performance.results import (
+from benchmarks.reporting.publication import (
     ResultPublication,
     build_benchmark_run_record,
 )
-from benchmarks.performance.synthetic_requests import (
+from benchmarks.workloads.synthetic import (
     create_trace_random_dataset_plugin,
     generate_trace_random_requests,
 )
@@ -57,19 +56,13 @@ class ChatCompletionsLoadClient:
         benchmark: HttpBenchmarkConfig,
         endpoint: BenchmarkRuntimeEndpoint,
         *,
-        max_concurrency: int,
-        request_count: int,
+        max_connections: int,
     ) -> None:
         self._generation = benchmark.generation
         self._request_overrides = benchmark.generation.request_overrides()
-        connection_limit = (
-            request_count
-            if benchmark.load_schedule.unbounded_concurrency
-            else max_concurrency
-        )
         limits = httpx.Limits(
-            max_connections=connection_limit,
-            max_keepalive_connections=connection_limit,
+            max_connections=max_connections,
+            max_keepalive_connections=max_connections,
         )
         # Each measured request must map to one service request; retries change arrival rate, failure rate, and latency.
         self._client = AsyncOpenAI(
@@ -379,7 +372,7 @@ def generate_synthetic_prefix_reuse_requests(
     hash_id_lists: list[list[int] | None],
 ) -> list[ChatRequestContent]:
     """Build reproducible 512-token prefix blocks from Mooncake hash IDs."""
-    dataset = benchmark.request_dataset
+    dataset = benchmark.resolved_dataset
     if len(input_lengths) != len(hash_id_lists):
         raise ValueError("input_lengths must match hash_id_lists")
 
@@ -434,7 +427,7 @@ def generate_synthetic_prefix_reuse_requests(
 def _request_origin(benchmark: HttpBenchmarkConfig) -> str:
     return (
         "random"
-        if benchmark.request_dataset.dataset_selectors == ["random"]
+        if benchmark.resolved_dataset.dataset_selectors == ["random"]
         else "dataset"
     )
 
@@ -446,7 +439,7 @@ def bind_arrival_trace_requests(
 ) -> tuple[str, list[ArrivalTraceEvent]]:
     """Bind native, random, or external-dataset requests to the selected arrival events."""
     request_origin = _request_origin(benchmark)
-    dataset = benchmark.request_dataset
+    dataset = benchmark.resolved_dataset
     trace = benchmark.arrival_trace
     if request_origin == "random":
         input_lengths = [event.input_tokens for event in events]
@@ -479,10 +472,7 @@ def bind_arrival_trace_requests(
                     else None
                 ),
             )
-    elif same_dataset_selector(
-        dataset.dataset_selectors[0],
-        trace.trace_selector,
-    ):
+    elif dataset.dataset_selectors[0] == trace.trace_selector:
         if all(event.request is not None for event in events):
             return request_origin, [
                 replace(event, request_origin=request_origin) for event in events
@@ -692,7 +682,7 @@ class ArrivalTraceBenchmark:
             {
                 "dataset": f"trace={trace.trace_selector}",
                 "trace_path": trace.trace_selector,
-                "payload_dataset": self.benchmark.request_dataset.dataset_selectors[0],
+                "payload_dataset": self.benchmark.resolved_dataset.dataset_selectors[0],
                 "trace_start": trace.start_offset_seconds,
                 "trace_duration": trace.duration_seconds,
                 "trace_max_concurrency": max_concurrency,
@@ -710,8 +700,7 @@ class ArrivalTraceBenchmark:
             async with ChatCompletionsLoadClient(
                 self.benchmark,
                 self.endpoint,
-                max_concurrency=active_connection_limit,
-                request_count=request_count,
+                max_connections=active_connection_limit,
             ) as client:
                 request_measurements = await self._replay_events(
                     client,

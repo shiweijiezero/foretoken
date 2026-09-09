@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import math
 import os
@@ -17,14 +16,14 @@ if TYPE_CHECKING:
     from evalscope.perf.utils.perf_models import BenchmarkSummary, PercentileResult
     from evalscope.perf.utils.trace_metrics import TraceLevelSummary
 
-from benchmarks.performance.config import HttpBenchmarkConfig
-from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.performance.conversation import (
+from benchmarks.config import HttpBenchmarkConfig
+from benchmarks.deployment import BenchmarkRuntimeEndpoint
+from benchmarks.workloads.datasets import (
     load_chat_conversations,
     resolve_tokenizer_path,
     split_chat_conversation,
 )
-from benchmarks.performance.metrics import generation_tokens_per_second_per_user
+from benchmarks.reporting.metrics import generation_tokens_per_second_per_user
 
 
 EVALSCOPE_API = "foretoken_openai"
@@ -78,9 +77,9 @@ def _materialize_evalscope_request_dataset(
     conversations = load_chat_conversations(benchmark)
     turn_lists = [split_chat_conversation(messages) for messages in conversations]
     effective_turn_lists = [
-        turns[: benchmark.request_dataset.max_turns]
-        if benchmark.request_dataset.max_turns is not None
-        and benchmark.request_dataset.max_turns > 0
+        turns[: benchmark.resolved_dataset.max_turns]
+        if benchmark.resolved_dataset.max_turns is not None
+        and benchmark.resolved_dataset.max_turns > 0
         else turns
         for turns in turn_lists
     ]
@@ -110,7 +109,7 @@ def _evalscope_arguments(
 
     schedule = benchmark.load_schedule
     generation = benchmark.generation
-    dataset = benchmark.request_dataset
+    dataset = benchmark.resolved_dataset
     is_random = dataset.dataset_selectors == ["random"]
     omit_temperature = (
         generation.temperature is None
@@ -255,6 +254,8 @@ def _map_evalscope_metrics(
     summary: BenchmarkSummary,
     percentiles: PercentileResult,
     trace_summary: TraceLevelSummary | None = None,
+    *,
+    single_turn: bool,
 ) -> dict[str, Any]:
     """Map typed EvalScope results to Foretoken metric fields."""
     schedule = benchmark.load_schedule
@@ -332,15 +333,17 @@ def _map_evalscope_metrics(
         )
         metrics["conversation"] = {
             "attempted_num": conversation_count,
-            "max_turns": benchmark.request_dataset.max_turns,
+            "max_turns": benchmark.resolved_dataset.max_turns,
             "avg_turn_requests": (
                 int(summary.total_requests) / conversation_count
                 if conversation_count
                 else 0.0
             ),
             "avg_context_turns_per_request": (
-                float(summary.avg_turns)
-                if summary.avg_turns is not None
+                (1.0 if single_turn else float(summary.avg_turns))
+                if summary.succeed_requests and (
+                    single_turn or (summary.avg_turns is not None and summary.avg_turns >= 0)
+                )
                 else None
             ),
             "latency": _trace_metric_distribution(
@@ -365,6 +368,12 @@ def _map_evalscope_metrics(
                 trace_summary, "Eligible Cache Hit Rate (%)"
             ),
         }
+        if single_turn:
+            # One-turn conversations have exactly the same timing samples as
+            # their HTTP requests; no conversation trace summary is needed.
+            metrics["conversation"]["latency"] = dict(metrics["latency"])
+            metrics["conversation"]["first_turn_ttft"] = dict(ttft)
+            metrics["conversation"]["time_to_final_answer_token"] = dict(ttft)
     return metrics
 
 
@@ -426,7 +435,7 @@ def _read_evalscope_request_measurements(
     }
 
 
-async def run_evalscope_standard_load(
+def run_evalscope_standard_load(
     benchmark: HttpBenchmarkConfig,
     endpoint: BenchmarkRuntimeEndpoint,
     output_dir: str,
@@ -436,6 +445,7 @@ async def run_evalscope_standard_load(
     """Run a standard workload through EvalScope public point execution and return mapped results."""
     try:
         from evalscope.perf.main import run_one_benchmark
+        from evalscope.perf.utils.handler import PerfBenchmarkInterrupted
         from evalscope.utils.logger import configure_logging
         from evalscope.utils.model_utils import seed_everything
     except ModuleNotFoundError as error:
@@ -450,18 +460,17 @@ async def run_evalscope_standard_load(
         os.path.join(output_dir, "benchmark.log"),
     )
     arguments = _evalscope_arguments(benchmark, endpoint, output_dir)
-    seed_everything(benchmark.request_dataset.random_seed)
+    seed_everything(benchmark.resolved_dataset.random_seed)
     materialized_dataset = (
         arguments.dataset_path
         if arguments.dataset in {"line_by_line", "custom_multi_turn"}
         else None
     )
     try:
-        result = await asyncio.to_thread(
-            run_one_benchmark,
-            arguments,
-            output_dir,
-        )
+        # EvalScope owns its event loop and signal cancellation on the main thread.
+        result = run_one_benchmark(arguments, output_dir)
+    except PerfBenchmarkInterrupted as error:
+        raise SystemExit(error.exit_code) from None
     finally:
         if materialized_dataset:
             Path(materialized_dataset).unlink(missing_ok=True)
@@ -470,7 +479,8 @@ async def run_evalscope_standard_load(
     percentiles = point["percentiles"]
     trace_summary = point.get("trace_summary")
     metrics = _map_evalscope_metrics(
-        benchmark, summary, percentiles, trace_summary
+        benchmark, summary, percentiles, trace_summary,
+        single_turn=not arguments.multi_turn,
     )
     if collect_request_measurements:
         measurements = _read_evalscope_request_measurements(

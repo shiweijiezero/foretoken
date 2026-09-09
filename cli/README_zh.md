@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken 命令行工具 通过统一的 `foretoken` 入口安装 Kubernetes 平台、从 Kustomize 配置部署模型服务、查看服务就绪状态、解析前端访问入口并运行评测。
+Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平台、从 Kustomize 配置部署模型服务、查看服务就绪状态、获取前端服务 URL 并运行性能评测。
 
 新集群从“安装 命令行工具”开始。如果 `foretoken --version` 已经可用，直接安装平台；如果集群已经安装 Foretoken 平台，直接部署模型服务。
 
@@ -146,28 +146,8 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 
 Host 值在直接访问时是 URL authority，在 HTTP Gateway 模式下是配置的路由域名。该命令负责等待 LoadBalancer 或 Gateway 地址，服务就绪仍由 `foretoken deploy` 负责。
 
-## 运行评测
+## 评测模型服务
 
-使用 pip 安装可选的评测依赖：
+`foretoken bench` 通过同一个命令入口评测 Foretoken Kustomize 部署或已有模型服务。[模型服务性能评测](../benchmarks/README_zh.md)提供安装、首次成功运行、数据集、负载控制、结果指标、轨迹回放和参数扫描说明。
 
-```bash
-pip install 'foretoken[bench]'
-
-# 如果使用源码安装：
-# pip install -e .
-# pip install -e '.[bench]'
-```
-
-或在已经激活的 uv 虚拟环境中安装评测依赖：
-
-```bash
-uv pip install 'foretoken[bench]'
-```
-
-然后运行评测：
-
-```bash
-foretoken bench examples/quickstart
-```
-
-命令行工具 使用当前 `kubectl` context，并遵循 `KUBECONFIG` 等标准 Kubernetes 配置。
+评测 Kustomize 部署时，命令会使用当前 `kubectl` context，并遵循 `KUBECONFIG` 等标准 Kubernetes 配置。

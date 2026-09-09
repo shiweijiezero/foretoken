@@ -14,9 +14,9 @@ from typing import Any, Optional
 
 import wandb
 
-from benchmarks.performance.config import HttpBenchmarkConfig, WandbRunConfig
-from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.performance.metrics import percentile_summary
+from benchmarks.config import HttpBenchmarkConfig, WandbRunConfig
+from benchmarks.deployment import BenchmarkRuntimeEndpoint
+from benchmarks.reporting.metrics import percentile_summary
 
 logger = logging.getLogger(__name__)
 

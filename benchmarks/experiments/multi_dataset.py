@@ -11,20 +11,20 @@ import re
 from dataclasses import replace
 from typing import Any
 
-from benchmarks.performance.config import HttpBenchmarkConfig
-from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.performance.http_benchmark import StandardHttpLoadBenchmark
-from benchmarks.performance.metrics import (
+from benchmarks.config import HttpBenchmarkConfig
+from benchmarks.deployment import BenchmarkRuntimeEndpoint
+from benchmarks.load.standard import StandardHttpLoadBenchmark
+from benchmarks.reporting.metrics import (
     merge_request_measurements,
     summarize_http_measurements,
 )
-from benchmarks.performance.results import (
+from benchmarks.reporting.publication import (
     build_benchmark_run_record,
     open_local_result_directory,
     publish_results,
     resolved_load_record,
 )
-from benchmarks.performance.wandb import wandb_group_name
+from benchmarks.reporting.wandb import wandb_group_name
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +57,11 @@ class MultiDatasetBenchmark:
         self.benchmark = benchmark
         self.endpoint = endpoint
 
-    async def run(self) -> dict[str, Any]:
+    def run(self) -> dict[str, Any]:
         """Benchmark each dataset in order and publish one compatible merged result."""
         load_record = resolved_load_record(self.benchmark)
         dataset_selectors = list(
-            self.benchmark.request_dataset.dataset_selectors
+            self.benchmark.resolved_dataset.dataset_selectors
         )
         total_requests = int(load_record["number"])
         request_counts = _allocate_request_counts(
@@ -108,7 +108,7 @@ class MultiDatasetBenchmark:
             child_benchmark = replace(
                 self.benchmark,
                 request_dataset=replace(
-                    self.benchmark.request_dataset,
+                    self.benchmark.resolved_dataset,
                     dataset_selectors=[dataset_selector],
                 ),
                 load_schedule=replace(
@@ -116,7 +116,7 @@ class MultiDatasetBenchmark:
                     request_count=request_count,
                 ),
             )
-            child_result = await StandardHttpLoadBenchmark(
+            child_result = StandardHttpLoadBenchmark(
                 child_benchmark,
                 self.endpoint,
                 label=child_name,
@@ -186,7 +186,7 @@ class MultiDatasetBenchmark:
             )
             metrics["conversation"] = {
                 "attempted_num": total_requests,
-                "max_turns": self.benchmark.request_dataset.max_turns,
+                "max_turns": self.benchmark.resolved_dataset.max_turns,
                 "avg_turn_requests": (
                     metrics["request_num"] / total_requests
                     if total_requests

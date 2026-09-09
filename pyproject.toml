@@ -44,6 +44,10 @@ packages = [
     "foretoken.accelerators",
     "foretoken.platform",
     "benchmarks",
-    "benchmarks.performance",
+    "benchmarks.config",
+    "benchmarks.workloads",
+    "benchmarks.load",
+    "benchmarks.experiments",
+    "benchmarks.reporting",
 ]
 package-dir = { foretoken = "cli/foretoken", benchmarks = "benchmarks" }

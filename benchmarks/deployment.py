@@ -17,7 +17,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 import yaml
 
-from benchmarks.performance.config import ChatCompletionsEndpoint
+from benchmarks.config import ChatCompletionsEndpoint
 from foretoken.kubernetes import (
     FrontendEndpoint,
     Kubectl,

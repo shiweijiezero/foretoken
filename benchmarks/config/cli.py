@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from dataclasses import MISSING, fields
 from typing import Any
 
-from benchmarks.performance.config import (
+from benchmarks.config import (
     ArrivalTraceSchedule,
     BenchmarkDeploymentConfig,
     BenchmarkOutputConfig,
@@ -61,7 +61,7 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--url",
         default=_default(ChatCompletionsEndpoint, "url"),
-        help="Existing OpenAI-compatible chat-completions URL",
+        help="Model service URL, including /v1/chat/completions",
     )
     parser.add_argument(
         "--model",
@@ -91,8 +91,8 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=_default(HttpLoadSchedule, "max_concurrency"),
         help=(
-            "Maximum concurrent requests, or concurrent conversations in "
-            "conversation mode; ignored with --open-loop"
+            "Maximum concurrent conversations; a fixed or random prompt is one "
+            "turn; ignored with --open-loop"
         ),
     )
     parser.add_argument(
@@ -100,8 +100,7 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=_default(HttpLoadSchedule, "request_count"),
         help=(
-            "Requests per run, or conversations in conversation mode; total "
-            "across multiple datasets"
+            "Conversations per run; total across multiple datasets"
         ),
     )
     parser.add_argument(
@@ -117,7 +116,7 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
         "--open-loop",
         action="store_true",
         default=_default(HttpLoadSchedule, "unbounded_concurrency"),
-        help="Remove the concurrency limit; positive --rate still schedules arrivals",
+        help="Schedule single-turn requests without a concurrency cap; requires --rate > 0",
     )
 
     # Chat Completions generation parameters
@@ -205,8 +204,8 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=_default(ChatRequestDataset, "max_turns"),
         help=(
-            "Maximum user turns per conversation; positive values explicitly "
-            "enable conversation mode, while -1 uses complete known conversations"
+            "Maximum user turns per conversation; -1 runs the complete "
+            "conversation, positive values keep the first N turns"
         ),
     )
     parser.add_argument(

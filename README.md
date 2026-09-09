@@ -21,7 +21,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 | Feature | Description | Status |
 |---|---|---|
-| Benchmarking | Performance benchmarks and parameter sweeps, correctness evaluation, and SLO simulation | In development |
+| [Benchmarking](benchmarks/README.md) | Measure model-service latency and throughput with fixed, dataset, random, trace-replay, and parameter-sweep workloads | In development |
 | Profiling | Use PyTorch Profiler and Nsight to identify compute, communication, and CPU/GPU bottlenecks | Planned |
 | Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics | In development |
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
@@ -77,18 +77,9 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-### 5. Run a benchmark
+### 5. Measure the model service
 
-```bash
-pip install 'foretoken[bench]'
-
-# For source installation from the repository:
-# pip install -e .
-# pip install -e '.[bench]'
-foretoken bench examples/quickstart
-```
-
-See [Benchmarking](benchmarks/README.md) for datasets, remote endpoints, result storage, and parameter sweeps.
+Benchmarking is optional. Follow [Model Service Benchmarks](benchmarks/README.md) to install the extra dependencies and run a fixed prompt, conversation dataset, random workload, trace replay, or parameter sweep against this deployment or an existing model service.
 
 ## Gateway Mode
 

@@ -9,19 +9,19 @@ from typing import Any, Optional
 
 import numpy as np
 
-from benchmarks.performance.config import HttpBenchmarkConfig
+from benchmarks.config import HttpBenchmarkConfig
 
 
 def percentile_summary(values: list[float]) -> dict[str, float | None]:
-    """Compute the mean and fixed percentiles used by benchmark summaries."""
+    """Compute mean and nearest-rank percentiles, matching EvalScope's estimator."""
     if not values:
         return {"mean": None, "p50": None, "p95": None, "p99": None}
     array = np.asarray(values, dtype=float)
     return {
         "mean": float(np.mean(array)),
-        "p50": float(np.percentile(array, 50)),
-        "p95": float(np.percentile(array, 95)),
-        "p99": float(np.percentile(array, 99)),
+        "p50": float(np.percentile(array, 50, method="inverted_cdf")),
+        "p95": float(np.percentile(array, 95, method="inverted_cdf")),
+        "p99": float(np.percentile(array, 99, method="inverted_cdf")),
     }
 
 
@@ -150,7 +150,7 @@ def summarize_request_measurements(output: dict[str, Any]) -> dict[str, Any]:
         "tpot": percentile_summary(tpots),
         "itl": percentile_summary(itls),
         "throughput": {
-            "requests_per_second": len(results) / total_time,
+            "requests_per_second": success_count / total_time,
             "generation_tokens_per_second": output_tokens / total_time,
             "prompt_tokens_per_second": input_tokens / total_time,
             "total_tokens_per_second": (input_tokens + output_tokens) / total_time,
