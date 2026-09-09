@@ -12,7 +12,7 @@ from contextlib import nullcontext
 from typing import Any
 
 from benchmarks.performance.cli import parse_http_benchmark_arguments
-from benchmarks.performance.arrival_trace_benchmark import ArrivalTraceBenchmark
+from benchmarks.performance.trace_replay import ArrivalTraceBenchmark
 from benchmarks.performance.config import HttpBenchmarkConfig
 from benchmarks.performance.console_output import (
     configure_logging,

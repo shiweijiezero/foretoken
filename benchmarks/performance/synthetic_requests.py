@@ -1,15 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Generate deterministic token-shaped prompts for random workloads and Mooncake traces."""
+"""Generate deterministic token-shaped prompts for random workloads."""
 
 from __future__ import annotations
 
 import logging
 import os
-import random
 import re
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +19,6 @@ from benchmarks.performance.chat_client import ChatRequestContent
 from benchmarks.performance.config import HttpBenchmarkConfig
 
 logger = logging.getLogger(__name__)
-_MOONCAKE_BLOCK_TOKENS = 512
 _BYTE_FALLBACK_TOKEN = re.compile(r"<0x[0-9A-Fa-f]{2}>")
 
 # Remote tokenizers download only files needed for tokenization and decoding.
@@ -204,54 +201,3 @@ def generate_random_requests(
     elif request_count is not None and request_count != len(input_lengths):
         raise ValueError("request_count must match input_lengths")
     return generator.generate_requests(input_lengths)
-
-
-def generate_synthetic_prefix_reuse_requests(
-    benchmark: HttpBenchmarkConfig,
-    *,
-    input_lengths: list[int],
-    hash_id_lists: list[list[int] | None],
-) -> list[ChatRequestContent]:
-    """Build reproducible 512-token prefix blocks from Mooncake hash IDs."""
-    dataset = benchmark.request_dataset
-    if not dataset.tokenizer:
-        raise ValueError("tokenizer_path is required for random data generation")
-    if len(input_lengths) != len(hash_id_lists):
-        raise ValueError("input_lengths must match hash_id_lists")
-
-    tokenizer = _load_tokenizer(dataset.tokenizer)
-    allowed_token_ids = _allowed_token_ids(tokenizer)
-
-    @lru_cache(maxsize=1024)
-    def block_for(hash_id: int) -> tuple[int, ...]:
-        generator = random.Random(dataset.random_seed + hash_id)
-        return tuple(
-            generator.choice(allowed_token_ids)
-            for _ in range(_MOONCAKE_BLOCK_TOKENS)
-        )
-
-    requests: list[ChatRequestContent] = []
-    for input_length, hash_ids in zip(input_lengths, hash_id_lists):
-        if hash_ids is None:
-            raise ValueError(
-                "--trace-synthetic-prefix-reuse requires hash_ids on every "
-                "selected trace event"
-            )
-        expected_blocks = (
-            input_length + _MOONCAKE_BLOCK_TOKENS - 1
-        ) // _MOONCAKE_BLOCK_TOKENS
-        if len(hash_ids) != expected_blocks:
-            raise ValueError(
-                "Mooncake hash_ids must cover every 512-token input block; "
-                f"got {len(hash_ids)} hash_ids for input_length={input_length}"
-            )
-
-        prompt_token_ids = [
-            token_id
-            for hash_id in hash_ids
-            for token_id in block_for(hash_id)
-        ][:input_length]
-        requests.append(
-            ChatRequestContent(prompt=_decode_prompt(tokenizer, prompt_token_ids))
-        )
-    return requests
