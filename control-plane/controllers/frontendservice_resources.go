@@ -77,6 +77,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_ROUTER_SCORER", Value: string(routerScorer)},
 		{Name: "FORETOKEN_ROUTER_PICKER", Value: string(routerPicker)},
 	}
+	frontendEnv = append(frontendEnv, profile.Tracing.Env()...)
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {
 		tokenizerCachePath = profile.RuntimeCache.MountPath + "/models"

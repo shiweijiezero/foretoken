@@ -10,13 +10,16 @@ metadata:
   labels:
     {{- include "foretoken.observabilityLabels" . | nindent 4 }}
 spec:
+  jobLabel: app.kubernetes.io/name
   selector:
     matchLabels:
-      app.kubernetes.io/name: foretoken-control-plane
+      {{- include "foretoken.selectorLabels" . | nindent 6 }}
   endpoints:
     - port: metrics
       path: /metrics
       scheme: http
+      # Autoscaling series identify the observed workload namespace, not the controller namespace.
+      honorLabels: true
       {{- with $.Values.observability.interval }}
       interval: {{ . | quote }}
       {{- end }}

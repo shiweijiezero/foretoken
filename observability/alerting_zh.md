@@ -3,46 +3,69 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# 告警与 Lark 通知
+# 告警
 
-[可观测性](README_zh.md) | [English](alerting.md)
+[English](alerting.md) | 简体中文
 
-Foretoken 提供指标和记录规则，但不会安装告警规则，也不会管理通知接收器。告警阈值、Alertmanager 路由和 Lark 投递由集群监控平台的配置负责。
+Foretoken 提供指标目标不可达、Frontend HTTP 错误、调度队列持续排队、KV Cache 压力，以及加速器利用率、显存、温度和功耗告警。告警与[指标采集](README_zh.md)分别启用：Prometheus 计算告警条件，Alertmanager 负责分组、路由并向平台选择的通知渠道投递。
 
-## 定义告警规则
+## 启用告警
 
-告警应基于[可观测性文档](README_zh.md)中记录的稳定记录规则。例如，平台自己的 Prometheus 规则组可以在没有 Frontend target 上报时触发告警：
+使用仓库维护的 [`examples/alerting/platform.yaml`](../examples/alerting/platform.yaml)：
 
 ```yaml
-groups:
-  - name: foretoken.platform
-    rules:
-      - alert: ForetokenFrontendUnavailable
-        expr: foretoken:frontend_up:sum == 0
-        for: 10m
-        labels:
-          severity: warning
-          team: inference
-        annotations:
-          summary: No Foretoken Frontend target is reporting
-          description: The selected Foretoken Frontend has reported no healthy target for 10 minutes.
+observability:
+  mode: enabled
+alerting:
+  enabled: true
 ```
 
-`PrometheusRule` 的元数据、选择器标签、评估间隔和归属取决于集群使用的 Prometheus Operator。请通过平台自己的配置仓库或 GitOps 流程加入规则，而不要修改 Foretoken Helm chart。阈值和 `for` 时长应根据服务运行目标选择；上例只是起点，不是 Foretoken 默认值。
+通过该文件安装或更新平台；如果已有其他平台配置文件，在同一命令中继续传入：
 
-流式响应可能先以 `2xx` 开始、后续再失败，因此不要把 `foretoken:frontend_http_response_start_5xx_ratio:rate5m` 当作推理成功率 SLO。定义故障条件时，应将响应开始信号与服务和模型服务信号结合起来。
+```bash
+foretoken install --values examples/alerting/platform.yaml
+```
 
-## 通过 Lark 投递通知
+安装后，Prometheus 除采集和记录规则外还会加载 `foretoken.alerting` 告警规则组。这不会修改模型部署，也不会创建通知接收器。若要从当前源码构建并安装，而不是使用发布产物，运行 `foretoken install -e . --values examples/alerting/platform.yaml`。
 
-Foretoken 没有内置的 Lark 接收器。要将告警发送到 Lark：
+## 确认规则生效
 
-1. 在集群监控平台的 Alertmanager 集成中配置 Lark 兼容的 webhook 或通知连接器。
-2. 按平台要求将 webhook URL、签名密钥等凭据存入平台的 Secret 管理，不要写入 Foretoken values、示例或 Git。
-3. 将平台告警标签（例如 `team` 和 `severity`）路由到该接收器。
-4. 通过平台正常的 Alertmanager 流程触发受控测试告警，确认 Lark 中的投递、去重和恢复通知。
+```bash
+kubectl get prometheusrule foretoken-control-plane-alerting-rules \
+  --namespace foretoken-platform
+```
 
-具体接收器和 Secret 格式取决于集群使用的 Alertmanager 集成。该集成应留在 Foretoken 之外，这样 `foretoken uninstall` 不会删除平台拥有的通知策略。
+按照[采集指南](README_zh.md#验证采集)打开 Prometheus。在 **Rules** 中确认 `foretoken.alerting` 已加载且没有计算错误。在 **Alerts** 中，异常条件先进入 pending，持续达到规则要求的时间后进入 firing；条件不再成立时告警解除。各条规则的含义和排查步骤见[告警排障手册](runbooks/alerts_zh.md)。
 
-## 归属与清理
+## 调整阈值与消息语言
 
-平台团队负责告警表达式、阈值、静默、升级策略、Alertmanager 接收器和 Lark 访问权限。Foretoken 负责随平台发布安装的指标与记录规则。删除 Foretoken 服务并运行 `foretoken uninstall` 不会删除平台拥有的告警规则或 Lark 集成。
+修改示例 YAML，无需编辑 Chart 源文件。例如：
+
+```yaml
+observability:
+  mode: enabled
+alerting:
+  enabled: true
+  language: en
+  thresholds:
+    acceleratorMemoryUsageRatio: 0.90
+    nvidiaTemperatureCelsius: 80
+```
+
+硬件阈值包括 `acceleratorUtilizationRatio`、`acceleratorMemoryUsageRatio`、`nvidiaTemperatureCelsius` 和 `nvidiaPowerWatts`。利用率使用 0–1 的比值，温度单位为摄氏度，功耗单位为瓦。未填写的选项沿用平台默认值；应结合设备限制和真实负载测量结果选择阈值。
+
+`language` 支持 `zh`、`en` 和 `bilingual`，通知接收器可据此选择中文、英文或双语消息。规则始终保留中英文 annotations。语言按告警分组生效，不能让同一条消息对不同接收人显示不同语言。
+
+## 通知渠道
+
+邮件、Slack、通用 webhook 等渠道复用 Alertmanager 已有接收器。Foretoken 告警携带 `service=foretoken` 和 `severity=warning` 标签，可据此配置通知路由。
+
+可选的 [Lark 集成](integrations/lark/README_zh.md)提供可直接应用的接收器、Secret 引用和消息模板，复用当前 Alertmanager，不会创建第二套通知服务。
+
+规则正常计算不代表通知已经送达。配置新接收器后，应发送携带真实告警标签和 workload namespace 的受控测试告警，并分别确认接收端收到了触发与解除消息。
+
+## 关闭告警
+
+在同一个配置文件中设置 `alerting.enabled: false`，重新执行安装命令。这只移除 Foretoken 告警规则，指标采集、记录规则和 Dashboard 仍然保留。平台已有的接收器、凭据、静默和通知策略不会删除。执行 `foretoken uninstall` 时，告警规则随所属 release 一起移除。
+
+使用旧配置时，将 `observability.alerts.language` 和 `observability.alerts.thresholds` 移到顶层 `alerting`，并设置 `alerting.enabled: true`，即可继续启用告警。

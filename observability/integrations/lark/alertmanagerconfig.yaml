@@ -8,10 +8,13 @@ apiVersion: monitoring.coreos.com/v1alpha1
 kind: AlertmanagerConfig
 metadata:
   name: foretoken-lark
+  labels:
+    inference.foretoken.io/alert-receiver: lark
 spec:
   route:
     groupBy:
       - alertname
+      - notification_language
     groupWait: 5s
     groupInterval: 30s
     repeatInterval: 1h

@@ -9,9 +9,12 @@ use std::time::Duration;
 use foretoken_model_protocol::{
     AbortInput, GenerateInput, TokenErrorCode, TokenEvent, TokenOutput,
 };
-use foretoken_tracing::{TRACEPARENT_HEADER, TRACESTATE_HEADER};
+use foretoken_tracing::{
+    TRACEPARENT_HEADER, TRACESTATE_HEADER, mark_error, propagation_headers, set_parent,
+};
 use futures::StreamExt;
 use serde::Deserialize;
+use tracing::{Instrument, info_span};
 use vllm_llm::{FinishReason, GenerateOutput, GeneratePromptInfo, GenerateRequest};
 
 use crate::{LlmFacade, LlmFacadeError, TokenStream};
@@ -52,8 +55,19 @@ impl HttpFacade {
     /// incremental decoding until terminal output or cancellation; response-start failures return first.
     pub(crate) async fn generate(
         &self,
-        request: GenerateRequest,
+        mut request: GenerateRequest,
     ) -> Result<TokenStream, LlmFacadeError> {
+        let span = info_span!(
+            "foretoken.model_server.request",
+            otel.kind = "client",
+            request_id = %request.request_id,
+            trace_id = tracing::field::Empty,
+            span_id = tracing::field::Empty,
+        );
+        set_parent(&span, request.trace_headers.as_ref());
+        if let Some(headers) = propagation_headers(&span) {
+            request.trace_headers = Some(headers);
+        }
         let trace_headers = request.trace_headers.clone();
         let body = rmp_serde::to_vec_named(&GenerateInput::from(request))
             .map_err(|_| LlmFacadeError::RequestFailed)?;
@@ -70,25 +84,54 @@ impl HttpFacade {
         }
         let response =
             tokio::time::timeout(self.request_start_timeout, transport.body(body).send())
+                .instrument(span.clone())
                 .await
-                .map_err(|_| LlmFacadeError::Unavailable)?
-                .map_err(classify_reqwest)?;
+                .map_err(|_| {
+                    mark_error(&span, "model-server response timed out");
+                    LlmFacadeError::Unavailable
+                })?
+                .map_err(|error| {
+                    mark_error(&span, "model-server connection failed");
+                    classify_reqwest(error)
+                })?;
         if !response.status().is_success() {
+            mark_error(&span, "model-server rejected request");
             return Err(classify_status(response.status()));
         }
         if !is_ndjson(response.headers().get(reqwest::header::CONTENT_TYPE)) {
+            mark_error(&span, "model-server returned an invalid content type");
             return Err(LlmFacadeError::Protocol);
         }
         Ok(Box::pin(async_stream::stream! {
             let mut body = Box::pin(response.bytes_stream()); let mut pending = Vec::new();
-            while let Some(chunk) = body.next().await {
-                match chunk { Ok(chunk) => pending.extend_from_slice(&chunk), Err(error) => { yield Err(classify_reqwest(error)); return; } }
+            while let Some(chunk) = body.next().instrument(span.clone()).await {
+                match chunk {
+                    Ok(chunk) => pending.extend_from_slice(&chunk),
+                    Err(error) => {
+                        mark_error(&span, "model-server response stream failed");
+                        yield Err(classify_reqwest(error));
+                        return;
+                    }
+                }
                 while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
                     let line: Vec<_> = pending.drain(..=newline).collect();
-                    match decode_event(&line[..line.len() - 1]) { Ok(output) => yield Ok(output), Err(error) => { yield Err(error); return; } }
+                    match decode_event(&line[..line.len() - 1]) {
+                        Ok(output) => yield Ok(output),
+                        Err(error) => {
+                            mark_error(&span, "model-server generation failed");
+                            yield Err(error);
+                            return;
+                        }
+                    }
                 }
             }
-            if !pending.is_empty() { yield decode_event(&pending); }
+            if !pending.is_empty() {
+                let result = decode_event(&pending);
+                if result.is_err() {
+                    mark_error(&span, "model-server generation failed");
+                }
+                yield result;
+            }
         }))
     }
     /// Asks this model server to cancel admitted work after its consumer ends early.

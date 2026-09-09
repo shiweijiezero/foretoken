@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken 会为服务和加速器指标安装 Prometheus 采集、记录规则以及可选告警规则。Alertmanager 路由和通知继续由平台团队负责。
+Foretoken 使用 Prometheus 采集服务与加速器指标，并通过 Foretoken System Overview Dashboard 展示。记录规则将原始采样聚合为 Dashboard 使用的查询结果。[告警](alerting_zh.md)是单独启用的可选功能。
 
 ## 安装采集
 
@@ -15,7 +15,7 @@ Foretoken 会为服务和加速器指标安装 Prometheus 采集、记录规则�
 foretoken install
 ```
 
-CLI 会发现采集路径，并在修改集群前打印安装计划。
+CLI 会发现采集路径，并在修改集群前打印安装计划。如需自定义采集设置，修改 [`examples/observability/platform.yaml`](../examples/observability/platform.yaml)，运行 `foretoken install --values examples/observability/platform.yaml`。模型服务仍使用原有示例 YAML 和 `foretoken deploy`。
 
 | 组件 | 没有合格实例 | 有合格实例 | 实例冲突或链路不完整 | `foretoken uninstall` |
 | --- | --- | --- | --- | --- |
@@ -55,7 +55,7 @@ kubectl port-forward \
   9090:9090
 ```
 
-打开 <http://127.0.0.1:9090/targets>，确认 Foretoken target 为 `UP`；再打开 <http://127.0.0.1:9090/rules>，确认 `foretoken.recording` 和 `foretoken.alerting` 均已加载。复用已有 Prometheus 时，通过平台原有的访问方式执行相同检查。
+打开 <http://127.0.0.1:9090/targets>，确认 Foretoken target 为 `UP`；再打开 <http://127.0.0.1:9090/rules>，确认 `foretoken.recording` 已加载。复用已有 Prometheus 时，通过平台原有的访问方式执行相同检查。
 
 以下查询可以查看 Frontend 请求量：
 
@@ -85,7 +85,7 @@ kubectl port-forward \
   3000:80
 ```
 
-打开 <http://127.0.0.1:3000>，进入 **Dashboards** 并选择 **Foretoken System Overview**。这一套 Dashboard 按请求链路依次展示 Frontend 流量和准入、model-server 延迟与吞吐、调度状态、KV Cache 与 RuntimeCache、加速器利用率和服务容器资源。页面提供命名空间、Frontend 服务、模型组、模型角色和模型筛选。
+打开 <http://127.0.0.1:3000>，进入 **Dashboards** 并选择 **Foretoken System Overview**。这一套 Dashboard 按请求链路依次展示 Frontend 流量和准入、model-server 延迟与吞吐、调度状态、KV Cache 与 RuntimeCache、加速器利用率和服务容器资源。页面可按工作负载命名空间、Frontend 服务、模型组、模型角色、模型和自动扩缩容的模型服务筛选。路由面板展示选择结果、候选数量和各阶段耗时；控制面面板展示 reconcile 与队列状态；扩缩容面板对照建议副本、已应用目标、服务容量、观测年龄和决策原因。控制面与加速器面板展示整个平台，不随工作负载命名空间筛选。
 
 如果 Foretoken 复用已有 Prometheus，Grafana 仍由原平台管理。能够发现 `grafana_dashboard=1` ConfigMap 的 Grafana sidecar 可以从 `foretoken-platform` 命名空间自动加载该 Dashboard。否则先导出 JSON，再按照平台已有流程导入：
 
@@ -103,6 +103,7 @@ kubectl get configmap \
 | --- | --- |
 | Frontend `/metrics` | HTTP 请求、准入队列、路由和运行状态 |
 | model-server `/metrics` | 当前推理后端的原生指标和已挂载 RuntimeCache 的文件系统状态 |
+| Controller `/metrics` | Reconcile、工作队列和已发布的模型服务扩缩容决策 |
 | DCGM Exporter | NVIDIA 利用率、显存、功耗、温度和 XID 错误 |
 | mxExporter | 沐曦利用率和显存指标 |
 | kubelet/cAdvisor | 容器 CPU、内存、文件系统和网络 |
@@ -115,7 +116,7 @@ kubectl get configmap \
 | Frontend | `foretoken:frontend_up:sum` | 正在上报的 Frontend target 数量 |
 | Frontend | `foretoken:frontend_http_response_starts:rate5m` | 每秒开始的 HTTP 响应数 |
 | Frontend | `foretoken:frontend_http_response_start_5xx_ratio:rate5m` | 响应开始时的 5xx 比例，不是推理失败率 |
-| Frontend | `foretoken:frontend_http_response_start_latency_seconds:quantile5m` | 响应开始延迟，通过 `quantile` 标签区分 `p50`、`p90` 和 `p99`；流式请求在首个 HTTP 响应返回时结束计时 |
+| Frontend | `foretoken:frontend_http_response_start_latency_seconds:quantile5m` | 从入口到 handler 生成响应头的时间，通过 `quantile` 标签区分 `p50`、`p90` 和 `p99`；不包含 SSE body 的发送 |
 | Frontend | `foretoken:frontend_upstream_queued_requests:sum` | 按扩缩容目标统计的准入等待请求数 |
 | Frontend | `foretoken:frontend_kv_index_source_health_ratio:min` | Frontend 副本中最低的 KV 事件源健康比例 |
 | 模型服务 | `foretoken:model_server_up:sum` | 正在上报的 model-server target 数量 |
@@ -136,36 +137,15 @@ kubectl get configmap \
 | 加速器 | `foretoken:accelerator_gpu_utilization_ratio` | NVIDIA 或沐曦设备利用率 |
 | 加速器 | `foretoken:accelerator_gpu_memory_usage_ratio` | NVIDIA 或沐曦设备显存使用率 |
 
-记录规则保留 namespace、Frontend 服务、模型组、模型角色、模型名称和可选的 Prefill/Decode pipeline scope。计数器会先计算可处理重置的五分钟速率，再执行聚合。Frontend HTTP 时延在 handler 返回响应时记录；对于 SSE，这表示响应开始延迟，完整请求/生成延迟则使用 model-server 的 E2E 规则。原始后端指标的名称、单位和标签以 `/metrics` 中的 `HELP` 和 `TYPE` 元数据为准。
+记录规则保留 namespace、Frontend 服务、模型组、模型角色、模型名称和可选的 Prefill/Decode pipeline scope。计数器会先计算可处理重置的五分钟速率，再执行聚合。Frontend HTTP 时延在 handler 返回响应时记录；对于 SSE，这表示响应开始延迟，model-server 的 E2E 规则从统一的 Frontend 到达时间计量至生成完成，不包含向客户端发送完毕的时间。Dashboard 汇总时展示各组分位数的最大值，而不是将各组合并后重新计算的分位数。原始后端指标的名称、单位和标签以 `/metrics` 中的 `HELP` 和 `TYPE` 元数据为准。
 
 流式响应可能先以 `2xx` 开始、后续再失败，因此 `foretoken:frontend_http_response_start_5xx_ratio:rate5m` 不能作为推理成功率 SLO。
 
-## 告警、Lark 与性能剖析
+## 定位问题
 
-启用可观测性后，Chart 会和记录规则一起渲染告警规则。查看实现的最短路径如下：
+[告警](alerting_zh.md)检查持续异常的信号，并通过 Alertmanager 发送通知。它需要单独启用，阈值和通知渠道在相应示例配置中选择。
 
-1. 在 `deploy/charts/foretoken/values.yaml` 中将 `observability.mode` 设为 `enabled`（或使用 `auto`）。
-2. 在同一个文件中查看阈值和语言选项。
-3. 在 `deploy/charts/foretoken/files/alerting-rules.yaml` 查看规则定义，在 `deploy/charts/foretoken/templates/alertingrule.yaml` 查看 Chart 如何渲染它。
-4. 用[告警排障手册](runbooks/alerts_zh.md)执行排查，用 [Lark 通知集成](integrations/lark/README_zh.md)查看路由和消息格式。
-
-Lark 集成支持 `zh`、`en` 和 `bilingual` 三种消息语言。一次部署的共享告警只选择一种语言；同一条分组消息不能针对不同接收人分别翻译。
-
-例如，保留默认阈值并选择英文消息：
-
-```yaml
-observability:
-  mode: enabled
-  alerts:
-    language: en
-    thresholds:
-      acceleratorMemoryUsageRatio: 0.90
-      nvidiaTemperatureCelsius: 80
-```
-
-Alertmanager 负责通知接收方、分组和路由。Foretoken 提供告警表达式和默认阈值；如果设备或 workload 需要不同限制，可以通过 Chart values 覆盖。
-
-Foretoken 不管理性能剖析流程。调查可复现实验时，使用受控负载，并通过模型运行环境和硬件平台使用 PyTorch Profiler、Nsight Systems 或 Nsight Compute。性能剖析会影响服务性能，应记录模型、负载、硬件和运行参数。
+定位单个慢请求时，使用[分布式追踪](tracing_zh.md)；分析算子、kernel 或通信瓶颈时，参阅[性能剖析指南](profiling_zh.md)。
 
 ## 停止采集
 

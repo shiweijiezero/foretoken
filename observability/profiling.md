@@ -5,30 +5,42 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Performance profiling
 
-[Observability](README.md) | [简体中文](profiling_zh.md)
+English | [简体中文](profiling_zh.md)
 
-Foretoken does not manage a profiling workflow. Use the metrics and dashboard first to identify a reproducible bottleneck, then run a controlled profile through the model runtime and hardware platform.
+Use `foretoken bench --profile` to capture PyTorch CPU/GPU traces during a short inference workload. The command warms up the same request client, starts the profiler on the selected model's serving Pods, sends the capture workload, and retrieves the traces locally. Profiling adds overhead; its measurements are diagnostic results, not normal throughput comparisons.
 
-## Choose a profiling tool
+## Capture a workload
 
-- **PyTorch Profiler** identifies operator, CPU, CUDA, and memory activity in a model-server process.
-- **Nsight Systems** shows host, device, and communication timelines across the serving process and GPU.
-- **Nsight Compute** provides detailed kernel-level analysis for a focused CUDA workload.
+The cluster must run a vLLM runtime with Torch profiling support. The operator needs Kubernetes permission to inspect ModelServices, ModelPools, ModelGroups and Pods, open Pod port-forwards, and copy files from model-server containers. The runtime image must provide `tar` for `kubectl cp`.
 
-Use the profiler entry point supported by the model-server image and the hardware platform. Foretoken does not add a common profiling flag or change the runtime command for these tools.
+Enable profiling using the maintained platform configuration, then deploy the model:
 
-## Run a reproducible investigation
+```bash
+foretoken install --values examples/profiling/platform-values.yaml
+foretoken deploy examples/quickstart
+foretoken bench examples/quickstart \
+  --profile --warmup-requests 8 --number 4 \
+  --parallel 2 --prompt "Explain why the sky is blue" --max-tokens 64
+```
 
-1. Select one model, replica, hardware shape, and runtime configuration.
-2. Use a controlled request workload with a fixed concurrency, prompt distribution, and output limit.
-3. Capture a short warm-up period separately from the measured profile.
-4. Profile only the interval needed to answer the bottleneck question; profiling adds overhead and can change serving behavior.
-5. Compare the profile with Frontend, model-server, accelerator, and RuntimeCache signals from the [Observability](README.md) dashboard.
+Use the existing source installation options when testing locally built images. Enabling profiling changes the runtime configuration; allow the model Pods to finish their rollout before capture. No profiler runs until `--profile` starts a session.
 
-Record the model identifier, Foretoken and backend image versions, Kubernetes resource requests, GPU type, parallelism, request workload, and profiler version with the result. Store profile artifacts in the platform's experiment or object storage, not in the repository.
+`--warmup-requests` counts requests dispatched before capture starts; these responses do not enter the recorded request metrics. Warm-up requests still in flight may appear in the trace. `--number` counts requests submitted during capture. Both phases use the same client, concurrency queue, generation parameters, and arrival-rate clock. Use `--warmup-requests 0` to capture a cold request.
 
-## Interpret and clean up
+A deployment with multiple models requires `--model`. Capture runs support a single prompt or dataset source and the normal `--parallel`, `--rate`, and `--open-loop` load controls. Sweeps, trace replay, multiple dataset sources, and SLA tuning are separate benchmark modes. `--url` is not supported for profiling because it does not identify the model Pods or provide an artifact-retrieval path.
 
-Use the profile to distinguish compute saturation, communication delays, CPU scheduling, model loading, and cache or filesystem effects. Confirm any proposed change with the same workload and metrics before applying it to a serving deployment.
+## Read the results
 
-Profiling sessions, temporary debug settings, and captured traces belong to the operator who created them. Remove them through the runtime or platform workflow after the investigation; `foretoken uninstall` does not manage profiling artifacts or external profiler configuration.
+Results are written below `results/profiles/<session-id>/`, or the directory selected by `--output-dir`. Each Pod has its own trace files; `profile-run.json` records the model, request configuration, runtime image, warm-up count, capture metrics, and collection status. Profile mode never sends results to W&B or enters Pareto analysis, regardless of ordinary benchmark output defaults.
+
+Open the generated `.pt.trace.json` or `.pt.trace.json.gz` files in a local Perfetto viewer or another PyTorch-compatible trace viewer. Compare CPU scheduling, CUDA kernels and communication with the [service metrics](README.md). Nsight Systems and Nsight Compute remain separate hardware-level tools, not alternative backends for this command.
+
+## Failures and cleanup
+
+Each model-server permits one profiler session at a time without changing inference admission. Request failure or Ctrl+C settles the benchmark's in-flight requests, stops all captures started by that command, and attempts to collect their artifacts. A server-side deadline derived from the workload bounds abandoned sessions if the benchmark process disappears.
+
+Successful collection removes only that session's files from the Pods and closes its port-forwards. Failed collection leaves files under `/tmp/foretoken-profiles/<session-id>/` for recovery; the error identifies the affected Pod. Use the normal Kubernetes file-copy workflow to retrieve them before deleting the stopped session through its internal management endpoint. A Pod restart removes these temporary files. Do not roll out or scale the selected model during a capture.
+
+Disable the runtime profiling option and repeat `foretoken install` when profiling access is no longer needed. Profiling endpoints exist only on the restricted model-server API, not the public inference frontend.
+
+References: [vLLM profiling](https://docs.vllm.ai/en/latest/contributing/profiling/) and [PyTorch Profiler](https://docs.pytorch.org/tutorials/recipes/recipes/profiler_recipe.html).

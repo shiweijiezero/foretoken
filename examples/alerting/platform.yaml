@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Apply with foretoken install --values examples/alerting/platform.yaml.
+observability:
+  mode: enabled
+alerting:
+  enabled: true

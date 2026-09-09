@@ -12,6 +12,7 @@ import (
 	"reflect"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -67,6 +68,7 @@ type FrontendRuntimeProfile struct {
 	ImagePullSecrets []corev1.LocalObjectReference
 	RuntimeCache     *inferencev1alpha1.RuntimeCacheBinding
 	Gateway          *GatewayParent
+	Tracing          runtimeconfig.Tracing
 }
 
 // FrontendServiceReconciler owns the frontend workload and its optional HTTPRoute.

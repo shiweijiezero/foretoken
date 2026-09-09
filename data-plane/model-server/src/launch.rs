@@ -345,6 +345,18 @@ impl LaunchPlanV1 {
     /// The model-server image selects Python through `FORETOKEN_VLLM_PYTHON`; the process handle
     /// takes the resulting configuration, while the plan contributes validated vLLM flags.
     pub fn managed_engine(&self, handshake_port: u16) -> Result<ManagedEngineConfig, String> {
+        let mut python_args = self.render_vllm_args()?;
+        if let Some(directory) =
+            crate::profiling::output_directory().map_err(|error| error.to_string())?
+        {
+            python_args.extend([
+                "--profiler-config".into(),
+                json!({"profiler": "torch", "torch_profiler_dir": directory}).to_string(),
+            ]);
+        }
+        if let Some(endpoint) = foretoken_tracing::otlp_traces_endpoint() {
+            python_args.extend(["--otlp-traces-endpoint".into(), endpoint]);
+        }
         Ok(ManagedEngineConfig {
             python: std::env::var(VLLM_PYTHON_ENV)
                 .ok()
@@ -354,7 +366,7 @@ impl LaunchPlanV1 {
             handshake_host: LOOPBACK_HOST.into(),
             handshake_port,
             data_parallel_size: self.parallelism.dp,
-            python_args: self.render_vllm_args()?,
+            python_args,
         })
     }
 

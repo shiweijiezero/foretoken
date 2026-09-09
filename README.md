@@ -27,7 +27,8 @@ If you only need to serve a single model on one GPU, using an inference engine s
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
 | Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP parallelism | Research |
 | Control plane | Model services, replica management, autoscaling, updates, and failure recovery | In development |
-| [Observability](observability/README.md) | Collect runtime metrics, evaluate alerts, and profile CPU/GPU bottlenecks | In development |
+| [Observability](observability/README.md) | Collect service and accelerator metrics and inspect the system Dashboard | In development |
+| [Alerting](observability/alerting.md) | Evaluate service and hardware alerts and deliver notifications through Alertmanager | In development |
 
 ## Quick Start
 

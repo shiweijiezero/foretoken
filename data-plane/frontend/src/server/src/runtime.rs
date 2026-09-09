@@ -572,7 +572,7 @@ impl Generation for RuntimeGeneration {
     ) -> Result<GeneratedChat, GenerationError> {
         let slot = self.generation_slot(&request.model).await?;
         let runtime = slot.state.model(&request.model)?;
-        let (text_request, output_processor) = runtime
+        let (mut text_request, output_processor) = runtime
             .bundle
             .chat_processor
             .prepare_with_options(
@@ -590,6 +590,9 @@ impl Generation for RuntimeGeneration {
                     GenerationError::Internal
                 }
             })?;
+        if let Some(arrival_time) = request.arrival_time {
+            text_request.arrival_time = Some(arrival_time);
+        }
         let generated = self
             .dispatch(slot.clone(), runtime, request, text_request)
             .await?;

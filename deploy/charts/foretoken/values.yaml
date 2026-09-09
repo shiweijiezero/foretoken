@@ -47,14 +47,25 @@ observability:
   additionalLabels: {}
   interval: ""
   scrapeTimeout: ""
-  alerts:
-    # The language is attached to alert labels so a shared Lark receiver can render one language consistently.
-    language: zh
-    thresholds:
-      acceleratorUtilizationRatio: 0.95
-      acceleratorMemoryUsageRatio: 0.95
-      nvidiaTemperatureCelsius: 85
-      nvidiaPowerWatts: 300
+
+# Alert evaluation is separate from metric collection; notification receivers remain platform-owned.
+alerting:
+  enabled: false
+  language: zh
+  thresholds:
+    acceleratorUtilizationRatio: 0.95
+    acceleratorMemoryUsageRatio: 0.95
+    nvidiaTemperatureCelsius: 85
+    nvidiaPowerWatts: 300
+
+# Optional HTTP/protobuf trace export for frontend and model-server workloads.
+tracing:
+  endpoint: ""
+  samplingRatio: 0.1
+  # The Secret must exist in every workload namespace, not just foretoken-platform.
+  headersSecret:
+    name: ""
+    key: headers
 
 # The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
 runtime:
@@ -62,6 +73,8 @@ runtime:
     image: ghcr.io/shiweijiezero/foretoken/model-server:0.0.1-alpha.1
     profileRevision: default
     modelServerPort: 9000
+    profiling:
+      enabled: false
     # Optional source access is interpreted by the vLLM runtime adapter.
     modelSource:
       endpoint: ""

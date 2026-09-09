@@ -2,6 +2,7 @@
 {{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
 
 {{/* Exposes controller-runtime metrics to the Prometheus Operator. */}}
+{{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -15,6 +16,7 @@ spec:
     {{- include "foretoken.selectorLabels" . | nindent 4 }}
   ports:
     - name: metrics
-      port: 8443
+      port: 8080
       targetPort: metrics
       protocol: TCP
+{{- end }}

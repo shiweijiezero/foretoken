@@ -9,7 +9,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 Foretoken 告警表示异常信号已经持续了一段时间。告警不会自动修复系统，也不能单独证明用户请求已经中断。排查时先读取告警标签，再用当前 Kubernetes 状态确认信号。
 
-所有规则集中在一个源文件中；先用下表选择对应的排障章节，不需要为每种算法寻找单独文件：
+根据告警的 `alertname` 标签，在下表中选择对应的排障章节：
 
 | 告警 | 信号 | 默认持续时间 |
 | --- | --- | --- |
@@ -90,4 +90,4 @@ NVIDIA DCGM 功耗读数已超过配置阈值。先将读数与设备功耗上�
 
 ## GPU 阈值策略
 
-Chart 为标准化利用率、显存压力以及 NVIDIA 温度和功耗读数提供默认阈值。安装 Chart 时可以通过 `observability.alerts.thresholds` 覆盖这些值。利用率和显存规则覆盖 NVIDIA 与沐曦的标准化指标；温度和功耗规则只在集群存在 NVIDIA DCGM 指标时生效。这些告警用于容量和散热检查，不会自动修复系统。
+Foretoken 为标准化利用率、显存压力以及 NVIDIA 温度和功耗读数提供默认阈值。在 `examples/alerting/platform.yaml` 的 `alerting.thresholds` 中调整后，通过 `foretoken install --values` 应用配置。利用率和显存规则覆盖 NVIDIA 与沐曦的标准化指标；温度和功耗规则只在集群存在 NVIDIA DCGM 指标时生效。这些告警用于容量和散热检查，不会自动修复系统。

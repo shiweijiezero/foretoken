@@ -11,8 +11,7 @@ Foretoken alerts are sustained warning signals. They do not trigger remediation
 and do not by themselves prove a user-visible outage. Start with the labels on
 the alert, then confirm the signal against the current Kubernetes state.
 
-The rules stay in one source file; use this table to choose the relevant
-runbook instead of looking for one file per algorithm:
+Use the alert's `alertname` label to select a runbook:
 
 | Alert | Signal | Default persistence |
 | --- | --- | --- |
@@ -122,9 +121,10 @@ metric.
 
 ## GPU threshold policy
 
-The Chart provides default thresholds for normalized utilization and memory
-pressure, plus NVIDIA temperature and power readings. Override them in
-`observability.alerts.thresholds` when installing the Chart. Utilization and
+Foretoken provides default thresholds for normalized utilization and memory
+pressure, plus NVIDIA temperature and power readings. Override them under
+`alerting.thresholds` in `examples/alerting/platform.yaml` and apply the file
+with `foretoken install --values`. Utilization and
 memory rules cover NVIDIA and MetaX normalized metrics; temperature and power
 currently apply only when the NVIDIA DCGM metrics exist. These are warning
 signals for capacity and thermal review, not automatic remediation.

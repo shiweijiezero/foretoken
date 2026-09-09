@@ -219,54 +219,6 @@
         },
         "scrapeTimeout": {
           "type": "string"
-        },
-        "alerts": {
-          "type": "object",
-          "required": [
-            "language",
-            "thresholds"
-          ],
-          "properties": {
-            "language": {
-              "type": "string",
-              "enum": [
-                "zh",
-                "en",
-                "bilingual"
-              ]
-            },
-            "thresholds": {
-              "type": "object",
-              "required": [
-                "acceleratorUtilizationRatio",
-                "acceleratorMemoryUsageRatio",
-                "nvidiaTemperatureCelsius",
-                "nvidiaPowerWatts"
-              ],
-              "properties": {
-                "acceleratorUtilizationRatio": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
-                },
-                "acceleratorMemoryUsageRatio": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
-                },
-                "nvidiaTemperatureCelsius": {
-                  "type": "number",
-                  "minimum": 0
-                },
-                "nvidiaPowerWatts": {
-                  "type": "number",
-                  "minimum": 0
-                }
-              },
-              "additionalProperties": false
-            }
-          },
-          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -607,11 +559,112 @@
                 }
               },
               "additionalProperties": false
+            },
+            "profiling": {
+              "type": "object",
+              "required": [
+                "enabled"
+              ],
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
         }
       }
+    },
+    "alerting": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "language",
+        "thresholds"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "language": {
+          "type": "string",
+          "enum": [
+            "zh",
+            "en",
+            "bilingual"
+          ]
+        },
+        "thresholds": {
+          "type": "object",
+          "required": [
+            "acceleratorUtilizationRatio",
+            "acceleratorMemoryUsageRatio",
+            "nvidiaTemperatureCelsius",
+            "nvidiaPowerWatts"
+          ],
+          "properties": {
+            "acceleratorUtilizationRatio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "acceleratorMemoryUsageRatio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "nvidiaTemperatureCelsius": {
+              "type": "number",
+              "minimum": 0
+            },
+            "nvidiaPowerWatts": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "tracing": {
+      "type": "object",
+      "required": [
+        "endpoint",
+        "samplingRatio",
+        "headersSecret"
+      ],
+      "properties": {
+        "endpoint": {
+          "type": "string",
+          "pattern": "^$|^https?://"
+        },
+        "samplingRatio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "headersSecret": {
+          "type": "object",
+          "required": [
+            "name",
+            "key"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     }
   },
   "allOf": [

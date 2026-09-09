@@ -17,6 +17,7 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -56,6 +57,8 @@ type ModelGroupReconciler struct {
 	Now                   func() time.Time
 	ControlPlaneNamespace string
 	ImagePullSecrets      []corev1.LocalObjectReference
+	Tracing               runtimeconfig.Tracing
+	ProfilingEnabled      bool
 }
 
 // SetupWithManager registers the ModelGroup controller and its owned resources.
@@ -143,7 +146,7 @@ func (reconciler *ModelGroupReconciler) validateModelPoolOwnership(ctx context.C
 
 // reconcileDeployment applies the ModelGroup Deployment and returns its persisted state.
 func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment, error) {
-	desired, err := desiredDeployment(group, reconciler.ImagePullSecrets)
+	desired, err := desiredDeployment(group, reconciler.ImagePullSecrets, reconciler.Tracing, reconciler.ProfilingEnabled)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +179,7 @@ func modelGroupLabels(group *inferencev1alpha1.ModelGroup) map[string]string {
 }
 
 // desiredDeployment builds the isolated model-server workload from a resolved ModelGroup contract.
-func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference) (*appsv1.Deployment, error) {
+func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference, tracing runtimeconfig.Tracing, profilingEnabled bool) (*appsv1.Deployment, error) {
 	launchPlan, err := vllmconfig.BuildLaunchPlan(group.Spec)
 	if err != nil {
 		return nil, fmt.Errorf("build vLLM launch plan: %w", err)
@@ -214,6 +217,10 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		{Name: "FORETOKEN_MODEL_GROUP_UID", Value: string(group.UID)},
 	}
 	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Spec.Artifacts.SourceAccess)...)
+	env = append(env, tracing.Env()...)
+	if profilingEnabled {
+		env = append(env, corev1.EnvVar{Name: "FORETOKEN_PROFILE_DIR", Value: "/tmp/foretoken-profiles"})
+	}
 	if group.Spec.PDRuntime != nil {
 		env = append(env,
 			corev1.EnvVar{Name: "VLLM_MOONCAKE_BOOTSTRAP_PORT", Value: strconv.Itoa(int(group.Spec.PDRuntime.BootstrapPort))},

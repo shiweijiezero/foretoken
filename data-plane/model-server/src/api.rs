@@ -26,7 +26,9 @@ use crate::runtime_cache;
 use foretoken_model_protocol::{
     AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, TelemetryResponse,
 };
-use foretoken_tracing::{REQUEST_ID_HEADER, TRACEPARENT_HEADER, TRACESTATE_HEADER};
+use foretoken_tracing::{
+    REQUEST_ID_HEADER, TracedBody, mark_error, propagation_headers, set_parent,
+};
 
 // One atomic word linearizes admission close against request acceptance.
 const ADMISSION_OPEN: u64 = 1 << 63;
@@ -129,6 +131,7 @@ pub struct AppState {
     metadata: RuntimeMetadataResponse,
     kv_events: Option<Arc<KvEventAdapter>>,
     runtime_cache: Option<runtime_cache::Config>,
+    profiler: Option<Arc<crate::profiling::Profiler>>,
 }
 impl AppState {
     /// Builds state consumed by internal HTTP handlers; the server owns the supplied backend state.
@@ -143,6 +146,7 @@ impl AppState {
             metadata,
             kv_events: None,
             runtime_cache: None,
+            profiler: None,
         }
     }
     /// Attaches the shared KV delta source used by the index endpoint and returns updated state.
@@ -150,6 +154,12 @@ impl AppState {
     /// The router owns this state while its handlers retain cloned adapter references.
     pub fn with_kv_events(mut self, adapter: Arc<KvEventAdapter>) -> Self {
         self.kv_events = Some(adapter);
+        self
+    }
+
+    /// Attaches the opt-in internal profiler whose files remain owned by its capture session.
+    pub fn with_profiler(mut self, profiler: Arc<crate::profiling::Profiler>) -> Self {
+        self.profiler = Some(profiler);
         self
     }
 
@@ -164,6 +174,7 @@ impl AppState {
 ///
 /// Server bootstrap moves `state` into the returned router, which owns it for all handler lifetimes.
 pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize) -> Router {
+    let profiles = crate::profiling::routes(state.profiler.clone());
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -178,6 +189,7 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
             internal_generate_request_body_limit_bytes,
         ))
         .with_state(state)
+        .merge(profiles)
 }
 async fn healthz(State(state): State<AppState>) -> StatusCode {
     status(state.health.healthy())
@@ -258,7 +270,7 @@ async fn generate(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     // Multimodal tensors use MessagePack; ordinary requests keep a human-readable JSON boundary.
-    let input: GenerateInput = if content_type_is(&headers, "application/msgpack") {
+    let mut input: GenerateInput = if content_type_is(&headers, "application/msgpack") {
         rmp_serde::from_slice(&body).map_err(|_| ApiError::InvalidRequest)?
     } else {
         serde_json::from_slice(&body).map_err(|_| ApiError::InvalidRequest)?
@@ -269,30 +281,27 @@ async fn generate(
     // Admission closes before drain; the permit remains owned by the stream until completion or drop.
     let permit = state.health.try_admit().ok_or(ApiError::Unavailable)?;
     let request_id = input.request_id.clone();
-    let traceparent = input
-        .trace_headers
-        .as_ref()
-        .and_then(|headers| headers.get(TRACEPARENT_HEADER))
-        .cloned()
-        .unwrap_or_default();
-    let tracestate = input
-        .trace_headers
-        .as_ref()
-        .and_then(|headers| headers.get(TRACESTATE_HEADER))
-        .cloned()
-        .unwrap_or_default();
     let span = info_span!(
         "foretoken.model_server.generate",
+        otel.kind = "server",
         request_id = %request_id,
-        traceparent = %traceparent,
-        tracestate = %tracestate,
+        trace_id = tracing::field::Empty,
+        span_id = tracing::field::Empty,
     );
+    set_parent(&span, input.trace_headers.as_ref());
+    if let Some(headers) = propagation_headers(&span) {
+        input.trace_headers = Some(headers);
+    }
+    tracing::info!(parent: &span, "generation accepted");
     let stream = state
         .backend
         .generate(input)
-        .instrument(span)
+        .instrument(span.clone())
         .await
-        .map_err(ApiError::backend)?;
+        .map_err(|error| {
+            mark_error(&span, "backend rejected generation");
+            ApiError::backend(error)
+        })?;
     // Once headers are sent, backend failures become typed terminal events rather than a new HTTP status.
     let stream_request_id = request_id.clone();
     let body_stream = stream.map(move |item| {
@@ -304,25 +313,28 @@ async fn generate(
                 code: error.token_error_code(),
             },
         };
+        if matches!(&event, TokenEvent::Error { .. }) {
+            mark_error(&tracing::Span::current(), "backend stream failed");
+        }
         let mut encoded = serde_json::to_vec(&event).expect("TokenEvent always serializes");
         encoded.push(b'\n');
         Ok::<Bytes, Infallible>(Bytes::from(encoded))
     });
-    Ok((
+    let mut response = (
         StatusCode::OK,
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_static("application/x-ndjson"),
-            ),
-            (
-                header::HeaderName::from_static(REQUEST_ID_HEADER),
-                HeaderValue::from_str(&request_id).expect("internal request IDs are valid headers"),
-            ),
-        ],
-        Body::from_stream(body_stream),
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/x-ndjson"),
+        )],
+        Body::new(TracedBody::new(Body::from_stream(body_stream), span)),
     )
-        .into_response())
+        .into_response();
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
+        response
+            .headers_mut()
+            .insert(header::HeaderName::from_static(REQUEST_ID_HEADER), value);
+    }
+    Ok(response)
 }
 
 async fn abort(

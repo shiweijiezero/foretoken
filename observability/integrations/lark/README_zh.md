@@ -3,72 +3,69 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Lark 告警通知
+# Lark 通知
 
-[English](README.md) | 简体中文
+[English](README.md) | 简体中文 | [告警](../../alerting_zh.md)
 
-这个可选集成把现有 Prometheus Alertmanager 中带有 `service=foretoken` 标签的告警发送给 Lark 自定义机器人。Foretoken 负责告警标签和消息字段；平台负责 Alertmanager 实例、接收群以及 webhook 凭据。
+该接收器把 Alertmanager 中的 Foretoken 告警发送到 Lark 自定义机器人，支持中文、英文和双语消息，按告警名称及消息语言分组。重试、分组和解除通知由 Alertmanager 负责，不会额外部署通知服务。
 
-这里的清单是部署来源，不会创建第二套 Alertmanager。应用清单后，集群中会生成一个 `AlertmanagerConfig`。Webhook URL 必须保存在 Kubernetes Secret 中，不得写入仓库。
+## 开始前
 
-Chart 会为每条告警添加 `notification_language` 标签。安装 Chart 时将
-`observability.alerts.language` 设为 `zh`、`en` 或 `bilingual`，Payload 就会选择中文、英文或双语消息。由于一条 Alertmanager 消息可能包含多条告警，这个选择作用于一次部署共享的消息，不能针对同一条消息中的不同接收人单独选择语言。
+先[启用 Foretoken 告警](../../alerting_zh.md)。接收器需要 Alertmanager 0.32 或更新版本，以及支持 `webhookConfigs.payload` 的 Prometheus Operator CRD。CLI 管理的 kube-prometheus-stack 88.5.2 包含兼容版本：Alertmanager 0.34.0 和 Prometheus Operator 0.93.1。
 
-## 前提条件
+在目标群创建 Lark 自定义机器人。此直连接收器不计算 Lark 请求签名；应使用未开启签名校验的机器人，或复用平台已有的签名连接器。每条消息包含 `Foretoken`，可将其设置为机器人的必需关键词。
 
-- Prometheus Operator 会为目标 Alertmanager 选择 `AlertmanagerConfig`；
-- 已安装的 CRD 和 Alertmanager 版本支持 `webhookConfigs.payload`；
-- 已创建 Lark 自定义机器人 webhook；
-- 平台的 namespace 匹配策略允许接收 Foretoken workload namespace 中的告警。
+## 接入 CLI 管理的 Alertmanager
 
-Prometheus Operator 通常会把 `AlertmanagerConfig` 路由限制在资源自身的 namespace。即使配置和 Alertmanager 一起放在 `monitoring`，带有其他 workload `namespace` 标签的告警仍可能无法匹配。Alertmanager 管理者必须检查 `alertmanagerConfigMatcherStrategy` 并明确决定跨 namespace 策略；本集成不会替平台修改它。
-
-## 安装
-
-选择 Alertmanager 所属 namespace，并在其中创建被引用的 Secret：
+示例使用 `foretoken-platform` 命名空间。将机器人 URL 保存到仓库之外的本地凭据文件，然后创建 Kubernetes Secret：
 
 ```bash
-ALERTMANAGER_NAMESPACE=monitoring
 kubectl create secret generic foretoken-lark-webhook \
-  --namespace "$ALERTMANAGER_NAMESPACE" \
-  --from-literal=url='<LARK_CUSTOM_BOT_WEBHOOK_URL>'
+  --namespace foretoken-platform \
+  --from-file=url=/secure/path/lark-webhook-url
+
+kubectl apply --kustomize examples/alerting/lark
+
+kubectl patch alertmanager foretoken-prometheus-kube-alertmanager \
+  --namespace foretoken-platform \
+  --type merge \
+  --patch-file examples/alerting/lark/alertmanager-patch.yaml
 ```
 
-把 receiver 应用到相同 namespace：
+将 `/secure/path/lark-webhook-url` 替换为只包含机器人 URL 的文件路径。若 Secret 已存在，通过平台已有的 Secret 管理流程更新。
 
-```bash
-kubectl apply \
-  --namespace "$ALERTMANAGER_NAMESPACE" \
-  --filename observability/integrations/lark/alertmanagerconfig.yaml
-```
+补丁只选择 `foretoken-platform` 中带有 `inference.foretoken.io/alert-receiver=lark` 标签的接收器配置，并允许这个可信接收器匹配 workload namespace 中的 Foretoken 告警。否则 Operator 默认追加的接收器 namespace 条件会排除这些告警。安装或升级受管监控 release 后，再应用该补丁。
 
-如果 Secret 已存在，应通过平台的 Secret 管理流程更新，不要把值提交到仓库。
+## 接入共享 Alertmanager
 
-## 消息契约
+修改 `examples/alerting/lark/kustomization.yaml` 的 namespace，在相同命名空间中创建 Secret，再应用该 Kustomize 目录。由 Alertmanager 管理者把接收器的标签和命名空间纳入已有选择器，并允许所需的 workload namespace。不要用受管实例的示例补丁覆盖共享平台的选择器。
 
-路由选择 Foretoken 告警规则统一添加的 `service=foretoken` 标签。Payload 按告警名称分组，逐一列出受影响目标，以 `Asia/Shanghai` 显示触发和解除时间，并根据语言选择每条告警规则的中文或英文 `summary`、`description` 和 `runbook_url`。
+接收器匹配 `service=foretoken`。同一告警是否同时发送到其他渠道，由平台现有路由决定。
 
-模板同时处理 `model_group` 这类记录规则标准化标签，以及 `inference_foretoken_io_model_group` 这类 ServiceMonitor 原始标签，因为抓取失败发生在记录规则标准化之前。
+## 消息语言与投递验证
 
-## 验证
+在[平台配置示例](../../../examples/alerting/platform.yaml)中将 `alerting.language` 设为 `zh`、`en` 或 `bilingual`，再通过 `foretoken install --values` 应用该文件。每条消息列出受影响目标、级别、触发或解除时间、摘要和排障链接。时间采用 `Asia/Shanghai`；不同语言的告警分别分组。
 
-查看 Operator 接受的资源以及 Alertmanager 路由：
+检查已安装的配置：
 
 ```bash
 kubectl get alertmanagerconfig foretoken-lark \
-  --namespace "$ALERTMANAGER_NAMESPACE" \
-  --output yaml
+  --namespace foretoken-platform --output yaml
 ```
 
-测试告警应携带与正式规则相同的标签，包括 `service=foretoken` 和真实 Foretoken workload namespace。只在 Alertmanager namespace 中测试，不能证明跨 namespace 路由有效。最后应分别确认 Lark 收到了 firing 和 resolved 消息。
+确认 Operator 接受了配置，且 Alertmanager 加载时没有报错。通过 Alertmanager 发送携带 `service=foretoken`、workload `namespace` 和目标 `notification_language` 的受控测试告警，分别确认目标群收到了触发与解除消息。Alertmanager 只记录 HTTP 传输结果；实际查看目标群，才能确认 Lark 接受了机器人凭据和消息。
 
-## 设计参考
+## 移除接收器
 
-Alertmanager 继续负责告警分组、去重、重复发送和投递。Payload 遍历 `.Alerts`，不假设同组告警一定拥有完全相同的 annotations。
+```bash
+kubectl delete --kustomize examples/alerting/lark
+kubectl delete secret foretoken-lark-webhook --namespace foretoken-platform
+```
 
-- [Prometheus 通知模板参考](https://prometheus.io/docs/alerting/latest/notifications/)
-- [Prometheus Operator `AlertmanagerConfig` API](https://prometheus-operator.dev/docs/api-reference/api/#monitoring.coreos.com/v1alpha1.AlertmanagerConfig)
-- [vLLM Production Stack 可观测性配置](https://github.com/vllm-project/production-stack/blob/main/observability/kube-prom-stack.yaml)
-- [Dynamo XPU 告警规则](https://github.com/ai-dynamo/dynamo/blob/main/dev/observability/xpu-alert-rules.yml)
+不再使用时，也从 Alertmanager 配置中移除示例的选择器设置。这不会关闭 Prometheus 告警规则；关闭规则请设置 `alerting.enabled: false`。
 
-Dynamo 的 XPU 规则展示了持续时间、warning/critical 分级、exporter 可用性和“存在业务流量时才检查硬件异常”等做法。vLLM Production Stack 的 receiver 模板会遍历分组后的告警。两者都不会定义 Foretoken 的 Lark 目标、标签或处置流程，因此这些内容仍然是显式的 Foretoken 集成策略。
+## 参考
+
+- [Alertmanager webhook 配置](https://prometheus.io/docs/alerting/latest/configuration/#webhook_config)
+- [Prometheus 通知模板](https://prometheus.io/docs/alerting/latest/notifications/)
+- [Prometheus Operator AlertmanagerConfig API](https://prometheus-operator.dev/docs/api-reference/api/#monitoring.coreos.com/v1alpha1.AlertmanagerConfig)

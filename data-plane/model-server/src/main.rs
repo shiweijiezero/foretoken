@@ -28,10 +28,16 @@ const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
 const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    vllm_tracing::init_tracing("ForetokenModelServer");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let _tracing =
+        foretoken_tracing::init_tracing("foretoken-model-server").map_err(std::io::Error::other)?;
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run())
+}
 
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Resolve the controller-owned launch plan before starting any engine or network task.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
     let cache_shutdown = Arc::new(Notify::new());
@@ -162,6 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     health.set_client_healthy(true);
     health.set_accepting(true);
     let backend = Arc::new(VllmBackend::new(Llm::new(client), max_concurrent_requests));
+    let profiler = foretoken_model_server::profiling::Profiler::from_env(backend.clone())?;
 
     // Expose only the restricted group-local API after EngineCore is connected and healthy.
     let listener = match TcpListener::bind(config.listen_address).await {
@@ -177,6 +184,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shutdown = Arc::new(Notify::new());
     let server_shutdown = shutdown.clone();
     let mut app_state = AppState::new(backend.clone(), health.clone(), metadata);
+    if let Some(profiler) = &profiler {
+        app_state = app_state.with_profiler(profiler.clone());
+    }
     if let Some(kv_events) = kv_events {
         app_state = app_state.with_kv_events(kv_events);
     }
@@ -242,6 +252,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 drop(server);
             }
         }
+    }
+    if let Some(profiler) = &profiler {
+        profiler.shutdown().await;
     }
     if let Err(error) = backend.shutdown().await {
         warn!(%error, "could not shut down EngineCore client cleanly");
@@ -327,7 +340,7 @@ async fn start_engine_attempt(
     startup_deadline: Instant,
     cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
 ) -> Result<(ManagedEngineHandle, EngineCoreClient), EngineStartupFailure> {
-    let environment = if let Some(cache) = cache {
+    let mut environment = if let Some(cache) = cache {
         cache.set_mode(mode);
         cache
             .prepare(mode)
@@ -336,6 +349,12 @@ async fn start_engine_attempt(
     } else {
         Vec::new()
     };
+    if foretoken_tracing::otlp_traces_endpoint().is_some() {
+        environment.push((
+            "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL".into(),
+            "http/protobuf".into(),
+        ));
+    }
     let handshake_port = allocate_handshake_port(LOOPBACK_HOST)
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
     let managed_engine = config
@@ -436,8 +455,7 @@ async fn detect_engine_protocol(
     let minor = parts.next().and_then(|part| part.parse::<u64>().ok());
     match (major, minor) {
         (Some(0), Some(20)) => Ok(EngineCoreProtocol::V0_20),
-        (Some(0), Some(21..=25)) => Ok(EngineCoreProtocol::V0_21ToV0_25),
-        (Some(0), Some(26..=27)) => Ok(EngineCoreProtocol::V0_26ToV0_27),
+        (Some(0), Some(21..=27)) => Ok(EngineCoreProtocol::V0_21ToV0_25),
         (Some(0), Some(28)) => Ok(EngineCoreProtocol::V0_28),
         _ => Err(format!(
             "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.28"

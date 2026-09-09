@@ -79,6 +79,8 @@ func main() {
 	var modelSourceEndpoint string
 	var modelSourceTokenSecretName string
 	var modelSourceTokenSecretKey string
+	var tracingConfig runtimeconfig.Tracing
+	var profilingEnabled bool
 
 	// Metrics stay disabled until the chart exposes a secured endpoint.
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
@@ -103,6 +105,11 @@ func main() {
 	})
 	flag.StringVar(&cacheClaimName, "cache-claim", "", "Existing namespace-local PVC shared by runtime workloads.")
 	flag.StringVar(&cacheMountPath, "cache-mount-path", "/var/cache/foretoken", "Absolute runtime cache root mounted into workload Pods.")
+	flag.StringVar(&tracingConfig.Endpoint, "tracing-endpoint", "", "HTTP/protobuf OTLP base URL for inference workload traces.")
+	flag.Float64Var(&tracingConfig.SamplingRatio, "tracing-sampling-ratio", 0.1, "Fraction of new inference traces sampled; remote parent decisions are preserved.")
+	flag.StringVar(&tracingConfig.HeadersSecretName, "tracing-headers-secret-name", "", "Namespace-local Secret containing OTLP authentication headers.")
+	flag.StringVar(&tracingConfig.HeadersSecretKey, "tracing-headers-secret-key", "", "Key containing comma-separated OTLP headers in the tracing Secret.")
+	flag.BoolVar(&profilingEnabled, "vllm-profiling-enabled", false, "Enable operator-controlled PyTorch profiling on vLLM model-server Pods.")
 	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional model source endpoint interpreted by the runtime adapter.")
 	flag.StringVar(&modelSourceTokenSecretName, "model-source-token-secret-name", "", "Namespace-local Secret containing the model source credential.")
 	flag.StringVar(&modelSourceTokenSecretKey, "model-source-token-secret-key", "", "Key in the model source credential Secret.")
@@ -144,6 +151,10 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
 	if inferenceEngineImage == "" {
 		ctrl.Log.Error(errors.New("inference-engine-image must be nonempty"), "invalid inference engine profile")
+		os.Exit(1)
+	}
+	if err := tracingConfig.Validate(); err != nil {
+		ctrl.Log.Error(err, "invalid tracing configuration")
 		os.Exit(1)
 	}
 	if err := cacheProfile.Validate(); err != nil {
@@ -291,6 +302,7 @@ func main() {
 				Port:             int32(frontendPort),
 				ImagePullSecrets: workloadImagePullSecrets,
 				Gateway:          gateway,
+				Tracing:          tracingConfig,
 			},
 		}
 		if err := frontendReconciler.SetupWithManager(manager); err != nil {
@@ -346,7 +358,7 @@ func main() {
 		ctrl.Log.Error(errors.New("POD_NAMESPACE is required"), "unable to configure ModelGroup drain networking")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, Tracing: tracingConfig, ProfilingEnabled: profilingEnabled}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelGroup controller")
 		os.Exit(1)
 	}

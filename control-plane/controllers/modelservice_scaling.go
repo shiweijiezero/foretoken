@@ -10,14 +10,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus"
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/compiler"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
 type modelScalingConfig struct {
@@ -25,59 +23,6 @@ type modelScalingConfig struct {
 	Limits          core.ReplicaLimits
 	PollingInterval time.Duration
 	MetricsMaxAge   time.Duration
-}
-
-var autoscalingMetrics = struct {
-	recommendation *prometheus.GaugeVec
-	adjusted       *prometheus.GaugeVec
-	applied        *prometheus.GaugeVec
-	observationAge *prometheus.GaugeVec
-	observationOK  *prometheus.GaugeVec
-	hold           *prometheus.GaugeVec
-	failure        *prometheus.GaugeVec
-}{
-	recommendation: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "foretoken_autoscaling_recommendation_replicas",
-		Help: "Replica count recommended by the autoscaling decision algorithm.",
-	}, autoscalingMetricLabels),
-	adjusted: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "foretoken_autoscaling_adjusted_replicas",
-		Help: "Replica count after autoscaling stabilization and rate limiting.",
-	}, autoscalingMetricLabels),
-	applied: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "foretoken_autoscaling_applied_replicas",
-		Help: "Replica count applied to the controller-owned ModelPool target.",
-	}, autoscalingMetricLabels),
-	observationAge: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "foretoken_autoscaling_observation_age_seconds",
-		Help: "Age of the oldest observation used by the autoscaling evaluation.",
-	}, autoscalingMetricLabels),
-	observationOK: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "foretoken_autoscaling_observation_fresh",
-		Help: "Whether the autoscaling observation is fresh and complete.",
-	}, autoscalingMetricLabels),
-	hold: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "foretoken_autoscaling_hold",
-		Help: "Whether the autoscaling target capacity was held by the latest evaluation.",
-	}, autoscalingMetricLabels),
-	failure: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "foretoken_autoscaling_failure",
-		Help: "Whether the latest autoscaling evaluation failed to collect usable observations.",
-	}, autoscalingMetricLabels),
-}
-
-var autoscalingMetricLabels = []string{"namespace", "modelservice", "target_kind", "target_name", "role"}
-
-func init() {
-	crmetrics.Registry.MustRegister(
-		autoscalingMetrics.recommendation,
-		autoscalingMetrics.adjusted,
-		autoscalingMetrics.applied,
-		autoscalingMetrics.observationAge,
-		autoscalingMetrics.observationOK,
-		autoscalingMetrics.hold,
-		autoscalingMetrics.failure,
-	)
 }
 
 // scalingConfig resolves one ModelService autoscaling configuration into runtime algorithms and limits.
@@ -364,7 +309,6 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 			ReadyReplicas:    snapshot.Replicas.ReadyReplicas,
 			RoutableReplicas: snapshot.Replicas.RoutableReplicas,
 		})
-		observeAutoscalingDecision(service, decision, snapshot)
 	}
 	resolved := append([]compiler.ModelPool(nil), compiledPools...)
 	for index := range resolved {
@@ -386,42 +330,6 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 		resolved[index].DesiredGroups = desired
 	}
 	return resolved, statuses, nil
-}
-
-// observeAutoscalingDecision publishes the latest controller-owned decision for Prometheus consumers.
-func observeAutoscalingDecision(service *inferencev1alpha1.ModelService, decision core.ScalingDecision, snapshot core.ScalingSnapshot) {
-	if service == nil || service.Spec.Autoscaling == nil {
-		return
-	}
-	labels := prometheus.Labels{
-		"namespace":    service.Namespace,
-		"modelservice": service.Name,
-		"target_kind":  string(decision.Target.Kind),
-		"target_name":  decision.Target.Name,
-		"role":         string(decision.Target.Role),
-	}
-	autoscalingMetrics.recommendation.With(labels).Set(float64(decision.Recommendation.Replicas))
-	autoscalingMetrics.adjusted.With(labels).Set(float64(decision.Adjustment.Replicas))
-	autoscalingMetrics.applied.With(labels).Set(float64(decision.AppliedReplicas))
-	fresh := snapshot.Metrics.State == core.MetricsFresh
-	autoscalingMetrics.observationOK.With(labels).Set(boolFloat(fresh))
-	age := 0.0
-	if !snapshot.Metrics.Window.End.IsZero() {
-		age = time.Since(snapshot.Metrics.Window.End).Seconds()
-		if age < 0 {
-			age = 0
-		}
-	}
-	autoscalingMetrics.observationAge.With(labels).Set(age)
-	autoscalingMetrics.hold.With(labels).Set(boolFloat(decision.Adjustment.Reason == core.AdjustmentReasonHold))
-	autoscalingMetrics.failure.With(labels).Set(boolFloat(snapshot.Metrics.State == core.MetricsUnavailable))
-}
-
-func boolFloat(value bool) float64 {
-	if value {
-		return 1
-	}
-	return 0
 }
 
 // scalingSnapshot builds one replica and metrics input for the autoscaling pipeline.

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Foretoken installs Prometheus collection, recording rules, and optional alert rules for service and accelerator signals. Alertmanager routing and notifications remain owned by the platform team.
+Foretoken collects service and accelerator metrics with Prometheus and displays them in the Foretoken System Overview Dashboard. Recording rules aggregate raw samples into the queries used by the Dashboard. [Alerting](alerting.md) is a separate, optional capability.
 
 ## Install collection
 
@@ -15,7 +15,7 @@ Foretoken installs Prometheus collection, recording rules, and optional alert ru
 foretoken install
 ```
 
-The CLI discovers the collection path and prints its plan before changing the cluster.
+The CLI discovers the collection path and prints its plan before changing the cluster. For custom collection settings, edit [`examples/observability/platform.yaml`](../examples/observability/platform.yaml) and pass it with `foretoken install --values examples/observability/platform.yaml`. Model services continue to use their existing example YAML and `foretoken deploy`.
 
 | Component | No suitable existing instance | Qualified existing instance | Conflict or incomplete path | `foretoken uninstall` |
 | --- | --- | --- | --- | --- |
@@ -55,7 +55,7 @@ kubectl port-forward \
   9090:9090
 ```
 
-Open <http://127.0.0.1:9090/targets> and confirm that the Foretoken targets are `UP`. Then open <http://127.0.0.1:9090/rules> and confirm that `foretoken.recording` and `foretoken.alerting` are loaded. When reusing Prometheus, perform the same checks through its existing access path.
+Open <http://127.0.0.1:9090/targets> and confirm that the Foretoken targets are `UP`. Then open <http://127.0.0.1:9090/rules> and confirm that `foretoken.recording` is loaded. When reusing Prometheus, perform the same checks through its existing access path.
 
 A minimal query for frontend request volume is:
 
@@ -85,7 +85,7 @@ kubectl port-forward \
   3000:80
 ```
 
-Open <http://127.0.0.1:3000>, then select **Dashboards** and open **Foretoken System Overview**. The single dashboard follows the request path from Frontend traffic and admission through model-server latency, throughput, and scheduler state, then shows KV and RuntimeCache behavior, accelerator utilization, and serving-container resources. Shared filters select the namespace, Frontend service, model group, model role, and model.
+Open <http://127.0.0.1:3000>, then select **Dashboards** and open **Foretoken System Overview**. The single dashboard follows the request path from Frontend traffic and admission through model-server latency, throughput, and scheduler state, then shows KV and RuntimeCache behavior, accelerator utilization, and serving-container resources. Shared filters select the workload namespace, Frontend service, model group, model role, model, and autoscaled model service. Routing panels show selection outcomes, candidate counts, and stage latency. Control-plane panels show reconciliation and workqueue health; autoscaling panels compare recommendations with applied and serving capacity, observation age, and decision reasons. Control-plane and accelerator panels cover the platform rather than a single workload namespace.
 
 When Foretoken reuses an existing Prometheus, Grafana remains owned by that platform. A Grafana sidecar that discovers ConfigMaps labeled `grafana_dashboard=1` can load the dashboard from the `foretoken-platform` namespace. Otherwise, extract the JSON and import it through the platform's normal dashboard workflow:
 
@@ -103,6 +103,7 @@ kubectl get configmap \
 | --- | --- |
 | Frontend `/metrics` | HTTP requests, admission queues, routing, and runtime state |
 | model-server `/metrics` | Native inference-backend metrics and mounted RuntimeCache filesystem state |
+| Controller `/metrics` | Reconciliation, workqueues, and published model-service autoscaling decisions |
 | DCGM Exporter | NVIDIA utilization, memory, power, temperature, and XID errors |
 | mxExporter | MetaX utilization and memory metrics |
 | kubelet/cAdvisor | Container CPU, memory, filesystem, and network |
@@ -115,7 +116,7 @@ The following stable recording rules provide the query layer used by the system 
 | Frontend | `foretoken:frontend_up:sum` | Reporting Frontend targets |
 | Frontend | `foretoken:frontend_http_response_starts:rate5m` | HTTP response starts per second |
 | Frontend | `foretoken:frontend_http_response_start_5xx_ratio:rate5m` | Response-start 5xx ratio, not inference failure ratio |
-| Frontend | `foretoken:frontend_http_response_start_latency_seconds:quantile5m` | Response-start latency with a `quantile` label of `p50`, `p90`, or `p99`; streaming requests end at the first HTTP response |
+| Frontend | `foretoken:frontend_http_response_start_latency_seconds:quantile5m` | Time until the handler produces response headers, with `p50`, `p90`, or `p99`; excludes SSE body delivery |
 | Frontend | `foretoken:frontend_upstream_queued_requests:sum` | Requests waiting for admission by scaling target |
 | Frontend | `foretoken:frontend_kv_index_source_health_ratio:min` | Lowest KV event-source health ratio across Frontend replicas |
 | Model serving | `foretoken:model_server_up:sum` | Reporting model-server targets |
@@ -136,36 +137,15 @@ The following stable recording rules provide the query layer used by the system 
 | Accelerator | `foretoken:accelerator_gpu_utilization_ratio` | Per-device NVIDIA or MetaX utilization ratio |
 | Accelerator | `foretoken:accelerator_gpu_memory_usage_ratio` | Per-device NVIDIA or MetaX memory utilization ratio |
 
-Rules preserve namespace, Frontend service, model group, model role, model name, and optional Prefill/Decode pipeline scope. Counter rules calculate reset-aware five-minute rates before aggregation. Frontend HTTP duration is measured when the handler returns its response; for SSE this is response-start latency, while complete request/generation latency comes from the model-server E2E rule. For raw backend metric names, units, and labels, inspect the backend `/metrics` `HELP` and `TYPE` metadata.
+Rules preserve namespace, Frontend service, model group, model role, model name, and optional Prefill/Decode pipeline scope. Counter rules calculate reset-aware five-minute rates before aggregation. Frontend HTTP duration is measured when the handler returns its response; for SSE this is response-start latency, while the model-server E2E rule measures generation completion from the shared Frontend arrival-time boundary, not client delivery. Dashboard latency summaries show the maximum per-group quantile rather than a quantile pooled across groups. For raw backend metric names, units, and labels, inspect the backend `/metrics` `HELP` and `TYPE` metadata.
 
 A response may begin with `2xx` and fail later while streaming. Do not use `foretoken:frontend_http_response_start_5xx_ratio:rate5m` as an inference-success SLO.
 
-## Alerts, Lark, and profiling
+## Diagnose a problem
 
-When observability is enabled, the Chart renders alert rules alongside the recording rules. The shortest path to the implementation is:
+[Alerting](alerting.md) evaluates sustained unhealthy signals and sends notifications through Alertmanager. Enable it separately and choose thresholds and notification channels in its example configuration.
 
-1. Set `observability.mode=enabled` (or use `auto`) in `deploy/charts/foretoken/values.yaml`.
-2. Read the thresholds and language options in `deploy/charts/foretoken/values.yaml`.
-3. Read the rule definitions in `deploy/charts/foretoken/files/alerting-rules.yaml` and their Chart rendering in `deploy/charts/foretoken/templates/alertingrule.yaml`.
-4. Use the [alert runbooks](runbooks/alerts.md) for operator actions, and the [Lark integration](integrations/lark/README.md) for routing and message formatting.
-
-The Lark integration supports `zh`, `en`, and `bilingual` messages. One deployment chooses one language for its shared alerts; a single grouped message cannot be translated differently for individual recipients.
-
-For example, keep the default thresholds but choose English messages:
-
-```yaml
-observability:
-  mode: enabled
-  alerts:
-    language: en
-    thresholds:
-      acceleratorMemoryUsageRatio: 0.90
-      nvidiaTemperatureCelsius: 80
-```
-
-Alertmanager owns notification receivers, grouping, and routing. Foretoken provides the alert expressions and default thresholds; override them through the Chart values when the device and workload require different limits.
-
-Foretoken does not manage a profiling workflow. For a reproducible investigation, run a controlled workload and use PyTorch Profiler, Nsight Systems, or Nsight Compute through the model runtime and hardware platform. Profiling changes serving performance; record the model, load, hardware, and runtime settings with the result.
+For an individual slow request, use [distributed tracing](tracing.md). For operator, kernel, or communication bottlenecks, follow the [performance profiling guide](profiling.md).
 
 ## Remove collection
 

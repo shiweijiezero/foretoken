@@ -261,6 +261,7 @@ struct StreamErrorBody<'a> {
 }
 
 fn stream_backend_error() -> StreamError<'static> {
+    foretoken_tracing::mark_error(&tracing::Span::current(), "inference stream failed");
     StreamError {
         error: StreamErrorBody {
             message: "model server request failed",

@@ -11,6 +11,7 @@ import logging
 import random
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from typing import Any, Optional
 
 from evalscope.perf.multi_turn_args import _sample_int_or_range as sample_max_tokens
@@ -163,12 +164,16 @@ class Runner(ABC):
         parallel: int,
         rate: float,
         open_loop: bool,
+        warmup_requests: int = 0,
+        start_capture: Callable[[], Awaitable[None]] | None = None,
     ) -> dict[str, Any]:
-        """Dispatch requests with closed/open-loop concurrency and optional rate pacing.
+        """Dispatch with one client, concurrency queue, and pacing clock across warm-up and capture.
 
-        Does not close ``client``; the caller that created it owns cleanup.
+        Warm-up results are excluded. The capture callback runs once after those requests have
+        entered the client; in-flight warm-up requests continue through the same scheduler.
+        The caller owns client cleanup after all submitted tasks have settled.
         """
-        request_count = len(requests)
+        request_count = len(requests) - warmup_requests
         LoadConfig.validate_point(parallel=int(parallel), rate=float(rate))
         has_pacing = float(rate) > 0
         semaphore: Optional[asyncio.Semaphore] = (
@@ -176,6 +181,10 @@ class Runner(ABC):
         )
         results: list[Optional[dict[str, Any]]] = [None] * request_count
         start_time = time.perf_counter()
+        warmup_started = 0
+        warmup_dispatched = asyncio.Event()
+        if warmup_requests == 0:
+            warmup_dispatched.set()
         progress_bar = tqdm_asyncio(
             total=request_count,
             desc="Benchmarking",
@@ -183,43 +192,55 @@ class Runner(ABC):
         )
 
         async def dispatch_one(index: int, request: dict[str, Any]) -> None:
+            nonlocal warmup_started
             if semaphore is not None:
                 await semaphore.acquire()
             try:
+                if index < warmup_requests:
+                    warmup_started += 1
+                    if warmup_started == warmup_requests:
+                        warmup_dispatched.set()
                 result = await self.generate_request(
                     client,
                     prompt=request.get("prompt"),
                     messages=request.get("messages"),
                     tools=request.get("tools"),
                 )
-                result["end_time"] = time.perf_counter() - start_time
-                results[index] = result
+                if index >= warmup_requests:
+                    result["end_time"] = time.perf_counter() - start_time
+                    results[index - warmup_requests] = result
+                elif not result["success"]:
+                    raise RuntimeError("a profiling warm-up request failed")
             finally:
                 if semaphore is not None:
                     semaphore.release()
-                progress_bar.update(1)
+                if index >= warmup_requests:
+                    progress_bar.update(1)
 
+        tasks: list[asyncio.Task[None]] = []
         try:
-            if has_pacing:
-                tasks: list[asyncio.Task[None]] = []
-                pacing_start = time.perf_counter()
-                next_at = 0.0
-                for index, request in enumerate(requests):
+            pacing_start = time.perf_counter()
+            next_at = 0.0
+            for index, request in enumerate(requests):
+                if start_capture is not None and index == warmup_requests:
+                    # Waiting for dispatch (not completion) keeps warm-up requests in flight.
+                    await warmup_dispatched.wait()
+                    await start_capture()
+                    start_time = time.perf_counter()
+                if has_pacing:
                     delay = next_at - (time.perf_counter() - pacing_start)
                     if delay > 0:
                         await asyncio.sleep(delay)
-                    tasks.append(asyncio.create_task(dispatch_one(index, request)))
-                    # Poisson inter-arrival ~ Exp(rate)
+                tasks.append(asyncio.create_task(dispatch_one(index, request)))
+                if has_pacing:
                     next_at += random.expovariate(rate)
-                await asyncio.gather(*tasks)
-            else:
-                await asyncio.gather(
-                    *[
-                        dispatch_one(index, request)
-                        for index, request in enumerate(requests)
-                    ]
-                )
+            await asyncio.gather(*tasks)
         finally:
+            # A failed or interrupted load must settle its requests before the profiler is stopped.
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
             progress_bar.close()
 
         end_time = time.perf_counter()

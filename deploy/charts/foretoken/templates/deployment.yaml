@@ -59,8 +59,23 @@ spec:
             - {{ printf "--autoscaling-telemetry-collection-timeout=%s" .Values.controller.autoscalingTelemetry.collectionTimeout | quote }}
             - {{ printf "--autoscaling-telemetry-request-timeout=%s" .Values.controller.autoscalingTelemetry.requestTimeout | quote }}
             - {{ printf "--autoscaling-telemetry-concurrency=%d" (int .Values.controller.autoscalingTelemetry.concurrency) | quote }}
-            - --metrics-bind-address=:8443
+            {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
+            - --metrics-bind-address=:8080
+            {{- else }}
+            - --metrics-bind-address=0
+            {{- end }}
             - --health-probe-bind-address=:8081
+            {{- with .Values.tracing.endpoint }}
+            - {{ printf "--tracing-endpoint=%s" . | quote }}
+            - {{ printf "--tracing-sampling-ratio=%v" $.Values.tracing.samplingRatio | quote }}
+            {{- with $.Values.tracing.headersSecret.name }}
+            - {{ printf "--tracing-headers-secret-name=%s" . | quote }}
+            - {{ printf "--tracing-headers-secret-key=%s" $.Values.tracing.headersSecret.key | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.runtime.vllm.profiling.enabled }}
+            - --vllm-profiling-enabled=true
+            {{- end }}
             {{- range .Values.workload.imagePullSecrets }}
             - {{ printf "--workload-image-pull-secret=%s" .name | quote }}
             {{- end }}
@@ -129,9 +144,11 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
           ports:
+            {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
             - name: metrics
-              containerPort: 8443
+              containerPort: 8080
               protocol: TCP
+            {{- end }}
             - name: healthz
               containerPort: 8081
               protocol: TCP

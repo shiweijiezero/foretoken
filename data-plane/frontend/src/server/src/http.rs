@@ -26,7 +26,8 @@ use foretoken_chat::{
 use foretoken_engine_core_client::protocol::structured_outputs::StructuredOutputsParams;
 use foretoken_text::{Prompt, SamplingParams, TextDecodeOptions};
 use foretoken_tracing::{
-    REQUEST_ID_HEADER, RequestContext, TRACEPARENT_HEADER, TRACESTATE_HEADER, w3c_trace_headers,
+    REQUEST_ID_HEADER, RequestContext, TRACEPARENT_HEADER, TRACESTATE_HEADER, TracedBody,
+    propagation_headers, set_parent,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -88,37 +89,53 @@ pub fn router(
 
 /// Creates the server-owned request identity and carries W3C context through one HTTP request.
 async fn request_context(mut request: Request<Body>, next: Next) -> Response {
-    let request_id = request_id_prefix(request.uri().path());
-    let trace_headers = w3c_trace_headers(
-        request
-            .headers()
-            .get(TRACEPARENT_HEADER)
-            .and_then(|value| value.to_str().ok()),
-        request
-            .headers()
-            .get(TRACESTATE_HEADER)
-            .and_then(|value| value.to_str().ok()),
+    let arrival_time = vllm_llm::current_unix_timestamp_secs();
+    let request_id = format!(
+        "{}-{}",
+        request_id_prefix(request.uri().path()),
+        Uuid::new_v4()
     );
-    let context = RequestContext {
-        request_id: format!("{request_id}-{}", Uuid::new_v4()),
-        trace_headers,
-    };
+    let incoming = [TRACEPARENT_HEADER, TRACESTATE_HEADER]
+        .into_iter()
+        .filter_map(|name| {
+            request
+                .headers()
+                .get(name)?
+                .to_str()
+                .ok()
+                .map(|value| (name.to_owned(), value.to_owned()))
+        })
+        .collect();
     let span = info_span!(
         "foretoken.http.request",
-        request_id = %context.request_id,
-        traceparent = context.traceparent().unwrap_or(""),
-        tracestate = context.tracestate().unwrap_or(""),
-        method = %request.method(),
-        path = %request.uri().path(),
+        otel.kind = "server",
+        request_id = %request_id,
+        trace_id = tracing::field::Empty,
+        span_id = tracing::field::Empty,
+        http.request.method = %request.method(),
+        http.route = request.extensions().get::<axum::extract::MatchedPath>().map(|path| path.as_str()).unwrap_or("unmatched"),
+        http.response.status_code = tracing::field::Empty,
+        otel.status_code = tracing::field::Empty,
     );
-    request.extensions_mut().insert(context.clone());
-    let mut response = next.run(request).instrument(span).await;
-    response.headers_mut().insert(
+    set_parent(&span, Some(&incoming));
+    let context = RequestContext {
+        request_id: request_id.clone(),
+        arrival_time,
+        trace_headers: propagation_headers(&span),
+    };
+    request.extensions_mut().insert(context);
+    tracing::info!(parent: &span, "request accepted");
+    let response = next.run(request).instrument(span.clone()).await;
+    span.record("http.response.status_code", response.status().as_u16());
+    if response.status().is_server_error() {
+        span.record("otel.status_code", "ERROR");
+    }
+    let (mut parts, body) = response.into_parts();
+    parts.headers.insert(
         REQUEST_ID_HEADER,
-        HeaderValue::from_str(&context.request_id)
-            .expect("generated request IDs are valid headers"),
+        HeaderValue::from_str(&request_id).expect("generated request IDs are valid headers"),
     );
-    response
+    Response::from_parts(parts, Body::new(TracedBody::new(body, span)))
 }
 
 fn request_id_prefix(path: &str) -> &'static str {
@@ -821,7 +838,7 @@ async fn completions(
     if request.best_of.is_some() && !public_logprobs {
         sampling_params.logprobs = Some(0);
     }
-    let arrival_time = Some(vllm_llm::current_unix_timestamp_secs());
+    let arrival_time = Some(context.arrival_time);
     let mut generated = Vec::with_capacity(prompts.len() * best_of as usize);
     let mut candidate_index = 0;
     for prompt in prompts {
@@ -890,7 +907,6 @@ async fn chat_completions(
         Ok(request) => request,
         Err(_) => return client_error(),
     };
-    let id = context.request_id.clone();
     if validate_multimodal_input(&request.messages).is_err() {
         return client_error();
     }
@@ -926,27 +942,19 @@ async fn chat_completions(
         // OpenAI's omitted tool_choice defaults to auto when tools are supplied.
         tool_choice = ChatToolChoice::Auto;
     }
-    chat_with_request(
-        state,
-        request,
-        id,
-        context.trace_headers.clone(),
-        messages,
-        tools,
-        tool_choice,
-    )
-    .await
+    chat_with_request(state, request, context, messages, tools, tool_choice).await
 }
 
 async fn chat_with_request(
     state: AppState,
     request: ChatCompletionRequest,
-    id: String,
-    trace_headers: Option<std::collections::BTreeMap<String, String>>,
+    context: RequestContext,
     messages: Vec<ChatMessage>,
     tools: Vec<ChatTool>,
     tool_choice: ChatToolChoice,
 ) -> Response {
+    let id = context.request_id.clone();
+    let trace_headers = context.trace_headers.clone();
     let stream = request.stream;
     let include_usage = request.stream_options.include_usage;
     if include_usage && !stream {
@@ -1016,7 +1024,7 @@ async fn chat_with_request(
     if chat.validate().is_err() {
         return client_error();
     }
-    let arrival_time = Some(vllm_llm::current_unix_timestamp_secs());
+    let arrival_time = Some(context.arrival_time);
     let generated = match state
         .generation
         .generate_chat(

@@ -15,10 +15,16 @@ use foretoken_runtime_builder::{KvIndexCredential, RuntimeBuilder};
 use foretoken_server::{RuntimeGeneration, router};
 use serving_snapshot::{refresh_active_generation, watch_serving_snapshot};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    foretoken_tracing::init_tracing("ForetokenFrontend");
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let _tracing =
+        foretoken_tracing::init_tracing("foretoken-frontend").map_err(std::io::Error::other)?;
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run())
+}
 
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // Establish the long-lived generation owner before starting background refreshes.
     // Snapshot updates publish atomically, so an invalid update cannot replace active routing.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;

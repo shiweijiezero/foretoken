@@ -56,9 +56,7 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
   "id": null,
-  "links": [
-
-  ],
+  "links": [],
   "panels": [
     {
       "collapsed": false,
@@ -69,9 +67,7 @@
         "y": 0
       },
       "id": 1,
-      "panels": [
-
-      ],
+      "panels": [],
       "title": "Overview",
       "type": "row"
     },
@@ -87,9 +83,7 @@
             "fixedColor": "#0ca30c",
             "mode": "fixed"
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "noValue": "0",
           "thresholds": {
             "mode": "absolute",
@@ -106,9 +100,7 @@
           },
           "unit": "short"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 4,
@@ -163,9 +155,7 @@
             "fixedColor": "#0ca30c",
             "mode": "fixed"
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "noValue": "0",
           "thresholds": {
             "mode": "absolute",
@@ -182,9 +172,7 @@
           },
           "unit": "short"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 4,
@@ -239,9 +227,7 @@
             "fixedColor": "#2a78d6",
             "mode": "fixed"
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "noValue": "0",
           "thresholds": {
             "mode": "absolute",
@@ -254,9 +240,7 @@
           },
           "unit": "reqps"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 4,
@@ -311,9 +295,7 @@
             "fixedColor": "#0ca30c",
             "mode": "fixed"
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "noValue": "0",
           "thresholds": {
             "mode": "absolute",
@@ -334,9 +316,7 @@
           },
           "unit": "percentunit"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 4,
@@ -391,9 +371,7 @@
             "fixedColor": "#2a78d6",
             "mode": "fixed"
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "noValue": "0",
           "thresholds": {
             "mode": "absolute",
@@ -406,9 +384,7 @@
           },
           "unit": "suffix: tok/s"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 4,
@@ -463,9 +439,7 @@
             "fixedColor": "#eb6834",
             "mode": "fixed"
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "noValue": "0",
           "thresholds": {
             "mode": "absolute",
@@ -478,9 +452,7 @@
           },
           "unit": "suffix: tok/s"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 4,
@@ -535,9 +507,7 @@
             "fixedColor": "#eb6834",
             "mode": "fixed"
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "noValue": "0",
           "thresholds": {
             "mode": "absolute",
@@ -554,9 +524,7 @@
           },
           "unit": "short"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 4,
@@ -610,9 +578,7 @@
           "color": {
             "mode": "thresholds"
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "noValue": "Not configured",
           "thresholds": {
             "mode": "absolute",
@@ -629,9 +595,7 @@
           },
           "unit": "short"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 4,
@@ -683,9 +647,7 @@
         "y": 5
       },
       "id": 10,
-      "panels": [
-
-      ],
+      "panels": [],
       "title": "Frontend",
       "type": "row"
     },
@@ -698,7 +660,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -732,9 +694,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -842,11 +802,11 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Five-minute response-start latency quantiles for OpenAI-compatible generation handlers. Streaming requests are measured when the SSE response starts.",
+      "description": "Time until the Frontend handler produces HTTP response headers. This excludes SSE body delivery; it is neither TTFT nor full-stream duration.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -880,9 +840,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -994,7 +952,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -1028,9 +986,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1127,7 +1083,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -1161,9 +1117,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1179,9 +1133,7 @@
           },
           "unit": "percentunit"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -1231,9 +1183,7 @@
         "y": 14
       },
       "id": 15,
-      "panels": [
-
-      ],
+      "panels": [],
       "title": "Model Serving",
       "type": "row"
     },
@@ -1246,7 +1196,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -1280,9 +1230,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1298,9 +1246,7 @@
           },
           "unit": "reqps"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -1350,7 +1296,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -1384,9 +1330,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1495,7 +1439,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -1529,9 +1473,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1636,11 +1578,11 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Worst five-minute complete model-server request/generation latency quantile among the selected model groups.",
+      "description": "Maximum per-model-group quantile from the shared Frontend arrival time to the model-server terminal output. Does not measure downstream client body consumption.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -1674,9 +1616,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1776,7 +1716,7 @@
           "refId": "A"
         }
       ],
-      "title": "End-to-end latency",
+      "title": "Generation completion latency",
       "type": "timeseries"
     },
     {
@@ -1784,11 +1724,11 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Worst five-minute TTFT quantile among the selected model groups.",
+      "description": "Maximum per-model-group TTFT quantile, using the same Frontend arrival-time boundary for chat and completion requests.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -1822,9 +1762,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1932,11 +1870,11 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Worst five-minute TPOT quantile among the selected model groups.",
+      "description": "Maximum per-model-group output-token latency quantile. This is not a cluster-wide quantile.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -1970,9 +1908,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2084,9 +2020,7 @@
         "y": 31
       },
       "id": 22,
-      "panels": [
-
-      ],
+      "panels": [],
       "title": "Cache",
       "type": "row"
     },
@@ -2099,7 +2033,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -2133,9 +2067,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2151,9 +2083,7 @@
           },
           "unit": "percentunit"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -2203,7 +2133,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -2237,9 +2167,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2336,7 +2264,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -2370,9 +2298,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2388,9 +2314,7 @@
           },
           "unit": "percentunit"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -2440,7 +2364,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -2474,9 +2398,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2492,9 +2414,7 @@
           },
           "unit": "bytes"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -2544,9 +2464,7 @@
         "y": 40
       },
       "id": 27,
-      "panels": [
-
-      ],
+      "panels": [],
       "title": "Accelerators and Resources",
       "type": "row"
     },
@@ -2555,11 +2473,11 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Node-level accelerator utilization from DCGM Exporter or the official MetaX mxExporter. Namespace filters do not apply to exporter metrics.",
+      "description": "Mean GPU utilization by vendor and node across the monitored cluster, independent of workload namespace filters.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -2593,9 +2511,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2611,9 +2527,7 @@
           },
           "unit": "percentunit"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -2651,7 +2565,7 @@
           "refId": "A"
         }
       ],
-      "title": "GPU utilization",
+      "title": "Node mean GPU utilization",
       "type": "timeseries"
     },
     {
@@ -2659,11 +2573,11 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Node-level accelerator memory utilization from DCGM Exporter or the official MetaX mxExporter.",
+      "description": "Mean GPU memory utilization by vendor and node across the monitored cluster, independent of workload namespace filters.",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -2697,9 +2611,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2715,9 +2627,7 @@
           },
           "unit": "percentunit"
         },
-        "overrides": [
-
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -2755,7 +2665,7 @@
           "refId": "A"
         }
       ],
-      "title": "GPU memory utilization",
+      "title": "Node mean GPU memory utilization",
       "type": "timeseries"
     },
     {
@@ -2767,7 +2677,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -2801,9 +2711,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2900,7 +2808,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "palette-classic-by-name"
           },
           "custom": {
             "axisBorderShow": false,
@@ -2934,9 +2842,7 @@
               "mode": "off"
             }
           },
-          "mappings": [
-
-          ],
+          "mappings": [],
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -3023,6 +2929,1002 @@
       ],
       "title": "Serving memory usage",
       "type": "timeseries"
+    },
+    {
+      "id": 32,
+      "title": "Routing decisions",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 49,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Selection results by workflow round. A selection failure is not an HTTP status; a request can involve several rounds.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 8,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 50,
+        "w": 8,
+        "h": 8
+      },
+      "id": 33,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by(round,outcome) (rate(foretoken_router_selections_total{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]))",
+          "legendFormat": "{{round}} / {{outcome}}",
+          "range": true,
+          "instant": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Routing outcomes",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "P99 filter, scorer and picker execution time, aggregated from histogram buckets across selected Frontend replicas.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 8,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 50,
+        "w": 8,
+        "h": 8
+      },
+      "id": 34,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum by(round,stage,algorithm,le) (rate(foretoken_router_stage_duration_seconds_bucket{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval])))",
+          "legendFormat": "{{round}} / {{stage}} / {{algorithm}}",
+          "range": true,
+          "instant": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Routing stage latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Mean available, filtered and selectable candidate counts. Selectable counts include data-parallel ranks.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 8,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 50,
+        "w": 8,
+        "h": 8
+      },
+      "id": 35,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by(round,stage) (rate(foretoken_router_candidates_sum{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval])) / sum by(round,stage) (rate(foretoken_router_candidates_count{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]))",
+          "legendFormat": "{{round}} / {{stage}}",
+          "range": true,
+          "instant": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Routing candidates",
+      "type": "timeseries"
+    },
+    {
+      "id": 36,
+      "title": "Control plane",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 58,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Controller-runtime errors per second. This section observes the platform controller independently of workload namespace filters.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 8,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 59,
+        "w": 8,
+        "h": 8
+      },
+      "id": 37,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum by(controller) (rate(controller_runtime_reconcile_errors_total{job=\"foretoken-control-plane\"}[$__rate_interval]))",
+          "legendFormat": "{{controller}}",
+          "range": true,
+          "instant": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Reconcile errors",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "P99 reconciliation time by controller; this is control-plane work, not inference request latency.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 8,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 59,
+        "w": 8,
+        "h": 8
+      },
+      "id": 38,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99,sum by(controller,le) (rate(controller_runtime_reconcile_time_seconds_bucket{job=\"foretoken-control-plane\"}[$__rate_interval])))",
+          "legendFormat": "{{controller}}",
+          "range": true,
+          "instant": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Reconcile latency",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Queued reconciliations. Current replica counts are deduplicated rather than added across controller replicas.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 8,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 59,
+        "w": 8,
+        "h": 8
+      },
+      "id": 39,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by(name) (workqueue_depth{job=\"foretoken-control-plane\"})",
+          "legendFormat": "{{name}}",
+          "range": true,
+          "instant": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Controller workqueues",
+      "type": "timeseries"
+    },
+    {
+      "id": 40,
+      "title": "Autoscaling decisions",
+      "type": "row",
+      "collapsed": false,
+      "panels": [],
+      "gridPos": {
+        "x": 0,
+        "y": 67,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Latest published recommendation, adjusted target and applied desired capacity. A missing recommendation means the decision algorithm did not provide one.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 8,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 68,
+        "w": 8,
+        "h": 8
+      },
+      "id": 41,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_recommendation_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / recommendation",
+          "range": true,
+          "instant": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_adjusted_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / adjusted",
+          "range": true,
+          "instant": false,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / applied",
+          "range": true,
+          "instant": false,
+          "refId": "C"
+        }
+      ],
+      "title": "Replica decisions",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Ready and routable capacity published by the autoscaler, compared with applied desired replicas.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 8,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 68,
+        "w": 8,
+        "h": 8
+      },
+      "id": 42,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / applied",
+          "range": true,
+          "instant": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_ready_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / ready",
+          "range": true,
+          "instant": false,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_routable_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / routable",
+          "range": true,
+          "instant": false,
+          "refId": "C"
+        }
+      ],
+      "title": "Serving capacity",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Elapsed time since the last observation and evaluation; age keeps increasing if reconciliation stops. Missing observation series means no usable observation was published.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 8,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 68,
+        "w": 8,
+        "h": 8
+      },
+      "id": 43,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "time() - max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_observation_timestamp_seconds{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / observation",
+          "range": true,
+          "instant": false,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "time() - max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_evaluation_timestamp_seconds{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / evaluation",
+          "range": true,
+          "instant": false,
+          "refId": "B"
+        }
+      ],
+      "title": "Observation and evaluation age",
+      "type": "timeseries"
+    },
+    {
+      "id": 44,
+      "title": "Latest autoscaling stage",
+      "description": "Current trigger, decision and adjustment outcomes from ModelService status. Reasons are bounded status codes, not log messages.",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 76,
+        "w": 24,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "refId": "A",
+          "editorMode": "code",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role,stage,algorithm,disposition,reason) (foretoken_autoscaling_stage{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": []
+      }
     }
   ],
   "refresh": "10s",
@@ -3035,14 +3937,11 @@
   "templating": {
     "list": [
       {
-        "current": {
-        },
+        "current": {},
         "includeAll": false,
         "label": "Data source",
         "name": "DS_PROMETHEUS",
-        "options": [
-
-        ],
+        "options": [],
         "query": "prometheus",
         "refresh": 1,
         "regex": "",
@@ -3064,9 +3963,7 @@
         "label": "Namespace",
         "multi": true,
         "name": "namespace",
-        "options": [
-
-        ],
+        "options": [],
         "query": {
           "qryType": 1,
           "query": "label_values(foretoken:frontend_up:sum, namespace)",
@@ -3093,9 +3990,7 @@
         "label": "Frontend service",
         "multi": true,
         "name": "frontend_service",
-        "options": [
-
-        ],
+        "options": [],
         "query": {
           "qryType": 1,
           "query": "label_values(foretoken:frontend_up:sum{namespace=~\"$namespace\"}, frontend_service)",
@@ -3122,9 +4017,7 @@
         "label": "Model group",
         "multi": true,
         "name": "model_group",
-        "options": [
-
-        ],
+        "options": [],
         "query": {
           "qryType": 1,
           "query": "label_values(foretoken:model_server_up:sum{namespace=~\"$namespace\"}, model_group)",
@@ -3151,9 +4044,7 @@
         "label": "Model role",
         "multi": true,
         "name": "model_role",
-        "options": [
-
-        ],
+        "options": [],
         "query": {
           "qryType": 1,
           "query": "label_values(foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\"}, model_role)",
@@ -3180,13 +4071,38 @@
         "label": "Model",
         "multi": true,
         "name": "model_name",
-        "options": [
-
-        ],
+        "options": [],
         "query": {
           "qryType": 1,
           "query": "label_values(foretoken:model_server_kv_cache_usage_ratio:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}, model_name)",
           "refId": "variable-model_name"
+        },
+        "refresh": 1,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\"}, modelservice)",
+        "includeAll": true,
+        "label": "Model service",
+        "multi": true,
+        "name": "model_service",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\"}, modelservice)",
+          "refId": "variable-model_service"
         },
         "refresh": 1,
         "regex": "",
@@ -3199,11 +4115,10 @@
     "from": "now-30m",
     "to": "now"
   },
-  "timepicker": {
-  },
+  "timepicker": {},
   "timezone": "browser",
   "title": "Foretoken System Overview",
   "uid": "foretoken-system-overview",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
