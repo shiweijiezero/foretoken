@@ -47,15 +47,9 @@ foretoken install --prometheus monitoring/prometheus
 # 查看 Foretoken 的 ServiceMonitor 和记录规则
 kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
-
-# 使用 CLI 管理的 Prometheus 时，在本机打开 Prometheus UI
-kubectl port-forward \
-  --namespace foretoken-platform \
-  service/foretoken-prometheus-kube-prometheus \
-  9090:9090
 ```
 
-打开 <http://127.0.0.1:9090/targets>，确认 Foretoken target 为 `UP`；再打开 <http://127.0.0.1:9090/rules>，确认 `foretoken.recording` 已加载。复用已有 Prometheus 时，通过平台原有的访问方式执行相同检查。
+通过监控平台提供的 Prometheus 地址打开 **Targets** 页面，确认 Foretoken target 为 `UP`；再打开 **Rules** 页面，确认 `foretoken.recording` 已加载。访问入口由监控平台通过 Ingress、Gateway 或可达的 Service 提供，安装采集不会额外开放公网端点。
 
 以下查询可以查看 Frontend 请求量：
 
@@ -65,7 +59,7 @@ sum(foretoken:frontend_http_response_starts:rate5m)
 
 ## 打开 Grafana Dashboard
 
-由 CLI 管理的 kube-prometheus-stack 会自动加载 **Foretoken System Overview**。获取自动生成的管理员凭据，并在本机打开 Grafana：
+由 CLI 管理的 kube-prometheus-stack 会自动加载 **Foretoken System Overview**。通过监控平台配置的地址打开 Grafana；CLI 管理的实例如果未接入平台单点登录，可获取自动生成的管理员凭据：
 
 ```bash
 GRAFANA_USER="$(kubectl get secret \
@@ -78,14 +72,9 @@ GRAFANA_PASSWORD="$(kubectl get secret \
   --output jsonpath='{.data.admin-password}' | base64 --decode)"
 printf 'Grafana user: %s\nGrafana password: %s\n' \
   "$GRAFANA_USER" "$GRAFANA_PASSWORD"
-
-kubectl port-forward \
-  --namespace foretoken-platform \
-  service/foretoken-prometheus-grafana \
-  3000:80
 ```
 
-打开 <http://127.0.0.1:3000>，进入 **Dashboards** 并选择 **Foretoken System Overview**。这一套 Dashboard 按请求链路依次展示 Frontend 流量和准入、model-server 延迟与吞吐、调度状态、KV Cache 与 RuntimeCache、加速器利用率和服务容器资源。页面可按工作负载命名空间、Frontend 服务、模型组、模型角色、模型和自动扩缩容的模型服务筛选。路由面板展示选择结果、候选数量和各阶段耗时；控制面面板展示 reconcile 与队列状态；扩缩容面板对照建议副本、已应用目标、服务容量、观测年龄和决策原因。控制面与加速器面板展示整个平台，不随工作负载命名空间筛选。
+在 Grafana 中进入 **Dashboards**，选择 **Foretoken System Overview**。这一套 Dashboard 按请求链路依次展示 Frontend 流量和准入、model-server 延迟与吞吐、调度状态、KV Cache 与 RuntimeCache、加速器利用率和服务容器资源。页面可按工作负载命名空间、Frontend 服务、模型组、模型角色、模型和自动扩缩容的模型服务筛选。路由面板展示选择结果、候选数量和各阶段耗时；控制面面板展示 reconcile 与队列状态；扩缩容面板对照建议副本、已应用目标、服务容量、观测年龄和决策原因。控制面与加速器面板展示整个平台，不随工作负载命名空间筛选。
 
 如果 Foretoken 复用已有 Prometheus，Grafana 仍由原平台管理。能够发现 `grafana_dashboard=1` ConfigMap 的 Grafana sidecar 可以从 `foretoken-platform` 命名空间自动加载该 Dashboard。否则先导出 JSON，再按照平台已有流程导入：
 

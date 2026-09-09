@@ -47,15 +47,9 @@ List the Foretoken monitors and Prometheus rules:
 # List the Foretoken monitors and recording rules
 kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
-
-# For CLI-managed Prometheus, open the Prometheus UI locally
-kubectl port-forward \
-  --namespace foretoken-platform \
-  service/foretoken-prometheus-kube-prometheus \
-  9090:9090
 ```
 
-Open <http://127.0.0.1:9090/targets> and confirm that the Foretoken targets are `UP`. Then open <http://127.0.0.1:9090/rules> and confirm that `foretoken.recording` is loaded. When reusing Prometheus, perform the same checks through its existing access path.
+Use the Prometheus URL provided by the monitoring platform. Open its `/targets` page and confirm that the Foretoken targets are `UP`; open `/rules` and confirm that `foretoken.recording` is loaded. The monitoring platform owns access through its Ingress, Gateway, or reachable Service; installing collection does not expose an additional public endpoint.
 
 A minimal query for frontend request volume is:
 
@@ -65,7 +59,7 @@ sum(foretoken:frontend_http_response_starts:rate5m)
 
 ## Open the Grafana dashboard
 
-The CLI-managed kube-prometheus-stack loads the **Foretoken System Overview** automatically. Retrieve its generated administrator credentials and open Grafana locally:
+The CLI-managed kube-prometheus-stack loads **Foretoken System Overview** automatically. Open Grafana through the monitoring platform's configured URL. For a CLI-managed installation without platform SSO, retrieve its generated administrator credentials:
 
 ```bash
 GRAFANA_USER="$(kubectl get secret \
@@ -78,14 +72,9 @@ GRAFANA_PASSWORD="$(kubectl get secret \
   --output jsonpath='{.data.admin-password}' | base64 --decode)"
 printf 'Grafana user: %s\nGrafana password: %s\n' \
   "$GRAFANA_USER" "$GRAFANA_PASSWORD"
-
-kubectl port-forward \
-  --namespace foretoken-platform \
-  service/foretoken-prometheus-grafana \
-  3000:80
 ```
 
-Open <http://127.0.0.1:3000>, then select **Dashboards** and open **Foretoken System Overview**. The single dashboard follows the request path from Frontend traffic and admission through model-server latency, throughput, and scheduler state, then shows KV and RuntimeCache behavior, accelerator utilization, and serving-container resources. Shared filters select the workload namespace, Frontend service, model group, model role, model, and autoscaled model service. Routing panels show selection outcomes, candidate counts, and stage latency. Control-plane panels show reconciliation and workqueue health; autoscaling panels compare recommendations with applied and serving capacity, observation age, and decision reasons. Control-plane and accelerator panels cover the platform rather than a single workload namespace.
+In Grafana, select **Dashboards** and open **Foretoken System Overview**. The single dashboard follows the request path from Frontend traffic and admission through model-server latency, throughput, and scheduler state, then shows KV and RuntimeCache behavior, accelerator utilization, and serving-container resources. Shared filters select the workload namespace, Frontend service, model group, model role, model, and autoscaled model service. Routing panels show selection outcomes, candidate counts, and stage latency. Control-plane panels show reconciliation and workqueue health; autoscaling panels compare recommendations with applied and serving capacity, observation age, and decision reasons. Control-plane and accelerator panels cover the platform rather than a single workload namespace.
 
 When Foretoken reuses an existing Prometheus, Grafana remains owned by that platform. A Grafana sidecar that discovers ConfigMaps labeled `grafana_dashboard=1` can load the dashboard from the `foretoken-platform` namespace. Otherwise, extract the JSON and import it through the platform's normal dashboard workflow:
 
