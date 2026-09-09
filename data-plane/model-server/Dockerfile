@@ -31,10 +31,6 @@ FROM ${INFERENCE_ENGINE_IMAGE}
 
 ARG FORETOKEN_VLLM_PYTHON
 ENV FORETOKEN_VLLM_PYTHON=${FORETOKEN_VLLM_PYTHON}
-ARG PYPI_INDEX_URL=https://pypi.org/simple
-RUN ${FORETOKEN_VLLM_PYTHON:-python} -m pip install --no-cache-dir \
-      --index-url "${PYPI_INDEX_URL}" modelscope==1.35.3
-
 LABEL org.opencontainers.image.source="https://github.com/shiweijiezero/foretoken"
 
 COPY --from=builder /out/foretoken-model-server /usr/local/bin/foretoken-model-server
