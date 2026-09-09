@@ -65,8 +65,6 @@ cd foretoken
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-The first deployment downloads several gigabytes of runtime images and model weights.
-
 This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and a runtime cache PVC starting at 10 GiB, using a default `StorageClass` that supports expansion. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
 
 ### 4. Send a test request

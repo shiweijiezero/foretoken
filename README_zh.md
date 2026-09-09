@@ -65,8 +65,6 @@ cd foretoken
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-首次部署需要下载数 GB 的运行时镜像和模型权重。
-
 该示例部署一个前端服务、一个 `Qwen/Qwen3-0.6B` 模型副本和一个从 10 GiB 起的运行时缓存 PVC，缓存需要支持扩容的默认 `StorageClass`。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
 
 ### 4. 发送测试请求
