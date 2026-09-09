@@ -145,7 +145,7 @@ kubectl get configmap \
 
 [告警](alerting_zh.md)检查持续异常的信号，并通过 Alertmanager 发送通知。它需要单独启用，阈值和通知渠道在相应示例配置中选择。
 
-定位单个慢请求时，使用[分布式追踪](tracing_zh.md)；分析算子、kernel 或通信瓶颈时，参阅[性能剖析指南](profiling_zh.md)。
+定位单个慢请求时，使用[分布式追踪](tracing_zh.md)。
 
 ## 停止采集
 

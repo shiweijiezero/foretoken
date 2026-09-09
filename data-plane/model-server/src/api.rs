@@ -131,7 +131,6 @@ pub struct AppState {
     metadata: RuntimeMetadataResponse,
     kv_events: Option<Arc<KvEventAdapter>>,
     runtime_cache: Option<runtime_cache::Config>,
-    profiler: Option<Arc<crate::profiling::Profiler>>,
 }
 impl AppState {
     /// Builds state consumed by internal HTTP handlers; the server owns the supplied backend state.
@@ -146,7 +145,6 @@ impl AppState {
             metadata,
             kv_events: None,
             runtime_cache: None,
-            profiler: None,
         }
     }
     /// Attaches the shared KV delta source used by the index endpoint and returns updated state.
@@ -154,12 +152,6 @@ impl AppState {
     /// The router owns this state while its handlers retain cloned adapter references.
     pub fn with_kv_events(mut self, adapter: Arc<KvEventAdapter>) -> Self {
         self.kv_events = Some(adapter);
-        self
-    }
-
-    /// Attaches the opt-in internal profiler whose files remain owned by its capture session.
-    pub fn with_profiler(mut self, profiler: Arc<crate::profiling::Profiler>) -> Self {
-        self.profiler = Some(profiler);
         self
     }
 
@@ -174,7 +166,6 @@ impl AppState {
 ///
 /// Server bootstrap moves `state` into the returned router, which owns it for all handler lifetimes.
 pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize) -> Router {
-    let profiles = crate::profiling::routes(state.profiler.clone());
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
@@ -189,7 +180,6 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
             internal_generate_request_body_limit_bytes,
         ))
         .with_state(state)
-        .merge(profiles)
 }
 async fn healthz(State(state): State<AppState>) -> StatusCode {
     status(state.health.healthy())

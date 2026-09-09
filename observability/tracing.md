@@ -51,4 +51,4 @@ A streaming span remains active until the response body completes, fails, or is 
 
 Use an OpenTelemetry Collector or another OTLP/HTTP receiver at the configured endpoint. Configure retention, access control, batching, and export to the trace backend in that platform. Foretoken does not install a collector, tracing database, or log backend.
 
-Profiling and alert notifications are separate operations; see [Alerting](alerting.md), [Lark integration](integrations/lark/README.md), and [Performance profiling](profiling.md).
+For notifications based on sustained metric conditions, see [Alerting](alerting.md).

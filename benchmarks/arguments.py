@@ -31,8 +31,6 @@ class BenchCommand:
     kustomize_path: str
     config: BenchConfig
     wait_timeout: str
-    profile: bool = False
-    warmup_requests: int = 0
 
 
 def _default(cls: type, name: str) -> Any:
@@ -122,15 +120,6 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         default=_default(LoadConfig, "open_loop"),
         help="Remove the concurrency limit; positive --rate still schedules arrivals",
-    )
-
-    parser.add_argument(
-        "--profile", action="store_true",
-        help="Capture a bounded Torch profile on a Foretoken deployment; save locally without W&B or Pareto comparison",
-    )
-    parser.add_argument(
-        "--warmup-requests", type=int, default=None,
-        help="Requests dispatched before profiling starts (default: 8 with --profile)",
     )
 
     # Generation
@@ -448,19 +437,8 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchCommand:
         bench.error("provide either PATH or --url")
     if parsed_args.url and not parsed_args.model:
         bench.error("--model is required with --url")
-    if parsed_args.warmup_requests is not None and not parsed_args.profile:
-        bench.error("--warmup-requests requires --profile")
-    if parsed_args.profile:
-        if not parsed_args.kustomize_path:
-            bench.error("--profile requires a Foretoken Kustomize PATH for profiler access and artifact collection")
-        if parsed_args.bench_params or parsed_args.trace_path or len(parsed_args.dataset) > 1 or parsed_args.sla_auto_tune:
-            bench.error("--profile captures one load point; omit sweeps, trace replay, multiple datasets, and SLA tuning")
-        if parsed_args.warmup_requests is not None and parsed_args.warmup_requests < 0:
-            bench.error("--warmup-requests must be nonnegative")
     return BenchCommand(
         kustomize_path=parsed_args.kustomize_path or "",
         config=_bench_config(parsed_args),
         wait_timeout=parsed_args.wait_timeout,
-        profile=parsed_args.profile,
-        warmup_requests=(8 if parsed_args.warmup_requests is None else parsed_args.warmup_requests) if parsed_args.profile else 0,
     )
