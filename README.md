@@ -31,7 +31,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ## Quick Start
 
-This Quick Start requires Python 3.10+, Kubernetes with an expandable default `StorageClass`, `kubectl`, Helm, at least one supported GPU, and a working `LoadBalancer` (k3s ServiceLB is sufficient for k3d). See the [k3d guide](docs/k3d-deployment.md) for a single-machine test cluster. The default runtime image targets NVIDIA GPUs; for MetaX GPUs, use the runtime image and platform values in the [MetaX deployment guide](docs/metax-deployment.md).
+Start with a GPU-enabled Kubernetes cluster and Python 3.10+, `kubectl`, and Helm installed locally.
 
 ### 1. Install the command-line tool
 
@@ -44,7 +44,7 @@ pip install foretoken
 
 ### 2. Install the Kubernetes platform
 
-By default, installation uses the Foretoken images published on GHCR:
+The default GHCR images serve NVIDIA GPUs. For MetaX, use the image and settings in the [MetaX deployment guide](docs/metax-deployment.md).
 
 ```bash
 # Release images:
@@ -75,7 +75,7 @@ foretoken deploy examples/quickstart --timeout 20m
 
 The first deployment downloads several gigabytes of runtime images and model weights.
 
-This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and an automatically expanding runtime cache PVC starting at 10 GiB. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
+This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and a runtime cache PVC starting at 10 GiB, using a default `StorageClass` that supports expansion. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
 
 ### 4. Send a test request
 

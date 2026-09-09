@@ -31,7 +31,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 ## 快速开始
 
-本快速开始需要 Python 3.10 以上版本、配置了可扩容默认 `StorageClass` 的 Kubernetes 集群、`kubectl`、Helm、至少一块受支持的 GPU，以及可用的 `LoadBalancer`（k3d 使用 k3s ServiceLB 即可）。如需准备单机测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。默认运行时镜像适配 NVIDIA GPU；沐曦 GPU 使用[沐曦部署指南](docs/metax-deployment_zh.md)中的运行时镜像和平台配置。
+准备好 GPU Kubernetes 集群，并在本机安装 Python 3.10+、`kubectl` 和 Helm。
 
 ### 1. 安装命令行工具
 
@@ -44,7 +44,7 @@ pip install foretoken
 
 ### 2. 安装 Kubernetes 平台
 
-默认使用 Foretoken 发布在 GHCR 的镜像：
+默认使用 GHCR 上适配 NVIDIA 的发布镜像。沐曦请使用[部署指南](docs/metax-deployment_zh.md)中的镜像和配置。
 
 ```bash
 # 使用发布镜像：
@@ -75,7 +75,7 @@ foretoken deploy examples/quickstart --timeout 20m
 
 首次部署需要下载数 GB 的运行时镜像和模型权重。
 
-该示例部署一个前端服务、一个 `Qwen/Qwen3-0.6B` 模型副本和一个从 10 GiB 起自动扩容的运行时缓存 PVC。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
+该示例部署一个前端服务、一个 `Qwen/Qwen3-0.6B` 模型副本和一个从 10 GiB 起的运行时缓存 PVC，缓存需要支持扩容的默认 `StorageClass`。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
 
 ### 4. 发送测试请求
 
