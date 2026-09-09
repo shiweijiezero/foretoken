@@ -10,9 +10,10 @@ from contextlib import nullcontext
 from tempfile import TemporaryDirectory
 from typing import Any, Optional
 
-from benchmarks.performance.benchmark_config import HttpBenchmarkConfig
+from benchmarks.performance.config import HttpBenchmarkConfig
 from benchmarks.performance.console_output import log_benchmark_summary
-from benchmarks.performance.evalscope_load import run_evalscope_standard_load
+from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
+from benchmarks.performance.evalscope import run_evalscope_standard_load
 from benchmarks.performance.local_results import LocalResultDirectory
 from benchmarks.performance.request_metrics import (
     attach_user_throughput,
@@ -40,14 +41,15 @@ def resolved_load_record(benchmark: HttpBenchmarkConfig) -> dict[str, Any]:
 
 def build_benchmark_run_record(
     benchmark: HttpBenchmarkConfig,
+    endpoint: BenchmarkRuntimeEndpoint,
     mode: str,
     load_record: dict[str, Any],
 ) -> dict[str, Any]:
     """Build the run record shared by console and local results."""
     record = {
         "mode": mode,
-        "model": benchmark.endpoint.model,
-        "url": benchmark.endpoint.url,
+        "model": endpoint.model,
+        "url": endpoint.url,
         "parallel": load_record["parallel"],
         "number": load_record["number"],
         "rate": load_record["rate"],
@@ -148,6 +150,7 @@ class StandardHttpLoadBenchmark:
     def __init__(
         self,
         benchmark: HttpBenchmarkConfig,
+        endpoint: BenchmarkRuntimeEndpoint,
         *,
         label: str = "",
         output_dir: Optional[str] = None,
@@ -155,6 +158,7 @@ class StandardHttpLoadBenchmark:
         collect_request_measurements: bool = False,
     ) -> None:
         self.benchmark = benchmark
+        self.endpoint = endpoint
         self.label = label
         self.output_dir = output_dir
         self.wandb_group = wandb_group
@@ -167,7 +171,7 @@ class StandardHttpLoadBenchmark:
             self.benchmark, self.output_dir
         )
         run_record = build_benchmark_run_record(
-            self.benchmark, "standard_load", load_record
+            self.benchmark, self.endpoint, "standard_load", load_record
         )
         label = self.label.strip() or None
         working_directory = (
@@ -180,6 +184,7 @@ class StandardHttpLoadBenchmark:
             wandb_run = WandbBenchmarkRun()
             wandb_run.start(
                 self.benchmark,
+                self.endpoint,
                 output_dir=execution_dir,
                 parallel=int(load_record["resolved_parallel"]),
                 rate=float(load_record["rate"]),
@@ -189,6 +194,7 @@ class StandardHttpLoadBenchmark:
             try:
                 metrics, request_measurements = await run_evalscope_standard_load(
                     self.benchmark,
+                    self.endpoint,
                     execution_dir,
                     collect_request_measurements=self.collect_request_measurements,
                 )

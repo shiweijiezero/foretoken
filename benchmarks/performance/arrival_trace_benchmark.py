@@ -13,8 +13,9 @@ from benchmarks.performance.arrival_trace_records import ArrivalTraceEvent
 from benchmarks.performance.arrival_trace_requests import (
     load_arrival_trace_requests,
 )
-from benchmarks.performance.benchmark_config import HttpBenchmarkConfig
+from benchmarks.performance.config import HttpBenchmarkConfig
 from benchmarks.performance.chat_client import ChatCompletionsLoadClient
+from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
 from benchmarks.performance.http_benchmark import (
     build_benchmark_run_record,
     open_local_result_directory,
@@ -28,8 +29,13 @@ from benchmarks.performance.wandb_results import WandbBenchmarkRun
 class ArrivalTraceBenchmark:
     """Own the lifecycle of recorded-time scheduling, concurrency limits, and trace results."""
 
-    def __init__(self, benchmark: HttpBenchmarkConfig) -> None:
+    def __init__(
+        self,
+        benchmark: HttpBenchmarkConfig,
+        endpoint: BenchmarkRuntimeEndpoint,
+    ) -> None:
         self.benchmark = benchmark
+        self.endpoint = endpoint
 
     async def _send_event(
         self,
@@ -195,6 +201,7 @@ class ArrivalTraceBenchmark:
         result_directory = open_local_result_directory(self.benchmark)
         run_record = build_benchmark_run_record(
             self.benchmark,
+            self.endpoint,
             "arrival_trace",
             reporting_load,
         )
@@ -214,6 +221,7 @@ class ArrivalTraceBenchmark:
         wandb_run = WandbBenchmarkRun()
         wandb_run.start(
             self.benchmark,
+            self.endpoint,
             output_dir=result_directory.output_dir,
             parallel=reported_concurrency,
             rate=-1.0,
@@ -222,6 +230,7 @@ class ArrivalTraceBenchmark:
         try:
             async with ChatCompletionsLoadClient(
                 self.benchmark,
+                self.endpoint,
                 max_concurrency=active_connection_limit,
                 request_count=request_count,
             ) as client:

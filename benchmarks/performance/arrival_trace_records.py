@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import math
 from collections.abc import Callable, Iterator
@@ -14,11 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.performance.chat_client import ChatRequestContent
-from benchmarks.performance.huggingface_datasets import (
-    is_hf_dataset_spec,
-    iter_hf_rows,
-    resolve_hf_file_uri,
-)
+from benchmarks.performance.conversation import iter_dataset_rows
 
 logger = logging.getLogger(__name__)
 
@@ -158,46 +153,11 @@ class ArrivalTraceReader:
         self.trace_selector = str(trace_selector)
         self.trace_format: str | None = None
 
-    def _resolve_local_path(self) -> Path:
-        local_path = Path(self.trace_selector).expanduser()
-        if local_path.exists():
-            return local_path
-        if not self.trace_selector.startswith("hf://"):
-            return local_path
-
-        logger.info("Resolving Hugging Face trace %s", self.trace_selector)
-        return Path(resolve_hf_file_uri(self.trace_selector))
-
     def _iter_rows(self) -> Iterator[tuple[Path, int, int, Any]]:
-        local_path = Path(self.trace_selector).expanduser()
-        is_huggingface_dataset = (
-            not local_path.exists()
-            and not self.trace_selector.startswith("hf://")
-            and is_hf_dataset_spec(self.trace_selector)
-        )
-        if is_huggingface_dataset:
-            dataset_label = Path(f"hf://{self.trace_selector}")
-            logger.info("Resolving Hugging Face trace %s", self.trace_selector)
-            for row_index, row in iter_hf_rows(self.trace_selector):
-                yield dataset_label, row_index + 1, row_index, row
-            return
-
-        dataset_path = self._resolve_local_path()
-        if not dataset_path.is_file():
-            raise FileNotFoundError(f"Trace JSONL not found: {dataset_path}")
-        source_row_index = 0
-        with dataset_path.open("r", encoding="utf-8") as file:
-            for line_number, line in enumerate(file, start=1):
-                if not line.strip():
-                    continue
-                try:
-                    row: Any = json.loads(line)
-                except json.JSONDecodeError as error:
-                    raise ValueError(
-                        f"Invalid JSON at {dataset_path}:{line_number}: {error}"
-                    ) from error
-                yield dataset_path, line_number, source_row_index, row
-                source_row_index += 1
+        """Yield trace rows through the shared local and Hub source reader."""
+        if not Path(self.trace_selector).expanduser().is_file():
+            logger.info("Resolving trace source %s", self.trace_selector)
+        yield from iter_dataset_rows(self.trace_selector)
 
     def _iter_events(self) -> Iterator[ArrivalTraceEvent]:
         row_parser: TraceRowParser | None = None

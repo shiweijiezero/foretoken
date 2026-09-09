@@ -16,12 +16,14 @@ class LocalResultDirectory:
 
     def __init__(
         self,
-        root_dir: str = "results",
+        root_dir: str | None = None,
         *,
         output_dir: Optional[str] = None,
         enabled: bool = True,
     ) -> None:
         if output_dir is None:
+            if root_dir is None:
+                raise ValueError("root_dir is required when output_dir is omitted")
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             output_dir = os.path.join(root_dir, timestamp)
         self.output_dir = output_dir

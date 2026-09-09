@@ -18,7 +18,7 @@ from huggingface_hub import snapshot_download
 from transformers import AutoTokenizer
 
 from benchmarks.performance.chat_client import ChatRequestContent
-from benchmarks.performance.benchmark_config import HttpBenchmarkConfig
+from benchmarks.performance.config import HttpBenchmarkConfig
 
 logger = logging.getLogger(__name__)
 _MOONCAKE_BLOCK_TOKENS = 512

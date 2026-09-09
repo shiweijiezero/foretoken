@@ -12,7 +12,8 @@ from typing import Any, Optional
 import httpx
 from openai import APIError, AsyncOpenAI
 
-from benchmarks.performance.benchmark_config import HttpBenchmarkConfig
+from benchmarks.performance.config import HttpBenchmarkConfig
+from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
 from benchmarks.performance.request_metrics import compute_tpot
 
 
@@ -35,6 +36,7 @@ class ChatCompletionsLoadClient:
     def __init__(
         self,
         benchmark: HttpBenchmarkConfig,
+        endpoint: BenchmarkRuntimeEndpoint,
         *,
         max_concurrency: int,
         request_count: int,
@@ -50,15 +52,14 @@ class ChatCompletionsLoadClient:
             max_connections=connection_limit,
             max_keepalive_connections=connection_limit,
         )
-        endpoint = benchmark.endpoint
         # Each measured request must map to one service request; retries change arrival rate, failure rate, and latency.
         self._client = AsyncOpenAI(
             base_url=_openai_base_url(endpoint.url),
-            api_key=endpoint.api_key,
+            api_key=benchmark.endpoint.api_key,
             max_retries=0,
             default_headers=endpoint.headers,
             http_client=httpx.AsyncClient(
-                timeout=endpoint.timeout_seconds,
+                timeout=benchmark.endpoint.timeout_seconds,
                 limits=limits,
             ),
         )

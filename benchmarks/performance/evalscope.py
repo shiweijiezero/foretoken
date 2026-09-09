@@ -17,14 +17,53 @@ if TYPE_CHECKING:
     from evalscope.perf.utils.perf_models import BenchmarkSummary, PercentileResult
     from evalscope.perf.utils.trace_metrics import TraceLevelSummary
 
-from benchmarks.performance.benchmark_config import HttpBenchmarkConfig
-from benchmarks.performance.request_datasets import (
+from benchmarks.performance.config import HttpBenchmarkConfig
+from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
+from benchmarks.performance.conversation import (
     load_chat_conversations,
     split_chat_conversation,
 )
-from benchmarks.performance.request_metrics import (
-    generation_tokens_per_second_per_user,
-)
+from benchmarks.performance.request_metrics import generation_tokens_per_second_per_user
+
+
+EVALSCOPE_API = "foretoken_openai"
+_EVALSCOPE_ARGUMENTS_TYPE: type | None = None
+
+
+def _evalscope_arguments_type() -> tuple[str, type]:
+    """Load and register the Foretoken EvalScope adapter once when a load runs."""
+    global _EVALSCOPE_ARGUMENTS_TYPE
+    if _EVALSCOPE_ARGUMENTS_TYPE is not None:
+        return EVALSCOPE_API, _EVALSCOPE_ARGUMENTS_TYPE
+    try:
+        from pydantic import Field
+        from evalscope.perf.arguments import Arguments
+        from evalscope.perf.plugin.api.openai_api import OpenaiPlugin
+        from evalscope.perf.plugin.registry import register_api
+    except ModuleNotFoundError as error:
+        raise ValueError(
+            "standard HTTP loads require EvalScope; install benchmark "
+            "dependencies with: pip install 'foretoken[bench]'"
+        ) from error
+
+    class ForetokenEvalScopeArguments(Arguments):
+        """EvalScope arguments carrying Foretoken request-field omission semantics."""
+
+        omit_temperature: bool = Field(default=False, exclude=True, repr=False)
+
+    @register_api(EVALSCOPE_API)
+    class ForetokenOpenaiPlugin(OpenaiPlugin):
+        """Reuse EvalScope OpenAI execution while omitting an unset temperature."""
+
+        def build_request(self, messages: Any, param: Any = None) -> dict[str, Any]:
+            """Build a request and restore Foretoken optional-temperature semantics."""
+            request = super().build_request(messages, param)
+            if self.param.omit_temperature:
+                request.pop("temperature", None)
+            return request
+
+    _EVALSCOPE_ARGUMENTS_TYPE = ForetokenEvalScopeArguments
+    return EVALSCOPE_API, ForetokenEvalScopeArguments
 
 
 def _materialize_evalscope_request_dataset(
@@ -59,19 +98,11 @@ def _materialize_evalscope_request_dataset(
 
 def _evalscope_arguments(
     benchmark: HttpBenchmarkConfig,
+    endpoint: BenchmarkRuntimeEndpoint,
     output_dir: str,
 ) -> Any:
     """Map one Foretoken standard workload to EvalScope point arguments."""
-    try:
-        from benchmarks.performance.evalscope_adapter import (
-            EVALSCOPE_API,
-            ForetokenEvalScopeArguments,
-        )
-    except ModuleNotFoundError as error:
-        raise ValueError(
-            "standard HTTP loads require EvalScope; install benchmark "
-            "dependencies with: pip install 'foretoken[bench]'"
-        ) from error
+    EVALSCOPE_API, ForetokenEvalScopeArguments = _evalscope_arguments_type()
 
     schedule = benchmark.load_schedule
     generation = benchmark.generation
@@ -92,11 +123,11 @@ def _evalscope_arguments(
         and "temperature" not in generation.extra_body
     )
     argument_values: dict[str, Any] = {
-        "model": benchmark.endpoint.model,
-        "url": benchmark.endpoint.url,
+        "model": endpoint.model,
+        "url": endpoint.url,
         "api": EVALSCOPE_API,
         "api_key": benchmark.endpoint.api_key,
-        "headers": benchmark.endpoint.headers,
+        "headers": endpoint.headers,
         "total_timeout": benchmark.endpoint.timeout_seconds,
         "read_timeout": benchmark.endpoint.timeout_seconds,
         "no_test_connection": True,
@@ -375,6 +406,7 @@ def _read_evalscope_request_measurements(
 
 async def run_evalscope_standard_load(
     benchmark: HttpBenchmarkConfig,
+    endpoint: BenchmarkRuntimeEndpoint,
     output_dir: str,
     *,
     collect_request_measurements: bool = False,
@@ -395,7 +427,7 @@ async def run_evalscope_standard_load(
         False,
         os.path.join(output_dir, "benchmark.log"),
     )
-    arguments = _evalscope_arguments(benchmark, output_dir)
+    arguments = _evalscope_arguments(benchmark, endpoint, output_dir)
     seed_everything(benchmark.request_dataset.random_seed)
     materialized_dataset = (
         arguments.dataset_path

@@ -11,13 +11,14 @@ from collections import Counter
 from dataclasses import replace
 from typing import Any, Callable
 
-from benchmarks.performance.benchmark_config import (
+from benchmarks.performance.config import (
     HttpBenchmarkConfig,
     ParameterSweepConfig,
     HttpLoadSchedule,
     normalize_output_token_limit,
 )
-from benchmarks.performance.jsonl import load_jsonl
+from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
+from benchmarks.performance.conversation import iter_jsonl_rows
 from benchmarks.performance.pareto import plot_sweep_pareto
 from benchmarks.performance.http_benchmark import (
     StandardHttpLoadBenchmark,
@@ -217,7 +218,7 @@ def load_sweep_points(path: str) -> list[SweepPoint]:
 
     points: list[SweepPoint] = []
     explicit_names: list[str] = []
-    for line_no, record in load_jsonl(path, allow_comments=True):
+    for _, line_no, _, record in iter_jsonl_rows(path, allow_comments=True):
         if not isinstance(record, dict):
             raise TypeError(
                 "Each bench-params JSONL line must be an object, "
@@ -273,8 +274,13 @@ def apply_sweep_point(
 class ParameterSweepBenchmark:
     """Own parameter expansion, repeated runs, W&B grouping, and Pareto artifacts."""
 
-    def __init__(self, benchmark: HttpBenchmarkConfig) -> None:
+    def __init__(
+        self,
+        benchmark: HttpBenchmarkConfig,
+        endpoint: BenchmarkRuntimeEndpoint,
+    ) -> None:
         self.benchmark = benchmark
+        self.endpoint = endpoint
 
     async def run(self) -> dict[str, Any]:
         """Run all parameter points and return the highest-throughput point as the compatible metrics result."""
@@ -295,13 +301,16 @@ class ParameterSweepBenchmark:
         result_directory = open_local_result_directory(self.benchmark, experiment_dir)
         experiment_dir = result_directory.output_dir
         wandb_enabled = self.benchmark.outputs.includes("wandb")
-        wandb_group = wandb_group_name(self.benchmark) if wandb_enabled else None
+        wandb_group = (
+            wandb_group_name(self.benchmark, self.endpoint)
+            if wandb_enabled
+            else None
+        )
 
         plan = {
             "mode": "parameter_sweep",
             "bench_params": sweep.bench_params,
             "num_runs": sweep.num_runs,
-            "experiment_dir": experiment_dir,
             "wandb_group": wandb_group,
             "combinations": [
                 {
@@ -341,6 +350,7 @@ class ParameterSweepBenchmark:
                 )
                 result = await StandardHttpLoadBenchmark(
                     point_benchmark,
+                    self.endpoint,
                     label=label,
                     output_dir=run_dir,
                     wandb_group=wandb_group,
@@ -349,7 +359,7 @@ class ParameterSweepBenchmark:
                 point["combination"] = combination_name
                 point["parameter_group"] = str(combination[_PARAMETER_GROUP])
                 point["run_number"] = run_number
-                point["gpu_count"] = point_benchmark.serving_gpu_count
+                point["gpu_count"] = self.endpoint.gpu_count
                 if point_benchmark.is_multi_turn:
                     point["multi_turn"] = True
                 point["bench"] = dict(combination)

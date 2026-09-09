@@ -11,13 +11,13 @@ from benchmarks.performance.arrival_trace_records import (
     ArrivalTraceEvent,
     ArrivalTraceReader,
 )
-from benchmarks.performance.benchmark_config import HttpBenchmarkConfig
-from benchmarks.performance.huggingface_datasets import same_dataset_selector
+from benchmarks.performance.config import HttpBenchmarkConfig
+from benchmarks.performance.conversation import same_dataset_selector
 from benchmarks.performance.synthetic_requests import (
     generate_random_requests,
     generate_synthetic_prefix_reuse_requests,
 )
-from benchmarks.performance.request_datasets import (
+from benchmarks.performance.conversation import (
     load_chat_requests,
     load_indexed_chat_requests,
 )

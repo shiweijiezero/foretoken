@@ -10,12 +10,14 @@ import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import yaml
 
+from benchmarks.performance.config import ChatCompletionsEndpoint
 from foretoken.kubernetes import (
     FrontendEndpoint,
     Kubectl,
@@ -30,15 +32,32 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class DeployedBenchmarkEndpoint:
-    """Store the public Chat Completions endpoint discovered from a Foretoken deployment."""
+class BenchmarkRuntimeEndpoint:
+    """Store immutable endpoint and capacity resolved for one benchmark run."""
 
     url: str
     model: str
     models: tuple[str, ...]
-    headers: dict[str, str]
+    headers: Mapping[str, str]
     hostname: str
     gpu_count: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
+
+
+def direct_benchmark_endpoint(
+    endpoint: ChatCompletionsEndpoint,
+) -> BenchmarkRuntimeEndpoint:
+    """Build the runtime endpoint for an already supplied OpenAI-compatible URL."""
+    return BenchmarkRuntimeEndpoint(
+        url=endpoint.url,
+        model=endpoint.model,
+        models=(endpoint.model,),
+        headers={},
+        hostname="",
+        gpu_count=1,
+    )
 
 
 def _select_model(models: Iterable[str], requested: str) -> str:
@@ -142,7 +161,7 @@ def discover_benchmark_endpoint(
     *,
     requested_model: str,
     api_key: str,
-) -> DeployedBenchmarkEndpoint:
+) -> BenchmarkRuntimeEndpoint:
     """Wait for the rendered service to become ready and return the public HTTP benchmark endpoint."""
     wait_seconds = timeout_seconds(timeout)
     model, gpu_count = select_benchmark_model(deployment, requested_model)
@@ -162,7 +181,7 @@ def discover_benchmark_endpoint(
             f"model {model!r} is not advertised by the frontend; "
             f"available models: {', '.join(models)}"
         )
-    return DeployedBenchmarkEndpoint(
+    return BenchmarkRuntimeEndpoint(
         url,
         model,
         models,
@@ -234,7 +253,7 @@ def benchmark_endpoint_from_kustomize(
     *,
     requested_model: str,
     api_key: str,
-) -> Iterator[DeployedBenchmarkEndpoint]:
+) -> Iterator[BenchmarkRuntimeEndpoint]:
     """Reuse a complete deployment, or create and clean up only objects missing for this benchmark."""
     kubectl = Kubectl()
     deployment = load_deployment(kustomize_path, kubectl)

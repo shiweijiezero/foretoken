@@ -8,7 +8,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from benchmarks.performance.benchmark_config import HttpBenchmarkConfig
+from benchmarks.performance.config import HttpBenchmarkConfig
+from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
 from benchmarks.performance.request_metrics import generation_tokens_per_second_per_gpu
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,10 @@ def print_benchmark_endpoint(
     print(f"Models: {', '.join(models)}")
 
 
-def format_benchmark_config(benchmark: HttpBenchmarkConfig) -> str:
+def format_benchmark_config(
+    benchmark: HttpBenchmarkConfig,
+    endpoint: BenchmarkRuntimeEndpoint,
+) -> str:
     """Build a user-visible HTTP benchmark configuration summary."""
     dataset = benchmark.request_dataset
     trace = benchmark.arrival_trace
@@ -121,8 +125,8 @@ def format_benchmark_config(benchmark: HttpBenchmarkConfig) -> str:
     )
     return (
         "\n===== Foretoken Benchmark Configuration ====\n"
-        f"  URL        : {benchmark.endpoint.url}\n"
-        f"  Model      : {benchmark.endpoint.model}\n"
+        f"  URL        : {endpoint.url}\n"
+        f"  Model      : {endpoint.model}\n"
         f"{concurrency_line}"
         f"  {count_name:<11}: {request_count_label}\n"
         f"  Arrival rate: {arrival_rate_label}\n"

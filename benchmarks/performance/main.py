@@ -9,21 +9,24 @@ import asyncio
 import logging
 from collections.abc import Sequence
 from contextlib import nullcontext
-from dataclasses import replace
 from typing import Any
 
-from benchmarks.performance.arguments import parse_http_benchmark_arguments
+from benchmarks.performance.cli import parse_http_benchmark_arguments
 from benchmarks.performance.arrival_trace_benchmark import ArrivalTraceBenchmark
-from benchmarks.performance.benchmark_config import HttpBenchmarkConfig
+from benchmarks.performance.config import HttpBenchmarkConfig
 from benchmarks.performance.console_output import (
     configure_logging,
     format_benchmark_config,
     print_benchmark_endpoint,
 )
-from benchmarks.performance.deployment import benchmark_endpoint_from_kustomize
+from benchmarks.performance.deployment import (
+    BenchmarkRuntimeEndpoint,
+    benchmark_endpoint_from_kustomize,
+    direct_benchmark_endpoint,
+)
 from benchmarks.performance.http_benchmark import StandardHttpLoadBenchmark
-from benchmarks.performance.multi_dataset_benchmark import MultiDatasetBenchmark
-from benchmarks.performance.parameter_sweep import ParameterSweepBenchmark
+from benchmarks.performance.multi_dataset import MultiDatasetBenchmark
+from benchmarks.performance.sweep import ParameterSweepBenchmark
 from foretoken.manifest import DeploymentError
 
 logger = logging.getLogger(__name__)
@@ -31,69 +34,47 @@ logger = logging.getLogger(__name__)
 
 async def run_http_benchmark(
     benchmark: HttpBenchmarkConfig,
+    endpoint: BenchmarkRuntimeEndpoint,
 ) -> dict[str, Any]:
     """Select and run the single workload lifecycle for the current HTTP benchmark configuration."""
     benchmark.validate()
     if benchmark.arrival_trace.trace_selector:
-        return await ArrivalTraceBenchmark(benchmark).run()
+        return await ArrivalTraceBenchmark(benchmark, endpoint).run()
     if benchmark.parameter_sweep.bench_params:
-        return await ParameterSweepBenchmark(benchmark).run()
+        return await ParameterSweepBenchmark(benchmark, endpoint).run()
     if benchmark.request_dataset.has_multiple_datasets:
-        return await MultiDatasetBenchmark(benchmark).run()
-    return await StandardHttpLoadBenchmark(benchmark).run()
+        return await MultiDatasetBenchmark(benchmark, endpoint).run()
+    return await StandardHttpLoadBenchmark(benchmark, endpoint).run()
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     """Parse and run the current HTTP benchmark for lazy import by the top-level CLI."""
     try:
-        command = parse_http_benchmark_arguments(argv)
-        benchmark = command.benchmark
-        dataset = benchmark.request_dataset
-        if (
-            command.kustomize_path
-            and not dataset.fixed_prompt
-            and not dataset.dataset_selectors
-        ):
-            benchmark.request_dataset = replace(
-                dataset,
-                fixed_prompt="Hello",
-            )
+        benchmark = parse_http_benchmark_arguments(argv)
         benchmark.validate()
-        if (
-            benchmark.parameter_sweep.bench_params
-            and not command.kustomize_path
-        ):
-            raise ValueError(
-                "--bench-params requires a Foretoken Kustomize deployment"
-            )
         configure_logging(not benchmark.outputs.includes("quiet"))
-        if command.kustomize_path:
+        deployment_path = benchmark.deployment.kustomize_path
+        if deployment_path:
             service_context = benchmark_endpoint_from_kustomize(
-                command.kustomize_path,
-                command.wait_timeout,
+                deployment_path,
+                benchmark.deployment.wait_timeout,
                 requested_model=benchmark.endpoint.model,
                 api_key=benchmark.endpoint.api_key,
             )
         else:
-            service_context = nullcontext(None)
+            service_context = nullcontext(
+                direct_benchmark_endpoint(benchmark.endpoint)
+            )
         with service_context as endpoint:
-            if endpoint is not None:
-                benchmark.endpoint = replace(
-                    benchmark.endpoint,
-                    url=endpoint.url,
-                    model=endpoint.model,
-                    headers=endpoint.headers,
+            if deployment_path and not benchmark.outputs.includes("quiet"):
+                print_benchmark_endpoint(
+                    endpoint.url,
+                    endpoint.models,
+                    endpoint.hostname,
                 )
-                benchmark.serving_gpu_count = endpoint.gpu_count
-                if not benchmark.outputs.includes("quiet"):
-                    print_benchmark_endpoint(
-                        endpoint.url,
-                        endpoint.models,
-                        endpoint.hostname,
-                    )
 
-            logger.info("%s", format_benchmark_config(benchmark))
-            result = asyncio.run(run_http_benchmark(benchmark))
+            logger.info("%s", format_benchmark_config(benchmark, endpoint))
+            result = asyncio.run(run_http_benchmark(benchmark, endpoint))
             if result["metrics"]["success_num"] == 0:
                 raise SystemExit(1)
     except (DeploymentError, ValueError) as exc:

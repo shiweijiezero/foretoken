@@ -11,7 +11,8 @@ import re
 from dataclasses import replace
 from typing import Any
 
-from benchmarks.performance.benchmark_config import HttpBenchmarkConfig
+from benchmarks.performance.config import HttpBenchmarkConfig
+from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
 from benchmarks.performance.http_benchmark import (
     StandardHttpLoadBenchmark,
     build_benchmark_run_record,
@@ -46,8 +47,13 @@ def _allocate_request_counts(
 class MultiDatasetBenchmark:
     """Own multi-dataset request allocation, child workload order, and merged results."""
 
-    def __init__(self, benchmark: HttpBenchmarkConfig) -> None:
+    def __init__(
+        self,
+        benchmark: HttpBenchmarkConfig,
+        endpoint: BenchmarkRuntimeEndpoint,
+    ) -> None:
         self.benchmark = benchmark
+        self.endpoint = endpoint
 
     async def run(self) -> dict[str, Any]:
         """Benchmark each dataset in order and publish one compatible merged result."""
@@ -62,6 +68,7 @@ class MultiDatasetBenchmark:
         result_directory = open_local_result_directory(self.benchmark)
         run_record = build_benchmark_run_record(
             self.benchmark,
+            self.endpoint,
             "multi_dataset",
             load_record,
         )
@@ -70,7 +77,9 @@ class MultiDatasetBenchmark:
 
         wandb_enabled = self.benchmark.outputs.includes("wandb")
         wandb_group = (
-            wandb_group_name(self.benchmark) if wandb_enabled else None
+            wandb_group_name(self.benchmark, self.endpoint)
+            if wandb_enabled
+            else None
         )
 
         dataset_measurements: list[dict[str, Any]] = []
@@ -107,6 +116,7 @@ class MultiDatasetBenchmark:
             )
             child_result = await StandardHttpLoadBenchmark(
                 child_benchmark,
+                self.endpoint,
                 label=child_name,
                 output_dir=os.path.join(
                     result_directory.output_dir, child_name

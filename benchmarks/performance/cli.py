@@ -8,11 +8,12 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
-from dataclasses import MISSING, dataclass, fields
+from dataclasses import MISSING, fields
 from typing import Any
 
-from benchmarks.performance.benchmark_config import (
+from benchmarks.performance.config import (
     ArrivalTraceSchedule,
+    BenchmarkDeploymentConfig,
     BenchmarkOutputConfig,
     ChatCompletionsEndpoint,
     ChatCompletionsGeneration,
@@ -22,15 +23,6 @@ from benchmarks.performance.benchmark_config import (
     ParameterSweepConfig,
     WandbRunConfig,
 )
-
-
-@dataclass(frozen=True)
-class HttpBenchmarkCommand:
-    """Store the service source, configuration, and deployment wait timeout for one HTTP benchmark."""
-
-    kustomize_path: str
-    benchmark: HttpBenchmarkConfig
-    wait_timeout: str
 
 
 def _default(cls: type, name: str) -> Any:
@@ -68,12 +60,12 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--url",
-        default="",
+        default=_default(ChatCompletionsEndpoint, "url"),
         help="Existing OpenAI-compatible chat-completions URL",
     )
     parser.add_argument(
         "--model",
-        default="",
+        default=_default(ChatCompletionsEndpoint, "model"),
         help="Model name; inferred when the deployment contains one model",
     )
     parser.add_argument(
@@ -89,7 +81,7 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--wait-timeout",
-        default="15m",
+        default=_default(BenchmarkDeploymentConfig, "wait_timeout"),
         help="Timeout for each deployment readiness stage",
     )
 
@@ -353,6 +345,10 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _http_benchmark_config(namespace: argparse.Namespace) -> HttpBenchmarkConfig:
     return HttpBenchmarkConfig(
+        deployment=BenchmarkDeploymentConfig(
+            kustomize_path=namespace.kustomize_path or "",
+            wait_timeout=namespace.wait_timeout,
+        ),
         endpoint=ChatCompletionsEndpoint(
             url=namespace.url,
             model=namespace.model,
@@ -414,7 +410,7 @@ def _http_benchmark_config(namespace: argparse.Namespace) -> HttpBenchmarkConfig
 
 def parse_http_benchmark_arguments(
     argv: Sequence[str] | None = None,
-) -> HttpBenchmarkCommand:
+) -> HttpBenchmarkConfig:
     """Parse HTTP benchmark arguments after top-level ``foretoken bench``."""
     parser = argparse.ArgumentParser(
         prog="foretoken bench",
@@ -427,12 +423,4 @@ def parse_http_benchmark_arguments(
     _add_performance_arguments(parser)
 
     parsed_args = parser.parse_args(argv)
-    if bool(parsed_args.kustomize_path) == bool(parsed_args.url):
-        parser.error("provide either PATH or --url")
-    if parsed_args.url and not parsed_args.model:
-        parser.error("--model is required with --url")
-    return HttpBenchmarkCommand(
-        kustomize_path=parsed_args.kustomize_path or "",
-        benchmark=_http_benchmark_config(parsed_args),
-        wait_timeout=parsed_args.wait_timeout,
-    )
+    return _http_benchmark_config(parsed_args)

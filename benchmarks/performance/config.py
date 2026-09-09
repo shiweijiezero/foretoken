@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import random
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Optional
 
 OutputTokenLimit = int | list[int]
+DEFAULT_DEPLOYMENT_PROMPT = "Hello"
+DEFAULT_WAIT_TIMEOUT = "15m"
 
 
 def normalize_output_token_limit(value: int | list[int]) -> OutputTokenLimit:
@@ -34,13 +36,20 @@ def normalize_output_token_limit(value: int | list[int]) -> OutputTokenLimit:
 
 @dataclass
 class ChatCompletionsEndpoint:
-    """Store the OpenAI-compatible Chat Completions endpoint and transport options."""
+    """Store endpoint choices supplied by the benchmark user."""
 
-    url: str
-    model: str
+    url: str = ""
+    model: str = ""
     api_key: str = "EMPTY"
     timeout_seconds: int = 300
-    headers: dict[str, str] = field(default_factory=dict)
+
+
+@dataclass
+class BenchmarkDeploymentConfig:
+    """Store the optional Kustomize source and readiness timeout for one benchmark."""
+
+    kustomize_path: str = ""
+    wait_timeout: str = DEFAULT_WAIT_TIMEOUT
 
 
 @dataclass
@@ -196,7 +205,12 @@ class ParameterSweepConfig:
 class HttpBenchmarkConfig:
     """Store the service, workload, and output configuration for the current HTTP benchmark."""
 
-    endpoint: ChatCompletionsEndpoint
+    deployment: BenchmarkDeploymentConfig = field(
+        default_factory=BenchmarkDeploymentConfig
+    )
+    endpoint: ChatCompletionsEndpoint = field(
+        default_factory=ChatCompletionsEndpoint
+    )
     load_schedule: HttpLoadSchedule = field(default_factory=HttpLoadSchedule)
     generation: ChatCompletionsGeneration = field(
         default_factory=ChatCompletionsGeneration
@@ -212,7 +226,19 @@ class HttpBenchmarkConfig:
     parameter_sweep: ParameterSweepConfig = field(
         default_factory=ParameterSweepConfig
     )
-    serving_gpu_count: int = 1
+
+    def __post_init__(self) -> None:
+        """Resolve the deployment's default workload before any runner consumes it."""
+        dataset = self.request_dataset
+        if (
+            self.deployment.kustomize_path
+            and not dataset.fixed_prompt
+            and not dataset.dataset_selectors
+        ):
+            self.request_dataset = replace(
+                dataset,
+                fixed_prompt=DEFAULT_DEPLOYMENT_PROMPT,
+            )
 
     @property
     def is_multi_turn(self) -> bool:
@@ -224,15 +250,20 @@ class HttpBenchmarkConfig:
 
     def validate(self) -> None:
         """Validate the selected HTTP workload before acquiring resources."""
+        has_deployment = bool(self.deployment.kustomize_path)
+        has_url = bool(self.endpoint.url)
+        if has_deployment == has_url:
+            raise ValueError("provide either PATH or --url")
+        if has_url and not self.endpoint.model:
+            raise ValueError("--model is required with --url")
+        if self.parameter_sweep.bench_params and not has_deployment:
+            raise ValueError("--bench-params requires a Foretoken Kustomize deployment")
+
         self.load_schedule.validate()
         self.outputs.validate()
         if "stream" in self.generation.extra_body:
             raise ValueError(
                 "stream must be set via --stream/--no-stream, not extra_body"
-            )
-        if self.serving_gpu_count < 1:
-            raise ValueError(
-                f"gpu_count must be >= 1, got {self.serving_gpu_count}"
             )
 
         dataset = self.request_dataset
@@ -292,9 +323,7 @@ class HttpBenchmarkConfig:
                 and not dataset.dataset_selectors[0].startswith("/")
                 and not trace.trace_selector.startswith("/")
             ):
-                from benchmarks.performance.huggingface_datasets import (
-                    same_dataset_selector,
-                )
+                from benchmarks.performance.conversation import same_dataset_selector
 
                 same_dataset = same_dataset_selector(
                     dataset.dataset_selectors[0], trace.trace_selector
@@ -371,7 +400,7 @@ class HttpBenchmarkConfig:
             )
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a credential-free configuration structure compatible with existing result files."""
+        """Serialize only user configuration for result and W&B snapshots."""
         endpoint = asdict(self.endpoint)
         endpoint.pop("api_key", None)
         endpoint["timeout"] = endpoint.pop("timeout_seconds")
@@ -402,11 +431,9 @@ class HttpBenchmarkConfig:
         if self.is_multi_turn:
             dataset["multi_turn"] = True
             dataset["max_turns"] = self.request_dataset.max_turns
-        output = {
-            **asdict(self.outputs),
-            "gpu_count": self.serving_gpu_count,
-        }
+        output = asdict(self.outputs)
         return {
+            "deployment": asdict(self.deployment),
             "endpoint": endpoint,
             "load": load,
             "generation": asdict(self.generation),
