@@ -190,6 +190,7 @@ fn request() -> GenerationRequest {
     GenerationRequest {
         model: "model".into(),
         request_id: "workflow-request".into(),
+        trace_headers: None,
         prompt: Prompt::Text("hello".into()),
         sampling_params: SamplingParams::default(),
         decode_options: TextDecodeOptions::default(),

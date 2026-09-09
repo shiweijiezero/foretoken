@@ -9,6 +9,7 @@ use std::time::Duration;
 use foretoken_model_protocol::{
     AbortInput, GenerateInput, TokenErrorCode, TokenEvent, TokenOutput,
 };
+use foretoken_tracing::{TRACEPARENT_HEADER, TRACESTATE_HEADER};
 use futures::StreamExt;
 use serde::Deserialize;
 use vllm_llm::{FinishReason, GenerateOutput, GeneratePromptInfo, GenerateRequest};
@@ -53,19 +54,25 @@ impl HttpFacade {
         &self,
         request: GenerateRequest,
     ) -> Result<TokenStream, LlmFacadeError> {
+        let trace_headers = request.trace_headers.clone();
         let body = rmp_serde::to_vec_named(&GenerateInput::from(request))
             .map_err(|_| LlmFacadeError::RequestFailed)?;
-        let response = tokio::time::timeout(
-            self.request_start_timeout,
-            self.client
-                .post(self.url("/v1/internal/generate"))
-                .header(reqwest::header::CONTENT_TYPE, "application/msgpack")
-                .body(body)
-                .send(),
-        )
-        .await
-        .map_err(|_| LlmFacadeError::Unavailable)?
-        .map_err(classify_reqwest)?;
+        let mut transport = self
+            .client
+            .post(self.url("/v1/internal/generate"))
+            .header(reqwest::header::CONTENT_TYPE, "application/msgpack");
+        if let Some(headers) = trace_headers {
+            for (name, value) in headers {
+                if name == TRACEPARENT_HEADER || name == TRACESTATE_HEADER {
+                    transport = transport.header(name, value);
+                }
+            }
+        }
+        let response =
+            tokio::time::timeout(self.request_start_timeout, transport.body(body).send())
+                .await
+                .map_err(|_| LlmFacadeError::Unavailable)?
+                .map_err(classify_reqwest)?;
         if !response.status().is_success() {
             return Err(classify_status(response.status()));
         }

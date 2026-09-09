@@ -185,7 +185,8 @@ groups:
             )
           )
 
-      - record: foretoken:frontend_http_request_duration_seconds:quantile5m
+      # The frontend middleware observes this histogram when the handler returns. For SSE, it is response-start latency.
+      - record: foretoken:frontend_http_response_start_latency_seconds:quantile5m
         expr: |
           label_replace(
             histogram_quantile(

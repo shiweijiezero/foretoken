@@ -115,7 +115,7 @@ The following stable recording rules provide the query layer used by the system 
 | Frontend | `foretoken:frontend_up:sum` | Reporting Frontend targets |
 | Frontend | `foretoken:frontend_http_response_starts:rate5m` | HTTP response starts per second |
 | Frontend | `foretoken:frontend_http_response_start_5xx_ratio:rate5m` | Response-start 5xx ratio, not inference failure ratio |
-| Frontend | `foretoken:frontend_http_request_duration_seconds:quantile5m` | Request latency with a `quantile` label of `p50`, `p90`, or `p99` |
+| Frontend | `foretoken:frontend_http_response_start_latency_seconds:quantile5m` | Response-start latency with a `quantile` label of `p50`, `p90`, or `p99`; streaming requests end at the first HTTP response |
 | Frontend | `foretoken:frontend_upstream_queued_requests:sum` | Requests waiting for admission by scaling target |
 | Frontend | `foretoken:frontend_kv_index_source_health_ratio:min` | Lowest KV event-source health ratio across Frontend replicas |
 | Model serving | `foretoken:model_server_up:sum` | Reporting model-server targets |
@@ -124,7 +124,7 @@ The following stable recording rules provide the query layer used by the system 
 | Model serving | `foretoken:model_server_generation_tokens:rate5m` | Generated tokens per second |
 | Model serving | `foretoken:model_server_requests_running:sum` | Requests currently running |
 | Model serving | `foretoken:model_server_requests_waiting:sum` | Requests waiting in the scheduler |
-| Model serving | `foretoken:model_server_e2e_request_latency_seconds:quantile5m` | E2E latency with `p50`, `p90`, and `p99` series |
+| Model serving | `foretoken:model_server_e2e_request_latency_seconds:quantile5m` | Complete model-server request/generation latency with `p50`, `p90`, and `p99` series |
 | Model serving | `foretoken:model_server_time_to_first_token_seconds:quantile5m` | TTFT with `p50`, `p90`, and `p99` series |
 | Model serving | `foretoken:model_server_time_per_output_token_seconds:quantile5m` | TPOT with `p50`, `p90`, and `p99` series |
 | Cache | `foretoken:model_server_kv_cache_usage_ratio:max` | Highest in-engine KV Cache usage ratio |
@@ -136,7 +136,7 @@ The following stable recording rules provide the query layer used by the system 
 | Accelerator | `foretoken:accelerator_gpu_utilization_ratio` | Per-device NVIDIA or MetaX utilization ratio |
 | Accelerator | `foretoken:accelerator_gpu_memory_usage_ratio` | Per-device NVIDIA or MetaX memory utilization ratio |
 
-Rules preserve namespace, Frontend service, model group, model role, model name, and optional Prefill/Decode pipeline scope. Counter rules calculate reset-aware five-minute rates before aggregation. For raw backend metric names, units, and labels, inspect the backend `/metrics` `HELP` and `TYPE` metadata.
+Rules preserve namespace, Frontend service, model group, model role, model name, and optional Prefill/Decode pipeline scope. Counter rules calculate reset-aware five-minute rates before aggregation. Frontend HTTP duration is measured when the handler returns its response; for SSE this is response-start latency, while complete request/generation latency comes from the model-server E2E rule. For raw backend metric names, units, and labels, inspect the backend `/metrics` `HELP` and `TYPE` metadata.
 
 A response may begin with `2xx` and fail later while streaming. Do not use `foretoken:frontend_http_response_start_5xx_ratio:rate5m` as an inference-success SLO.
 

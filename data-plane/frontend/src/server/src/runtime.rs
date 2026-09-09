@@ -56,6 +56,7 @@ impl RuntimeBundle {
 pub struct GenerationRequest {
     pub model: String,
     pub request_id: String,
+    pub trace_headers: Option<BTreeMap<String, String>>,
     pub prompt: Prompt,
     pub sampling_params: SamplingParams,
     pub decode_options: TextDecodeOptions,
@@ -505,7 +506,10 @@ impl RuntimeGeneration {
                     GenerationError::Internal
                 }
             })?;
-        let generate_request = prepared.generate_request;
+        let mut generate_request = prepared.generate_request;
+        // Text preparation owns prompt lowering; trace context is transport metadata and is copied
+        // at the boundary immediately before routing so every stage sees the same W3C values.
+        generate_request.trace_headers = request.trace_headers.clone();
         let context = RouterRequest::new(request.model.clone(), Arc::new(generate_request.clone()));
         let mut session = slot.state.router.start(context);
         let initial = session

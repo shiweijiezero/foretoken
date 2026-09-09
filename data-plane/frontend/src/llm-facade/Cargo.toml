@@ -12,6 +12,7 @@ async-stream.workspace = true
 async-trait.workspace = true
 foretoken-model-protocol = { path = "../../../model-protocol" }
 foretoken-router = { path = "../router" }
+foretoken-tracing = { path = "../tracing" }
 futures.workspace = true
 reqwest.workspace = true
 rmp-serde.workspace = true

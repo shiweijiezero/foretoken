@@ -115,7 +115,7 @@ kubectl get configmap \
 | Frontend | `foretoken:frontend_up:sum` | 正在上报的 Frontend target 数量 |
 | Frontend | `foretoken:frontend_http_response_starts:rate5m` | 每秒开始的 HTTP 响应数 |
 | Frontend | `foretoken:frontend_http_response_start_5xx_ratio:rate5m` | 响应开始时的 5xx 比例，不是推理失败率 |
-| Frontend | `foretoken:frontend_http_request_duration_seconds:quantile5m` | 请求延迟，通过 `quantile` 标签区分 `p50`、`p90` 和 `p99` |
+| Frontend | `foretoken:frontend_http_response_start_latency_seconds:quantile5m` | 响应开始延迟，通过 `quantile` 标签区分 `p50`、`p90` 和 `p99`；流式请求在首个 HTTP 响应返回时结束计时 |
 | Frontend | `foretoken:frontend_upstream_queued_requests:sum` | 按扩缩容目标统计的准入等待请求数 |
 | Frontend | `foretoken:frontend_kv_index_source_health_ratio:min` | Frontend 副本中最低的 KV 事件源健康比例 |
 | 模型服务 | `foretoken:model_server_up:sum` | 正在上报的 model-server target 数量 |
@@ -124,7 +124,7 @@ kubectl get configmap \
 | 模型服务 | `foretoken:model_server_generation_tokens:rate5m` | 每秒生成的输出 Token 数 |
 | 模型服务 | `foretoken:model_server_requests_running:sum` | 当前运行中的请求数 |
 | 模型服务 | `foretoken:model_server_requests_waiting:sum` | 调度器中等待的请求数 |
-| 模型服务 | `foretoken:model_server_e2e_request_latency_seconds:quantile5m` | E2E 延迟的 `p50`、`p90` 和 `p99` 序列 |
+| 模型服务 | `foretoken:model_server_e2e_request_latency_seconds:quantile5m` | 完整 model-server 请求/生成延迟的 `p50`、`p90` 和 `p99` 序列 |
 | 模型服务 | `foretoken:model_server_time_to_first_token_seconds:quantile5m` | TTFT 的 `p50`、`p90` 和 `p99` 序列 |
 | 模型服务 | `foretoken:model_server_time_per_output_token_seconds:quantile5m` | TPOT 的 `p50`、`p90` 和 `p99` 序列 |
 | Cache | `foretoken:model_server_kv_cache_usage_ratio:max` | 最高引擎内 KV Cache 使用率 |
@@ -136,7 +136,7 @@ kubectl get configmap \
 | 加速器 | `foretoken:accelerator_gpu_utilization_ratio` | NVIDIA 或沐曦设备利用率 |
 | 加速器 | `foretoken:accelerator_gpu_memory_usage_ratio` | NVIDIA 或沐曦设备显存使用率 |
 
-记录规则保留 namespace、Frontend 服务、模型组、模型角色、模型名称和可选的 Prefill/Decode pipeline scope。计数器会先计算可处理重置的五分钟速率，再执行聚合。原始后端指标的名称、单位和标签以 `/metrics` 中的 `HELP` 和 `TYPE` 元数据为准。
+记录规则保留 namespace、Frontend 服务、模型组、模型角色、模型名称和可选的 Prefill/Decode pipeline scope。计数器会先计算可处理重置的五分钟速率，再执行聚合。Frontend HTTP 时延在 handler 返回响应时记录；对于 SSE，这表示响应开始延迟，完整请求/生成延迟则使用 model-server 的 E2E 规则。原始后端指标的名称、单位和标签以 `/metrics` 中的 `HELP` 和 `TYPE` 元数据为准。
 
 流式响应可能先以 `2xx` 开始、后续再失败，因此 `foretoken:frontend_http_response_start_5xx_ratio:rate5m` 不能作为推理成功率 SLO。
 

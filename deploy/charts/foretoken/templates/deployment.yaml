@@ -59,7 +59,7 @@ spec:
             - {{ printf "--autoscaling-telemetry-collection-timeout=%s" .Values.controller.autoscalingTelemetry.collectionTimeout | quote }}
             - {{ printf "--autoscaling-telemetry-request-timeout=%s" .Values.controller.autoscalingTelemetry.requestTimeout | quote }}
             - {{ printf "--autoscaling-telemetry-concurrency=%d" (int .Values.controller.autoscalingTelemetry.concurrency) | quote }}
-            - --metrics-bind-address=0
+            - --metrics-bind-address=:8443
             - --health-probe-bind-address=:8081
             {{- range .Values.workload.imagePullSecrets }}
             - {{ printf "--workload-image-pull-secret=%s" .name | quote }}
@@ -129,6 +129,9 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
           ports:
+            - name: metrics
+              containerPort: 8443
+              protocol: TCP
             - name: healthz
               containerPort: 8081
               protocol: TCP

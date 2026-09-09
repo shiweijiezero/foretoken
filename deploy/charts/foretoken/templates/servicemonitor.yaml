@@ -2,6 +2,28 @@
 {{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
 
 {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "foretoken.compactName" (printf "%s-control-plane" (include "foretoken.fullname" .)) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.observabilityLabels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: foretoken-control-plane
+  endpoints:
+    - port: metrics
+      path: /metrics
+      scheme: http
+      {{- with $.Values.observability.interval }}
+      interval: {{ . | quote }}
+      {{- end }}
+      {{- with $.Values.observability.scrapeTimeout }}
+      scrapeTimeout: {{ . | quote }}
+      {{- end }}
+---
 {{- if .Values.frontend.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor

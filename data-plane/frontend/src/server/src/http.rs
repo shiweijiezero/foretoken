@@ -7,11 +7,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use axum::body::Body;
 use axum::extract::DefaultBodyLimit;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{Path as AxumPath, State};
-use axum::http::StatusCode;
+use axum::extract::{Extension, Path as AxumPath, State};
+use axum::http::header::HeaderValue;
+use axum::http::{Request, StatusCode};
 use axum::middleware;
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -22,8 +25,12 @@ use foretoken_chat::{
 };
 use foretoken_engine_core_client::protocol::structured_outputs::StructuredOutputsParams;
 use foretoken_text::{Prompt, SamplingParams, TextDecodeOptions};
+use foretoken_tracing::{
+    REQUEST_ID_HEADER, RequestContext, TRACEPARENT_HEADER, TRACESTATE_HEADER, w3c_trace_headers,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tracing::{Instrument, info_span};
 use uuid::Uuid;
 
 use crate::response::{
@@ -75,7 +82,52 @@ pub fn router(
             stream_idle,
         })
         .layer(DefaultBodyLimit::max(MAX_HTTP_BODY_BYTES))
+        .layer(middleware::from_fn(request_context))
         .layer(middleware::from_fn(foretoken_metrics::track_http_metrics))
+}
+
+/// Creates the server-owned request identity and carries W3C context through one HTTP request.
+async fn request_context(mut request: Request<Body>, next: Next) -> Response {
+    let request_id = request_id_prefix(request.uri().path());
+    let trace_headers = w3c_trace_headers(
+        request
+            .headers()
+            .get(TRACEPARENT_HEADER)
+            .and_then(|value| value.to_str().ok()),
+        request
+            .headers()
+            .get(TRACESTATE_HEADER)
+            .and_then(|value| value.to_str().ok()),
+    );
+    let context = RequestContext {
+        request_id: format!("{request_id}-{}", Uuid::new_v4()),
+        trace_headers,
+    };
+    let span = info_span!(
+        "foretoken.http.request",
+        request_id = %context.request_id,
+        traceparent = context.traceparent().unwrap_or(""),
+        tracestate = context.tracestate().unwrap_or(""),
+        method = %request.method(),
+        path = %request.uri().path(),
+    );
+    request.extensions_mut().insert(context.clone());
+    let mut response = next.run(request).instrument(span).await;
+    response.headers_mut().insert(
+        REQUEST_ID_HEADER,
+        HeaderValue::from_str(&context.request_id)
+            .expect("generated request IDs are valid headers"),
+    );
+    response
+}
+
+fn request_id_prefix(path: &str) -> &'static str {
+    match path {
+        "/v1/chat/completions" => "chatcmpl",
+        "/v1/completions" | "/v1/generate" => "cmpl",
+        "/tokenize" | "/detokenize" => "tokenize",
+        _ => "req",
+    }
 }
 
 async fn healthz() -> StatusCode {
@@ -158,6 +210,7 @@ fn resolve_model(state: &AppState, requested: Option<String>) -> Result<String, 
 
 async fn tokenize(
     State(state): State<AppState>,
+    Extension(context): Extension<RequestContext>,
     request: Result<Json<TokenizeRequest>, JsonRejection>,
 ) -> Response {
     let Json(request) = match request {
@@ -221,7 +274,7 @@ async fn tokenize(
                 GenerationPromptMode::NoGenerationPrompt
             };
             let chat = ChatRequest {
-                request_id: server_request_id("tokenize"),
+                request_id: context.request_id.clone(),
                 messages,
                 sampling_params: SamplingParams {
                     max_tokens: Some(1),
@@ -642,10 +695,6 @@ struct OpenAiJsonSchema {
     strict: Option<bool>,
 }
 
-/// Generates the backend and Mooncake request identity for one HTTP generation.
-fn server_request_id(prefix: &str) -> String {
-    format!("{prefix}-{}", Uuid::new_v4())
-}
 fn sampling(
     temperature: Option<f32>,
     top_p: Option<f32>,
@@ -744,6 +793,7 @@ pub(crate) fn openai_error(error: GenerationError) -> Response {
 }
 async fn completions(
     State(state): State<AppState>,
+    Extension(context): Extension<RequestContext>,
     request: Result<Json<CompletionRequest>, JsonRejection>,
 ) -> Response {
     let Json(request) = match request {
@@ -771,14 +821,22 @@ async fn completions(
     if request.best_of.is_some() && !public_logprobs {
         sampling_params.logprobs = Some(0);
     }
+    let arrival_time = Some(vllm_llm::current_unix_timestamp_secs());
     let mut generated = Vec::with_capacity(prompts.len() * best_of as usize);
+    let mut candidate_index = 0;
     for prompt in prompts {
         for _ in 0..best_of {
+            let request_id = if candidate_index == 0 {
+                context.request_id.clone()
+            } else {
+                format!("{}/candidate-{candidate_index}", context.request_id)
+            };
+            candidate_index += 1;
             match state
                 .generation
                 .generate(GenerationRequest {
                     model: request.model.clone(),
-                    request_id: server_request_id("cmpl"),
+                    request_id,
                     prompt: prompt.clone(),
                     sampling_params: sampling_params.clone(),
                     decode_options: decode_options(request.stop.clone()),
@@ -786,9 +844,10 @@ async fn completions(
                     priority: request.priority,
                     cache_salt: request.cache_salt.clone(),
                     session_id: request.session_id.clone(),
-                    arrival_time: Some(vllm_llm::current_unix_timestamp_secs()),
+                    arrival_time,
                     tool_call_parser: ParserSelection::None,
                     reasoning_parser: ParserSelection::None,
+                    trace_headers: context.trace_headers.clone(),
                 })
                 .await
             {
@@ -824,13 +883,14 @@ async fn completions(
 
 async fn chat_completions(
     State(state): State<AppState>,
+    Extension(context): Extension<RequestContext>,
     request: Result<Json<ChatCompletionRequest>, JsonRejection>,
 ) -> Response {
     let Json(request) = match request {
         Ok(request) => request,
         Err(_) => return client_error(),
     };
-    let id = server_request_id("chatcmpl");
+    let id = context.request_id.clone();
     if validate_multimodal_input(&request.messages).is_err() {
         return client_error();
     }
@@ -866,13 +926,23 @@ async fn chat_completions(
         // OpenAI's omitted tool_choice defaults to auto when tools are supplied.
         tool_choice = ChatToolChoice::Auto;
     }
-    chat_with_request(state, request, id, messages, tools, tool_choice).await
+    chat_with_request(
+        state,
+        request,
+        id,
+        context.trace_headers.clone(),
+        messages,
+        tools,
+        tool_choice,
+    )
+    .await
 }
 
 async fn chat_with_request(
     state: AppState,
     request: ChatCompletionRequest,
     id: String,
+    trace_headers: Option<std::collections::BTreeMap<String, String>>,
     messages: Vec<ChatMessage>,
     tools: Vec<ChatTool>,
     tool_choice: ChatToolChoice,
@@ -946,6 +1016,7 @@ async fn chat_with_request(
     if chat.validate().is_err() {
         return client_error();
     }
+    let arrival_time = Some(vllm_llm::current_unix_timestamp_secs());
     let generated = match state
         .generation
         .generate_chat(
@@ -959,7 +1030,7 @@ async fn chat_with_request(
                 priority: chat.priority,
                 cache_salt: chat.cache_salt.clone(),
                 session_id: chat.session_id.clone(),
-                arrival_time: None,
+                arrival_time,
                 tool_call_parser: if tool_requested {
                     ParserSelection::Auto
                 } else {
@@ -970,6 +1041,7 @@ async fn chat_with_request(
                 } else {
                     ParserSelection::None
                 },
+                trace_headers,
             },
             chat,
             include_reasoning,

@@ -18,6 +18,7 @@ use axum::{Json, Router};
 use bytes::Bytes;
 use futures::StreamExt;
 use serde::Serialize;
+use tracing::{Instrument, info_span};
 
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
 use crate::kv_event_adapter::{KvDeltaError, KvEventAdapter};
@@ -25,6 +26,7 @@ use crate::runtime_cache;
 use foretoken_model_protocol::{
     AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, TelemetryResponse,
 };
+use foretoken_tracing::{REQUEST_ID_HEADER, TRACEPARENT_HEADER, TRACESTATE_HEADER};
 
 // One atomic word linearizes admission close against request acceptance.
 const ADMISSION_OPEN: u64 = 1 << 63;
@@ -267,18 +269,38 @@ async fn generate(
     // Admission closes before drain; the permit remains owned by the stream until completion or drop.
     let permit = state.health.try_admit().ok_or(ApiError::Unavailable)?;
     let request_id = input.request_id.clone();
+    let traceparent = input
+        .trace_headers
+        .as_ref()
+        .and_then(|headers| headers.get(TRACEPARENT_HEADER))
+        .cloned()
+        .unwrap_or_default();
+    let tracestate = input
+        .trace_headers
+        .as_ref()
+        .and_then(|headers| headers.get(TRACESTATE_HEADER))
+        .cloned()
+        .unwrap_or_default();
+    let span = info_span!(
+        "foretoken.model_server.generate",
+        request_id = %request_id,
+        traceparent = %traceparent,
+        tracestate = %tracestate,
+    );
     let stream = state
         .backend
         .generate(input)
+        .instrument(span)
         .await
         .map_err(ApiError::backend)?;
     // Once headers are sent, backend failures become typed terminal events rather than a new HTTP status.
+    let stream_request_id = request_id.clone();
     let body_stream = stream.map(move |item| {
         let _permit = &permit;
         let event = match item {
             Ok(event) => event,
             Err(error) => TokenEvent::Error {
-                request_id: request_id.clone(),
+                request_id: stream_request_id.clone(),
                 code: error.token_error_code(),
             },
         };
@@ -288,7 +310,16 @@ async fn generate(
     });
     Ok((
         StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/x-ndjson")],
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/x-ndjson"),
+            ),
+            (
+                header::HeaderName::from_static(REQUEST_ID_HEADER),
+                HeaderValue::from_str(&request_id).expect("internal request IDs are valid headers"),
+            ),
+        ],
         Body::from_stream(body_stream),
     )
         .into_response())

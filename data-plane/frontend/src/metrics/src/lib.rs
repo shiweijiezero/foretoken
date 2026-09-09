@@ -224,9 +224,11 @@ fn escape_label(value: &str) -> String {
         .replace('"', "\\\"")
 }
 
-/// Records one non-metrics HTTP request after its handler completes.
+/// Records one non-metrics HTTP response start after its handler returns a response.
 ///
-/// The Axum middleware stack consumes the unchanged response while this function updates frontend-owned vLLM-compatible counters.
+/// For SSE endpoints, Axum returns before the body stream finishes, so the duration histogram
+/// measures response-start latency. Complete generation latency remains owned by the model-server
+/// request metrics and is exposed through `vllm:e2e_request_latency_seconds`.
 pub async fn track_http_metrics(request: Request, next: Next) -> Response {
     let method = request.method().as_str().to_owned();
     let handler = request
@@ -239,7 +241,7 @@ pub async fn track_http_metrics(request: Request, next: Next) -> Response {
     if excluded {
         return response;
     }
-    let elapsed = started_at.elapsed().as_secs_f64();
+    let response_start_latency = started_at.elapsed().as_secs_f64();
     let metrics = &METRICS.api_server;
     metrics
         .http_requests
@@ -252,8 +254,10 @@ pub async fn track_http_metrics(request: Request, next: Next) -> Response {
     metrics
         .http_request_duration_seconds
         .get_or_create(&HttpHandlerLabels { method, handler })
-        .observe(elapsed);
-    metrics.http_request_duration_highr_seconds.observe(elapsed);
+        .observe(response_start_latency);
+    metrics
+        .http_request_duration_highr_seconds
+        .observe(response_start_latency);
     response
 }
 fn status_group(status: u16) -> &'static str {

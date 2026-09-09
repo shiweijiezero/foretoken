@@ -20,11 +20,13 @@ foretoken-model-protocol = { path = "../../../model-protocol" }
 foretoken-router = { path = "../router" }
 foretoken-text = { path = "../text" }
 foretoken-tokenizer = { path = "../tokenizer" }
+foretoken-tracing = { path = "../tracing" }
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tracing.workspace = true
 uuid.workspace = true
 vllm-llm.workspace = true
 

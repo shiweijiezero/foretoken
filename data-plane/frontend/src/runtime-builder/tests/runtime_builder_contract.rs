@@ -53,6 +53,7 @@ async fn logical_only_snapshot_publishes_a_ready_scale_from_zero_runtime() {
     let cold_request = |request_id: &str| GenerationRequest {
         model: "model".into(),
         request_id: request_id.into(),
+        trace_headers: None,
         prompt: Prompt::Text("hello".into()),
         sampling_params: SamplingParams::default(),
         decode_options: TextDecodeOptions::default(),

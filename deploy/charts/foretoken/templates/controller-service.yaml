@@ -1,0 +1,20 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
+
+{{/* Exposes controller-runtime metrics to the Prometheus Operator. */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "foretoken.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "foretoken.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: metrics
+      port: 8443
+      targetPort: metrics
+      protocol: TCP
