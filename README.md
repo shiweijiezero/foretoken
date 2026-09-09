@@ -52,7 +52,7 @@ foretoken install
 # foretoken install -e .
 ```
 
-For MetaX GPUs, see the [MetaX deployment guide](docs/metax-deployment.md) for the runtime image and configuration.
+For deployment on MetaX GPUs, follow the [MetaX deployment guide](docs/metax-deployment.md).
 
 This installs the Foretoken CRDs and controller in the `foretoken-platform` namespace and waits for the controller to become ready. The default mode exposes the frontend through a `LoadBalancer` Service. Source installation rebuilds the images and updates the cluster; to deploy the current source to a remote cluster, see the [source deployment guide](docs/custom-deployment.md).
 
