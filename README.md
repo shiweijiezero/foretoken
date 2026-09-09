@@ -44,15 +44,15 @@ pip install foretoken
 
 ### 2. Install the Kubernetes platform
 
-The default GHCR images serve NVIDIA GPUs. For MetaX, use the image and settings in the [MetaX deployment guide](docs/metax-deployment.md).
-
 ```bash
-# Release images:
+# Use release images from GHCR:
 foretoken install
 
 # Source installation from the repository:
 # foretoken install -e .
 ```
+
+For MetaX GPUs, see the [MetaX deployment guide](docs/metax-deployment.md) for the runtime image and configuration.
 
 This installs the Foretoken CRDs and controller in the `foretoken-platform` namespace and waits for the controller to become ready. The default mode exposes the frontend through a `LoadBalancer` Service. Source installation rebuilds the images and updates the cluster; to deploy the current source to a remote cluster, see the [source deployment guide](docs/custom-deployment.md).
 

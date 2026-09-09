@@ -44,15 +44,15 @@ pip install foretoken
 
 ### 2. 安装 Kubernetes 平台
 
-默认使用 GHCR 上适配 NVIDIA 的发布镜像。沐曦请使用[部署指南](docs/metax-deployment_zh.md)中的镜像和配置。
-
 ```bash
-# 使用发布镜像：
+# 使用 GHCR 发布的镜像：
 foretoken install
 
 # 如果使用源码安装：
 # foretoken install -e .
 ```
+
+沐曦 GPU 的运行时镜像和配置见[沐曦部署指南](docs/metax-deployment_zh.md)。
 
 该命令会在 `foretoken-platform` 命名空间中安装 Foretoken CRD 和控制器，并等待控制器就绪。默认模式通过 `LoadBalancer` 类型的 Kubernetes `Service` 提供前端地址。源码安装会重新构建镜像并更新集群；如果要将当前源码部署到远程集群，请参阅[源码部署指南](docs/custom-deployment_zh.md)。
 
