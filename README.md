@@ -44,7 +44,15 @@ pip install foretoken
 # pip install -e .
 ```
 
-### 2. Install the Kubernetes platform
+### 2. Get the Quick Start configuration
+
+The published Python package contains the `foretoken` command, not the repository's maintained Kubernetes examples. Download the examples once:
+
+```bash
+git clone --depth 1 https://github.com/shiweijiezero/foretoken.git foretoken-examples
+```
+
+### 3. Install the Kubernetes platform
 
 By default, installation uses the Foretoken images published on GHCR:
 
@@ -61,15 +69,15 @@ This installs the Foretoken CRDs and controller in the `foretoken-platform` name
 ### 3. Deploy the Quick Start
 
 ```bash
-foretoken deploy examples/quickstart
+foretoken deploy foretoken-examples/examples/quickstart
 ```
 
-This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and an automatically expanding runtime cache PVC starting at 10 GiB. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
+This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and an automatically expanding runtime cache PVC starting at 10 GiB. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](foretoken-examples/examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
 
 ### 4. Send a test request
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint foretoken-examples/examples/quickstart)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -85,7 +93,7 @@ pip install 'foretoken[bench]'
 # For source installation from the repository:
 # pip install -e .
 # pip install -e '.[bench]'
-foretoken bench examples/quickstart
+foretoken bench foretoken-examples/examples/quickstart
 ```
 
 See [Benchmarking](benchmarks/README.md) for datasets, remote endpoints, result storage, and parameter sweeps.
@@ -94,7 +102,7 @@ See [Benchmarking](benchmarks/README.md) for datasets, remote endpoints, result 
 
 Gateway mode provides a shared entry point through Kubernetes Gateway and a hostname. It suits clusters that already use Gateway or manage external traffic centrally.
 
-Foretoken creates its default Gateway for Envoy Gateway. Install Envoy Gateway, then add the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
+Foretoken creates its default Gateway for Envoy Gateway. Install Envoy Gateway, then add the public hostname under `spec` in `foretoken-examples/examples/quickstart/frontend.yaml`:
 
 ```yaml
 spec:
@@ -115,11 +123,11 @@ helm upgrade --install envoy-gateway \
 foretoken install --frontend-mode gateway
 
 # Deploy the Quick Start
-foretoken deploy examples/quickstart
+foretoken deploy foretoken-examples/examples/quickstart
 
 # Resolve the Gateway address and request hostname
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint foretoken-examples/examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint foretoken-examples/examples/quickstart --host)"
 
 # Send a test request
 curl --fail-with-body --no-buffer \
@@ -135,7 +143,7 @@ See the [command-line tool guide](cli/README.md) to reuse a Gateway from another
 
 ```bash
 # Delete the Quick Start resources, including its namespace and runtime cache PVC
-foretoken delete examples/quickstart
+foretoken delete foretoken-examples/examples/quickstart
 
 # Uninstall the Foretoken platform
 foretoken uninstall

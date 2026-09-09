@@ -44,7 +44,15 @@ pip install foretoken
 # pip install -e .
 ```
 
-### 2. 安装 Kubernetes 平台
+### 2. 获取快速开始配置
+
+发布的 Python package 提供 `foretoken` 命令，不包含仓库中的 Kubernetes 示例。先下载维护中的示例配置：
+
+```bash
+git clone --depth 1 https://github.com/shiweijiezero/foretoken.git foretoken-examples
+```
+
+### 3. 安装 Kubernetes 平台
 
 默认使用 Foretoken 发布在 GHCR 的镜像：
 
@@ -61,15 +69,15 @@ foretoken install
 ### 3. 部署快速开始示例
 
 ```bash
-foretoken deploy examples/quickstart
+foretoken deploy foretoken-examples/examples/quickstart
 ```
 
-该示例部署一个前端服务、一个 `Qwen/Qwen3-0.6B` 模型副本和一个从 10 GiB 起自动扩容的运行时缓存 PVC。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
+该示例部署一个前端服务、一个 `Qwen/Qwen3-0.6B` 模型副本和一个从 10 GiB 起自动扩容的运行时缓存 PVC。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](foretoken-examples/examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
 
 ### 4. 发送测试请求
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint foretoken-examples/examples/quickstart)"
 
 curl --fail-with-body --no-buffer \
   "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
@@ -85,7 +93,7 @@ pip install 'foretoken[bench]'
 # 如果使用源码安装：
 # pip install -e .
 # pip install -e '.[bench]'
-foretoken bench examples/quickstart
+foretoken bench foretoken-examples/examples/quickstart
 ```
 
 数据集、远程服务、结果保存和参数扫描见[评测指南](benchmarks/README_zh.md)。
@@ -94,7 +102,7 @@ foretoken bench examples/quickstart
 
 网关模式通过 Kubernetes Gateway 和域名提供统一入口，适合已经使用 Gateway 或需要集中管理外部流量的集群。
 
-Foretoken 默认创建的 Gateway 使用 Envoy Gateway。先安装 Envoy Gateway，并在 `examples/quickstart/frontend.yaml` 的 `spec` 中添加访问域名：
+Foretoken 默认创建的 Gateway 使用 Envoy Gateway。先安装 Envoy Gateway，并在 `foretoken-examples/examples/quickstart/frontend.yaml` 的 `spec` 中添加访问域名：
 
 ```yaml
 spec:
@@ -115,11 +123,11 @@ helm upgrade --install envoy-gateway \
 foretoken install --frontend-mode gateway
 
 # 部署快速开始示例
-foretoken deploy examples/quickstart
+foretoken deploy foretoken-examples/examples/quickstart
 
 # 获取网关地址和请求域名
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint foretoken-examples/examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint foretoken-examples/examples/quickstart --host)"
 
 # 发送测试请求
 curl --fail-with-body --no-buffer \
@@ -135,7 +143,7 @@ curl --fail-with-body --no-buffer \
 
 ```bash
 # 删除快速开始的资源，包括命名空间和运行时缓存 PVC
-foretoken delete examples/quickstart
+foretoken delete foretoken-examples/examples/quickstart
 
 # 卸载 Foretoken 平台
 foretoken uninstall
