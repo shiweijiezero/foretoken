@@ -6,11 +6,7 @@
 
 from __future__ import annotations
 
-import logging
-from typing import Any, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from benchmarks.deployment.profiling import ProfileSession
+from typing import Any
 
 from benchmarks.runner.base import Runner
 from benchmarks.runner.run_spec import RunSpec
@@ -33,43 +29,6 @@ class RunBenchmark(Runner):
     def __init__(self, spec: RunSpec):
         super().__init__(spec.config)
         self.spec = spec
-
-    async def run_profile(self, session: ProfileSession, warmup_requests: int) -> dict[str, Any]:
-        """Capture one workload with the normal scheduler and save only local diagnostic results."""
-        load = self.default_load()
-        requests = load_requests(self.config, number=load["number"] + warmup_requests)
-        client = self.create_client(load["parallel"], len(requests))
-        metrics = None
-        failure = None
-        # The server's abandonment timer bounds a lost CLI; ordinary completion stops immediately.
-        duration = max(1, int(self.config.endpoint.timeout * (self.config.endpoint.max_retries + 1) * len(requests) + 60))
-        if load["rate"] > 0:
-            duration += int(len(requests) / load["rate"]) + 1
-        try:
-            raw_output = await self.dispatch(
-                client, requests, parallel=load["parallel"], rate=load["rate"],
-                open_loop=load["open_loop"], warmup_requests=warmup_requests,
-                start_capture=lambda: session.start(duration),
-            )
-            metrics = self.aggregate_metrics(
-                raw_output, rate=load["rate"], number=load["number"],
-                resolved_parallel=load["resolved_parallel"], include_user_throughput=False,
-            )
-        except BaseException as error:
-            failure = str(error) or type(error).__name__
-            raise
-        finally:
-            await client.close()
-            try:
-                session.stop_and_collect()
-            except Exception as error:
-                if failure is None:
-                    failure = str(error)
-                    raise
-                logging.getLogger(__name__).exception("Could not finish profile collection; captured files remain in the Pods")
-            finally:
-                session.save_run({**self.config.to_dict(), "warmup_requests": warmup_requests}, metrics, failure)
-        return {"mode": "profile", "metrics": metrics, "output_dir": str(session.output_dir)}
 
     async def run(self) -> dict[str, Any]:
         load = self.default_load()

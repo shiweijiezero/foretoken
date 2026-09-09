@@ -33,8 +33,6 @@ class BenchmarkEndpoint:
     headers: dict[str, str]
     hostname: str
     gpu_count: int
-    namespace: str
-    model_services: tuple[str, ...]
 
 
 def _select_model(models: Iterable[str], requested: str) -> str:
@@ -165,6 +163,4 @@ def discover_endpoint(
         headers,
         resources.hostname,
         gpu_count,
-        resources.namespace,
-        tuple(name for name, declared_model in resources.models.items() if declared_model == model),
     )

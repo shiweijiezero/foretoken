@@ -168,7 +168,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     health.set_client_healthy(true);
     health.set_accepting(true);
     let backend = Arc::new(VllmBackend::new(Llm::new(client), max_concurrent_requests));
-    let profiler = foretoken_model_server::profiling::Profiler::from_env(backend.clone())?;
 
     // Expose only the restricted group-local API after EngineCore is connected and healthy.
     let listener = match TcpListener::bind(config.listen_address).await {
@@ -184,9 +183,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let shutdown = Arc::new(Notify::new());
     let server_shutdown = shutdown.clone();
     let mut app_state = AppState::new(backend.clone(), health.clone(), metadata);
-    if let Some(profiler) = &profiler {
-        app_state = app_state.with_profiler(profiler.clone());
-    }
     if let Some(kv_events) = kv_events {
         app_state = app_state.with_kv_events(kv_events);
     }
@@ -252,9 +248,6 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 drop(server);
             }
         }
-    }
-    if let Some(profiler) = &profiler {
-        profiler.shutdown().await;
     }
     if let Err(error) = backend.shutdown().await {
         warn!(%error, "could not shut down EngineCore client cleanly");

@@ -162,19 +162,6 @@ impl VllmBackend {
         }
     }
 
-    /// Starts or stops the engine's Torch profiler for the internal profiling session owner.
-    pub async fn profile(&self, start: bool, prefix: &str) -> Result<(), BackendError> {
-        let guard = self.llm.read().await;
-        let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
-        let client = llm.engine_core_client();
-        if start {
-            client.start_profile(Some(prefix)).await
-        } else {
-            client.stop_profile(Some(prefix)).await
-        }
-        .map_err(BackendError::from_engine_client)
-    }
-
     /// Takes and shuts down the owned vLLM `Llm` facade during model-server teardown.
     pub async fn shutdown(&self) -> Result<(), BackendError> {
         let Some(llm) = self.llm.write().await.take() else {

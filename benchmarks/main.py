@@ -63,17 +63,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     print_endpoint(endpoint.url, endpoint.models, endpoint.hostname)
 
             logger.info("%s", config.summary())
-            if command.profile:
-                from benchmarks.deployment.profiling import ProfileSession
-                from benchmarks.runner.run_benchmark import RunBenchmark
-                from benchmarks.runner.run_spec import RunSpec
-
-                if endpoint is None:
-                    raise ValueError("profiling requires a Foretoken deployment")
-                with ProfileSession(endpoint, config.endpoint.timeout, config.output.output_dir) as session:
-                    result = asyncio.run(RunBenchmark(RunSpec(config=config)).run_profile(session, command.warmup_requests))
-            else:
-                result = asyncio.run(select_runner(config).run())
+            result = asyncio.run(select_runner(config).run())
             if result["metrics"]["success_num"] == 0:
                 raise SystemExit(1)
     except (DeploymentError, ValueError) as exc:

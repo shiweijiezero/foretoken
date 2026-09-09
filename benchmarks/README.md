@@ -60,10 +60,6 @@ For parameter sweeps, `token/s/user` means output throughput divided by the conf
 
 A sweep always writes every valid point. It creates `pareto/PARETO.png` only when the sweep has at least two valid points.
 
-## Capture a performance profile
-
-For a short diagnostic capture on a Foretoken deployment, use `foretoken bench PATH --profile --warmup-requests 8 --number 4`. The model runtime must have profiling enabled. See [Performance profiling](../observability/profiling.md) for the platform example, local artifacts, and cleanup. Profile runs do not enter W&B or Pareto comparisons.
-
 ## Next steps
 
 Scenario recipes for datasets, random prompts, trace replay, prefix reuse, multiple datasets, and parameter sweeps are in [Benchmark examples](docs/examples.md). The command reference and result formats are exposed through `foretoken bench --help` and the generated local artifacts.
