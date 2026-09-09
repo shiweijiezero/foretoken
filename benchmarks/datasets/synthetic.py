@@ -9,7 +9,7 @@ from itertools import islice
 from typing import Any
 
 from benchmarks.config import HttpBenchmarkConfig
-from benchmarks.workloads.datasets import (
+from benchmarks.datasets.datasets import (
     ChatRequestContent,
     resolve_tokenizer_path,
 )

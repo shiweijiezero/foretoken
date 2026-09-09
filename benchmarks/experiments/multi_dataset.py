@@ -13,18 +13,18 @@ from typing import Any
 
 from benchmarks.config import HttpBenchmarkConfig
 from benchmarks.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.load.standard import StandardHttpLoadBenchmark
-from benchmarks.reporting.metrics import (
+from benchmarks.serving.standard import StandardHttpLoadBenchmark
+from benchmarks.results.metrics import (
     merge_request_measurements,
     summarize_http_measurements,
 )
-from benchmarks.reporting.publication import (
+from benchmarks.results.publication import (
     build_benchmark_run_record,
     open_local_result_directory,
     publish_results,
     resolved_load_record,
 )
-from benchmarks.reporting.wandb import wandb_group_name
+from benchmarks.results.wandb import wandb_group_name
 
 logger = logging.getLogger(__name__)
 

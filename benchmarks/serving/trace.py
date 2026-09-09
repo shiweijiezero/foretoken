@@ -20,23 +20,23 @@ import httpx
 from openai import APIError, AsyncOpenAI
 
 from benchmarks.config import HttpBenchmarkConfig
-from benchmarks.workloads.datasets import (
+from benchmarks.datasets.datasets import (
     ChatRequestContent,
     iter_dataset_rows,
     load_chat_requests,
     load_indexed_chat_requests,
 )
 from benchmarks.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.reporting.metrics import (
+from benchmarks.results.metrics import (
     compute_tpot,
     percentile_summary,
     summarize_http_measurements,
 )
-from benchmarks.reporting.publication import (
+from benchmarks.results.publication import (
     ResultPublication,
     build_benchmark_run_record,
 )
-from benchmarks.workloads.synthetic import (
+from benchmarks.datasets.synthetic import (
     create_trace_random_dataset_plugin,
     generate_trace_random_requests,
 )

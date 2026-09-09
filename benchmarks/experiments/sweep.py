@@ -18,11 +18,11 @@ from benchmarks.config.sweep import (
     sweep_point_name,
 )
 from benchmarks.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.load.standard import StandardHttpLoadBenchmark
-from benchmarks.reporting.publication import open_local_result_directory
-from benchmarks.reporting.console import log_sweep_results
-from benchmarks.reporting.pareto import plot_sweep_pareto
-from benchmarks.reporting.wandb import wandb_group_name
+from benchmarks.serving.standard import StandardHttpLoadBenchmark
+from benchmarks.results.publication import open_local_result_directory
+from benchmarks.results.console import log_sweep_results
+from benchmarks.results.pareto import plot_sweep_pareto
+from benchmarks.results.wandb import wandb_group_name
 
 logger = logging.getLogger(__name__)
 

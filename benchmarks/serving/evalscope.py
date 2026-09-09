@@ -18,12 +18,12 @@ if TYPE_CHECKING:
 
 from benchmarks.config import HttpBenchmarkConfig
 from benchmarks.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.workloads.datasets import (
+from benchmarks.datasets.datasets import (
     load_chat_conversations,
     resolve_tokenizer_path,
     split_chat_conversation,
 )
-from benchmarks.reporting.metrics import generation_tokens_per_second_per_user
+from benchmarks.results.metrics import generation_tokens_per_second_per_user
 
 
 EVALSCOPE_API = "foretoken_openai"

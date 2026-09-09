@@ -10,7 +10,7 @@ from dataclasses import replace
 from typing import Any, Callable
 
 from benchmarks.config import HttpBenchmarkConfig, normalize_output_token_limit
-from benchmarks.workloads.datasets import iter_jsonl_rows
+from benchmarks.datasets.datasets import iter_jsonl_rows
 
 SweepPoint = dict[str, object]
 _LOAD_CAST = {"parallel": int, "number": int, "rate": float}
