@@ -58,18 +58,12 @@ foretoken install
 
 ### 3. 部署快速开始示例
 
-下载示例配置：
+获取示例并部署：
 
 ```bash
-mkdir -p examples/quickstart
-for file in kustomization.yaml namespace.yaml cache.yaml frontend.yaml model.yaml; do
-  curl --fail --location \
-    "https://raw.githubusercontent.com/shiweijiezero/foretoken/v0.0.2/examples/quickstart/$file" \
-    --output "examples/quickstart/$file"
-done
-```
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 
-```bash
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
