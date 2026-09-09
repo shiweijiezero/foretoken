@@ -9,6 +9,8 @@ from typing import Any, Optional
 
 import numpy as np
 
+from benchmarks.performance.config import HttpBenchmarkConfig
+
 
 def percentile_summary(values: list[float]) -> dict[str, float | None]:
     """Compute the mean and fixed percentiles used by benchmark summaries."""
@@ -161,3 +163,28 @@ def summarize_request_measurements(output: dict[str, Any]) -> dict[str, Any]:
         ),
         "benchmark_time": total_time,
     }
+
+
+def summarize_http_measurements(
+    benchmark: HttpBenchmarkConfig,
+    request_measurements: dict[str, Any],
+    *,
+    arrival_rate: float,
+    request_count: int,
+    reported_concurrency: int,
+    include_user_throughput: bool = True,
+) -> dict[str, Any]:
+    """Add workload coordinates to aggregated request observations for publication."""
+    metrics = summarize_request_measurements(request_measurements)
+    configured_stream = bool(benchmark.generation.stream)
+    if metrics["stream"] != configured_stream:
+        raise RuntimeError(
+            "recorded stream mode does not match the requests that ran: "
+            f"config={configured_stream} results={metrics['stream']}"
+        )
+    metrics["rate"] = arrival_rate
+    metrics["number"] = request_count
+    metrics["parallel"] = reported_concurrency
+    if include_user_throughput:
+        attach_user_throughput(metrics, parallel=reported_concurrency)
+    return metrics

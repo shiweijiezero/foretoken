@@ -28,16 +28,14 @@ from benchmarks.performance.conversation import (
     same_dataset_selector,
 )
 from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.performance.http_benchmark import (
-    build_benchmark_run_record,
-    open_local_result_directory,
-    publish_benchmark_results,
-    summarize_http_measurements,
-)
-from benchmarks.performance.local_results import LocalResultDirectory
-from benchmarks.performance.request_metrics import (
+from benchmarks.performance.metrics import (
     compute_tpot,
     percentile_summary,
+    summarize_http_measurements,
+)
+from benchmarks.performance.results import (
+    ResultPublication,
+    build_benchmark_run_record,
 )
 from benchmarks.performance.synthetic_requests import (
     _allowed_token_ids,
@@ -45,8 +43,6 @@ from benchmarks.performance.synthetic_requests import (
     _load_tokenizer,
     generate_random_requests,
 )
-from benchmarks.performance.wandb_results import WandbBenchmarkRun
-
 logger = logging.getLogger(__name__)
 
 
@@ -499,7 +495,7 @@ def bind_arrival_trace_requests(
 
 
 class ArrivalTraceBenchmark:
-    """Own one trace replay from trace selection through result publication."""
+    """Execute and summarize one timestamp-driven trace replay."""
 
     def __init__(
         self,
@@ -508,30 +504,6 @@ class ArrivalTraceBenchmark:
     ) -> None:
         self.benchmark = benchmark
         self.endpoint = endpoint
-        self.trace_window_start: float | None = None
-        self.trace_format: str | None = None
-        self.events: list[ArrivalTraceEvent] = []
-        self.request_origin: str | None = None
-        self.result_directory: LocalResultDirectory | None = None
-        self.wandb_run: WandbBenchmarkRun | None = None
-
-    def _load_trace_window(self) -> None:
-        """Load and retain the selected trace window before payload binding."""
-        trace = self.benchmark.arrival_trace
-        reader = ArrivalTraceReader(trace.trace_selector)
-        self.trace_window_start, self.events = reader.read_window(
-            start_offset_seconds=trace.start_offset_seconds,
-            duration_seconds=trace.duration_seconds,
-        )
-        self.trace_format = reader.trace_format
-        if self.trace_format is None:
-            raise RuntimeError("Trace format was not detected")
-
-    def _bind_trace_payloads(self) -> None:
-        """Bind one independent request to every retained trace arrival."""
-        self.request_origin, self.events = bind_arrival_trace_requests(
-            self.benchmark, self.events
-        )
 
     async def _send_event(
         self,
@@ -667,16 +639,19 @@ class ArrivalTraceBenchmark:
 
     async def run(self) -> dict[str, Any]:
         """Replay one selected trace window and publish its local and W&B results."""
-        self._load_trace_window()
-        self._bind_trace_payloads()
         trace = self.benchmark.arrival_trace
-        request_count = len(self.events)
-        if request_count < 1:
-            raise ValueError("selected trace window contains no requests")
-        if self.trace_window_start is None or self.trace_format is None:
-            raise RuntimeError("trace replay state was not initialized")
-        if self.request_origin is None:
-            raise RuntimeError("trace payload binding did not set a payload source")
+        reader = ArrivalTraceReader(trace.trace_selector)
+        trace_window_start, events = reader.read_window(
+            start_offset_seconds=trace.start_offset_seconds,
+            duration_seconds=trace.duration_seconds,
+        )
+        trace_format = reader.trace_format
+        if trace_format is None:
+            raise RuntimeError("Trace format was not detected")
+        request_origin, events = bind_arrival_trace_requests(
+            self.benchmark, events
+        )
+        request_count = len(events)
 
         max_concurrency = trace.max_concurrency
         active_connection_limit = (
@@ -694,7 +669,6 @@ class ArrivalTraceBenchmark:
             "open_loop": False,
             "resolved_parallel": reported_concurrency,
         }
-        self.result_directory = open_local_result_directory(self.benchmark)
         run_record = build_benchmark_run_record(
             self.benchmark,
             self.endpoint,
@@ -710,20 +684,16 @@ class ArrivalTraceBenchmark:
                 "trace_duration": trace.duration_seconds,
                 "trace_max_concurrency": max_concurrency,
                 "trace_synthetic_prefix_reuse": trace.synthetic_prefix_reuse,
-                "trace_format": self.trace_format,
-                "payload_source": self.request_origin,
+                "trace_format": trace_format,
+                "payload_source": request_origin,
             }
         )
-        self.wandb_run = WandbBenchmarkRun()
-        self.wandb_run.start(
+        publication = ResultPublication(
             self.benchmark,
             self.endpoint,
-            output_dir=self.result_directory.output_dir,
-            parallel=reported_concurrency,
-            rate=-1.0,
+            run_record,
         )
-
-        try:
+        with publication:
             async with ChatCompletionsLoadClient(
                 self.benchmark,
                 self.endpoint,
@@ -732,9 +702,9 @@ class ArrivalTraceBenchmark:
             ) as client:
                 request_measurements = await self._replay_events(
                     client,
-                    self.events,
+                    events,
                     max_concurrency=max_concurrency,
-                    trace_window_start=self.trace_window_start,
+                    trace_window_start=trace_window_start,
                 )
             metrics = summarize_http_measurements(
                 self.benchmark,
@@ -747,21 +717,14 @@ class ArrivalTraceBenchmark:
             self._attach_replay_metrics(
                 metrics, request_measurements["results"]
             )
-            publish_benchmark_results(
-                self.benchmark,
-                self.result_directory,
-                run_record,
+            publication.publish(
                 request_measurements,
                 metrics,
-                wandb_run=self.wandb_run,
                 trace_measurements=request_measurements["results"],
             )
-        except Exception:
-            self.wandb_run.finish()
-            raise
 
         return {
             "mode": "arrival_trace",
             "metrics": metrics,
-            "output_dir": self.result_directory.output_dir,
+            "output_dir": publication.output_dir,
         }

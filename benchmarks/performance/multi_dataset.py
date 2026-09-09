@@ -13,16 +13,18 @@ from typing import Any
 
 from benchmarks.performance.config import HttpBenchmarkConfig
 from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.performance.http_benchmark import (
-    StandardHttpLoadBenchmark,
-    build_benchmark_run_record,
-    open_local_result_directory,
-    publish_benchmark_results,
-    resolved_load_record,
+from benchmarks.performance.http_benchmark import StandardHttpLoadBenchmark
+from benchmarks.performance.metrics import (
+    merge_request_measurements,
     summarize_http_measurements,
 )
-from benchmarks.performance.request_metrics import merge_request_measurements
-from benchmarks.performance.wandb_results import wandb_group_name
+from benchmarks.performance.results import (
+    build_benchmark_run_record,
+    open_local_result_directory,
+    publish_results,
+    resolved_load_record,
+)
+from benchmarks.performance.wandb import wandb_group_name
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +67,6 @@ class MultiDatasetBenchmark:
         request_counts = _allocate_request_counts(
             total_requests, len(dataset_selectors)
         )
-        result_directory = open_local_result_directory(self.benchmark)
         run_record = build_benchmark_run_record(
             self.benchmark,
             self.endpoint,
@@ -74,6 +75,7 @@ class MultiDatasetBenchmark:
         )
         run_record["datasets"] = dataset_selectors
         run_record["dataset_request_counts"] = request_counts
+        result_directory = open_local_result_directory(self.benchmark)
 
         wandb_enabled = self.benchmark.outputs.includes("wandb")
         wandb_group = (
@@ -206,7 +208,7 @@ class MultiDatasetBenchmark:
                 "eligible_cache_hit_rate_percent": dict(empty_distribution),
                 "per_dataset": child_conversations,
             }
-        publish_benchmark_results(
+        publish_results(
             self.benchmark,
             result_directory,
             run_record,

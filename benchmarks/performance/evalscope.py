@@ -23,7 +23,7 @@ from benchmarks.performance.conversation import (
     load_chat_conversations,
     split_chat_conversation,
 )
-from benchmarks.performance.request_metrics import generation_tokens_per_second_per_user
+from benchmarks.performance.metrics import generation_tokens_per_second_per_user
 
 
 EVALSCOPE_API = "foretoken_openai"

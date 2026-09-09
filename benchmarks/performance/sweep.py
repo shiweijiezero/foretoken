@@ -20,12 +20,10 @@ from benchmarks.performance.config import (
 from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
 from benchmarks.performance.conversation import iter_jsonl_rows
 from benchmarks.performance.pareto import plot_sweep_pareto
-from benchmarks.performance.http_benchmark import (
-    StandardHttpLoadBenchmark,
-    open_local_result_directory,
-)
+from benchmarks.performance.http_benchmark import StandardHttpLoadBenchmark
+from benchmarks.performance.results import open_local_result_directory
 from benchmarks.performance.console_output import log_sweep_results
-from benchmarks.performance.wandb_results import wandb_group_name
+from benchmarks.performance.wandb import wandb_group_name
 
 logger = logging.getLogger(__name__)
 

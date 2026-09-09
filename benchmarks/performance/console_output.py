@@ -10,7 +10,7 @@ from typing import Any
 
 from benchmarks.performance.config import HttpBenchmarkConfig
 from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.performance.request_metrics import generation_tokens_per_second_per_gpu
+from benchmarks.performance.metrics import generation_tokens_per_second_per_gpu
 
 logger = logging.getLogger(__name__)
 

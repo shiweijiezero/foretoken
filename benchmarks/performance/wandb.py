@@ -16,7 +16,7 @@ import wandb
 
 from benchmarks.performance.config import HttpBenchmarkConfig, WandbRunConfig
 from benchmarks.performance.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.performance.request_metrics import percentile_summary
+from benchmarks.performance.metrics import percentile_summary
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,6 @@ class WandbBenchmarkRun:
     """Own the optional W&B run lifecycle for one benchmark workload point."""
 
     def __init__(self) -> None:
-        self._active = False
         self._run: Optional[Any] = None
 
     def start(
@@ -227,7 +226,6 @@ class WandbBenchmarkRun:
                 exc,
             )
             return
-        self._active = True
         logger.info(
             "W&B logging enabled: project=%s name=%s group=%s concurrency=%s rate=%s",
             wandb_config.project,
@@ -239,11 +237,9 @@ class WandbBenchmarkRun:
 
     def log_metrics(self, metrics: dict[str, Any]) -> None:
         """Publish the final aggregated HTTP benchmark metrics."""
-        if not self._active:
-            return
-        message = wandb_metric_fields(metrics)
         if self._run is None:
             return
+        message = wandb_metric_fields(metrics)
         if "replay_delay" in metrics:
             self._run.summary.update(message)
         else:
@@ -251,7 +247,7 @@ class WandbBenchmarkRun:
 
     def log_trace_measurements(self, results: list[dict[str, Any]]) -> None:
         """Upload trace history organized by scheduled time after replay completes."""
-        if not self._active or self._run is None:
+        if self._run is None:
             return
         rows = _trace_bucket_rows(results)
         try:
@@ -279,7 +275,7 @@ class WandbBenchmarkRun:
 
     def finish(self) -> None:
         """Finish only the run owned by this object; leave other W&B runs in the process unchanged."""
-        if self._active and self._run is not None:
-            self._run.finish()
-        self._active = False
+        run = self._run
         self._run = None
+        if run is not None:
+            run.finish()
