@@ -20,13 +20,12 @@ foretoken install --values examples/tracing/platform-values.yaml
 Set these values for a real collector:
 
 ```yaml
-observability:
-  tracing:
-    endpoint: http://otel-collector.observability.svc:4318
-    samplingRatio: 0.1
-    # headersSecret:
-    #   name: otel-exporter-headers
-    #   key: headers
+tracing:
+  endpoint: http://otel-collector.observability.svc:4318
+  samplingRatio: 0.1
+  # headersSecret:
+  #   name: otel-exporter-headers
+  #   key: headers
 ```
 
 `endpoint` is an OTLP/HTTP base URL; Foretoken uses the `/v1/traces` trace path. `samplingRatio` is the parent-based trace sampling probability. An optional `headersSecret` supplies the complete OTLP headers value through a Kubernetes Secret; keep credentials out of YAML and Git.

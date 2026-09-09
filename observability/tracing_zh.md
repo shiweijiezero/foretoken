@@ -20,13 +20,12 @@ foretoken install --values examples/tracing/platform-values.yaml
 将示例中的地址替换为实际 Collector：
 
 ```yaml
-observability:
-  tracing:
-    endpoint: http://otel-collector.observability.svc:4318
-    samplingRatio: 0.1
-    # headersSecret:
-    #   name: otel-exporter-headers
-    #   key: headers
+tracing:
+  endpoint: http://otel-collector.observability.svc:4318
+  samplingRatio: 0.1
+  # headersSecret:
+  #   name: otel-exporter-headers
+  #   key: headers
 ```
 
 `endpoint` 是 OTLP/HTTP 基础地址，Foretoken 使用其 `/v1/traces` 路径。`samplingRatio` 是基于父 span 的采样概率。可选的 `headersSecret` 从 Kubernetes Secret 提供完整的 OTLP headers 值；凭据不要写入 YAML 或 Git。

@@ -3,11 +3,10 @@
 
 # Apply this file with `foretoken install --values examples/tracing/platform-values.yaml`.
 # The endpoint is the OTLP/HTTP base URL; Foretoken appends /v1/traces.
-observability:
-  tracing:
-    endpoint: http://otel-collector.observability.svc:4318
-    samplingRatio: 0.1
-    # Optional: reference a Secret containing an OTLP headers value.
-    # headersSecret:
-    #   name: otel-exporter-headers
-    #   key: headers
+tracing:
+  endpoint: http://otel-collector.observability.svc:4318
+  samplingRatio: 0.1
+  # Optional: reference a Secret containing an OTLP headers value.
+  # headersSecret:
+  #   name: otel-exporter-headers
+  #   key: headers
