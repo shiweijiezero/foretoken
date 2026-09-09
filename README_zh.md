@@ -58,8 +58,6 @@ foretoken install
 
 ### 3. 部署快速开始示例
 
-获取示例并部署：
-
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken

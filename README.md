@@ -58,8 +58,6 @@ This installs the Foretoken CRDs and controller in the `foretoken-platform` name
 
 ### 3. Deploy the Quick Start
 
-Get the examples and deploy:
-
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
