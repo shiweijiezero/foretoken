@@ -1,22 +1,19 @@
-# syntax=docker/dockerfile:1
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Build from the repository root so Cargo uses the data-plane workspace and
 # its engine adapters. The inference engine image must provide the Python
-# entrypoint required by the selected adapter; the current vLLM adapter uses
-# vllm.entrypoints.cli.main.
+# entrypoint required by the selected adapter. FORETOKEN_VLLM_PYTHON may select
+# an image-specific executable; model-server otherwise uses `python`. The
+# current vLLM adapter uses vllm.entrypoints.cli.main.
 
-ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye
+ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye@sha256:b015aa055657c177e783b690c79b0517cda38fae1fa677b133a954d61f4afdc3
 ARG INFERENCE_ENGINE_IMAGE=ghcr.io/shiweijiezero/foretoken/model-server:0.0.1
+ARG FORETOKEN_VLLM_PYTHON
 
 FROM ${RUST_BUILDER_IMAGE} AS builder
 
 WORKDIR /workspace
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential perl pkg-config \
-    && rm -rf /var/lib/apt/lists/*
 
 COPY data-plane/ ./data-plane/
 
@@ -32,6 +29,8 @@ RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/regis
 
 FROM ${INFERENCE_ENGINE_IMAGE}
 
+ARG FORETOKEN_VLLM_PYTHON
+ENV FORETOKEN_VLLM_PYTHON=${FORETOKEN_VLLM_PYTHON}
 LABEL org.opencontainers.image.source="https://github.com/shiweijiezero/foretoken"
 
 COPY --from=builder /out/foretoken-model-server /usr/local/bin/foretoken-model-server
