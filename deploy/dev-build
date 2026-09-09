@@ -8,7 +8,7 @@ cd "$ROOT"
 
 TAG=${TAG:-latest}
 LOCAL_IMAGE_PREFIX=${LOCAL_IMAGE_PREFIX:-foretoken-dev}
-INFERENCE_ENGINE_IMAGE=${INFERENCE_ENGINE_IMAGE:-ghcr.io/shiweijiezero/foretoken/model-server:0.0.1}
+INFERENCE_ENGINE_IMAGE=${INFERENCE_ENGINE_IMAGE:-ghcr.io/shiweijiezero/foretoken/model-server:0.0.2}
 
 CONTROL_PLANE_IMAGE="$LOCAL_IMAGE_PREFIX-control-plane:$TAG"
 FRONTEND_IMAGE="$LOCAL_IMAGE_PREFIX-frontend:$TAG"
