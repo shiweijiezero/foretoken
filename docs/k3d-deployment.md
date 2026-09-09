@@ -175,7 +175,7 @@ uv pip install -e .
 
 ```bash
 foretoken install -e .
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 ### 4.2 Local mode
@@ -185,7 +185,7 @@ Install Foretoken from release images and deploy the Quick Start:
 ```bash
 foretoken install
 
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 Resolve the address that k3s ServiceLB assigns to the frontend:
@@ -208,7 +208,7 @@ Install Gateway mode and deploy the Quick Start from release images. The command
 
 ```bash
 foretoken install --frontend-mode gateway
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 Resolve the configured Gateway endpoint:
