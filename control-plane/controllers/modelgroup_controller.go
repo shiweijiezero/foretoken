@@ -58,6 +58,7 @@ type ModelGroupReconciler struct {
 	ControlPlaneNamespace string
 	ImagePullSecrets      []corev1.LocalObjectReference
 	Tracing               runtimeconfig.Tracing
+	ProfilingEnabled      bool
 }
 
 // SetupWithManager registers the ModelGroup controller and its owned resources.
@@ -145,7 +146,7 @@ func (reconciler *ModelGroupReconciler) validateModelPoolOwnership(ctx context.C
 
 // reconcileDeployment applies the ModelGroup Deployment and returns its persisted state.
 func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment, error) {
-	desired, err := desiredDeployment(group, reconciler.ImagePullSecrets, reconciler.Tracing)
+	desired, err := desiredDeployment(group, reconciler.ImagePullSecrets, reconciler.Tracing, reconciler.ProfilingEnabled)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +179,7 @@ func modelGroupLabels(group *inferencev1alpha1.ModelGroup) map[string]string {
 }
 
 // desiredDeployment builds the isolated model-server workload from a resolved ModelGroup contract.
-func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference, tracing runtimeconfig.Tracing) (*appsv1.Deployment, error) {
+func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference, tracing runtimeconfig.Tracing, profilingEnabled bool) (*appsv1.Deployment, error) {
 	launchPlan, err := vllmconfig.BuildLaunchPlan(group.Spec)
 	if err != nil {
 		return nil, fmt.Errorf("build vLLM launch plan: %w", err)
@@ -217,6 +218,9 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	}
 	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Spec.Artifacts.SourceAccess)...)
 	env = append(env, tracing.Env()...)
+	if profilingEnabled {
+		env = append(env, corev1.EnvVar{Name: "FORETOKEN_PROFILE_DIR", Value: "/tmp/foretoken-profiles"})
+	}
 	if group.Spec.PDRuntime != nil {
 		env = append(env,
 			corev1.EnvVar{Name: "VLLM_MOONCAKE_BOOTSTRAP_PORT", Value: strconv.Itoa(int(group.Spec.PDRuntime.BootstrapPort))},

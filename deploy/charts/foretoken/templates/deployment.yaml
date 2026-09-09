@@ -73,6 +73,9 @@ spec:
             - {{ printf "--tracing-headers-secret-key=%s" $.Values.tracing.headersSecret.key | quote }}
             {{- end }}
             {{- end }}
+            {{- if .Values.runtime.vllm.profiling.enabled }}
+            - --vllm-profiling-enabled=true
+            {{- end }}
             {{- range .Values.workload.imagePullSecrets }}
             - {{ printf "--workload-image-pull-secret=%s" .name | quote }}
             {{- end }}

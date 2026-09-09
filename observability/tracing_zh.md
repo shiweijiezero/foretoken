@@ -50,4 +50,4 @@ tracing:
 
 请在配置的地址部署 OpenTelemetry Collector 或其他 OTLP/HTTP receiver，并由平台负责保留周期、访问控制、批处理以及导出到 trace backend。Foretoken 不安装 Collector、追踪数据库或日志后端。
 
-如需根据持续异常的指标发送通知，参阅[告警](alerting_zh.md)。
+性能剖析和告警通知是独立运维能力，分别参阅[告警](alerting_zh.md)、[Lark 集成](integrations/lark/README_zh.md)和[性能剖析](profiling_zh.md)。

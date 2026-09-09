@@ -73,6 +73,8 @@ runtime:
     image: ghcr.io/shiweijiezero/foretoken/model-server:0.0.1-alpha.1
     profileRevision: default
     modelServerPort: 9000
+    profiling:
+      enabled: false
     # Optional source access is interpreted by the vLLM runtime adapter.
     modelSource:
       endpoint: ""

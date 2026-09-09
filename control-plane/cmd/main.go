@@ -80,6 +80,7 @@ func main() {
 	var modelSourceTokenSecretName string
 	var modelSourceTokenSecretKey string
 	var tracingConfig runtimeconfig.Tracing
+	var profilingEnabled bool
 
 	// Metrics stay disabled until the chart exposes a secured endpoint.
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
@@ -108,6 +109,7 @@ func main() {
 	flag.Float64Var(&tracingConfig.SamplingRatio, "tracing-sampling-ratio", 0.1, "Fraction of new inference traces sampled; remote parent decisions are preserved.")
 	flag.StringVar(&tracingConfig.HeadersSecretName, "tracing-headers-secret-name", "", "Namespace-local Secret containing OTLP authentication headers.")
 	flag.StringVar(&tracingConfig.HeadersSecretKey, "tracing-headers-secret-key", "", "Key containing comma-separated OTLP headers in the tracing Secret.")
+	flag.BoolVar(&profilingEnabled, "vllm-profiling-enabled", false, "Enable operator-controlled PyTorch profiling on vLLM model-server Pods.")
 	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional model source endpoint interpreted by the runtime adapter.")
 	flag.StringVar(&modelSourceTokenSecretName, "model-source-token-secret-name", "", "Namespace-local Secret containing the model source credential.")
 	flag.StringVar(&modelSourceTokenSecretKey, "model-source-token-secret-key", "", "Key in the model source credential Secret.")
@@ -356,7 +358,7 @@ func main() {
 		ctrl.Log.Error(errors.New("POD_NAMESPACE is required"), "unable to configure ModelGroup drain networking")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, Tracing: tracingConfig}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, Tracing: tracingConfig, ProfilingEnabled: profilingEnabled}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelGroup controller")
 		os.Exit(1)
 	}

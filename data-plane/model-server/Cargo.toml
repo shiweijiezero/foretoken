@@ -28,7 +28,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["serde"] }
 zeromq.workspace = true
 vllm-engine-core-client.workspace = true
 vllm-llm.workspace = true

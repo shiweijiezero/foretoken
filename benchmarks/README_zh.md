@@ -60,6 +60,10 @@ foretoken bench \
 
 扫描会保存每个有效负载点；只有至少有两个有效负载点时，才会生成 `pareto/PARETO.png`。
 
+## 采集性能剖析
+
+在 Foretoken 部署上执行短时间诊断采集：`foretoken bench PATH --profile --warmup-requests 8 --number 4`。模型 runtime 必须已开启剖析能力。平台示例、本地产物和清理方式见[性能剖析](../observability/profiling_zh.md)。剖析结果不会上传 W&B，也不会参与 Pareto 比较。
+
 ## 下一步
 
 数据集、随机提示词、轨迹回放、前缀复用、多数据集和参数扫描的配方见[评测示例](docs/examples_zh.md)。命令参数和结果格式可通过 `foretoken bench --help` 及本地产物查看。

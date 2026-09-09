@@ -134,7 +134,7 @@ A response may begin with `2xx` and fail later while streaming. Do not use `fore
 
 [Alerting](alerting.md) evaluates sustained unhealthy signals and sends notifications through Alertmanager. Enable it separately and choose thresholds and notification channels in its example configuration.
 
-For an individual slow request, use [distributed tracing](tracing.md).
+For an individual slow request, use [distributed tracing](tracing.md). For operator, kernel, or communication bottlenecks, follow the [performance profiling guide](profiling.md).
 
 ## Remove collection
 
