@@ -10,7 +10,7 @@ VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)
 	image-frontend image-vllm-metax image-model-server image-model-server-metax \
 	image-benchmark dashboard
 
-# Regenerates the Grafana dashboard shipped by the chart; needs the `dev` extra on Python 3.11+.
+# Regenerates the Grafana dashboard shipped by the chart; needs the `dev` extra installed.
 dashboard:
 	python3 deploy/grafana/system_overview.py > deploy/charts/foretoken/files/grafana/foretoken-system-overview.json
 

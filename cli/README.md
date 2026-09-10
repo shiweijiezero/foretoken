@@ -13,7 +13,7 @@ For a new cluster, start by installing the command-line tool. If `foretoken --ve
 
 ## Before you start
 
-You need Python 3.10 or later, an active Kubernetes context, `kubectl`, and Helm. GPU nodes must already have their vendor driver and Kubernetes device plugin.
+You need Python 3.11 or later, an active Kubernetes context, `kubectl`, and Helm. GPU nodes must already have their vendor driver and Kubernetes device plugin.
 ## Install the command-line tool
 
 Install the published Foretoken command-line tool package with pip:

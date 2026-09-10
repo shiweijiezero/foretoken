@@ -11,7 +11,7 @@ version = "0.0.2"
 description = "Command-line tools for installing and operating Foretoken"
 readme = "cli/README.md"
 license = "Apache-2.0"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 authors = [{ name = "Foretoken contributors" }]
 dependencies = [
     "packaging>=24.0",
@@ -33,7 +33,7 @@ bench = [
     "wandb>=0.16",
 ]
 dev = [
-    "grafana-foundation-sdk==1769699379!11.6.0; python_version >= '3.11'",
+    "grafana-foundation-sdk==1769699379!11.6.0",
     "pytest>=7.0",
 ]
 

@@ -31,7 +31,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 ## Quick Start
 
-Start with a GPU-enabled Kubernetes cluster and Python 3.10+, `kubectl`, and Helm installed locally.
+Start with a GPU-enabled Kubernetes cluster and Python 3.11+, `kubectl`, and Helm installed locally.
 
 ### 1. Install the command-line tool
 
