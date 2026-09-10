@@ -86,19 +86,15 @@ sum(foretoken:frontend_http_response_starts:rate5m)
 
 ## 告警
 
-告警规则随采集一起安装。每条告警都链接到[排障手册](runbooks/alerts_zh.md)中的对应条目，说明信号含义和排查方法。阈值和通知语言在平台配置中设置，看板会把每个阈值画成对应面板上的虚线：
+告警规则随采集一起安装。每条告警都链接到[排障手册](runbooks/alerts_zh.md)中的对应条目，说明信号含义和排查方法。看板会把每个告警阈值画成对应面板上的虚线。
 
-```yaml
-observability:
-  mode: enabled
-  alerts:
-    language: en
-    thresholds:
-      kvCacheUsageRatio: 0.90
-      nvidiaTemperatureCelsius: 80
+要调整阈值或通知语言，修改[可观测性示例](../examples/observability/README_zh.md)中的 `platform.yaml`，随安装一起传入：
+
+```bash
+foretoken install --values examples/observability/platform.yaml
 ```
 
-可配置的阈值有 `kvCacheUsageRatio`、`acceleratorUtilizationRatio`、`acceleratorMemoryUsageRatio`、`nvidiaTemperatureCelsius` 和 `nvidiaPowerWatts`，未填写的沿用 Chart 默认值。`language` 可选 `zh`、`en` 或 `bilingual`，对本次安装的全部告警生效。通知由集群的 Alertmanager 发送；可选的 [Lark 集成](integrations/lark/README_zh.md)为 Lark 群机器人提供接收器。
+`language` 可选 `zh`、`en` 或 `bilingual`，对本次安装的全部告警生效。通知由集群的 Alertmanager 发送；可选的 [Lark 集成](integrations/lark/README_zh.md)为 Lark 群机器人提供接收器。
 
 ## 指标参考
 

@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Alert settings for `foretoken install --values examples/observability/platform.yaml`.
+# The values below are the chart defaults; edit the ones to change and keep the rest.
+observability:
+  alerts:
+    # Notification language: zh, en, or bilingual.
+    language: zh
+    # Alert rules fire at these values; the dashboard draws them as dashed lines.
+    thresholds:
+      kvCacheUsageRatio: 0.95
+      acceleratorUtilizationRatio: 0.95
+      acceleratorMemoryUsageRatio: 0.95
+      nvidiaTemperatureCelsius: 85
+      nvidiaPowerWatts: 300
