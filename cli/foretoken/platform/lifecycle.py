@@ -77,7 +77,7 @@ class PlatformLifecycle:
                 )
         values = load_platform_values(command.values)
         stored_load_balancer = (
-            helm.platform_load_balancer_config(platform)
+            helm.stored_load_balancer_config(platform)
             if platform_exists
             else None
         )
@@ -107,13 +107,13 @@ class PlatformLifecycle:
             )
 
         load_balancer_plan = load_balancer.resolve_install(load_balancer_config)
-        if load_balancer_plan.blocking_reason:
+        if load_balancer_plan.blocking:
             _print_plan(
                 "LoadBalancer",
                 load_balancer_plan.action,
                 load_balancer_plan.detail,
             )
-            raise DeploymentError(load_balancer_plan.blocking_reason)
+            raise DeploymentError(load_balancer_plan.detail)
 
         gateway_config, gateway_plan = gateway.resolve_install(
             command, platform, platform_exists
@@ -266,7 +266,6 @@ class PlatformLifecycle:
             gateway_section_name=command.gateway_section_name,
             gateway_controller_name=gateway_plan.controller_name,
             observability_labels=observability_labels,
-            load_balancer_addresses=load_balancer_plan.config.managed_addresses,
             reuse_values=platform_exists,
             timeout=command.timeout,
         )

@@ -37,7 +37,7 @@ class LoadBalancerPlan:
     action: str
     detail: str
     install: bool = False
-    blocking_reason: str = ""
+    blocking: bool = False
 
 
 @dataclass(frozen=True)
@@ -67,21 +67,26 @@ class LoadBalancerLifecycle:
         helm = self._helm
         release = helm.metallb_release()
         release_exists = helm.release_exists(release)
+        # A release under the managed name that another tool owns is only an
+        # obstacle when a managed installation is requested; otherwise it is
+        # observed like any other implementation.
         if release_exists and not helm.is_cli_managed(release):
-            return LoadBalancerPlan(
-                release,
-                config,
-                "Needs configuration",
-                f"Helm release {release.display_name} is not managed by foretoken",
-                blocking_reason=(
-                    f"Helm release {release.display_name} is not managed by foretoken; "
-                    "use its existing Helm lifecycle"
-                ),
-            )
+            if config.managed_addresses:
+                return LoadBalancerPlan(
+                    release,
+                    config,
+                    "Needs configuration",
+                    f"Helm release {release.display_name} is not managed by "
+                    "foretoken; use its existing Helm lifecycle",
+                    blocking=True,
+                )
+            release_exists = False
 
         try:
             observation = self._observe_cluster()
-            managed_configured = self._managed_configuration_is_owned(release)
+            managed_configured = release_exists and (
+                self._managed_configuration_is_owned(release)
+            )
         except DeploymentError as exc:
             detail = f"cluster capability could not be inspected: {exc}"
             return LoadBalancerPlan(
@@ -89,13 +94,13 @@ class LoadBalancerLifecycle:
                 config,
                 "Needs configuration" if config.managed_addresses else "Not verified",
                 detail,
-                blocking_reason=detail if config.managed_addresses else "",
+                blocking=bool(config.managed_addresses),
             )
 
         # A managed release stores its pool, so an interrupted or partially
         # upgraded installation resumes without asking for the addresses again.
         if release_exists and not config.managed_addresses:
-            config = self._helm.metallb_load_balancer_config(release)
+            config = self._helm.stored_load_balancer_config(release)
             if not config.managed_addresses:
                 config = self._managed_resource_config(release)
 
@@ -109,25 +114,13 @@ class LoadBalancerLifecycle:
                 )
             return self._automatic_plan(release, config, observation, release_exists)
 
-        collision = self._managed_resource_collision(release)
-        if collision:
+        conflict = self._managed_resource_collision(release) or (
+            "" if release_exists else self._managed_install_conflict(observation)
+        )
+        if conflict:
             return LoadBalancerPlan(
-                release,
-                config,
-                "Needs configuration",
-                collision,
-                blocking_reason=collision,
+                release, config, "Needs configuration", conflict, blocking=True
             )
-        if not release_exists:
-            conflict = self._managed_install_conflict(observation)
-            if conflict:
-                return LoadBalancerPlan(
-                    release,
-                    config,
-                    "Needs configuration",
-                    conflict,
-                    blocking_reason=conflict,
-                )
         return LoadBalancerPlan(
             release,
             config,

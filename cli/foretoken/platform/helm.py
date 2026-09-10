@@ -68,23 +68,9 @@ class Helm(HelmClient):
         """Return the controller identity reserved for managed Envoy Gateway."""
         return self._config.envoy_gateway_controller
 
-    def platform_load_balancer_config(
-        self, release: ReleaseRef
-    ) -> LoadBalancerConfig:
-        """Return the LoadBalancer settings stored with one platform release."""
+    def stored_load_balancer_config(self, release: ReleaseRef) -> LoadBalancerConfig:
+        """Return the address pool stored with the platform or managed MetalLB release."""
         return load_balancer_config_from_values(self._release_values(release))
-
-    def metallb_load_balancer_config(
-        self, release: ReleaseRef
-    ) -> LoadBalancerConfig:
-        """Return the address pool stored with a CLI-managed MetalLB release."""
-        values = self._release_values(release)
-        foretoken = values.get("foretoken") or {}
-        if not isinstance(foretoken, dict):
-            raise DeploymentError("managed MetalLB release metadata is invalid")
-        return load_balancer_config_from_values(
-            {"loadBalancer": {"managedAddresses": foretoken.get("managedAddresses", [])}}
-        )
 
     def platform_gateway_config(self, release: ReleaseRef) -> PlatformGatewayConfig:
         """Return the effective frontend Gateway configuration for a platform."""
@@ -135,7 +121,6 @@ class Helm(HelmClient):
         chart: str,
         chart_version: str | None,
         release_labels: tuple[tuple[str, str], ...] = (),
-        repository: str | None = None,
     ) -> list[str]:
         """Build the shared CLI-owned Helm release identity and chart selection."""
         labels = (self._config.management_label, *release_labels)
@@ -152,8 +137,6 @@ class Helm(HelmClient):
         ]
         if chart_version is not None:
             args.extend(["--version", chart_version])
-        if repository is not None:
-            args.extend(["--repo", repository])
         return args
 
     @staticmethod
@@ -183,7 +166,6 @@ class Helm(HelmClient):
         gateway_section_name: str,
         gateway_controller_name: str,
         observability_labels: tuple[tuple[str, str], ...],
-        load_balancer_addresses: tuple[str, ...],
     ) -> None:
         """Add the platform values shared by release and source installs."""
         for values_file in values:
@@ -194,9 +176,6 @@ class Helm(HelmClient):
                 "frontend.enabled=true",
                 "--set",
                 "observability.mode=enabled",
-                "--set-json",
-                "loadBalancer.managedAddresses="
-                + json.dumps(load_balancer_addresses, separators=(",", ":")),
             ]
         )
         if observability_labels:
@@ -251,7 +230,6 @@ class Helm(HelmClient):
         gateway_section_name: str,
         gateway_controller_name: str,
         observability_labels: tuple[tuple[str, str], ...],
-        load_balancer_addresses: tuple[str, ...],
         reuse_values: bool,
         timeout: str,
     ) -> None:
@@ -285,7 +263,6 @@ class Helm(HelmClient):
             gateway_section_name,
             gateway_controller_name,
             observability_labels,
-            load_balancer_addresses,
         )
         if source_images is not None:
             control_plane_image = source_images.control_plane
@@ -341,14 +318,16 @@ class Helm(HelmClient):
             release,
             self._config.metallb.source,
             self._config.metallb.version,
-            repository=self._config.metallb.repository,
         )
+        # Layer 2 announcement needs no BGP backend, which the chart otherwise
+        # bundles as frr-k8s. The pool is stored under the platform's own values
+        # key so one reader recovers it from either release.
         args.extend(
             [
                 "--set",
                 "frrk8s.enabled=false",
                 "--set-json",
-                "foretoken.managedAddresses="
+                "loadBalancer.managedAddresses="
                 + json.dumps(config.managed_addresses, separators=(",", ":")),
             ]
         )

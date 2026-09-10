@@ -51,11 +51,11 @@ foretoken install
 
 ### LoadBalancer 访问
 
-`foretoken install` 使用当前 Kubernetes context，不会自行创建集群。新建本地环境时，先按 [k3d 指南](../docs/k3d-deployment_zh.md)准备集群，再运行上面的默认安装命令；k3d 自带的 k3s ServiceLB 无需任何额外设置。
+`foretoken install` 在当前 Kubernetes context 中工作，不会自行创建集群。新建本地环境时，先按 [k3d 指南](../docs/k3d-deployment_zh.md)准备集群；k3d 自带的 k3s ServiceLB 无需额外设置。
 
-安装时不会创建探测 Service，也不会猜测网络地址。命令会自动识别并复用集群已有的默认 LoadBalancer 实现，包括 k3s ServiceLB、使用默认 class 的 MetalLB，以及云平台的节点集成；计划行显示 `Reuse`。这些信息说明集群具备哪种实现，而不是承诺某个地址：前端 Service 创建后，`foretoken endpoint` 会根据 Service 状态确认实际分配的地址。如果无法确认任何实现，控制平面仍会完成安装，并在结束时明确指出部署模型服务前需要完成的步骤。
+安装会复用集群已有的 `LoadBalancer` Service 地址分配实现，包括 k3s ServiceLB、服务默认 class 的 MetalLB，以及云平台的集成，并在计划中显示 `LoadBalancer Reuse`。地址按 Service 分配，前端 Service 创建后由 `foretoken endpoint` 给出实际地址。如果无法确认任何实现，控制平面仍会完成安装，并在结尾以 `LoadBalancer support Not verified` 说明下一步。
 
-已有的裸金属集群需要由管理员规划网络。管理员预留一段可在节点二层网络中路由的地址，并停用其他默认实现（包括 k3s ServiceLB）后，把获批范围写入 values 文件：
+没有该实现的裸金属集群，需要向管理员申请一段可在节点二层网络中路由的地址，停用其他默认实现后，把该范围写入 values 文件：
 
 ```yaml
 loadBalancer:
@@ -67,7 +67,7 @@ loadBalancer:
 foretoken install --values platform-values.yaml
 ```
 
-非空的 `managedAddresses` 表示选择由命令行工具安装 MetalLB，并维护 Foretoken 自己的地址池和二层公告。地址池会随 release 保存：后续升级无需重复提供，中断的安装也会据此自动修复。Foretoken 不会根据节点地址推导地址池、扫描空闲 IP、把节点 IP 当作虚拟地址，也不会接管或修改由外部管理的 MetalLB 地址池与公告。
+`managedAddresses` 非空时，命令行工具会安装 MetalLB，并维护 Foretoken 自己的地址池和二层公告。地址池随 release 保存，后续升级不必再传 values 文件，中断的安装也会自动修复。外部管理的 MetalLB release、地址池和公告只会被复用，不会被修改。
 
 ### 网关模式
 

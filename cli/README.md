@@ -51,11 +51,11 @@ During installation, the command-line tool discovers Prometheus and accelerator 
 
 ### LoadBalancer access
 
-`foretoken install` uses the active Kubernetes context; it does not create a cluster. For a new local environment, first follow the maintained [k3d setup](../docs/k3d-deployment.md), then run the default installation above. The included k3s ServiceLB needs no additional Foretoken setting.
+`foretoken install` works in the active Kubernetes context and does not create a cluster. For a new local environment, follow the [k3d setup](../docs/k3d-deployment.md) first; its k3s ServiceLB needs no additional setting.
 
-Installation does not create a probe Service or guess a network address. It automatically reuses observed support for unclassified `LoadBalancer` Services, including default k3s ServiceLB, default-class MetalLB, and cloud provider integrations. These signals describe the cluster implementation, not a promised address: `foretoken endpoint` confirms allocation after a frontend Service exists. If support cannot be verified, the control plane still installs and reports the exact next step before model services are deployed.
+Installation reuses the cluster's implementation for `LoadBalancer` Services — k3s ServiceLB, a MetalLB installation serving the default class, or a cloud provider integration — and the plan shows `LoadBalancer Reuse`. Addresses are assigned per Service, so `foretoken endpoint` reports the frontend address once the Service exists. When no implementation can be confirmed, the control plane still installs and the summary ends with `LoadBalancer support Not verified` and the next step.
 
-Existing bare-metal clusters need administrator-owned network planning. When the administrator has reserved a range routed on the nodes' Layer 2 network and disabled any competing default implementation, add that approved range to a values file:
+On a bare-metal cluster without such an implementation, ask the administrator for an address range routed on the nodes' Layer 2 network, disable any competing default implementation, and add the range to a values file:
 
 ```yaml
 loadBalancer:
@@ -67,7 +67,7 @@ loadBalancer:
 foretoken install --values platform-values.yaml
 ```
 
-A non-empty `managedAddresses` list asks the command-line tool to install MetalLB and maintain its Foretoken address pool and Layer 2 advertisement. The saved pool is reused on upgrades and repairs an interrupted managed installation. Foretoken never derives the pool from node addresses, scans for unused IPs, uses a node IP as a virtual address, or modifies externally owned MetalLB pools and advertisements.
+With a non-empty `managedAddresses`, the command-line tool installs MetalLB and maintains a Foretoken-owned address pool and Layer 2 advertisement. The pool is saved with the release, so later upgrades run without the values file and an interrupted installation is repaired automatically. Externally managed MetalLB releases, pools, and advertisements are reused as they are and never modified.
 
 ### Gateway mode
 

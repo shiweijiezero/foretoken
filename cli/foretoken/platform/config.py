@@ -23,7 +23,6 @@ class ManagedChart:
     release_name: str
     source: str
     version: str | None = None
-    repository: str | None = None
 
 
 @dataclass(frozen=True)
@@ -85,9 +84,8 @@ def default_platform_config() -> PlatformConfig:
         ),
         metallb=ManagedChart(
             release_name="foretoken-metallb",
-            source="metallb",
+            source="oci://quay.io/metallb/chart/metallb",
             version="0.16.1",
-            repository="https://metallb.github.io/metallb",
         ),
         envoy_gateway_default_controller=(
             "gateway.envoyproxy.io/gatewayclass-controller"
