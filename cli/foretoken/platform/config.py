@@ -134,38 +134,32 @@ def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
 
 def load_balancer_config_from_values(
     values: dict[str, Any],
-    fallback: LoadBalancerConfig | None = None,
-) -> LoadBalancerConfig:
-    """Decode the CLI-owned LoadBalancer settings from effective Helm values."""
-    config = fallback or LoadBalancerConfig()
+) -> LoadBalancerConfig | None:
+    """Decode loadBalancer.managedAddresses, or None when the values leave it unset."""
     load_balancer = values.get("loadBalancer")
     if load_balancer is None:
-        return config
+        return None
     if not isinstance(load_balancer, dict):
         raise DeploymentError("loadBalancer must be a mapping")
     if "managedAddresses" not in load_balancer:
-        return config
+        return None
     addresses = load_balancer["managedAddresses"]
     if not isinstance(addresses, list) or not all(
-        isinstance(address, str) and address.strip() for address in addresses
+        isinstance(address, str) and address for address in addresses
     ):
         raise DeploymentError(
             "loadBalancer.managedAddresses must be a list of IP ranges or CIDRs"
         )
-    normalized = tuple(address.strip() for address in addresses)
-    if len(set(normalized)) != len(normalized):
-        raise DeploymentError(
-            "loadBalancer.managedAddresses must not contain duplicate ranges"
-        )
-    return LoadBalancerConfig(normalized)
+    return LoadBalancerConfig(tuple(addresses))
 
 
 def resolve_load_balancer_config(
     values: tuple[dict[str, Any], ...],
-    stored: LoadBalancerConfig | None = None,
 ) -> LoadBalancerConfig:
-    """Apply values files in Helm order to the stored LoadBalancer choice."""
-    config = stored or LoadBalancerConfig()
+    """Return the LoadBalancer choice from the last values file that sets it."""
+    config = LoadBalancerConfig()
     for item in values:
-        config = load_balancer_config_from_values(item, config)
+        decoded = load_balancer_config_from_values(item)
+        if decoded is not None:
+            config = decoded
     return config

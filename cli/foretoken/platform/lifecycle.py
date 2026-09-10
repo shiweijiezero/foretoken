@@ -76,14 +76,7 @@ class PlatformLifecycle:
                     f"run {command_hint}"
                 )
         values = load_platform_values(command.values)
-        stored_load_balancer = (
-            helm.stored_load_balancer_config(platform)
-            if platform_exists
-            else None
-        )
-        load_balancer_config = resolve_load_balancer_config(
-            values, stored_load_balancer
-        )
+        load_balancer_config = resolve_load_balancer_config(values)
 
         deployments = control_plane_deployments(kubectl)
         expected_deployment = f"{platform.name}-control-plane"
@@ -298,9 +291,9 @@ class PlatformLifecycle:
             _print_plan(
                 "LoadBalancer support",
                 load_balancer_plan.action,
-                "model services cannot receive external addresses yet; for a new "
-                "local cluster use the maintained k3d setup, or ask the cluster "
-                "administrator for an approved loadBalancer.managedAddresses range",
+                "model services cannot receive external addresses until the "
+                "cluster assigns LoadBalancer addresses; set "
+                "loadBalancer.managedAddresses in --values to install managed MetalLB",
             )
 
     def uninstall(self, command: UninstallCommand) -> None:

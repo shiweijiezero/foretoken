@@ -69,8 +69,11 @@ class Helm(HelmClient):
         return self._config.envoy_gateway_controller
 
     def stored_load_balancer_config(self, release: ReleaseRef) -> LoadBalancerConfig:
-        """Return the address pool stored with the platform or managed MetalLB release."""
-        return load_balancer_config_from_values(self._release_values(release))
+        """Return the address pool stored with the managed MetalLB release."""
+        return (
+            load_balancer_config_from_values(self._release_values(release))
+            or LoadBalancerConfig()
+        )
 
     def platform_gateway_config(self, release: ReleaseRef) -> PlatformGatewayConfig:
         """Return the effective frontend Gateway configuration for a platform."""
@@ -320,8 +323,8 @@ class Helm(HelmClient):
             self._config.metallb.version,
         )
         # Layer 2 announcement needs no BGP backend, which the chart otherwise
-        # bundles as frr-k8s. The pool is stored under the platform's own values
-        # key so one reader recovers it from either release.
+        # bundles as frr-k8s. The pool is stored under the key users set in
+        # their values so a later install without values recovers it.
         args.extend(
             [
                 "--set",

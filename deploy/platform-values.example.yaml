@@ -8,10 +8,9 @@ image:
   repository: registry.example.com/foretoken/control-plane
   tag: dev
 
-# On bare-metal clusters without a LoadBalancer implementation, uncomment this
-# block with the address range approved by the cluster administrator and routed
-# on the node network. foretoken install manages MetalLB in Layer 2 mode only
-# when this list is non-empty.
+# On clusters that assign no addresses to LoadBalancer Services, set an address
+# range routed on the node network; foretoken install then manages MetalLB in
+# Layer 2 mode.
 # loadBalancer:
 #   managedAddresses:
 #     - <approved-address-range>

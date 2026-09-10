@@ -49,29 +49,9 @@ foretoken install
 
 During installation, the command-line tool discovers Prometheus and accelerator metric exporters. It reuses compatible shared instances, installs managed Prometheus and NVIDIA DCGM Exporter releases when needed, and connects to the mxExporter already provided by a MetaX cluster. See [Observability](../observability/README.md) for monitoring selection and configuration.
 
-### LoadBalancer access
-
-`foretoken install` works in the active Kubernetes context and does not create a cluster. For a new local environment, follow the [k3d setup](../docs/k3d-deployment.md) first; its k3s ServiceLB needs no additional setting.
-
-Installation reuses the cluster's implementation for `LoadBalancer` Services — k3s ServiceLB, a MetalLB installation serving the default class, or a cloud provider integration — and the plan shows `LoadBalancer Reuse`. Addresses are assigned per Service, so `foretoken endpoint` reports the frontend address once the Service exists. When no implementation can be confirmed, the control plane still installs and the summary ends with `LoadBalancer support Not verified` and the next step.
-
-On a bare-metal cluster without such an implementation, ask the administrator for an address range routed on the nodes' Layer 2 network, disable any competing default implementation, and add the range to a values file:
-
-```yaml
-loadBalancer:
-  managedAddresses:
-    - <approved-address-range>
-```
-
-```bash
-foretoken install --values platform-values.yaml
-```
-
-With a non-empty `managedAddresses`, the command-line tool installs MetalLB and maintains a Foretoken-owned address pool and Layer 2 advertisement. The pool is saved with the release, so later upgrades run without the values file and an interrupted installation is repaired automatically. Externally managed MetalLB releases, pools, and advertisements are reused as they are and never modified.
-
 ### Gateway mode
 
-Gateway mode creates a dedicated `GatewayClass` and `Gateway`, installing Envoy Gateway if no compatible controller is available. The Gateway data plane is itself exposed through a `LoadBalancer` Service, so the LoadBalancer requirement above still applies:
+Gateway mode creates a dedicated `GatewayClass` and `Gateway`, installing Envoy Gateway if no compatible controller is available:
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -107,7 +87,7 @@ Registry login authorizes the local image push. Private registries also need `im
 
 ### Installation options
 
-Repeatable `--values` files provide platform image, runtime, and hardware settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
+Repeatable `--values` files provide platform image, runtime, and hardware settings. On a cluster that assigns no addresses to `LoadBalancer` Services, set `loadBalancer.managedAddresses` to an address range routed on the node network; the command-line tool then installs MetalLB in Layer 2 mode and keeps the range with that release. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
 
 ### Persistent runtime cache
 
@@ -197,4 +177,4 @@ The command waits for deletion and ignores resources that are already absent. Af
 foretoken uninstall
 ```
 
-The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain. It removes monitoring, Gateway, and MetalLB resources managed by the command-line tool with the platform, while reused cluster components remain unchanged. Because MetalLB is cluster-wide, a managed release is preserved when default `LoadBalancer` Services or external MetalLB address configuration still depend on it; remove those dependencies and run `foretoken uninstall` again to complete cleanup.
+The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain. It removes monitoring, Gateway, and MetalLB resources managed by the command-line tool with the platform, while reused cluster components remain unchanged.
