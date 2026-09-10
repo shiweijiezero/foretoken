@@ -11,14 +11,12 @@ Foretoken collects service and accelerator metrics with Prometheus, shows them i
 
 ## Get started
 
-Install the platform, deploy a model service, and open the dashboard:
-
 ```bash
 foretoken install
 foretoken deploy examples/quickstart
 ```
 
-`foretoken install` finds an existing Prometheus or installs a CLI-managed kube-prometheus-stack, and prints its plan before changing the cluster. The CLI-managed Grafana loads the dashboard automatically. Retrieve its generated administrator credentials, then open Grafana at the address your cluster provides:
+`foretoken install` reuses a Prometheus that already exists in the cluster or installs a CLI-managed kube-prometheus-stack. The CLI-managed Grafana loads the dashboard automatically. Retrieve its generated administrator credentials, then open Grafana at the address your cluster provides:
 
 ```bash
 GRAFANA_USER="$(kubectl get secret \
@@ -33,19 +31,32 @@ printf 'Grafana user: %s\nGrafana password: %s\n' \
   "$GRAFANA_USER" "$GRAFANA_PASSWORD"
 ```
 
-In Grafana, select **Dashboards** and open **Foretoken System Overview**. It follows the request path: Frontend traffic and admission, model-server latency, throughput, and request-length distributions, scheduler state, KV and RuntimeCache behavior, accelerator utilization, and container resources, followed by autoscaling decisions. Routing and control-plane sections are collapsed below. Filters select the namespace, Frontend service, model group, model role, model, and model service. Accelerator panels show only devices used by Foretoken workloads, each counted once.
+In Grafana, select **Dashboards** and open **Foretoken System Overview**. It follows a request through the Frontend, model serving, caches, and accelerators, and ends with autoscaling decisions; routing and control-plane details are in collapsed sections. Filters narrow the view to a namespace, Frontend service, model group, model role, model, or model service.
+
+## Check that collection works
+
+```bash
+kubectl get servicemonitor,prometheusrule -A \
+  -l app.kubernetes.io/name=foretoken-control-plane
+```
+
+In Prometheus, confirm on **Targets** that the Foretoken targets are `UP` and on **Rules** that `foretoken.recording` and `foretoken.alerting` are loaded. This query returns the Frontend request rate:
+
+```promql
+sum(foretoken:frontend_http_response_starts:rate5m)
+```
 
 ## Use an existing monitoring stack
 
 The CLI reuses what the cluster already provides and installs only what is missing:
 
-| Component | Nothing suitable exists | A qualified instance exists | Conflict or incomplete setup | `foretoken uninstall` |
+| Component | Not present | Present | Present but not usable | `foretoken uninstall` |
 | --- | --- | --- | --- | --- |
 | Prometheus | Install a CLI-managed kube-prometheus-stack | Reuse it | Stop and ask for an explicit choice | Remove only the CLI-managed release |
 | NVIDIA DCGM Exporter | Install a CLI-managed exporter on clusters with NVIDIA GPUs | Reuse it | Stop | Remove only the CLI-managed release |
 | MetaX mxExporter | Stop; the cluster must provide it | Reuse it | Stop | Keep it |
 
-A qualified exporter is ready, covers every selected GPU node, and has exactly one ServiceMonitor that its Prometheus selects. The CLI does not install GPU drivers, device plugins, or vendor operators.
+An exporter is usable when it covers every GPU node and the selected Prometheus scrapes it. The CLI does not install GPU drivers, device plugins, or vendor operators.
 
 If several compatible Prometheus instances exist, choose one:
 
@@ -71,19 +82,6 @@ kubectl get configmap \
   > /tmp/foretoken-system-overview.json
 ```
 
-## Check that collection works
-
-```bash
-kubectl get servicemonitor,prometheusrule -A \
-  -l app.kubernetes.io/name=foretoken-control-plane
-```
-
-In Prometheus, confirm on **Targets** that the Foretoken targets are `UP` and on **Rules** that `foretoken.recording` and `foretoken.alerting` are loaded. This query returns the Frontend request rate:
-
-```promql
-sum(foretoken:frontend_http_response_starts:rate5m)
-```
-
 ## Alerts
 
 Alert rules are installed together with collection. Each alert links to its entry in the [runbooks](runbooks/alerts.md), which explain the signal and how to investigate it. The dashboard draws each alert threshold as a dashed line on the matching panel.
@@ -105,8 +103,7 @@ foretoken install --values examples/observability/alerts.yaml
 | Controller `/metrics` | Reconciliation, workqueues, and published autoscaling decisions |
 | DCGM Exporter | NVIDIA utilization, memory, power, temperature, and XID errors |
 | mxExporter | MetaX utilization and memory |
-| kubelet/cAdvisor | Container CPU, memory, filesystem, and network |
-| kube-state-metrics | Kubernetes object state |
+| kubelet/cAdvisor | Container CPU and memory |
 
 The dashboard and alerts query these recording rules. Model-serving rules are derived from vLLM metrics.
 
@@ -143,7 +140,7 @@ The dashboard and alerts query these recording rules. Model-serving rules are de
 | Accelerator | `foretoken:accelerator_gpu_power_watts` | Per-device NVIDIA power draw |
 | Accelerator | `foretoken:accelerator_gpu_temperature_celsius` | Per-device NVIDIA temperature |
 
-Rules keep the namespace, Frontend service, model group, model role, model name, and Prefill/Decode pipeline scope labels. Frontend latency ends when response headers are sent, so for streaming responses it does not include token delivery; model-server latency ends when generation completes. A streaming response can start with `2xx` and fail later, so the 5xx ratio is not an inference success rate.
+Rules keep the namespace, Frontend service, model group, model role, model name, and Prefill/Decode pipeline scope labels. Frontend latency ends when response headers are sent, so for streaming responses it does not include token delivery; model-server latency ends when generation completes. A streaming response can start with `2xx` and fail later, so the 5xx ratio is not an inference success rate. Accelerator rules cover only devices used by Foretoken workloads.
 
 ## Remove collection
 

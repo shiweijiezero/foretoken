@@ -11,14 +11,12 @@ Foretoken 使用 Prometheus 采集服务和加速器指标，通过 Grafana 看�
 
 ## 快速开始
 
-安装平台、部署一个模型服务，然后打开看板：
-
 ```bash
 foretoken install
 foretoken deploy examples/quickstart
 ```
 
-`foretoken install` 会查找集群中已有的 Prometheus，没有时安装一套由 CLI 管理的 kube-prometheus-stack，并在修改集群前打印安装计划。CLI 管理的 Grafana 会自动加载看板。先获取自动生成的管理员凭据，再通过集群提供的地址打开 Grafana：
+`foretoken install` 会复用集群中已有的 Prometheus，没有时安装一套由 CLI 管理的 kube-prometheus-stack。CLI 管理的 Grafana 会自动加载看板。先获取自动生成的管理员凭据，再通过集群提供的地址打开 Grafana：
 
 ```bash
 GRAFANA_USER="$(kubectl get secret \
@@ -33,19 +31,32 @@ printf 'Grafana user: %s\nGrafana password: %s\n' \
   "$GRAFANA_USER" "$GRAFANA_PASSWORD"
 ```
 
-在 Grafana 中进入 **Dashboards**，选择 **Foretoken System Overview**。它按请求链路依次展示 Frontend 流量和准入、model-server 延迟、吞吐和请求长度分布、调度状态、KV Cache 与 RuntimeCache、加速器利用率和容器资源，之后是扩缩容决策；路由决策和控制面状态两个分区默认折叠。页面可按命名空间、Frontend 服务、模型组、模型角色、模型和模型服务筛选。加速器面板只展示 Foretoken 工作负载使用的设备，每个设备只计一次。
+在 Grafana 中进入 **Dashboards**，选择 **Foretoken System Overview**。它沿着请求链路依次展示 Frontend、模型服务、缓存和加速器，最后是扩缩容决策；路由和控制面的细节放在折叠分区里。可以按命名空间、Frontend 服务、模型组、模型角色、模型或模型服务筛选。
+
+## 确认采集正常
+
+```bash
+kubectl get servicemonitor,prometheusrule -A \
+  -l app.kubernetes.io/name=foretoken-control-plane
+```
+
+在 Prometheus 的 **Targets** 页面确认 Foretoken target 为 `UP`，在 **Rules** 页面确认 `foretoken.recording` 和 `foretoken.alerting` 已加载。下面的查询返回 Frontend 请求速率：
+
+```promql
+sum(foretoken:frontend_http_response_starts:rate5m)
+```
 
 ## 接入已有监控
 
 CLI 优先复用集群已有的组件，只安装缺少的部分：
 
-| 组件 | 没有合适实例 | 有合格实例 | 冲突或配置不完整 | `foretoken uninstall` |
+| 组件 | 不存在 | 存在 | 存在但不可用 | `foretoken uninstall` |
 | --- | --- | --- | --- | --- |
 | Prometheus | 安装 CLI 管理的 kube-prometheus-stack | 复用 | 停止并要求显式指定 | 只删除 CLI 管理的 release |
 | NVIDIA DCGM Exporter | 有 NVIDIA GPU 时安装 CLI 管理的 exporter | 复用 | 停止 | 只删除 CLI 管理的 release |
 | 沐曦 mxExporter | 停止，需要集群自行提供 | 复用 | 停止 | 保留 |
 
-合格的 exporter 必须已就绪、覆盖全部选中的 GPU 节点，并且只有一个被 Prometheus 选中的 ServiceMonitor。CLI 不安装 GPU 驱动、device plugin 或厂商 Operator。
+exporter 可用的条件是覆盖全部 GPU 节点并被选中的 Prometheus 抓取。CLI 不安装 GPU 驱动、device plugin 或厂商 Operator。
 
 集群中有多个兼容的 Prometheus 时，显式指定一个：
 
@@ -71,19 +82,6 @@ kubectl get configmap \
   > /tmp/foretoken-system-overview.json
 ```
 
-## 确认采集正常
-
-```bash
-kubectl get servicemonitor,prometheusrule -A \
-  -l app.kubernetes.io/name=foretoken-control-plane
-```
-
-在 Prometheus 的 **Targets** 页面确认 Foretoken target 为 `UP`，在 **Rules** 页面确认 `foretoken.recording` 和 `foretoken.alerting` 已加载。下面的查询返回 Frontend 请求速率：
-
-```promql
-sum(foretoken:frontend_http_response_starts:rate5m)
-```
-
 ## 告警
 
 告警规则随采集一起安装。每条告警都链接到[排障手册](runbooks/alerts_zh.md)中的对应条目，说明信号含义和排查方法。看板会把每个告警阈值画成对应面板上的虚线。
@@ -105,8 +103,7 @@ foretoken install --values examples/observability/alerts.yaml
 | Controller `/metrics` | Reconcile、工作队列和已发布的扩缩容决策 |
 | DCGM Exporter | NVIDIA 利用率、显存、功耗、温度和 XID 错误 |
 | mxExporter | 沐曦利用率和显存 |
-| kubelet/cAdvisor | 容器 CPU、内存、文件系统和网络 |
-| kube-state-metrics | Kubernetes 对象状态 |
+| kubelet/cAdvisor | 容器 CPU 和内存 |
 
 看板和告警查询下列记录规则。模型服务相关规则来自 vLLM 指标。
 
@@ -143,7 +140,7 @@ foretoken install --values examples/observability/alerts.yaml
 | 加速器 | `foretoken:accelerator_gpu_power_watts` | 每块 NVIDIA 设备的功耗 |
 | 加速器 | `foretoken:accelerator_gpu_temperature_celsius` | 每块 NVIDIA 设备的温度 |
 
-记录规则保留命名空间、Frontend 服务、模型组、模型角色、模型名称和 Prefill/Decode pipeline scope 标签。Frontend 延迟在响应头发出时结束，流式响应的 token 发送时间不计入；model-server 延迟在生成完成时结束。流式响应可能先以 `2xx` 开始、之后再失败，因此 5xx 比例不是推理成功率。
+记录规则保留命名空间、Frontend 服务、模型组、模型角色、模型名称和 Prefill/Decode pipeline scope 标签。Frontend 延迟在响应头发出时结束，流式响应的 token 发送时间不计入；model-server 延迟在生成完成时结束。流式响应可能先以 `2xx` 开始、之后再失败，因此 5xx 比例不是推理成功率。加速器规则只覆盖 Foretoken 工作负载使用的设备。
 
 ## 停止采集
 
