@@ -11,7 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, Query, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -19,17 +19,18 @@ use bytes::Bytes;
 use futures::StreamExt;
 use serde::Serialize;
 
-use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
-use crate::kv_event_adapter::{KvDeltaError, KvEventAdapter};
+use crate::core::kv_events::{KvDeltaError, KvEventAdapter};
+use crate::engine::{Engine, EngineError};
 use crate::runtime_cache;
 use foretoken_model_protocol::{
-    AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, TelemetryResponse,
+    AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, StreamEvent,
+    TelemetryResponse,
 };
+use vllm_llm::GenerateRequest;
 
 // One atomic word linearizes admission close against request acceptance.
 const ADMISSION_OPEN: u64 = 1 << 63;
 const RUNNING_REQUESTS_MASK: u64 = !ADMISSION_OPEN;
-const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
 
 /// Engine state used for API health and admission only; process ownership stays upstream.
 #[derive(Default)]
@@ -122,7 +123,7 @@ impl Drop for AdmissionPermit {
 /// Mutable process state shared by typed HTTP handlers.
 #[derive(Clone)]
 pub struct AppState {
-    backend: Arc<dyn Backend>,
+    backend: Arc<dyn Engine>,
     health: Arc<RuntimeHealth>,
     metadata: RuntimeMetadataResponse,
     kv_events: Option<Arc<KvEventAdapter>>,
@@ -131,7 +132,7 @@ pub struct AppState {
 impl AppState {
     /// Builds state consumed by internal HTTP handlers; the server owns the supplied backend state.
     pub fn new(
-        backend: Arc<dyn Backend>,
+        backend: Arc<dyn Engine>,
         health: Arc<RuntimeHealth>,
         metadata: RuntimeMetadataResponse,
     ) -> Self {
@@ -165,7 +166,6 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
-        .route("/metrics", get(metrics))
         .route("/v1/internal/metadata", get(metadata))
         .route("/v1/internal/telemetry", get(telemetry))
         .route("/v1/internal/admission/close", post(close_admission))
@@ -182,29 +182,6 @@ async fn healthz(State(state): State<AppState>) -> StatusCode {
 }
 async fn readyz(State(state): State<AppState>) -> StatusCode {
     status(state.health.ready())
-}
-
-async fn metrics(State(state): State<AppState>) -> Response {
-    match state.backend.render_openmetrics() {
-        Ok(mut body) => {
-            if let Some(cache) = &state.runtime_cache {
-                if let Some(without_eof) = body.strip_suffix("# EOF\n") {
-                    body = without_eof.to_owned();
-                }
-                body.push_str(&cache.render_openmetrics());
-                body.push_str("# EOF\n");
-            }
-            (
-                [(
-                    header::CONTENT_TYPE,
-                    HeaderValue::from_static(OPENMETRICS_CONTENT_TYPE),
-                )],
-                body,
-            )
-                .into_response()
-        }
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
 }
 
 async fn metadata(State(state): State<AppState>) -> Json<RuntimeMetadataResponse> {
@@ -256,7 +233,7 @@ async fn generate(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     // Multimodal tensors use MessagePack; ordinary requests keep a human-readable JSON boundary.
-    let input: GenerateInput = if content_type_is(&headers, "application/msgpack") {
+    let input: GenerateRequest = if content_type_is(&headers, "application/msgpack") {
         rmp_serde::from_slice(&body).map_err(|_| ApiError::InvalidRequest)?
     } else {
         serde_json::from_slice(&body).map_err(|_| ApiError::InvalidRequest)?
@@ -276,13 +253,13 @@ async fn generate(
     let body_stream = stream.map(move |item| {
         let _permit = &permit;
         let event = match item {
-            Ok(event) => event,
-            Err(error) => TokenEvent::Error {
+            Ok(event) => StreamEvent::Output(event),
+            Err(error) => StreamEvent::Error {
                 request_id: request_id.clone(),
                 code: error.token_error_code(),
             },
         };
-        let mut encoded = serde_json::to_vec(&event).expect("TokenEvent always serializes");
+        let mut encoded = serde_json::to_vec(&event).expect("StreamEvent always serializes");
         encoded.push(b'\n');
         Ok::<Bytes, Infallible>(Bytes::from(encoded))
     });
@@ -361,13 +338,13 @@ enum ApiError {
     RequestFailed,
 }
 impl ApiError {
-    fn backend(error: BackendError) -> Self {
+    fn backend(error: EngineError) -> Self {
         match error {
-            BackendError::InvalidRequest => Self::InvalidRequest,
-            BackendError::Unavailable => Self::Unavailable,
-            BackendError::Rejected => Self::Rejected,
-            BackendError::Protocol => Self::Protocol,
-            BackendError::RequestFailed => Self::RequestFailed,
+            EngineError::InvalidRequest => Self::InvalidRequest,
+            EngineError::Unavailable => Self::Unavailable,
+            EngineError::Rejected => Self::Rejected,
+            EngineError::Protocol => Self::Protocol,
+            EngineError::RequestFailed => Self::RequestFailed,
         }
     }
     const fn status(self) -> StatusCode {

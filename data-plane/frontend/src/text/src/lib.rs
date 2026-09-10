@@ -10,7 +10,7 @@ use std::sync::Arc;
 use foretoken_chat::{
     ChatBackend, ChatRequestProcessor, DynChatBackend, HfChatBackend, LoadModelBackendsOptions,
 };
-use foretoken_engine_core_client::protocol::dtype::ModelDtype;
+use foretoken_model_protocol::ModelDtype;
 use foretoken_tokenizer::DynTokenizer;
 use hf_hub::api::tokio::ApiBuilder;
 use hf_hub::{Cache, Repo, RepoType, api::Siblings};
@@ -147,7 +147,7 @@ pub async fn load_hf_snapshot_runtime(
     let text_backend: DynTextBackend = Arc::new(text_backend);
     let chat_backend: DynChatBackend = Arc::new(chat_backend);
     let chat_processor = match model_dtype {
-        Some(model_dtype) => ChatRequestProcessor::with_model_dtype(chat_backend, model_dtype),
+        Some(dtype) => ChatRequestProcessor::with_model_dtype(chat_backend, to_vllm_dtype(dtype)),
         None => ChatRequestProcessor::render_only(chat_backend),
     };
     Ok(HfSnapshotRuntime {
@@ -156,6 +156,14 @@ pub async fn load_hf_snapshot_runtime(
         chat_processor: Arc::new(chat_processor),
         supports_multimodal,
     })
+}
+
+fn to_vllm_dtype(dtype: ModelDtype) -> foretoken_engine_core_client::protocol::dtype::ModelDtype {
+    match dtype {
+        ModelDtype::Float16 => foretoken_engine_core_client::protocol::dtype::ModelDtype::Float16,
+        ModelDtype::BFloat16 => foretoken_engine_core_client::protocol::dtype::ModelDtype::BFloat16,
+        ModelDtype::Float32 => foretoken_engine_core_client::protocol::dtype::ModelDtype::Float32,
+    }
 }
 
 fn cached_model_snapshot(model_id: &str, revision: &str) -> Option<std::path::PathBuf> {

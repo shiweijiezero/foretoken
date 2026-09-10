@@ -200,6 +200,7 @@ fn request() -> GenerationRequest {
         arrival_time: None,
         tool_call_parser: ParserSelection::None,
         reasoning_parser: ParserSelection::None,
+        extensions: Default::default(),
     }
 }
 

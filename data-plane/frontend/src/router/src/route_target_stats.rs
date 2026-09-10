@@ -27,8 +27,8 @@ pub struct RouteTargetStats {
     pub observed_window: Duration,
     /// Requests currently admitted by Model Server.
     pub running_requests: u64,
-    /// Engine-reported scheduler capacity, or `None` when unavailable; not an admission limit.
-    pub max_concurrent_requests: Option<u64>,
+    /// Configured Model Server concurrency limit.
+    pub max_concurrent_requests: u64,
     /// Requests currently running in the vLLM scheduler.
     pub scheduler_running_requests: Option<u64>,
     /// Requests currently waiting in the vLLM scheduler.

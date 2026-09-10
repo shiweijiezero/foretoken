@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+#[cfg(feature = "backend-vllm")]
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -8,43 +9,26 @@ use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use foretoken_model_protocol::{
-    CumulativeHistogram, CumulativeHistogramBucket, RuntimeMetadataResponse, RuntimeModelIdentity,
+    CumulativeHistogram, CumulativeHistogramBucket, ModelDtype, RuntimeMetadataResponse,
+    RuntimeModelIdentity,
 };
-use foretoken_model_server::api::{AppState, RuntimeHealth, router};
-use foretoken_model_server::backend::{
-    Backend, BackendError, BackendTelemetry, GenerateInput, MetricsError, TokenEvent, TokenOutput,
-    TokenStream,
-};
+use foretoken_model_server::core::api::{AppState, RuntimeHealth, router};
+use foretoken_model_server::engine::{Engine, EngineError, EngineTelemetry, TokenStream};
 use futures::stream;
 use http_body_util::BodyExt;
 use tower::ServiceExt;
-use vllm_engine_core_client::protocol::dtype::ModelDtype;
+#[cfg(feature = "backend-vllm")]
 use vllm_engine_core_client::protocol::multimodal::{
     MmBatchedField, MmFeatureSpec, MmField, MmFieldElem, MmKwargValue, PlaceholderRange,
 };
-use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
+#[cfg(feature = "backend-vllm")]
 use vllm_engine_core_client::protocol::tensor::WireNdArray;
-
-const OPENMETRICS_FIXTURE: &str = concat!(
-    "# HELP fake_backend_up Whether the fake backend is available.\n",
-    "# TYPE fake_backend_up gauge\n",
-    "fake_backend_up 1\n",
-    "# EOF\n",
-);
-
-#[derive(Clone, Copy)]
-enum StreamBehavior {
-    Complete,
-    Pending,
-    Failing,
-}
+use vllm_llm::{FinishReason, GenerateOutput, GenerateRequest};
 
 struct RecordingBackend {
-    requests: Mutex<Vec<GenerateInput>>,
+    requests: Mutex<Vec<GenerateRequest>>,
     aborts: Mutex<Vec<Vec<String>>>,
-    telemetry: BackendTelemetry,
-    metrics: Result<&'static str, MetricsError>,
-    stream_behavior: StreamBehavior,
+    telemetry: EngineTelemetry,
 }
 
 impl Default for RecordingBackend {
@@ -52,51 +36,47 @@ impl Default for RecordingBackend {
         Self {
             requests: Mutex::new(Vec::new()),
             aborts: Mutex::new(Vec::new()),
-            telemetry: BackendTelemetry {
+            telemetry: EngineTelemetry {
                 running_requests: 0,
-                max_concurrent_requests: Some(7),
+                max_concurrent_requests: 7,
                 ..Default::default()
             },
-            metrics: Ok(OPENMETRICS_FIXTURE),
-            stream_behavior: StreamBehavior::Complete,
         }
     }
 }
 
 #[async_trait]
-impl Backend for RecordingBackend {
-    async fn generate(&self, input: GenerateInput) -> Result<TokenStream, BackendError> {
-        self.requests.lock().unwrap().push(input.clone());
-        match self.stream_behavior {
-            StreamBehavior::Complete => Ok(Box::pin(stream::iter([Ok(TokenEvent::Token(
-                Box::new(TokenOutput {
-                    request_id: input.request_id,
-                    prompt_token_ids: Some(input.prompt_token_ids),
-                    prompt_logprobs: None,
-                    token_ids: vec![42],
-                    logprobs: None,
-                    cached_token_count: 2,
-                    finish_reason: Some(vllm_llm::FinishReason::stop_eos()),
-                    kv_transfer_params: None,
-                    ec_transfer_params: None,
-                }),
-            ))]))),
-            StreamBehavior::Pending => Ok(Box::pin(stream::pending())),
-            StreamBehavior::Failing => Ok(Box::pin(stream::iter([Err(BackendError::Unavailable)]))),
-        }
+impl Engine for RecordingBackend {
+    async fn generate(&self, input: GenerateRequest) -> Result<TokenStream, EngineError> {
+        let request_id = input.request_id.clone();
+        let prompt_token_ids = input.prompt_token_ids.clone();
+        self.requests.lock().unwrap().push(input);
+        Ok(Box::pin(stream::iter([Ok(GenerateOutput {
+            request_id,
+            prompt_info: Some(vllm_llm::GeneratePromptInfo {
+                prompt_token_ids: prompt_token_ids.into(),
+                prompt_logprobs: None,
+            }),
+            token_ids: vec![42],
+            logprobs: None,
+            cached_token_count: 2,
+            finish_reason: Some(FinishReason::Stop(None)),
+            kv_transfer_params: None,
+            ec_transfer_params: None,
+        })])))
     }
 
-    async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError> {
+    async fn abort(&self, request_ids: &[String]) -> Result<(), EngineError> {
         self.aborts.lock().unwrap().push(request_ids.to_vec());
         Ok(())
     }
 
-    fn telemetry(&self) -> BackendTelemetry {
+    fn telemetry(&self) -> EngineTelemetry {
         self.telemetry.clone()
     }
 
-    fn render_openmetrics(&self) -> Result<String, MetricsError> {
-        self.metrics.map(str::to_owned)
+    async fn cleanup(&self) -> Result<(), EngineError> {
+        Ok(())
     }
 }
 
@@ -114,12 +94,12 @@ fn metadata() -> RuntimeMetadataResponse {
     }
 }
 
-fn app(backend: Arc<dyn Backend>, healthy: bool, accepting: bool) -> axum::Router {
+fn app(backend: Arc<dyn Engine>, healthy: bool, accepting: bool) -> axum::Router {
     app_with_body_limit(backend, healthy, accepting, 64 * 1024 * 1024)
 }
 
 fn app_with_body_limit(
-    backend: Arc<dyn Backend>,
+    backend: Arc<dyn Engine>,
     healthy: bool,
     accepting: bool,
     body_limit: usize,
@@ -131,40 +111,6 @@ fn app_with_body_limit(
     router(AppState::new(backend, health, metadata()), body_limit)
 }
 
-// Protects backend metrics scraping independently of model readiness and admission.
-#[tokio::test]
-async fn metrics_returns_backend_openmetrics_when_not_ready() {
-    let response = app(Arc::new(RecordingBackend::default()), false, false)
-        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(
-        response.headers().get("content-type").unwrap(),
-        "application/openmetrics-text; version=1.0.0; charset=utf-8"
-    );
-    let body = response.into_body().collect().await.unwrap().to_bytes();
-    let body = std::str::from_utf8(&body).unwrap();
-    assert_eq!(body, OPENMETRICS_FIXTURE);
-}
-
-// Protects metrics render failures from being reported as successful empty output.
-#[tokio::test]
-async fn metrics_returns_internal_server_error_when_backend_render_fails() {
-    let backend = RecordingBackend {
-        metrics: Err(MetricsError),
-        ..Default::default()
-    };
-    let response = app(Arc::new(backend), true, true)
-        .oneshot(Request::get("/metrics").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-}
-
-// Protects the KV delta endpoint from claiming data when no event adapter exists.
 #[tokio::test]
 async fn kv_delta_is_unavailable_without_an_event_adapter() {
     let response = app(Arc::new(RecordingBackend::default()), true, true)
@@ -179,14 +125,58 @@ async fn kv_delta_is_unavailable_without_an_event_adapter() {
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
-// Protects internal JSON lowering and the typed NDJSON token stream contract.
+struct PendingStreamBackend;
+
+#[async_trait]
+impl Engine for PendingStreamBackend {
+    async fn generate(&self, _: GenerateRequest) -> Result<TokenStream, EngineError> {
+        Ok(Box::pin(stream::pending()))
+    }
+
+    async fn abort(&self, _: &[String]) -> Result<(), EngineError> {
+        Ok(())
+    }
+
+    fn telemetry(&self) -> EngineTelemetry {
+        EngineTelemetry {
+            max_concurrent_requests: 7,
+            ..Default::default()
+        }
+    }
+
+    async fn cleanup(&self) -> Result<(), EngineError> {
+        Ok(())
+    }
+}
+
+struct FailingStreamBackend;
+
+#[async_trait]
+impl Engine for FailingStreamBackend {
+    async fn generate(&self, _: GenerateRequest) -> Result<TokenStream, EngineError> {
+        Ok(Box::pin(stream::iter([Err(EngineError::Unavailable)])))
+    }
+
+    async fn abort(&self, _: &[String]) -> Result<(), EngineError> {
+        Ok(())
+    }
+
+    fn telemetry(&self) -> EngineTelemetry {
+        Default::default()
+    }
+
+    async fn cleanup(&self) -> Result<(), EngineError> {
+        Ok(())
+    }
+}
+
 #[tokio::test]
 async fn generate_forwards_json_input_and_encodes_ndjson() {
     let backend = Arc::new(RecordingBackend::default());
     let body = serde_json::json!({
         "request_id": "request-1",
         "prompt_token_ids": [1, 2],
-        "sampling_params": EngineCoreSamplingParams::default(),
+        "sampling_params": {},
         "priority": -2
     });
     let response = app(backend.clone(), true, true)
@@ -206,14 +196,14 @@ async fn generate_forwards_json_input_and_encodes_ndjson() {
     );
     assert_eq!(
         response.into_body().collect().await.unwrap().to_bytes(),
-        "{\"type\":\"token\",\"request_id\":\"request-1\",\"prompt_token_ids\":[1,2],\"prompt_logprobs\":null,\"token_ids\":[42],\"logprobs\":null,\"cached_token_count\":2,\"finish_reason\":{\"Stop\":null},\"kv_transfer_params\":null,\"ec_transfer_params\":null}\n"
+        "{\"type\":\"output\",\"request_id\":\"request-1\",\"prompt_info\":{\"prompt_token_ids\":[1,2],\"prompt_logprobs\":null},\"token_ids\":[42],\"logprobs\":null,\"finish_reason\":{\"Stop\":null},\"cached_token_count\":2,\"kv_transfer_params\":null,\"ec_transfer_params\":null}\n"
     );
     let requests = backend.requests.lock().unwrap();
     assert_eq!(requests[0].prompt_token_ids, [1, 2]);
     assert_eq!(requests[0].priority, -2);
 }
 
-// Protects MessagePack transport of multimodal tensor fields into the backend request.
+#[cfg(feature = "backend-vllm")]
 #[tokio::test]
 async fn generate_accepts_msgpack_multimodal_tensors() {
     let backend = Arc::new(RecordingBackend::default());
@@ -226,21 +216,21 @@ async fn generate_accepts_msgpack_multimodal_tensors() {
             field: MmField::Batched(MmBatchedField { keep_on_cpu: false }),
         },
     );
-    let body = rmp_serde::to_vec_named(&foretoken_model_protocol::GenerateInput {
+    let mm_features = vec![MmFeatureSpec {
+        data: Some(data),
+        modality: "image".into(),
+        identifier: "image-1".into(),
+        mm_position: PlaceholderRange {
+            offset: 1,
+            length: 1,
+            is_embed: None,
+        },
+        mm_hash: None,
+    }];
+    let body = rmp_serde::to_vec_named(&GenerateRequest {
         request_id: "request-mm".into(),
         prompt_token_ids: vec![1, 2],
-        mm_features: Some(vec![MmFeatureSpec {
-            data: Some(data),
-            modality: "image".into(),
-            identifier: "image-1".into(),
-            mm_position: PlaceholderRange {
-                offset: 1,
-                length: 1,
-                is_embed: None,
-            },
-            mm_hash: None,
-        }]),
-        sampling_params: EngineCoreSamplingParams::default(),
+        mm_features: Some(mm_features),
         arrival_time: None,
         cache_salt: None,
         trace_headers: None,
@@ -249,6 +239,8 @@ async fn generate_accepts_msgpack_multimodal_tensors() {
         session_id: Some("session-mm".into()),
         reasoning_parser_kwargs: None,
         lora_request: None,
+        sampling_params: Default::default(),
+        extensions: Default::default(),
     })
     .unwrap();
 
@@ -268,27 +260,19 @@ async fn generate_accepts_msgpack_multimodal_tensors() {
     assert_eq!(requests[0].mm_features.as_ref().unwrap().len(), 1);
 }
 
-// Protects stream failures from producing duplicate or untyped terminal output.
 #[tokio::test]
 async fn stream_errors_are_encoded_as_one_typed_terminal_event() {
-    let response = app(
-        Arc::new(RecordingBackend {
-            stream_behavior: StreamBehavior::Failing,
-            ..Default::default()
-        }),
-        true,
-        true,
-    )
-    .oneshot(
-        Request::post("/v1/internal/generate")
-            .header("content-type", "application/json")
-            .body(Body::from(
-                r#"{"request_id":"request-1","prompt_token_ids":[1],"sampling_params":{}}"#,
-            ))
-            .unwrap(),
-    )
-    .await
-    .unwrap();
+    let response = app(Arc::new(FailingStreamBackend), true, true)
+        .oneshot(
+            Request::post("/v1/internal/generate")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"request_id":"request-1","prompt_token_ids":[1],"sampling_params":{}}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(
@@ -298,7 +282,6 @@ async fn stream_errors_are_encoded_as_one_typed_terminal_event() {
     );
 }
 
-// Protects abort scope validation and exact backend request-id forwarding.
 #[tokio::test]
 async fn abort_requires_scoped_request_ids_and_forwards_them() {
     let backend = Arc::new(RecordingBackend::default());
@@ -329,7 +312,38 @@ async fn abort_requires_scoped_request_ids_and_forwards_them() {
     assert_eq!(backend.aborts.lock().unwrap().as_slice(), [["request-1"]]);
 }
 
-// Protects the typed metadata and telemetry snapshots consumed by the frontend.
+#[tokio::test]
+async fn internal_requests_reject_unknown_fields() {
+    let backend = Arc::new(RecordingBackend::default());
+    for (path, body) in [
+        (
+            "/v1/internal/generate",
+            r#"{"request_id":"r","prompt_token_ids":[1],"sampling_params":{},"unsupported":true}"#,
+        ),
+        (
+            "/v1/internal/abort",
+            r#"{"request_ids":["r"],"unsupported":true}"#,
+        ),
+    ] {
+        let response = app(backend.clone(), true, true)
+            .oneshot(
+                Request::post(path)
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(
+            response.status().is_client_error(),
+            "{path} returned {}",
+            response.status()
+        );
+    }
+    assert!(backend.requests.lock().unwrap().is_empty());
+    assert!(backend.aborts.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn metadata_and_telemetry_expose_typed_runtime_snapshots() {
     let histogram = CumulativeHistogram {
@@ -341,9 +355,9 @@ async fn metadata_and_telemetry_expose_typed_runtime_snapshots() {
         }],
     };
     let backend = Arc::new(RecordingBackend {
-        telemetry: BackendTelemetry {
+        telemetry: EngineTelemetry {
             running_requests: 3,
-            max_concurrent_requests: Some(7),
+            max_concurrent_requests: 7,
             scheduler_running_requests: Some(2),
             scheduler_waiting_requests: Some(1),
             kv_cache_usage: Some(0.75),
@@ -404,7 +418,6 @@ async fn metadata_and_telemetry_expose_typed_runtime_snapshots() {
     assert_eq!(telemetry["e2e_seconds"], telemetry["ttft_seconds"]);
 }
 
-// Protects backend execution from unhealthy or admission-closed requests.
 #[tokio::test]
 async fn readiness_and_admission_gate_generation_without_backend_calls() {
     let backend = Arc::new(RecordingBackend::default());
@@ -449,7 +462,6 @@ async fn readiness_and_admission_gate_generation_without_backend_calls() {
     assert!(backend.requests.lock().unwrap().is_empty());
 }
 
-// Protects the configured internal body limit from Axum default-limit behavior.
 #[tokio::test]
 async fn configured_body_limit_is_enforced_after_the_default_axum_limit_is_overridden() {
     let accepts_large_request = app(Arc::new(RecordingBackend::default()), true, true)
@@ -483,17 +495,9 @@ async fn configured_body_limit_is_enforced_after_the_default_axum_limit_is_overr
     );
 }
 
-// Protects draining from ignoring a stream that remains open after admission closes.
 #[tokio::test]
 async fn admission_close_tracks_open_streams() {
-    let app = app(
-        Arc::new(RecordingBackend {
-            stream_behavior: StreamBehavior::Pending,
-            ..Default::default()
-        }),
-        true,
-        true,
-    );
+    let app = app(Arc::new(PendingStreamBackend), true, true);
     let response = app
         .clone()
         .oneshot(

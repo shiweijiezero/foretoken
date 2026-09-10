@@ -3,7 +3,7 @@
 
 //! Defines OpenAI-compatible request data transfer objects (DTOs) and HTTP handlers.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -428,6 +428,9 @@ struct CompletionRequest {
     session_id: Option<String>,
     #[serde(default)]
     stop: Option<Stop>,
+    /// OpenAI `extra_body`: backend-native fields forwarded verbatim.
+    #[serde(default)]
+    extra_body: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -517,6 +520,9 @@ struct ChatCompletionRequest {
     reasoning_effort: Option<ReasoningEffort>,
     #[serde(default)]
     include_reasoning: Option<bool>,
+    /// OpenAI `extra_body`: backend-native fields forwarded verbatim.
+    #[serde(default)]
+    extra_body: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -712,9 +718,9 @@ pub(crate) fn openai_error(error: GenerationError) -> Response {
             "unavailable",
         ),
         GenerationError::BackendRejected => (
-            StatusCode::BAD_GATEWAY,
+            StatusCode::BAD_REQUEST,
             "model server rejected the request",
-            "server_error",
+            "invalid_request_error",
             "backend_rejected",
         ),
         GenerationError::BackendProtocol => (
@@ -789,6 +795,7 @@ async fn completions(
                     arrival_time: Some(vllm_llm::current_unix_timestamp_secs()),
                     tool_call_parser: ParserSelection::None,
                     reasoning_parser: ParserSelection::None,
+                    extensions: request.extra_body.clone(),
                 })
                 .await
             {
@@ -970,6 +977,7 @@ async fn chat_with_request(
                 } else {
                     ParserSelection::None
                 },
+                extensions: request.extra_body,
             },
             chat,
             include_reasoning,

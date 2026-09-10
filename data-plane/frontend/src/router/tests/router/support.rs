@@ -90,6 +90,7 @@ pub(super) fn request() -> RouterRequest {
             session_id: None,
             reasoning_parser_kwargs: None,
             lora_request: None,
+            extensions: Default::default(),
         }),
     )
 }

@@ -115,6 +115,8 @@ pub enum KvPlan {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
+// Variants mirror the wire values `kv_both`/`kv_producer`/`kv_consumer`.
+#[allow(clippy::enum_variant_names)]
 pub enum KvRole {
     KvBoth,
     KvProducer,

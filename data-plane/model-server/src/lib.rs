@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Group-local typed streaming API backed by one vLLM EngineCore instance.
+//! Group-local typed streaming API backed by one inference engine.
 
-pub mod api;
-pub mod backend;
-mod backend_telemetry;
-pub mod config;
-pub mod kv_event_adapter;
-pub mod launch;
+#[cfg(all(feature = "backend-vllm", feature = "backend-sglang"))]
+compile_error!("exactly one backend feature (vllm or sglang) may be enabled");
+
+pub mod core;
+pub mod engine;
 pub mod runtime_cache;
 #[doc(hidden)]
 pub mod runtime_transport;

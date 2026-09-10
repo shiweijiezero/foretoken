@@ -66,6 +66,9 @@ pub struct GenerationRequest {
     pub arrival_time: Option<f64>,
     pub tool_call_parser: ParserSelection,
     pub reasoning_parser: ParserSelection,
+    /// Backend-native request fields (OpenAI `extra_body`) carried verbatim to
+    /// the engine adapter.
+    pub extensions: BTreeMap<String, serde_json::Value>,
 }
 
 pub struct RoutedRequest {
@@ -505,7 +508,8 @@ impl RuntimeGeneration {
                     GenerationError::Internal
                 }
             })?;
-        let generate_request = prepared.generate_request;
+        let mut generate_request = prepared.generate_request;
+        generate_request.extensions = request.extensions;
         let context = RouterRequest::new(request.model.clone(), Arc::new(generate_request.clone()));
         let mut session = slot.state.router.start(context);
         let initial = session

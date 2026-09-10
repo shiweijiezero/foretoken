@@ -10,11 +10,10 @@ use foretoken_backend_registry::{
     SnapshotEpdPipelineScope, SnapshotError, SnapshotGroup, SnapshotModel, SnapshotPdComponent,
     SnapshotPdPipelineScope,
 };
-use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_llm_facade::{LlmFacadeResolver, RouteStage};
 use foretoken_model_protocol::{
-    CumulativeHistogram, CumulativeHistogramBucket, ModelServerRole, RuntimeMetadataResponse,
-    RuntimeModelIdentity, TelemetryResponse,
+    CumulativeHistogram, CumulativeHistogramBucket, ModelDtype, ModelServerRole,
+    RuntimeMetadataResponse, RuntimeModelIdentity, TelemetryResponse,
 };
 use foretoken_router::{
     RouteDecision, RouteInventory, RouteTargetId, RouteTargetSet, RouteTargetStatsReader,
@@ -189,7 +188,7 @@ fn telemetry(at_ms: u64, tokens: u64, histogram: CumulativeHistogram) -> Telemet
         collected_at_unix_ms: at_ms,
         accepting: true,
         running_requests: 0,
-        max_concurrent_requests: Some(1),
+        max_concurrent_requests: 1,
         scheduler_running_requests: Some(0),
         scheduler_waiting_requests: Some(0),
         kv_cache_usage: Some(0.0),
