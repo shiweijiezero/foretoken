@@ -8,7 +8,7 @@ image:
   repository: registry.example.com/foretoken/control-plane
   tag: dev
 
-# Self-managed clusters usually cannot assign services an external IP. Give
+# Clusters built with kubeadm, RKE2, or kubespray assign services no external IP. Give
 # Foretoken a range of unused addresses in the nodes' subnet to assign instead.
 # loadBalancer:
 #   managedAddresses:
