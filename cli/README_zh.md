@@ -89,7 +89,7 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，命令行工具不会自动接管。
 
-如果安装结尾出现 `LoadBalancer support Not verified`，说明集群还无法给模型服务分配外部 IP。向集群管理员要几个节点所在网络中空闲的 IP，写进 values 文件，再运行 `foretoken install --values PATH`：
+模型服务通过一个集群外可访问的 IP 提供服务。k3d 和云上集群会自动分配这个 IP；自建集群通常没有这个能力，安装结尾会提示 `LoadBalancer support Not verified`。此时向集群管理员确认一段节点网段内未被占用的 IP 交给 Foretoken，由它分配给服务：
 
 ```yaml
 loadBalancer:
@@ -97,7 +97,9 @@ loadBalancer:
     - 192.168.1.240-192.168.1.250
 ```
 
-Foretoken 会安装把这些 IP 分配给服务的组件，并记住这份列表，之后安装不必再传。
+```bash
+foretoken install --values platform-values.yaml
+```
 
 ### 持久化运行时缓存
 

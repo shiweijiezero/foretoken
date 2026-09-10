@@ -89,7 +89,7 @@ Registry login authorizes the local image push. Private registries also need `im
 
 Repeatable `--values` files provide platform image, runtime, and hardware settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
 
-If installation ends with `LoadBalancer support Not verified`, the cluster cannot yet give model services an external IP address. Ask the cluster administrator for a few unused IP addresses on the nodes' network, list them in a values file, and run `foretoken install --values PATH`:
+Model services are reached through an IP address outside the cluster. k3d and cloud clusters assign one automatically; a self-managed cluster usually cannot, and installation then ends with `LoadBalancer support Not verified`. Give Foretoken a range of unused addresses in the nodes' subnet, confirmed with the cluster administrator, and it assigns them to services:
 
 ```yaml
 loadBalancer:
@@ -97,7 +97,9 @@ loadBalancer:
     - 192.168.1.240-192.168.1.250
 ```
 
-Foretoken installs the component that hands these addresses to services, and remembers the list for later installs.
+```bash
+foretoken install --values platform-values.yaml
+```
 
 ### Persistent runtime cache
 
