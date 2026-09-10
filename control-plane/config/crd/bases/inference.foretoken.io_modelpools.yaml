@@ -93,6 +93,7 @@ spec:
                   backend:
                     enum:
                     - vllm
+                    - sglang
                     type: string
                   ecProfile:
                     description: ECProfile is the controller-owned platform EC profile
