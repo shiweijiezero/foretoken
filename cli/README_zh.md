@@ -87,7 +87,7 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 ### 安装选项
 
-重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，命令行工具不会自动接管。
+重复使用 `--values` 可提供平台镜像、runtime、硬件和可观测性配置。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，命令行工具不会自动接管。
 
 ### 持久化运行时缓存
 
@@ -162,6 +162,16 @@ foretoken bench examples/multi-model-quickstart --model Qwen/Qwen3-0.6B
 ```
 
 命令行工具使用当前 `kubectl` context，并遵循 `KUBECONFIG` 等标准 Kubernetes 配置。
+
+## 采集诊断 Profile
+
+实验性的源码命令可对已有、准备好的诊断 ModelService 采集一次 Torch 窗口：
+
+```bash
+foretoken profile MODEL_SERVICE -n foretoken-diagnostic --duration 15s
+```
+
+它不生成请求、不部署服务，也不下载 trace。服务负责自动停止和持久保存，即使命令断线也不依赖本机回收。使用前请查看[采集前提与限制](../observability/README_zh.md#单次-profiling实验性需源码构建)。
 
 ## 清理
 

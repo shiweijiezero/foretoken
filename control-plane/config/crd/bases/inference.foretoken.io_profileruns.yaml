@@ -1,0 +1,150 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Defines a generated Kubernetes API manifest for Foretoken custom resources.
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: profileruns.inference.foretoken.io
+spec:
+  group: inference.foretoken.io
+  names:
+    kind: ProfileRun
+    listKind: ProfileRunList
+    plural: profileruns
+    singular: profilerun
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.modelServiceRef.name
+      name: Service
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: ProfileRun is a retained execution request; the controller owns
+          stop and recovery.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ProfileRunSpec requests a bounded capture without changing
+              serving configuration.
+            properties:
+              action:
+                default: Capture
+                enum:
+                - Capture
+                - Finish
+                - Cancel
+                type: string
+              duration:
+                default: 15s
+                description: Duration is a positive Go-style duration.
+                minLength: 2
+                pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
+                type: string
+                x-kubernetes-validations:
+                - message: must be a positive duration
+                  rule: duration(self) > duration('0s')
+              modelServiceRef:
+                description: ProfileServiceReference selects one existing ModelService
+                  in the run namespace.
+                properties:
+                  name:
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+            required:
+            - action
+            - duration
+            - modelServiceRef
+            type: object
+            x-kubernetes-validations:
+            - message: capture target and duration are immutable
+              rule: self.modelServiceRef == oldSelf.modelServiceRef && self.duration
+                == oldSelf.duration
+            - message: capture actions cannot move backwards
+              rule: oldSelf.action == 'Capture' || self.action == oldSelf.action ||
+                (oldSelf.action == 'Finish' && self.action == 'Cancel')
+            - message: capture duration must be at least 1ms
+              rule: duration(self.duration) >= duration('1ms')
+          status:
+            description: ProfileRunStatus publishes observed capture progress, not
+              benchmark completion.
+            properties:
+              artifact:
+                description: ProfileArtifactReference identifies retained storage
+                  independently of the runtime Pod.
+                properties:
+                  claimName:
+                    type: string
+                  path:
+                    type: string
+                required:
+                - claimName
+                - path
+                type: object
+              completedParticipants:
+                format: int32
+                type: integer
+              finishedAt:
+                format: date-time
+                type: string
+              message:
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              participants:
+                format: int32
+                type: integer
+              phase:
+                enum:
+                - Pending
+                - Starting
+                - Capturing
+                - Stopping
+                - Succeeded
+                - Failed
+                - Cancelled
+                type: string
+              reason:
+                type: string
+              startedAt:
+                format: date-time
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

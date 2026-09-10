@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"os"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -75,6 +76,7 @@ func main() {
 	var autoscalingTelemetryConcurrency int
 	var workloadImagePullSecretNames []string
 	var cacheClaimName string
+	profilingArtifactClaims := map[string]string{}
 	var cacheMountPath string
 	var modelSourceEndpoint string
 	var modelSourceTokenSecretName string
@@ -102,6 +104,17 @@ func main() {
 		return nil
 	})
 	flag.StringVar(&cacheClaimName, "cache-claim", "", "Existing namespace-local PVC shared by runtime workloads.")
+	flag.Func("profiling-artifact-claim", "Prepare diagnostic runtimes in NAMESPACE with an existing dedicated PVC: NAMESPACE/CLAIM; repeat per namespace.", func(value string) error {
+		namespace, claim, ok := strings.Cut(value, "/")
+		if !ok || namespace == "" || claim == "" || strings.Contains(claim, "/") {
+			return errors.New("profiling artifact claim must use NAMESPACE/CLAIM")
+		}
+		if _, exists := profilingArtifactClaims[namespace]; exists {
+			return errors.New("configure only one profiling artifact claim per namespace")
+		}
+		profilingArtifactClaims[namespace] = claim
+		return nil
+	})
 	flag.StringVar(&cacheMountPath, "cache-mount-path", "/var/cache/foretoken", "Absolute runtime cache root mounted into workload Pods.")
 	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional model source endpoint interpreted by the runtime adapter.")
 	flag.StringVar(&modelSourceTokenSecretName, "model-source-token-secret-name", "", "Namespace-local Secret containing the model source credential.")
@@ -269,6 +282,10 @@ func main() {
 	}
 
 	// Controllers are registered explicitly so each resource keeps one lifecycle owner.
+	if err := (&controllers.ProfileRunReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+		ctrl.Log.Error(err, "unable to register ProfileRun controller")
+		os.Exit(1)
+	}
 	if err := (&controllers.RuntimeCacheReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register RuntimeCache controller")
 		os.Exit(1)
@@ -346,7 +363,7 @@ func main() {
 		ctrl.Log.Error(errors.New("POD_NAMESPACE is required"), "unable to configure ModelGroup drain networking")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, ProfilingArtifactClaims: profilingArtifactClaims}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelGroup controller")
 		os.Exit(1)
 	}

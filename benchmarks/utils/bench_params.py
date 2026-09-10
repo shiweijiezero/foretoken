@@ -6,11 +6,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import fields, replace
-from typing import Any
+from typing import Any, Callable
 
 from evalscope.perf.arguments import Arguments
+from vllm.benchmarks.sweep.param_sweep import ParameterSweep, ParameterSweepItem
+from vllm.benchmarks.sweep.utils import sanitize_filename
 
 from benchmarks.config import (
     BenchConfig,
@@ -24,53 +25,13 @@ from benchmarks.workload.loader import load_jsonl
 __all__ = [
     "ParameterSweep",
     "ParameterSweepItem",
-    "apply_bench_overrides",
-    "expand_load_points",
-    "load_param_sweep",
     "sanitize_filename",
+    "load_param_sweep",
+    "expand_load_points",
+    "apply_bench_overrides",
 ]
 
 _LOAD_CAST = {"parallel": int, "number": int, "rate": float}
-
-
-class ParameterSweepItem(dict[str, object]):
-    """One named set of request and load overrides consumed by SweepRunner."""
-
-    @property
-    def name(self) -> str:
-        """Return the explicit benchmark name or a readable parameter summary."""
-        if "_benchmark_name" in self:
-            return str(self["_benchmark_name"])
-        return "-".join(
-            f"{key}={value}"
-            for key, value in self.items()
-            if key != "_benchmark_name"
-        )
-
-
-class ParameterSweep(list[ParameterSweepItem]):
-    """Ordered benchmark combinations loaded from the Foretoken JSONL format."""
-
-    @classmethod
-    def from_records(cls, records: list[dict[str, object]]) -> ParameterSweep:
-        """Validate combination names and return typed sweep items to the runner."""
-        names = [
-            str(record["_benchmark_name"])
-            for record in records
-            if "_benchmark_name" in record
-        ]
-        duplicates = {name for name in names if names.count(name) > 1}
-        if duplicates:
-            raise ValueError(
-                f"Duplicate _benchmark_name values found: {duplicates}. "
-                "All _benchmark_name values must be unique."
-            )
-        return cls(ParameterSweepItem(record) for record in records)
-
-
-def sanitize_filename(filename: str) -> str:
-    """Make a sweep label safe for use as one local result-directory name."""
-    return filename.replace("/", "_").replace("..", "__").strip("'\"")
 
 
 def _as_dataset(value: Any) -> list[str]:

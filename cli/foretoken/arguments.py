@@ -75,6 +75,16 @@ class BenchCommand:
     arguments: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ProfileCommand:
+    """Request one runtime-owned Torch window on an existing diagnostic service."""
+
+    model_service: str
+    namespace: str
+    duration: str | None
+    timeout: str
+
+
 ParsedCommand = (
     InstallCommand
     | UninstallCommand
@@ -83,6 +93,7 @@ ParsedCommand = (
     | StatusCommand
     | EndpointCommand
     | BenchCommand
+    | ProfileCommand
 )
 
 
@@ -236,6 +247,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="print the HTTP Host value instead of the URL",
     )
 
+    profile = subparsers.add_parser(
+        "profile",
+        help="Capture one experimental Torch window on an existing diagnostic ModelService",
+        description=(
+            "Request runtime-owned Torch capture. The platform must prepare diagnostic "
+            "storage before service deployment. This command does not generate requests "
+            "or download traces; results remain on the artifact PVC."
+        ),
+    )
+    profile.add_argument("model_service", metavar="MODEL_SERVICE")
+    profile.add_argument("-n", "--namespace", required=True)
+    profile.add_argument(
+        "--duration",
+        help="recording window, such as 15s (default: ProfileRun API default)",
+    )
+    _add_wait_timeout_argument(profile, "capture completion")
+
     subparsers.add_parser(
         "bench",
         add_help=False,
@@ -290,6 +318,13 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
         return DeployCommand(parsed_args.kustomize_path, parsed_args.timeout)
     if parsed_args.command == "delete":
         return DeleteCommand(parsed_args.kustomize_path, parsed_args.timeout)
+    if parsed_args.command == "profile":
+        return ProfileCommand(
+            parsed_args.model_service,
+            parsed_args.namespace,
+            parsed_args.duration,
+            parsed_args.timeout,
+        )
     if parsed_args.command == "status":
         if bool(parsed_args.kustomize_path) == bool(parsed_args.namespace):
             parser.error("status requires either PATH or --namespace")

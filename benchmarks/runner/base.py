@@ -11,7 +11,6 @@ import logging
 import random
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from typing import Any, Optional
 
 from evalscope.perf.multi_turn_args import _sample_int_or_range as sample_max_tokens
@@ -39,7 +38,6 @@ class Runner(ABC):
     def __init__(self, config: BenchConfig):
         self.config = config
         self._generation_overrides = config.generation.request_overrides()
-        self.before_requests: Callable[[], None] | None = None
 
     @abstractmethod
     async def run(self) -> dict[str, Any]:
@@ -177,9 +175,6 @@ class Runner(ABC):
             None if open_loop else asyncio.Semaphore(parallel)
         )
         results: list[Optional[dict[str, Any]]] = [None] * request_count
-        # Submit only after payload/client preparation, before the measured request clock.
-        if self.before_requests is not None:
-            self.before_requests()
         start_time = time.perf_counter()
         progress_bar = tqdm_asyncio(
             total=request_count,

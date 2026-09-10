@@ -87,7 +87,7 @@ Registry login authorizes the local image push. Private registries also need `im
 
 ### Installation options
 
-Repeatable `--values` files provide platform image, runtime, and hardware settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
+Repeatable `--values` files provide platform image, runtime, hardware, and observability settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
 
 ### Persistent runtime cache
 
@@ -162,6 +162,16 @@ foretoken bench examples/multi-model-quickstart --model Qwen/Qwen3-0.6B
 ```
 
 The command-line tool uses the active `kubectl` context and honors standard Kubernetes configuration such as `KUBECONFIG`.
+
+## Capture a diagnostic profile
+
+The experimental source-only command captures one Torch window on an existing, prepared diagnostic ModelService:
+
+```bash
+foretoken profile MODEL_SERVICE -n foretoken-diagnostic --duration 15s
+```
+
+It does not generate requests, deploy services or download traces. The service owns automatic stop and persistent output even if the CLI disconnects. Follow the [profiling prerequisites and limitations](../observability/README.md#one-off-profiling-experimental-source-build) before using it.
 
 ## Clean up
 

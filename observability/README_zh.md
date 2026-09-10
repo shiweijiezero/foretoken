@@ -165,7 +165,25 @@ observability:
 
 Alertmanager 负责通知接收方、分组和路由。Foretoken 提供告警表达式和默认阈值；如果设备或 workload 需要不同限制，可以通过 Chart values 覆盖。
 
-在受控负载中短时间采集 Torch trace，见[benchmark profiling](../benchmarks/README_zh.md#按需-profiling)。命令负责提交和收取结果，model-server 负责窗口计时。Profiling 独立于监控和告警配置；所需引擎修复及当前验证限制见 benchmark 指南。
+## 单次 Profiling（实验性，需源码构建）
+
+对于已准备好的诊断 ModelService，执行一次 Torch 采集：
+
+```bash
+foretoken profile MODEL_SERVICE -n foretoken-diagnostic --duration 15s
+```
+
+此命令不发送推理请求。在它显示 `Capturing` 时，通过服务原有的 Frontend 发送少量、获准的负载。Runtime 自动停止，命令输出保留结果的 PVC 和路径。Ctrl-C 请求取消；终端断线或达到 `--timeout` 只结束本地观察，不影响 runtime 自己的截止时间。默认采集 15 秒；CLI 默认等待 10 分钟，包括导出时间。
+
+平台管理员只需预先准备一次，独立于 `observability.mode` 和告警：
+
+1. 准备一个尚未运行服务的诊断命名空间，以及其中独立的产物 PVC。所有参与 Pod 都必须能写入；跨节点 Pod 应使用支持 `ReadWriteMany` 的共享存储。不要复用模型缓存或 KV Store 的 PVC。
+2. 复制 [`deploy/profiling-values.example.yaml`](../deploy/profiling-values.example.yaml)，填入命名空间及已有 PVC 名，通过 `foretoken install -e . --values YOUR_VALUES_FILE` 进行[源码安装](../docs/custom-deployment_zh.md)。CRD、控制器和 model-server 镜像必须来自同一份源码，并按集群要求提供 registry 参数。启用此绑定会改变 ModelGroup 的 Pod 模板，应在部署诊断服务前完成，不要用于已有工作负载的共享命名空间。
+3. 将诊断 ModelService 部署到该命名空间并等待 Ready。管理员授予调用者创建、读取、修改 ProfileRun 的 Kubernetes 权限；仅有推理 token 不够。此后每次采集只需上述命令，不再修改服务 YAML 或手动转发端口。
+
+PVC 上保存未压缩的 `.pt.trace.json` 和 manifest。通过平台已有存储入口取得文件，在 [Perfetto](https://ui.perfetto.dev/) 打开；命令不会自动下载。缺少预期 worker 的 trace 或 GPU kernel 活动时，采集判定失败。请保持负载很小：[vLLM profiling 指南](https://docs.vllm.ai/en/stable/contributing/profiling/)说明了额外开销和较大的产物体积。
+
+目前通过实验验证的是 vLLM 0.26.0 上的单 worker NVIDIA 服务。尚不支持 `bench --profile`、延迟、采样上限、重复窗口、Nsight 或沐曦。多 worker 采集、原生 utility 和存储故障注入仍需硬件验证。原生 profiler 失败可能终止选中的诊断 runtime，应使用允许这种中断的服务。无法确认 runtime 已停止时，ProfileRun 会保留 finalizer 和恢复计划，供管理员诊断。生命周期和恢复说明见 [Profiling 设计](../docs/development/profiling_zh.md)。
 
 ## 停止采集
 

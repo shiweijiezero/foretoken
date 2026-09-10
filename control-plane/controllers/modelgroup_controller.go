@@ -52,10 +52,11 @@ const (
 // ModelGroupReconciler owns the Kubernetes workload for one execution Group.
 type ModelGroupReconciler struct {
 	client.Client
-	DrainClient           ModelGroupDrainClient
-	Now                   func() time.Time
-	ControlPlaneNamespace string
-	ImagePullSecrets      []corev1.LocalObjectReference
+	DrainClient             ModelGroupDrainClient
+	Now                     func() time.Time
+	ControlPlaneNamespace   string
+	ImagePullSecrets        []corev1.LocalObjectReference
+	ProfilingArtifactClaims map[string]string
 }
 
 // SetupWithManager registers the ModelGroup controller and its owned resources.
@@ -145,6 +146,9 @@ func (reconciler *ModelGroupReconciler) validateModelPoolOwnership(ctx context.C
 func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment, error) {
 	desired, err := desiredDeployment(group, reconciler.ImagePullSecrets)
 	if err != nil {
+		return nil, err
+	}
+	if err := configureProfilingWorkload(desired, reconciler.ProfilingArtifactClaims[group.Namespace]); err != nil {
 		return nil, err
 	}
 	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {

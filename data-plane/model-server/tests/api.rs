@@ -91,14 +91,6 @@ impl Backend for RecordingBackend {
         Ok(())
     }
 
-    async fn start_profile(&self, _profile_prefix: &str) -> Result<(), BackendError> {
-        Ok(())
-    }
-
-    async fn stop_profile(&self, _profile_prefix: &str) -> Result<Vec<String>, BackendError> {
-        Ok(Vec::new())
-    }
-
     fn telemetry(&self) -> BackendTelemetry {
         self.telemetry.clone()
     }

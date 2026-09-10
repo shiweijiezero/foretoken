@@ -14,6 +14,7 @@ const LISTEN_ENV: &str = "FORETOKEN_INTERNAL_LISTEN";
 pub struct RuntimeConfig {
     pub launch: LaunchPlanV1,
     pub listen_address: SocketAddr,
+    pub profiling: Option<crate::profiling::Config>,
 }
 
 impl RuntimeConfig {
@@ -26,6 +27,12 @@ impl RuntimeConfig {
             .parse()
             .map_err(|_| format!("{LISTEN_ENV} must be a socket address"))?;
         Ok(Self {
+            profiling: crate::profiling::Config::from_env(
+                launch.parallelism.tp
+                    * launch.parallelism.pp
+                    * launch.parallelism.dp
+                    * launch.parallelism.pcp,
+            )?,
             launch,
             listen_address,
         })

@@ -18,6 +18,10 @@ controller:
     requestTimeout: 1s
     concurrency: 8
 
+# Startup preparation for dedicated diagnostic namespaces. Claims must already exist.
+profiling:
+  artifactClaims: {}
+
 # Each named Secret must exist in the namespace of the FrontendService or ModelService workload.
 workload:
   imagePullSecrets: []

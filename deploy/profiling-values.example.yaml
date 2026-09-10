@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Prepare an otherwise empty diagnostic namespace before deploying model services.
+# The dedicated, shared-writable artifact PVC must already exist in that namespace.
+profiling:
+  artifactClaims:
+    foretoken-diagnostic: foretoken-profiles

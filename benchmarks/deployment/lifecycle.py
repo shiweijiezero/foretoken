@@ -12,11 +12,10 @@ from contextlib import contextmanager
 from typing import Any
 
 import yaml
-from foretoken.kubernetes import Kubectl, load_deployment
-from foretoken.manifest import DeploymentError, ForetokenDeployment
-from foretoken.profiling import ProfileIncomplete
 
 from benchmarks.deployment.discovery import BenchmarkEndpoint, discover_endpoint
+from foretoken.kubernetes import Kubectl, load_deployment
+from foretoken.manifest import DeploymentError, ForetokenDeployment
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +97,6 @@ def benchmark_deployment(
             _delete_objects(kubectl, created, timeout)
             raise
 
-    preserve_created = False
     try:
         yield discover_endpoint(
             resources,
@@ -107,15 +105,7 @@ def benchmark_deployment(
             requested_model=requested_model,
             api_key=api_key,
         )
-    except ProfileIncomplete:
-        preserve_created = True
-        if created:
-            logger.error(
-                "Retaining benchmark deployment in namespace %s: profiling cleanup is incomplete",
-                resources.namespace,
-            )
-        raise
     finally:
-        if created and not preserve_created:
+        if created:
             logger.info("Cleaning up Foretoken service from %s", resources.path)
             _delete_objects(kubectl, created, timeout)

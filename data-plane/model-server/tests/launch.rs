@@ -31,7 +31,6 @@ fn renders_supported_owned_arguments() {
         "--pipeline-parallel-size=",
         "--prefill-context-parallel-size=",
         "--decode-context-parallel-size=",
-        "--profiler-config=",
     ] {
         assert_eq!(
             args.iter().filter(|arg| arg.starts_with(flag)).count(),
@@ -47,22 +46,6 @@ fn renders_supported_owned_arguments() {
         "{args:?}"
     );
 
-    let profiler_config = args
-        .iter()
-        .find_map(|arg| arg.strip_prefix("--profiler-config="))
-        .expect("profiler config");
-    let profiler_config: serde_json::Value = serde_json::from_str(profiler_config).unwrap();
-    assert_eq!(profiler_config["profiler"], "torch");
-    assert_eq!(
-        profiler_config["torch_profiler_dir"],
-        "/tmp/foretoken/profiles"
-    );
-    assert_eq!(profiler_config["ignore_frontend"], true);
-    assert_eq!(
-        profiler_config["torch_profiler_dump_cuda_time_total"],
-        false
-    );
-
     let event_config = args
         .iter()
         .find_map(|arg| arg.strip_prefix("--kv-events-config="))
@@ -73,10 +56,6 @@ fn renders_supported_owned_arguments() {
         "ipc:///tmp/foretoken-kv-events.sock"
     );
     assert_eq!(event_config["topic"], "foretoken-kv-v1");
-
-    let mut invalid = plan();
-    invalid.extra_args.push("--profiler-config={}".to_string());
-    assert!(invalid.render_vllm_args().is_err());
 }
 
 // Protects role-specific EC launch configuration for encoder and prefill.

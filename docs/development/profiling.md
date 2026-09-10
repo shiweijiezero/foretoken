@@ -3,99 +3,98 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# On-demand profiling design
+# Service-owned profiling
 
 English | [简体中文](profiling_zh.md)
 
-**Status: target design with a local single-window prototype.** `bench --profile`, delay, duration, runtime cancellation/status, and exec-based retrieval are implemented locally; GPU integration is not yet validated. Standalone `profile`, repeat/interval, sample limits, and additional backends below remain proposals, not released interfaces. Current commands are documented in the [benchmark guide](../../benchmarks/README.md#on-demand-profiling).
+The experimental implementation captures one time-bounded Torch window on an existing diagnostic ModelService. It is independent of benchmark execution and monitoring. Start with the [operator guide](../../observability/README.md#one-off-profiling-experimental-source-build) for preparation, the command and artifact access.
 
-## 1. Two entry points, one capture capability
+## Ownership and execution
 
-Profiling records model execution while requests are being processed. It is a finite, one-off operation, independent of model deployment, Prometheus, Grafana, and alerting.
-
-- `foretoken bench PATH --profile`: the existing benchmark executor supplies requests while short capture windows run. It continues to own request content, concurrency, and rate.
-- `foretoken profile`: select an existing Foretoken service and capture its current traffic, without silently generating additional requests. Service selection and authorization syntax remain open in section 6.
-
-Both submit the same capture plan. Users do not edit examples, Helm charts, or observability YAML, discover Pods, forward ports, or issue start/stop HTTP requests. Images and runtimes prepare profiler support internally; being ready to profile does not mean continuously recording.
-
-## 2. Bound collection with small windows
-
-These are candidate options and semantics shared by both entry points. An unresolved unit must not become a public field prematurely.
-
-| Choice | Candidate option | Meaning |
-| --- | --- | --- |
-| Tool | `--profile` for bench; standalone selector TBD | Torch, Nsight Systems, or the MetaX native tool; expose only validated implementations |
-| Initial delay | `--profile-delay` | Seconds from plan activation until the first window, not from model deployment |
-| Window length | `--profile-duration` | Target collection seconds per window, after which stop is requested; export time is separate |
-| Window count | `--profile-repeat` | Finite total number of windows, including the first |
-| Gap | `--profile-interval` | Wait after the preceding window has stopped and exported, before starting the next; not a fixed start-to-start frequency |
-| Sample cap per window | Name and unit TBD | Stop when either the cap or duration is reached; requests, engine steps, and tool samples are not interchangeable |
-
-For example, wait 30 seconds, collect for 5 seconds, wait 20 seconds after export, and repeat for 3 windows in total. These values illustrate semantics, not defaults. The default should be one short capture; determine its duration through a real small-workload check rather than defaulting to indefinite collection.
-
-A window still ends on time without incoming requests and reports that no inference work was captured. Do not extend it or generate traffic implicitly. Report actual capture start and end times. Instances execute independently; do not promise precisely synchronized starts across Pods.
-
-vLLM's `delay_iterations` / `max_iterations` and the [PyTorch schedule](https://docs.pytorch.org/docs/2.14/profiler.html#torch.profiler.profiler.schedule) count execution steps, not seconds. An engine step is not one user request. If samples mean requests, define the start/completion counting point and batching/prefill/decode semantics first; `bench --number` cannot stand in for exact server-side request selection.
-
-## 3. Submit locally; time and execute inside the cluster
-
-The workstation selects a service, submits the complete plan, and retrieves results. The model-server's existing process-management path owns window execution rather than relying on timed start/stop calls from the workstation.
+A capture must stop and retain results even when its initiating command disconnects. Its identity and lifetime belong to a namespaced `ProfileRun`, not to the command process or `ModelService.spec`.
 
 ```text
-bench --profile --+
-                 +-- 1. shared submission -- 2. Kubernetes management channel
-profile service -+                                      |
-                                                        v
-                         3. model-server: delay -> capture -> export -> gap
-                                                        |            `-- finite repeat
-                                                        v
-                         4. backend adapter -> profiler inside the engine
-                                                        |
-                                                        v
-                         5. save window results -> automatic retrieval and report
+ordinary workload ── public frontend ──> model-server
+                                            │
+foretoken profile ── Kubernetes API          │
+                          │                 │
+                      ProfileRun            │
+                          │                 │
+                 existing controller ────────┘
+                    internal HTTP           │
+                                     runtime supervisor
+                                            │
+                                      vLLM / Torch
+                                            │
+                                      artifact PVC
 ```
 
-The local single-window implementation uses Kubernetes Pod exec: invoke the existing model-server management port from inside its container and hand the window to an in-process task. Exec submits or queries; it does not host the timing loop. Users do not execute these internal commands. This adds no TCP listener, Service, Gateway route, or workstation port-forward.
+The CLI creates and observes the run; Ctrl-C requests cancellation. The existing control-plane manager selects the serving cohort, sends intent through model-server's existing internal listener, and publishes observed status. The runtime supervisor owns native start, automatic stop, export and failure handling. The platform owns the dedicated artifact PVC and retention.
 
-Participants come from the selected service's committed serving generation, restricting operations to that Foretoken service. Kubernetes RBAC protects exec calls. Management handlers separately require a loopback peer; they do not trust forwarded-address headers. CPU checks cover these handlers, but the deployed listening configuration and Kubernetes permissions still need end-to-end validation.
+The command does not generate traffic, change serving configuration, deploy a benchmark Job, open a public profiling port, or copy files out of Pods. An inference token permits requests, not Kubernetes profiling control. ProfileRun operations use Kubernetes RBAC; internal HTTP follows the existing platform network trust boundary, not per-user authorization between Pods.
 
-The model-server owns the active task after the submitting request returns. At a window deadline it requests stop; export must complete before another window starts. Cancellation prevents later windows and requests termination of the current capture. Reject overlapping captures on one engine instead of replacing them. If some participants fail to start, cancel those started for this run and report partial results.
+## Prepare before capture
 
-A disconnected workstation must not leave a submitted window recording indefinitely. Native stop/export failure or a stuck operation must be reported as failed or not confirmed stopped; an expired timer is not proof of termination. Do not kill or restart an existing service by default for a diagnostic operation. Pod restart does not resume an old plan or transfer it to replacement instances. No new CRD, reconciler, Job, or always-on profiling service is introduced.
+The platform's `profiling.artifactClaims` maps a diagnostic namespace to an existing PVC. The ModelGroup controller projects the mount and runtime identity into its normal Pod template. This changes workloads at deployment time, so configure it before deploying diagnostic services. ProfileRun does not own or mutate workloads or PVCs.
 
-Bench still performs one normal execution: prepare inputs, activate the plan as request execution begins, and end remaining captures when the workload finishes or is interrupted. Do not repeat benchmarks to fill the requested window count. Requests may run during the delay; do not wait until profiling has ended to generate traffic. Integrate with the existing executor's preparation/execution boundary, without a second client, scheduler, or warm-up request path.
+At startup, the runtime creates a fresh process identity and configures the installed engine's Torch profiler to write uncompressed traces into private staging. The model-server image applies the [vLLM Python backport](../../data-plane/patches/vllm-python-profiling.patch) for error propagation and independent subsequent captures. The Rust source submodule is not the installed Python engine. An image must accept the backport or already contain that exact implementation.
 
-Separate output by invocation, window, and runtime, retaining native backend files without overwriting consecutive captures. Shared submission code automatically retrieves completed files; users do not run `kubectl cp`, and no download port or dedicated PVC is required. Uncollected files follow the existing Pod storage lifetime, with no guarantee beyond Pod deletion. Benchmark-owned temporary services are cleaned up only after capture stops and results are handled; retrieval failures must preserve recoverable output and be reported rather than silently deleting it.
+## Identity and recovery
 
-## 4. A common command does not imply identical backend startup
+The CLI submits this API intent; users do not write this YAML for each capture:
 
-| Backend direction | Implementation or feasibility boundary |
-| --- | --- |
-| PyTorch Profiler | Reuse engine controls and export. Verify device events on NVIDIA and the MetaX PyTorch build separately; a CPU-only trace is not evidence of GPU support |
-| Nsight Systems | Reuse `nsys` and native capture controls; verify attachment to existing services, multi-window export, and idle runtime overhead |
-| MetaX native tool | Confirm the actual tool, version, lifecycle, and output interface before adapting it to the plan; do not invent a tool name or copy NVIDIA commands |
+```yaml
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ProfileRun
+metadata:
+  generateName: profile-
+  namespace: foretoken-diagnostic
+spec:
+  modelServiceRef:
+    name: diagnostic-model
+  duration: 15s
+  action: Capture
+```
 
-The [vLLM Torch and Nsight examples](https://docs.vllm.ai/en/latest/contributing/profiling/) demonstrate different prerequisites: the documented Nsight server starts under `nsys`. Foretoken images and startup integration own the no-user-YAML experience; it does not prove that any existing process can be instrumented without preparation. A capture command must not implicitly roll or restart an existing service. Report an unavailable selected backend before starting.
+The API fixes target and duration at creation. Actions move from `Capture` to `Finish` or `Cancel`; cancellation cannot be reversed. The Kubernetes UID distinguishes runs even when a resource name is reused.
 
-Learn engine controls and backend-specific parameters from [Dynamo Runtime Profiling](https://github.com/ai-dynamo/dynamo/blob/main/docs/fern/pages/developer-guide/knowledge-base/modular-components/profiler/profiler-guide.md#runtime-profiling), without importing deployment optimization, capacity characterization, or automatic deployment into short-window capture.
+Before native work starts, reconciliation persists a deletion finalizer and an immutable, run-owned ConfigMap execution plan. It resolves the ModelService's committed serving generation with existing routing helpers and checks the Pod → ReplicaSet → Deployment → ModelGroup ownership chain. The plan stores fixed service, group, Pod and runtime identities. Controller restart reads the same plan rather than selecting replacement instances.
 
-## 5. Ownership and implementation order
+Status progresses through `Starting`, `Capturing` and `Stopping` to `Succeeded`, `Failed` or `Cancelled`. All selected participants must be capturing before the run reports `Capturing`; success requires every expected participant's result. Sending an HTTP operation alone is not completion. The runtime rejects competing captures and handles same-run retries without restarting or extending the window.
 
-| Location | Responsibility |
-| --- | --- |
-| [`cli/foretoken/`](../../cli/foretoken/) | Shared service selection, submission, observation, and retrieval for both entry points, using existing Kubernetes facilities |
-| [`benchmarks/`](../../benchmarks/) | Supply requests and integrate one execution with a capture plan; do not own capture timers or duplicate Pod lifecycle |
-| [`data-plane/model-server/`](../../data-plane/model-server/) | In-process plans, controls, cancellation, and backend adapters, reusing process management and the engine client |
-| [`deploy/`](../../deploy/) | Image tools and required runtime preparation, without user-facing profiling YAML switches |
-| [`data-plane/third_party/vllm/`](../../data-plane/third_party/vllm/) | Only generally reusable upstream fixes, not Foretoken commands, timing, or Kubernetes behavior |
+An unreachable or replaced participant or changed serving cohort causes cancellation of remaining work and a coverage or stop error. A missing Pod is not proof that its engine stopped. Unconfirmed stop retains the finalizer and plan for operator diagnosis. Deleting a live run also requests cancellation; sealed artifacts are not owned by the run and are not garbage-collected with it.
 
-Validate the implemented delayed Torch window with a real workload, then connect the standalone entry point to the same control path. Extend it with gaps, finite repetition, and the agreed sample cap. Integrate Nsight and MetaX after validating their startup conditions separately. Use real small workloads to verify windows, export, repeated runs, cancellation, and continued ordinary inference; do not introduce permanent tests or CI as prerequisite infrastructure.
+## Runtime deadlines
 
-The local prototype replaces profiling port-forwarding, whole-benchmark capture, extra warm-up requests, and file-set differences with one runtime-owned window. `PUT/GET/DELETE /v1/internal/profile/{id}` on the existing listener accepts, observes, and cancels a client-generated ID; these handlers accept loopback peers only. The supervisor retains the active or latest result in memory; after a newer capture or process restart, an old ID is explicitly unavailable, not silently redirected. Native files retain their Pod storage lifetime. A failed native control blocks another capture until runtime recovery, without restarting the service. CLI retrieval failures retain benchmark-created resources. The model-server Dockerfile installs the repository-owned Python backport for per-capture names and export errors; it does not depend on uncommitted changes inside the Rust build's vLLM submodule. Engine-image requirements are documented in the [source image lifecycle guide](source-image-lifecycle.md). GPU integration remains unvalidated. Ordinary inference access is unchanged.
+State updates hold a short lock. Native utilities run in tasks owned by the supervisor, outside that lock and independently of HTTP request tasks. Cancellation changes desired action; it does not abandon an in-flight utility.
 
-## 6. Two interface decisions before implementation
+The ProfileRun API owns the default 15-second duration; the runtime starts that timer after native start succeeds. Native start and stop/flush have separate 30-second and 120-second budgets. Early `Finish` stops a shorter window. The CLI's default 10-minute observation timeout changes none of these deadlines.
 
-1. **Sample unit and scope:** requests, engine steps, or tool samples? Is the cap per window, per worker, or service-wide? Do not expose an ambiguous `--samples` until defined.
-2. **Existing-service identity and authorization:** what does “service token” identify and authorize, and is there an existing lookup/control interface? Review a `ModelService + namespace` management entry first if appropriate, but do not equate an inference API key with Pod control or invent a token-triggered prefill protocol.
+A failed or timed-out utility leaves native profiler state uncertain. The diagnostic runtime closes admission and follows its existing engine process-group shutdown path before releasing the utility task. This can interrupt inference on that service. Failure to confirm termination is reported rather than represented as success. Partial output remains for storage-owner diagnosis.
 
-These decisions do not prevent defining shared timing and ownership, but they affect the final command syntax and acceptance criteria. Nsight/MetaX attachment requirements are backend feasibility work, not a reason to shift configuration back to user YAML.
+## Seal before publication
+
+Each runtime writes to a dedicated, shared-writable artifact PVC, separate from runtime cache and KV storage:
+
+```text
+<artifact-volume>/.staging/<runtime-id>/
+<artifact-volume>/runs/<run-uid>/<runtime-id>/
+```
+
+Before starting, staging must be empty; unhandled output is not erased. After native stop/flush, success requires one valid Torch trace containing GPU kernel activity per expected worker. Validation streams events rather than loading the whole trace into memory. Cancellation retains available output without claiming completeness.
+
+The supervisor writes and flushes the manifest, renames the whole staging directory on the same filesystem, and flushes destination directories before publishing the artifact reference. Atomicity is per participant, not a distributed transaction. Later captures recreate staging and use a different run path. Publication failure neither produces success nor deletes recoverable data.
+
+The manifest's `startedAtUnixMs` follows native start; `stoppedAtUnixMs` follows stop/flush, so their difference includes export and is not pure recording duration. ProfileRun `finishedAt` is controller-observed completion. The command returns a PVC/path reference, not a workstation download. Namespace or PVC deletion remains a storage-owner operation and can remove artifacts.
+
+## Validation scope
+
+Real Kubernetes acceptance covered a single-worker NVIDIA A100 service with vLLM 0.26.0: two separate captures, Ctrl-C cancellation with retained output, automatic completion after CLI termination, controller restart recovery, and usable inference afterward. Perfetto parsed the traces with GPU kernel counts matching the original JSON; CPU slice-overlap import diagnostics remain and were not hidden by modifying files.
+
+Native-utility hangs, failed storage publication, multi-worker coverage and profiling overhead still require hardware measurement. Direct lifecycle checks do not replace those experiments. Benchmark integration, delay, sampling limits, repeated windows, Nsight and MetaX are outside this implementation; none is required to use the independent command.
+
+## Upstream references
+
+- [vLLM profiling](https://docs.vllm.ai/en/stable/contributing/profiling/): engine setup, output and diagnostic overhead.
+- [PyTorch profiler](https://docs.pytorch.org/docs/stable/profiler.html): native capture and trace export.
+- [Dynamo Profiler](https://docs.dynamo.nvidia.com/dynamo/dev/knowledge-base/modular-components/profiler/overview): deployment characterization has different outputs and ownership from bounded runtime trace capture.
