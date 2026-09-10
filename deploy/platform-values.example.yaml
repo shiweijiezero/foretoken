@@ -22,24 +22,13 @@ frontend:
 
 runtime:
   vllm:
-    image: registry.example.com/foretoken/model-server-vllm:dev
+    image: registry.example.com/foretoken/model-server:dev
     gpu:
       # Extended resource advertised by the cluster's GPU device plugin.
       resourceName: nvidia.com/gpu
       # Set this when the cluster exposes GPUs through a RuntimeClass.
       runtimeClassName: nvidia
       # Vendor node labels distinguish card models that share one resource name.
-      nodeSelector:
-        key: nvidia.com/gpu.product
-        value: NVIDIA-H100-80GB-HBM3
-  # Optional: SGLang aggregate Groups use a model-server image built with the
-  # backend-sglang feature.
-  sglang:
-    image: registry.example.com/foretoken/model-server-sglang:dev
-    profileRevision: default
-    gpu:
-      resourceName: nvidia.com/gpu
-      runtimeClassName: nvidia
       nodeSelector:
         key: nvidia.com/gpu.product
         value: NVIDIA-H100-80GB-HBM3
