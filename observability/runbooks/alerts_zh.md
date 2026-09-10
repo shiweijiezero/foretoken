@@ -64,13 +64,13 @@ Frontend 的 HTTP 响应开始事件中，5xx 比例在至少每秒 0.1 个响�
 
 ## ForetokenModelServerKVCachePressureHigh
 
-一个 model group 中所有 engine 的最高 KV Cache 使用率连续十分钟不低于 95%。
+一个 model group 中所有 engine 的最高 KV Cache 使用率连续十分钟不低于配置的阈值（默认 95%）。
 
 1. 确认 group、role 和 model 标签，再查看 scheduler waiting 与 running requests。
 2. 调整容量前，先检查请求长度、并发、workload 配置和副本健康状态。
 3. 比较各个 Pod 或 engine，定位实际热点。
 
-记录指标在每次计算时取所有 engine 的最大值，而不是集群平均值；贡献最大值的 engine 可能随时间改变。95% 是初始 warning 策略，后续应根据真实 workload 的测量结果调整。
+记录指标在每次计算时取所有 engine 的最大值，而不是集群平均值；贡献最大值的 engine 可能随时间改变。阈值由 `observability.alerts.thresholds.kvCacheUsageRatio` 配置，应根据真实 workload 的测量结果调整。
 
 ## ForetokenAcceleratorGPUUtilizationHigh
 

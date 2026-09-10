@@ -46,8 +46,14 @@ AUTOSCALING_TARGET = "namespace,modelservice,target_kind,target_name,role"
 AUTOSCALING_LEGEND = "{{modelservice}} / {{target_name}} / {{role}}"
 DEVICE_LEGEND = "{{node}} / {{device_id}}"
 
-# The KV-cache pressure alert fires at this usage ratio; the panel draws it as a reference line.
-KV_CACHE_ALERT_RATIO = 0.95
+# Alert thresholds are drawn as reference lines. The values live in the chart's
+# `observability.alerts.thresholds`; the chart substitutes these placeholders when it renders
+# the dashboard ConfigMap, so the alert rules and the lines always agree.
+KV_CACHE_THRESHOLD = "foretoken_alert_threshold_kv_cache_usage_ratio"
+GPU_UTILIZATION_THRESHOLD = "foretoken_alert_threshold_accelerator_utilization_ratio"
+GPU_MEMORY_THRESHOLD = "foretoken_alert_threshold_accelerator_memory_usage_ratio"
+GPU_TEMPERATURE_THRESHOLD = "foretoken_alert_threshold_nvidia_temperature_celsius"
+GPU_POWER_THRESHOLD = "foretoken_alert_threshold_nvidia_power_watts"
 
 
 def query(expr: str, legend: str | None = None) -> prometheus.Dataquery:
@@ -57,7 +63,7 @@ def query(expr: str, legend: str | None = None) -> prometheus.Dataquery:
     return target
 
 
-def steps(*thresholds: tuple[float | None, str]) -> dashboard.ThresholdsConfig:
+def steps(*thresholds: tuple[float | str | None, str]) -> dashboard.ThresholdsConfig:
     return dashboard.ThresholdsConfig().mode(dashboard_models.ThresholdsMode.ABSOLUTE).steps(
         [dashboard_models.Threshold(value=value, color=color) for value, color in thresholds]
     )
@@ -109,13 +115,13 @@ def series(
     span: int,
     colors: dict[str, str] | None = None,
     stack: bool = False,
-    reference_line: float | None = None,
+    reference_line: str | None = None,
 ) -> timeseries.Panel:
     """A time series panel.
 
     `colors` pins legend names to fixed colors, `stack` draws the series as a composition, and
-    `reference_line` adds a dashed horizontal line, used to show an alert threshold. Ratio panels
-    keep a fixed 0 to 1 axis so the curve does not rescale as values change.
+    `reference_line` names an alert threshold placeholder drawn as a dashed horizontal line.
+    Ratio panels keep a fixed 0 to 1 axis so the curve does not rescale as values change.
     """
     panel = (
         timeseries.Panel()
@@ -192,13 +198,14 @@ def distribution(title: str, description: str, rule: str) -> heatmap.Panel:
     )
 
 
-def by_device(title: str, description: str, rule: str, *, unit: str) -> timeseries.Panel:
+def by_device(title: str, description: str, rule: str, *, unit: str, threshold: str) -> timeseries.Panel:
     return series(
         title,
         description,
         [query(f"max by(node, device_id) ({rule})", DEVICE_LEGEND)],
         unit=unit,
         span=6,
+        reference_line=threshold,
     )
 
 
@@ -550,7 +557,7 @@ def build() -> dashboard_models.Dashboard:
             [query(f"max by(model_role) (foretoken:model_server_kv_cache_usage_ratio:max{{{MODEL}}})", "{{model_role}}")],
             unit="percentunit",
             span=8,
-            reference_line=KV_CACHE_ALERT_RATIO,
+            reference_line=KV_CACHE_THRESHOLD,
         )
     )
     board.with_panel(
@@ -613,6 +620,7 @@ def build() -> dashboard_models.Dashboard:
             ],
             unit="percentunit",
             span=6,
+            reference_line=GPU_UTILIZATION_THRESHOLD,
         )
     )
     board.with_panel(
@@ -627,6 +635,7 @@ def build() -> dashboard_models.Dashboard:
             ],
             unit="percentunit",
             span=6,
+            reference_line=GPU_MEMORY_THRESHOLD,
         )
     )
     board.with_panel(
@@ -635,6 +644,7 @@ def build() -> dashboard_models.Dashboard:
             "Utilization of each Foretoken-attributed GPU.",
             "foretoken:accelerator_gpu_utilization_ratio",
             unit="percentunit",
+            threshold=GPU_UTILIZATION_THRESHOLD,
         )
     )
     board.with_panel(
@@ -643,6 +653,7 @@ def build() -> dashboard_models.Dashboard:
             "Memory utilization of each Foretoken-attributed GPU.",
             "foretoken:accelerator_gpu_memory_usage_ratio",
             unit="percentunit",
+            threshold=GPU_MEMORY_THRESHOLD,
         )
     )
     board.with_panel(
@@ -651,6 +662,7 @@ def build() -> dashboard_models.Dashboard:
             "Power draw of each Foretoken-attributed NVIDIA GPU.",
             "foretoken:accelerator_gpu_power_watts",
             unit="watt",
+            threshold=GPU_POWER_THRESHOLD,
         )
     )
     board.with_panel(
@@ -659,6 +671,7 @@ def build() -> dashboard_models.Dashboard:
             "Temperature of each Foretoken-attributed NVIDIA GPU.",
             "foretoken:accelerator_gpu_temperature_celsius",
             unit="celsius",
+            threshold=GPU_TEMPERATURE_THRESHOLD,
         )
     )
     container = 'namespace=~"$namespace",container=~"frontend|model-server"'

@@ -1997,7 +1997,7 @@
               },
               {
                 "color": "#d03b3b",
-                "value": 0.95
+                "value": "foretoken_alert_threshold_kv_cache_usage_ratio"
               }
             ]
           },
@@ -2344,10 +2344,26 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never"
+            "showPoints": "never",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
           },
           "max": 1,
           "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0ca30c",
+                "value": null
+              },
+              {
+                "color": "#d03b3b",
+                "value": "foretoken_alert_threshold_accelerator_utilization_ratio"
+              }
+            ]
+          },
           "unit": "percentunit"
         },
         "overrides": []
@@ -2405,10 +2421,26 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never"
+            "showPoints": "never",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
           },
           "max": 1,
           "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0ca30c",
+                "value": null
+              },
+              {
+                "color": "#d03b3b",
+                "value": "foretoken_alert_threshold_accelerator_memory_usage_ratio"
+              }
+            ]
+          },
           "unit": "percentunit"
         },
         "overrides": []
@@ -2466,10 +2498,26 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never"
+            "showPoints": "never",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
           },
           "max": 1,
           "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0ca30c",
+                "value": null
+              },
+              {
+                "color": "#d03b3b",
+                "value": "foretoken_alert_threshold_accelerator_utilization_ratio"
+              }
+            ]
+          },
           "unit": "percentunit"
         },
         "overrides": []
@@ -2527,10 +2575,26 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never"
+            "showPoints": "never",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
           },
           "max": 1,
           "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0ca30c",
+                "value": null
+              },
+              {
+                "color": "#d03b3b",
+                "value": "foretoken_alert_threshold_accelerator_memory_usage_ratio"
+              }
+            ]
+          },
           "unit": "percentunit"
         },
         "overrides": []
@@ -2588,7 +2652,23 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never"
+            "showPoints": "never",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0ca30c",
+                "value": null
+              },
+              {
+                "color": "#d03b3b",
+                "value": "foretoken_alert_threshold_nvidia_power_watts"
+              }
+            ]
           },
           "unit": "watt"
         },
@@ -2647,7 +2727,23 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never"
+            "showPoints": "never",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0ca30c",
+                "value": null
+              },
+              {
+                "color": "#d03b3b",
+                "value": "foretoken_alert_threshold_nvidia_temperature_celsius"
+              }
+            ]
           },
           "unit": "celsius"
         },

@@ -86,7 +86,7 @@ sum(foretoken:frontend_http_response_starts:rate5m)
 
 ## Alerts
 
-Alert rules are installed together with collection. Each alert links to its entry in the [runbooks](runbooks/alerts.md), which explain the signal and how to investigate it. Thresholds and the notification language are set in the platform values:
+Alert rules are installed together with collection. Each alert links to its entry in the [runbooks](runbooks/alerts.md), which explain the signal and how to investigate it. Thresholds and the notification language are set in the platform values; the dashboard draws each threshold as a dashed line on the matching panel:
 
 ```yaml
 observability:
@@ -94,11 +94,11 @@ observability:
   alerts:
     language: en
     thresholds:
-      acceleratorMemoryUsageRatio: 0.90
+      kvCacheUsageRatio: 0.90
       nvidiaTemperatureCelsius: 80
 ```
 
-`language` accepts `zh`, `en`, or `bilingual` and applies to all alerts of the installation. Notifications are delivered by the cluster's Alertmanager; the optional [Lark integration](integrations/lark/README.md) adds a receiver for Lark group bots.
+The thresholds are `kvCacheUsageRatio`, `acceleratorUtilizationRatio`, `acceleratorMemoryUsageRatio`, `nvidiaTemperatureCelsius`, and `nvidiaPowerWatts`; unset ones keep the chart defaults. `language` accepts `zh`, `en`, or `bilingual` and applies to all alerts of the installation. Notifications are delivered by the cluster's Alertmanager; the optional [Lark integration](integrations/lark/README.md) adds a receiver for Lark group bots.
 
 ## Metrics reference
 

@@ -7,18 +7,18 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken 使用 Prometheus 采集服务和加速器指标，通过 Grafana 中的 **Foretoken System Overview** Dashboard 展示，并为常见问题安装告警规则。
+Foretoken 使用 Prometheus 采集服务和加速器指标，通过 Grafana 看板 **Foretoken System Overview** 展示，并为常见问题安装告警规则。
 
 ## 快速开始
 
-安装平台、部署一个模型服务，然后打开 Dashboard：
+安装平台、部署一个模型服务，然后打开看板：
 
 ```bash
 foretoken install
 foretoken deploy examples/quickstart
 ```
 
-`foretoken install` 会查找集群中已有的 Prometheus，没有时安装一套由 CLI 管理的 kube-prometheus-stack，并在修改集群前打印安装计划。CLI 管理的 Grafana 会自动加载 Dashboard。先获取自动生成的管理员凭据，再通过集群提供的地址打开 Grafana：
+`foretoken install` 会查找集群中已有的 Prometheus，没有时安装一套由 CLI 管理的 kube-prometheus-stack，并在修改集群前打印安装计划。CLI 管理的 Grafana 会自动加载看板。先获取自动生成的管理员凭据，再通过集群提供的地址打开 Grafana：
 
 ```bash
 GRAFANA_USER="$(kubectl get secret \
@@ -61,7 +61,7 @@ foretoken install --prometheus monitoring/prometheus
 
 GPU 面板和告警依靠 Foretoken 模型组和模型角色的 Pod 标签识别设备。CLI 管理的 DCGM Exporter 会输出这些标签；复用已有 exporter 时需要同样的标签，否则这些面板没有数据。
 
-复用 Prometheus 时，Grafana 仍由原平台管理。能够发现 `grafana_dashboard=1` ConfigMap 的 Grafana sidecar 会从 `foretoken-platform` 命名空间自动加载 Dashboard；否则导出 JSON 后在 Grafana 中导入：
+复用 Prometheus 时，Grafana 仍由原平台管理。能够发现 `grafana_dashboard=1` ConfigMap 的 Grafana sidecar 会从 `foretoken-platform` 命名空间自动加载看板；否则导出 JSON 后在 Grafana 中导入：
 
 ```bash
 kubectl get configmap \
@@ -86,7 +86,7 @@ sum(foretoken:frontend_http_response_starts:rate5m)
 
 ## 告警
 
-告警规则随采集一起安装。每条告警都链接到[排障手册](runbooks/alerts_zh.md)中的对应条目，说明信号含义和排查方法。阈值和通知语言在平台配置中设置：
+告警规则随采集一起安装。每条告警都链接到[排障手册](runbooks/alerts_zh.md)中的对应条目，说明信号含义和排查方法。阈值和通知语言在平台配置中设置，看板会把每个阈值画成对应面板上的虚线：
 
 ```yaml
 observability:
@@ -94,11 +94,11 @@ observability:
   alerts:
     language: en
     thresholds:
-      acceleratorMemoryUsageRatio: 0.90
+      kvCacheUsageRatio: 0.90
       nvidiaTemperatureCelsius: 80
 ```
 
-`language` 可选 `zh`、`en` 或 `bilingual`，对本次安装的全部告警生效。通知由集群的 Alertmanager 发送；可选的 [Lark 集成](integrations/lark/README_zh.md)为 Lark 群机器人提供接收器。
+可配置的阈值有 `kvCacheUsageRatio`、`acceleratorUtilizationRatio`、`acceleratorMemoryUsageRatio`、`nvidiaTemperatureCelsius` 和 `nvidiaPowerWatts`，未填写的沿用 Chart 默认值。`language` 可选 `zh`、`en` 或 `bilingual`，对本次安装的全部告警生效。通知由集群的 Alertmanager 发送；可选的 [Lark 集成](integrations/lark/README_zh.md)为 Lark 群机器人提供接收器。
 
 ## 指标参考
 
@@ -112,7 +112,7 @@ observability:
 | kubelet/cAdvisor | 容器 CPU、内存、文件系统和网络 |
 | kube-state-metrics | Kubernetes 对象状态 |
 
-Dashboard 和告警查询下列记录规则。模型服务相关规则来自 vLLM 指标。
+看板和告警查询下列记录规则。模型服务相关规则来自 vLLM 指标。
 
 | 类别 | 记录规则 | 含义 |
 | --- | --- | --- |
