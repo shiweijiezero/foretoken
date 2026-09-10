@@ -8,12 +8,12 @@ image:
   repository: registry.example.com/foretoken/control-plane
   tag: dev
 
-# On clusters that assign no addresses to LoadBalancer Services, set an address
-# range routed on the node network; foretoken install then manages MetalLB in
-# Layer 2 mode.
+# If foretoken install ends with "LoadBalancer support Not verified", list a few
+# unused IP addresses on the nodes' network here. Foretoken then installs the
+# component that hands them to services.
 # loadBalancer:
 #   managedAddresses:
-#     - <approved-address-range>
+#     - 192.168.1.240-192.168.1.250
 
 # This Secret must exist in foretoken-platform for the control-plane Pod.
 imagePullSecrets:

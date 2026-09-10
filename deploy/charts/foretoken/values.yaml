@@ -26,7 +26,8 @@ workload:
     claimName: ""
     mountPath: /var/cache/foretoken
 
-# Consumed by foretoken install. A non-empty pool installs CLI-managed MetalLB in Layer 2 mode.
+# Unused node-network IP addresses for services when the cluster assigns none.
+# Consumed by foretoken install, which then manages MetalLB in Layer 2 mode.
 loadBalancer:
   managedAddresses: []
 
