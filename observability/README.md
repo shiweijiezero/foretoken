@@ -33,7 +33,7 @@ printf 'Grafana user: %s\nGrafana password: %s\n' \
   "$GRAFANA_USER" "$GRAFANA_PASSWORD"
 ```
 
-In Grafana, select **Dashboards** and open **Foretoken System Overview**. It follows the request path: Frontend traffic and admission, model-server latency and throughput, scheduler state, KV and RuntimeCache behavior, accelerator utilization, and container resources, followed by routing decisions, control-plane health, and autoscaling decisions. Filters select the namespace, Frontend service, model group, model role, model, and model service. Accelerator panels show only devices used by Foretoken workloads, each counted once.
+In Grafana, select **Dashboards** and open **Foretoken System Overview**. It follows the request path: Frontend traffic and admission, model-server latency, throughput, and request-length distributions, scheduler state, KV and RuntimeCache behavior, accelerator utilization, and container resources, followed by autoscaling decisions. Routing and control-plane sections are collapsed below. Filters select the namespace, Frontend service, model group, model role, model, and model service. Accelerator panels show only devices used by Foretoken workloads, each counted once.
 
 ## Use an existing monitoring stack
 
@@ -131,6 +131,11 @@ The dashboard and alerts query these recording rules. Model-serving rules are de
 | Model serving | `foretoken:model_server_e2e_request_latency_seconds:quantile5m` | Request latency inside the model server, as `p50`, `p90`, and `p99` |
 | Model serving | `foretoken:model_server_time_to_first_token_seconds:quantile5m` | Time to first token, as `p50`, `p90`, and `p99` |
 | Model serving | `foretoken:model_server_time_per_output_token_seconds:quantile5m` | Time per output token, as `p50`, `p90`, and `p99` |
+| Model serving | `foretoken:model_server_inter_token_latency_seconds:quantile5m` | Gap between consecutive output tokens, as `p50`, `p90`, and `p99` |
+| Model serving | `foretoken:model_server_request_stage_time_seconds:quantile5m` | Time spent in the `queue`, `prefill`, and `decode` stages, as `p50`, `p90`, and `p99` |
+| Model serving | `foretoken:model_server_preemptions:rate5m` | Requests preempted per second |
+| Model serving | `foretoken:model_server_request_prompt_tokens_bucket:rate5m` | Prompt length histogram buckets |
+| Model serving | `foretoken:model_server_request_generation_tokens_bucket:rate5m` | Output length histogram buckets |
 | Cache | `foretoken:model_server_kv_cache_usage_ratio:max` | Highest KV cache usage ratio in an engine |
 | Cache | `foretoken:model_server_prefix_cache_hit_ratio:rate5m` | Local or external prefix cache hit ratio |
 | Cache | `foretoken:model_server_runtime_cache_available_bytes:min` | Lowest RuntimeCache free space |
@@ -139,6 +144,8 @@ The dashboard and alerts query these recording rules. Model-serving rules are de
 | Cache | `foretoken:model_server_runtime_cache_temporary:max` | Whether any model server uses temporary Pod-local cache storage |
 | Accelerator | `foretoken:accelerator_gpu_utilization_ratio` | Per-device NVIDIA or MetaX utilization |
 | Accelerator | `foretoken:accelerator_gpu_memory_usage_ratio` | Per-device NVIDIA or MetaX memory usage |
+| Accelerator | `foretoken:accelerator_gpu_power_watts` | Per-device NVIDIA power draw |
+| Accelerator | `foretoken:accelerator_gpu_temperature_celsius` | Per-device NVIDIA temperature |
 
 Rules keep the namespace, Frontend service, model group, model role, model name, and Prefill/Decode pipeline scope labels. Frontend latency ends when response headers are sent, so for streaming responses it does not include token delivery; model-server latency ends when generation completes. A streaming response can start with `2xx` and fail later, so the 5xx ratio is not an inference success rate.
 

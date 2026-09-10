@@ -16,14 +16,16 @@ serving and caches to accelerators, and finally routing, control-plane, and auto
 
 from __future__ import annotations
 
-from grafana_foundation_sdk.builders import common, dashboard, prometheus, stat, table, timeseries
+from grafana_foundation_sdk.builders import common, dashboard, heatmap, prometheus, stat, table, timeseries
 from grafana_foundation_sdk.cog.encoder import JSONEncoder
 from grafana_foundation_sdk.models import common as models
 from grafana_foundation_sdk.models import dashboard as dashboard_models
+from grafana_foundation_sdk.models import heatmap as heatmap_models
 from grafana_foundation_sdk.models import prometheus as prometheus_models
 
 PROMETHEUS = dashboard_models.DataSourceRef(type_val="prometheus", uid="${DS_PROMETHEUS}")
 
+# Requests are blue, tokens orange, errors red, caches teal; latency quantiles darken with rank.
 GREEN = "#0ca30c"
 AMBER = "#eda100"
 RED = "#d03b3b"
@@ -31,6 +33,7 @@ BLUE = "#2a78d6"
 ORANGE = "#eb6834"
 TEAL = "#1baf7a"
 QUANTILE_COLORS = {"p50": "#86b6ef", "p90": "#3987e5", "p99": "#184f95"}
+STAGE_COLORS = {"queue": AMBER, "prefill": BLUE, "decode": TEAL}
 
 # Label selectors shared by the dashboard variables and the queries below.
 FRONTEND = 'namespace=~"$namespace",frontend_service=~"$frontend_service"'
@@ -41,6 +44,10 @@ SERVICE = 'namespace=~"$namespace",modelservice=~"$model_service"'
 CONTROLLER = 'job="foretoken-control-plane"'
 AUTOSCALING_TARGET = "namespace,modelservice,target_kind,target_name,role"
 AUTOSCALING_LEGEND = "{{modelservice}} / {{target_name}} / {{role}}"
+DEVICE_LEGEND = "{{node}} / {{device_id}}"
+
+# The KV-cache pressure alert fires at this usage ratio; the panel draws it as a reference line.
+KV_CACHE_ALERT_RATIO = 0.95
 
 
 def query(expr: str, legend: str | None = None) -> prometheus.Dataquery:
@@ -101,8 +108,15 @@ def series(
     unit: str,
     span: int,
     colors: dict[str, str] | None = None,
+    stack: bool = False,
+    reference_line: float | None = None,
 ) -> timeseries.Panel:
-    """A time series panel; `colors` pins legend names to fixed colors."""
+    """A time series panel.
+
+    `colors` pins legend names to fixed colors, `stack` draws the series as a composition, and
+    `reference_line` adds a dashed horizontal line, used to show an alert threshold. Ratio panels
+    keep a fixed 0 to 1 axis so the curve does not rescale as values change.
+    """
     panel = (
         timeseries.Panel()
         .title(title)
@@ -111,7 +125,7 @@ def series(
         .unit(unit)
         .color_scheme(dashboard.FieldColor().mode(dashboard_models.FieldColorModeId.PALETTE_CLASSIC_BY_NAME))
         .line_width(2)
-        .fill_opacity(8)
+        .fill_opacity(24 if stack else 8)
         .point_size(8)
         .show_points(models.VisibilityMode.NEVER)
         .legend(
@@ -126,6 +140,14 @@ def series(
         .span(span)
         .height(8)
     )
+    if unit == "percentunit":
+        panel.min(0).max(1)
+    if stack:
+        panel.stacking(common.StackingConfig().mode(models.StackingMode.NORMAL).group("A"))
+    if reference_line is not None:
+        panel.thresholds(steps((None, GREEN), (reference_line, RED))).thresholds_style(
+            common.GraphThresholdsStyleConfig().mode(models.GraphThresholdsStyleMode.DASHED)
+        )
     for name, color in (colors or {}).items():
         panel.override_by_name(
             name,
@@ -134,14 +156,49 @@ def series(
     return panel
 
 
-def quantiles(rule: str, selector: str, title: str, description: str) -> timeseries.Panel:
+def quantiles(rule: str, selector: str, title: str, description: str, *, span: int = 8) -> timeseries.Panel:
     return series(
         title,
         description,
         [query(f"max by(quantile) ({rule}{{{selector}}})", "{{quantile}}")],
         unit="s",
-        span=8,
+        span=span,
         colors=QUANTILE_COLORS,
+    )
+
+
+def distribution(title: str, description: str, rule: str) -> heatmap.Panel:
+    """A heatmap of a request-length histogram, one column per scrape interval."""
+    return (
+        heatmap.Panel()
+        .title(title)
+        .description(description)
+        .datasource(PROMETHEUS)
+        .with_target(
+            prometheus.Dataquery()
+            .datasource(PROMETHEUS)
+            .expr(f"sum by(le) ({rule}{{{MODEL}}})")
+            .format(prometheus_models.PromQueryFormat.HEATMAP)
+            .legend_format("{{le}}")
+            .range()
+            .ref_id("A")
+        )
+        .calculate(False)
+        .cell_gap(1)
+        .color(heatmap.HeatmapColorOptions().mode(heatmap_models.HeatmapColorMode.SCHEME).scheme("Blues").steps(64))
+        .y_axis(heatmap.YAxisConfig().unit("short"))
+        .span(12)
+        .height(8)
+    )
+
+
+def by_device(title: str, description: str, rule: str, *, unit: str) -> timeseries.Panel:
+    return series(
+        title,
+        description,
+        [query(f"max by(node, device_id) ({rule})", DEVICE_LEGEND)],
+        unit=unit,
+        span=6,
     )
 
 
@@ -320,6 +377,17 @@ def build() -> dashboard_models.Dashboard:
             unit="reqps",
             span=6,
             colors={"2xx": GREEN, "4xx": ORANGE, "5xx": RED},
+            stack=True,
+        )
+    )
+    board.with_panel(
+        series(
+            "Request rate by endpoint",
+            "Frontend response starts grouped by HTTP endpoint.",
+            [query(f"sum by(handler) (foretoken:frontend_http_response_starts:rate5m{{{FRONTEND}}})", "{{handler}}")],
+            unit="reqps",
+            span=6,
+            stack=True,
         )
     )
     board.with_panel(
@@ -354,15 +422,6 @@ def build() -> dashboard_models.Dashboard:
             colors={"Pool": BLUE, "EPDPipelineScope": ORANGE},
         )
     )
-    board.with_panel(
-        series(
-            "KV index source health",
-            "Healthy KV event sources divided by configured sources. Disabled or unavailable indexing reports zero.",
-            [query(f"foretoken:frontend_kv_index_source_health_ratio:min{{{FRONTEND}}}", "{{frontend_service}}")],
-            unit="percentunit",
-            span=6,
-        )
-    )
 
     board.with_row(dashboard.Row("Model Serving"))
     board.with_panel(
@@ -377,6 +436,7 @@ def build() -> dashboard_models.Dashboard:
             ],
             unit="reqps",
             span=8,
+            stack=True,
         )
     )
     board.with_panel(
@@ -431,15 +491,66 @@ def build() -> dashboard_models.Dashboard:
             "Maximum per-model-group output-token latency quantile. This is not a cluster-wide quantile.",
         )
     )
+    board.with_panel(
+        quantiles(
+            "foretoken:model_server_inter_token_latency_seconds:quantile5m",
+            MODEL,
+            "Inter-token latency",
+            "Maximum per-model-group gap between consecutive output tokens. Unlike time per output "
+            "token, it is measured per token rather than averaged over the request.",
+        )
+    )
+    board.with_panel(
+        series(
+            "Request time by stage",
+            "P90 time a request spends waiting for the scheduler, in prefill, and in decode.",
+            [
+                query(
+                    f'max by(stage) (foretoken:model_server_request_stage_time_seconds:quantile5m{{{MODEL},quantile="p90"}})',
+                    "{{stage}}",
+                )
+            ],
+            unit="s",
+            span=8,
+            colors=STAGE_COLORS,
+        )
+    )
+    board.with_panel(
+        series(
+            "Preemptions",
+            "Requests preempted per second because KV-cache blocks ran out. Sustained preemption "
+            "precedes the KV-cache pressure alert.",
+            [query(f"sum(foretoken:model_server_preemptions:rate5m{{{MODEL}}})", "Preemptions")],
+            unit="ops",
+            span=8,
+            colors={"Preemptions": RED},
+        )
+    )
+    board.with_panel(
+        distribution(
+            "Prompt length",
+            "Distribution of prompt tokens per request over time.",
+            "foretoken:model_server_request_prompt_tokens_bucket:rate5m",
+        )
+    )
+    board.with_panel(
+        distribution(
+            "Output length",
+            "Distribution of generated tokens per request over time.",
+            "foretoken:model_server_request_generation_tokens_bucket:rate5m",
+        )
+    )
 
     board.with_row(dashboard.Row("Cache"))
     board.with_panel(
         series(
             "KV Cache utilization",
-            "Highest in-engine KV-cache utilization grouped by model role.",
+            "Highest in-engine KV-cache utilization grouped by model role. The dashed line is the "
+            "KV-cache pressure alert threshold.",
             [query(f"max by(model_role) (foretoken:model_server_kv_cache_usage_ratio:max{{{MODEL}}})", "{{model_role}}")],
             unit="percentunit",
-            span=6,
+            span=8,
+            reference_line=KV_CACHE_ALERT_RATIO,
         )
     )
     board.with_panel(
@@ -448,8 +559,17 @@ def build() -> dashboard_models.Dashboard:
             "Average local and external Prefix Cache token hit ratios across selected model groups.",
             [query(f"avg by(cache) (foretoken:model_server_prefix_cache_hit_ratio:rate5m{{{MODEL}}})", "{{cache}}")],
             unit="percentunit",
-            span=6,
+            span=8,
             colors={"local": BLUE, "external": TEAL},
+        )
+    )
+    board.with_panel(
+        series(
+            "KV index source health",
+            "Healthy KV event sources divided by configured sources. Disabled or unavailable indexing reports zero.",
+            [query(f"foretoken:frontend_kv_index_source_health_ratio:min{{{FRONTEND}}}", "{{frontend_service}}")],
+            unit="percentunit",
+            span=8,
         )
     )
     board.with_panel(
@@ -458,7 +578,7 @@ def build() -> dashboard_models.Dashboard:
             "Mounted RuntimeCache filesystem utilization. Series are absent for model groups without a RuntimeCache.",
             [query(f"foretoken:model_server_runtime_cache_usage_ratio:max{{{GROUP}}}", "{{model_group}} / {{model_role}}")],
             unit="percentunit",
-            span=6,
+            span=12,
         )
     )
     board.with_panel(
@@ -472,7 +592,7 @@ def build() -> dashboard_models.Dashboard:
                 )
             ],
             unit="bytes",
-            span=6,
+            span=12,
         )
     )
 
@@ -509,6 +629,38 @@ def build() -> dashboard_models.Dashboard:
             span=6,
         )
     )
+    board.with_panel(
+        by_device(
+            "GPU utilization by device",
+            "Utilization of each Foretoken-attributed GPU.",
+            "foretoken:accelerator_gpu_utilization_ratio",
+            unit="percentunit",
+        )
+    )
+    board.with_panel(
+        by_device(
+            "GPU memory by device",
+            "Memory utilization of each Foretoken-attributed GPU.",
+            "foretoken:accelerator_gpu_memory_usage_ratio",
+            unit="percentunit",
+        )
+    )
+    board.with_panel(
+        by_device(
+            "GPU power by device",
+            "Power draw of each Foretoken-attributed NVIDIA GPU.",
+            "foretoken:accelerator_gpu_power_watts",
+            unit="watt",
+        )
+    )
+    board.with_panel(
+        by_device(
+            "GPU temperature by device",
+            "Temperature of each Foretoken-attributed NVIDIA GPU.",
+            "foretoken:accelerator_gpu_temperature_celsius",
+            unit="celsius",
+        )
+    )
     container = 'namespace=~"$namespace",container=~"frontend|model-server"'
     board.with_panel(
         series(
@@ -536,8 +688,10 @@ def build() -> dashboard_models.Dashboard:
         )
     )
 
-    board.with_row(dashboard.Row("Routing decisions"))
-    board.with_panel(
+    # Routing and control-plane sections are collapsed: they matter when investigating the
+    # platform rather than during routine checks of the request path.
+    routing = dashboard.Row("Routing decisions")
+    routing.with_panel(
         series(
             "Routing outcomes",
             "Selection results by workflow round. A selection failure is not an HTTP status; "
@@ -552,7 +706,7 @@ def build() -> dashboard_models.Dashboard:
             span=8,
         )
     )
-    board.with_panel(
+    routing.with_panel(
         series(
             "Routing stage latency",
             "P99 filter, scorer and picker execution time, aggregated from histogram buckets "
@@ -568,7 +722,7 @@ def build() -> dashboard_models.Dashboard:
             span=8,
         )
     )
-    board.with_panel(
+    routing.with_panel(
         series(
             "Routing candidates",
             "Mean available, filtered and selectable candidate counts. Selectable counts include data-parallel ranks.",
@@ -583,9 +737,10 @@ def build() -> dashboard_models.Dashboard:
             span=8,
         )
     )
+    board.with_row(routing)
 
-    board.with_row(dashboard.Row("Control plane"))
-    board.with_panel(
+    control_plane = dashboard.Row("Control plane")
+    control_plane.with_panel(
         series(
             "Reconcile errors",
             "Controller-runtime errors per second. This section observes the platform controller "
@@ -600,7 +755,7 @@ def build() -> dashboard_models.Dashboard:
             span=8,
         )
     )
-    board.with_panel(
+    control_plane.with_panel(
         series(
             "Reconcile latency",
             "P99 reconciliation time by controller; this is control-plane work, not inference request latency.",
@@ -615,7 +770,7 @@ def build() -> dashboard_models.Dashboard:
             span=8,
         )
     )
-    board.with_panel(
+    control_plane.with_panel(
         series(
             "Controller workqueues",
             "Queued reconciliations. Current replica counts are deduplicated rather than added "
@@ -625,6 +780,7 @@ def build() -> dashboard_models.Dashboard:
             span=8,
         )
     )
+    board.with_row(control_plane)
 
     board.with_row(dashboard.Row("Autoscaling decisions"))
     board.with_panel(
@@ -665,6 +821,7 @@ def build() -> dashboard_models.Dashboard:
             age=True,
         )
     )
+    stage_columns = ["namespace", "modelservice", "target_kind", "target_name", "role", "stage", "algorithm", "disposition", "reason"]
     board.with_panel(
         table.Panel()
         .title("Latest autoscaling stage")
@@ -678,13 +835,20 @@ def build() -> dashboard_models.Dashboard:
         .with_target(
             prometheus.Dataquery()
             .datasource(PROMETHEUS)
-            .expr(
-                f"max by({AUTOSCALING_TARGET},stage,algorithm,disposition,reason) "
-                f"(foretoken_autoscaling_stage{{{SERVICE}}})"
-            )
+            .expr(f"max by({','.join(stage_columns)}) (foretoken_autoscaling_stage{{{SERVICE}}})")
             .format(prometheus_models.PromQueryFormat.TABLE)
             .instant()
             .ref_id("A")
+        )
+        # The instant query returns Time and Value columns that carry no information here.
+        .with_transformation(
+            dashboard_models.DataTransformerConfig(
+                id_val="organize",
+                options={
+                    "excludeByName": {"Time": True, "Value": True},
+                    "indexByName": {column: index for index, column in enumerate(stage_columns)},
+                },
+            )
         )
         .span(24)
         .height(9)

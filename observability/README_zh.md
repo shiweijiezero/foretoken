@@ -33,7 +33,7 @@ printf 'Grafana user: %s\nGrafana password: %s\n' \
   "$GRAFANA_USER" "$GRAFANA_PASSWORD"
 ```
 
-在 Grafana 中进入 **Dashboards**，选择 **Foretoken System Overview**。它按请求链路依次展示 Frontend 流量和准入、model-server 延迟与吞吐、调度状态、KV Cache 与 RuntimeCache、加速器利用率和容器资源，之后是路由决策、控制面状态和扩缩容决策。页面可按命名空间、Frontend 服务、模型组、模型角色、模型和模型服务筛选。加速器面板只展示 Foretoken 工作负载使用的设备，每个设备只计一次。
+在 Grafana 中进入 **Dashboards**，选择 **Foretoken System Overview**。它按请求链路依次展示 Frontend 流量和准入、model-server 延迟、吞吐和请求长度分布、调度状态、KV Cache 与 RuntimeCache、加速器利用率和容器资源，之后是扩缩容决策；路由决策和控制面状态两个分区默认折叠。页面可按命名空间、Frontend 服务、模型组、模型角色、模型和模型服务筛选。加速器面板只展示 Foretoken 工作负载使用的设备，每个设备只计一次。
 
 ## 接入已有监控
 
@@ -131,6 +131,11 @@ Dashboard 和告警查询下列记录规则。模型服务相关规则来自 vLL
 | 模型服务 | `foretoken:model_server_e2e_request_latency_seconds:quantile5m` | model-server 内的请求延迟，分 `p50`、`p90`、`p99` |
 | 模型服务 | `foretoken:model_server_time_to_first_token_seconds:quantile5m` | 首 token 延迟，分 `p50`、`p90`、`p99` |
 | 模型服务 | `foretoken:model_server_time_per_output_token_seconds:quantile5m` | 每输出 token 的时间，分 `p50`、`p90`、`p99` |
+| 模型服务 | `foretoken:model_server_inter_token_latency_seconds:quantile5m` | 相邻输出 token 之间的间隔，分 `p50`、`p90`、`p99` |
+| 模型服务 | `foretoken:model_server_request_stage_time_seconds:quantile5m` | 请求在 `queue`、`prefill`、`decode` 各阶段的时间，分 `p50`、`p90`、`p99` |
+| 模型服务 | `foretoken:model_server_preemptions:rate5m` | 每秒被抢占的请求数 |
+| 模型服务 | `foretoken:model_server_request_prompt_tokens_bucket:rate5m` | prompt 长度直方图桶 |
+| 模型服务 | `foretoken:model_server_request_generation_tokens_bucket:rate5m` | 输出长度直方图桶 |
 | 缓存 | `foretoken:model_server_kv_cache_usage_ratio:max` | 引擎中最高的 KV Cache 使用率 |
 | 缓存 | `foretoken:model_server_prefix_cache_hit_ratio:rate5m` | 本地或外部 Prefix Cache 命中率 |
 | 缓存 | `foretoken:model_server_runtime_cache_available_bytes:min` | RuntimeCache 最少的剩余空间 |
@@ -139,6 +144,8 @@ Dashboard 和告警查询下列记录规则。模型服务相关规则来自 vLL
 | 缓存 | `foretoken:model_server_runtime_cache_temporary:max` | 是否有 model-server 在使用 Pod 内的临时缓存 |
 | 加速器 | `foretoken:accelerator_gpu_utilization_ratio` | 每块 NVIDIA 或沐曦设备的利用率 |
 | 加速器 | `foretoken:accelerator_gpu_memory_usage_ratio` | 每块 NVIDIA 或沐曦设备的显存使用率 |
+| 加速器 | `foretoken:accelerator_gpu_power_watts` | 每块 NVIDIA 设备的功耗 |
+| 加速器 | `foretoken:accelerator_gpu_temperature_celsius` | 每块 NVIDIA 设备的温度 |
 
 记录规则保留命名空间、Frontend 服务、模型组、模型角色、模型名称和 Prefill/Decode pipeline scope 标签。Frontend 延迟在响应头发出时结束，流式响应的 token 发送时间不计入；model-server 延迟在生成完成时结束。流式响应可能先以 `2xx` 开始、之后再失败，因此 5xx 比例不是推理成功率。
 
