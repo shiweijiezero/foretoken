@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Alert settings for `foretoken install --values examples/observability/alerts.yaml`.
+# Observability settings for `foretoken install --values examples/observability/observability.yaml`.
 # The values below are the chart defaults; edit the ones to change and keep the rest.
 observability:
   alerts:

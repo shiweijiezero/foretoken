@@ -86,10 +86,10 @@ kubectl get configmap \
 
 Alert rules are installed together with collection. Each alert links to its entry in the [runbooks](runbooks/alerts.md), which explain the signal and how to investigate it. The dashboard draws each alert threshold as a dashed line on the matching panel.
 
-To change thresholds or the notification language, edit `alerts.yaml` in the [observability example](../examples/observability/README.md) and pass it to the installation:
+To change thresholds or the notification language, edit `observability.yaml` in the [observability example](../examples/observability/README.md) and pass it to the installation:
 
 ```bash
-foretoken install --values examples/observability/alerts.yaml
+foretoken install --values examples/observability/observability.yaml
 ```
 
 `language` accepts `zh`, `en`, or `bilingual` and applies to all alerts of the installation. Notifications are delivered by the cluster's Alertmanager; the optional [Lark integration](integrations/lark/README.md) adds a receiver for Lark group bots.

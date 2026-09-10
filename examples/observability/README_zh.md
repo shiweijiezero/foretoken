@@ -7,10 +7,10 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-在[快速开始](../quickstart/README_zh.md)的模型服务之上启用指标、Grafana 看板和告警。`alerts.yaml` 保存告警阈值和通知语言；指标采集和看板不需要配置。在仓库根目录运行：
+在[快速开始](../quickstart/README_zh.md)的模型服务之上启用指标、Grafana 看板和告警。`observability.yaml` 保存告警阈值和通知语言；指标采集和看板不需要配置。在仓库根目录运行：
 
 ```bash
-foretoken install --values examples/observability/alerts.yaml
+foretoken install --values examples/observability/observability.yaml
 foretoken deploy examples/quickstart
 ```
 

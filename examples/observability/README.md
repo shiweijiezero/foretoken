@@ -7,10 +7,10 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Runs the [Quick Start](../quickstart/README.md) model service with metrics, the Grafana dashboard, and alerts. `alerts.yaml` holds the alert thresholds and notification language; metric collection and the dashboard need no configuration. From the repository root:
+Runs the [Quick Start](../quickstart/README.md) model service with metrics, the Grafana dashboard, and alerts. `observability.yaml` holds the alert thresholds and notification language; metric collection and the dashboard need no configuration. From the repository root:
 
 ```bash
-foretoken install --values examples/observability/alerts.yaml
+foretoken install --values examples/observability/observability.yaml
 foretoken deploy examples/quickstart
 ```
 

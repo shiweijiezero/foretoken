@@ -86,10 +86,10 @@ kubectl get configmap \
 
 告警规则随采集一起安装。每条告警都链接到[排障手册](runbooks/alerts_zh.md)中的对应条目，说明信号含义和排查方法。看板会把每个告警阈值画成对应面板上的虚线。
 
-要调整阈值或通知语言，修改[可观测性示例](../examples/observability/README_zh.md)中的 `alerts.yaml`，随安装一起传入：
+要调整阈值或通知语言，修改[可观测性示例](../examples/observability/README_zh.md)中的 `observability.yaml`，随安装一起传入：
 
 ```bash
-foretoken install --values examples/observability/alerts.yaml
+foretoken install --values examples/observability/observability.yaml
 ```
 
 `language` 可选 `zh`、`en` 或 `bilingual`，对本次安装的全部告警生效。通知由集群的 Alertmanager 发送；可选的 [Lark 集成](integrations/lark/README_zh.md)为 Lark 群机器人提供接收器。
