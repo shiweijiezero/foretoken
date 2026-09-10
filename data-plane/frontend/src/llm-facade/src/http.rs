@@ -188,7 +188,7 @@ pub async fn bootstrap_engine_id(
 
 fn decode_event(line: &[u8]) -> Result<GenerateOutput, LlmFacadeError> {
     match serde_json::from_slice(line).map_err(|_| LlmFacadeError::Protocol)? {
-        StreamEvent::Output(output) => Ok(output),
+        StreamEvent::Output(output) => Ok(*output),
         StreamEvent::Error { code, .. } => Err(match code {
             TokenErrorCode::Unavailable => LlmFacadeError::Unavailable,
             TokenErrorCode::RequestFailed => LlmFacadeError::RequestFailed,

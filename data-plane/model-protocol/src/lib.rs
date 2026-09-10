@@ -207,7 +207,7 @@ pub enum TokenErrorCode {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StreamEvent {
-    Output(vllm_llm::GenerateOutput),
+    Output(Box<vllm_llm::GenerateOutput>),
     Error {
         request_id: String,
         code: TokenErrorCode,

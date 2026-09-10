@@ -253,7 +253,7 @@ async fn generate(
     let body_stream = stream.map(move |item| {
         let _permit = &permit;
         let event = match item {
-            Ok(event) => StreamEvent::Output(event),
+            Ok(event) => StreamEvent::Output(Box::new(event)),
             Err(error) => StreamEvent::Error {
                 request_id: request_id.clone(),
                 code: error.token_error_code(),
