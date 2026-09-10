@@ -1,39 +1,129 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Starts a managed local EngineCore child and serves the restricted internal API.
+//! Starts a managed inference engine child and serves the restricted internal API.
+//!
+//! The engine backend is fixed at build time by the `backend-vllm` or
+//! `backend-sglang` cargo feature; this binary never selects an engine at
+//! runtime.
 
-use std::future::IntoFuture;
-use std::io;
+use std::future::{Future, IntoFuture};
+use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity};
-use foretoken_model_server::api::{AppState, RuntimeHealth, router};
-use foretoken_model_server::backend::VllmBackend;
-use foretoken_model_server::config::RuntimeConfig;
-use foretoken_model_server::kv_event_adapter::KvEventAdapter;
+use foretoken_model_server::core::api::{AppState, RuntimeHealth, router};
+use foretoken_model_server::core::config::RuntimeConfig;
+#[cfg(feature = "backend-vllm")]
+use foretoken_model_server::core::kv_events::KvEventAdapter;
+use foretoken_model_server::engine::Engine;
+#[cfg(feature = "backend-sglang")]
+use foretoken_model_server::engine::sglang::{SglangBackend, SglangLaunchPlan, SglangProcess};
+#[cfg(feature = "backend-vllm")]
+use foretoken_model_server::engine::vllm::{
+    LaunchPlanV1, VllmBackend, VllmProcess, conversion::to_neutral_model_dtype,
+};
+#[cfg(feature = "backend-vllm")]
 use foretoken_model_server::runtime_cache;
+#[cfg(feature = "backend-sglang")]
 use foretoken_model_server::runtime_transport::LOOPBACK_HOST;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
-use vllm_engine_core_client::{
-    EngineCoreClient, EngineCoreClientConfig, EngineCoreProtocol, TransportMode,
-};
+#[cfg(feature = "backend-vllm")]
 use vllm_llm::Llm;
-use vllm_managed_engine::{ManagedEngineHandle, allocate_handshake_port};
 
+#[cfg(feature = "backend-vllm")]
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
+#[cfg(feature = "backend-vllm")]
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
+#[cfg(feature = "backend-vllm")]
 const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    vllm_tracing::init_tracing("ForetokenModelServer");
+    init_tracing();
 
     // Resolve the controller-owned launch plan before starting any engine or network task.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
+
+    run(config).await
+}
+
+/// Runs the build-selected backend; exactly one `run_*` function is compiled.
+#[cfg(feature = "backend-vllm")]
+async fn run(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>> {
+    run_vllm(config).await
+}
+
+#[cfg(all(feature = "backend-sglang", not(feature = "backend-vllm")))]
+async fn run(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>> {
+    run_sglang(config).await
+}
+
+/// Installs the process-wide tracing subscriber for the build-selected backend.
+#[cfg(feature = "backend-vllm")]
+fn init_tracing() {
+    vllm_tracing::init_tracing("ForetokenModelServer");
+}
+
+#[cfg(feature = "backend-sglang")]
+fn init_tracing() {
+    tracing_subscriber::fmt::init();
+}
+
+/// Stops admission, drains the HTTP server, then tears down the backend and
+/// child process. `shutdown_process` receives the time left in the drain budget.
+struct ShutdownPolicy<'a> {
+    drain_timeout: Duration,
+    stop_is_server: bool,
+    cleanup_message: &'a str,
+    process_message: &'a str,
+}
+
+async fn finish_shutdown<S, B, E1, P, E2>(
+    health: &RuntimeHealth,
+    shutdown: &Notify,
+    mut server: Pin<Box<S>>,
+    policy: ShutdownPolicy<'_>,
+    cleanup: B,
+    shutdown_process: impl FnOnce(Duration) -> P,
+) where
+    S: Future<Output = std::io::Result<()>>,
+    B: Future<Output = Result<(), E1>>,
+    E1: std::fmt::Display,
+    P: Future<Output = Result<(), E2>>,
+    E2: std::fmt::Display,
+{
+    health.set_accepting(false);
+    health.set_client_healthy(false);
+    shutdown.notify_waiters();
+    let deadline = Instant::now() + policy.drain_timeout;
+    if !policy.stop_is_server {
+        match tokio::time::timeout(policy.drain_timeout, server.as_mut()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => error!(%error, "HTTP server failed while draining"),
+            Err(_) => {
+                warn!("HTTP handlers did not drain before deadline");
+                drop(server);
+            }
+        }
+    }
+    if let Err(error) = cleanup.await {
+        warn!(%error, "{}", policy.cleanup_message);
+    }
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if let Err(error) = shutdown_process(remaining).await {
+        warn!(%error, "{}", policy.process_message);
+    }
+    health.set_process_alive(false);
+}
+
+#[cfg(feature = "backend-vllm")]
+async fn run_vllm(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let plan = LaunchPlanV1::parse(&config.launch_payload).map_err(std::io::Error::other)?;
+
     let cache_shutdown = Arc::new(Notify::new());
     let cache_config = runtime_cache::Config::from_env().map_err(std::io::Error::other)?;
     let mut cache_server = if let Some(server_config) = cache_config.clone() {
@@ -47,7 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
     // Resolve optional KV projection state now; connect only after the engine publisher is ready.
-    let kv_events = match kv_event_adapter(&config) {
+    let kv_events = match kv_event_adapter(&plan) {
         Ok(adapter) => Some(adapter),
         Err(error) => {
             warn!(%error, "KV index configuration is unavailable; prefix scoring is disabled");
@@ -55,95 +145,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    // The model-server owns one startup deadline across the persistent attempt and one
-    // Pod-scoped temporary retry, including complete teardown of a failed child process.
-    let startup_deadline = Instant::now() + config.launch.startup_timeout();
-    let (engine, client) = match start_engine_attempt(
-        &config,
-        cache_config.as_ref(),
-        runtime_cache::Mode::Persistent,
-        startup_deadline,
-        &mut cache_server,
-    )
-    .await
-    {
-        Ok(started) => started,
-        Err(EngineStartupFailure::PersistentCache { context, source }) => {
-            let cache = cache_config
-                .as_ref()
-                .expect("persistent cache failure requires a mounted RuntimeCache");
-            warn!(
-                cache_mode = runtime_cache::Mode::Temporary.as_str(),
-                error = %source,
-                %context,
-                "persistent RuntimeCache became unavailable; retrying EngineCore with Pod-scoped temporary storage"
-            );
-            match start_engine_attempt(
-                &config,
-                Some(cache),
-                runtime_cache::Mode::Temporary,
-                startup_deadline,
-                &mut cache_server,
-            )
-            .await
-            {
-                Ok(started) => {
-                    info!(
-                        cache_mode = runtime_cache::Mode::Temporary.as_str(),
-                        "EngineCore started with Pod-scoped temporary cache storage"
-                    );
-                    started
-                }
-                Err(failure) => {
-                    return Err(io::Error::other(format!(
-                        "temporary RuntimeCache retry failed: {}",
-                        failure.into_error()
-                    ))
-                    .into());
-                }
-            }
-        }
-        Err(failure) => return Err(failure.into_error().into()),
-    };
+    let mut process = VllmProcess::spawn(&plan).await?;
     let health = Arc::new(RuntimeHealth::new());
     health.set_process_alive(true);
 
-    let mut client_health = client.subscribe_health();
-    let max_concurrent_requests =
-        client
-            .ready_responses()
-            .into_iter()
-            .try_fold(Some(0_u64), |total, ready| {
-                let (Some(total), Some(limit)) = (total, ready.max_num_seqs) else {
-                    return Ok(None);
-                };
-                total
-                    .checked_add(limit)
-                    .map(Some)
-                    .ok_or_else(|| std::io::Error::other("EngineCore max_num_seqs sum overflowed"))
-            })?;
+    let mut client_health = process.client().subscribe_health();
+    let max_concurrent_requests = process.max_concurrent_requests()?;
     let metadata = RuntimeMetadataResponse {
         version: 1,
         model: RuntimeModelIdentity {
-            model: config.launch.artifacts.model.clone(),
-            revision: config.launch.artifacts.revision.clone(),
+            model: plan.artifacts.model.clone(),
+            revision: plan.artifacts.revision.clone(),
         },
-        model_dtype: client.reported_model_dtype(),
-        effective_max_model_len: client.max_model_len(),
-        ec_transfer: config.launch.ec.runtime_metadata(),
-        capabilities: if config.launch.ec.enabled() {
+        model_dtype: Some(to_neutral_model_dtype(process.client().model_dtype())),
+        effective_max_model_len: process.client().max_model_len(),
+        ec_transfer: plan.ec.runtime_metadata(),
+        capabilities: if plan.ec.enabled() {
             ["ec_transfer".into()].into_iter().collect()
         } else {
             Default::default()
         },
     };
     if !*client_health.borrow() {
-        let reason = client.health_error().map_or_else(
+        let reason = process.client().health_error().map_or_else(
             || "EngineCore client became unhealthy during startup".to_string(),
             |error| format!("EngineCore client became unhealthy during startup: {error}"),
         );
-        let _ = client.shutdown().await;
-        let _ = engine.shutdown(config.launch.drain_timeout()).await;
+        let _ = process.take_client().shutdown().await;
+        let _ = process.shutdown(plan.drain_timeout()).await;
         health.set_process_alive(false);
         return Err(std::io::Error::other(reason).into());
     }
@@ -161,7 +190,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     health.set_client_healthy(true);
     health.set_accepting(true);
-    let backend = Arc::new(VllmBackend::new(Llm::new(client), max_concurrent_requests));
+    let backend = Arc::new(VllmBackend::new(
+        Llm::new(process.take_client()),
+        max_concurrent_requests,
+    ));
 
     // Expose only the restricted group-local API after EngineCore is connected and healthy.
     let listener = match TcpListener::bind(config.listen_address).await {
@@ -169,8 +201,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(error) => {
             health.set_accepting(false);
             health.set_client_healthy(false);
-            let _ = backend.shutdown().await;
-            let _ = engine.shutdown(config.launch.drain_timeout()).await;
+            let _ = backend.cleanup().await;
+            let _ = process.shutdown(plan.drain_timeout()).await;
             return Err(error.into());
         }
     };
@@ -186,10 +218,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut server = Box::pin(
         axum::serve(
             listener,
-            router(
-                app_state,
-                config.launch.internal_generate_request_body_limit_bytes,
-            ),
+            router(app_state, plan.internal_generate_request_body_limit_bytes),
         )
         .with_graceful_shutdown(async move { server_shutdown.notified().await })
         .into_future(),
@@ -212,7 +241,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 unreachable!("EngineCore health only transitions to unhealthy")
             }
         },
-        status = engine.wait_for_exit() => Stop::ChildExited(format!("managed EngineCore exited unexpectedly: {status}")),
+        status = process.engine.wait_for_exit() => Stop::ChildExited(format!("managed EngineCore exited unexpectedly: {status}")),
         result = &mut server => Stop::Server(match result {
             Ok(()) => "HTTP server stopped unexpectedly".into(),
             Err(error) => format!("HTTP server failed: {error}"),
@@ -227,30 +256,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         | Stop::CacheServer(reason) => warn!(%reason),
     }
 
-    // Stop new admission before draining HTTP handlers, the client, and finally the child process.
-    health.set_accepting(false);
-    health.set_client_healthy(false);
-    shutdown.notify_waiters();
     cache_shutdown.notify_waiters();
-    let deadline = Instant::now() + config.launch.drain_timeout();
-    if !matches!(&stop, Stop::Server(_)) {
-        match tokio::time::timeout(config.launch.drain_timeout(), server.as_mut()).await {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => error!(%error, "HTTP server failed while draining"),
-            Err(_) => {
-                warn!("HTTP handlers did not drain before deadline");
-                drop(server);
-            }
-        }
+
+    finish_shutdown(
+        &health,
+        &shutdown,
+        server,
+        ShutdownPolicy {
+            drain_timeout: plan.drain_timeout(),
+            stop_is_server: matches!(&stop, Stop::Server(_)),
+            cleanup_message: "could not shut down EngineCore client cleanly",
+            process_message: "could not shut down managed EngineCore cleanly",
+        },
+        backend.cleanup(),
+        |remaining| process.shutdown(remaining),
+    )
+    .await;
+    if let Some(cache_server) = cache_server {
+        let _ = cache_server.await;
     }
-    if let Err(error) = backend.shutdown().await {
-        warn!(%error, "could not shut down EngineCore client cleanly");
-    }
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if let Err(error) = engine.shutdown(remaining).await {
-        warn!(%error, "could not shut down managed EngineCore cleanly");
-    }
-    health.set_process_alive(false);
 
     match stop {
         Stop::Signal => Ok(()),
@@ -261,152 +285,179 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-enum EngineStartupFailure {
-    PersistentCache { context: String, source: io::Error },
-    Other(io::Error),
-}
+#[cfg(feature = "backend-sglang")]
+async fn run_sglang(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let plan = SglangLaunchPlan::parse(&config.launch_payload).map_err(std::io::Error::other)?;
 
-impl EngineStartupFailure {
-    fn into_error(self) -> io::Error {
-        match self {
-            Self::PersistentCache { context, source } => {
-                io::Error::new(source.kind(), format!("{context}: {source}"))
-            }
-            Self::Other(error) => error,
-        }
-    }
-}
+    let health = Arc::new(RuntimeHealth::new());
+    health.set_process_alive(true);
 
-fn cache_mode_failure(
-    mode: runtime_cache::Mode,
-    context: impl Into<String>,
-    source: io::Error,
-) -> EngineStartupFailure {
-    let context = context.into();
-    if mode == runtime_cache::Mode::Persistent {
-        EngineStartupFailure::PersistentCache { context, source }
-    } else {
-        EngineStartupFailure::Other(io::Error::new(
-            source.kind(),
-            format!("{context}: {source}"),
-        ))
-    }
-}
+    let mut process = SglangProcess::spawn(&plan)?;
 
-fn classify_engine_startup_failure(
-    cache: Option<&runtime_cache::Config>,
-    mode: runtime_cache::Mode,
-    message: String,
-) -> EngineStartupFailure {
-    if let Some(cache) = cache
-        && let Err(error) = cache.probe_writable(mode)
-    {
-        return cache_mode_failure(
-            mode,
-            format!("{message}; {} cache write probe failed", mode.as_str()),
-            error,
-        );
+    // Wait for SGLang readiness before publishing the model server.
+    if let Err(reason) = wait_for_sglang_health(&plan, plan.startup_seconds).await {
+        health.set_process_alive(false);
+        let _ = process.shutdown(plan.drain_timeout()).await;
+        return Err(std::io::Error::other(reason).into());
     }
-    EngineStartupFailure::Other(io::Error::other(message))
-}
 
-async fn wait_cache_write_failure(
-    cache: Option<&runtime_cache::Config>,
-    mode: runtime_cache::Mode,
-) -> io::Error {
-    let Some(cache) = cache else {
-        return std::future::pending().await;
-    };
-    cache.wait_until_unwritable(mode).await
-}
-
-async fn start_engine_attempt(
-    config: &RuntimeConfig,
-    cache: Option<&runtime_cache::Config>,
-    mode: runtime_cache::Mode,
-    startup_deadline: Instant,
-    cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
-) -> Result<(ManagedEngineHandle, EngineCoreClient), EngineStartupFailure> {
-    let environment = if let Some(cache) = cache {
-        cache.set_mode(mode);
-        cache
-            .prepare(mode)
-            .map_err(|error| cache_mode_failure(mode, "cache preparation failed", error))?;
-        cache.engine_environment(mode)
-    } else {
-        Vec::new()
-    };
-    let handshake_port = allocate_handshake_port(LOOPBACK_HOST)
-        .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
-    let managed_engine = config
-        .launch
-        .managed_engine(handshake_port)
-        .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
-    let protocol_timeout = startup_deadline.saturating_duration_since(Instant::now());
-    if protocol_timeout.is_zero() {
-        return Err(EngineStartupFailure::Other(io::Error::other(
-            "EngineCore startup deadline elapsed before version detection",
-        )));
-    }
-    let engine_protocol = tokio::time::timeout(
-        protocol_timeout,
-        detect_engine_protocol(&managed_engine.python, &environment),
-    )
-    .await
-    .map_err(|_| {
-        EngineStartupFailure::Other(io::Error::other(
-            "EngineCore startup deadline elapsed during version detection",
-        ))
-    })?
-    .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
-    let engine = ManagedEngineHandle::spawn_with_env(managed_engine, environment)
-        .await
-        .map_err(|error| {
-            classify_engine_startup_failure(
-                cache,
-                mode,
-                format!("could not spawn managed EngineCore: {error}"),
-            )
-        })?;
-    let ready_timeout = startup_deadline.saturating_duration_since(Instant::now());
-    if ready_timeout.is_zero() {
-        let _ = engine.shutdown(config.launch.drain_timeout()).await;
-        return Err(EngineStartupFailure::Other(io::Error::other(
-            "EngineCore startup deadline elapsed before client connection",
-        )));
-    }
-    let client_config = EngineCoreClientConfig {
-        transport_mode: TransportMode::HandshakeOwner {
-            handshake_address: format!("tcp://{LOOPBACK_HOST}:{handshake_port}"),
-            advertised_host: LOOPBACK_HOST.into(),
-            engine_count: config.launch.parallelism.dp,
-            ready_timeout,
-            local_input_address: None,
-            local_output_address: None,
-        },
-        coordinator_mode: None,
-        model_name: config.launch.artifacts.model.clone(),
-        client_index: 0,
-    };
-    let client = tokio::select! {
-        result = EngineCoreClient::connect_with_protocol(client_config, engine_protocol) => match result {
-            Ok(client) => Ok(client),
-            Err(error) => Err(classify_engine_startup_failure(cache, mode, format!("could not connect to EngineCore: {error}"))),
-        },
-        status = engine.wait_for_exit() => Err(classify_engine_startup_failure(cache, mode, format!("managed EngineCore exited during startup: {status}"))),
-        reason = wait_cache_server(cache_server) => Err(EngineStartupFailure::Other(io::Error::other(format!("cache observation server stopped during startup: {reason}")))),
-        error = wait_cache_write_failure(cache, mode) => Err(cache_mode_failure(mode, format!("{} cache became unwritable during EngineCore startup", mode.as_str()), error)),
-    };
-    match client {
-        Ok(client) => Ok((engine, client)),
+    // Publish the context limit required by frontend request validation.
+    let reported_len = match sglang_context_len(plan.port).await {
+        Ok(len) => len,
         Err(error) => {
-            let _ = engine.shutdown(config.launch.drain_timeout()).await;
-            Err(error)
+            warn!(%error, "could not query SGLang model info during startup");
+            health.set_process_alive(false);
+            let _ = process.shutdown(plan.drain_timeout()).await;
+            return Err(std::io::Error::other(error).into());
+        }
+    };
+
+    let metadata = RuntimeMetadataResponse {
+        version: 1,
+        model: RuntimeModelIdentity {
+            model: plan.model.clone(),
+            revision: plan.revision.clone().unwrap_or_default(),
+        },
+        model_dtype: None,
+        effective_max_model_len: reported_len,
+        ec_transfer: None,
+        capabilities: Default::default(),
+    };
+
+    health.set_client_healthy(true);
+    health.set_accepting(true);
+    let backend = Arc::new(SglangBackend::new(format!(
+        "http://{LOOPBACK_HOST}:{}",
+        plan.port
+    )));
+
+    let listener = match TcpListener::bind(config.listen_address).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            health.set_accepting(false);
+            health.set_client_healthy(false);
+            let _ = backend.cleanup().await;
+            let _ = process.shutdown(plan.drain_timeout()).await;
+            return Err(error.into());
+        }
+    };
+    let shutdown = Arc::new(Notify::new());
+    let server_shutdown = shutdown.clone();
+    let app_state = AppState::new(backend.clone(), health.clone(), metadata);
+    let mut server = Box::pin(
+        axum::serve(
+            listener,
+            router(app_state, plan.internal_generate_request_body_limit_bytes),
+        )
+        .with_graceful_shutdown(async move { server_shutdown.notified().await })
+        .into_future(),
+    );
+
+    enum Stop {
+        Signal,
+        ChildExited(String),
+        Server(String),
+    }
+    let stop = tokio::select! {
+        () = shutdown_signal() => Stop::Signal,
+        status = process.wait_for_exit() => Stop::ChildExited(match status {
+            Ok(status) => format!("sglang server exited unexpectedly: {status}"),
+            Err(error) => format!("sglang server wait failed: {error}"),
+        }),
+        result = &mut server => Stop::Server(match result {
+            Ok(()) => "HTTP server stopped unexpectedly".into(),
+            Err(error) => format!("HTTP server failed: {error}"),
+        }),
+    };
+    match &stop {
+        Stop::Signal => info!("received shutdown signal"),
+        Stop::ChildExited(reason) | Stop::Server(reason) => warn!(%reason),
+    }
+
+    finish_shutdown(
+        &health,
+        &shutdown,
+        server,
+        ShutdownPolicy {
+            drain_timeout: plan.drain_timeout(),
+            stop_is_server: matches!(&stop, Stop::Server(_)),
+            cleanup_message: "could not shut down SGLang backend cleanly",
+            process_message: "could not shut down SGLang server cleanly",
+        },
+        backend.cleanup(),
+        |remaining| process.shutdown(remaining),
+    )
+    .await;
+
+    match stop {
+        Stop::Signal => Ok(()),
+        Stop::ChildExited(reason) | Stop::Server(reason) => {
+            Err(std::io::Error::other(reason).into())
         }
     }
 }
 
-async fn wait_cache_server(server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>) -> String {
+/// Waits for SGLang's `/health` endpoint within the startup budget.
+#[cfg(feature = "backend-sglang")]
+async fn wait_for_sglang_health(
+    plan: &SglangLaunchPlan,
+    budget_seconds: u64,
+) -> Result<(), String> {
+    let client = reqwest::Client::new();
+    let url = format!("http://{LOOPBACK_HOST}:{}/health", plan.port);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(budget_seconds);
+    loop {
+        match client.get(&url).send().await {
+            Ok(response) if response.status().is_success() => return Ok(()),
+            Ok(_) => {}
+            Err(_) => {}
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err("sglang server did not become healthy within the startup budget".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+}
+
+/// Gets SGLang's effective context length from `/get_server_info`.
+#[cfg(feature = "backend-sglang")]
+async fn sglang_context_len(port: u16) -> Result<u32, String> {
+    let url = format!("http://{LOOPBACK_HOST}:{port}/get_server_info");
+    let info: serde_json::Value = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .map_err(|error| format!("sglang get_server_info request failed: {error}"))?
+        .error_for_status()
+        .map_err(|error| format!("sglang get_server_info returned an error: {error}"))?
+        .json()
+        .await
+        .map_err(|error| format!("sglang get_server_info response is not valid JSON: {error}"))?;
+
+    // Prefer the configured value, then the scheduler's resolved input limit.
+    if let Some(len) = info
+        .get("context_length")
+        .and_then(serde_json::Value::as_i64)
+    {
+        if len > 0 {
+            return u32::try_from(len).map_err(|_| "sglang context length exceeds u32::MAX".into());
+        }
+    }
+    if let Some(len) = info
+        .get("max_req_input_len")
+        .and_then(serde_json::Value::as_i64)
+    {
+        if len > 0 {
+            return u32::try_from(len).map_err(|_| "sglang context length exceeds u32::MAX".into());
+        }
+    }
+    Err("sglang get_server_info has no context length".into())
+}
+
+#[cfg(feature = "backend-vllm")]
+async fn wait_cache_server(
+    server: &mut Option<tokio::task::JoinHandle<std::io::Result<()>>>,
+) -> String {
     let Some(server) = server else {
         return std::future::pending().await;
     };
@@ -417,39 +468,9 @@ async fn wait_cache_server(server: &mut Option<tokio::task::JoinHandle<io::Resul
     }
 }
 
-/// Select request and output layouts using the same cache environment as the managed engine.
-async fn detect_engine_protocol(
-    python: &str,
-    environment: &[(String, String)],
-) -> Result<EngineCoreProtocol, Box<dyn std::error::Error>> {
-    let output = tokio::process::Command::new(python)
-        .envs(environment.iter().cloned())
-        .args(["-c", "import vllm; print(vllm.__version__)"])
-        .output()
-        .await?;
-    if !output.status.success() {
-        return Err(format!("could not inspect vLLM version using {python}").into());
-    }
-    let version = String::from_utf8(output.stdout)?.trim().to_owned();
-    let mut parts = version.split('.');
-    let major = parts.next().and_then(|part| part.parse::<u64>().ok());
-    let minor = parts.next().and_then(|part| part.parse::<u64>().ok());
-    match (major, minor) {
-        (Some(0), Some(20)) => Ok(EngineCoreProtocol::V0_20),
-        (Some(0), Some(21..=25)) => Ok(EngineCoreProtocol::V0_21ToV0_25),
-        (Some(0), Some(26..=27)) => Ok(EngineCoreProtocol::V0_26ToV0_27),
-        (Some(0), Some(28)) => Ok(EngineCoreProtocol::V0_28),
-        _ => Err(format!(
-            "unsupported vLLM version `{version}`; supported versions are 0.20 through 0.28"
-        )
-        .into()),
-    }
-}
-
-// Build the adapter only from controller-projected identity and keyed material. Startup owns the
-// returned `Arc` until it either launches the subscriber task or omits the KV index endpoint.
+#[cfg(feature = "backend-vllm")]
 fn kv_event_adapter(
-    config: &RuntimeConfig,
+    plan: &LaunchPlanV1,
 ) -> Result<Arc<KvEventAdapter>, Box<dyn std::error::Error>> {
     let bytes = std::fs::read(std::env::var(KV_KEY_PATH_ENV)?)?;
     let key: [u8; 32] = bytes
@@ -462,11 +483,12 @@ fn kv_event_adapter(
         key,
         scope_id,
         model_group_id,
-        config.launch.artifacts.revision.clone(),
-        config.launch.parallelism.dp.try_into()?,
+        plan.artifacts.revision.clone(),
+        plan.parallelism.dp.try_into()?,
     ))
 }
 
+#[cfg(feature = "backend-vllm")]
 fn required_env(name: &str) -> Result<String, Box<dyn std::error::Error>> {
     std::env::var(name)
         .ok()

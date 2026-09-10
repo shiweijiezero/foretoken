@@ -63,6 +63,7 @@ async fn logical_only_snapshot_publishes_a_ready_scale_from_zero_runtime() {
         arrival_time: None,
         tool_call_parser: Default::default(),
         reasoning_parser: Default::default(),
+        extensions: Default::default(),
     };
     let requests = ["cold-a", "cold-b"].map(|request_id| {
         let generation = generation.clone();

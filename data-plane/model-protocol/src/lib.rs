@@ -1,18 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Versioned internal HTTP contract for already-tokenized vLLM requests.
+//! Versioned internal HTTP contract between the Foretoken frontend and model-server.
 
-use std::collections::BTreeMap;
+pub mod types;
+
+pub use types::ModelDtype;
 
 use serde::{Deserialize, Serialize};
-use vllm_engine_core_client::protocol::dtype::ModelDtype;
-use vllm_engine_core_client::protocol::logprobs::Logprobs;
-use vllm_engine_core_client::protocol::lora::LoraRequest;
-use vllm_engine_core_client::protocol::multimodal::MmFeatures;
-use vllm_engine_core_client::protocol::request::ReasoningParserKwargs;
-use vllm_engine_core_client::protocol::sampling::EngineCoreSamplingParams;
-use vllm_llm::{FinishReason, GenerateOutput, GenerateRequest};
 
 /// Execution responsibility of one routable ModelGroup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -25,104 +20,12 @@ pub enum ModelServerRole {
     Decode,
 }
 
-/// Request accepted by the single model-server ingress owned by one routable ModelGroup.
-/// Its Pod placement is a runtime detail and does not create another routing identity.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GenerateInput {
-    pub request_id: String,
-    pub prompt_token_ids: Vec<u32>,
-    pub sampling_params: EngineCoreSamplingParams,
-    pub mm_features: Option<MmFeatures>,
-    pub arrival_time: Option<f64>,
-    pub cache_salt: Option<String>,
-    pub trace_headers: Option<BTreeMap<String, String>>,
-    #[serde(default)]
-    pub priority: i32,
-    pub data_parallel_rank: Option<u32>,
-    pub session_id: Option<String>,
-    pub reasoning_parser_kwargs: Option<ReasoningParserKwargs>,
-    pub lora_request: Option<LoraRequest>,
-}
-impl From<GenerateRequest> for GenerateInput {
-    fn from(request: GenerateRequest) -> Self {
-        Self {
-            request_id: request.request_id,
-            prompt_token_ids: request.prompt_token_ids,
-            sampling_params: request.sampling_params,
-            mm_features: request.mm_features,
-            arrival_time: request.arrival_time,
-            cache_salt: request.cache_salt,
-            trace_headers: request.trace_headers,
-            priority: request.priority,
-            data_parallel_rank: request.data_parallel_rank,
-            session_id: request.session_id,
-            reasoning_parser_kwargs: request.reasoning_parser_kwargs,
-            lora_request: request.lora_request,
-        }
-    }
-}
-impl From<GenerateInput> for GenerateRequest {
-    fn from(request: GenerateInput) -> Self {
-        Self {
-            request_id: request.request_id,
-            prompt_token_ids: request.prompt_token_ids,
-            sampling_params: request.sampling_params,
-            mm_features: request.mm_features,
-            arrival_time: request.arrival_time,
-            cache_salt: request.cache_salt,
-            trace_headers: request.trace_headers,
-            priority: request.priority,
-            data_parallel_rank: request.data_parallel_rank,
-            session_id: request.session_id,
-            reasoning_parser_kwargs: request.reasoning_parser_kwargs,
-            lora_request: request.lora_request,
-        }
-    }
-}
-
 /// Explicitly scoped cancellation request. Empty lists are rejected by model-server.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AbortInput {
     #[serde(default)]
     pub request_ids: Vec<String>,
-}
-
-/// Fields preserved from one vLLM output update.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TokenOutput {
-    pub request_id: String,
-    pub prompt_token_ids: Option<Vec<u32>>,
-    pub prompt_logprobs: Option<Logprobs>,
-    pub token_ids: Vec<u32>,
-    pub logprobs: Option<Logprobs>,
-    pub cached_token_count: usize,
-    pub finish_reason: Option<FinishReason>,
-    pub kv_transfer_params: Option<serde_json::Value>,
-    pub ec_transfer_params: Option<serde_json::Value>,
-}
-impl From<GenerateOutput> for TokenOutput {
-    fn from(output: GenerateOutput) -> Self {
-        let (prompt_token_ids, prompt_logprobs) = match output.prompt_info {
-            Some(prompt) => (
-                Some(prompt.prompt_token_ids.to_vec()),
-                prompt.prompt_logprobs,
-            ),
-            None => (None, None),
-        };
-        Self {
-            request_id: output.request_id,
-            prompt_token_ids,
-            prompt_logprobs,
-            token_ids: output.token_ids,
-            logprobs: output.logprobs,
-            cached_token_count: output.cached_token_count,
-            finish_reason: output.finish_reason,
-            kv_transfer_params: output.kv_transfer_params,
-            ec_transfer_params: output.ec_transfer_params,
-        }
-    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -169,8 +72,8 @@ pub struct TelemetryResponse {
     pub collected_at_unix_ms: u64,
     pub accepting: bool,
     pub running_requests: u64,
-    /// Sum of engine-reported scheduler capacities, or `None` when any capacity is unknown.
-    pub max_concurrent_requests: Option<u64>,
+    /// Sum of engine-reported scheduler capacities.
+    pub max_concurrent_requests: u64,
     pub scheduler_running_requests: Option<u64>,
     pub scheduler_waiting_requests: Option<u64>,
     pub kv_cache_usage: Option<f64>,
@@ -303,8 +206,8 @@ pub enum TokenErrorCode {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum TokenEvent {
-    Token(Box<TokenOutput>),
+pub enum StreamEvent {
+    Output(Box<vllm_llm::GenerateOutput>),
     Error {
         request_id: String,
         code: TokenErrorCode,

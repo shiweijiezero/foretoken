@@ -1,0 +1,95 @@
+diff --git a/rust/src/llm/examples/external_engine_smoke.rs b/rust/src/llm/examples/external_engine_smoke.rs
+index 9d31828..8a4bcab 100644
+--- a/rust/src/llm/examples/external_engine_smoke.rs
++++ b/rust/src/llm/examples/external_engine_smoke.rs
+@@ -62,6 +62,7 @@ fn build_request(request_id: String, max_tokens: u32) -> GenerateRequest {
+         session_id: None,
+         reasoning_parser_kwargs: None,
+         lora_request: None,
++        extensions: Default::default(),
+     }
+ }
+ 
+diff --git a/rust/src/llm/src/output.rs b/rust/src/llm/src/output.rs
+index c8f01b9..40fa2c2 100644
+--- a/rust/src/llm/src/output.rs
++++ b/rust/src/llm/src/output.rs
+@@ -48,7 +48,7 @@ pub struct CollectedGenerateOutput {
+ 
+ /// Prompt-scoped metadata emitted only once on the first [`GenerateOutput`] for
+ /// one request.
+-#[derive(Debug, Clone, PartialEq)]
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+ pub struct GeneratePromptInfo {
+     /// Original prompt token IDs for this request.
+     pub prompt_token_ids: Arc<[u32]>,
+@@ -135,7 +135,7 @@ fn finish_reason_from_engine(
+ ///
+ /// Original Python output reference:
+ /// <https://github.com/vllm-project/vllm/blob/bc2c0c86efb28e77677a3cfb8687e976914a313a/vllm/outputs.py#L85-L143>
+-#[derive(Debug, Clone, PartialEq)]
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+ pub struct GenerateOutput {
+     /// Unique ID of the request that produced this output.
+     pub request_id: String,
+diff --git a/rust/src/llm/src/request.rs b/rust/src/llm/src/request.rs
+index c647f54..f1cd9ba 100644
+--- a/rust/src/llm/src/request.rs
++++ b/rust/src/llm/src/request.rs
+@@ -3,6 +3,7 @@
+ 
+ use std::collections::BTreeMap;
+ 
++use serde::{Deserialize, Serialize};
+ use uuid::Uuid;
+ use vllm_engine_core_client::protocol::lora::LoraRequest;
+ use vllm_engine_core_client::protocol::multimodal::MmFeatures;
+@@ -21,7 +22,8 @@ use crate::request_metrics::current_unix_timestamp_secs;
+ ///
+ /// Original Python API reference:
+ /// <https://github.com/vllm-project/vllm/blob/bc2c0c86efb28e77677a3cfb8687e976914a313a/vllm/engine/protocol.py#L67-L84>
+-#[derive(Debug, Clone, PartialEq)]
++#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
++#[serde(default, deny_unknown_fields)]
+ pub struct GenerateRequest {
+     /// Unique ID of the request.
+     pub request_id: String,
+@@ -53,6 +55,10 @@ pub struct GenerateRequest {
+     pub reasoning_parser_kwargs: Option<ReasoningParserKwargs>,
+     /// Optional LoRA adapter request applied to this generation.
+     pub lora_request: Option<LoraRequest>,
++    /// Opaque backend-native fields forwarded verbatim to the engine adapter
++    /// (e.g. SGLang `stop_regex`, `custom_params`); ignored by the vLLM engine.
++    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
++    pub extensions: BTreeMap<String, serde_json::Value>,
+ }
+ 
+ #[derive(Debug)]
+@@ -81,6 +87,7 @@ impl GenerateRequest {
+             session_id,
+             reasoning_parser_kwargs,
+             lora_request,
++            ..
+         } = self;
+ 
+         let external_request_id = request_id;
+@@ -165,6 +172,7 @@ mod tests {
+                 .into(),
+             }),
+             lora_request: None,
++            extensions: BTreeMap::new(),
+         }
+     }
+ 
+diff --git a/rust/src/llm/tests/generate.rs b/rust/src/llm/tests/generate.rs
+index 2ff3faa..db6ed6e 100644
+--- a/rust/src/llm/tests/generate.rs
++++ b/rust/src/llm/tests/generate.rs
+@@ -168,6 +168,7 @@ fn sample_generate_request(request_id: &str, max_tokens: u32) -> GenerateRequest
+         session_id: None,
+         reasoning_parser_kwargs: None,
+         lora_request: None,
++        extensions: Default::default(),
+     }
+ }
+ 

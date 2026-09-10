@@ -9,6 +9,7 @@ license.workspace = true
 
 [dependencies]
 foretoken-chat = { path = "../chat" }
+foretoken-model-protocol = { path = "../../../model-protocol" }
 foretoken-engine-core-client = { path = "../engine-core-client" }
 foretoken-tokenizer = { path = "../tokenizer" }
 hf-hub.workspace = true

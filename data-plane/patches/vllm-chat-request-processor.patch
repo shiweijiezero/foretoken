@@ -1,18 +1,20 @@
+diff --git a/rust/src/chat/src/lib.rs b/rust/src/chat/src/lib.rs
+index cf22722..37e30b3 100644
 --- a/rust/src/chat/src/lib.rs
 +++ b/rust/src/chat/src/lib.rs
-@@ -113,6 +113,11 @@
-             tool_call_parser: ParserSelection::Auto,
-             reasoning_parser: ParserSelection::Auto,
+@@ -115,6 +115,11 @@ impl ChatRequestProcessor {
          }
-+    }
-+
+     }
+ 
 +    /// Create an engine-free processor with multimodal support.
 +    pub fn with_model_dtype(backend: DynChatBackend, model_dtype: ModelDtype) -> Self {
 +        Self::new(backend, model_dtype)
-     }
-
++    }
++
      /// Create a render-only processor that rejects multimodal requests.
-@@ -214,16 +219,26 @@
+     pub fn render_only(backend: DynChatBackend) -> Self {
+         Self {
+@@ -214,16 +219,26 @@ impl ChatRequestProcessor {
      /// Prepare one chat request without submitting it to an engine.
      pub async fn prepare(
          &self,

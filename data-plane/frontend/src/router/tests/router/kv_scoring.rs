@@ -103,7 +103,7 @@ fn target_stats(running_requests: u64) -> Arc<RouteTargetStats> {
         collected_at_unix_ms: 1,
         observed_window: Duration::from_secs(60),
         running_requests,
-        max_concurrent_requests: Some(8),
+        max_concurrent_requests: 8,
         scheduler_running_requests: None,
         scheduler_waiting_requests: None,
         kv_cache_usage: None,

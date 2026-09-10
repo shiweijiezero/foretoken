@@ -3,18 +3,21 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Build from the repository root so Cargo uses the data-plane workspace and
-# its engine adapters. The inference engine image must provide the Python
-# entrypoint required by the selected adapter. FORETOKEN_VLLM_PYTHON may select
-# an image-specific executable; model-server otherwise uses `python`. The
-# current vLLM adapter uses vllm.entrypoints.cli.main.
+# its engine adapters. ENGINE_FEATURES selects the inference backend compiled
+# into the binary (backend-vllm or backend-sglang); INFERENCE_ENGINE_IMAGE must
+# provide the Python environment required by that adapter. FORETOKEN_VLLM_PYTHON
+# may select an image-specific Python executable; model-server otherwise uses
+# the image default.
 
-ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye
+ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bookworm
 ARG INFERENCE_ENGINE_IMAGE=ghcr.io/shiweijiezero/foretoken/model-server:0.0.1
 ARG FORETOKEN_VLLM_PYTHON
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.9.10
 
 FROM ${UV_IMAGE} AS uv
 FROM ${RUST_BUILDER_IMAGE} AS builder
+
+ARG ENGINE_FEATURES=backend-vllm
 
 WORKDIR /workspace
 
@@ -24,7 +27,9 @@ RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=foretoken-cargo-target,target=/workspace/data-plane/target,sharing=locked \
     cargo build --locked --release \
-      --manifest-path data-plane/Cargo.toml \
+      --no-default-features \
+    --features ${ENGINE_FEATURES} \
+    --manifest-path data-plane/Cargo.toml \
       --package foretoken-model-server \
     && install -Dm755 \
       data-plane/target/release/foretoken-model-server \

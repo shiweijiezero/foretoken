@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-use foretoken_model_server::launch::LaunchPlanV1;
+#![cfg(feature = "backend-vllm")]
+
+use foretoken_model_server::engine::vllm::LaunchPlanV1;
 
 fn plan() -> LaunchPlanV1 {
     LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"model":"model","revision":"rev","tokenizer":"tokenizer","tokenizerRevision":"tokenizer-rev"},"parallelism":{"tp":2,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":30,"drainSeconds":7},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":["--max-model-len=32768"]}"#).unwrap()

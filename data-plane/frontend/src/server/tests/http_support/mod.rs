@@ -163,6 +163,7 @@ fn generated(request: GenerationRequest, tokenizer: DynTokenizer) -> Generated {
                     session_id: None,
                     reasoning_parser_kwargs: None,
                     lora_request: None,
+                    extensions: Default::default(),
                 },
             },
             stream: Box::pin(stream::iter(vec![

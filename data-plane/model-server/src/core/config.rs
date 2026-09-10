@@ -2,17 +2,23 @@
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 //! Environment boundary for the controller-owned typed launch plan.
+//!
+//! The launch plan is read as a raw payload; the engine adapter selected at
+//! build time (via the backend feature) parses it. Each backend reads its own
+//! controller-injected environment variable, so the binary never decides its
+//! engine at runtime.
 
 use std::net::SocketAddr;
 
-use crate::launch::LaunchPlanV1;
-
-const LAUNCH_PLAN_ENV: &str = "FORETOKEN_VLLM_LAUNCH_PLAN";
 const LISTEN_ENV: &str = "FORETOKEN_INTERNAL_LISTEN";
+#[cfg(feature = "backend-vllm")]
+const LAUNCH_PLAN_ENV: &str = "FORETOKEN_VLLM_LAUNCH_PLAN";
+#[cfg(all(feature = "backend-sglang", not(feature = "backend-vllm")))]
+const LAUNCH_PLAN_ENV: &str = "FORETOKEN_SGLANG_LAUNCH_PLAN";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
-    pub launch: LaunchPlanV1,
+    pub launch_payload: String,
     pub listen_address: SocketAddr,
 }
 
@@ -21,12 +27,12 @@ impl RuntimeConfig {
     ///
     /// Startup receives an owned configuration; environment values are not retained after parsing.
     pub fn from_env() -> Result<Self, String> {
-        let launch = LaunchPlanV1::parse(&required_env(LAUNCH_PLAN_ENV)?)?;
+        let launch_payload = required_env(LAUNCH_PLAN_ENV)?;
         let listen_address = required_env(LISTEN_ENV)?
             .parse()
             .map_err(|_| format!("{LISTEN_ENV} must be a socket address"))?;
         Ok(Self {
-            launch,
+            launch_payload,
             listen_address,
         })
     }

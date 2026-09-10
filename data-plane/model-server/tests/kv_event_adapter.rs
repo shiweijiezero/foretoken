@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use foretoken_model_protocol::{KvCacheLocality, KvDeltaEvent, KvPlacement, KvStorageTier};
-use foretoken_model_server::kv_event_adapter::{KvDeltaError, KvEventAdapter};
+use foretoken_model_server::core::kv_events::{KvDeltaError, KvEventAdapter};
 use serde_json::json;
 
 fn adapter(data_parallel_size: u32) -> Arc<KvEventAdapter> {
