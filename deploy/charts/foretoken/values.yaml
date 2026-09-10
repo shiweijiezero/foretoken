@@ -56,7 +56,7 @@ observability:
       nvidiaTemperatureCelsius: 85
       nvidiaPowerWatts: 300
 
-# The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
+# The runtime image must contain Foretoken model-server, its Python launcher, and a compatible inference-engine runtime.
 runtime:
   vllm:
     image: ghcr.io/shiweijiezero/foretoken/model-server:0.0.1-alpha.1
@@ -98,6 +98,13 @@ runtime:
       configMapName: ""
       configMapKey: ""
       pythonHashSeed: ""
+  # SGLang aggregate Groups reuse the model-server image built with the
+  # backend-sglang feature. SGLang currently supports aggregate Groups only.
+  # Build base (validated engine version): lmsysorg/sglang:v0.5.18 — bump only
+  # after re-running data-plane/scripts/sglang-param-matrix.sh.
+  sglang:
+    image: ghcr.io/shiweijiezero/foretoken/model-server-sglang:0.0.1
+    profileRevision: default
 
 # Resource sizing is workload- and cluster-dependent; measure before setting it.
 resources: {}

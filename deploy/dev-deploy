@@ -15,12 +15,14 @@ RELEASE=${RELEASE:-foretoken}
 PLATFORM_NAMESPACE=${PLATFORM_NAMESPACE:-foretoken-platform}
 WORKLOAD_NAMESPACE=${WORKLOAD_NAMESPACE:-foretoken-demo}
 FRONTEND_MODE=${FRONTEND_MODE:-local}
-DEV_TIMEOUT=${DEV_TIMEOUT:-5m}
-INFERENCE_ENGINE_IMAGE=${INFERENCE_ENGINE_IMAGE:-ghcr.io/shiweijiezero/foretoken/model-server:0.0.1}
+DEV_TIMEOUT=${DEV_TIMEOUT:-15m}
+# Engine base image; keep the SGLang default in sync with SGLANG_PIN in
+# data-plane/scripts/sglang-param-matrix.sh.
+VLLM_ENGINE_IMAGE=${VLLM_ENGINE_IMAGE:-ghcr.io/shiweijiezero/foretoken/model-server:0.0.1}
+SGLANG_ENGINE_IMAGE=${SGLANG_ENGINE_IMAGE:-lmsysorg/sglang:v0.5.18}
 IMAGE_PULL_SECRET=${IMAGE_PULL_SECRET:-}
 LOCAL_IMAGE_PREFIX=${LOCAL_IMAGE_PREFIX:-foretoken-dev}
 K3D_CONFIG=${K3D_CONFIG:-$ROOT/deploy/k3d/config.yaml}
-DEV_IMAGE_OUTPUT=${DEV_IMAGE_OUTPUT:-}
 
 for command in docker helm kubectl make; do
   command -v "$command" >/dev/null || {
@@ -36,47 +38,6 @@ cleanup() {
 }
 trap cleanup EXIT
 
-write_image_output() {
-  python3 - "$DEV_IMAGE_OUTPUT" \
-    "$IMAGE_MODE" \
-    "$CONTROL_PLANE_DEPLOY_IMAGE" \
-    "$FRONTEND_DEPLOY_IMAGE" \
-    "$MODEL_SERVER_DEPLOY_IMAGE" \
-    "$CONTROL_PLANE_CHANGED" \
-    "$FRONTEND_CHANGED" \
-    "$MODEL_SERVER_CHANGED" <<'PY'
-import json
-import sys
-
-(
-    output_path,
-    image_mode,
-    control_plane_deploy_image,
-    frontend_deploy_image,
-    model_server_deploy_image,
-    control_plane_changed,
-    frontend_changed,
-    model_server_changed,
-) = sys.argv[1:]
-
-with open(output_path, "w", encoding="utf-8") as output:
-    json.dump(
-        {
-            "IMAGE_MODE": image_mode,
-            "CONTROL_PLANE_DEPLOY_IMAGE": control_plane_deploy_image,
-            "FRONTEND_DEPLOY_IMAGE": frontend_deploy_image,
-            "MODEL_SERVER_DEPLOY_IMAGE": model_server_deploy_image,
-            "CONTROL_PLANE_CHANGED": control_plane_changed == "true",
-            "FRONTEND_CHANGED": frontend_changed == "true",
-            "MODEL_SERVER_CHANGED": model_server_changed == "true",
-        },
-        output,
-        separators=(",", ":"),
-    )
-    output.write("\n")
-PY
-}
-
 if [[ -n "$CLUSTER" && -n "$KIND_CLUSTER" ]]; then
   printf 'set either CLUSTER or KIND_CLUSTER, not both\n' >&2
   exit 1
@@ -84,20 +45,10 @@ fi
 
 if [[ -z "$CLUSTER" && -z "$KIND_CLUSTER" ]]; then
   current_context=$(kubectl config current-context 2>/dev/null || true)
-  current_nodes=$(kubectl get nodes -o name 2>/dev/null | sed 's#^node/##' | sort || true)
-  if [[ "$current_context" == kind-* ]] && command -v kind >/dev/null; then
-    candidate=${current_context#kind-}
-    kind_nodes=$(kind get nodes --name "$candidate" 2>/dev/null | sort || true)
-    if [[ -n "$current_nodes" && "$current_nodes" == "$kind_nodes" ]]; then
-      KIND_CLUSTER=$candidate
-    fi
-  elif [[ "$current_context" == k3d-* ]] && command -v k3d >/dev/null; then
-    candidate=${current_context#k3d-}
-    if k3d cluster get "$candidate" >/dev/null 2>&1 &&
-      [[ -n "$current_nodes" ]] &&
-      ! grep -Ev "^k3d-${candidate}-" <<<"$current_nodes" >/dev/null; then
-      CLUSTER=$candidate
-    fi
+  if [[ "$current_context" == kind-* ]]; then
+    KIND_CLUSTER=${current_context#kind-}
+  elif [[ "$current_context" == k3d-* ]]; then
+    CLUSTER=${current_context#k3d-}
   fi
 fi
 
@@ -147,11 +98,7 @@ elif [[ -n "$CLUSTER" ]]; then
   LOCAL_CLUSTER=k3d
 else
   [[ -n "$REGISTRY" ]] || {
-    if [[ "${FORETOKEN_CLI_SOURCE:-false}" == true ]]; then
-      printf 'current context requires: foretoken install -e PATH --registry REGISTRY\n' >&2
-    else
-      printf 'set REGISTRY for the Kubernetes deployment\n' >&2
-    fi
+    printf 'set REGISTRY for the Kubernetes deployment\n' >&2
     exit 1
   }
 fi
@@ -165,17 +112,20 @@ fi
 
 CONTROL_PLANE_IMAGE="$LOCAL_IMAGE_PREFIX-control-plane:$TAG"
 FRONTEND_IMAGE="$LOCAL_IMAGE_PREFIX-frontend:$TAG"
-MODEL_SERVER_IMAGE="$LOCAL_IMAGE_PREFIX-model-server:$TAG"
+MODEL_SERVER_IMAGE="$LOCAL_IMAGE_PREFIX-model-server-vllm:$TAG"
+MODEL_SERVER_SGLANG_IMAGE="$LOCAL_IMAGE_PREFIX-model-server-sglang:$TAG"
 
 CONTROL_PLANE_BEFORE=$(image_id "$CONTROL_PLANE_IMAGE")
 FRONTEND_BEFORE=$(image_id "$FRONTEND_IMAGE")
 MODEL_SERVER_BEFORE=$(image_id "$MODEL_SERVER_IMAGE")
+MODEL_SERVER_SGLANG_BEFORE=$(image_id "$MODEL_SERVER_SGLANG_IMAGE")
 
 build_dev_images
 
 CONTROL_PLANE_AFTER=$(image_id "$CONTROL_PLANE_IMAGE")
 FRONTEND_AFTER=$(image_id "$FRONTEND_IMAGE")
 MODEL_SERVER_AFTER=$(image_id "$MODEL_SERVER_IMAGE")
+MODEL_SERVER_SGLANG_AFTER=$(image_id "$MODEL_SERVER_SGLANG_IMAGE")
 
 CONTROL_PLANE_CHANGED=false
 FRONTEND_CHANGED=false
@@ -183,17 +133,15 @@ MODEL_SERVER_CHANGED=false
 [[ "$CONTROL_PLANE_BEFORE" != "$CONTROL_PLANE_AFTER" ]] && CONTROL_PLANE_CHANGED=true
 [[ "$FRONTEND_BEFORE" != "$FRONTEND_AFTER" ]] && FRONTEND_CHANGED=true
 [[ "$MODEL_SERVER_BEFORE" != "$MODEL_SERVER_AFTER" ]] && MODEL_SERVER_CHANGED=true
+[[ "$MODEL_SERVER_SGLANG_BEFORE" != "$MODEL_SERVER_SGLANG_AFTER" ]] && MODEL_SERVER_CHANGED=true
 
 RELEASE_EXISTS=false
-if RELEASE_STATUS=$(helm status "$RELEASE" --namespace "$PLATFORM_NAMESPACE" 2>&1); then
+if helm status "$RELEASE" --namespace "$PLATFORM_NAMESPACE" >/dev/null 2>&1; then
   RELEASE_EXISTS=true
-elif grep -q 'release: not found' <<<"$RELEASE_STATUS"; then
+else
   CONTROL_PLANE_CHANGED=true
   FRONTEND_CHANGED=true
   MODEL_SERVER_CHANGED=true
-else
-  printf '%s\n' "$RELEASE_STATUS" >&2
-  exit 1
 fi
 
 if [[ "$RELEASE_EXISTS" == true ]]; then
@@ -222,12 +170,13 @@ fi
 CONTROL_PLANE_DEPLOY_IMAGE=$CONTROL_PLANE_IMAGE
 FRONTEND_DEPLOY_IMAGE=$FRONTEND_IMAGE
 MODEL_SERVER_DEPLOY_IMAGE=$MODEL_SERVER_IMAGE
+MODEL_SERVER_SGLANG_DEPLOY_IMAGE=$MODEL_SERVER_SGLANG_IMAGE
 
 if [[ "$IMAGE_MODE" == import ]]; then
   changed_images=()
   [[ "$CONTROL_PLANE_CHANGED" == true ]] && changed_images+=("$CONTROL_PLANE_IMAGE")
   [[ "$FRONTEND_CHANGED" == true ]] && changed_images+=("$FRONTEND_IMAGE")
-  [[ "$MODEL_SERVER_CHANGED" == true ]] && changed_images+=("$MODEL_SERVER_IMAGE")
+  [[ "$MODEL_SERVER_CHANGED" == true ]] && changed_images+=("$MODEL_SERVER_IMAGE" "$MODEL_SERVER_SGLANG_IMAGE")
   if ((${#changed_images[@]} > 0)); then
     if [[ "$LOCAL_CLUSTER" == kind ]]; then
       kind load docker-image --name "$KIND_CLUSTER" "${changed_images[@]}"
@@ -253,18 +202,17 @@ else
     MODEL_SERVER_DEPLOY_IMAGE="$REGISTRY/model-server:$DEPLOY_TAG"
     docker tag "$MODEL_SERVER_IMAGE" "$MODEL_SERVER_DEPLOY_IMAGE"
     docker push "$MODEL_SERVER_DEPLOY_IMAGE"
+    MODEL_SERVER_SGLANG_DEPLOY_IMAGE="$REGISTRY/model-server-sglang:$DEPLOY_TAG"
+    docker tag "$MODEL_SERVER_SGLANG_IMAGE" "$MODEL_SERVER_SGLANG_DEPLOY_IMAGE"
+    docker push "$MODEL_SERVER_SGLANG_DEPLOY_IMAGE"
   fi
-fi
-
-if [[ -n "$DEV_IMAGE_OUTPUT" ]]; then
-  write_image_output
-  exit 0
 fi
 
 helm_args=(
   upgrade --install "$RELEASE" "$ROOT/deploy/charts/foretoken"
   --namespace "$PLATFORM_NAMESPACE"
   --wait --timeout "$DEV_TIMEOUT"
+  --debug
 )
 
 if [[ "$RELEASE_EXISTS" == true ]]; then
@@ -293,6 +241,7 @@ if [[ "$IMAGE_MODE" == import ]]; then
     --set image.pullPolicy=Never
     --set "frontend.image=$FRONTEND_DEPLOY_IMAGE"
     --set "runtime.vllm.image=$MODEL_SERVER_DEPLOY_IMAGE"
+    --set "runtime.sglang.image=$MODEL_SERVER_SGLANG_DEPLOY_IMAGE"
   )
 else
   if [[ "$CONTROL_PLANE_CHANGED" == true ]]; then
@@ -304,6 +253,7 @@ else
   fi
   [[ "$FRONTEND_CHANGED" == true ]] && helm_args+=(--set "frontend.image=$FRONTEND_DEPLOY_IMAGE")
   [[ "$MODEL_SERVER_CHANGED" == true ]] && helm_args+=(--set "runtime.vllm.image=$MODEL_SERVER_DEPLOY_IMAGE")
+  [[ "$MODEL_SERVER_CHANGED" == true ]] && helm_args+=(--set "runtime.sglang.image=$MODEL_SERVER_SGLANG_DEPLOY_IMAGE")
 fi
 
 helm "${helm_args[@]}"
