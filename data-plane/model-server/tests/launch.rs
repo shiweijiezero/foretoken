@@ -75,9 +75,7 @@ fn renders_supported_owned_arguments() {
     assert_eq!(event_config["topic"], "foretoken-kv-v1");
 
     let mut invalid = plan();
-    invalid
-        .extra_args
-        .push("--profiler-config={}".to_string());
+    invalid.extra_args.push("--profiler-config={}".to_string());
     assert!(invalid.render_vllm_args().is_err());
 }
 
