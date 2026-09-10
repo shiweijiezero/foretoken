@@ -172,7 +172,7 @@ type ModelGroupKVRuntimeConfig struct {
 
 // ModelGroupRuntime defines the resolved inference-engine runtime.
 type ModelGroupRuntime struct {
-	// +kubebuilder:validation:Enum=vllm
+	// +kubebuilder:validation:Enum=vllm;sglang
 	Backend string `json:"backend"`
 
 	// +kubebuilder:validation:MinLength=1
