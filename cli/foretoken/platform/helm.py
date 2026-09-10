@@ -8,8 +8,13 @@ from __future__ import annotations
 import json
 
 from foretoken.manifest import DeploymentError
+from foretoken.platform.config import load_balancer_config_from_values
 from foretoken.platform.helm_client import HelmClient
-from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef
+from foretoken.platform.types import (
+    LoadBalancerConfig,
+    PlatformGatewayConfig,
+    ReleaseRef,
+)
 from foretoken.source import SourceImages
 
 
@@ -36,10 +41,22 @@ class Helm(HelmClient):
             self._config.envoy_gateway.release_name, self._config.namespace
         )
 
+    def metallb_release(self) -> ReleaseRef:
+        """Return the MetalLB release managed with the platform."""
+        return ReleaseRef(
+            self._config.metallb.release_name,
+            self._config.load_balancer_namespace,
+        )
+
     @property
     def platform_selector_labels(self) -> tuple[tuple[str, str], ...]:
         """Return labels shared by resources in the platform release."""
         return self._config.platform_selector_labels
+
+    @property
+    def management_label(self) -> tuple[str, str]:
+        """Return the label used on CLI-owned Kubernetes resources."""
+        return self._config.management_label
 
     @property
     def envoy_gateway_default_controller(self) -> str:
@@ -50,6 +67,13 @@ class Helm(HelmClient):
     def envoy_gateway_controller(self) -> str:
         """Return the controller identity reserved for managed Envoy Gateway."""
         return self._config.envoy_gateway_controller
+
+    def stored_load_balancer_config(self, release: ReleaseRef) -> LoadBalancerConfig:
+        """Return the address pool stored with the managed MetalLB release."""
+        return (
+            load_balancer_config_from_values(self._release_values(release))
+            or LoadBalancerConfig()
+        )
 
     def platform_gateway_config(self, release: ReleaseRef) -> PlatformGatewayConfig:
         """Return the effective frontend Gateway configuration for a platform."""
@@ -283,6 +307,33 @@ class Helm(HelmClient):
                     f"runtime.vllm.image={model_server_image}",
                 ]
             )
+        self._finish_upgrade(args, timeout)
+        self.run(args)
+
+    def install_metallb(
+        self,
+        release: ReleaseRef,
+        config: LoadBalancerConfig,
+        timeout: str,
+    ) -> None:
+        """Install MetalLB and store the pool needed to resume its configuration."""
+        args = self._upgrade_install_args(
+            release,
+            self._config.metallb.source,
+            self._config.metallb.version,
+        )
+        # Layer 2 announcement needs no BGP backend, which the chart otherwise
+        # bundles as frr-k8s. The pool is stored under the key users set in
+        # their values so a later install without values recovers it.
+        args.extend(
+            [
+                "--set",
+                "frrk8s.enabled=false",
+                "--set-json",
+                "loadBalancer.managedAddresses="
+                + json.dumps(config.managed_addresses, separators=(",", ":")),
+            ]
+        )
         self._finish_upgrade(args, timeout)
         self.run(args)
 

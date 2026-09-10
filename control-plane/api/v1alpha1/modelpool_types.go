@@ -57,8 +57,8 @@ type NormalizedKVCache struct {
 	MooncakeStore *NormalizedMooncakeStore `json:"mooncakeStore,omitempty"`
 }
 
-// RuntimeCache identifies the persistent runtime cache shared by serving workloads.
-type RuntimeCache struct {
+// RuntimeCacheBinding identifies the persistent runtime cache shared by serving workloads.
+type RuntimeCacheBinding struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	ClaimName string `json:"claimName"`
@@ -108,7 +108,7 @@ type NormalizedPoolTemplate struct {
 
 	// RuntimeCache is set by the ModelService controller when persistent runtime caching is enabled.
 	// +optional
-	RuntimeCache *RuntimeCache `json:"runtimeCache,omitempty"`
+	RuntimeCache *RuntimeCacheBinding `json:"runtimeCache,omitempty"`
 
 	// SourceAccess is set by the ModelService controller from the selected runtime profile.
 	// +optional

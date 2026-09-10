@@ -40,7 +40,13 @@ The host needs:
 - Docker configured to use the NVIDIA runtime; and
 - k3d, kubectl, and Helm.
 
-## 1. Select GPUs and name the cluster
+## 1. Enter the repository and select GPUs
+
+Run the remaining commands from the Foretoken repository root:
+
+```bash
+cd /path/to/your/foretoken
+```
 
 List GPUs:
 
@@ -111,10 +117,6 @@ done
 Create a single-server cluster:
 
 ```bash
-if k3d cluster get "$CLUSTER" >/dev/null 2>&1; then
-  k3d cluster delete "$CLUSTER"
-fi
-
 k3d cluster create "$CLUSTER" \
   --config deploy/k3d/config.yaml \
   --gpus "\"device=$GPU_INDICES\"" \
@@ -148,16 +150,10 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 
 ## 4. Install and access Foretoken
 
-Change to the Foretoken project directory:
-
-```bash
-cd /path/to/your/foretoken
-```
-
 Install the command-line tool with pip:
 
 ```bash
-pip install -e .
+pip install foretoken
 ```
 
 Or create and activate a virtual environment with uv:
@@ -165,17 +161,20 @@ Or create and activate a virtual environment with uv:
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install -e .
+uv pip install foretoken
 ```
 
 ### 4.1 Choose a deployment method
 
 - **Use release images**: continue with [section 4.2: Local mode](#42-local-mode) or [section 4.3: Gateway mode](#43-gateway-mode).
-- **Deploy from source in local mode**: run the complete commands below, then continue with [section 4.4: Send a request](#44-send-an-openai-api-compatible-request).
+- **Deploy from source in local mode**: prepare the tools listed in the [source deployment guide](custom-deployment.md), run the commands below, then continue with [section 4.4: Send a request](#44-send-an-openai-api-compatible-request).
 
 ```bash
+pip install -e .
 foretoken install -e .
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
 ### 4.2 Local mode
@@ -185,7 +184,7 @@ Install Foretoken from release images and deploy the Quick Start:
 ```bash
 foretoken install
 
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 Resolve the address that k3s ServiceLB assigns to the frontend:
@@ -208,7 +207,7 @@ Install Gateway mode and deploy the Quick Start from release images. The command
 
 ```bash
 foretoken install --frontend-mode gateway
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 Resolve the configured Gateway endpoint:

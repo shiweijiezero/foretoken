@@ -7,6 +7,8 @@
 
 本维护者指南说明手工镜像导入和原始 Helm 操作。除非另有说明，命令均从 Foretoken 仓库根目录执行。
 
+沐曦镜像准备方式见[准备沐曦 Foretoken 平台](metax-platform_zh.md#构建镜像)。
+
 ## 直接导入本地镜像
 
 **选项 1：导入 Kind 集群。** 使用 Kind 验证控制平面、CRD、前端服务和调度逻辑时，可以直接创建集群。需要运行 GPU 模型服务时，使用选项 2 的 k3d，并按 [使用 k3d 部署 Foretoken](../k3d-deployment_zh.md) 指定可用 GPU。先安装 Kind：
@@ -40,7 +42,15 @@ kind create cluster \
   --config deploy/kind/multi-node.yaml
 ```
 
-创建集群后，构建并导入本地镜像。
+创建集群后，构建并导入本地镜像。vLLM adapter 支持 vLLM 0.20 至 0.28 提供的 EngineCore 协议。inference-engine image 通常通过 `python` 提供 Python 解释器；如果必须使用特定解释器路径，同时设置两个构建输入：
+
+```bash
+INFERENCE_ENGINE_IMAGE=<compatible-inference-engine-image> \
+FORETOKEN_VLLM_PYTHON=/absolute/path/to/python \
+make dev-build
+```
+
+否则直接使用默认值：
 
 ```bash
 # 预计执行时间：约 8 分钟

@@ -118,6 +118,7 @@ pub enum GenerationError {
 impl From<LlmFacadeError> for GenerationError {
     fn from(error: LlmFacadeError) -> Self {
         match error {
+            LlmFacadeError::InvalidRequest => Self::InvalidRequest,
             LlmFacadeError::Unavailable => Self::Unavailable,
             LlmFacadeError::Rejected => Self::BackendRejected,
             LlmFacadeError::Protocol => Self::BackendProtocol,

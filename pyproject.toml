@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "foretoken"
-version = "0.0.1a1"
+version = "0.0.2"
 description = "Command-line tools for installing and operating Foretoken"
 readme = "cli/README.md"
 license = "Apache-2.0"

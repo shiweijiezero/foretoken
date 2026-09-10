@@ -4,7 +4,7 @@
 //! vLLM text lowering reused by the Foretoken routing data path.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use foretoken_chat::{
@@ -29,6 +29,7 @@ pub struct HfSnapshotRuntime {
 
 const HF_TOKEN_ENV: &str = "HF_TOKEN";
 const HF_HUB_OFFLINE_ENV: &str = "HF_HUB_OFFLINE";
+const TEMPORARY_HF_CACHE_DIR_ENV: &str = "FORETOKEN_TEMPORARY_HF_CACHE_DIR";
 const MODEL_FILES: &[&str] = &[
     "added_tokens.json",
     "chat_template.json",
@@ -52,8 +53,8 @@ const MODEL_FILES: &[&str] = &[
 
 /// Loads a local tokenizer directory or downloads a pinned Hub revision into the HF cache.
 ///
-/// Remote files are placed in the standard `HF_HOME` cache and then loaded through vLLM's
-/// local resolver so tokenizer selection remains upstream-owned.
+/// Remote files use the standard `HF_HOME` cache, or the controller-projected Pod cache when
+/// persistent storage is offline, and are then loaded through vLLM's local resolver.
 pub async fn load_hf_text_backend(
     model_id: &str,
     revision: &str,
@@ -79,6 +80,12 @@ pub async fn load_hf_text_backend(
     }
 
     let mut builder = ApiBuilder::from_env().with_progress(false);
+    if let Some(cache_dir) = std::env::var(TEMPORARY_HF_CACHE_DIR_ENV)
+        .ok()
+        .filter(|path| !path.is_empty())
+    {
+        builder = builder.with_cache_dir(PathBuf::from(cache_dir));
+    }
     if let Ok(token) = std::env::var(HF_TOKEN_ENV)
         && !token.is_empty()
     {
@@ -121,7 +128,7 @@ pub async fn load_hf_snapshot_runtime(
     model_id: &str,
     revision: &str,
     max_model_len: u32,
-    model_dtype: ModelDtype,
+    model_dtype: Option<ModelDtype>,
 ) -> std::result::Result<HfSnapshotRuntime, TextBackendLoadError> {
     let text_backend = load_hf_text_backend(model_id, revision).await?;
     let tokenizer = text_backend.tokenizer();
@@ -135,16 +142,18 @@ pub async fn load_hf_snapshot_runtime(
         tokenizer.clone(),
     )
     .map_err(|_| TextBackendLoadError::CachedModel)?;
-    let supports_multimodal = chat_backend.multimodal_model_info().is_some();
+    let supports_multimodal =
+        chat_backend.multimodal_model_info().is_some() && model_dtype.is_some();
     let text_backend: DynTextBackend = Arc::new(text_backend);
     let chat_backend: DynChatBackend = Arc::new(chat_backend);
+    let chat_processor = match model_dtype {
+        Some(model_dtype) => ChatRequestProcessor::with_model_dtype(chat_backend, model_dtype),
+        None => ChatRequestProcessor::render_only(chat_backend),
+    };
     Ok(HfSnapshotRuntime {
         text_processor: Arc::new(TextRequestProcessor::new(text_backend, max_model_len)),
         tokenizer,
-        chat_processor: Arc::new(ChatRequestProcessor::with_model_dtype(
-            chat_backend,
-            model_dtype,
-        )),
+        chat_processor: Arc::new(chat_processor),
         supports_multimodal,
     })
 }

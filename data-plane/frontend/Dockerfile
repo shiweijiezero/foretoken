@@ -5,8 +5,8 @@
 # Build from the repository root so Cargo uses the data-plane workspace and
 # its official vLLM submodule.
 
-ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye
-ARG RUNTIME_IMAGE=docker.io/library/debian:bullseye-slim
+ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bookworm
+ARG RUNTIME_IMAGE=docker.io/library/debian:bookworm-slim
 
 FROM ${RUST_BUILDER_IMAGE} AS builder
 
@@ -33,7 +33,7 @@ FROM ${RUNTIME_IMAGE}
 LABEL org.opencontainers.image.source="https://github.com/shiweijiezero/foretoken"
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates ffmpeg libssl1.1 \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3 libstdc++6 \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 65532 --create-home foretoken \
     && mkdir -p /var/cache/foretoken \

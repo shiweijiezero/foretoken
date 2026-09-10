@@ -81,26 +81,18 @@ type servingSnapshotPDPipelineScope struct {
 	DecodeRouteTargetIDs  []string `json:"decode_route_target_ids"`
 }
 
-// servingSnapshotEPDComponent is one component of an atomic 1E:1P:1D triplet.
+// servingSnapshotEPDComponent is one route in an E/P/D compatibility scope.
 type servingSnapshotEPDComponent struct {
 	RouteTargetID            string   `json:"route_target_id"`
 	ServiceUID               string   `json:"service_uid"`
 	PoolUID                  string   `json:"pool_uid"`
 	PoolName                 string   `json:"pool_name"`
 	Role                     string   `json:"role"`
-	PipelineScopeID          string   `json:"pipeline_scope_id"`
 	Model                    string   `json:"model"`
 	Revision                 string   `json:"revision"`
 	Tokenizer                string   `json:"tokenizer"`
 	TokenizerRevision        string   `json:"tokenizer_revision"`
 	MaxInputTokens           *int32   `json:"max_input_tokens,omitempty"`
-	ProfileName              string   `json:"profile_name,omitempty"`
-	ProfileRevision          string   `json:"profile_revision,omitempty"`
-	Connector                string   `json:"connector,omitempty"`
-	Protocol                 string   `json:"protocol,omitempty"`
-	ECProfileName            string   `json:"ec_profile_name,omitempty"`
-	ECProfileRevision        string   `json:"ec_profile_revision,omitempty"`
-	ECConnector              string   `json:"ec_connector,omitempty"`
 	Capabilities             []string `json:"capabilities"`
 	Endpoint                 string   `json:"endpoint"`
 	PrefillBootstrapEndpoint string   `json:"prefill_bootstrap_endpoint,omitempty"`
@@ -109,8 +101,8 @@ type servingSnapshotEPDComponent struct {
 }
 
 type servingSnapshotEPDPipelineScope struct {
-	PipelineScopeID      string `json:"pipeline_scope_id"`
-	EncoderRouteTargetID string `json:"encoder_route_target_id"`
-	PrefillRouteTargetID string `json:"prefill_route_target_id"`
-	DecodeRouteTargetID  string `json:"decode_route_target_id"`
+	PipelineScopeID       string   `json:"pipeline_scope_id"`
+	EncoderRouteTargetIDs []string `json:"encoder_route_target_ids"`
+	PrefillRouteTargetIDs []string `json:"prefill_route_target_ids"`
+	DecodeRouteTargetIDs  []string `json:"decode_route_target_ids"`
 }

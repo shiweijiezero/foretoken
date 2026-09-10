@@ -7,14 +7,16 @@
 
 如需运行双模型并验证自动扩缩容，请参阅[多模型快速开始](../multi-model-quickstart/README_zh.md)。
 
-本示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。
+本示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。示例还会通过命名空间的默认 `StorageClass` 创建一个从 10 GiB 起自动扩容的运行时缓存 PVC。
+
+在 [`model.yaml`](model.yaml) 的 `ModelService` 中配置模型、副本数、资源和并行参数，在 [`cache.yaml`](cache.yaml) 的 `RuntimeCache` 中配置运行时缓存，在 [`frontend.yaml`](frontend.yaml) 的 `FrontendService` 中配置前端。Foretoken 会自动创建所需的 Kubernetes 工作负载。
 
 ## 部署
 
-先完成根目录[快速开始](../../README_zh.md)中的平台安装，再部署本示例：
+先按[快速开始](../../README_zh.md)安装平台并获取仓库，再从仓库根目录部署：
 
 ```bash
-foretoken deploy examples/quickstart
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 该命令会在服务状态变化时输出进度，并在当前配置就绪后退出。

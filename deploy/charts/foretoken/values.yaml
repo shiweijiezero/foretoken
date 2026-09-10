@@ -21,16 +21,21 @@ controller:
 # Each named Secret must exist in the namespace of the FrontendService or ModelService workload.
 workload:
   imagePullSecrets: []
-  # The named PVC must exist in every workload namespace.
+  # Set claimName to override namespace RuntimeCache discovery with an existing PVC.
   cache:
     claimName: ""
     mountPath: /var/cache/foretoken
+
+# Unused node-network IP addresses for services when the cluster assigns none.
+# Consumed by foretoken install, which then manages MetalLB in Layer 2 mode.
+loadBalancer:
+  managedAddresses: []
 
 # Local mode uses a LoadBalancer Service. Gateway mode attaches an HTTPRoute to a Gateway.
 frontend:
   enabled: false
   mode: local
-  image: ghcr.io/shiweijiezero/foretoken/frontend:0.0.1-alpha.1
+  image: ghcr.io/shiweijiezero/foretoken/frontend:0.0.2
   port: 8080
   gateway:
     # When enabled, the Chart creates an isolated GatewayClass and HTTP Gateway.
@@ -47,11 +52,19 @@ observability:
   additionalLabels: {}
   interval: ""
   scrapeTimeout: ""
+  alerts:
+    # The language is attached to alert labels so a shared Lark receiver can render one language consistently.
+    language: zh
+    thresholds:
+      acceleratorUtilizationRatio: 0.95
+      acceleratorMemoryUsageRatio: 0.95
+      nvidiaTemperatureCelsius: 85
+      nvidiaPowerWatts: 300
 
 # The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
 runtime:
   vllm:
-    image: ghcr.io/shiweijiezero/foretoken/model-server:0.0.1-alpha.1
+    image: ghcr.io/shiweijiezero/foretoken/model-server:0.0.2
     profileRevision: default
     modelServerPort: 9000
     # Optional source access is interpreted by the vLLM runtime adapter.

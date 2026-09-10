@@ -28,6 +28,8 @@ pub enum RouteStage {
 }
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq)]
 pub enum LlmFacadeError {
+    #[error("request is invalid for the selected backend")]
+    InvalidRequest,
     #[error("backend unavailable")]
     Unavailable,
     #[error("backend rejected request")]

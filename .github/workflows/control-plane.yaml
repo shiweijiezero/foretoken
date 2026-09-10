@@ -47,7 +47,7 @@ jobs:
         run: make -C control-plane verify
       - name: Validate operator image
         run: docker build -f control-plane/Dockerfile -t foretoken-control-plane:test .
-      - name: Validate Prometheus recording rules
+      - name: Validate Prometheus rules
         run: |
           docker run --rm \
             --volume "${PWD}:/workspace:ro" \
@@ -61,6 +61,12 @@ jobs:
             --entrypoint /bin/promtool \
             quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
             test rules observability/tests/recording-rules.test.yaml
+          docker run --rm \
+            --volume "${PWD}:/workspace:ro" \
+            --workdir /workspace \
+            --entrypoint /bin/promtool \
+            quay.io/prometheus/prometheus:v3.12.0-distroless@sha256:f39df5334dee301b885f77e0ff1159f5d8a43bf9db518f885544594799a1e3c2 \
+            check rules deploy/charts/foretoken/files/alerting-rules.yaml
       - name: Create test cluster
         uses: helm/kind-action@v1.14.0
         with:
@@ -87,13 +93,22 @@ jobs:
             --set observability.scrapeTimeout=10s \
             > /tmp/foretoken-observability.yaml
           test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability.yaml)" = "2"
-          test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability.yaml)" = "1"
+          test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability.yaml)" = "2"
           test "$(grep -c 'path: /metrics' /tmp/foretoken-observability.yaml)" = "2"
           test "$(grep -c 'interval: \"30s\"' /tmp/foretoken-observability.yaml)" = "2"
           test "$(grep -c 'scrapeTimeout: \"10s\"' /tmp/foretoken-observability.yaml)" = "2"
-          test "$(grep -c 'release: kube-prometheus-stack' /tmp/foretoken-observability.yaml)" = "3"
+          test "$(grep -c 'release: kube-prometheus-stack' /tmp/foretoken-observability.yaml)" = "4"
           grep -q 'foretoken:frontend_http_response_starts:rate5m' /tmp/foretoken-observability.yaml
           grep -q 'foretoken:model_server_requests_waiting:sum' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenMetricsTargetDown' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenFrontendHTTPResponseStart5xxRatioHigh' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenModelServerSchedulerBacklog' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenModelServerKVCachePressureHigh' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenAcceleratorGPUUtilizationHigh' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenAcceleratorGPUMemoryUsageHigh' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenNVIDIAGPUTemperatureHigh' /tmp/foretoken-observability.yaml
+          grep -q 'ForetokenNVIDIAGPUPowerUsageHigh' /tmp/foretoken-observability.yaml
+          grep -q 'observability/runbooks/alerts.md' /tmp/foretoken-observability.yaml
           helm template foretoken deploy/charts/foretoken \
             --kube-version 1.36.3 \
             --api-versions monitoring.coreos.com/v1/ServiceMonitor \
@@ -101,7 +116,7 @@ jobs:
             --set frontend.enabled=true \
             > /tmp/foretoken-observability-auto.yaml
           test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability-auto.yaml)" = "2"
-          test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability-auto.yaml)" = "1"
+          test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability-auto.yaml)" = "2"
       - name: Validate operator lifecycle
         run: |
           kind load docker-image foretoken-control-plane:test --name foretoken
@@ -120,6 +135,24 @@ jobs:
             crd/modelgroups.inference.foretoken.io \
             --timeout=1m
           kubectl create namespace foretoken-demo
+          # kind has no default StorageClass. This static volume exercises the
+          # RuntimeCache binding path without adding an external provisioner.
+          kubectl apply -f - <<'EOF'
+          apiVersion: v1
+          kind: PersistentVolume
+          metadata:
+            name: foretoken-runtime-cache-test
+          spec:
+            capacity:
+              storage: 100Gi
+            accessModes:
+              - ReadWriteOnce
+            persistentVolumeReclaimPolicy: Retain
+            storageClassName: ""
+            hostPath:
+              path: /var/lib/foretoken-runtime-cache
+              type: DirectoryOrCreate
+          EOF
           kubectl apply --server-side --namespace foretoken-demo -k examples/quickstart
           kubectl wait --for=condition=PoolsMaterialized \
             modelservice/quickstart-qwen3-0.6b \

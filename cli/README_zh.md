@@ -7,15 +7,12 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平台、从 Kustomize 配置部署模型服务、查看服务就绪状态、获取前端服务 URL 并运行性能评测。
-
-新集群从“安装 命令行工具”开始。如果 `foretoken --version` 已经可用，直接安装平台；如果集群已经安装 Foretoken 平台，直接部署模型服务。
+Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平台、从 Kustomize 配置部署模型服务、查看服务就绪状态、解析前端访问入口并运行评测。
 
 ## 开始前
 
-需要准备 Python 3.10 或更高版本、当前 Kubernetes context、`kubectl` 和 Helm。GPU 节点需要预先安装厂商驱动和 Kubernetes device plugin。源码安装还需要 Docker 和 Make，以及本地 kind/k3d 集群或所有目标节点都能访问的 OCI registry。
-
-## 安装 命令行工具
+需要准备 Python 3.10 或更高版本、当前 Kubernetes context、`kubectl` 和 Helm。GPU 节点需要预先安装厂商驱动和 Kubernetes device plugin。
+## 安装命令行工具
 
 使用 pip 安装已经发布的 Foretoken 命令行工具包：
 
@@ -34,7 +31,7 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-这一步只会在当前 Python 环境中安装 `foretoken` 命令，不会修改 Kubernetes 集群。运行 `foretoken --version` 可以查看 命令行工具 及其对应的平台版本。
+运行 `foretoken --version` 查看已安装的命令行工具版本。
 
 ## 安装 Kubernetes 平台
 
@@ -48,11 +45,11 @@ uv pip install foretoken
 foretoken install
 ```
 
-安装过程中，命令行工具 会发现 Prometheus 和加速器指标 exporter。它会复用兼容的共享实例，按需安装由 命令行工具 管理的 Prometheus 和 NVIDIA DCGM Exporter，并接入沐曦集群已经提供的 mxExporter。命令行工具 不安装 GPU 驱动、device plugin 或厂商 Operator。监控实例存在歧义或配置不完整时，安装会给出可操作的错误；选择规则见[可观测性](../observability/README_zh.md)。
+安装同时会配置监控；集群里已有 Prometheus 和 GPU 指标 exporter 时直接复用。详见[可观测性](../observability/README_zh.md)。
 
 ### 网关模式
 
-只有集群运行 Envoy Gateway 时，命令行工具 才会创建专用的 `GatewayClass` 和 `Gateway`：
+网关模式会创建专用的 `GatewayClass` 和 `Gateway`，集群没有可复用的控制器时自动安装 Envoy Gateway：
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -71,7 +68,7 @@ foretoken install \
 
 ### 当前源码
 
-从当前源码构建 Foretoken 镜像，并配置平台使用这些镜像：
+按[源码部署指南](../docs/custom-deployment_zh.md)准备构建工具，再从仓库根目录安装：
 
 ```bash
 foretoken install -e .
@@ -88,35 +85,40 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 ### 安装选项
 
-重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，命令行工具不会自动接管。
+重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。
+
+模型服务通过一个集群外可访问的 IP 提供服务。k3d、k3s 和云上集群会自动分配这个 IP；用 kubeadm、RKE2 或 kubespray 搭建的集群默认没有地址分配能力，安装结尾会提示 `LoadBalancer support Not verified`。此时向集群管理员确认一段节点网段内未被占用的 IP 交给 Foretoken，由它分配给服务：
+
+```yaml
+loadBalancer:
+  managedAddresses:
+    - 192.168.1.240-192.168.1.250
+```
+
+```bash
+foretoken install --values platform-values.yaml
+```
 
 ### 持久化运行时缓存
 
-如需在 Pod 重启后复用模型和编译缓存，将 `workload.cache.claimName` 设置为已有 PVC。该 PVC 必须能被所有可能运行工作负载的节点挂载；多节点部署通常需要 `ReadWriteMany`。留空则关闭持久化缓存。配置示例见[持久化运行时缓存](../docs/development/runtime-cache_zh.md)。
+在 workload namespace 中创建一个 `RuntimeCache`，Foretoken 即可自动创建并管理共享缓存 PVC。已有 PVC 仍可通过 `workload.cache.claimName` 使用。详见[持久化运行时缓存](../docs/development/runtime-cache_zh.md)。
 
 ## 部署和管理模型服务
 
-部署一个 Kustomize 根目录中渲染出的前端服务和全部模型：
+部署一个 Kustomize 根目录中的前端服务和全部模型。以下命令在仓库根目录执行；尚未获取配置时，先运行：
 
 ```bash
-foretoken deploy examples/multi-model-quickstart
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 ```
 
-该命令会应用配置，在 `FrontendService` 和 `ModelService` 状态变化时输出进度，并在所有资源的当前 generation 就绪后退出。默认等待十分钟，可通过 `--timeout` 调整。
-
-删除同一配置渲染出的资源：
+资源和存储要求见[多模型示例](../examples/multi-model-quickstart/README_zh.md)。单模型部署使用 `examples/quickstart`。
 
 ```bash
-foretoken delete examples/multi-model-quickstart
+foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-该命令会等待删除完成，并忽略已经不存在的资源。删除全部 Foretoken 服务后，可以移除平台发布实例：
-
-```bash
-foretoken uninstall
-```
-
-该命令保留 Foretoken CRD，并在仍有用户服务时拒绝卸载。平台卸载时会一并删除由 命令行工具 管理的监控和 Gateway 资源，复用的集群组件保持不变。
+该命令会应用配置、输出服务状态变化，并在所有服务就绪后退出。未指定 `--timeout` 时最多等待十分钟。
 
 不应用配置，直接查看同一部署的状态：
 
@@ -140,11 +142,10 @@ FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 HTTP Gateway 模式下，单独解析请求的 `Host`：
 
 ```bash
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --host)"
 ```
 
-Host 值在直接访问时是 URL authority，在 HTTP Gateway 模式下是配置的路由域名。该命令负责等待 LoadBalancer 或 Gateway 地址，服务就绪仍由 `foretoken deploy` 负责。
+直接访问时，`--host` 返回主机名或 IP，以及 URL 中包含的端口；HTTP Gateway 模式下返回配置的路由域名。`foretoken endpoint` 等待 LoadBalancer 或 Gateway 分配地址；要等待服务就绪，请使用 `foretoken deploy`。
 
 ## 评测模型服务
 

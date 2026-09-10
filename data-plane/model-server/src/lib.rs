@@ -9,5 +9,6 @@ mod backend_telemetry;
 pub mod config;
 pub mod kv_event_adapter;
 pub mod launch;
+pub mod runtime_cache;
 #[doc(hidden)]
 pub mod runtime_transport;

@@ -18,17 +18,17 @@ pub struct RouteTargetLatencyStats {
     pub p95_ms: Option<f64>,
 }
 
-/// Latest route target gauges and statistics calculated over `observed_window`.
+/// Latest route target gauges and available statistics calculated over `observed_window`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouteTargetStats {
     /// Collection time of the latest cumulative snapshot.
     pub collected_at_unix_ms: u64,
-    /// Actual interval between the Router-selected baseline and latest snapshot.
+    /// Actual counter interval, or zero until history covers the requested observation window.
     pub observed_window: Duration,
     /// Requests currently admitted by Model Server.
     pub running_requests: u64,
-    /// Configured Model Server concurrency limit.
-    pub max_concurrent_requests: u64,
+    /// Engine-reported scheduler capacity, or `None` when unavailable; not an admission limit.
+    pub max_concurrent_requests: Option<u64>,
     /// Requests currently running in the vLLM scheduler.
     pub scheduler_running_requests: Option<u64>,
     /// Requests currently waiting in the vLLM scheduler.
@@ -51,7 +51,8 @@ pub struct RouteTargetStats {
 pub trait RouteTargetStatsReader: Send + Sync {
     /// Calculates statistics for `route_target_id` over the Router-selected `window`.
     ///
-    /// Returns `None` when telemetry is unavailable or retained history cannot cover the window.
+    /// Returns `None` when telemetry is unavailable. Gauges are available from the first snapshot;
+    /// rates and latencies remain `None` until retained history covers the requested window.
     fn stats(&self, route_target_id: &RouteTargetId, window: Duration) -> Option<RouteTargetStats>;
 }
 
