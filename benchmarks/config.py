@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
 from evalscope.perf.multi_turn_args import IntOrRange
+from foretoken.profiling import ProfileWindow
 
 
 @dataclass
@@ -182,6 +183,14 @@ class ParamSweepConfig:
 
 
 @dataclass
+class ProfilingConfig:
+    """On-demand profiler selected for one bounded benchmark run."""
+
+    profiler: str = ""
+    window: ProfileWindow = field(default_factory=ProfileWindow)
+
+
+@dataclass
 class BenchConfig:
     """Root benchmark configuration (framework contract)."""
 
@@ -192,11 +201,17 @@ class BenchConfig:
     output: OutputConfig = field(default_factory=OutputConfig)
     wandb: WandbConfig = field(default_factory=WandbConfig)
     param_sweep: ParamSweepConfig = field(default_factory=ParamSweepConfig)
+    profiling: ProfilingConfig = field(default_factory=ProfilingConfig)
 
     def validate(self) -> None:
         """Validate nested configs before a run starts."""
         self.load.validate()
         self.output.validate()
+        if self.profiling.profiler not in {"", "torch"}:
+            raise ValueError(f"unsupported profiler: {self.profiling.profiler}")
+        if self.profiling.profiler and self.param_sweep.bench_params:
+            raise ValueError("--profile cannot be combined with --bench-params")
+        self.profiling.window.validate()
         dataset = self.dataset
         has_trace = bool(dataset.trace_path)
         if not has_trace and not dataset.prompt and not dataset.dataset:
@@ -346,6 +361,7 @@ class BenchConfig:
             f"  Arrival rate: {rate_label}\n"
             f"{open_loop_line}"
             f"  Stream     : {self.generation.stream}\n"
+            f"  Profile    : {self.profiling.profiler or 'off'}\n"
             f"  Dataset    : {dataset_label}\n"
             f"{trace_lines}"
             "============================================\n"

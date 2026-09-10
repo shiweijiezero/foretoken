@@ -165,7 +165,7 @@ observability:
 
 Alertmanager 负责通知接收方、分组和路由。Foretoken 提供告警表达式和默认阈值；如果设备或 workload 需要不同限制，可以通过 Chart values 覆盖。
 
-Foretoken 不管理性能剖析流程。调查可复现实验时，使用受控负载，并通过模型运行环境和硬件平台使用 PyTorch Profiler、Nsight Systems 或 Nsight Compute。性能剖析会影响服务性能，应记录模型、负载、硬件和运行参数。
+在受控负载中短时间采集 Torch trace，见[benchmark profiling](../benchmarks/README_zh.md#按需-profiling)。命令负责提交和收取结果，model-server 负责窗口计时。Profiling 独立于监控和告警配置；所需引擎修复及当前验证限制见 benchmark 指南。
 
 ## 停止采集
 

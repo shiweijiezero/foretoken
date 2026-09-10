@@ -15,6 +15,7 @@ use vllm_llm::{FinishReason, Llm};
 use vllm_metrics::{EngineLabels, METRICS};
 
 use crate::backend_telemetry::{BoundaryLatencyMetrics, read_vllm_metrics};
+use crate::launch::PROFILE_OUTPUT_PATH;
 
 pub use foretoken_model_protocol::{
     CumulativeHistogram, GenerateInput, TokenErrorCode, TokenEvent, TokenOutput,
@@ -123,6 +124,12 @@ pub trait Backend: Send + Sync {
 
     /// Cancels request IDs supplied by the abort handler; backend ownership remains unchanged.
     async fn abort(&self, request_ids: &[String]) -> Result<(), BackendError>;
+
+    /// Starts an on-demand profile with a trace-name hint for the inference engine.
+    async fn start_profile(&self, profile_prefix: &str) -> Result<(), BackendError>;
+
+    /// Stops and exports the active capture, returning only this prefix's native artifact paths.
+    async fn stop_profile(&self, profile_prefix: &str) -> Result<Vec<String>, BackendError>;
 
     /// Returns a snapshot published by telemetry handlers without transferring backend ownership.
     fn telemetry(&self) -> BackendTelemetry;
@@ -332,6 +339,34 @@ impl Backend for VllmBackend {
         llm.abort(request_ids).await.map_err(BackendError::from_llm)
     }
 
+    async fn start_profile(&self, profile_prefix: &str) -> Result<(), BackendError> {
+        let guard = self.llm.read().await;
+        let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
+        llm.engine_core_client()
+            .start_profile(Some(profile_prefix))
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, "vLLM profiling start failed");
+                BackendError::from_engine_client(error)
+            })
+    }
+
+    async fn stop_profile(&self, profile_prefix: &str) -> Result<Vec<String>, BackendError> {
+        let guard = self.llm.read().await;
+        let llm = guard.as_ref().ok_or(BackendError::Unavailable)?;
+        llm.engine_core_client()
+            .stop_profile(None)
+            .await
+            .map_err(|error| {
+                tracing::warn!(%error, "vLLM profiling stop/export failed");
+                BackendError::from_engine_client(error)
+            })?;
+        vllm_profile_files(profile_prefix).map_err(|error| {
+            tracing::warn!(%error, "could not locate this vLLM capture's artifacts");
+            BackendError::RequestFailed
+        })
+    }
+
     fn telemetry(&self) -> BackendTelemetry {
         let vllm = read_vllm_metrics(&self.engine_labels);
         let (ttft_seconds, tpot_seconds, e2e_seconds) = self
@@ -357,4 +392,33 @@ impl Backend for VllmBackend {
     fn render_openmetrics(&self) -> Result<String, MetricsError> {
         METRICS.render().map_err(|_| MetricsError)
     }
+}
+
+/// Match the prefix returned to vLLM; do not claim another capture's files by directory diff.
+fn vllm_profile_files(prefix: &str) -> std::io::Result<Vec<String>> {
+    let prefix = format!("{prefix}_");
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(PROFILE_OUTPUT_PATH)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if entry.file_type()?.is_file()
+            && name.starts_with(&prefix)
+            && (name.ends_with(".pt.trace.json")
+                || name.ends_with(".pt.trace.json.gz")
+                || name.ends_with(".profiler_out.txt"))
+        {
+            files.push(entry.path().to_string_lossy().into_owned());
+        }
+    }
+    if !files
+        .iter()
+        .any(|path| path.ends_with(".pt.trace.json") || path.ends_with(".pt.trace.json.gz"))
+    {
+        return Err(std::io::Error::other(
+            "vLLM exported no trace matching the capture prefix",
+        ));
+    }
+    files.sort();
+    Ok(files)
 }

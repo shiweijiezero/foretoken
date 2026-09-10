@@ -13,17 +13,21 @@ from dataclasses import MISSING, dataclass, fields
 from typing import Any
 
 from evalscope.perf.arguments import Arguments
+from foretoken.profiling import ProfileWindow
 
 from benchmarks.config import (
     BenchConfig,
     DatasetConfig,
+    EndpointConfig,
     GenerationConfig,
     LoadConfig,
     OutputConfig,
     ParamSweepConfig,
-    EndpointConfig,
+    ProfilingConfig,
     WandbConfig,
 )
+
+
 @dataclass(frozen=True)
 class BenchCommand:
     """Run a benchmark against a deployment or existing endpoint."""
@@ -91,6 +95,22 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         "--wait-timeout",
         default="15m",
         help="Timeout for each deployment readiness stage",
+    )
+    parser.add_argument(
+        "--profile",
+        nargs="?",
+        const="torch",
+        choices=("torch",),
+        default=_default(ProfilingConfig, "profiler"),
+        help="Capture one short PyTorch window during this run",
+    )
+    parser.add_argument(
+        "--profile-delay", type=float, default=_default(ProfileWindow, "delay_seconds"),
+        help="Seconds after submission before capture starts (requires --profile)",
+    )
+    parser.add_argument(
+        "--profile-duration", type=float, default=_default(ProfileWindow, "duration_seconds"),
+        help="Maximum capture seconds, excluding export (requires --profile)",
     )
 
     # Load
@@ -415,6 +435,10 @@ def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
             num_runs=namespace.num_runs,
             experiment_name=namespace.experiment_name,
         ),
+        profiling=ProfilingConfig(
+            profiler=namespace.profile,
+            window=ProfileWindow(namespace.profile_delay, namespace.profile_duration),
+        ),
     )
 
 
@@ -437,6 +461,13 @@ def parse_arguments(argv: Sequence[str] | None = None) -> BenchCommand:
         bench.error("provide either PATH or --url")
     if parsed_args.url and not parsed_args.model:
         bench.error("--model is required with --url")
+    if parsed_args.profile and parsed_args.url:
+        bench.error("--profile requires a Foretoken Kustomize deployment PATH")
+    if not parsed_args.profile and (
+        parsed_args.profile_delay != _default(ProfileWindow, "delay_seconds")
+        or parsed_args.profile_duration != _default(ProfileWindow, "duration_seconds")
+    ):
+        bench.error("--profile-delay and --profile-duration require --profile")
     return BenchCommand(
         kustomize_path=parsed_args.kustomize_path or "",
         config=_bench_config(parsed_args),

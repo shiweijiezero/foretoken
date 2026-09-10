@@ -70,14 +70,16 @@ class MultiDatasetRunner(Runner):
                 dataset=replace(self.config.dataset, dataset=[source]),
                 load=replace(self.config.load, number=count),
             )
-            result = await RunBenchmark(
+            child = RunBenchmark(
                 RunSpec(
                     config=child_config,
                     label=child_name,
                     output_dir=os.path.join(writer.output_dir, child_name),
                     wandb_group=wandb_group,
                 )
-            ).run()
+            )
+            child.before_requests = self.before_requests
+            result = await child.run()
             raw_outputs.append(result["raw"])
 
         if not raw_outputs:

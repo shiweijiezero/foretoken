@@ -165,7 +165,7 @@ observability:
 
 Alertmanager owns notification receivers, grouping, and routing. Foretoken provides the alert expressions and default thresholds; override them through the Chart values when the device and workload require different limits.
 
-Foretoken does not manage a profiling workflow. For a reproducible investigation, run a controlled workload and use PyTorch Profiler, Nsight Systems, or Nsight Compute through the model runtime and hardware platform. Profiling changes serving performance; record the model, load, hardware, and runtime settings with the result.
+For a short Torch capture during a controlled workload, see [benchmark profiling](../benchmarks/README.md#on-demand-profiling). The command owns submission and retrieval; model-server owns the timed window. Profiling is independent of monitoring and alert configuration. Engine prerequisites and the current validation limits are listed in the benchmark guide.
 
 ## Remove collection
 

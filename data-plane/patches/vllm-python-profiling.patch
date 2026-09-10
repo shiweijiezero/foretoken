@@ -1,0 +1,242 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Backport per-capture Torch output names and explicit profiler-control errors.
+# Applies to the Python sources shipped by vLLM 0.24.0 and 0.26.0.
+# Installed by model-server's Dockerfile, independently of the Rust source submodule.
+
+diff --git a/vllm/profiler/wrapper.py b/vllm/profiler/wrapper.py
+index 201b450..210b796 100644
+--- a/vllm/profiler/wrapper.py
++++ b/vllm/profiler/wrapper.py
+@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
+ from collections.abc import Callable
+ from contextlib import nullcontext
+ from typing import Literal
++from uuid import uuid4
+ 
+ import torch
+ from typing_extensions import override
+@@ -40,6 +41,9 @@ class WorkerProfiler(ABC):
+         # Track when the profiler is actually running
+         self._profiling_for_iters = 0
+         self._running = False
++        # Automatic profiling runs inside inference. Retain its first failure
++        # for the next control call instead of interrupting model execution.
++        self._error: Exception | None = None
+ 
+     @abstractmethod
+     def _start(self) -> None:
+@@ -52,24 +56,37 @@ class WorkerProfiler(ABC):
+         pass
+ 
+     def _call_start(self) -> None:
+-        """Call _start with error handling but no safeguards."""
++        """Start collection, retaining failures for the profiling control caller."""
+         try:
+             self._start()
+             self._running = True  # Only mark as running if start succeeds
+         except Exception as e:
++            self._error = e
++            self._active = False
+             logger.warning("Failed to start profiler: %s", e)
+ 
+     def _call_stop(self) -> None:
+-        """Call _stop with error handling but no safeguards."""
++        """Stop collection without letting a profiling failure abort inference."""
+         try:
+             self._stop()
++            self._running = False
+             logger.info_once("Profiler stopped successfully.")
+         except Exception as e:
++            if self._error is None:
++                self._error = e
+             logger.warning("Failed to stop profiler: %s", e)
+-        self._running = False  # Always mark as not running, assume stop worked
++
++    def _raise_if_failed(self) -> None:
++        """Report failed collection or export through explicit control calls."""
++        if self._error is not None:
++            raise RuntimeError(
++                f"Profiling failed: {self._error}; "
++                "restart the worker before another capture."
++            ) from self._error
+ 
+     def start(self) -> None:
+         """Attempt to start the profiler, accounting for delayed starts."""
++        self._raise_if_failed()
+         if self._active:
+             logger.debug(
+                 "start_profile received when profiler is already active. "
+@@ -79,11 +96,12 @@ class WorkerProfiler(ABC):
+         self._active = True
+         if self._delay_iters == 0:
+             self._call_start()
++            self._raise_if_failed()
+ 
+     def step(self) -> None:
+         """Update the profiler state at each worker step,
+         to handle delayed starts and max iteration limits."""
+-        if not self._active:
++        if not self._active or self._error is not None:
+             return
+ 
+         self._active_iteration_count += 1
+@@ -98,8 +116,15 @@ class WorkerProfiler(ABC):
+ 
+         # Call profiler step for schedule-based profiling
+         # Only count iterations where data is actually recorded (not warmup)
+-        if self._running and self._profiler_step():
+-            self._profiling_for_iters += 1
++        if self._running:
++            try:
++                if self._profiler_step():
++                    self._profiling_for_iters += 1
++            except Exception as e:
++                self._error = e
++                logger.warning("Failed to advance profiler: %s", e)
++                self._call_stop()
++                return
+ 
+         if (
+             self._max_iters > 0
+@@ -126,6 +151,7 @@ class WorkerProfiler(ABC):
+     def stop(self) -> None:
+         """Attempt to stop the profiler, accounting for overlapped calls."""
+         if not self._active:
++            self._raise_if_failed()
+             logger.debug(
+                 "stop_profile received when profiler is not active. Ignoring request."
+             )
+@@ -136,12 +162,14 @@ class WorkerProfiler(ABC):
+ 
+         if self._running:
+             self._call_stop()
++        self._raise_if_failed()
+ 
+     def shutdown(self) -> None:
+         """Ensure profiler is stopped when shutting down."""
+         logger.info_once("Shutting down profiler")
+         if self._running:
+-            self.stop()
++            self._call_stop()
++        self._active = False
+ 
+     def annotate_context_manager(self, name: str):
+         """Return a context manager to annotate profiler traces."""
+@@ -169,6 +197,7 @@ class TorchProfilerWrapper(WorkerProfiler):
+ 
+         self.local_rank = local_rank
+         self.profiler_config = profiler_config
++        self._worker_name = worker_name
+         torch_profiler_trace_dir = profiler_config.torch_profiler_dir
+         if local_rank in (None, 0):
+             logger.info_once(
+@@ -184,16 +213,7 @@ class TorchProfilerWrapper(WorkerProfiler):
+                 profiler_config.torch_profiler_with_flops,
+             )
+ 
+-        # Determine trace handler: use custom handler if provided,
+-        # otherwise default to tensorboard trace handler
+-        if on_trace_ready is not None:
+-            trace_handler = on_trace_ready
+-        else:
+-            trace_handler = torch.profiler.tensorboard_trace_handler(
+-                torch_profiler_trace_dir,
+-                worker_name=worker_name,
+-                use_gzip=profiler_config.torch_profiler_use_gzip,
+-            )
++        self._on_trace_ready = on_trace_ready
+ 
+         self.dump_cpu_time_total = "CPU" in activities and len(activities) == 1
+ 
+@@ -222,7 +242,7 @@ class TorchProfilerWrapper(WorkerProfiler):
+             profile_memory=profiler_config.torch_profiler_with_memory,
+             with_stack=profiler_config.torch_profiler_with_stack,
+             with_flops=profiler_config.torch_profiler_with_flops,
+-            on_trace_ready=trace_handler,
++            on_trace_ready=self._export_trace,
+         )
+ 
+         # Track if we're using a schedule (need to call step())
+@@ -248,13 +268,13 @@ class TorchProfilerWrapper(WorkerProfiler):
+             row_limit=row_limit,
+         )
+ 
+-    def _write_profiler_table(self, rank: int, table: str) -> None:
++    def _write_profiler_table(self, trace_name: str, table: str) -> None:
+         profiler_dir = self.profiler_config.torch_profiler_dir
+ 
+         # Skip file write for URI paths (gs://, s3://, etc.)
+         # as standard file I/O doesn't work with URI schemes
+         if not _is_uri_path(profiler_dir):
+-            profiler_out_file = f"{profiler_dir}/profiler_out_{rank}.txt"
++            profiler_out_file = f"{profiler_dir}/{trace_name}.profiler_out.txt"
+             with open(profiler_out_file, "w") as f:
+                 print(table, file=f)
+ 
+@@ -266,11 +286,23 @@ class TorchProfilerWrapper(WorkerProfiler):
+     def _stop(self) -> None:
+         self.profiler.stop()
+ 
++    def _export_trace(self, profiler: torch.profiler.profile) -> None:
++        """Export one capture's trace and summary under a shared unique name."""
+         profiler_config = self.profiler_config
+         rank = self.local_rank
++        trace_name = f"{self._worker_name}.{uuid4().hex}"
++        if self._on_trace_ready is not None:
++            self._on_trace_ready(profiler)
++        else:
++            torch.profiler.tensorboard_trace_handler(
++                profiler_config.torch_profiler_dir,
++                worker_name=trace_name,
++                use_gzip=profiler_config.torch_profiler_use_gzip,
++            )(profiler)
++
+         if profiler_config.torch_profiler_dump_cuda_time_total:
+             table = self._build_profiler_table(sort_key="self_cuda_time_total")
+-            self._write_profiler_table(rank, table)
++            self._write_profiler_table(trace_name, table)
+ 
+             # only print profiler results on rank 0
+             if rank == 0:
+@@ -280,7 +312,7 @@ class TorchProfilerWrapper(WorkerProfiler):
+             table = self._build_profiler_table(
+                 sort_key="self_cpu_time_total", row_limit=50
+             )
+-            self._write_profiler_table(rank, table)
++            self._write_profiler_table(trace_name, table)
+ 
+             # only print profiler results on rank 0
+             if rank == 0:
+diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
+index 9c20df0..4a1d239 100644
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -1199,7 +1199,7 @@ class Worker(WorkerBase):
+             else:
+                 trace_name = rank_suffix
+ 
+-            # Create the profiler wrapper only on the first start call
++            # Create one wrapper per capture so its trace name and schedule are fresh.
+             if self.profiler is None:
+                 profiler_type = self.profiler_config.profiler
+                 if profiler_type == "torch":
+@@ -1221,14 +1221,15 @@ class Worker(WorkerBase):
+                         f"Invalid profiler value of {self.profiler_config.profiler}"
+                     )
+ 
+-            # If profiler already initialized, restart profiling but keep
+-            # the original trace name from the first initialization.
+             self.profiler.start()
+         else:
+             if self.profiler is None:
+                 logger.warning("Profiler was not started, nothing to stop.")
+                 return
+             self.profiler.stop()
++            if self.profiler_config.profiler == "torch":
++                # Retain a failed wrapper so another start cannot hide its error.
++                self.profiler = None
+ 
+     def execute_dummy_batch(self) -> None:
+         num_tokens = getattr(self.model_runner, "uniform_decode_query_len", 1)

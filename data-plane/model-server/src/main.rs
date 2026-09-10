@@ -177,6 +177,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shutdown = Arc::new(Notify::new());
     let server_shutdown = shutdown.clone();
     let mut app_state = AppState::new(backend.clone(), health.clone(), metadata);
+    let profiler = app_state.profiler();
     if let Some(kv_events) = kv_events {
         app_state = app_state.with_kv_events(kv_events);
     }
@@ -189,7 +190,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             router(
                 app_state,
                 config.launch.internal_generate_request_body_limit_bytes,
-            ),
+            )
+            .into_make_service_with_connect_info::<std::net::SocketAddr>(),
         )
         .with_graceful_shutdown(async move { server_shutdown.notified().await })
         .into_future(),
@@ -233,8 +235,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     shutdown.notify_waiters();
     cache_shutdown.notify_waiters();
     let deadline = Instant::now() + config.launch.drain_timeout();
+    profiler
+        .shutdown(deadline.saturating_duration_since(Instant::now()))
+        .await;
     if !matches!(&stop, Stop::Server(_)) {
-        match tokio::time::timeout(config.launch.drain_timeout(), server.as_mut()).await {
+        match tokio::time::timeout(
+            deadline.saturating_duration_since(Instant::now()),
+            server.as_mut(),
+        )
+        .await
+        {
             Ok(Ok(())) => {}
             Ok(Err(error)) => error!(%error, "HTTP server failed while draining"),
             Err(_) => {

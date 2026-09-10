@@ -36,6 +36,25 @@ foretoken bench \
   --number 20
 ```
 
+## On-demand profiling
+
+Profile only a few requests from a Foretoken Kubernetes deployment:
+
+```bash
+foretoken bench examples/quickstart \
+  --profile \
+  --number 2 \
+  --output local
+```
+
+The command prepares its normal workload, then submits one capture window to the selected service's model-server Pods immediately before request dispatch. The runtime waits `--profile-delay` seconds (default `0`), captures for up to `--profile-duration` seconds (default `5`), and stops and exports without depending on the workstation connection. No additional warm-up request is sent. Requests continue during the delay; if the benchmark finishes first, the command cancels the remaining window. A workload that ends during the delay produces a status report but no trace. Native profiler startup also takes time, so a very short workload may finish before any inference is captured.
+
+Profiling control uses Kubernetes exec and the existing Pod-local management listener: it creates no profiling port-forward, Service, or YAML setting. Your Kubernetes identity needs Pod exec access. Use matching current-source CLI and model-server images; the source image build includes the required vLLM profiling backport. Older images only providing immediate start/stop are incompatible with window submission. Ordinary benchmark frontend access is unchanged.
+
+Results are copied to `results/profiles/<capture-id>/<pod>/`, including `capture.json` and native trace files. Export time is additional to the capture duration. Only successfully copied artifacts are removed from the Pod. If stop, export, or retrieval cannot be confirmed, the command reports an error and retains any benchmark-created deployment for recovery. Open `.pt.trace.json.gz` in [Perfetto](https://ui.perfetto.dev/).
+
+Profiling slows inference and can produce large files, so keep the workload small. `--profile` requires a Kustomize deployment path and cannot be combined with `--url` or `--bench-params`. One capture may use a model-server at a time. This path currently implements one Torch window; repeated windows, a standalone profiling command, Nsight, and MetaX validation remain follow-up work.
+
 ## Results and output
 
 Without `--output`, the benchmark prints a summary, writes local artifacts under `results/`, and attempts a W&B upload. If W&B is unavailable, local results remain available.

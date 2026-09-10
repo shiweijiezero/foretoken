@@ -95,6 +95,8 @@ class TraceRunner(Runner):
                 except asyncio.QueueEmpty:
                     return
 
+        if self.before_requests is not None:
+            self.before_requests()
         start_time = time.perf_counter()
         request_count = 0
         try:

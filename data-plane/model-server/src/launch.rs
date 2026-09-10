@@ -15,6 +15,7 @@ use crate::runtime_transport::{KV_EVENT_ENDPOINT, KV_EVENT_TOPIC, LOOPBACK_HOST}
 
 const VLLM_PYTHON_ENV: &str = "FORETOKEN_VLLM_PYTHON";
 const DEFAULT_VLLM_PYTHON: &str = "python";
+pub(crate) const PROFILE_OUTPUT_PATH: &str = "/tmp/foretoken/profiles";
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -288,6 +289,13 @@ impl LaunchPlanV1 {
         if self.lifecycle.startup_seconds == 0 || self.lifecycle.drain_seconds == 0 {
             return Err("launch plan lifecycle seconds must be positive".into());
         }
+        if self.extra_args.iter().any(|arg| {
+            arg == "--profiler-config"
+                || arg.starts_with("--profiler-config=")
+                || arg.starts_with("--profiler-config.")
+        }) {
+            return Err("extraArgs cannot override Foretoken profiler configuration".into());
+        }
         if self.kv.events() != (p.dp == 1) {
             return Err("KV events must be enabled exactly when DP is 1".into());
         }
@@ -395,6 +403,15 @@ impl LaunchPlanV1 {
         if let Some(config) = self.ec.transfer_config() {
             args.push(format!("--ec-transfer-config={config}"));
         }
+        args.push(format!(
+            "--profiler-config={}",
+            json!({
+                "profiler": "torch",
+                "torch_profiler_dir": PROFILE_OUTPUT_PATH,
+                "ignore_frontend": true,
+                "torch_profiler_dump_cuda_time_total": false,
+            })
+        ));
         Ok(args)
     }
 }

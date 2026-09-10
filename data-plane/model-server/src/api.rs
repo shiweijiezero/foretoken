@@ -4,13 +4,14 @@
 //! Restricted internal HTTP routes for already-tokenized EngineCore requests.
 
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
-use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -21,6 +22,7 @@ use serde::Serialize;
 
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
 use crate::kv_event_adapter::{KvDeltaError, KvEventAdapter};
+use crate::profiling::{ProfileError, ProfileStatus, ProfileWindow, Profiler};
 use crate::runtime_cache;
 use foretoken_model_protocol::{
     AbortInput, KV_INDEX_DELTA_PATH, KvDeltaQuery, RuntimeMetadataResponse, TelemetryResponse,
@@ -123,6 +125,7 @@ impl Drop for AdmissionPermit {
 #[derive(Clone)]
 pub struct AppState {
     backend: Arc<dyn Backend>,
+    profiler: Arc<Profiler>,
     health: Arc<RuntimeHealth>,
     metadata: RuntimeMetadataResponse,
     kv_events: Option<Arc<KvEventAdapter>>,
@@ -136,12 +139,18 @@ impl AppState {
         metadata: RuntimeMetadataResponse,
     ) -> Self {
         Self {
+            profiler: Arc::new(Profiler::new(backend.clone())),
             backend,
             health,
             metadata,
             kv_events: None,
             runtime_cache: None,
         }
+    }
+
+    /// Shares the API's capture supervisor with model-server shutdown; it owns all capture tasks.
+    pub fn profiler(&self) -> Arc<Profiler> {
+        self.profiler.clone()
     }
     /// Attaches the shared KV delta source used by the index endpoint and returns updated state.
     ///
@@ -168,6 +177,12 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
         .route("/metrics", get(metrics))
         .route("/v1/internal/metadata", get(metadata))
         .route("/v1/internal/telemetry", get(telemetry))
+        .route(
+            "/v1/internal/profile/{id}",
+            get(profile_status)
+                .put(submit_profile)
+                .delete(cancel_profile),
+        )
         .route("/v1/internal/admission/close", post(close_admission))
         .route("/v1/internal/generate", post(generate))
         .route("/v1/internal/abort", post(abort))
@@ -220,6 +235,59 @@ async fn telemetry(State(state): State<AppState>) -> Json<TelemetryResponse> {
 async fn close_admission(State(state): State<AppState>) -> Json<TelemetryResponse> {
     state.health.set_accepting(false);
     Json(telemetry_response(&state))
+}
+
+/// Accepts a window through Pod-local management, not the network inference entry point.
+async fn submit_profile(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+    input: Result<Json<ProfileWindow>, JsonRejection>,
+) -> Result<(StatusCode, Json<ProfileStatus>), ApiError> {
+    if !peer.ip().is_loopback() {
+        return Err(ApiError::Forbidden);
+    }
+    let Json(input) = input.map_err(|_| ApiError::InvalidRequest)?;
+    if !state.health.healthy() {
+        return Err(ApiError::Unavailable);
+    }
+    let status = state
+        .profiler
+        .submit(id, input)
+        .map_err(ApiError::profile)?;
+    Ok((StatusCode::ACCEPTED, Json(status)))
+}
+
+/// Returns this Pod's matching capture snapshot to its local management client.
+async fn profile_status(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+) -> Result<Json<ProfileStatus>, ApiError> {
+    if !peer.ip().is_loopback() {
+        return Err(ApiError::Forbidden);
+    }
+    state
+        .profiler
+        .status(&id)
+        .map(Json)
+        .map_err(ApiError::profile)
+}
+
+/// Requests cancellation without claiming native stop or export has already finished.
+async fn cancel_profile(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+) -> Result<Json<ProfileStatus>, ApiError> {
+    if !peer.ip().is_loopback() {
+        return Err(ApiError::Forbidden);
+    }
+    state
+        .profiler
+        .cancel(&id)
+        .map(Json)
+        .map_err(ApiError::profile)
 }
 
 fn telemetry_response(state: &AppState) -> TelemetryResponse {
@@ -354,6 +422,9 @@ fn status(healthy: bool) -> StatusCode {
 /// Fixed, wire-safe errors for the internal API.
 #[derive(Debug, Clone, Copy)]
 enum ApiError {
+    Forbidden,
+    Conflict,
+    NotFound,
     InvalidRequest,
     Unavailable,
     Rejected,
@@ -361,6 +432,14 @@ enum ApiError {
     RequestFailed,
 }
 impl ApiError {
+    fn profile(error: ProfileError) -> Self {
+        match error {
+            ProfileError::InvalidWindow => Self::InvalidRequest,
+            ProfileError::Conflict => Self::Conflict,
+            ProfileError::NotFound => Self::NotFound,
+            ProfileError::Closed => Self::Unavailable,
+        }
+    }
     fn backend(error: BackendError) -> Self {
         match error {
             BackendError::InvalidRequest => Self::InvalidRequest,
@@ -372,6 +451,9 @@ impl ApiError {
     }
     const fn status(self) -> StatusCode {
         match self {
+            Self::Forbidden => StatusCode::FORBIDDEN,
+            Self::Conflict => StatusCode::CONFLICT,
+            Self::NotFound => StatusCode::NOT_FOUND,
             Self::InvalidRequest => StatusCode::BAD_REQUEST,
             Self::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
             Self::Rejected | Self::Protocol | Self::RequestFailed => StatusCode::BAD_GATEWAY,
@@ -379,6 +461,9 @@ impl ApiError {
     }
     const fn code(self) -> &'static str {
         match self {
+            Self::Forbidden => "forbidden",
+            Self::Conflict => "profile_conflict",
+            Self::NotFound => "profile_not_found",
             Self::InvalidRequest => "invalid_request",
             Self::Unavailable => "unavailable",
             Self::Rejected => "rejected",
@@ -388,6 +473,11 @@ impl ApiError {
     }
     const fn message(self) -> &'static str {
         match self {
+            Self::Forbidden => "profiling requires Pod-local management access",
+            Self::Conflict => {
+                "another capture is active or the profiler is not reusable after failure"
+            }
+            Self::NotFound => "capture is not retained by this model-server process",
             Self::InvalidRequest => "invalid internal request",
             Self::Unavailable => "model server is unavailable",
             Self::Rejected => "model server rejected the request",

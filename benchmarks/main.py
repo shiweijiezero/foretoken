@@ -12,11 +12,14 @@ from collections.abc import Sequence
 from contextlib import nullcontext
 from dataclasses import replace
 
+from foretoken.kubernetes import Kubectl, timeout_seconds
+from foretoken.manifest import DeploymentError
+from foretoken.profiling import benchmark_profile
+
 from benchmarks.arguments import parse_arguments
 from benchmarks.deployment import benchmark_deployment
 from benchmarks.logger.cli import configure_logging, print_endpoint
 from benchmarks.runner.select_runner import select_runner
-from foretoken.manifest import DeploymentError
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +66,24 @@ def main(argv: Sequence[str] | None = None) -> None:
                     print_endpoint(endpoint.url, endpoint.models, endpoint.hostname)
 
             logger.info("%s", config.summary())
-            result = asyncio.run(select_runner(config).run())
+            runner = select_runner(config)
+            if config.profiling.profiler:
+                if endpoint is None:
+                    raise ValueError("--profile requires a running deployment")
+                profile_context = benchmark_profile(
+                    endpoint.namespace,
+                    endpoint.model_services,
+                    Kubectl(),
+                    timeout_seconds(command.wait_timeout),
+                    config.output.output_dir,
+                    config.profiling.window,
+                )
+            else:
+                profile_context = nullcontext(None)
+            with profile_context as profile:
+                if profile is not None:
+                    runner.before_requests = profile.start
+                result = asyncio.run(runner.run())
             if result["metrics"]["success_num"] == 0:
                 raise SystemExit(1)
     except (DeploymentError, ValueError) as exc:
