@@ -9,8 +9,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平台、从 Kustomize 配置部署模型服务、查看服务就绪状态、解析前端访问入口并运行评测。
 
-新集群从“安装命令行工具”开始。如果 `foretoken --version` 已经可用，直接安装平台；如果集群已经安装 Foretoken 平台，直接部署模型服务。
-
 ## 开始前
 
 需要准备 Python 3.10 或更高版本、当前 Kubernetes context、`kubectl` 和 Helm。GPU 节点需要预先安装厂商驱动和 Kubernetes device plugin。
@@ -47,7 +45,7 @@ uv pip install foretoken
 foretoken install
 ```
 
-安装过程中，命令行工具会发现 Prometheus 和加速器指标 exporter，复用兼容的共享实例，按需安装 Prometheus 和 NVIDIA DCGM Exporter，并接入沐曦集群已经提供的 mxExporter。监控选择与配置见[可观测性](../observability/README_zh.md)。
+安装同时会配置监控；集群里已有 Prometheus 和 GPU 指标 exporter 时直接复用。详见[可观测性](../observability/README_zh.md)。
 
 ### 网关模式
 
@@ -87,7 +85,7 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 ### 安装选项
 
-重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，命令行工具不会自动接管。
+重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。
 
 模型服务通过一个集群外可访问的 IP 提供服务。k3d、k3s 和云上集群会自动分配这个 IP；用 kubeadm、RKE2 或 kubespray 搭建的集群默认没有地址分配能力，安装结尾会提示 `LoadBalancer support Not verified`。此时向集群管理员确认一段节点网段内未被占用的 IP 交给 Foretoken，由它分配给服务：
 
@@ -189,4 +187,4 @@ foretoken delete examples/multi-model-quickstart
 foretoken uninstall
 ```
 
-该命令保留 Foretoken CRD，并在仍有用户服务时拒绝卸载。平台卸载时会一并删除由命令行工具管理的监控、Gateway 和 MetalLB 资源，复用的集群组件保持不变。
+仍有模型服务时该命令会拒绝执行。它删除 `foretoken install` 安装的内容，复用的集群组件和 Foretoken CRD 保持不变。
