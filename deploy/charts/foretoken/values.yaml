@@ -26,6 +26,10 @@ workload:
     claimName: ""
     mountPath: /var/cache/foretoken
 
+# Consumed by foretoken install. A non-empty pool installs CLI-managed MetalLB in Layer 2 mode.
+loadBalancer:
+  managedAddresses: []
+
 # Local mode uses a LoadBalancer Service. Gateway mode attaches an HTTPRoute to a Gateway.
 frontend:
   enabled: false

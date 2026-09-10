@@ -49,9 +49,29 @@ foretoken install
 
 安装过程中，命令行工具会发现 Prometheus 和加速器指标 exporter，复用兼容的共享实例，按需安装 Prometheus 和 NVIDIA DCGM Exporter，并接入沐曦集群已经提供的 mxExporter。监控选择与配置见[可观测性](../observability/README_zh.md)。
 
+### LoadBalancer 访问
+
+`foretoken install` 使用当前 Kubernetes context，不会自行创建集群。新建本地环境时，先按 [k3d 指南](../docs/k3d-deployment_zh.md)准备集群，再运行上面的默认安装命令；k3d 自带的 k3s ServiceLB 无需任何额外设置。
+
+安装时不会创建探测 Service，也不会猜测网络地址。命令会自动识别并复用集群已有的默认 LoadBalancer 实现，包括 k3s ServiceLB、使用默认 class 的 MetalLB，以及云平台的节点集成；计划行显示 `Reuse`。这些信息说明集群具备哪种实现，而不是承诺某个地址：前端 Service 创建后，`foretoken endpoint` 会根据 Service 状态确认实际分配的地址。如果无法确认任何实现，控制平面仍会完成安装，并在结束时明确指出部署模型服务前需要完成的步骤。
+
+已有的裸金属集群需要由管理员规划网络。管理员预留一段可在节点二层网络中路由的地址，并停用其他默认实现（包括 k3s ServiceLB）后，把获批范围写入 values 文件：
+
+```yaml
+loadBalancer:
+  managedAddresses:
+    - <获批地址范围>
+```
+
+```bash
+foretoken install --values platform-values.yaml
+```
+
+非空的 `managedAddresses` 表示选择由命令行工具安装 MetalLB，并维护 Foretoken 自己的地址池和二层公告。地址池会随 release 保存：后续升级无需重复提供，中断的安装也会据此自动修复。Foretoken 不会根据节点地址推导地址池、扫描空闲 IP、把节点 IP 当作虚拟地址，也不会接管或修改由外部管理的 MetalLB 地址池与公告。
+
 ### 网关模式
 
-网关模式会创建专用的 `GatewayClass` 和 `Gateway`，集群没有可复用的控制器时自动安装 Envoy Gateway：
+网关模式会创建专用的 `GatewayClass` 和 `Gateway`，集群没有可复用的控制器时自动安装 Envoy Gateway。Gateway 数据面本身仍通过 `LoadBalancer` Service 暴露，上一节的 LoadBalancer 要求同样适用：
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -177,4 +197,4 @@ foretoken delete examples/multi-model-quickstart
 foretoken uninstall
 ```
 
-该命令保留 Foretoken CRD，并在仍有用户服务时拒绝卸载。平台卸载时会一并删除由命令行工具管理的监控和 Gateway 资源，复用的集群组件保持不变。
+该命令保留 Foretoken CRD，并在仍有用户服务时拒绝卸载。平台卸载时会一并删除由命令行工具管理的监控、Gateway 和 MetalLB 资源，复用的集群组件保持不变。MetalLB 属于集群级组件；如果仍有使用默认 LoadBalancer 的 Service 或外部 MetalLB 地址配置，命令会保留该 release。删除这些依赖后再次运行 `foretoken uninstall`，即可完成清理。

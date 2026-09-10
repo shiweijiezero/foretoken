@@ -6,6 +6,7 @@
     "imagePullSecrets",
     "controller",
     "workload",
+    "loadBalancer",
     "frontend",
     "observability",
     "runtime"
@@ -133,6 +134,23 @@
             }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "loadBalancer": {
+      "type": "object",
+      "required": [
+        "managedAddresses"
+      ],
+      "properties": {
+        "managedAddresses": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
         }
       },
       "additionalProperties": false

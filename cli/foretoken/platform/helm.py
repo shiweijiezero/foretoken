@@ -8,8 +8,13 @@ from __future__ import annotations
 import json
 
 from foretoken.manifest import DeploymentError
+from foretoken.platform.config import load_balancer_config_from_values
 from foretoken.platform.helm_client import HelmClient
-from foretoken.platform.types import PlatformGatewayConfig, ReleaseRef
+from foretoken.platform.types import (
+    LoadBalancerConfig,
+    PlatformGatewayConfig,
+    ReleaseRef,
+)
 from foretoken.source import SourceImages
 
 
@@ -36,10 +41,22 @@ class Helm(HelmClient):
             self._config.envoy_gateway.release_name, self._config.namespace
         )
 
+    def metallb_release(self) -> ReleaseRef:
+        """Return the MetalLB release managed with the platform."""
+        return ReleaseRef(
+            self._config.metallb.release_name,
+            self._config.load_balancer_namespace,
+        )
+
     @property
     def platform_selector_labels(self) -> tuple[tuple[str, str], ...]:
         """Return labels shared by resources in the platform release."""
         return self._config.platform_selector_labels
+
+    @property
+    def management_label(self) -> tuple[str, str]:
+        """Return the label used on CLI-owned Kubernetes resources."""
+        return self._config.management_label
 
     @property
     def envoy_gateway_default_controller(self) -> str:
@@ -50,6 +67,24 @@ class Helm(HelmClient):
     def envoy_gateway_controller(self) -> str:
         """Return the controller identity reserved for managed Envoy Gateway."""
         return self._config.envoy_gateway_controller
+
+    def platform_load_balancer_config(
+        self, release: ReleaseRef
+    ) -> LoadBalancerConfig:
+        """Return the LoadBalancer settings stored with one platform release."""
+        return load_balancer_config_from_values(self._release_values(release))
+
+    def metallb_load_balancer_config(
+        self, release: ReleaseRef
+    ) -> LoadBalancerConfig:
+        """Return the address pool stored with a CLI-managed MetalLB release."""
+        values = self._release_values(release)
+        foretoken = values.get("foretoken") or {}
+        if not isinstance(foretoken, dict):
+            raise DeploymentError("managed MetalLB release metadata is invalid")
+        return load_balancer_config_from_values(
+            {"loadBalancer": {"managedAddresses": foretoken.get("managedAddresses", [])}}
+        )
 
     def platform_gateway_config(self, release: ReleaseRef) -> PlatformGatewayConfig:
         """Return the effective frontend Gateway configuration for a platform."""
@@ -100,6 +135,7 @@ class Helm(HelmClient):
         chart: str,
         chart_version: str | None,
         release_labels: tuple[tuple[str, str], ...] = (),
+        repository: str | None = None,
     ) -> list[str]:
         """Build the shared CLI-owned Helm release identity and chart selection."""
         labels = (self._config.management_label, *release_labels)
@@ -116,6 +152,8 @@ class Helm(HelmClient):
         ]
         if chart_version is not None:
             args.extend(["--version", chart_version])
+        if repository is not None:
+            args.extend(["--repo", repository])
         return args
 
     @staticmethod
@@ -145,6 +183,7 @@ class Helm(HelmClient):
         gateway_section_name: str,
         gateway_controller_name: str,
         observability_labels: tuple[tuple[str, str], ...],
+        load_balancer_addresses: tuple[str, ...],
     ) -> None:
         """Add the platform values shared by release and source installs."""
         for values_file in values:
@@ -155,6 +194,9 @@ class Helm(HelmClient):
                 "frontend.enabled=true",
                 "--set",
                 "observability.mode=enabled",
+                "--set-json",
+                "loadBalancer.managedAddresses="
+                + json.dumps(load_balancer_addresses, separators=(",", ":")),
             ]
         )
         if observability_labels:
@@ -209,6 +251,7 @@ class Helm(HelmClient):
         gateway_section_name: str,
         gateway_controller_name: str,
         observability_labels: tuple[tuple[str, str], ...],
+        load_balancer_addresses: tuple[str, ...],
         reuse_values: bool,
         timeout: str,
     ) -> None:
@@ -242,6 +285,7 @@ class Helm(HelmClient):
             gateway_section_name,
             gateway_controller_name,
             observability_labels,
+            load_balancer_addresses,
         )
         if source_images is not None:
             control_plane_image = source_images.control_plane
@@ -283,6 +327,31 @@ class Helm(HelmClient):
                     f"runtime.vllm.image={model_server_image}",
                 ]
             )
+        self._finish_upgrade(args, timeout)
+        self.run(args)
+
+    def install_metallb(
+        self,
+        release: ReleaseRef,
+        config: LoadBalancerConfig,
+        timeout: str,
+    ) -> None:
+        """Install MetalLB and store the pool needed to resume its configuration."""
+        args = self._upgrade_install_args(
+            release,
+            self._config.metallb.source,
+            self._config.metallb.version,
+            repository=self._config.metallb.repository,
+        )
+        args.extend(
+            [
+                "--set",
+                "frrk8s.enabled=false",
+                "--set-json",
+                "foretoken.managedAddresses="
+                + json.dumps(config.managed_addresses, separators=(",", ":")),
+            ]
+        )
         self._finish_upgrade(args, timeout)
         self.run(args)
 

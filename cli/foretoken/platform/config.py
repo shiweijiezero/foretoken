@@ -7,11 +7,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from foretoken import platform_version
 from foretoken.manifest import DeploymentError
+from foretoken.platform.types import LoadBalancerConfig
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,7 @@ class ManagedChart:
     release_name: str
     source: str
     version: str | None = None
+    repository: str | None = None
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,7 @@ class PlatformConfig:
     """Define the internal identities shared by one CLI-managed platform."""
 
     namespace: str
+    load_balancer_namespace: str
     management_label: tuple[str, str]
     legacy_management_label: tuple[str, str]
     install_source_label: str
@@ -35,6 +39,7 @@ class PlatformConfig:
     prometheus: ManagedChart
     dcgm_exporter: ManagedChart
     envoy_gateway: ManagedChart
+    metallb: ManagedChart
     envoy_gateway_default_controller: str
     envoy_gateway_controller: str
     dcgm_metrics: str
@@ -52,6 +57,7 @@ def default_platform_config() -> PlatformConfig:
     """Return the version-aligned configuration owned by the installed CLI."""
     return PlatformConfig(
         namespace="foretoken-platform",
+        load_balancer_namespace="metallb-system",
         management_label=("foretoken.io/managed-by", "foretoken"),
         legacy_management_label=("foretoken.io/managed-by", "foretoken-cli"),
         install_source_label="foretoken.io/install-source",
@@ -77,6 +83,12 @@ def default_platform_config() -> PlatformConfig:
             source="oci://docker.io/envoyproxy/gateway-helm",
             version="v1.9.1",
         ),
+        metallb=ManagedChart(
+            release_name="foretoken-metallb",
+            source="metallb",
+            version="0.16.1",
+            repository="https://metallb.github.io/metallb",
+        ),
         envoy_gateway_default_controller=(
             "gateway.envoyproxy.io/gatewayclass-controller"
         ),
@@ -95,8 +107,9 @@ DCGM_FI_DEV_XID_ERRORS, gauge, Last XID error code.
     )
 
 
-def validate_platform_values(paths: tuple[str, ...]) -> None:
-    """Keep frontend topology under the CLI argument contract."""
+def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
+    """Read Helm values files and keep frontend topology under the CLI contract."""
+    loaded: list[dict[str, Any]] = []
     for path_value in paths:
         path = Path(path_value)
         try:
@@ -106,14 +119,55 @@ def validate_platform_values(paths: tuple[str, ...]) -> None:
                 f"cannot read Helm values file {path}: {exc}"
             ) from exc
         if not isinstance(values, dict):
+            loaded.append({})
             continue
         frontend = values.get("frontend")
-        if not isinstance(frontend, dict):
-            continue
-        reserved = tuple(key for key in ("mode", "gateway") if key in frontend)
-        if reserved:
-            names = ", ".join(f"frontend.{key}" for key in reserved)
-            raise DeploymentError(
-                f"Helm values file {path} sets {names}; use --frontend-mode "
-                "and --gateway-* options for frontend topology"
-            )
+        if isinstance(frontend, dict):
+            reserved = tuple(key for key in ("mode", "gateway") if key in frontend)
+            if reserved:
+                names = ", ".join(f"frontend.{key}" for key in reserved)
+                raise DeploymentError(
+                    f"Helm values file {path} sets {names}; use --frontend-mode "
+                    "and --gateway-* options for frontend topology"
+                )
+        loaded.append(values)
+    return tuple(loaded)
+
+
+def load_balancer_config_from_values(
+    values: dict[str, Any],
+    fallback: LoadBalancerConfig | None = None,
+) -> LoadBalancerConfig:
+    """Decode the CLI-owned LoadBalancer settings from effective Helm values."""
+    config = fallback or LoadBalancerConfig()
+    load_balancer = values.get("loadBalancer")
+    if load_balancer is None:
+        return config
+    if not isinstance(load_balancer, dict):
+        raise DeploymentError("loadBalancer must be a mapping")
+    if "managedAddresses" not in load_balancer:
+        return config
+    addresses = load_balancer["managedAddresses"]
+    if not isinstance(addresses, list) or not all(
+        isinstance(address, str) and address.strip() for address in addresses
+    ):
+        raise DeploymentError(
+            "loadBalancer.managedAddresses must be a list of IP ranges or CIDRs"
+        )
+    normalized = tuple(address.strip() for address in addresses)
+    if len(set(normalized)) != len(normalized):
+        raise DeploymentError(
+            "loadBalancer.managedAddresses must not contain duplicate ranges"
+        )
+    return LoadBalancerConfig(normalized)
+
+
+def resolve_load_balancer_config(
+    values: tuple[dict[str, Any], ...],
+    stored: LoadBalancerConfig | None = None,
+) -> LoadBalancerConfig:
+    """Apply values files in Helm order to the stored LoadBalancer choice."""
+    config = stored or LoadBalancerConfig()
+    for item in values:
+        config = load_balancer_config_from_values(item, config)
+    return config

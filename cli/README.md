@@ -49,9 +49,29 @@ foretoken install
 
 During installation, the command-line tool discovers Prometheus and accelerator metric exporters. It reuses compatible shared instances, installs managed Prometheus and NVIDIA DCGM Exporter releases when needed, and connects to the mxExporter already provided by a MetaX cluster. See [Observability](../observability/README.md) for monitoring selection and configuration.
 
+### LoadBalancer access
+
+`foretoken install` uses the active Kubernetes context; it does not create a cluster. For a new local environment, first follow the maintained [k3d setup](../docs/k3d-deployment.md), then run the default installation above. The included k3s ServiceLB needs no additional Foretoken setting.
+
+Installation does not create a probe Service or guess a network address. It automatically reuses observed support for unclassified `LoadBalancer` Services, including default k3s ServiceLB, default-class MetalLB, and cloud provider integrations. These signals describe the cluster implementation, not a promised address: `foretoken endpoint` confirms allocation after a frontend Service exists. If support cannot be verified, the control plane still installs and reports the exact next step before model services are deployed.
+
+Existing bare-metal clusters need administrator-owned network planning. When the administrator has reserved a range routed on the nodes' Layer 2 network and disabled any competing default implementation, add that approved range to a values file:
+
+```yaml
+loadBalancer:
+  managedAddresses:
+    - <approved-address-range>
+```
+
+```bash
+foretoken install --values platform-values.yaml
+```
+
+A non-empty `managedAddresses` list asks the command-line tool to install MetalLB and maintain its Foretoken address pool and Layer 2 advertisement. The saved pool is reused on upgrades and repairs an interrupted managed installation. Foretoken never derives the pool from node addresses, scans for unused IPs, uses a node IP as a virtual address, or modifies externally owned MetalLB pools and advertisements.
+
 ### Gateway mode
 
-Gateway mode creates a dedicated `GatewayClass` and `Gateway`, installing Envoy Gateway if no compatible controller is available:
+Gateway mode creates a dedicated `GatewayClass` and `Gateway`, installing Envoy Gateway if no compatible controller is available. The Gateway data plane is itself exposed through a `LoadBalancer` Service, so the LoadBalancer requirement above still applies:
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -177,4 +197,4 @@ The command waits for deletion and ignores resources that are already absent. Af
 foretoken uninstall
 ```
 
-The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain. It removes monitoring and Gateway resources managed by the command-line tool with the platform, while reused cluster components remain unchanged.
+The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain. It removes monitoring, Gateway, and MetalLB resources managed by the command-line tool with the platform, while reused cluster components remain unchanged. Because MetalLB is cluster-wide, a managed release is preserved when default `LoadBalancer` Services or external MetalLB address configuration still depend on it; remove those dependencies and run `foretoken uninstall` again to complete cleanup.
