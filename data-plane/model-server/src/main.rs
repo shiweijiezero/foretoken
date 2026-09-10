@@ -75,16 +75,20 @@ fn init_tracing() {
 
 /// Stops admission, drains the HTTP server, then tears down the backend and
 /// child process. `shutdown_process` receives the time left in the drain budget.
+struct ShutdownPolicy<'a> {
+    drain_timeout: Duration,
+    stop_is_server: bool,
+    cleanup_message: &'a str,
+    process_message: &'a str,
+}
+
 async fn finish_shutdown<S, B, E1, P, E2>(
     health: &RuntimeHealth,
     shutdown: &Notify,
     mut server: Pin<Box<S>>,
-    drain_timeout: Duration,
-    stop_is_server: bool,
+    policy: ShutdownPolicy<'_>,
     cleanup: B,
     shutdown_process: impl FnOnce(Duration) -> P,
-    cleanup_msg: &str,
-    process_msg: &str,
 ) where
     S: Future<Output = std::io::Result<()>>,
     B: Future<Output = Result<(), E1>>,
@@ -95,9 +99,9 @@ async fn finish_shutdown<S, B, E1, P, E2>(
     health.set_accepting(false);
     health.set_client_healthy(false);
     shutdown.notify_waiters();
-    let deadline = Instant::now() + drain_timeout;
-    if !stop_is_server {
-        match tokio::time::timeout(drain_timeout, server.as_mut()).await {
+    let deadline = Instant::now() + policy.drain_timeout;
+    if !policy.stop_is_server {
+        match tokio::time::timeout(policy.drain_timeout, server.as_mut()).await {
             Ok(Ok(())) => {}
             Ok(Err(error)) => error!(%error, "HTTP server failed while draining"),
             Err(_) => {
@@ -107,11 +111,11 @@ async fn finish_shutdown<S, B, E1, P, E2>(
         }
     }
     if let Err(error) = cleanup.await {
-        warn!(%error, "{}", cleanup_msg);
+        warn!(%error, "{}", policy.cleanup_message);
     }
     let remaining = deadline.saturating_duration_since(Instant::now());
     if let Err(error) = shutdown_process(remaining).await {
-        warn!(%error, "{}", process_msg);
+        warn!(%error, "{}", policy.process_message);
     }
     health.set_process_alive(false);
 }
@@ -258,12 +262,14 @@ async fn run_vllm(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Error
         &health,
         &shutdown,
         server,
-        plan.drain_timeout(),
-        matches!(&stop, Stop::Server(_)),
+        ShutdownPolicy {
+            drain_timeout: plan.drain_timeout(),
+            stop_is_server: matches!(&stop, Stop::Server(_)),
+            cleanup_message: "could not shut down EngineCore client cleanly",
+            process_message: "could not shut down managed EngineCore cleanly",
+        },
         backend.cleanup(),
         |remaining| process.shutdown(remaining),
-        "could not shut down EngineCore client cleanly",
-        "could not shut down managed EngineCore cleanly",
     )
     .await;
     if let Some(cache_server) = cache_server {
@@ -372,12 +378,14 @@ async fn run_sglang(config: RuntimeConfig) -> Result<(), Box<dyn std::error::Err
         &health,
         &shutdown,
         server,
-        plan.drain_timeout(),
-        matches!(&stop, Stop::Server(_)),
+        ShutdownPolicy {
+            drain_timeout: plan.drain_timeout(),
+            stop_is_server: matches!(&stop, Stop::Server(_)),
+            cleanup_message: "could not shut down SGLang backend cleanly",
+            process_message: "could not shut down SGLang server cleanly",
+        },
         backend.cleanup(),
         |remaining| process.shutdown(remaining),
-        "could not shut down SGLang backend cleanly",
-        "could not shut down SGLang server cleanly",
     )
     .await;
 
