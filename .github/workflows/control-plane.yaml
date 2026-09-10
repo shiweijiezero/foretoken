@@ -92,12 +92,12 @@ jobs:
             --set observability.interval=30s \
             --set observability.scrapeTimeout=10s \
             > /tmp/foretoken-observability.yaml
-          test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability.yaml)" = "2"
+          test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability.yaml)" = "3"
           test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability.yaml)" = "2"
-          test "$(grep -c 'path: /metrics' /tmp/foretoken-observability.yaml)" = "2"
-          test "$(grep -c 'interval: \"30s\"' /tmp/foretoken-observability.yaml)" = "2"
-          test "$(grep -c 'scrapeTimeout: \"10s\"' /tmp/foretoken-observability.yaml)" = "2"
-          test "$(grep -c 'release: kube-prometheus-stack' /tmp/foretoken-observability.yaml)" = "4"
+          test "$(grep -c 'path: /metrics' /tmp/foretoken-observability.yaml)" = "3"
+          test "$(grep -c 'interval: \"30s\"' /tmp/foretoken-observability.yaml)" = "3"
+          test "$(grep -c 'scrapeTimeout: \"10s\"' /tmp/foretoken-observability.yaml)" = "3"
+          test "$(grep -c 'release: kube-prometheus-stack' /tmp/foretoken-observability.yaml)" = "5"
           grep -q 'foretoken:frontend_http_response_starts:rate5m' /tmp/foretoken-observability.yaml
           grep -q 'foretoken:model_server_requests_waiting:sum' /tmp/foretoken-observability.yaml
           grep -q 'ForetokenMetricsTargetDown' /tmp/foretoken-observability.yaml
@@ -115,7 +115,7 @@ jobs:
             --api-versions monitoring.coreos.com/v1/PrometheusRule \
             --set frontend.enabled=true \
             > /tmp/foretoken-observability-auto.yaml
-          test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability-auto.yaml)" = "2"
+          test "$(grep -c '^kind: ServiceMonitor' /tmp/foretoken-observability-auto.yaml)" = "3"
           test "$(grep -c '^kind: PrometheusRule' /tmp/foretoken-observability-auto.yaml)" = "2"
       - name: Validate operator lifecycle
         run: |

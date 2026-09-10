@@ -15,6 +15,8 @@ pub struct RouterPipeline<C: Send + 'static = ()> {
     pub(super) scorer: Arc<dyn RouteScorer<C>>,
     /// Final scored-candidate picker.
     pub(super) picker: Arc<dyn RoutePicker<C>>,
+    /// Compiled descriptor names used for bounded-cardinality stage metrics.
+    pub(super) algorithm_names: [&'static str; 3],
     /// Creates isolated algorithm context for each request.
     pub(super) customized_context_factory: Arc<dyn Fn(&RouterRequest) -> C + Send + Sync>,
 }
@@ -40,6 +42,7 @@ impl<C: Send + 'static> RouterPipeline<C> {
             filter,
             scorer,
             picker,
+            algorithm_names: ["custom"; 3],
             customized_context_factory: Arc::new(customized_context_factory),
         }
     }

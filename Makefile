@@ -8,7 +8,11 @@ VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)
 
 .PHONY: vllm-source build-data-plane format verify-data-plane dev-build dev-deploy \
 	image-frontend image-vllm-metax image-model-server image-model-server-metax \
-	image-benchmark
+	image-benchmark dashboard
+
+# Regenerates the Grafana dashboard shipped by the chart; needs the `dev` extra on Python 3.11+.
+dashboard:
+	python3 deploy/grafana/system_overview.py > deploy/charts/foretoken/files/grafana/foretoken-system-overview.json
 
 vllm-source:
 	@test -f data-plane/third_party/vllm/rust/Cargo.toml || \

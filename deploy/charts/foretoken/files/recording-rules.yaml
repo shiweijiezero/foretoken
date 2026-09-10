@@ -185,7 +185,8 @@ groups:
             )
           )
 
-      - record: foretoken:frontend_http_request_duration_seconds:quantile5m
+      # The frontend middleware observes this histogram when the handler returns. For SSE, it is response-start latency.
+      - record: foretoken:frontend_http_response_start_latency_seconds:quantile5m
         expr: |
           label_replace(
             histogram_quantile(
@@ -612,44 +613,80 @@ groups:
             )
           )
 
+      # With honor_labels=false, exported_* holds workload identity while the
+      # plain labels identify the exporter Pod. Restore workload labels before
+      # aggregation; label_replace leaves non-conflicting labels unchanged.
       - record: foretoken:accelerator_gpu_utilization_ratio
         expr: |
-          max by (vendor, node, device_id) (
+          max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
+            label_replace(label_replace(label_replace(label_replace(
             label_replace(label_replace(label_replace(
-              DCGM_FI_DEV_GPU_UTIL / 100,
-              "vendor", "nvidia", "__name__", ".*"
+              label_replace(label_replace(
+                DCGM_FI_DEV_GPU_UTIL{
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                } / 100,
+                "vendor", "nvidia", "__name__", ".*"
+              ), "device_id", "$1", "UUID", "(.+)")
+              or
+              label_replace(label_replace(
+                mx_gpu_usage{
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                } / 100,
+                "vendor", "metax", "__name__", ".*"
+              ), "device_id", "$1", "uuid", "(.+)"),
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
             ), "node", "$1", "Hostname", "(.+)"
-            ), "device_id", "$1", "UUID", "(.+)"
-            )
-          )
-          or
-          max by (vendor, node, device_id) (
-            label_replace(label_replace(label_replace(
-              mx_gpu_usage / 100,
-              "vendor", "metax", "__name__", ".*"
-            ), "node", "$1", "Hostname", "(.+)"
-            ), "device_id", "$1", "uuid", "(.+)"
+            ), "namespace", "$1", "exported_namespace", "(.+)"
+            ), "pod", "$1", "exported_pod", "(.+)"
+            ), "container", "$1", "exported_container", "(.+)"
             )
           )
 
       - record: foretoken:accelerator_gpu_memory_usage_ratio
         expr: |
-          max by (vendor, node, device_id) (
+          max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
+            label_replace(label_replace(label_replace(label_replace(
             label_replace(label_replace(label_replace(
-              DCGM_FI_DEV_FB_USED
-              /
-              clamp_min(DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE, 1),
-              "vendor", "nvidia", "__name__", ".*"
+              label_replace(label_replace(
+                (
+                  DCGM_FI_DEV_FB_USED{
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }
+                  /
+                  clamp_min(
+                    DCGM_FI_DEV_FB_USED{
+                      inference_foretoken_io_model_group!="",
+                      inference_foretoken_io_model_role!=""
+                    }
+                    +
+                    DCGM_FI_DEV_FB_FREE{
+                      inference_foretoken_io_model_group!="",
+                      inference_foretoken_io_model_role!=""
+                    },
+                    1
+                  )
+                ),
+                "vendor", "nvidia", "__name__", ".*"
+              ), "device_id", "$1", "UUID", "(.+)")
+              or
+              label_replace(label_replace(
+                mx_memory_usage{
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                } / 100,
+                "vendor", "metax", "__name__", ".*"
+              ), "device_id", "$1", "uuid", "(.+)"),
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
             ), "node", "$1", "Hostname", "(.+)"
-            ), "device_id", "$1", "UUID", "(.+)"
-            )
-          )
-          or
-          max by (vendor, node, device_id) (
-            label_replace(label_replace(label_replace(
-              mx_memory_usage / 100,
-              "vendor", "metax", "__name__", ".*"
-            ), "node", "$1", "Hostname", "(.+)"
-            ), "device_id", "$1", "uuid", "(.+)"
+            ), "namespace", "$1", "exported_namespace", "(.+)"
+            ), "pod", "$1", "exported_pod", "(.+)"
+            ), "container", "$1", "exported_container", "(.+)"
             )
           )

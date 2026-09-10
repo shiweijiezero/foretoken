@@ -33,6 +33,7 @@ bench = [
     "wandb>=0.16",
 ]
 dev = [
+    "grafana-foundation-sdk==1769699379!11.6.0; python_version >= '3.11'",
     "pytest>=7.0",
 ]
 

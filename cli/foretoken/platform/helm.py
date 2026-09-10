@@ -387,6 +387,10 @@ class Helm(HelmClient):
             [
                 "--set",
                 "serviceMonitor.enabled=true",
+                "--set",
+                "kubernetes.enablePodLabels=true",
+                "--set-json",
+                "kubernetes.podLabelAllowlistRegex=[\"^inference\\\\.foretoken\\\\.io/.*$\"]",
                 "--set-string",
                 "customMetrics=" + self._config.dcgm_metrics.replace(",", "\\,"),
                 "--set-json",
