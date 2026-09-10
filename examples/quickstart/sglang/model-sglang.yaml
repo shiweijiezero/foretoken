@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Foretoken Quick Start SGLang model service configuration.
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: quickstart-qwen3-0.6b-sglang # Kubernetes name of this model service.
+spec:
+  model: Qwen/Qwen3-0.6B
+  backend: sglang
+  resources:
+    requests:
+      cpu: "4"
+      memory: 48Gi
+      gpu:
+        count: 1
+    limits:
+      cpu: "8"
+      memory: 64Gi
+  timeouts:
+    startup: 10m
+    drain: 2m
+  parallelism: {}
+  extraArgs:
+    - --context-length=32768

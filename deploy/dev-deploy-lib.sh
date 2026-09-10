@@ -18,10 +18,17 @@ build_dev_images() {
     .
 
   docker build \
-    --build-arg INFERENCE_ENGINE_IMAGE="$INFERENCE_ENGINE_IMAGE" \
-    --build-arg FORETOKEN_VLLM_PYTHON \
+    --build-arg INFERENCE_ENGINE_IMAGE="$VLLM_ENGINE_IMAGE" \
+    --build-arg ENGINE_FEATURES=backend-vllm \
     -f data-plane/model-server/Dockerfile \
     -t "$MODEL_SERVER_IMAGE" \
+    .
+
+  docker build \
+    --build-arg INFERENCE_ENGINE_IMAGE="$SGLANG_ENGINE_IMAGE" \
+    --build-arg ENGINE_FEATURES=backend-sglang \
+    -f data-plane/model-server/Dockerfile \
+    -t "$MODEL_SERVER_SGLANG_IMAGE" \
     .
 }
 
@@ -85,11 +92,12 @@ deployment_image() {
   kubectl get deployment \
     --namespace "$1" \
     --selector "$2" \
-    -o jsonpath='{.items[0].spec.template.spec.containers[0].image}'
+    -o jsonpath='{.items[0].spec.template.spec.containers[0].image}' \
+    2>/dev/null || true
 }
 
 deployments_exist() {
-  [[ -n "$(kubectl get deployment --namespace "$1" --selector "$2" -o name)" ]]
+  [[ -n "$(kubectl get deployment --namespace "$1" --selector "$2" -o name 2>/dev/null)" ]]
 }
 
 restart_deployments() {
