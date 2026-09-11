@@ -14,7 +14,7 @@ from openai import APIError, AsyncOpenAI
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
 from benchmarks.results.metrics import compute_tpot
-from benchmarks.tasks.conversations import Task
+from benchmarks.datasets.conversations import Task
 
 
 class ChatCompletionsLoadClient:

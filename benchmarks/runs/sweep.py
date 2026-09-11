@@ -17,7 +17,7 @@ from benchmarks.config.benchmark import (
     ParameterSweepConfig,
     normalize_output_token_limit,
 )
-from benchmarks.episodes.generated_load import GeneratedLoadBenchmark
+from benchmarks.runs.http import GeneratedLoadBenchmark
 from benchmarks.model_service import ModelService
 from benchmarks.results.console import log_sweep_results
 from benchmarks.results.output import (
@@ -27,7 +27,7 @@ from benchmarks.results.output import (
 )
 from benchmarks.results.pareto import plot_sweep_pareto
 from benchmarks.results.wandb import wandb_group_name
-from benchmarks.tasks.conversations import iter_jsonl_rows
+from benchmarks.datasets.conversations import iter_jsonl_rows
 
 logger = logging.getLogger(__name__)
 

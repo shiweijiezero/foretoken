@@ -9,10 +9,9 @@ import logging
 import os
 import re
 from dataclasses import replace
-from typing import Any
+from typing import Any, Callable
 
 from benchmarks.config.benchmark import BenchmarkConfig
-from benchmarks.episodes.generated_load import GeneratedLoadBenchmark
 from benchmarks.model_service import ModelService
 from benchmarks.results.metrics import RequestMeasurement, summarize_measurements
 from benchmarks.results.output import (
@@ -53,9 +52,11 @@ class MultiDatasetBenchmark:
         self,
         benchmark: BenchmarkConfig,
         service: ModelService,
+        run_dataset: Callable[[BenchmarkConfig, ModelService, str, str, str | None], BenchmarkRun],
     ) -> None:
         self.benchmark = benchmark
         self.service = service
+        self._run_dataset = run_dataset
 
     def run(self) -> BenchmarkRun:
         """Benchmark each dataset in order and publish one merged result."""
@@ -126,13 +127,13 @@ class MultiDatasetBenchmark:
                     request_count=request_count,
                 ),
             )
-            child = GeneratedLoadBenchmark(
+            child = self._run_dataset(
                 child_benchmark,
                 self.service,
-                label=child_name,
-                output_dir=os.path.join(output_dir, child_name),
-                wandb_group=wandb_group,
-            ).run()
+                child_name,
+                os.path.join(output_dir, child_name),
+                wandb_group,
+            )
             if child.measurements is None:
                 raise RuntimeError("generated load did not return measurements")
             measurements.extend(child.measurements)

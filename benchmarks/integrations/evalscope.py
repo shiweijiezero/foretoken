@@ -22,11 +22,11 @@ from benchmarks.results.metrics import (
     RequestMeasurement,
     generation_tokens_per_second_per_user,
 )
-from benchmarks.tasks.conversations import (
+from benchmarks.datasets.conversations import (
     load_conversation_tasks,
     split_chat_conversation,
 )
-from benchmarks.tasks.huggingface import resolve_tokenizer_path
+from benchmarks.datasets.huggingface import resolve_tokenizer_path
 
 
 EVALSCOPE_API = "foretoken_openai"

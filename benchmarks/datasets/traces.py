@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmarks.tasks.conversations import Task, Turn, iter_dataset_rows
+from benchmarks.datasets.conversations import Task, Turn, iter_dataset_rows
 
 logger = logging.getLogger(__name__)
 

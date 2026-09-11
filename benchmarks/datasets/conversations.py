@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
 
 from benchmarks.config.benchmark import BenchmarkConfig, ChatRequestDataset
-from benchmarks.tasks.huggingface import (
+from benchmarks.datasets.huggingface import (
     is_hf_dataset_spec,
     is_hf_file_uri,
     iter_hf_rows,

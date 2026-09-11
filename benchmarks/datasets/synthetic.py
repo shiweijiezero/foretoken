@@ -12,8 +12,8 @@ from typing import Any
 
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
-from benchmarks.tasks.conversations import Task, Turn
-from benchmarks.tasks.huggingface import resolve_tokenizer_path
+from benchmarks.datasets.conversations import Task, Turn
+from benchmarks.datasets.huggingface import resolve_tokenizer_path
 
 _MOONCAKE_BLOCK_TOKENS = 512
 

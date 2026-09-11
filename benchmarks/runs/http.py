@@ -8,7 +8,7 @@ from __future__ import annotations
 from typing import Optional
 
 from benchmarks.config.benchmark import BenchmarkConfig
-from benchmarks.episodes.evalscope import run_evalscope_standard_load
+from benchmarks.integrations.evalscope import run_evalscope_standard_load
 from benchmarks.model_service import ModelService
 from benchmarks.results.output import (
     BenchmarkRun,
@@ -63,3 +63,16 @@ class GeneratedLoadBenchmark:
             )
             outputs.publish(run)
         return run
+
+
+def run_http_dataset(
+    benchmark: BenchmarkConfig,
+    service: ModelService,
+    label: str,
+    output_dir: str,
+    wandb_group: str | None,
+) -> BenchmarkRun:
+    """Run one dataset with the output location and group selected by its composition."""
+    return GeneratedLoadBenchmark(
+        benchmark, service, label=label, output_dir=output_dir, wandb_group=wandb_group
+    ).run()

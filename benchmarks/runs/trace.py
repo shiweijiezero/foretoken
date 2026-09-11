@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.config.benchmark import BenchmarkConfig
-from benchmarks.episodes.chat_client import ChatCompletionsLoadClient
+from benchmarks.integrations.openai import ChatCompletionsLoadClient
 from benchmarks.model_service import ModelService
 from benchmarks.results.metrics import (
     RequestMeasurement,
@@ -26,15 +26,15 @@ from benchmarks.results.output import (
     build_benchmark_run_record,
     write_json,
 )
-from benchmarks.tasks.conversations import (
+from benchmarks.datasets.conversations import (
     load_indexed_request_tasks,
     load_request_tasks,
 )
-from benchmarks.tasks.synthetic import (
+from benchmarks.datasets.synthetic import (
     generate_synthetic_prefix_reuse_requests,
     generate_trace_random_requests,
 )
-from benchmarks.tasks.traces import ArrivalTraceEvent, ArrivalTraceReader
+from benchmarks.datasets.traces import ArrivalTraceEvent, ArrivalTraceReader
 
 logger = logging.getLogger(__name__)
 
