@@ -78,6 +78,26 @@ class LocalDirectorySink:
             {**self.benchmark.to_dict(), **run.record},
         )
         write_json(self.output_dir, "metrics.json", run.metrics)
+        if run.measurements is not None and "raw_output" not in run.artifacts:
+            write_json(self.output_dir, "raw_output.json", [
+                {
+                    "success": item.succeeded,
+                    "status_code": item.status_code,
+                    "error": item.error_message,
+                    "stream": bool(run.metrics["stream"]),
+                    "start_time": item.started_at,
+                    "end_time": item.started_at + item.latency,
+                    "latency": item.latency,
+                    "ttft": item.ttft if run.metrics["stream"] else None,
+                    "tpot": item.tpot if run.metrics["stream"] else None,
+                    "input_tokens": item.input_tokens,
+                    "output_tokens": item.output_tokens,
+                    "inter_token_latencies": list(item.itl_samples) if run.metrics["stream"] else [],
+                    "conversation_id": item.conversation_id,
+                    "turn": item.turn,
+                }
+                for item in run.measurements
+            ])
         logger.info("Results saved: %s", self.output_dir)
 
     def close(self) -> None:

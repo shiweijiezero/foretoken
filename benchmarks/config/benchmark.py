@@ -43,12 +43,15 @@ class ModelServiceSource:
     model: str = ""
     api_key: str = "EMPTY"
     timeout_seconds: int = 300
+    max_retries: int = 0
     wait_timeout: str = DEFAULT_WAIT_TIMEOUT
 
     def validate(self) -> None:
         """Require exactly one service source and an explicit model for a URL."""
         if bool(self.kustomize_path) == bool(self.url):
             raise ValueError("provide either PATH or --url")
+        if self.max_retries < 0:
+            raise ValueError("--max-retries must be >= 0")
         if self.url and not self.model:
             raise ValueError("--model is required with --url")
 
@@ -145,6 +148,7 @@ class ChatRequestDataset:
     minimum_prompt_tokens: int = 0
     maximum_prompt_tokens: int = 131072
     shared_prefix_tokens: int = 0
+    apply_chat_template: bool = False
     fixed_prompt: str = ""
     # -1 means the complete conversation; positive values truncate turns.
     max_turns: Optional[int] = -1

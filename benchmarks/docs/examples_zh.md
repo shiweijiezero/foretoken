@@ -46,7 +46,7 @@ foretoken bench \
   --output local
 ```
 
-最小值和最大值是随机提示词正文的闭区间。`--prefix-length` 会给每条请求增加相同长度的前缀。模型服务可能应用自己的 chat template，因此应以结果中的实际输入 token 数核对最终请求规模。
+长度范围默认只计算提示词正文。添加 `--apply-chat-template` 后，随机生成时会计入所选 tokenizer 的对话模板开销。`--prefix-length` 增加共享前缀。服务端可能使用不同模板，最终输入 token 数以评测结果为准。
 
 ## 使用本地 JSONL 数据
 

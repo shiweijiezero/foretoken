@@ -75,7 +75,7 @@ Conversation datasets do not support tool definitions, tool calls, or `tool` rol
 
 ## Control the request load
 
-Without a positive `--rate`, requests are sent as fast as possible while `--parallel` limits concurrent work.
+The default `--rate -1` sends requests as fast as possible within the `--parallel` limit. Requests are not retried by default; `--max-retries N` allows up to `N` additional attempts for transient failures, included in request latency.
 
 - `--parallel N` sets the concurrency limit.
 - `--number N` sets the conversation count; fixed and random prompts produce one-turn conversations.
@@ -104,7 +104,7 @@ Parameter sweeps also report generation tokens per second per GPU, calculated fr
 
 For conversation datasets, request metrics count the HTTP turns that actually ran. The conversation section reports conversation-level latency and attempted conversations per second. A failed turn stops that conversation, so successful turns are not the same as successful conversations.
 
-For standard workloads, inspect `benchmark_data.db` for request records and `benchmark.log` for failure details. See [parameter sweeps](docs/examples.md#sweep-benchmark-parameters) to compare configurations.
+`raw_output.json` contains per-request records. Standard workloads also retain `benchmark_data.db` and `benchmark.log`. See [parameter sweeps](docs/examples.md#sweep-benchmark-parameters) to compare configurations.
 
 ## Select result destinations
 

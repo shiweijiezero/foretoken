@@ -32,6 +32,8 @@ class RequestMeasurement:
     succeeded: bool
     conversation_id: str | None
     turn: int | None
+    status_code: int | None = None
+    error_message: str | None = None
 
 
 def percentile_summary(values: list[float]) -> dict[str, float | None]:

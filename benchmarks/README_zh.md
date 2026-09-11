@@ -75,7 +75,7 @@ foretoken bench \
 
 ## 控制请求负载
 
-未设置正数 `--rate` 时，命令会在 `--parallel` 限制内尽快发送请求。
+默认 `--rate -1`，在 `--parallel` 并发限制内尽快发送请求。默认不重试；`--max-retries N` 允许对暂时性故障最多额外尝试 `N` 次，重试耗时计入请求延迟。
 
 - `--parallel N` 设置并发上限。
 - `--number N` 设置对话数；固定提示词和随机提示词各生成单轮对话。
@@ -104,7 +104,7 @@ foretoken bench \
 
 使用对话数据时，请求指标统计实际发送的 HTTP 轮次；对话部分提供对话级延迟和每秒尝试对话数。任一轮失败都会终止当前对话，因此成功轮次数不能解释为成功对话数。
 
-标准负载的请求记录保存在 `benchmark_data.db`，失败详情见 `benchmark.log`。比较不同配置的方法见[参数扫描](docs/examples_zh.md#扫描评测参数)。
+`raw_output.json` 保存逐请求记录。标准负载还保留 `benchmark_data.db` 和 `benchmark.log`。比较不同配置的方法见[参数扫描](docs/examples_zh.md#扫描评测参数)。
 
 ## 选择结果去向
 

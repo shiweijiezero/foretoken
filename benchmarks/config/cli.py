@@ -79,6 +79,12 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         help="Request timeout seconds",
     )
     parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=_default(ModelServiceSource, "max_retries"),
+        help="Additional attempts for transient request failures; 0 disables retries",
+    )
+    parser.add_argument(
         "--wait-timeout",
         default=_default(ModelServiceSource, "wait_timeout"),
         help="Timeout for each deployment readiness stage",
@@ -276,6 +282,12 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         help="Maximum prompt length in tokens (random: sampled inner length)",
     )
     parser.add_argument(
+        "--apply-chat-template",
+        action=argparse.BooleanOptionalAction,
+        default=_default(ChatRequestDataset, "apply_chat_template"),
+        help="Include tokenizer chat-template overhead when sizing random prompts",
+    )
+    parser.add_argument(
         "--prefix-length",
         type=int,
         default=_default(ChatRequestDataset, "shared_prefix_tokens"),
@@ -350,6 +362,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             model=namespace.model,
             api_key=namespace.api_key,
             timeout_seconds=namespace.timeout,
+            max_retries=namespace.max_retries,
             wait_timeout=namespace.wait_timeout,
         ),
         load=HttpLoadSchedule(
@@ -378,6 +391,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             minimum_prompt_tokens=namespace.min_prompt_length,
             maximum_prompt_tokens=namespace.max_prompt_length,
             shared_prefix_tokens=namespace.prefix_length,
+            apply_chat_template=namespace.apply_chat_template,
             fixed_prompt=namespace.prompt,
             max_turns=namespace.max_turns,
         ),

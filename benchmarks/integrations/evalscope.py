@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 import math
 import os
 import sqlite3
@@ -53,6 +55,7 @@ def _evalscope_arguments_type() -> tuple[str, type]:
         """EvalScope arguments carrying Foretoken request-field omission semantics."""
 
         omit_temperature: bool = Field(default=False, exclude=True, repr=False)
+        max_retries: int = Field(default=0, ge=0)
 
     @register_api(EVALSCOPE_API)
     class ForetokenOpenaiPlugin(OpenaiPlugin):
@@ -67,6 +70,39 @@ def _evalscope_arguments_type() -> tuple[str, type]:
             if effective_param.omit_temperature:
                 request.pop("temperature", None)
             return request
+
+        async def process_request(self, client_session: Any, url: str, headers: dict, body: dict) -> Any:
+            """Retry transient failures before any response content, counting wait time in latency."""
+            started_at = time.perf_counter()
+            for attempt in range(self.param.max_retries + 1):
+                result = await super().process_request(client_session, url, headers, body)
+                status = result.status_code
+                transport_error = status is None and any(
+                    name in (result.error or "")
+                    for name in ("aiohttp.client_exceptions.", "TimeoutError", "ConnectionResetError")
+                )
+                retryable = transport_error or (status is not None and (status in (408, 409, 429) or status >= 500))
+                if result.success or result.response_messages or not retryable or attempt == self.param.max_retries:
+                    break
+                await asyncio.sleep(min(0.5 * 2 ** min(attempt, 4), 8.0))
+            if attempt:
+                elapsed_before_attempt = result.start_time - started_at
+                result.start_time = started_at
+                result.query_latency += elapsed_before_attempt
+                if result.is_stream and result.first_chunk_latency:
+                    result.first_chunk_latency += elapsed_before_attempt
+            # EvalScope's SQLite schema omits status and error details. Keep
+            # these per logical request so the exported JSON can retain them.
+            completed_at = result.completed_time or time.perf_counter()
+            diagnostic = {
+                "start_time": result.start_time,
+                "latency": completed_at - result.start_time,
+                "status_code": 200 if result.success else result.status_code,
+                "error": None if result.success else result.error,
+            }
+            with open(os.path.join(self.param.outputs_dir, "request_diagnostics.jsonl"), "a", encoding="utf-8") as file:
+                file.write(json.dumps(diagnostic, ensure_ascii=False) + "\n")
+            return result
 
     _EVALSCOPE_ARGUMENTS_TYPE = ForetokenEvalScopeArguments
     return EVALSCOPE_API, ForetokenEvalScopeArguments
@@ -122,6 +158,7 @@ def _evalscope_arguments(
         "api": EVALSCOPE_API,
         "api_key": service.api_key,
         "headers": service.request_headers,
+        "max_retries": benchmark.service.max_retries,
         "total_timeout": benchmark.service.timeout_seconds,
         "read_timeout": benchmark.service.timeout_seconds,
         "no_test_connection": True,
@@ -169,9 +206,8 @@ def _evalscope_arguments(
                 "min_prompt_length": dataset.minimum_prompt_tokens,
                 "max_prompt_length": dataset.maximum_prompt_tokens,
                 "prefix_length": dataset.shared_prefix_tokens,
-                # Random lengths describe generated user content plus the shared
-                # prefix, not tokenizer-specific chat framing.
-                "apply_chat_template": False,
+                # The upstream dataset accounts for chat framing when requested.
+                "apply_chat_template": dataset.apply_chat_template,
                 "multi_turn": False,
                 "max_turns": None,
             }
@@ -385,6 +421,13 @@ def _read_evalscope_request_measurements(output_dir: str) -> list[RequestMeasure
     the per-request rows that multi-dataset runs merge. EvalScope persists HTTP
     turns without conversation identity, so conversation fields stay unset.
     """
+    diagnostics_path = Path(output_dir) / "request_diagnostics.jsonl"
+    diagnostics = {}
+    if diagnostics_path.exists():
+        with diagnostics_path.open(encoding="utf-8") as file:
+            for line in file:
+                item = json.loads(line)
+                diagnostics[float(item["start_time"])] = item
     database_path = os.path.join(output_dir, "benchmark_data.db")
     with sqlite3.connect(database_path) as connection:
         rows = connection.execute(
@@ -403,7 +446,7 @@ def _read_evalscope_request_measurements(output_dir: str) -> list[RequestMeasure
         RequestMeasurement(
             started_at=float(row[1]) - first_start,
             ttft=float(row[3]) if row[3] is not None else None,
-            latency=float(row[2] or 0.0),
+            latency=float(row[2] if row[2] is not None else diagnostics.get(float(row[1]), {}).get("latency", 0.0)),
             tpot=float(row[6]) if row[6] is not None else None,
             itl_samples=tuple(float(value) for value in json.loads(row[7] or "[]")),
             input_tokens=int(row[4] or 0),
@@ -411,6 +454,8 @@ def _read_evalscope_request_measurements(output_dir: str) -> list[RequestMeasure
             succeeded=bool(row[0]),
             conversation_id=None,
             turn=None,
+            status_code=diagnostics.get(float(row[1]), {}).get("status_code"),
+            error_message=diagnostics.get(float(row[1]), {}).get("error"),
         )
         for row in rows
     ]
@@ -434,6 +479,7 @@ def run_evalscope_standard_load(
         ) from error
 
     os.makedirs(output_dir, exist_ok=True)
+    (Path(output_dir) / "request_diagnostics.jsonl").unlink(missing_ok=True)
     configure_logging(
         False,
         os.path.join(output_dir, "benchmark.log"),

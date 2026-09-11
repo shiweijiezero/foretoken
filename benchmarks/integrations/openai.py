@@ -33,11 +33,11 @@ class ChatCompletionsLoadClient:
             max_connections=max_connections,
             max_keepalive_connections=max_connections,
         )
-        # Each measured request must map to one service request; retries change arrival rate, failure rate, and latency.
+        # SDK retries remain inside the measured logical request latency.
         self._client = AsyncOpenAI(
             base_url=service.api_root,
             api_key=service.api_key,
-            max_retries=0,
+            max_retries=benchmark.service.max_retries,
             default_headers=service.request_headers,
             http_client=httpx.AsyncClient(
                 timeout=benchmark.service.timeout_seconds,

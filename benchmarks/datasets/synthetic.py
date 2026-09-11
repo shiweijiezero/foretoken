@@ -48,7 +48,7 @@ def create_trace_random_dataset_plugin(
         min_prompt_length=workload.minimum_prompt_tokens,
         max_prompt_length=workload.maximum_prompt_tokens,
         prefix_length=workload.shared_prefix_tokens,
-        apply_chat_template=False,
+        apply_chat_template=workload.apply_chat_template,
         visualizer=None,
     )
     return RandomDatasetPlugin(arguments)

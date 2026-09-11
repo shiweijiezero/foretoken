@@ -46,7 +46,7 @@ foretoken bench \
   --output local
 ```
 
-The minimum and maximum are inclusive lengths for the generated prompt content. `--prefix-length` adds the same prefix length to every request. Compare the measured input-token count with the requested range because the model service may apply its own chat template.
+By default, the length range applies to prompt content. Add `--apply-chat-template` to account for the selected tokenizer's chat-template overhead when generating random prompts. `--prefix-length` adds a shared prefix. The service may use a different template, so check the actual input-token counts in the results.
 
 ## Use a local JSONL dataset
 
