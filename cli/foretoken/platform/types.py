@@ -31,3 +31,10 @@ class PlatformGatewayConfig:
     name: str
     namespace: str
     section_name: str
+
+
+@dataclass(frozen=True)
+class LoadBalancerConfig:
+    """Effective address pool requested for CLI-managed MetalLB."""
+
+    managed_addresses: tuple[str, ...] = ()

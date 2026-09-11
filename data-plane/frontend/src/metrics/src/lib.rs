@@ -18,7 +18,9 @@ use serde::Serialize;
 pub use vllm_metrics::*;
 
 const OPENMETRICS_CONTENT_TYPE: &str = "application/openmetrics-text; version=1.0.0; charset=utf-8";
-const EXCLUDED_HANDLERS: &[&str] = &[
+/// Routes served to the platform rather than to inference clients. They are not counted as
+/// requests and receive no request span, so scrapes and probes do not appear in request logs.
+pub const EXCLUDED_HANDLERS: &[&str] = &[
     "/metrics",
     "/healthz",
     "/readyz",
@@ -178,14 +180,14 @@ pub async fn scrape_with_kv_index(
     render(Some((state, reason, sources_healthy, sources_total)))
 }
 
-// Renders upstream metrics first, then appends Foretoken-owned admission and optional KV-index
-// families before restoring the single OpenMetrics EOF marker.
+// Combines upstream, Router, admission, and optional KV-index families under one OpenMetrics EOF marker.
 fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
-    match METRICS.render() {
-        Ok(mut body) => {
+    match (METRICS.render(), foretoken_router::render_metrics()) {
+        (Ok(mut body), Ok(router)) => {
             if let Some(without_eof) = body.strip_suffix("# EOF\n") {
                 body = without_eof.to_owned();
             }
+            body.push_str(router.strip_suffix("# EOF\n").unwrap_or(&router));
             body.push_str(&render_admission_metrics());
             if let Some((state, reason, sources_healthy, sources_total)) = kv_index {
                 body.push_str(&format!("# TYPE foretoken_kv_index_enabled gauge\nforetoken_kv_index_enabled {}\n# TYPE foretoken_kv_index_degraded gauge\nforetoken_kv_index_degraded{{reason=\"{}\"}} {}\n# TYPE foretoken_kv_index_sources_healthy gauge\nforetoken_kv_index_sources_healthy {}\n# TYPE foretoken_kv_index_sources_total gauge\nforetoken_kv_index_sources_total {}\n", usize::from(!matches!(state, "disabled" | "unavailable")), escape_label(reason.unwrap_or("none")), usize::from(state == "degraded"), sources_healthy, sources_total));
@@ -200,7 +202,7 @@ fn render(kv_index: Option<(&str, Option<&str>, usize, usize)>) -> Response {
             )
                 .into_response()
         }
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        (Err(_), _) | (_, Err(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }
 
@@ -224,9 +226,11 @@ fn escape_label(value: &str) -> String {
         .replace('"', "\\\"")
 }
 
-/// Records one non-metrics HTTP request after its handler completes.
+/// Records one non-metrics HTTP response start after its handler returns a response.
 ///
-/// The Axum middleware stack consumes the unchanged response while this function updates frontend-owned vLLM-compatible counters.
+/// For SSE endpoints, Axum returns before the body stream finishes, so the duration histogram
+/// measures response-start latency. Complete generation latency remains owned by the model-server
+/// request metrics and is exposed through `vllm:e2e_request_latency_seconds`.
 pub async fn track_http_metrics(request: Request, next: Next) -> Response {
     let method = request.method().as_str().to_owned();
     let handler = request
@@ -239,7 +243,7 @@ pub async fn track_http_metrics(request: Request, next: Next) -> Response {
     if excluded {
         return response;
     }
-    let elapsed = started_at.elapsed().as_secs_f64();
+    let response_start_latency = started_at.elapsed().as_secs_f64();
     let metrics = &METRICS.api_server;
     metrics
         .http_requests
@@ -252,8 +256,10 @@ pub async fn track_http_metrics(request: Request, next: Next) -> Response {
     metrics
         .http_request_duration_seconds
         .get_or_create(&HttpHandlerLabels { method, handler })
-        .observe(elapsed);
-    metrics.http_request_duration_highr_seconds.observe(elapsed);
+        .observe(response_start_latency);
+    metrics
+        .http_request_duration_highr_seconds
+        .observe(response_start_latency);
     response
 }
 fn status_group(status: u16) -> &'static str {

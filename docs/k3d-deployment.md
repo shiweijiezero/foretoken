@@ -33,7 +33,7 @@ Host physical GPUs 6 and 7
 
 The host needs:
 
-- Python 3.10 or later;
+- Python 3.11 or later;
 - Linux;
 - an NVIDIA driver;
 - NVIDIA Container Toolkit;

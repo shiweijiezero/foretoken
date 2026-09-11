@@ -8,6 +8,12 @@ image:
   repository: registry.example.com/foretoken/control-plane
   tag: dev
 
+# Clusters built with kubeadm, RKE2, or kubespray assign services no external IP. Give
+# Foretoken a range of unused addresses in the nodes' subnet to assign instead.
+# loadBalancer:
+#   managedAddresses:
+#     - 192.168.1.240-192.168.1.250
+
 # This Secret must exist in foretoken-platform for the control-plane Pod.
 imagePullSecrets:
   - name: registry-auth

@@ -117,8 +117,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "install",
         help="Install or update the Foretoken Kubernetes control plane",
         description=(
-            "Install or update Foretoken CRDs and the controller, configure shared "
-            "monitoring, and create Gateway resources when Gateway mode is selected. "
+            "Install or update Foretoken CRDs and the controller, discover the cluster "
+            "LoadBalancer, configure shared monitoring, and create Gateway resources "
+            "when Gateway mode is selected. "
             "Model services are deployed separately with 'foretoken deploy'."
         ),
     )
@@ -138,7 +139,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--values",
         action="append",
         metavar="PATH",
-        help="Helm values for images, runtime, or hardware; may be repeated",
+        help=(
+            "Helm values for images, runtime, hardware, or a managed LoadBalancer "
+            "address pool; may be repeated"
+        ),
     )
     install.add_argument(
         "--prometheus",

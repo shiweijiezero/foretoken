@@ -21,10 +21,12 @@ from foretoken.manifest import DeploymentError
 from foretoken.observability import PrometheusRef, select_prometheus
 from foretoken.platform.config import (
     default_platform_config,
-    validate_platform_values,
+    resolve_load_balancer_config,
+    load_platform_values,
 )
 from foretoken.platform.gateway import GatewayControllerLifecycle
 from foretoken.platform.helm import Helm
+from foretoken.platform.load_balancer import LoadBalancerLifecycle
 from foretoken.source import (
     prepare_source_images,
     restart_changed_source_deployments,
@@ -33,7 +35,7 @@ from foretoken.source import (
 
 def _print_plan(responsibility: str, action: str, detail: str) -> None:
     """Print one stable installation lifecycle decision."""
-    print(f"{responsibility:<28} {action:<8} {detail}")
+    print(f"{responsibility:<28} {action:<20} {detail}")
 
 
 class PlatformLifecycle:
@@ -43,12 +45,14 @@ class PlatformLifecycle:
         self._helm = Helm(default_platform_config())
         self._kubectl = Kubectl()
         self._gateway = GatewayControllerLifecycle(self._helm, self._kubectl)
+        self._load_balancer = LoadBalancerLifecycle(self._helm, self._kubectl)
 
     def install(self, command: InstallCommand) -> None:
         """Install managed dependencies and update the Foretoken platform release."""
         helm = self._helm
         kubectl = self._kubectl
         gateway = self._gateway
+        load_balancer = self._load_balancer
         timeout_seconds(command.timeout)
 
         platform = helm.platform_release()
@@ -71,7 +75,8 @@ class PlatformLifecycle:
                     f"Helm release {platform.display_name} uses {install_source} images; "
                     f"run {command_hint}"
                 )
-        validate_platform_values(command.values)
+        values = load_platform_values(command.values)
+        load_balancer_config = resolve_load_balancer_config(values)
 
         deployments = control_plane_deployments(kubectl)
         expected_deployment = f"{platform.name}-control-plane"
@@ -93,6 +98,15 @@ class PlatformLifecycle:
                 "another Foretoken control plane already exists; use its existing "
                 f"lifecycle: {existing}"
             )
+
+        load_balancer_plan = load_balancer.resolve_install(load_balancer_config)
+        if load_balancer_plan.blocking:
+            _print_plan(
+                "LoadBalancer",
+                load_balancer_plan.action,
+                load_balancer_plan.detail,
+            )
+            raise DeploymentError(load_balancer_plan.detail)
 
         gateway_config, gateway_plan = gateway.resolve_install(
             command, platform, platform_exists
@@ -199,6 +213,9 @@ class PlatformLifecycle:
         if command.editable is not None:
             _print_plan("Source images", "Build", command.editable)
         _print_plan(
+            "LoadBalancer", load_balancer_plan.action, load_balancer_plan.detail
+        )
+        _print_plan(
             "Gateway Controller", gateway_plan.action, gateway_plan.detail
         )
         _print_plan("Prometheus", prometheus_action, prometheus_detail)
@@ -216,6 +233,7 @@ class PlatformLifecycle:
             if command.editable is not None
             else None
         )
+        load_balancer.apply(load_balancer_plan, command.timeout)
         gateway.apply_before_platform(gateway_plan, command.timeout)
         if install_managed_prometheus:
             helm.install_prometheus(
@@ -255,6 +273,12 @@ class PlatformLifecycle:
             gateway_plan, gateway_config, command.timeout
         ):
             _print_plan(responsibility, action, detail)
+        if load_balancer_plan.install:
+            _print_plan(
+                "LoadBalancer",
+                "Configured",
+                f"{load_balancer_plan.release.display_name} (Layer 2; address allocation is confirmed per Service)",
+            )
         if install_managed_prometheus:
             mark_managed_metrics_scraper_namespace(
                 kubectl, managed_prometheus.namespace
@@ -263,12 +287,21 @@ class PlatformLifecycle:
         if install_managed_dcgm:
             _print_plan("NVIDIA DCGM Exporter", "Ready", managed_dcgm.display_name)
         _print_plan("Foretoken platform", "Ready", platform.display_name)
+        if not load_balancer_plan.install and load_balancer_plan.action != "Reuse":
+            _print_plan(
+                "LoadBalancer support",
+                load_balancer_plan.action,
+                "model services cannot receive external addresses until the "
+                "cluster assigns LoadBalancer addresses; set "
+                "loadBalancer.managedAddresses in --values to install managed MetalLB",
+            )
 
     def uninstall(self, command: UninstallCommand) -> None:
         """Remove CLI-owned releases after user services are gone."""
         helm = self._helm
         kubectl = self._kubectl
         gateway = self._gateway
+        load_balancer = self._load_balancer
         timeout_seconds(command.timeout)
         platform = helm.platform_release()
         managed_dcgm = helm.dcgm_release()
@@ -343,3 +376,6 @@ class PlatformLifecycle:
         )
         if gateway_result is not None:
             _print_plan("Gateway Controller", *gateway_result)
+        load_balancer_result = load_balancer.finish_uninstall(command.timeout)
+        if load_balancer_result is not None:
+            _print_plan("LoadBalancer", *load_balancer_result)
