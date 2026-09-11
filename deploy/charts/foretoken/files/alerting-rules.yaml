@@ -97,21 +97,6 @@ groups:
           description_zh: 'GPU 利用率：{{ $value | humanizePercentage }}；阈值：{{ "foretoken_alert_threshold_accelerator_utilization_ratio" | humanizePercentage }}，持续 15 分钟。持续高利用率表示容量压力，不代表已经发生故障。'
           runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenacceleratorgpuutilizationhigh'
 
-      - alert: ForetokenAcceleratorGPUMemoryUsageHigh
-        expr: foretoken:accelerator_gpu_memory_usage_ratio >= foretoken_alert_threshold_accelerator_memory_usage_ratio
-        for: 10m
-        labels:
-          service: foretoken
-          severity: warning
-          notification_language: foretoken_alert_language
-        annotations:
-          alertname_zh: 'Foretoken 加速器 GPU 显存使用率过高'
-          summary: 'Accelerator memory usage is high on {{ $labels.vendor }} device {{ $labels.device_id }}'
-          summary_zh: '{{ $labels.vendor }} 加速器 {{ $labels.device_id }} 显存使用率偏高'
-          description: 'GPU memory usage: {{ $value | humanizePercentage }}; threshold: {{ "foretoken_alert_threshold_accelerator_memory_usage_ratio" | humanizePercentage }} for 10 minutes. Check KV-cache pressure, request lengths, and replica capacity before scaling.'
-          description_zh: 'GPU 显存使用率：{{ $value | humanizePercentage }}；阈值：{{ "foretoken_alert_threshold_accelerator_memory_usage_ratio" | humanizePercentage }}，持续 10 分钟。扩容前先检查 KV Cache 压力、请求长度和副本容量。'
-          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenacceleratorgpumemoryusagehigh'
-
       - alert: ForetokenNVIDIAGPUTemperatureHigh
         expr: foretoken:accelerator_gpu_temperature_celsius >= foretoken_alert_threshold_nvidia_temperature_celsius
         for: 10m

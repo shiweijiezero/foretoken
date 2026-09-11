@@ -21,7 +21,6 @@ runbook instead of looking for one file per algorithm:
 | `ForetokenModelServerSchedulerBacklog` | Aggregated vLLM stage scheduler waiting queue is nonzero | 10 minutes |
 | `ForetokenModelServerKVCachePressureHigh` | Maximum vLLM KV-cache usage is high | 10 minutes |
 | `ForetokenAcceleratorGPUUtilizationHigh` | Normalized NVIDIA or MetaX GPU utilization is high | 15 minutes |
-| `ForetokenAcceleratorGPUMemoryUsageHigh` | Normalized NVIDIA or MetaX GPU memory usage is high | 10 minutes |
 | `ForetokenNVIDIAGPUTemperatureHigh` | NVIDIA GPU temperature exceeds the configured threshold | 10 minutes |
 | `ForetokenNVIDIAGPUPowerUsageHigh` | NVIDIA GPU power usage exceeds the configured threshold | 10 minutes |
 
@@ -105,12 +104,6 @@ Normalized NVIDIA or MetaX utilization has stayed above the configured
 threshold. Check recent request rate, scheduler waiting and running requests,
 and the affected node or device before adding capacity.
 
-## ForetokenAcceleratorGPUMemoryUsageHigh
-
-Normalized GPU memory usage has stayed above the configured threshold. Check
-KV-cache pressure, request lengths, model replicas, and per-device hotspots;
-high memory use alone does not identify the cause of a failure.
-
 ## ForetokenNVIDIAGPUTemperatureHigh
 
 An NVIDIA DCGM temperature reading has stayed above the configured threshold.
@@ -126,9 +119,9 @@ Foretoken-attributed NVIDIA DCGM power series.
 
 ## GPU threshold policy
 
-The Chart provides default thresholds for normalized utilization and memory
-pressure, plus NVIDIA temperature and power readings. Override them in
-`observability.alerts.thresholds` when installing the Chart. Utilization and
-memory rules cover NVIDIA and MetaX normalized metrics; temperature and power
+The Chart provides default thresholds for normalized utilization, plus NVIDIA
+temperature and power readings. Override them in
+`observability.alerts.thresholds` when installing the Chart. Utilization rules
+cover NVIDIA and MetaX normalized metrics; temperature and power
 currently apply only when the NVIDIA DCGM metrics exist. These are warning
 signals for capacity and thermal review, not automatic remediation.

@@ -59,7 +59,6 @@ observability:
     thresholds:
       kvCacheUsageRatio: 0.95
       acceleratorUtilizationRatio: 0.95
-      acceleratorMemoryUsageRatio: 0.95
       nvidiaTemperatureCelsius: 85
       nvidiaPowerWatts: 300
 
