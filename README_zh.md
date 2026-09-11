@@ -21,7 +21,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 | 功能 | 说明 | 状态 |
 |---|---|---|
-| [性能评测](benchmarks/README_zh.md) | 使用固定提示词、数据集、随机负载、轨迹回放和参数扫描测量模型服务的延迟与吞吐量 | 开发中 |
+| [性能评测](benchmarks/README_zh.md) | 评测模型服务性能 | 开发中 |
 | 性能剖析 | PyTorch Profiler 和 Nsight 定位计算、通信及 CPU/GPU 性能瓶颈 | 规划中 |
 | 硬件适配 | 统一设备能力、运行时、通信和指标接口；参阅[沐曦部署指南](docs/metax-deployment_zh.md) | 开发中 |
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
@@ -80,7 +80,7 @@ curl --fail-with-body --no-buffer \
 
 ### 5. 测量模型服务性能
 
-性能评测是可选步骤。[模型服务性能评测](benchmarks/README_zh.md)说明如何安装额外依赖，并针对当前部署或已有模型服务运行固定提示词、对话数据、随机负载、轨迹回放和参数扫描。
+按照[模型服务性能评测](benchmarks/README_zh.md)测量服务的延迟与吞吐量。
 
 ## 网关模式
 

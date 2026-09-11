@@ -67,7 +67,7 @@ foretoken bench \
   --output local
 ```
 
-默认 `--max-turns -1`，会执行完整对话。第二行中的“火星”和“金星”只标记 assistant 轮次边界；进入下一轮时，模型的真实回答会替换这些参考内容。
+默认 `--max-turns -1`，会执行完整对话。第二行的追问会接着模型的第一轮回答继续，而不固定使用数据集里的“火星”。
 
 只执行每行的第一个用户轮次：
 
@@ -178,6 +178,8 @@ foretoken bench \
 
 ## 回放 StudyChat 轨迹
 
+每条轨迹记录是独立请求。使用时间窗口和 `--trace-max-concurrency` 控制回放，不使用 `--max-turns`、`--parallel`、`--number`、`--rate` 或 `--open-loop`。
+
 `--trace` 提供请求到达时间，`--dataset` 提供请求内容。两者都选择 StudyChat 时，命令直接使用记录中的请求内容。
 
 ```bash
@@ -192,11 +194,11 @@ foretoken bench \
   --output local
 ```
 
-这个半开时间窗口从首条记录后的第 600 秒开始，持续 300 秒。请求保持原始相对到达时间；并发限制导致的等待会计入回放延迟指标。
+从轨迹开始后的第 600 秒起回放，持续 300 秒。请求保持原始相对到达时间；并发限制导致的等待会计入回放延迟指标。
 
 ## 回放 Mooncake 前缀复用
 
-Mooncake 轨迹记录输入长度和前缀块标识，不包含请求文本。以下配方根据记录的 512-token 块标识构造确定性的合成 token 序列，再将其解码为请求文本：
+Mooncake 记录请求长度和共享前缀，不包含原始文本。以下示例生成合成提示词，用于评测前缀复用：
 
 ```bash
 foretoken bench \
@@ -214,13 +216,11 @@ foretoken bench \
   --output local
 ```
 
-这里的块关系描述解码前生成的 token 序列。模型服务可能重新分词或应用 chat template，因此该选项不保证服务端仍保持精确的 512-token 边界，也不保证一定产生缓存命中。
-
-轨迹中的每条记录都是独立请求。不要添加正数 `--max-turns`、`--rate`、`--open-loop`、`--parallel` 或 `--number`；使用轨迹时间窗口和 `--trace-max-concurrency` 控制回放。
+共享前缀按轨迹中的 512-token 块生成。服务端重新分词可能改变块边界，实际缓存命中应结合模型服务的指标确认。
 
 ## 扫描评测参数
 
-参数扫描只支持 Foretoken Kustomize 部署。仓库维护的 `benchmarks/examples/sweep.jsonl` 定义了两组并发负载点：
+参数扫描只支持 Foretoken Kustomize 部署，不能同时使用轨迹回放或多个数据集。仓库维护的 `benchmarks/examples/sweep.jsonl` 定义了两组并发负载点：
 
 ```jsonl
 {"_benchmark_name": "n10", "parallel": [1, 2, 4, 8], "number": 10, "max_tokens": 64}

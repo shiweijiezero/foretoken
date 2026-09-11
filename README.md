@@ -21,7 +21,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 | Feature | Description | Status |
 |---|---|---|
-| [Benchmarking](benchmarks/README.md) | Measure model-service latency and throughput with fixed, dataset, random, trace-replay, and parameter-sweep workloads | In development |
+| [Benchmarking](benchmarks/README.md) | Measure model-service performance | In development |
 | Profiling | Use PyTorch Profiler and Nsight to identify compute, communication, and CPU/GPU bottlenecks | Planned |
 | Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics; see [MetaX deployment](docs/metax-deployment.md) | In development |
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
@@ -80,7 +80,7 @@ curl --fail-with-body --no-buffer \
 
 ### 5. Measure the model service
 
-Benchmarking is optional. Follow [Model Service Benchmarks](benchmarks/README.md) to install the extra dependencies and run a fixed prompt, conversation dataset, random workload, trace replay, or parameter sweep against this deployment or an existing model service.
+See [Model Service Benchmarks](benchmarks/README.md) to measure latency and throughput.
 
 ## Gateway Mode
 

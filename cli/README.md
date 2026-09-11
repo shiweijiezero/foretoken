@@ -12,6 +12,7 @@ The Foretoken command-line tool installs the shared Kubernetes platform, deploys
 ## Before you start
 
 You need Python 3.10 or later, an active Kubernetes context, `kubectl`, and Helm. GPU nodes must already have their vendor driver and Kubernetes device plugin.
+
 ## Install the command-line tool
 
 Install the published Foretoken command-line tool package with pip:
@@ -149,6 +150,15 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 ## Benchmark model services
 
-`foretoken bench` measures a Foretoken Kustomize deployment or an existing model service through the same command-line entry point. See [Model Service Benchmarks](../benchmarks/README.md) for installation, the first successful run, datasets, load controls, result metrics, trace replay, and parameter sweeps.
+Use `foretoken bench` to measure model-service performance. Commands and examples are in [Model Service Benchmarks](../benchmarks/README.md).
 
-Kustomize benchmarks use the active `kubectl` context and honor standard Kubernetes configuration such as `KUBECONFIG`.
+## Clean up
+
+Delete the deployed services before uninstalling the platform:
+
+```bash
+foretoken delete examples/multi-model-quickstart
+foretoken uninstall
+```
+
+Foretoken CRDs and reused cluster components are retained. Managed MetalLB is also retained while other services depend on it.

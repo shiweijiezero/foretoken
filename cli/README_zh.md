@@ -12,6 +12,7 @@ Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平
 ## 开始前
 
 需要准备 Python 3.10 或更高版本、当前 Kubernetes context、`kubectl` 和 Helm。GPU 节点需要预先安装厂商驱动和 Kubernetes device plugin。
+
 ## 安装命令行工具
 
 使用 pip 安装已经发布的 Foretoken 命令行工具包：
@@ -149,6 +150,15 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 ## 评测模型服务
 
-`foretoken bench` 通过同一个命令入口评测 Foretoken Kustomize 部署或已有模型服务。[模型服务性能评测](../benchmarks/README_zh.md)提供安装、首次成功运行、数据集、负载控制、结果指标、轨迹回放和参数扫描说明。
+使用 `foretoken bench` 评测模型服务性能，命令和示例见[模型服务性能评测](../benchmarks/README_zh.md)。
 
-评测 Kustomize 部署时，命令会使用当前 `kubectl` context，并遵循 `KUBECONFIG` 等标准 Kubernetes 配置。
+## 清理
+
+先删除部署的服务，再卸载平台：
+
+```bash
+foretoken delete examples/multi-model-quickstart
+foretoken uninstall
+```
+
+卸载保留 Foretoken CRD 和复用的集群组件。如果其他服务仍依赖托管的 MetalLB，也会保留它。

@@ -67,7 +67,7 @@ foretoken bench \
   --output local
 ```
 
-The default `--max-turns -1` runs the complete conversation. In the second row, `Mars.` and `Venus.` only mark assistant turn boundaries. The next user turn receives the model's actual previous answer instead of the reference text.
+The default `--max-turns -1` runs the complete conversation. In the second row, the follow-up question uses the model's first answer, which may differ from `Mars.` in the dataset.
 
 Use `--max-turns 1` to run only the first user turn from each row:
 
@@ -178,6 +178,8 @@ Actual multi-turn conversations do not support positive `--rate` or `--open-loop
 
 ## Replay a StudyChat trace
 
+Each trace record is an independent request. Use the trace window and `--trace-max-concurrency` to control replay, not `--max-turns`, `--parallel`, `--number`, `--rate`, or `--open-loop`.
+
 `--trace` supplies arrival timestamps; `--dataset` supplies request content. When both select StudyChat, the recorded request content is used directly.
 
 ```bash
@@ -192,11 +194,11 @@ foretoken bench \
   --output local
 ```
 
-The selected half-open window begins 600 seconds after the trace's first timestamp and lasts 300 seconds. Requests keep their recorded relative arrival times. If the concurrency limit delays a request, the delay appears in the replay metrics.
+The replay starts 600 seconds into the trace and covers the next 300 seconds. Requests keep their recorded relative arrival times. If the concurrency limit delays a request, the delay appears in the replay metrics.
 
 ## Replay Mooncake prefix reuse
 
-Mooncake traces contain input lengths and prefix block identities rather than request text. This recipe builds a deterministic synthetic token sequence from the recorded 512-token block identities, then decodes it into request text:
+Mooncake records request lengths and shared prefixes, not the original text. Use it to generate synthetic prompts for a prefix-reuse experiment:
 
 ```bash
 foretoken bench \
@@ -214,13 +216,11 @@ foretoken bench \
   --output local
 ```
 
-The block relationship describes the generated token sequence before decoding. The model service may tokenize the resulting text differently or apply a chat template, so this option does not guarantee exact 512-token boundaries or cache hits at the service.
-
-Trace replay uses independent requests. Do not add a positive `--max-turns`, `--rate`, `--open-loop`, `--parallel`, or `--number`; use the trace window and `--trace-max-concurrency` instead.
+Shared prefixes are generated from the trace's 512-token blocks. Server-side tokenization can change these boundaries, so verify cache hits with the model service's metrics.
 
 ## Sweep benchmark parameters
 
-Parameter sweeps are available for Foretoken Kustomize deployments. The maintained file `benchmarks/examples/sweep.jsonl` defines two groups of concurrency points:
+Parameter sweeps require a Foretoken Kustomize deployment and cannot be combined with trace replay or multiple datasets. The maintained file `benchmarks/examples/sweep.jsonl` defines two groups of concurrency points:
 
 ```jsonl
 {"_benchmark_name": "n10", "parallel": [1, 2, 4, 8], "number": 10, "max_tokens": 64}

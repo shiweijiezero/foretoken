@@ -2,7 +2,7 @@
 
 English | [简体中文](README_zh.md)
 
-Use `foretoken bench` to measure the latency, throughput, and reliability of a model service. A benchmark can use either a Foretoken Kustomize deployment or the URL of an existing model service.
+Use `foretoken bench` to measure model-service performance.
 
 The service must provide an OpenAI-compatible Chat Completions API. Pass the full `/v1/chat/completions` URL when benchmarking an existing service.
 
@@ -19,11 +19,11 @@ pip install 'foretoken[bench]'
 
 ## Run your first benchmark
 
-Choose exactly one model service source.
+Choose a Foretoken deployment or an existing service URL.
 
 ### Foretoken Kustomize deployment
 
-Install the Foretoken platform once, then benchmark a maintained deployment:
+From the repository root, install the Foretoken platform and benchmark the [Quick Start deployment](../examples/quickstart/README.md):
 
 ```bash
 foretoken install
@@ -36,7 +36,7 @@ A deployment containing one model supplies the model name automatically. For a m
 
 ### Existing model service
 
-Foretoken and Kubernetes are not required when the service is already available:
+An existing service needs only the benchmark client, not a Foretoken platform or Kubernetes cluster:
 
 ```bash
 foretoken bench \
@@ -67,14 +67,9 @@ Copyable commands for each workload are in [Benchmark Recipes](docs/examples.md)
 
 ## How conversations run
 
-Every non-trace workload is run as a conversation. A fixed prompt, random prompt, or dataset row with one `user` turn is a one-turn conversation. Local JSONL, Hugging Face, and ShareGPT rows may contain multiple turns.
+For dataset workloads, each row is one conversation. All user turns run by default; use `--max-turns N` to limit them. Later turns use the model's actual previous answers rather than the dataset's reference answers. Fixed and random prompts are single-turn conversations.
 
-- `--max-turns -1`, the default, runs every user turn in the row.
-- `--max-turns N` runs only the first `N` user turns.
-- `--number` counts conversations. For a dataset, each selected row is one conversation; `--parallel` limits concurrent conversations.
-- An `assistant` message in the dataset is a reference boundary. Before the next user turn, its text is replaced by the model's actual answer.
-
-Rows may use an OpenAI-style `messages` field, a `prompt` or `user` field, or ShareGPT `conversations` entries with `from: human|gpt` and `value`.
+See the [local JSONL](docs/examples.md#use-a-local-jsonl-dataset) and [ShareGPT](docs/examples.md#run-sharegpt-conversations) examples for supported data formats.
 
 Conversation datasets do not support tool definitions, tool calls, or `tool` role messages. A multi-turn conversation cannot use a positive `--rate` or `--open-loop`.
 
@@ -100,14 +95,16 @@ Start with these values in the console summary or `metrics.json`:
 - **TTFT**: time to first token for streamed responses.
 - **TPOT**: time per output token after the first token for streamed responses.
 - **Generation tokens/s**: total output throughput.
-- **Generation tokens/s/user**: output throughput divided by `--parallel` for a closed-loop workload. It is a configured concurrency ratio, not a count of real users. Open-loop runs use a denominator of one.
-- **Requests/s**: completed request throughput.
+- **Generation tokens/s/user**: output throughput divided by the configured concurrency, `--parallel`. With `--open-loop`, this equals total output throughput.
+- **Requests/s**: successfully completed requests per second.
+
+With `--no-stream`, request latency and throughput remain available, but TTFT, TPOT, and inter-token latency are not reported.
 
 Parameter sweeps also report generation tokens per second per GPU, calculated from the GPU capacity declared for the selected model.
 
 For conversation datasets, request metrics count the HTTP turns that actually ran. The conversation section reports conversation-level latency and attempted conversations per second. A failed turn stops that conversation, so successful turns are not the same as successful conversations.
 
-`benchmark_data.db` contains request-level records for standard workloads, and `benchmark.log` contains failure details. Trace replay and parameter sweeps add workload-specific summaries in the same result directory. A sweep with at least two valid points also creates `pareto/PARETO.png`, comparing generation throughput per configured user or concurrent conversation with generation throughput per GPU.
+For standard workloads, inspect `benchmark_data.db` for request records and `benchmark.log` for failure details. See [parameter sweeps](docs/examples.md#sweep-benchmark-parameters) to compare configurations.
 
 ## Select result destinations
 
@@ -122,12 +119,4 @@ By default, the command prints a summary, saves local results, and attempts to u
 
 Use `--wandb-project`, `--wandb-entity`, and `--wandb-run-name` to place and name W&B runs.
 
-## Important combinations
-
-- Trace replay treats every selected trace row as an independent request. It does not continue a conversation between records.
-- A positive `--max-turns` cannot be combined with `--trace`. Use `--trace-max-concurrency` instead of `--parallel`; trace timestamps determine request count and arrival time.
-- Mooncake prefix-reuse replay requires `--dataset random`, a tokenizer, and `--trace-synthetic-prefix-reuse`.
-- Parameter sweeps require a Foretoken Kustomize deployment and cannot be combined with trace replay or multiple dataset selectors.
-- `--no-stream` reports request latency but not TTFT or TPOT.
-
-Run `foretoken bench --help` for the complete option reference.
+Run `foretoken bench --help` for all options.
