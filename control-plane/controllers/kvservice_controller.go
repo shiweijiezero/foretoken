@@ -100,7 +100,7 @@ func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ct
 			ready:          kvServiceCondition{reason: "ObservationFailed", message: "Client availability could not be determined"},
 		}))
 	}
-	// 使用同一次完整观察生成可用状态与写入目标，新增或移除 Pool 失败不撤销其他兼容容量。
+	// Observe availability before writes so a failed pool change preserves compatible capacity.
 	applyErr := reconciler.reconcilePools(ctx, service, pools)
 	ready := infrastructureReady && capacityAvailable
 	phase := inferencev1alpha1.KVServicePhaseProgressing
@@ -153,8 +153,8 @@ func (reconciler *KVServiceReconciler) reconcileInfrastructure(ctx context.Conte
 	return desiredKVServiceBinding(service, requesterName), nil
 }
 
-// reconcileRequesterConfig 按实际连接配置复用已有版本；已被模型引用的配置只创建、不原地更新。
-// 查询资源而非仅依赖 status，使创建后重启或暂时失去 Ready 不会生成另一份相同配置。
+// reconcileRequesterConfig reuses matching connection settings without overwriting referenced configurations.
+// Listing owned resources allows recovery after creation even when status has not been published.
 func (reconciler *KVServiceReconciler) reconcileRequesterConfig(ctx context.Context, service *inferencev1alpha1.KVService, desired *corev1.ConfigMap) (string, error) {
 	configs := new(corev1.ConfigMapList)
 	if err := reconciler.List(ctx, configs, client.InNamespace(service.Namespace), client.MatchingLabels(desired.Labels)); err != nil {
@@ -396,7 +396,7 @@ func (reconciler *KVServiceReconciler) infrastructureReady(ctx context.Context, 
 	return frontendDeploymentAvailable(deployment), nil
 }
 
-// kvPoolState 在写入前验证完整 Pool 观察，分别汇总目标收敛与兼容客户端的 Kubernetes 可用性。
+// kvPoolState validates observed pools and separates convergence from compatible client availability.
 func kvPoolState(service *inferencev1alpha1.KVService, pools []inferencev1alpha1.KVPool) (bool, bool, error) {
 	byName := make(map[string]*inferencev1alpha1.KVPool, len(pools))
 	for index := range pools {
@@ -414,8 +414,8 @@ func kvPoolState(service *inferencev1alpha1.KVService, pools []inferencev1alpha1
 			converged = false
 			continue
 		}
-		// Pool 模板不可变，只有数量能变化；上轮可用性不会因扩容 generation 增加而失效。
-		// 模板或 transport 已变化的旧 Pool 已在上方排除，零目标 Pool 不提供容量。
+		// Replica changes preserve the immutable template and its previously observed availability.
+		// Incompatible templates are excluded above; zero-target pools contribute no capacity.
 		condition := meta.FindStatusCondition(pool.Status.Conditions, conditionReady)
 		if template.Replicas > 0 && condition != nil && condition.Status == metav1.ConditionTrue {
 			available = true
@@ -546,7 +546,7 @@ func (reconciler *KVServiceReconciler) updateStatus(ctx context.Context, service
 	return reconciler.Status().Patch(ctx, service, client.MergeFrom(base))
 }
 
-// desiredKVServiceBinding 将已选定的配置版本投影给模型；副本数量不改变该版本。
+// desiredKVServiceBinding projects the selected configuration to models independently of replica count.
 func desiredKVServiceBinding(service *inferencev1alpha1.KVService, requesterName string) *inferencev1alpha1.KVServiceBinding {
 	_, _, _, masterService := kvMasterNames(service)
 	rpcPort, _, _ := masterPorts(service.Spec.Master)
