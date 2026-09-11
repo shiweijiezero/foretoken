@@ -148,7 +148,7 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup) (*appsv1.Deployme
 			{Name: "POD_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
 			{Name: "MOONCAKE_OFFLOAD_FILE_STORAGE_PATH", Value: "/data/mooncake-offload"},
 			{Name: "MOONCAKE_OFFLOAD_STORAGE_BACKEND_DESCRIPTOR", Value: "bucket_storage_backend"},
-			// 容量上报与 bucket 存储分别读取配置，二者使用同一磁盘预算。
+			// Capacity reporting and bucket storage use the same disk budget.
 			{Name: "MOONCAKE_OFFLOAD_TOTAL_SIZE_LIMIT_BYTES", Value: string(group.Spec.Client.Disk.Size)},
 			{Name: "MOONCAKE_OFFLOAD_BUCKET_MAX_TOTAL_SIZE", Value: string(group.Spec.Client.Disk.Size)},
 		},
@@ -191,7 +191,7 @@ func (reconciler *KVGroupReconciler) applyOwned(ctx context.Context, group *infe
 		return err
 	}
 	if _, ok := desired.(*appsv1.Deployment); ok {
-		// 接管旧 Update writer 声明的 workload 字段，保留 Deployment controller 的 revision 注解。
+		// The stable field owner preserves the Deployment controller's revision annotation.
 		return reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner("foretoken-kvgroup"), client.ForceOwnership)
 	}
 	if missing {

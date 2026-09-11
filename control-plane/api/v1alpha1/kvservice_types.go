@@ -104,7 +104,7 @@ type KVDisk struct {
 type KVClientTemplate struct {
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
-	// Protocol 同时用于存储客户端和绑定此 KVService 的模型请求端。
+	// Protocol is shared by storage clients and model requesters bound to this KVService.
 	// +kubebuilder:validation:Enum=tcp;rdma
 	Protocol string `json:"protocol"`
 	// +optional
@@ -116,7 +116,7 @@ type KVClientTemplate struct {
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	RDMAResourceName string `json:"rdmaResourceName,omitempty"`
-	// RDMAResourceCount 省略时由控制器为 RDMA 客户端解析为 1；TCP 不使用此字段。
+	// RDMAResourceCount defaults to one during RDMA client normalization and is unused for TCP.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	RDMAResourceCount int32        `json:"rdmaResourceCount,omitempty"`
@@ -162,7 +162,7 @@ type KVServiceBinding struct {
 }
 
 // KVServiceSpec declares a Foretoken-owned Mooncake standalone Store.
-// 所有存储池使用相同协议，使模型请求端与任一存储客户端采用一致的传输方式。
+// All storage pools use one protocol so requesters and storage clients share the same transport.
 // +kubebuilder:validation:XValidation:rule="self.storagePools.all(pool, pool.client.protocol == self.storagePools[0].client.protocol)",message="storagePools must use the same client protocol"
 // +kubebuilder:validation:XValidation:rule="self.storagePools.all(pool, self.storagePools.exists(other, other.name == pool.name) ? self.storagePools.filter(other, other.name == pool.name).size() == 1 : true)",message="storagePools names must be unique"
 type KVServiceSpec struct {
