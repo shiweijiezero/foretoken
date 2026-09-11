@@ -31,6 +31,8 @@ kubectl get pods,services,endpointslices --namespace "$NAMESPACE" -o wide
 
 如果某条记录指标消失，应先检查原始 `up` 指标和 Pod 状态。指标缺失表示数据不可用，不等于数值为零。
 
+加速器告警使用由 exporter 的模型组、模型角色 Pod 标签归属到 Foretoken 工作负载的记录指标。不带这些标签的样本不参与告警评估，温度和功耗告警也遵循这一范围。
+
 ## ForetokenMetricsTargetDown
 
 Prometheus 已连续五分钟无法抓取一个已经发现的 Frontend 或 model-server 目标。
@@ -82,11 +84,11 @@ Frontend 的 HTTP 响应开始事件中，5xx 比例在至少每秒 0.1 个响�
 
 ## ForetokenNVIDIAGPUTemperatureHigh
 
-NVIDIA DCGM 温度读数已超过配置阈值。检查节点散热、设备健康、功耗和 workload 放置情况。如果集群没有暴露 NVIDIA DCGM 指标，这条规则不会产生告警。
+NVIDIA DCGM 温度读数已超过配置阈值。检查节点散热、设备健康、功耗和 workload 放置情况。没有归属到 Foretoken 的 NVIDIA DCGM 温度指标时，这条规则不会产生告警。
 
 ## ForetokenNVIDIAGPUPowerUsageHigh
 
-NVIDIA DCGM 功耗读数已超过配置阈值。先将读数与设备功耗上限和 workload 对比，再检查温度和节点健康状态；没有 DCGM 指标时，这条规则不会产生告警。
+NVIDIA DCGM 功耗读数已超过配置阈值。先将读数与设备功耗上限和 workload 对比，再检查温度和节点健康状态；没有归属到 Foretoken 的 NVIDIA DCGM 功耗指标时，这条规则不会产生告警。
 
 ## GPU 阈值策略
 

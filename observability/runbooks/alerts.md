@@ -35,6 +35,10 @@ kubectl get pods,services,endpointslices --namespace "$NAMESPACE" -o wide
 If a recording series disappears, inspect the raw `up` metric and Pod health
 first. Missing metrics mean unavailable data, not a value of zero.
 
+Accelerator alerts use recording series attributed to Foretoken workloads by
+the exporter's model-group and model-role Pod labels. Samples without those
+labels are excluded, including from temperature and power alerts.
+
 ## ForetokenMetricsTargetDown
 
 Prometheus has continuously failed to scrape an already discovered Frontend or
@@ -110,15 +114,15 @@ high memory use alone does not identify the cause of a failure.
 ## ForetokenNVIDIAGPUTemperatureHigh
 
 An NVIDIA DCGM temperature reading has stayed above the configured threshold.
-Check node airflow, device health, power usage, and workload placement. This
-rule is absent when the cluster does not expose the NVIDIA DCGM metric.
+Check node airflow, device health, power usage, and workload placement. No alert
+fires without a Foretoken-attributed NVIDIA DCGM temperature series.
 
 ## ForetokenNVIDIAGPUPowerUsageHigh
 
 An NVIDIA DCGM power reading has stayed above the configured threshold. Compare
 the reading with the device power limit and workload, then inspect thermal and
-node health before changing capacity. This rule is absent without the DCGM
-metric.
+node health before changing capacity. No alert fires without a
+Foretoken-attributed NVIDIA DCGM power series.
 
 ## GPU threshold policy
 

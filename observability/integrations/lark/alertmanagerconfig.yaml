@@ -36,39 +36,47 @@ spec:
             {{- $title := "Foretoken 告警通知" -}}
             {{- $firing := "触发" -}}
             {{- $resolved := "解除" -}}
-            {{- $statusLabel := "状态" -}}
             {{- $levelLabel := "级别" -}}
-            {{- $namespaceLabel := "Namespace" -}}
+            {{- $namespaceLabel := "命名空间" -}}
             {{- $podLabel := "Pod" -}}
-            {{- $instanceLabel := "Instance" -}}
-            {{- $endpointLabel := "Endpoint" -}}
-            {{- $modelRoleLabel := "Model role" -}}
-            {{- $frontendLabel := "Frontend" -}}
-            {{- $modelGroupLabel := "Model group" -}}
-            {{- $pipelineLabel := "Pipeline scope" -}}
+            {{- $instanceLabel := "实例" -}}
+            {{- $endpointLabel := "端点" -}}
+            {{- $modelRoleLabel := "模型角色" -}}
+            {{- $frontendLabel := "前端" -}}
+            {{- $modelGroupLabel := "模型组" -}}
+            {{- $pipelineLabel := "流水线范围" -}}
             {{- $timeStartLabel := "告警开始" -}}
             {{- $timeEndLabel := "告警解除" -}}
             {{- $summaryLabel := "摘要" -}}
             {{- $descriptionLabel := "详情" -}}
-            {{- $runbookLabel := "Runbook" -}}
+            {{- $runbookLabel := "排障手册" -}}
+            {{- $severityWarning := "警告" -}}
+            {{- $severityCritical := "严重" -}}
+            {{- $severityInfo := "提示" -}}
             {{- $targetDownNote := "说明：抓取失败告警已解除；可能是抓取恢复，也可能是旧目标被移除，不代表原 Pod 或节点已恢复。" -}}
             {{- if eq $language "en" -}}
             {{- $title = "Foretoken alert notification" -}}
             {{- $firing = "firing" -}}
             {{- $resolved = "resolved" -}}
-            {{- $statusLabel = "Status" -}}
             {{- $levelLabel = "Severity" -}}
+            {{- $namespaceLabel = "Namespace" -}}
+            {{- $instanceLabel = "Instance" -}}
+            {{- $endpointLabel = "Endpoint" -}}
+            {{- $modelRoleLabel = "Model role" -}}
+            {{- $frontendLabel = "Frontend" -}}
+            {{- $modelGroupLabel = "Model group" -}}
+            {{- $pipelineLabel = "Pipeline scope" -}}
             {{- $timeStartLabel = "Started" -}}
             {{- $timeEndLabel = "Resolved" -}}
             {{- $summaryLabel = "Summary" -}}
             {{- $descriptionLabel = "Details" -}}
+            {{- $runbookLabel = "Runbook" -}}
             {{- $targetDownNote = "Note: a resolved scrape failure may mean that scraping recovered or that the old target disappeared; it does not prove that the original Pod or node recovered." -}}
             {{- end -}}
             {{- if eq $language "bilingual" -}}
             {{- $title = "Foretoken 告警通知 / Foretoken alert notification" -}}
             {{- $firing = "触发 / firing" -}}
             {{- $resolved = "解除 / resolved" -}}
-            {{- $statusLabel = "状态 / Status" -}}
             {{- $levelLabel = "级别 / Severity" -}}
             {{- $namespaceLabel = "命名空间 / Namespace" -}}
             {{- $podLabel = "Pod" -}}
@@ -82,8 +90,11 @@ spec:
             {{- $timeEndLabel = "告警解除 / Resolved" -}}
             {{- $summaryLabel = "摘要 / Summary" -}}
             {{- $descriptionLabel = "详情 / Details" -}}
-            {{- $runbookLabel = "Runbook" -}}
+            {{- $runbookLabel = "排障手册 / Runbook" -}}
             {{- $targetDownNote = "说明：抓取失败告警已解除；可能是抓取恢复，也可能是旧目标被移除，不代表原 Pod 或节点已恢复。 / Note: a resolved scrape failure may mean that scraping recovered or that the old target disappeared; it does not prove that the original Pod or node recovered." -}}
+            {{- $severityWarning = "警告 / warning" -}}
+            {{- $severityCritical = "严重 / critical" -}}
+            {{- $severityInfo = "提示 / info" -}}
             {{- end -}}
             {{- $header := printf "%s | %s %d · %s %d\n本条展示 %d 个目标（每条最多 5 个）" $title $firing (len .Alerts.Firing) $resolved (len .Alerts.Resolved) (len .Alerts) -}}
             {{- if eq $language "en" }}{{ $header = printf "%s | %s %d · %s %d\nShowing %d targets (max 5 per message)" $title $firing (len .Alerts.Firing) $resolved (len .Alerts.Resolved) (len .Alerts) }}{{ end -}}
@@ -92,11 +103,25 @@ spec:
             {{- range .Alerts -}}
             {{- $state := $firing -}}
             {{- if eq .Status "resolved" }}{{ $state = $resolved }}{{ end -}}
+            {{- $originalAlertName := .Labels.alertname -}}
+            {{- $alertName := $originalAlertName -}}
+            {{- if eq $language "zh" -}}
+            {{- with .Annotations.alertname_zh }}{{ $alertName = . }}{{ end -}}
+            {{- end -}}
+            {{- if eq $language "bilingual" -}}
+            {{- with .Annotations.alertname_zh }}{{ $alertName = printf "%s / %s" . $originalAlertName }}{{ end -}}
+            {{- end -}}
+            {{- $severity := .Labels.severity -}}
+            {{- if ne $language "en" -}}
+            {{- if eq .Labels.severity "warning" }}{{ $severity = $severityWarning }}{{ end -}}
+            {{- if eq .Labels.severity "critical" }}{{ $severity = $severityCritical }}{{ end -}}
+            {{- if eq .Labels.severity "info" }}{{ $severity = $severityInfo }}{{ end -}}
+            {{- end -}}
             {{- $summary := .Annotations.summary -}}
             {{- $description := .Annotations.description -}}
             {{- if eq $language "zh" }}{{ $summary = .Annotations.summary_zh }}{{ $description = .Annotations.description_zh }}{{ end -}}
             {{- if eq $language "bilingual" }}{{ $summary = printf "%s / %s" .Annotations.summary_zh .Annotations.summary }}{{ $description = printf "%s / %s" .Annotations.description_zh .Annotations.description }}{{ end -}}
-            {{- $text = printf "%s\n\n[%s] %s\n%s: %s" $text $state .Labels.alertname $levelLabel .Labels.severity -}}
+            {{- $text = printf "%s\n\n[%s] %s\n%s: %s" $text $state $alertName $levelLabel $severity -}}
             {{- with .Labels.namespace }}{{ $text = printf "%s\n%s：%s" $text $namespaceLabel . }}{{ end -}}
             {{- with .Labels.pod }}{{ $text = printf "%s\n%s：%s" $text $podLabel . }}{{ end -}}
             {{- with .Labels.instance }}{{ $text = printf "%s\n%s：%s" $text $instanceLabel . }}{{ end -}}
