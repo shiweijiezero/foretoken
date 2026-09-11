@@ -264,7 +264,7 @@ func (reconciler *KVServiceReconciler) applyOwned(ctx context.Context, owner *in
 		return err
 	}
 	if _, ok := desired.(*appsv1.Deployment); ok {
-		// 接管旧 Update writer 声明的 workload 字段，保留 Deployment controller 的 revision 注解。
+		// The stable field owner preserves the Deployment controller's revision annotation.
 		return reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner("foretoken-kvservice"), client.ForceOwnership)
 	}
 	if missing {
@@ -342,7 +342,7 @@ func (reconciler *KVServiceReconciler) reconcilePools(ctx context.Context, servi
 	return nil
 }
 
-// normalizedKVPoolSpec 为新 Pool 固化客户端配置；显式零副本保留，RDMA 默认值不进入 TCP 配置。
+// normalizedKVPoolSpec resolves client defaults while preserving explicit replica counts.
 func normalizedKVPoolSpec(service *inferencev1alpha1.KVService, template inferencev1alpha1.KVStoragePoolTemplate) inferencev1alpha1.KVPoolSpec {
 	if template.Client.Port == 0 {
 		template.Client.Port = 50052

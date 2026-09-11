@@ -120,8 +120,8 @@ func desiredKVMasterResources(service *inferencev1alpha1.KVService) (*corev1.Con
 	return config, requesterConfig, deployment, kubeService, pvc, nil
 }
 
-// preservePVCBindingAndMetadata 供 KV 控制器更新 PVC 时保留卷绑定、保护 finalizer 和已有注解。
-// 调用方已初始化 desired.Annotations；期望容量、显式 StorageClass 和 retention 决策仍由各资源 owner 负责。
+// preservePVCBindingAndMetadata keeps provider-assigned PVC fields and metadata during updates.
+// Callers initialize desired.Annotations; resource owners retain capacity, StorageClass, and retention decisions.
 func preservePVCBindingAndMetadata(desired, existing *corev1.PersistentVolumeClaim) {
 	desired.Spec.VolumeName = existing.Spec.VolumeName
 	desired.Spec.VolumeMode = existing.Spec.VolumeMode
@@ -207,7 +207,7 @@ func desiredKVRequesterConfig(service *inferencev1alpha1.KVService, masterServic
 	if err != nil {
 		return nil, fmt.Errorf("parse requester.localBufferSize: %w", err)
 	}
-	// KVService API 保证至少一个存储池且协议一致，请求端直接使用该协议，不另设默认值。
+	// The API requires one or more pools with a shared protocol; requesters use it directly.
 	protocol := service.Spec.StoragePools[0].Client.Protocol
 	name := kvChildName(service.Name+"-requester-config", string(service.UID)+":"+strconv.FormatInt(service.Generation, 10))
 	endpoint := fmt.Sprintf("%s.%s.svc:%d", masterService, service.Namespace, rpcPort)
