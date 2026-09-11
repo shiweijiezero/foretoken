@@ -2,8 +2,8 @@ Foretoken Mooncake Store
 Copyright contributors to the Foretoken project
 
 This image contains Mooncake, distributed under the Apache License 2.0, and
-Foretoken's provider-registration extension.
-The extension patch is installed at
+Foretoken's provider-registration and cache-loss drain extensions.
+The extension patches are installed at
 /usr/local/share/foretoken-mooncake/patches.
 
 Mooncake's cachelib_memory_allocator includes:

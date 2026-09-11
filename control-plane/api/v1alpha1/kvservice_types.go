@@ -166,10 +166,13 @@ type KVStoragePoolTemplate struct {
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 }
 
-// KVTimeouts defines lifecycle budgets for future Store clients.
+// KVTimeouts defines lifecycle budgets for Store clients.
 type KVTimeouts struct {
 	Startup Duration `json:"startup"`
-	Drain   Duration `json:"drain"`
+	// Drain bounds a leaving client's exit: the wait for its memory segments to leave
+	// Master and for in-flight SSD readers after its SSD metadata is dropped, and the
+	// process termination grace period.
+	Drain Duration `json:"drain"`
 }
 
 // KVRequesterSpec configures ModelGroup Store requester configuration.

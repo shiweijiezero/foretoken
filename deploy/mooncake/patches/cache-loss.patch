@@ -1,0 +1,1364 @@
+diff --git a/mooncake-store/include/client_service.h b/mooncake-store/include/client_service.h
+index db3effe7e43f0d5b730597acf18b15d261a59827..7bcba864a9e27b9914ab61a38e10b8c83b49e0e1 100644
+--- a/mooncake-store/include/client_service.h
++++ b/mooncake-store/include/client_service.h
+@@ -632,6 +632,23 @@ class Client {
+         return ids;
+     }
+ 
++    size_t GracefullyUnmountingSegmentCount() const {
++        std::lock_guard<std::mutex> lock(mounted_segments_mutex_);
++        return gracefully_unmounting_segments_.size();
++    }
++
++    tl::expected<std::string, ErrorCode> BeginCacheLossQuiesce() {
++        auto result = master_client_.BeginCacheLossQuiesce();
++        if (result || result.error() != ErrorCode::SEGMENT_NOT_FOUND) {
++            return result;
++        }
++        auto mount_result = MountLocalDiskSegment(false);
++        if (!mount_result) {
++            return tl::make_unexpected(mount_result.error());
++        }
++        return master_client_.BeginCacheLossQuiesce();
++    }
++
+     bool is_ping_healthy() const { return last_ping_success_.load(); }
+ 
+     /**
+diff --git a/mooncake-store/include/file_storage.h b/mooncake-store/include/file_storage.h
+index cce6602ae045b400e62275ddc4062b85f7780027..472bc7ee000a35c2954e11a80960a8be08164de4 100644
+--- a/mooncake-store/include/file_storage.h
++++ b/mooncake-store/include/file_storage.h
+@@ -1,5 +1,8 @@
+ #pragma once
+ 
++#include <atomic>
++#include <optional>
++
+ #include "client_service.h"
+ #include "client_buffer.h"
+ #include "storage_backend.h"
+@@ -39,6 +42,19 @@ class FileStorage {
+         const std::vector<std::string>& keys,
+         const std::vector<int64_t>& sizes);
+ 
++    struct CacheLossStatus {
++        bool quiesced{false};
++        bool heartbeat_in_flight{false};
++        bool metadata_rescan_in_flight{false};
++        uint64_t active_batch_gets{0};
++        uint64_t allocated_batches{0};
++        std::string fence_token;
++    };
++
++    // Stop admitting new SSD work and register an owner fence with Master.
++    tl::expected<std::string, ErrorCode> BeginCacheLossQuiesce();
++    CacheLossStatus GetCacheLossStatus() const;
++
+     FileStorageConfig config_;
+ 
+     /**
+@@ -91,6 +107,37 @@ class FileStorage {
+      */
+     tl::expected<void, ErrorCode> Heartbeat();
+ 
++    /**
++     * @brief Runs one heartbeat tick after lifecycle admission.
++     */
++    tl::expected<void, ErrorCode> HeartbeatImpl();
++
++    // Releases one admitted SSD read or heartbeat when the call returns.
++    class InFlight {
++       public:
++        InFlight(Mutex& mutex, uint64_t& counter)
++            : mutex_(&mutex), counter_(&counter) {}
++        InFlight(InFlight&& other) noexcept
++            : mutex_(other.mutex_), counter_(other.counter_) {
++            other.counter_ = nullptr;
++        }
++        InFlight(const InFlight&) = delete;
++        InFlight& operator=(const InFlight&) = delete;
++        ~InFlight() {
++            if (counter_ != nullptr) {
++                MutexLocker lock(mutex_);
++                --*counter_;
++            }
++        }
++
++       private:
++        Mutex* mutex_;
++        uint64_t* counter_;
++    };
++
++    // Admits one SSD read or heartbeat unless cache-loss quiescence started.
++    std::optional<InFlight> AdmitInFlight(uint64_t& counter);
++
+     /**
+      * @brief Drives the L2->L1 promotion pipeline for one heartbeat tick.
+      * Pulls promotion work from the master, stages a MEMORY replica for each
+@@ -123,6 +170,10 @@ class FileStorage {
+         const std::vector<std::string>& keys,
+         const std::vector<int64_t>& sizes);
+ 
++    tl::expected<BatchGetResult, ErrorCode> BatchGetImpl(
++        const std::vector<std::string>& keys,
++        const std::vector<int64_t>& sizes);
++
+     void ClientBufferGCThreadFunc();
+ 
+     /**
+@@ -142,6 +193,11 @@ class FileStorage {
+     mutable Mutex client_buffer_mutex_;
+     std::unordered_map<uint64_t, std::shared_ptr<AllocatedBatch>> GUARDED_BY(
+         client_buffer_mutex_) client_buffer_allocated_batches_;
++    bool GUARDED_BY(client_buffer_mutex_) cache_loss_quiescing_{false};
++    bool GUARDED_BY(client_buffer_mutex_) metadata_rescan_in_flight_{false};
++    uint64_t GUARDED_BY(client_buffer_mutex_) active_heartbeats_{0};
++    uint64_t GUARDED_BY(client_buffer_mutex_) active_batch_gets_{0};
++    std::string GUARDED_BY(client_buffer_mutex_) cache_loss_fence_token_;
+     std::atomic<uint64_t> next_batch_id_{1};
+ 
+     mutable Mutex offloading_mutex_;
+diff --git a/mooncake-store/include/master_admin_service.h b/mooncake-store/include/master_admin_service.h
+index 798747cce91048dace4689c9719930022ac983ef..38ece93d243a666d860ed4bf3883dc93ccfd5dc9 100644
+--- a/mooncake-store/include/master_admin_service.h
++++ b/mooncake-store/include/master_admin_service.h
+@@ -83,6 +83,8 @@ class MasterAdminServer {
+                                  coro_http::coro_http_response& resp);
+     void HandleClientRegistration(coro_http::coro_http_request& req,
+                                   coro_http::coro_http_response& resp);
++    void HandleDropLocalDiskReplicas(coro_http::coro_http_request& req,
++                                     coro_http::coro_http_response& resp);
+     void HandleQuerySegment(coro_http::coro_http_request& req,
+                             coro_http::coro_http_response& resp);
+     void HandleCreateDrainJob(coro_http::coro_http_request& req,
+diff --git a/mooncake-store/include/master_client.h b/mooncake-store/include/master_client.h
+index 7b5412304469774acfabf0197f5e9c2194dff986..2a1f124e483d27114d237824d02e6df4f8a0afe6 100644
+--- a/mooncake-store/include/master_client.h
++++ b/mooncake-store/include/master_client.h
+@@ -434,6 +434,9 @@ class MasterClient {
+     [[nodiscard]] tl::expected<void, ErrorCode> ReportSsdCapacity(
+         const UUID& client_id, int64_t ssd_total_capacity_bytes);
+ 
++    [[nodiscard]] tl::expected<std::string, ErrorCode>
++    BeginCacheLossQuiesce();
++
+     /**
+      * @brief Adds multiple new objects to a specified client in batch.
+      * @param keys         A list of object keys (names) that were successfully
+diff --git a/mooncake-store/include/master_service.h b/mooncake-store/include/master_service.h
+index 9d8826bbb6ebefb2636c8c92a128ccd20a200d30..131f634fff2b4d8ef3a46790308a63e4e7be2a68 100644
+--- a/mooncake-store/include/master_service.h
++++ b/mooncake-store/include/master_service.h
+@@ -321,6 +321,15 @@ class MasterService {
+                            const std::string& segment_name)
+         -> tl::expected<std::vector<std::string>, ErrorCode>;
+ 
++    struct CacheLossResult {
++        uint64_t removed_replicas{0};
++        uint64_t removed_objects{0};
++    };
++
++    // Drop only LOCAL_DISK replicas owned by a fenced, quiesced client.
++    tl::expected<CacheLossResult, ErrorCode> DropLocalDiskReplicas(
++        const UUID& client_id, const std::string& fence_token);
++
+     /**
+      * @brief Retrieves replica lists for object keys that match a regex
+      * pattern.
+@@ -655,6 +664,11 @@ class MasterService {
+     // state or triggering offload.
+     ClientSsdRegistration GetClientSsdRegistration(const UUID& client_id);
+ 
++    // Fence one SSD owner before metadata removal. The returned token is
++    // idempotent for the current membership and survives snapshot restore.
++    tl::expected<std::string, ErrorCode> BeginCacheLossQuiesce(
++        const UUID& client_id);
++
+     auto ReportSsdCapacity(const UUID& client_id,
+                            int64_t ssd_total_capacity_bytes)
+         -> tl::expected<void, ErrorCode>;
+@@ -1937,6 +1951,10 @@ class MasterService {
+     std::unordered_set<UUID, boost::hash<UUID>>
+         ok_client_;  // client with ok status
+     std::unordered_map<UUID, std::string, boost::hash<UUID>> client_host_id_;
++    // Serializes SSD owner fencing with offload completions and metadata
++    // drops, so a completion that passed the fence check cannot land after
++    // the owner's replicas were dropped.
++    std::mutex cache_loss_mutex_;
+     void ClientMonitorFunc();
+     std::thread client_monitor_thread_;
+     std::atomic<bool> client_monitor_running_{false};
+diff --git a/mooncake-store/include/rpc_service.h b/mooncake-store/include/rpc_service.h
+index 11798a82e5fbebac1f0583a85ede4b3c31c1a227..456f0aad66d3110c5ade2f46e7df4746f3107125 100644
+--- a/mooncake-store/include/rpc_service.h
++++ b/mooncake-store/include/rpc_service.h
+@@ -207,6 +207,13 @@ class WrappedMasterService {
+     MasterService::ClientSsdRegistration GetClientSsdRegistrationForAdmin(
+         const UUID& client_id);
+ 
++    tl::expected<std::string, ErrorCode> BeginCacheLossQuiesce(
++        const UUID& client_id);
++
++    tl::expected<MasterService::CacheLossResult, ErrorCode>
++    DropLocalDiskReplicasForAdmin(const UUID& client_id,
++                                  const std::string& fence_token);
++
+     tl::expected<std::pair<uint64_t, uint64_t>, ErrorCode> QuerySegmentForAdmin(
+         const std::string& segment);
+ 
+diff --git a/mooncake-store/include/segment.h b/mooncake-store/include/segment.h
+index 9fc5d2e8e601f3c20d1b1ee215748e8daa58ad3f..ae031b36d58af5512df34ab48ca011763ef9b862 100644
+--- a/mooncake-store/include/segment.h
++++ b/mooncake-store/include/segment.h
+@@ -100,6 +100,9 @@ struct LocalDiskSegment {
+     // offloading_objects (offloading_mutex_).
+     std::unordered_map<std::string, PromotionTaskItem> GUARDED_BY(
+         offloading_mutex_) promotion_objects;
++    // The owner fence is stored with SSD membership so snapshot restore cannot
++    // revive metadata writes while retaining the same client identity.
++    std::string cache_loss_fence_token;
+     explicit LocalDiskSegment(bool enable_offloading)
+         : enable_offloading(enable_offloading) {}
+ 
+@@ -134,6 +137,10 @@ class ScopedSegmentAccess {
+     ErrorCode MountLocalDiskSegment(const UUID& client_id,
+                                     bool enable_offloading);
+ 
++    // Create or reuse the fence stored with an existing SSD membership.
++    tl::expected<std::string, ErrorCode> BeginCacheLossQuiesce(
++        const UUID& client_id);
++
+     /**
+      * @brief Re-mount a segment. To avoid infinite remount trying, only the
+      * errors that may be solved by subsequent remount tryings are considered as
+diff --git a/mooncake-store/src/client_service.cpp b/mooncake-store/src/client_service.cpp
+index c4b74fd00a953c1f9578199b900670baca020a8e..7cee3f3130ccd281a75e0e9d1716622c2c3a238c 100644
+--- a/mooncake-store/src/client_service.cpp
++++ b/mooncake-store/src/client_service.cpp
+@@ -2919,30 +2919,36 @@ void Client::OnGracefulUnmountTimer(const UUID& segment_id, int retry_left) {
+ 
+     if (removed) {
+         std::function<void(const UUID&)> cleanup_callback;
++        bool unregistered = false;
+         {
+             std::lock_guard<std::mutex> lock(mounted_segments_mutex_);
+             auto it = gracefully_unmounting_segments_.find(segment_id);
+-            if (it != gracefully_unmounting_segments_.end()) {
+-                int rc = transfer_engine_->unregisterLocalMemory(
+-                    reinterpret_cast<void*>(it->second.base));
+-                if (rc != 0 && rc != ERR_ADDRESS_NOT_REGISTERED) {
+-                    LOG(ERROR)
+-                        << "Failed to unregister TE MR for graceful unmount: "
+-                        << rc;
+-                }
+-                gracefully_unmounting_segments_.erase(it);
++            if (it == gracefully_unmounting_segments_.end()) {
++                return;
+             }
+-            auto callback_it =
+-                graceful_unmount_cleanup_callbacks_.find(segment_id);
+-            if (callback_it != graceful_unmount_cleanup_callbacks_.end()) {
+-                cleanup_callback = std::move(callback_it->second);
+-                graceful_unmount_cleanup_callbacks_.erase(callback_it);
++            int rc = transfer_engine_->unregisterLocalMemory(
++                reinterpret_cast<void*>(it->second.base));
++            if (rc != 0 && rc != ERR_ADDRESS_NOT_REGISTERED) {
++                // Retain the segment and its cleanup callback for the retry below.
++                LOG(ERROR) << "Failed to unregister TE MR for graceful unmount: "
++                           << rc;
++            } else {
++                gracefully_unmounting_segments_.erase(it);
++                unregistered = true;
++                auto callback_it =
++                    graceful_unmount_cleanup_callbacks_.find(segment_id);
++                if (callback_it != graceful_unmount_cleanup_callbacks_.end()) {
++                    cleanup_callback = std::move(callback_it->second);
++                    graceful_unmount_cleanup_callbacks_.erase(callback_it);
++                }
+             }
+         }
+-        if (cleanup_callback) {
+-            cleanup_callback(segment_id);
++        if (unregistered) {
++            if (cleanup_callback) {
++                cleanup_callback(segment_id);
++            }
++            return;
+         }
+-        return;
+     }
+ 
+     if (retry_left > 0) {
+diff --git a/mooncake-store/src/file_storage.cpp b/mooncake-store/src/file_storage.cpp
+index df917d64cb2b5f542d5805a63e1774f8948e70b4..87b75f4b91558b183fa452992424e0fbaea81e75 100644
+--- a/mooncake-store/src/file_storage.cpp
++++ b/mooncake-store/src/file_storage.cpp
+@@ -304,6 +304,10 @@ FileStorage::~FileStorage() {
+     if (heartbeat_thread_.joinable()) {
+         heartbeat_thread_.join();
+     }
++    if (rescan_future_.valid()) {
++        rescan_future_.wait();
++        rescan_future_ = std::future<void>();
++    }
+     client_buffer_gc_running_ = false;
+     if (client_buffer_gc_thread_.joinable()) {
+         client_buffer_gc_thread_.join();
+@@ -398,7 +402,27 @@ tl::expected<void, ErrorCode> FileStorage::Init() {
+     return {};
+ }
+ 
++std::optional<FileStorage::InFlight> FileStorage::AdmitInFlight(
++    uint64_t& counter) {
++    MutexLocker lock(&client_buffer_mutex_);
++    if (cache_loss_quiescing_) {
++        return std::nullopt;
++    }
++    ++counter;
++    return std::optional<InFlight>(std::in_place, client_buffer_mutex_,
++                                   counter);
++}
++
+ tl::expected<FileStorage::BatchGetResult, ErrorCode> FileStorage::BatchGet(
++    const std::vector<std::string>& keys, const std::vector<int64_t>& sizes) {
++    auto admitted = AdmitInFlight(active_batch_gets_);
++    if (!admitted) {
++        return tl::make_unexpected(ErrorCode::UNAVAILABLE_IN_CURRENT_STATUS);
++    }
++    return BatchGetImpl(keys, sizes);
++}
++
++tl::expected<FileStorage::BatchGetResult, ErrorCode> FileStorage::BatchGetImpl(
+     const std::vector<std::string>& keys, const std::vector<int64_t>& sizes) {
+     auto start_time = std::chrono::steady_clock::now();
+     auto allocate_res = AllocateBatch(keys, sizes);
+@@ -439,6 +463,40 @@ tl::expected<FileStorage::BatchGetResult, ErrorCode> FileStorage::BatchGet(
+     return batch_result;
+ }
+ 
++tl::expected<std::string, ErrorCode> FileStorage::BeginCacheLossQuiesce() {
++    // This lock is the local linearization point: later reads are rejected and
++    // later GC passes retain every batch until its reader explicitly releases it.
++    {
++        MutexLocker lock(&client_buffer_mutex_);
++        cache_loss_quiescing_ = true;
++    }
++
++    auto fence_result = client_->BeginCacheLossQuiesce();
++    if (!fence_result) {
++        return tl::make_unexpected(fence_result.error());
++    }
++    {
++        MutexLocker lock(&client_buffer_mutex_);
++        cache_loss_fence_token_ = fence_result.value();
++    }
++    return fence_result.value();
++}
++
++FileStorage::CacheLossStatus FileStorage::GetCacheLossStatus() const {
++    CacheLossStatus status;
++    {
++        MutexLocker lock(&client_buffer_mutex_);
++        status.quiesced =
++            cache_loss_quiescing_ && !cache_loss_fence_token_.empty();
++        status.heartbeat_in_flight = active_heartbeats_ > 0;
++        status.metadata_rescan_in_flight = metadata_rescan_in_flight_;
++        status.active_batch_gets = active_batch_gets_;
++        status.allocated_batches = client_buffer_allocated_batches_.size();
++        status.fence_token = cache_loss_fence_token_;
++    }
++    return status;
++}
++
+ tl::expected<void, ErrorCode> FileStorage::OffloadObjects(
+     const std::vector<OffloadTaskItem>& offloading_objects) {
+     if (offloading_objects.empty()) {
+@@ -746,6 +804,14 @@ tl::expected<bool, ErrorCode> FileStorage::IsEnableOffloading() {
+ }
+ 
+ tl::expected<void, ErrorCode> FileStorage::Heartbeat() {
++    auto admitted = AdmitInFlight(active_heartbeats_);
++    if (!admitted) {
++        return {};
++    }
++    return HeartbeatImpl();
++}
++
++tl::expected<void, ErrorCode> FileStorage::HeartbeatImpl() {
+     if (client_ == nullptr) {
+         LOG(ERROR) << "client is nullptr";
+         return tl::make_unexpected(ErrorCode::INVALID_PARAMS);
+@@ -760,6 +826,10 @@ tl::expected<void, ErrorCode> FileStorage::Heartbeat() {
+     // Retry metadata resync if previous attempt failed.
+     if (metadata_resync_pending_.load() && !rescan_future_.valid()) {
+         LOG(INFO) << "Retrying background metadata rescan";
++        {
++            MutexLocker lock(&client_buffer_mutex_);
++            metadata_rescan_in_flight_ = true;
++        }
+         rescan_future_ = std::async(std::launch::async, [this]() {
+             auto result = ReRegisterOffloadedObjects();
+             if (!result) {
+@@ -768,6 +838,10 @@ tl::expected<void, ErrorCode> FileStorage::Heartbeat() {
+             } else {
+                 metadata_resync_pending_.store(false);
+             }
++            {
++                MutexLocker lock(&client_buffer_mutex_);
++                metadata_rescan_in_flight_ = false;
++            }
+         });
+     }
+ 
+@@ -806,6 +880,10 @@ tl::expected<void, ErrorCode> FileStorage::Heartbeat() {
+                         LOG(INFO) << "Triggering background metadata rescan "
+                                   << "after LOCAL_DISK segment re-registration";
+                         metadata_resync_pending_.store(true);
++                        {
++                            MutexLocker lock(&client_buffer_mutex_);
++                            metadata_rescan_in_flight_ = true;
++                        }
+                         rescan_future_ =
+                             std::async(std::launch::async, [this]() {
+                                 auto result = ReRegisterOffloadedObjects();
+@@ -815,6 +893,10 @@ tl::expected<void, ErrorCode> FileStorage::Heartbeat() {
+                                 } else {
+                                     metadata_resync_pending_.store(false);
+                                 }
++                                {
++                                    MutexLocker lock(&client_buffer_mutex_);
++                                    metadata_rescan_in_flight_ = false;
++                                }
+                             });
+                     }
+                 } else {
+@@ -1124,13 +1206,15 @@ FileStorage::AllocateBatch(const std::vector<std::string>& keys,
+             gc_triggered = true;
+             {
+                 MutexLocker locker(&client_buffer_mutex_);
+-                auto gc_now = std::chrono::steady_clock::now();
+-                for (auto it = client_buffer_allocated_batches_.begin();
+-                     it != client_buffer_allocated_batches_.end();) {
+-                    if (gc_now >= it->second->lease_timeout) {
+-                        it = client_buffer_allocated_batches_.erase(it);
+-                    } else {
+-                        ++it;
++                if (!cache_loss_quiescing_) {
++                    auto gc_now = std::chrono::steady_clock::now();
++                    for (auto it = client_buffer_allocated_batches_.begin();
++                         it != client_buffer_allocated_batches_.end();) {
++                        if (gc_now >= it->second->lease_timeout) {
++                            it = client_buffer_allocated_batches_.erase(it);
++                        } else {
++                            ++it;
++                        }
+                     }
+                 }
+             }
+@@ -1168,7 +1252,8 @@ void FileStorage::ClientBufferGCThreadFunc() {
+     while (client_buffer_gc_running_) {
+         {
+             MutexLocker locker(&client_buffer_mutex_);
+-            if (!client_buffer_allocated_batches_.empty()) {
++            if (!cache_loss_quiescing_ &&
++                !client_buffer_allocated_batches_.empty()) {
+                 auto now = std::chrono::steady_clock::now();
+                 for (auto it = client_buffer_allocated_batches_.begin();
+                      it != client_buffer_allocated_batches_.end();) {
+diff --git a/mooncake-store/src/master_admin_service.cpp b/mooncake-store/src/master_admin_service.cpp
+index 2c8a8aec7fb9b4d333e01461d5d2690a21f7b904..68bd2fa5023b75a7e5e81b6b898344abeaafeca3 100644
+--- a/mooncake-store/src/master_admin_service.cpp
++++ b/mooncake-store/src/master_admin_service.cpp
+@@ -765,6 +765,57 @@ void MasterAdminServer::HandleClientRegistration(
+     });
+ }
+ 
++struct HttpDropLocalDiskReplicasRequest {
++    std::string client_id;
++    std::string fence_token;
++};
++YLT_REFL(HttpDropLocalDiskReplicasRequest, client_id, fence_token);
++
++struct HttpDropLocalDiskReplicasResponse {
++    std::string client_id;
++    uint64_t removed_replicas{0};
++    uint64_t removed_objects{0};
++};
++YLT_REFL(HttpDropLocalDiskReplicasResponse, client_id, removed_replicas,
++         removed_objects);
++
++void MasterAdminServer::HandleDropLocalDiskReplicas(
++    coro_http::coro_http_request& req, coro_http::coro_http_response& resp) {
++    HttpDropLocalDiskReplicasRequest request;
++    try {
++        struct_json::from_json(request, req.get_body());
++    } catch (const std::exception&) {
++        WriteErrorResponse(resp, coro_http::status_type::bad_request,
++                           ErrorCode::INVALID_PARAMS, "Invalid JSON body");
++        return;
++    }
++
++    UUID client_id;
++    if (!StringToUuid(request.client_id, client_id) ||
++        request.fence_token.empty()) {
++        WriteErrorResponse(resp, coro_http::status_type::bad_request,
++                           ErrorCode::INVALID_PARAMS,
++                           "client_id and fence_token are required");
++        return;
++    }
++
++    WithActiveService(resp, [&](auto service) {
++        auto result = service->DropLocalDiskReplicasForAdmin(
++            client_id, request.fence_token);
++        if (!result) {
++            WriteErrorResponse(resp, ErrorCodeToHttpStatus(result.error()),
++                               result.error());
++            return;
++        }
++        WriteJsonResponse(
++            resp, coro_http::status_type::ok,
++            HttpDropLocalDiskReplicasResponse{
++                .client_id = UuidToString(client_id),
++                .removed_replicas = result->removed_replicas,
++                .removed_objects = result->removed_objects});
++    });
++}
++
+ void MasterAdminServer::HandleQuerySegment(
+     coro_http::coro_http_request& req, coro_http::coro_http_response& resp) {
+     WithActiveService(resp, [&](auto service) {
+@@ -1247,6 +1298,11 @@ void MasterAdminServer::RegisterHandler() {
+         [this](coro_http_request& req, coro_http_response& resp) {
+             HandleQuerySegment(req, resp);
+         });
++    http_server_.set_http_handler<POST>(
++        "/api/v1/clients/cache_loss",
++        [this](coro_http_request& req, coro_http_response& resp) {
++            HandleDropLocalDiskReplicas(req, resp);
++        });
+     http_server_.set_http_handler<POST>(
+         "/api/v1/drain_jobs",
+         [this](coro_http_request& req, coro_http_response& resp) {
+diff --git a/mooncake-store/src/master_client.cpp b/mooncake-store/src/master_client.cpp
+index e2d9db347f47262d0fbecd5a3e7de8bf7d96fa7e..0d749549a5721315ee0e293e550ffe46346b0052 100644
+--- a/mooncake-store/src/master_client.cpp
++++ b/mooncake-store/src/master_client.cpp
+@@ -227,6 +227,11 @@ struct RpcNameTraits<&WrappedMasterService::ReportSsdCapacity> {
+     static constexpr const char* value = "ReportSsdCapacity";
+ };
+ 
++template <>
++struct RpcNameTraits<&WrappedMasterService::BeginCacheLossQuiesce> {
++    static constexpr const char* value = "BeginCacheLossQuiesce";
++};
++
+ template <>
+ struct RpcNameTraits<&WrappedMasterService::NotifyOffloadSuccess> {
+     static constexpr const char* value = "NotifyOffloadSuccess";
+@@ -997,6 +1002,13 @@ tl::expected<void, ErrorCode> MasterClient::ReportSsdCapacity(
+         client_id, ssd_total_capacity_bytes);
+ }
+ 
++tl::expected<std::string, ErrorCode> MasterClient::BeginCacheLossQuiesce() {
++    ScopedVLogTimer timer(1, "MasterClient::BeginCacheLossQuiesce");
++    timer.LogRequest("client_id=", client_id_);
++    return invoke_rpc<&WrappedMasterService::BeginCacheLossQuiesce, std::string>(
++        client_id_);
++}
++
+ tl::expected<void, ErrorCode> MasterClient::NotifyOffloadSuccess(
+     const UUID& client_id, const std::vector<std::string>& keys,
+     const std::vector<StorageObjectMetadata>& metadatas) {
+diff --git a/mooncake-store/src/master_service.cpp b/mooncake-store/src/master_service.cpp
+index 04b3ef56d033252687afff4d3fb9c4f7e5ae597c..90a4ac33be2170742f460e7d5f15af758056283d 100644
+--- a/mooncake-store/src/master_service.cpp
++++ b/mooncake-store/src/master_service.cpp
+@@ -2463,6 +2463,91 @@ auto MasterService::BatchReplicaClear(
+     return cleared_keys;
+ }
+ 
++tl::expected<MasterService::CacheLossResult, ErrorCode>
++MasterService::DropLocalDiskReplicas(const UUID& client_id,
++                                     const std::string& fence_token) {
++    std::lock_guard<std::mutex> cache_loss_lock(cache_loss_mutex_);
++    std::shared_lock<std::shared_mutex> snapshot_lock(snapshot_mutex_);
++    {
++        auto segment_access = segment_manager_.getLocalDiskSegmentAccess();
++        const auto& segments = segment_access.getClientLocalDiskSegment();
++        auto segment_it = segments.find(client_id);
++        if (segment_it == segments.end()) {
++            return tl::make_unexpected(ErrorCode::SEGMENT_NOT_FOUND);
++        }
++        if (segment_it->second->cache_loss_fence_token != fence_token) {
++            return tl::make_unexpected(
++                ErrorCode::UNAVAILABLE_IN_CURRENT_STATUS);
++        }
++    }
++
++    CacheLossResult result;
++
++    for (size_t shard_index = 0; shard_index < kNumShards; ++shard_index) {
++        MetadataShardAccessorRW shard(this, shard_index);
++        for (auto tenant_it = shard->tenants.begin();
++             tenant_it != shard->tenants.end();) {
++            auto& tenant_state = tenant_it->second;
++            for (auto metadata_it = tenant_state.metadata.begin();
++                 metadata_it != tenant_state.metadata.end();) {
++                auto& metadata = metadata_it->second;
++                const std::function<bool(const Replica&)> owner =
++                    [&client_id](const Replica& replica) {
++                        const auto owner_id = replica.get_local_disk_client_id();
++                        return owner_id.has_value() &&
++                               owner_id.value() == client_id;
++                    };
++                if (!metadata.HasReplica(owner)) {
++                    ++metadata_it;
++                    continue;
++                }
++
++                const bool had_completed_owned = metadata.HasReplica(
++                    [&owner](const Replica& replica) {
++                        return owner(replica) && replica.is_completed();
++                    });
++                const size_t removed =
++                    EraseReplicasWithCacheTotalAccounting(metadata, owner);
++                result.removed_replicas += removed;
++                const bool has_completed_local_disk = metadata.HasReplica(
++                    [](const Replica& replica) {
++                        return replica.is_local_disk_replica() &&
++                               replica.is_completed();
++                    });
++                if (had_completed_owned && !has_completed_local_disk) {
++                    if (metadata.IsValid()) {
++                        shard.OnDiskReplicaRemoved(true, metadata);
++                    } else {
++                        shard.OnDiskReplicaRemoved(true);
++                    }
++                }
++
++                if (!metadata.IsValid()) {
++                    PublishKvRemoved(metadata_it->first, metadata,
++                                     tenant_it->first);
++                    metadata_it = EraseMetadata(tenant_state, metadata_it,
++                                                tenant_it->first,
++                                                QuotaEraseMode::kFull, &shard);
++                    ++result.removed_objects;
++                } else {
++                    ++metadata_it;
++                }
++            }
++            if (tenant_state.Empty()) {
++                tenant_it = shard->tenants.erase(tenant_it);
++            } else {
++                ++tenant_it;
++            }
++        }
++    }
++
++    LOG(INFO) << "client_id=" << client_id
++              << ", action=drop_local_disk_replicas"
++              << ", removed_replicas=" << result.removed_replicas
++              << ", removed_objects=" << result.removed_objects;
++    return result;
++}
++
+ auto MasterService::GetReplicaListByRegex(const std::string& regex_pattern,
+                                           const std::string& tenant_id)
+     -> tl::expected<
+@@ -4909,42 +4994,40 @@ auto MasterService::OffloadObjectHeartbeat(const UUID& client_id,
+                                            bool enable_offloading)
+     -> tl::expected<std::vector<OffloadTaskItem>, ErrorCode> {
+     std::shared_lock<std::shared_mutex> shared_lock(snapshot_mutex_);
+-    ScopedLocalDiskSegmentAccess local_disk_segment_access =
+-        segment_manager_.getLocalDiskSegmentAccess();
+-    auto& client_local_disk_segment =
+-        local_disk_segment_access.getClientLocalDiskSegment();
+-    auto local_disk_segment_it = client_local_disk_segment.find(client_id);
+-    if (local_disk_segment_it == client_local_disk_segment.end()) {
+-        LOG(ERROR) << "Local disk segment not found with client id = "
+-                   << client_id;
+-        return tl::make_unexpected(ErrorCode::SEGMENT_NOT_FOUND);
+-    }
+     std::unordered_map<std::string, OffloadTaskItem> offloading_objects_copy;
++    bool cache_loss_fenced = false;
+     {
+-        MutexLocker locker(&local_disk_segment_it->second->offloading_mutex_);
+-        local_disk_segment_it->second->enable_offloading = enable_offloading;
+-        if (enable_offloading) {
++        ScopedLocalDiskSegmentAccess local_disk_segment_access =
++            segment_manager_.getLocalDiskSegmentAccess();
++        auto& client_local_disk_segment =
++            local_disk_segment_access.getClientLocalDiskSegment();
++        auto local_disk_segment_it = client_local_disk_segment.find(client_id);
++        if (local_disk_segment_it == client_local_disk_segment.end()) {
++            LOG(ERROR) << "Local disk segment not found with client id = "
++                       << client_id;
++            return tl::make_unexpected(ErrorCode::SEGMENT_NOT_FOUND);
++        }
++
++        auto& local_disk_segment = local_disk_segment_it->second;
++        MutexLocker locker(&local_disk_segment->offloading_mutex_);
++        cache_loss_fenced =
++            !local_disk_segment->cache_loss_fence_token.empty();
++        local_disk_segment->enable_offloading =
++            enable_offloading && !cache_loss_fenced;
++        if (local_disk_segment->enable_offloading) {
+             std::vector<OffloadTaskItem> result;
+-            result.reserve(
+-                local_disk_segment_it->second->offloading_objects.size());
++            result.reserve(local_disk_segment->offloading_objects.size());
+             for (const auto& [_, task] :
+-                 local_disk_segment_it->second->offloading_objects) {
++                 local_disk_segment->offloading_objects) {
+                 result.push_back(task);
+             }
+-            local_disk_segment_it->second->offloading_objects.clear();
++            local_disk_segment->offloading_objects.clear();
+             return result;
+         }
+-        // Offloading is disabled: clear the pending queue to prevent
+-        // unbounded growth that would trigger KEYS_ULTRA_LIMIT in
+-        // PushOffloadingQueue. We must also clean up corresponding
+-        // offloading_tasks and decrement source replica refcounts to avoid
+-        // resource leaks and blocked writes (OBJECT_HAS_REPLICATION_TASK).
+-        // Copy keys out before releasing the mutex to avoid lock order
+-        // violation: the lock order is Shard Lock -> offloading_mutex_, so we
+-        // must release offloading_mutex_ before taking shard locks via
+-        // MetadataAccessorRW.
++        // Disabled and fenced clients share the same queue cleanup. The segment
++        // lock is released before shard locks to preserve the Master lock order.
+         offloading_objects_copy =
+-            std::move(local_disk_segment_it->second->offloading_objects);
++            std::move(local_disk_segment->offloading_objects);
+     }
+ 
+     for (auto& [_, task] : offloading_objects_copy) {
+@@ -4964,6 +5047,9 @@ auto MasterService::OffloadObjectHeartbeat(const UUID& client_id,
+             }
+         }
+     }
++    if (cache_loss_fenced && enable_offloading) {
++        return tl::make_unexpected(ErrorCode::UNAVAILABLE_IN_CURRENT_STATUS);
++    }
+     return {};
+ }
+ 
+@@ -4980,6 +5066,27 @@ MasterService::ClientSsdRegistration MasterService::GetClientSsdRegistration(
+     return {true, it->second->ssd_total_capacity_bytes};
+ }
+ 
++tl::expected<std::string, ErrorCode> MasterService::BeginCacheLossQuiesce(
++    const UUID& client_id) {
++    std::string fence_token;
++    {
++        std::lock_guard<std::mutex> cache_loss_lock(cache_loss_mutex_);
++        std::shared_lock<std::shared_mutex> snapshot_lock(snapshot_mutex_);
++        auto access = segment_manager_.getSegmentAccess();
++        auto result = access.BeginCacheLossQuiesce(client_id);
++        if (!result) {
++            return tl::make_unexpected(result.error());
++        }
++        fence_token = result.value();
++    }
++
++    auto cleanup_result = OffloadObjectHeartbeat(client_id, false);
++    if (!cleanup_result) {
++        return tl::make_unexpected(cleanup_result.error());
++    }
++    return fence_token;
++}
++
+ auto MasterService::ReportSsdCapacity(const UUID& client_id,
+                                       int64_t ssd_total_capacity_bytes)
+     -> tl::expected<void, ErrorCode> {
+@@ -5022,7 +5129,9 @@ auto MasterService::NotifyOffloadSuccess(
+     if (tasks.size() != metadatas.size()) {
+         return tl::make_unexpected(ErrorCode::INVALID_PARAMS);
+     }
++    std::lock_guard<std::mutex> cache_loss_lock(cache_loss_mutex_);
+     std::shared_ptr<LocalDiskSegment> local_disk_segment;
++    bool cache_loss_fenced = false;
+     {
+         ScopedLocalDiskSegmentAccess ssd_access =
+             segment_manager_.getLocalDiskSegmentAccess();
+@@ -5030,6 +5139,8 @@ auto MasterService::NotifyOffloadSuccess(
+         auto disk_it = client_segments.find(client_id);
+         if (disk_it != client_segments.end()) {
+             local_disk_segment = disk_it->second;
++            cache_loss_fenced =
++                !local_disk_segment->cache_loss_fence_token.empty();
+         }
+     }
+ 
+@@ -5039,9 +5150,9 @@ auto MasterService::NotifyOffloadSuccess(
+         const auto request_object_id =
+             MakeObjectIdentityForRequest(task.key, task.tenant_id);
+ 
+-        // NACK sentinel: offload failed on worker. Clean up the
+-        // offloading_task + dec_refcnt but skip AddReplica.
+-        if (metadata.data_size < 0) {
++        // A fenced completion is handled like a NACK: release the admitted
++        // source task but never recreate this owner's LOCAL_DISK metadata.
++        if (metadata.data_size < 0 || cache_loss_fenced) {
+             std::shared_lock<std::shared_mutex> shared_lock(snapshot_mutex_);
+             MetadataAccessorRW accessor(this, request_object_id);
+             if (accessor.Exists()) {
+@@ -5157,6 +5268,9 @@ auto MasterService::NotifyOffloadSuccess(
+         }
+     }
+ 
++    if (cache_loss_fenced) {
++        return tl::make_unexpected(ErrorCode::UNAVAILABLE_IN_CURRENT_STATUS);
++    }
+     return {};
+ }
+ 
+@@ -5186,7 +5300,8 @@ tl::expected<void, ErrorCode> MasterService::PushOffloadingQueue(
+             return tl::make_unexpected(ErrorCode::UNABLE_OFFLOADING);
+         }
+         MutexLocker locker(&local_disk_segment_it->second->offloading_mutex_);
+-        if (!local_disk_segment_it->second->enable_offloading) {
++        if (!local_disk_segment_it->second->enable_offloading ||
++            !local_disk_segment_it->second->cache_loss_fence_token.empty()) {
+             return tl::make_unexpected(ErrorCode::UNABLE_OFFLOADING);
+         }
+         if (local_disk_segment_it->second->offloading_objects.size() >=
+@@ -6447,6 +6562,7 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
+     }
+ 
+     // Rebuild total capacity metrics
++    std::unordered_set<UUID, boost::hash<UUID>> memory_clients;
+     {
+         MasterMetricManager::instance().reset_total_mem_capacity();
+         for (auto& segment_name : segment_names) {
+@@ -6471,6 +6587,7 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
+             int64_t total_size = 0;
+             for (const auto& [segment, client_id] : all_segments) {
+                 Ping(client_id);
++                memory_clients.insert(client_id);
+                 total_size += static_cast<int64_t>(segment.size);
+                 MasterMetricManager::instance().inc_total_mem_capacity(
+                     segment.name, segment.size);
+@@ -6483,6 +6600,27 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
+         }
+     }
+ 
++    // SSD-only owners also need a heartbeat grace window after snapshot restore.
++    // Otherwise no memory segment seeds their existing client-expiry lifecycle.
++    std::vector<UUID> disk_clients;
++    {
++        auto access = segment_manager_.getLocalDiskSegmentAccess();
++        const auto& disk_segments = access.getClientLocalDiskSegment();
++        disk_clients.reserve(disk_segments.size());
++        for (const auto& entry : disk_segments) {
++            if (!memory_clients.contains(entry.first)) {
++                disk_clients.push_back(entry.first);
++            }
++        }
++    }
++    for (const auto& client_id : disk_clients) {
++        auto ping = Ping(client_id);
++        if (!ping) {
++            LOG(ERROR) << "[Restore] Failed to schedule SSD owner expiry: "
++                       << toString(ping.error());
++        }
++    }
++
+     return {};
+ }
+ 
+diff --git a/mooncake-store/src/real_client.cpp b/mooncake-store/src/real_client.cpp
+index 90632851c55908acf8a3a96f9b7af3286c9f5cae..4541061d521c83d2db7a9006bbe2927b06a6bc0a 100644
+--- a/mooncake-store/src/real_client.cpp
++++ b/mooncake-store/src/real_client.cpp
+@@ -553,7 +553,9 @@ void ResourceTracker::startSignalThread() {
+                 }
+                 raise(sig);
+ 
+-                break;  // Should not reach due to process termination
++                // PID 1 never receives a default-action signal, so a container
++                // entrypoint must exit explicitly once cleanup is done.
++                _exit(128 + sig);
+             }
+         });
+         ready_future.wait();  // Ensure thread is ready
+@@ -1664,8 +1666,31 @@ struct ClientRegistrationResponse {
+     std::string client_id;
+     std::vector<std::string> memory_segment_ids;
+     bool ssd_enabled{false};
++    bool cache_loss_supported{false};
+ };
+-YLT_REFL(ClientRegistrationResponse, client_id, memory_segment_ids, ssd_enabled);
++YLT_REFL(ClientRegistrationResponse, client_id, memory_segment_ids, ssd_enabled,
++         cache_loss_supported);
++
++struct ClientCacheLossStatusResponse {
++    std::string client_id;
++    bool quiesced{false};
++    bool heartbeat_in_flight{false};
++    bool metadata_rescan_in_flight{false};
++    uint64_t active_batch_gets{0};
++    uint64_t allocated_batches{0};
++    uint64_t memory_segments_mounted{0};
++    uint64_t memory_segments_unmounting{0};
++    std::string fence_token;
++};
++YLT_REFL(ClientCacheLossStatusResponse, client_id, quiesced,
++         heartbeat_in_flight, metadata_rescan_in_flight, active_batch_gets,
++         allocated_batches, memory_segments_mounted,
++         memory_segments_unmounting, fence_token);
++
++// Give memory segments a bounded graceful-unmount interval. This is provider
++// cleanup, not proof that remote readers have released cached descriptors;
++// callers must not interpret the elapsed interval as a reader completion ack.
++constexpr uint64_t kCacheLossMemoryGracePeriodMs = 10000;
+ }  // namespace
+ 
+ int RealClient::start_http_server(int port) {
+@@ -1722,12 +1747,80 @@ int RealClient::start_http_server(int port) {
+             std::sort(payload.memory_segment_ids.begin(),
+                       payload.memory_segment_ids.end());
+             payload.ssd_enabled = ssd_enabled;
++            payload.cache_loss_supported = ssd_enabled;
+             std::string body;
+             struct_json::to_json(payload, body);
+             resp.add_header("Content-Type", "application/json");
+             resp.set_status_and_content(status_type::ok, std::move(body));
+         });
+ 
++    auto cache_loss_status = [this](const std::string &fence_token) {
++        const auto status = file_storage_->GetCacheLossStatus();
++        return ClientCacheLossStatusResponse{
++            .client_id = UuidToString(client_->getClientId()),
++            .quiesced = status.quiesced,
++            .heartbeat_in_flight = status.heartbeat_in_flight,
++            .metadata_rescan_in_flight = status.metadata_rescan_in_flight,
++            .active_batch_gets = status.active_batch_gets,
++            .allocated_batches = status.allocated_batches,
++            .memory_segments_mounted = client_->GetMountedSegmentIds().size(),
++            .memory_segments_unmounting =
++                client_->GracefullyUnmountingSegmentCount(),
++            .fence_token = fence_token};
++    };
++
++    // Quiesce is idempotent: the SSD fence is reused and memory segments that
++    // already left are no longer listed as mounted.
++    http_server_->set_http_handler<POST>(
++        "/cache-loss/quiesce",
++        [this, cache_loss_status](coro_http_request &,
++                                  coro_http_response &resp) {
++            if (!file_storage_) {
++                resp.set_status_and_content(status_type::conflict,
++                                            "SSD offload is not enabled");
++                return;
++            }
++            auto fence_result = file_storage_->BeginCacheLossQuiesce();
++            if (!fence_result) {
++                resp.set_status_and_content(
++                    status_type::service_unavailable,
++                    "cache-loss fence registration failed");
++                return;
++            }
++            for (const auto &segment_id : client_->GetMountedSegmentIds()) {
++                auto unmount = client_->UnmountSegmentById(
++                    segment_id, kCacheLossMemoryGracePeriodMs);
++                if (!unmount) {
++                    resp.set_status_and_content(
++                        status_type::service_unavailable,
++                        "memory segment graceful unmount failed");
++                    return;
++                }
++            }
++            std::string body;
++            struct_json::to_json(cache_loss_status(fence_result.value()),
++                                 body);
++            resp.add_header("Content-Type", "application/json");
++            resp.set_status_and_content(status_type::ok, std::move(body));
++        });
++
++    http_server_->set_http_handler<GET>(
++        "/cache-loss/status",
++        [this, cache_loss_status](coro_http_request &,
++                                  coro_http_response &resp) {
++            if (!file_storage_) {
++                resp.set_status_and_content(status_type::conflict,
++                                            "SSD offload is not enabled");
++                return;
++            }
++            std::string body;
++            struct_json::to_json(
++                cache_loss_status(file_storage_->GetCacheLossStatus().fence_token),
++                body);
++            resp.add_header("Content-Type", "application/json");
++            resp.set_status_and_content(status_type::ok, std::move(body));
++        });
++
+     http_server_->set_http_handler<GET>(
+         "/metrics", [this](coro_http_request &req, coro_http_response &resp) {
+             if (!client_) {
+diff --git a/mooncake-store/src/rpc_service.cpp b/mooncake-store/src/rpc_service.cpp
+index caf8cd711c3af99761926c568788fbb0dcf8f58a..4153e04c1b5593f07b1fb8ea322dbcf3b417cee5 100644
+--- a/mooncake-store/src/rpc_service.cpp
++++ b/mooncake-store/src/rpc_service.cpp
+@@ -1148,6 +1148,17 @@ WrappedMasterService::GetClientSsdRegistrationForAdmin(const UUID& client_id) {
+     return master_service_.GetClientSsdRegistration(client_id);
+ }
+ 
++tl::expected<std::string, ErrorCode>
++WrappedMasterService::BeginCacheLossQuiesce(const UUID& client_id) {
++    return master_service_.BeginCacheLossQuiesce(client_id);
++}
++
++tl::expected<MasterService::CacheLossResult, ErrorCode>
++WrappedMasterService::DropLocalDiskReplicasForAdmin(
++    const UUID& client_id, const std::string& fence_token) {
++    return master_service_.DropLocalDiskReplicas(client_id, fence_token);
++}
++
+ tl::expected<std::pair<uint64_t, uint64_t>, ErrorCode>
+ WrappedMasterService::QuerySegmentForAdmin(const std::string& segment) {
+     return master_service_.QuerySegments(segment);
+@@ -1364,6 +1375,9 @@ void RegisterRpcService(
+         &wrapped_master_service);
+     server.register_handler<&mooncake::WrappedMasterService::ReportSsdCapacity>(
+         &wrapped_master_service);
++    server.register_handler<
++        &mooncake::WrappedMasterService::BeginCacheLossQuiesce>(
++        &wrapped_master_service);
+     server.register_handler<
+         &mooncake::WrappedMasterService::NotifyOffloadSuccess>(
+         &wrapped_master_service);
+diff --git a/mooncake-store/src/segment.cpp b/mooncake-store/src/segment.cpp
+index 7009b8965d88814ef3bf2be6a621f5b9018c3290..8ae9cff3172015ab6ec358c3d0898340bbb8823a 100644
+--- a/mooncake-store/src/segment.cpp
++++ b/mooncake-store/src/segment.cpp
+@@ -225,6 +225,11 @@ ErrorCode ScopedSegmentAccess::MountLocalDiskSegment(const UUID& client_id,
+         segment_manager_->client_local_disk_segment_.find(client_id);
+     if (exist_segment_it !=
+         segment_manager_->client_local_disk_segment_.end()) {
++        if (!exist_segment_it->second->cache_loss_fence_token.empty()) {
++            LOG(WARNING) << "client_id=" << client_id
++                         << ", warn=local_disk_segment_cache_loss_fenced";
++            return ErrorCode::UNAVAILABLE_IN_CURRENT_STATUS;
++        }
+         LOG(WARNING) << "client_id=" << client_id
+                      << ", warn=local_disk_segment_already_exists";
+         return ErrorCode::SEGMENT_ALREADY_EXISTS;
+@@ -234,6 +239,23 @@ ErrorCode ScopedSegmentAccess::MountLocalDiskSegment(const UUID& client_id,
+     return ErrorCode::OK;
+ }
+ 
++tl::expected<std::string, ErrorCode>
++ScopedSegmentAccess::BeginCacheLossQuiesce(const UUID& client_id) {
++    auto it = segment_manager_->client_local_disk_segment_.find(client_id);
++    if (it == segment_manager_->client_local_disk_segment_.end()) {
++        return tl::make_unexpected(ErrorCode::SEGMENT_NOT_FOUND);
++    }
++    auto& segment = it->second;
++    if (segment->cache_loss_fence_token.empty()) {
++        segment->cache_loss_fence_token = UuidToString(generate_uuid());
++    }
++    {
++        MutexLocker locker(&segment->offloading_mutex_);
++        segment->enable_offloading = false;
++    }
++    return segment->cache_loss_fence_token;
++}
++
+ ErrorCode ScopedSegmentAccess::ReMountSegment(
+     const std::vector<Segment>& segments, const UUID& client_id) {
+     for (const auto& segment : segments) {
+@@ -680,9 +702,9 @@ SegmentSerializer::Serialize() {
+         }
+         std::sort(sorted_keys.begin(), sorted_keys.end());
+ 
+-        // Trailing ssd_total_capacity_bytes so a restored master keeps the
+-        // client-reported SSD capacity across a snapshot restore (#2783).
+-        packer.pack_array(2 + sorted_keys.size() * 2 + 1);
++        // Trailing capacity and cache-loss fence preserve the owner membership
++        // state across Master snapshot restore.
++        packer.pack_array(2 + sorted_keys.size() * 2 + 2);
+         packer.pack(segment->enable_offloading);
+         packer.pack(static_cast<uint64_t>(sorted_keys.size()));
+ 
+@@ -695,6 +717,7 @@ SegmentSerializer::Serialize() {
+             packer.pack(task.size);
+         }
+         packer.pack(segment->ssd_total_capacity_bytes);
++        packer.pack(segment->cache_loss_fence_token);
+     }
+ 
+     // Compress entire data
+@@ -1102,6 +1125,13 @@ tl::expected<void, SerializationError> SegmentSerializer::Deserialize(
+                 segment->ssd_total_capacity_bytes =
+                     client_value.via.array.ptr[capacity_idx].as<int64_t>();
+             }
++            size_t fence_idx = capacity_idx + 1;
++            if (client_value.via.array.size > fence_idx &&
++                client_value.via.array.ptr[fence_idx].type ==
++                    msgpack::type::STR) {
++                segment->cache_loss_fence_token =
++                    client_value.via.array.ptr[fence_idx].as<std::string>();
++            }
+ 
+             segment_manager_->client_local_disk_segment_[client_id] =
+                 std::move(segment);
+diff --git a/mooncake-store/tests/file_storage_test.cpp b/mooncake-store/tests/file_storage_test.cpp
+index 16413486df8dfdf8cfaebdfd3db5f63c44860348..a36208ec5b2b14dacebdf9cfd40d3138c0558862 100644
+--- a/mooncake-store/tests/file_storage_test.cpp
++++ b/mooncake-store/tests/file_storage_test.cpp
+@@ -452,6 +452,69 @@ TEST_F(FileStorageTest, HeartbeatRunsDiskWatermarkEvictionWithoutOffloadWork) {
+     AssertHeartbeatEvictsAllKeys(file_storage, expected_keys, batch_object);
+ }
+ 
++// Cache-loss quiescence must not revoke a returned SSD buffer; only the
++// reader's explicit release ends its lifetime after the provider is fenced.
++TEST_F(FileStorageTest, CacheLossRetainsReturnedBufferUntilRelease) {
++    std::filesystem::path master_root =
++        std::filesystem::path(data_path) / "cache_loss_master";
++    std::filesystem::create_directories(master_root);
++
++    testing::InProcMaster master;
++    auto master_config = InProcMasterConfigBuilder()
++                             .set_enable_offload(true)
++                             .set_root_fs_dir(master_root.string())
++                             .build();
++    ASSERT_TRUE(master.Start(master_config));
++
++    std::string local_rpc_addr =
++        "127.0.0.1:" + std::to_string(getFreeTcpPort());
++    auto client = Client::Create(local_rpc_addr, master.metadata_url(), "tcp",
++                                 std::nullopt, master.master_address());
++    ASSERT_TRUE(client.has_value());
++
++    FileStorageConfig config = FileStorageConfig::FromEnvironment();
++    config.storage_backend_type = StorageBackendType::kFilePerKey;
++    config.storage_filepath = data_path + "/cache_loss";
++    config.local_buffer_size = 4 * 1024 * 1024;
++    config.client_buffer_gc_interval_seconds = 1;
++    config.client_buffer_gc_ttl_ms = 10;
++    fs::create_directories(config.storage_filepath);
++
++    FileStorage file_storage(config, client.value(), local_rpc_addr);
++    ASSERT_TRUE(file_storage.Init());
++
++    std::vector<std::string> keys;
++    std::vector<int64_t> sizes;
++    std::unordered_map<std::string, std::string> data;
++    ASSERT_TRUE(FileStorageBatchOffload(file_storage, keys, sizes, data));
++    ASSERT_FALSE(keys.empty());
++    std::vector<std::string> read_keys{keys.front()};
++    std::vector<int64_t> read_sizes{sizes.front()};
++
++    auto batch = file_storage.BatchGet(read_keys, read_sizes);
++    ASSERT_TRUE(batch.has_value());
++    ASSERT_EQ(batch->pointers.size(), 1);
++    auto* returned = reinterpret_cast<const char*>(batch->pointers[0]);
++    ASSERT_EQ(std::string(returned, static_cast<size_t>(sizes[0])), data[keys[0]]);
++
++    auto start = std::chrono::steady_clock::now();
++    auto fence = file_storage.BeginCacheLossQuiesce();
++    ASSERT_TRUE(fence.has_value());
++    EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(1));
++    auto rejected = file_storage.BatchGet(keys, sizes);
++    ASSERT_FALSE(rejected.has_value());
++    EXPECT_EQ(rejected.error(), ErrorCode::UNAVAILABLE_IN_CURRENT_STATUS);
++
++    std::this_thread::sleep_for(std::chrono::seconds(2));
++    auto status = file_storage.GetCacheLossStatus();
++    EXPECT_TRUE(status.quiesced);
++    EXPECT_EQ(status.allocated_batches, 1);
++    EXPECT_EQ(std::string(returned, static_cast<size_t>(sizes[0])), data[keys[0]]);
++
++    EXPECT_TRUE(file_storage.ReleaseBuffer(batch->batch_id));
++    EXPECT_EQ(file_storage.GetCacheLossStatus().allocated_batches, 0);
++}
++
+ TEST_F(FileStorageTest, NotifyEvictedDiskReplicasUsesTenantScopedKeys) {
+     std::filesystem::path master_root =
+         std::filesystem::path(data_path) / "tenant_notify_master";
+diff --git a/mooncake-store/tests/master_service_test.cpp b/mooncake-store/tests/master_service_test.cpp
+index 46512a57494e20ca2db9cff5428d8eb3736b1dbd..9c030070a561840752ad3b07fa19ae62db26e7ab 100644
+--- a/mooncake-store/tests/master_service_test.cpp
++++ b/mooncake-store/tests/master_service_test.cpp
+@@ -7,6 +7,7 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <barrier>
+ #include <chrono>
+ #include <cstdlib>
+ #include <filesystem>
+@@ -5332,6 +5333,129 @@ TEST_F(MasterServiceTest, OffloadObjectHeartbeat) {
+     }
+ }
+ 
++// The owner fence linearizes with offload completion so a late ScanMeta-style
++// notification cannot recreate LOCAL_DISK metadata after cache loss begins.
++TEST_F(MasterServiceTest, CacheLossFenceRejectsLateOwnerMetadata) {
++    MasterServiceConfig config;
++    config.enable_offload = true;
++    std::unique_ptr<MasterService> service(new MasterService(config));
++    const UUID client_id = generate_uuid();
++    const UUID other_client_id = generate_uuid();
++    constexpr size_t buffer = 0x300000000;
++    constexpr size_t size = 1024 * 1024 * 16;
++    auto segment = MakeSegment("cache_loss_segment", buffer, size);
++    ASSERT_TRUE(service->MountSegment(segment, client_id));
++    ASSERT_TRUE(service->MountLocalDiskSegment(client_id, true));
++
++    auto notify_one = [&](const OffloadTaskItem& task) {
++        std::vector<StorageObjectMetadata> metadatas{
++            StorageObjectMetadata{.bucket_id = 0,
++                                  .offset = 0,
++                                  .key_size =
++                                      static_cast<int64_t>(task.key.size()),
++                                  .data_size = task.size,
++                                  .transport_endpoint = "127.0.0.1:9003"}};
++        return service->NotifyOffloadSuccess(client_id, {task}, metadatas);
++    };
++    auto has_owned_disk = [&](const std::string& key) {
++        auto query = service->GetReplicaListForAdmin(key, "default");
++        EXPECT_TRUE(query.has_value());
++        if (!query) return false;
++        return std::any_of(
++            query->replicas.begin(), query->replicas.end(),
++            [&](const Replica::Descriptor& replica) {
++                return replica.is_local_disk_replica() &&
++                       replica.get_local_disk_descriptor().client_id == client_id;
++            });
++    };
++
++    const std::string existing_key =
++        GenerateKeyForSegment(client_id, service, segment.name);
++    auto existing_tasks = service->OffloadObjectHeartbeat(client_id, true);
++    ASSERT_TRUE(existing_tasks.has_value());
++    ASSERT_EQ(existing_tasks->size(), 1);
++    ASSERT_TRUE(notify_one(existing_tasks->front()));
++    auto clear_memory =
++        service->BatchReplicaClear({existing_key}, client_id, segment.name);
++    ASSERT_TRUE(clear_memory.has_value());
++    ASSERT_EQ(clear_memory->size(), 1);
++    ASSERT_TRUE(has_owned_disk(existing_key));
++
++    const std::string late_key =
++        GenerateKeyForSegment(client_id, service, segment.name);
++    auto late_tasks = service->OffloadObjectHeartbeat(client_id, true);
++    ASSERT_TRUE(late_tasks.has_value());
++    ASSERT_EQ(late_tasks->size(), 1);
++    const std::string queued_key =
++        GenerateKeyForSegment(client_id, service, segment.name);
++    const std::string racing_key = "cache_loss_racing_put";
++    auto racing_put = service->PutStart(client_id, racing_key, "default", {1024},
++                                        {.replica_num = 1});
++    ASSERT_TRUE(racing_put.has_value());
++
++    auto fence = service->BeginCacheLossQuiesce(client_id);
++    ASSERT_TRUE(fence.has_value());
++    auto repeated_fence = service->BeginCacheLossQuiesce(client_id);
++    ASSERT_TRUE(repeated_fence.has_value());
++    EXPECT_EQ(repeated_fence.value(), fence.value());
++    auto disabled_heartbeat = service->OffloadObjectHeartbeat(client_id, false);
++    ASSERT_TRUE(disabled_heartbeat.has_value());
++    EXPECT_TRUE(disabled_heartbeat->empty());
++    EXPECT_TRUE(service->Remove(queued_key, "default", true).has_value());
++
++    auto remount = service->MountLocalDiskSegment(client_id, true);
++    ASSERT_FALSE(remount.has_value());
++    EXPECT_EQ(remount.error(), ErrorCode::UNAVAILABLE_IN_CURRENT_STATUS);
++    auto heartbeat = service->OffloadObjectHeartbeat(client_id, true);
++    ASSERT_FALSE(heartbeat.has_value());
++    EXPECT_EQ(heartbeat.error(), ErrorCode::UNAVAILABLE_IN_CURRENT_STATUS);
++
++    auto late_notify = notify_one(late_tasks->front());
++    ASSERT_FALSE(late_notify.has_value());
++    EXPECT_EQ(late_notify.error(), ErrorCode::UNAVAILABLE_IN_CURRENT_STATUS);
++    EXPECT_FALSE(has_owned_disk(late_key));
++
++    std::barrier start(3);
++    std::optional<tl::expected<void, ErrorCode>> racing_put_end;
++    std::optional<
++        tl::expected<MasterService::CacheLossResult, ErrorCode>> concurrent_drop;
++    std::thread writer([&]() {
++        start.arrive_and_wait();
++        racing_put_end =
++            service->PutEnd(client_id, racing_key, "default", ReplicaType::MEMORY);
++    });
++    std::thread dropper([&]() {
++        start.arrive_and_wait();
++        concurrent_drop =
++            service->DropLocalDiskReplicas(client_id, fence.value());
++    });
++    start.arrive_and_wait();
++    writer.join();
++    dropper.join();
++
++    ASSERT_TRUE(racing_put_end.has_value());
++    ASSERT_TRUE(racing_put_end->has_value());
++    ASSERT_TRUE(concurrent_drop.has_value());
++    ASSERT_TRUE(concurrent_drop->has_value());
++    EXPECT_EQ(concurrent_drop->value().removed_replicas, 1);
++    EXPECT_EQ(concurrent_drop->value().removed_objects, 1);
++    auto removed = service->GetReplicaListForAdmin(existing_key, "default");
++    ASSERT_FALSE(removed.has_value());
++    EXPECT_EQ(removed.error(), ErrorCode::OBJECT_NOT_FOUND);
++    auto repeated_drop =
++        service->DropLocalDiskReplicas(client_id, fence.value());
++    ASSERT_TRUE(repeated_drop.has_value());
++    EXPECT_EQ(repeated_drop->removed_replicas, 0);
++
++    ASSERT_TRUE(service->MountLocalDiskSegment(other_client_id, true));
++    auto other_fence = service->BeginCacheLossQuiesce(other_client_id);
++    ASSERT_TRUE(other_fence.has_value());
++    EXPECT_FALSE(
++        service->DropLocalDiskReplicas(client_id, other_fence.value()).has_value());
++    EXPECT_FALSE(
++        service->DropLocalDiskReplicas(other_client_id, fence.value()).has_value());
++}
++
+ TEST_F(MasterServiceTest, BatchReplicaClearAllSegments) {
+     const uint64_t kv_lease_ttl = 50;
+     auto service_config = MasterServiceConfig::builder()
+diff --git a/mooncake-store/tests/segment_test.cpp b/mooncake-store/tests/segment_test.cpp
+index 60b7362061bebfee421fb1436643b4a6670331b0..3e8f2d302a8923886c584c4135433bcd1dcb15f9 100644
+--- a/mooncake-store/tests/segment_test.cpp
++++ b/mooncake-store/tests/segment_test.cpp
+@@ -788,4 +788,36 @@ TEST_F(SegmentTest, MountLocalDiskSegmentDuplicate) {
+     ValidateMountedLocalDiskSegments(segment_manager, segments, client_ids);
+ }
+ 
++// Cache-loss fencing is part of SSD membership and must survive the same
++// snapshot round trip that restores LOCAL_DISK registration.
++TEST_F(SegmentTest, CacheLossFenceSurvivesSnapshotRestore) {
++    SegmentManager source(BufferAllocatorType::OFFSET);
++    const UUID client_id = generate_uuid();
++    std::string fence_token;
++    {
++        auto access = source.getSegmentAccess();
++        auto missing_fence = access.BeginCacheLossQuiesce(client_id);
++        ASSERT_FALSE(missing_fence.has_value());
++        EXPECT_EQ(missing_fence.error(), ErrorCode::SEGMENT_NOT_FOUND);
++        ASSERT_EQ(access.MountLocalDiskSegment(client_id, true), ErrorCode::OK);
++        auto fence = access.BeginCacheLossQuiesce(client_id);
++        ASSERT_TRUE(fence.has_value());
++        fence_token = fence.value();
++    }
++
++    SegmentSerializer source_serializer(&source);
++    auto snapshot = source_serializer.Serialize();
++    ASSERT_TRUE(snapshot.has_value());
++
++    SegmentManager restored(BufferAllocatorType::OFFSET);
++    SegmentSerializer restored_serializer(&restored);
++    ASSERT_TRUE(restored_serializer.Deserialize(snapshot.value()));
++    auto access = restored.getSegmentAccess();
++    auto restored_fence = access.BeginCacheLossQuiesce(client_id);
++    ASSERT_TRUE(restored_fence.has_value());
++    EXPECT_EQ(restored_fence.value(), fence_token);
++    EXPECT_EQ(access.MountLocalDiskSegment(client_id, true),
++              ErrorCode::UNAVAILABLE_IN_CURRENT_STATUS);
++}
++
+ }  // namespace mooncake

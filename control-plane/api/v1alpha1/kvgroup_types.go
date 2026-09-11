@@ -82,8 +82,9 @@ const (
 	KVGroupPhaseTerminating  KVGroupPhase = "Terminating"
 )
 
-// KVGroupStatus reports requested capacity, Kubernetes infrastructure, and optional
-// provider registration when storageRegistration is enabled.
+// KVGroupStatus reports requested capacity, Kubernetes infrastructure, and, when
+// storageRegistration is enabled, provider registration plus the drain outcome of a
+// deleting Group.
 type KVGroupStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
