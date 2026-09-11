@@ -29,95 +29,49 @@ spec:
           sendResolved: true
           maxAlerts: 5
           timeout: 10s
+          # Every message line is written once in Chinese and once in English. The
+          # notification_language label (zh, en, or bilingual) picks which of the
+          # two is sent; bilingual joins them as "zh / en" unless both are identical.
           payload: |
-            {{- $language := "zh" -}}
-            {{- if eq (index .CommonLabels "notification_language") "en" }}{{ $language = "en" }}{{ end -}}
-            {{- if eq (index .CommonLabels "notification_language") "bilingual" }}{{ $language = "bilingual" }}{{ end -}}
-            {{- $title := "Foretoken 告警通知" -}}
-            {{- $firing := "触发" -}}
-            {{- $resolved := "解除" -}}
-            {{- $statusLabel := "状态" -}}
-            {{- $levelLabel := "级别" -}}
-            {{- $namespaceLabel := "Namespace" -}}
-            {{- $podLabel := "Pod" -}}
-            {{- $instanceLabel := "Instance" -}}
-            {{- $endpointLabel := "Endpoint" -}}
-            {{- $modelRoleLabel := "Model role" -}}
-            {{- $frontendLabel := "Frontend" -}}
-            {{- $modelGroupLabel := "Model group" -}}
-            {{- $pipelineLabel := "Pipeline scope" -}}
-            {{- $timeStartLabel := "告警开始" -}}
-            {{- $timeEndLabel := "告警解除" -}}
-            {{- $summaryLabel := "摘要" -}}
-            {{- $descriptionLabel := "详情" -}}
-            {{- $runbookLabel := "Runbook" -}}
-            {{- $targetDownNote := "说明：抓取失败告警已解除；可能是抓取恢复，也可能是旧目标被移除，不代表原 Pod 或节点已恢复。" -}}
-            {{- if eq $language "en" -}}
-            {{- $title = "Foretoken alert notification" -}}
-            {{- $firing = "firing" -}}
-            {{- $resolved = "resolved" -}}
-            {{- $statusLabel = "Status" -}}
-            {{- $levelLabel = "Severity" -}}
-            {{- $timeStartLabel = "Started" -}}
-            {{- $timeEndLabel = "Resolved" -}}
-            {{- $summaryLabel = "Summary" -}}
-            {{- $descriptionLabel = "Details" -}}
-            {{- $targetDownNote = "Note: a resolved scrape failure may mean that scraping recovered or that the old target disappeared; it does not prove that the original Pod or node recovered." -}}
-            {{- end -}}
-            {{- if eq $language "bilingual" -}}
-            {{- $title = "Foretoken 告警通知 / Foretoken alert notification" -}}
-            {{- $firing = "触发 / firing" -}}
-            {{- $resolved = "解除 / resolved" -}}
-            {{- $statusLabel = "状态 / Status" -}}
-            {{- $levelLabel = "级别 / Severity" -}}
-            {{- $namespaceLabel = "命名空间 / Namespace" -}}
-            {{- $podLabel = "Pod" -}}
-            {{- $instanceLabel = "实例 / Instance" -}}
-            {{- $endpointLabel = "端点 / Endpoint" -}}
-            {{- $modelRoleLabel = "模型角色 / Model role" -}}
-            {{- $frontendLabel = "前端 / Frontend" -}}
-            {{- $modelGroupLabel = "模型组 / Model group" -}}
-            {{- $pipelineLabel = "流水线范围 / Pipeline scope" -}}
-            {{- $timeStartLabel = "告警开始 / Started" -}}
-            {{- $timeEndLabel = "告警解除 / Resolved" -}}
-            {{- $summaryLabel = "摘要 / Summary" -}}
-            {{- $descriptionLabel = "详情 / Details" -}}
-            {{- $runbookLabel = "Runbook" -}}
-            {{- $targetDownNote = "说明：抓取失败告警已解除；可能是抓取恢复，也可能是旧目标被移除，不代表原 Pod 或节点已恢复。 / Note: a resolved scrape failure may mean that scraping recovered or that the old target disappeared; it does not prove that the original Pod or node recovered." -}}
-            {{- end -}}
-            {{- $header := printf "%s | %s %d · %s %d\n本条展示 %d 个目标（每条最多 5 个）" $title $firing (len .Alerts.Firing) $resolved (len .Alerts.Resolved) (len .Alerts) -}}
-            {{- if eq $language "en" }}{{ $header = printf "%s | %s %d · %s %d\nShowing %d targets (max 5 per message)" $title $firing (len .Alerts.Firing) $resolved (len .Alerts.Resolved) (len .Alerts) }}{{ end -}}
-            {{- if eq $language "bilingual" }}{{ $header = printf "%s | 触发 %d · 解除 %d / firing %d · resolved %d\n本条展示 %d 个目标（每条最多 5 个） / Showing %d targets (max 5 per message)" $title (len .Alerts.Firing) (len .Alerts.Resolved) (len .Alerts.Firing) (len .Alerts.Resolved) (len .Alerts) (len .Alerts) }}{{ end -}}
-            {{- $text := $header -}}
+            {{- $language := index .CommonLabels "notification_language" -}}
+            {{- if not $language }}{{ $language = "zh" }}{{ end -}}
+            {{- $firing := len .Alerts.Firing }}{{ $resolved := len .Alerts.Resolved }}{{ $shown := len .Alerts -}}
+            {{- $lines := list -}}
+            {{- $lines = append $lines (dict "zh" "Foretoken 告警通知" "en" "Foretoken alert notification") -}}
+            {{- $lines = append $lines (dict "zh" (printf "触发 %d · 解除 %d，本条展示 %d 个目标（每条最多 5 个）" $firing $resolved $shown) "en" (printf "firing %d · resolved %d, showing %d targets (max 5 per message)" $firing $resolved $shown)) -}}
             {{- range .Alerts -}}
-            {{- $state := $firing -}}
-            {{- if eq .Status "resolved" }}{{ $state = $resolved }}{{ end -}}
-            {{- $summary := .Annotations.summary -}}
-            {{- $description := .Annotations.description -}}
-            {{- if eq $language "zh" }}{{ $summary = .Annotations.summary_zh }}{{ $description = .Annotations.description_zh }}{{ end -}}
-            {{- if eq $language "bilingual" }}{{ $summary = printf "%s / %s" .Annotations.summary_zh .Annotations.summary }}{{ $description = printf "%s / %s" .Annotations.description_zh .Annotations.description }}{{ end -}}
-            {{- $text = printf "%s\n\n[%s] %s\n%s: %s" $text $state .Labels.alertname $levelLabel .Labels.severity -}}
-            {{- with .Labels.namespace }}{{ $text = printf "%s\n%s：%s" $text $namespaceLabel . }}{{ end -}}
-            {{- with .Labels.pod }}{{ $text = printf "%s\n%s：%s" $text $podLabel . }}{{ end -}}
-            {{- with .Labels.instance }}{{ $text = printf "%s\n%s：%s" $text $instanceLabel . }}{{ end -}}
-            {{- with .Labels.endpoint }}{{ $text = printf "%s\n%s：%s" $text $endpointLabel . }}{{ end -}}
-            {{- with .Labels.model_role }}{{ $text = printf "%s\n%s：%s" $text $modelRoleLabel . }}{{ end -}}
-            {{- with .Labels.inference_foretoken_io_model_role }}{{ $text = printf "%s\n%s：%s" $text $modelRoleLabel . }}{{ end -}}
-            {{- with .Labels.inference_foretoken_io_frontend_service }}{{ $text = printf "%s\n%s：%s" $text $frontendLabel . }}{{ end -}}
-            {{- with .Labels.frontend_service }}{{ $text = printf "%s\n%s：%s" $text $frontendLabel . }}{{ end -}}
-            {{- with .Labels.model_group }}{{ $text = printf "%s\n%s：%s" $text $modelGroupLabel . }}{{ end -}}
-            {{- with .Labels.inference_foretoken_io_model_group }}{{ $text = printf "%s\n%s：%s" $text $modelGroupLabel . }}{{ end -}}
-            {{- with .Labels.pd_pipeline_scope }}{{ $text = printf "%s\n%s：%s" $text $pipelineLabel . }}{{ end -}}
-            {{- with .Labels.inference_foretoken_io_pd_pipeline_scope }}{{ $text = printf "%s\n%s：%s" $text $pipelineLabel . }}{{ end -}}
-            {{- $text = printf "%s\n%s：%s" $text $timeStartLabel (.StartsAt | tz "Asia/Shanghai" | date "2006-01-02 15:04:05 -0700") -}}
+            {{- $state := dict "zh" "触发" "en" "firing" -}}
+            {{- if eq .Status "resolved" }}{{ $state = dict "zh" "解除" "en" "resolved" }}{{ end -}}
+            {{- $lines = append $lines (dict "zh" "" "en" "") -}}
+            {{- $lines = append $lines (dict "zh" (printf "[%s] %s" $state.zh .Labels.alertname) "en" (printf "[%s] %s" $state.en .Labels.alertname)) -}}
+            {{- $lines = append $lines (dict "zh" (printf "级别：%s" .Labels.severity) "en" (printf "Severity: %s" .Labels.severity)) -}}
+            {{- with .Labels.namespace }}{{ $lines = append $lines (dict "zh" (printf "命名空间：%s" .) "en" (printf "Namespace: %s" .)) }}{{ end -}}
+            {{- with .Labels.pod }}{{ $lines = append $lines (dict "zh" (printf "Pod: %s" .) "en" (printf "Pod: %s" .)) }}{{ end -}}
+            {{- with .Labels.instance }}{{ $lines = append $lines (dict "zh" (printf "实例：%s" .) "en" (printf "Instance: %s" .)) }}{{ end -}}
+            {{- with .Labels.endpoint }}{{ $lines = append $lines (dict "zh" (printf "端点：%s" .) "en" (printf "Endpoint: %s" .)) }}{{ end -}}
+            {{- /* Scrape failures fire before recording rules normalize the ServiceMonitor labels. */ -}}
+            {{- with or .Labels.frontend_service .Labels.inference_foretoken_io_frontend_service }}{{ $lines = append $lines (dict "zh" (printf "前端：%s" .) "en" (printf "Frontend: %s" .)) }}{{ end -}}
+            {{- with or .Labels.model_group .Labels.inference_foretoken_io_model_group }}{{ $lines = append $lines (dict "zh" (printf "模型组：%s" .) "en" (printf "Model group: %s" .)) }}{{ end -}}
+            {{- with or .Labels.model_role .Labels.inference_foretoken_io_model_role }}{{ $lines = append $lines (dict "zh" (printf "模型角色：%s" .) "en" (printf "Model role: %s" .)) }}{{ end -}}
+            {{- with or .Labels.pd_pipeline_scope .Labels.inference_foretoken_io_pd_pipeline_scope }}{{ $lines = append $lines (dict "zh" (printf "流水线范围：%s" .) "en" (printf "Pipeline scope: %s" .)) }}{{ end -}}
+            {{- $startedAt := .StartsAt | tz "Asia/Shanghai" | date "2006-01-02 15:04:05 -0700" -}}
+            {{- $lines = append $lines (dict "zh" (printf "告警开始：%s" $startedAt) "en" (printf "Started: %s" $startedAt)) -}}
             {{- if eq .Status "resolved" -}}
-            {{- $text = printf "%s\n%s：%s" $text $timeEndLabel (.EndsAt | tz "Asia/Shanghai" | date "2006-01-02 15:04:05 -0700") -}}
+            {{- $endedAt := .EndsAt | tz "Asia/Shanghai" | date "2006-01-02 15:04:05 -0700" -}}
+            {{- $lines = append $lines (dict "zh" (printf "告警解除：%s" $endedAt) "en" (printf "Resolved: %s" $endedAt)) -}}
             {{- end -}}
-            {{- with $summary }}{{ $text = printf "%s\n%s：%s" $text $summaryLabel . }}{{ end -}}
-            {{- with $description }}{{ $text = printf "%s\n%s：%s" $text $descriptionLabel . }}{{ end -}}
-            {{- with .Annotations.runbook_url }}{{ $text = printf "%s\n%s：%s" $text $runbookLabel . }}{{ end -}}
+            {{- $lines = append $lines (dict "zh" (printf "摘要：%s" .Annotations.summary_zh) "en" (printf "Summary: %s" .Annotations.summary)) -}}
+            {{- $lines = append $lines (dict "zh" (printf "详情：%s" .Annotations.description_zh) "en" (printf "Details: %s" .Annotations.description)) -}}
+            {{- with .Annotations.runbook_url }}{{ $lines = append $lines (dict "zh" (printf "Runbook: %s" .) "en" (printf "Runbook: %s" .)) }}{{ end -}}
             {{- if and (eq .Status "resolved") (eq .Labels.alertname "ForetokenMetricsTargetDown") -}}
-            {{- $text = printf "%s\n%s" $text $targetDownNote -}}
+            {{- $lines = append $lines (dict "zh" "说明：抓取失败告警已解除；可能是抓取恢复，也可能是旧目标被移除，不代表原 Pod 或节点已恢复。" "en" "Note: a resolved scrape failure may mean that scraping recovered or that the old target disappeared; it does not prove that the original Pod or node recovered.") -}}
             {{- end -}}
+            {{- end -}}
+            {{- $text := "" -}}
+            {{- range $index, $line := $lines -}}
+            {{- $rendered := $line.zh -}}
+            {{- if eq $language "en" }}{{ $rendered = $line.en }}{{ end -}}
+            {{- if and (eq $language "bilingual") (ne $line.zh $line.en) }}{{ $rendered = printf "%s / %s" $line.zh $line.en }}{{ end -}}
+            {{- if $index }}{{ $text = printf "%s\n%s" $text $rendered }}{{ else }}{{ $text = $rendered }}{{ end -}}
             {{- end -}}
             {{- dict "msg_type" "text" "content" (dict "text" $text) | toJson -}}
