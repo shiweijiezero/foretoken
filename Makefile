@@ -100,8 +100,12 @@ mooncake-source:
 	git submodule update --init third_party/mooncake
 	git -C third_party/mooncake submodule update --init extern/pybind11 extern/yalantinglibs
 	@if ! git -C third_party/mooncake apply --reverse --check \
-		"../../deploy/mooncake/patches/provider-registration.patch" >/dev/null 2>&1; then \
-		git -C third_party/mooncake apply "../../deploy/mooncake/patches/provider-registration.patch"; \
+		"../../deploy/mooncake/patches/cache-loss.patch" >/dev/null 2>&1; then \
+		if ! git -C third_party/mooncake apply --reverse --check \
+			"../../deploy/mooncake/patches/provider-registration.patch" >/dev/null 2>&1; then \
+			git -C third_party/mooncake apply "../../deploy/mooncake/patches/provider-registration.patch"; \
+		fi; \
+		git -C third_party/mooncake apply "../../deploy/mooncake/patches/cache-loss.patch"; \
 	fi
 
 image-mooncake: mooncake-source
