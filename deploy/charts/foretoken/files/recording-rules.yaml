@@ -770,12 +770,13 @@ groups:
 
       # With honor_labels=false, exported_* holds workload identity while the
       # plain labels identify the exporter Pod. Restore workload labels before
-      # aggregation; label_replace leaves non-conflicting labels unchanged.
+      # aggregation; label_replace leaves non-conflicting labels unchanged. DCGM uses
+      # hostname in current releases and Hostname in older installations.
       - record: foretoken:accelerator_gpu_utilization_ratio
         expr: |
           max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
             label_replace(label_replace(label_replace(label_replace(
-            label_replace(label_replace(label_replace(
+            label_replace(label_replace(label_replace(label_replace(
               label_replace(label_replace(
                 DCGM_FI_DEV_GPU_UTIL{
                   inference_foretoken_io_model_group!="",
@@ -795,6 +796,7 @@ groups:
             ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
             ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
             ), "node", "$1", "Hostname", "(.+)"
+            ), "node", "$1", "hostname", "(.+)"
             ), "namespace", "$1", "exported_namespace", "(.+)"
             ), "pod", "$1", "exported_pod", "(.+)"
             ), "container", "$1", "exported_container", "(.+)"
@@ -805,7 +807,7 @@ groups:
         expr: |
           max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
             label_replace(label_replace(label_replace(label_replace(
-            label_replace(label_replace(label_replace(
+            label_replace(label_replace(label_replace(label_replace(
               label_replace(label_replace(
                 (
                   DCGM_FI_DEV_FB_USED{
@@ -840,6 +842,7 @@ groups:
             ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
             ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
             ), "node", "$1", "Hostname", "(.+)"
+            ), "node", "$1", "hostname", "(.+)"
             ), "namespace", "$1", "exported_namespace", "(.+)"
             ), "pod", "$1", "exported_pod", "(.+)"
             ), "container", "$1", "exported_container", "(.+)"
@@ -852,7 +855,7 @@ groups:
         expr: |
           max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
             label_replace(label_replace(label_replace(label_replace(
-            label_replace(label_replace(label_replace(
+            label_replace(label_replace(label_replace(label_replace(
               label_replace(label_replace(
                 DCGM_FI_DEV_POWER_USAGE{
                   inference_foretoken_io_model_group!="",
@@ -864,6 +867,7 @@ groups:
             ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
             ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
             ), "node", "$1", "Hostname", "(.+)"
+            ), "node", "$1", "hostname", "(.+)"
             ), "namespace", "$1", "exported_namespace", "(.+)"
             ), "pod", "$1", "exported_pod", "(.+)"
             ), "container", "$1", "exported_container", "(.+)"
@@ -874,7 +878,7 @@ groups:
         expr: |
           max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
             label_replace(label_replace(label_replace(label_replace(
-            label_replace(label_replace(label_replace(
+            label_replace(label_replace(label_replace(label_replace(
               label_replace(label_replace(
                 DCGM_FI_DEV_GPU_TEMP{
                   inference_foretoken_io_model_group!="",
@@ -886,6 +890,7 @@ groups:
             ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
             ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
             ), "node", "$1", "Hostname", "(.+)"
+            ), "node", "$1", "hostname", "(.+)"
             ), "namespace", "$1", "exported_namespace", "(.+)"
             ), "pod", "$1", "exported_pod", "(.+)"
             ), "container", "$1", "exported_container", "(.+)"

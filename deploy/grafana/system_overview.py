@@ -95,7 +95,7 @@ def headline(
         .graph_mode(models.BigValueGraphMode.AREA)
         .reduce_options(common.ReduceDataOptions().calcs(["lastNotNull"]))
         .with_target(query(expr, title).ref_id("A"))
-        .span(3)
+        .span(6)
         .height(4)
     )
     if color is None:
@@ -218,7 +218,7 @@ def autoscaling(
     """
     prefix = "time() - " if age else ""
     targets = [
-        query(f"{prefix}max by({AUTOSCALING_TARGET}) ({metric}{{{SERVICE}}})", f"{AUTOSCALING_LEGEND} / {suffix}")
+        query(f"{prefix}max by({AUTOSCALING_TARGET}) ({metric}{{{SERVICE}}})", f"{suffix} / {AUTOSCALING_LEGEND}")
         for suffix, metric in metrics.items()
     ]
     return series(title, description, targets, unit=unit, span=8)
@@ -303,7 +303,7 @@ def build() -> dashboard_models.Dashboard:
             "Frontend targets",
             "Prometheus targets currently reporting for the selected Frontend services.",
             f"sum(foretoken:frontend_up:sum{{{FRONTEND}}})",
-            color=GREEN,
+            color=None,
             thresholds=steps((None, RED), (1, GREEN)),
         )
     )
@@ -312,7 +312,7 @@ def build() -> dashboard_models.Dashboard:
             "Model servers",
             "Prometheus targets currently reporting for the selected model groups and roles.",
             f"sum(foretoken:model_server_up:sum{{{GROUP}}})",
-            color=GREEN,
+            color=None,
             thresholds=steps((None, RED), (1, GREEN)),
         )
     )
@@ -333,7 +333,7 @@ def build() -> dashboard_models.Dashboard:
             f"or 0 * sum(foretoken:frontend_http_response_starts:rate5m{{{FRONTEND}}})) "
             f"/ clamp_min(sum(foretoken:frontend_http_response_starts:rate5m{{{FRONTEND}}}), 1e-9)",
             unit="percentunit",
-            color=GREEN,
+            color=None,
             thresholds=steps((None, GREEN), (0.01, AMBER), (0.05, RED)),
         )
     )
@@ -359,7 +359,7 @@ def build() -> dashboard_models.Dashboard:
             "Queued requests",
             "Requests waiting for frontend admission to a scaling target.",
             f"sum(foretoken:frontend_upstream_queued_requests:sum{{{FRONTEND}}})",
-            color=ORANGE,
+            color=None,
             thresholds=steps((None, GREEN), (1, ORANGE)),
         )
     )
@@ -399,7 +399,7 @@ def build() -> dashboard_models.Dashboard:
     )
     board.with_panel(
         series(
-            "Frontend response-start latency",
+            "Response-start latency",
             "Time until the Frontend handler produces HTTP response headers. "
             "This excludes SSE body delivery; it is neither TTFT nor full-stream duration.",
             [
@@ -477,8 +477,9 @@ def build() -> dashboard_models.Dashboard:
             "foretoken:model_server_e2e_request_latency_seconds:quantile5m",
             MODEL,
             "Generation completion latency",
-            "Maximum per-model-group quantile from the shared Frontend arrival time to the model-server "
-            "terminal output. Does not measure downstream client body consumption.",
+            "Maximum per-model-group quantile from Frontend handler entry, after JSON decoding, to the "
+            "model-server terminal output. Excludes downstream client body consumption. "
+            "Frontend and model-server clocks must be synchronized.",
         )
     )
     board.with_panel(
@@ -486,8 +487,8 @@ def build() -> dashboard_models.Dashboard:
             "foretoken:model_server_time_to_first_token_seconds:quantile5m",
             MODEL,
             "Time to first token",
-            "Maximum per-model-group TTFT quantile, using the same Frontend arrival-time boundary "
-            "for chat and completion requests.",
+            "Maximum per-model-group TTFT quantile from Frontend handler entry, after JSON decoding, "
+            "to the first token received by model-server. Chat and completion requests share this origin.",
         )
     )
     board.with_panel(
