@@ -65,7 +65,7 @@ groups:
           runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenmodelserverschedulerbacklog'
 
       - alert: ForetokenModelServerKVCachePressureHigh
-        expr: foretoken:model_server_kv_cache_usage_ratio:max >= 0.95
+        expr: foretoken:model_server_kv_cache_usage_ratio:max >= foretoken_alert_threshold_kv_cache_usage_ratio
         for: 10m
         labels:
           service: foretoken
@@ -74,8 +74,8 @@ groups:
         annotations:
           summary: 'KV-cache pressure is high for model group {{ $labels.model_group }}'
           summary_zh: '模型组 {{ $labels.model_group }} 的 KV Cache 压力偏高'
-          description: 'The maximum KV-cache usage across vLLM engines in {{ $labels.model_group }}/{{ $labels.model_role }} has stayed at or above 95% for 10 minutes. The engine contributing the maximum can change between evaluations.'
-          description_zh: '{{ $labels.model_group }}/{{ $labels.model_role }} 中 vLLM engine 的最高 KV Cache 使用率已连续 10 分钟不低于 95%。每次计算中的最大值可能来自不同 engine。'
+          description: 'The maximum KV-cache usage across vLLM engines in {{ $labels.model_group }}/{{ $labels.model_role }} has stayed at or above {{ "foretoken_alert_threshold_kv_cache_usage_ratio" | humanizePercentage }} for 10 minutes. The engine contributing the maximum can change between evaluations.'
+          description_zh: '{{ $labels.model_group }}/{{ $labels.model_role }} 中 vLLM engine 的最高 KV Cache 使用率已连续 10 分钟不低于 {{ "foretoken_alert_threshold_kv_cache_usage_ratio" | humanizePercentage }}。每次计算中的最大值可能来自不同 engine。'
           runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenmodelserverkvcachepressurehigh'
 
       - alert: ForetokenAcceleratorGPUUtilizationHigh

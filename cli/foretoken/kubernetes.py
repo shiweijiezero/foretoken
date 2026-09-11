@@ -105,6 +105,17 @@ class Kubectl:
             input_text=rendered,
         )
 
+    def wait_for_crds(self, names: tuple[str, ...], timeout: str) -> None:
+        """Wait for installed CRDs before applying their custom resources."""
+        self.run(
+            [
+                "wait",
+                "--for=condition=Established",
+                *(f"crd/{name}" for name in names),
+                f"--timeout={timeout}",
+            ]
+        )
+
     def label_namespace(self, name: str, key: str, value: str) -> None:
         """Set one namespace label required by a platform integration."""
         self.run(
@@ -541,7 +552,11 @@ def _load_balancer_endpoint(
             ),
             has_ingress,
             deadline,
-            f"LoadBalancer address for service/{deployment.frontend}",
+            f"LoadBalancer address for service/{deployment.frontend} in namespace "
+            f"{deployment.namespace}; run 'kubectl describe service/{deployment.frontend} "
+            f"--namespace {deployment.namespace}' and verify the cluster LoadBalancer "
+            "implementation, or configure loadBalancer.managedAddresses for "
+            "'foretoken install --values PATH'",
         )
     ingress = service["status"]["loadBalancer"]["ingress"][0]
     address = str(ingress.get("ip") or ingress.get("hostname") or "").strip()
@@ -612,7 +627,10 @@ def _gateway_endpoint(
         or {},
         lambda value: bool((value.get("status") or {}).get("addresses")),
         deadline,
-        f"address for gateway/{gateway_name}",
+        f"address for gateway/{gateway_name} in namespace {gateway_namespace}; "
+        f"run 'kubectl describe gateway/{gateway_name} --namespace "
+        f"{gateway_namespace}' and inspect the Gateway controller Service and cluster "
+        "LoadBalancer implementation",
     )
     address = str(gateway["status"]["addresses"][0].get("value") or "").strip()
     if not address:

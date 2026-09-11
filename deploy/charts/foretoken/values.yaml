@@ -30,6 +30,11 @@ workload:
     claimName: ""
     mountPath: /var/cache/foretoken
 
+# Unused node-network IP addresses for services when the cluster assigns none.
+# Consumed by foretoken install, which then manages MetalLB in Layer 2 mode.
+loadBalancer:
+  managedAddresses: []
+
 # Local mode uses a LoadBalancer Service. Gateway mode attaches an HTTPRoute to a Gateway.
 frontend:
   enabled: false
@@ -54,7 +59,9 @@ observability:
   alerts:
     # The language is attached to alert labels so a shared Lark receiver can render one language consistently.
     language: zh
+    # Alert rules fire at these values, and the dashboard draws them as reference lines.
     thresholds:
+      kvCacheUsageRatio: 0.95
       acceleratorUtilizationRatio: 0.95
       acceleratorMemoryUsageRatio: 0.95
       nvidiaTemperatureCelsius: 85

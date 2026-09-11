@@ -59,7 +59,11 @@ spec:
             - {{ printf "--autoscaling-telemetry-collection-timeout=%s" .Values.controller.autoscalingTelemetry.collectionTimeout | quote }}
             - {{ printf "--autoscaling-telemetry-request-timeout=%s" .Values.controller.autoscalingTelemetry.requestTimeout | quote }}
             - {{ printf "--autoscaling-telemetry-concurrency=%d" (int .Values.controller.autoscalingTelemetry.concurrency) | quote }}
+            {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
+            - --metrics-bind-address=:8080
+            {{- else }}
             - --metrics-bind-address=0
+            {{- end }}
             - --health-probe-bind-address=:8081
             {{- range .Values.workload.imagePullSecrets }}
             - {{ printf "--workload-image-pull-secret=%s" .name | quote }}
@@ -132,6 +136,11 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
           ports:
+            {{- if eq (include "foretoken.observabilityEnabled" .) "true" }}
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+            {{- end }}
             - name: healthz
               containerPort: 8081
               protocol: TCP

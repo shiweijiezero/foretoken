@@ -185,7 +185,8 @@ groups:
             )
           )
 
-      - record: foretoken:frontend_http_request_duration_seconds:quantile5m
+      # The frontend middleware observes this histogram when the handler returns. For SSE, it is response-start latency.
+      - record: foretoken:frontend_http_response_start_latency_seconds:quantile5m
         expr: |
           label_replace(
             histogram_quantile(
@@ -478,6 +479,161 @@ groups:
             "quantile", "p99", "__name__", ".*"
           )
 
+      # Time a request spends waiting, in prefill, and in decode, as normalized histogram
+      # buckets. The quantile rule below derives from these buckets.
+      - record: foretoken:model_server_request_stage_time_seconds_bucket:rate5m
+        expr: |
+          sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, stage, le) (
+            label_replace(
+              label_replace(label_replace(label_replace(
+                rate(vllm:request_queue_time_seconds_bucket{
+                  endpoint="model-server",
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                }[5m]),
+                "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+              ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+              ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+              ),
+              "stage", "queue", "__name__", ".*"
+            )
+            or
+            label_replace(
+              label_replace(label_replace(label_replace(
+                rate(vllm:request_prefill_time_seconds_bucket{
+                  endpoint="model-server",
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                }[5m]),
+                "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+              ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+              ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+              ),
+              "stage", "prefill", "__name__", ".*"
+            )
+            or
+            label_replace(
+              label_replace(label_replace(label_replace(
+                rate(vllm:request_decode_time_seconds_bucket{
+                  endpoint="model-server",
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                }[5m]),
+                "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+              ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+              ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+              ),
+              "stage", "decode", "__name__", ".*"
+            )
+          )
+
+      - record: foretoken:model_server_request_stage_time_seconds:quantile5m
+        expr: |
+          label_replace(
+            histogram_quantile(0.50, sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, stage, le) (
+              foretoken:model_server_request_stage_time_seconds_bucket:rate5m
+            )),
+            "quantile", "p50", "__name__", ".*"
+          )
+          or
+          label_replace(
+            histogram_quantile(0.90, sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, stage, le) (
+              foretoken:model_server_request_stage_time_seconds_bucket:rate5m
+            )),
+            "quantile", "p90", "__name__", ".*"
+          )
+          or
+          label_replace(
+            histogram_quantile(0.99, sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, stage, le) (
+              foretoken:model_server_request_stage_time_seconds_bucket:rate5m
+            )),
+            "quantile", "p99", "__name__", ".*"
+          )
+
+      - record: foretoken:model_server_inter_token_latency_seconds_bucket:rate5m
+        expr: |
+          sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+            label_replace(label_replace(label_replace(
+              rate(vllm:inter_token_latency_seconds_bucket{
+                endpoint="model-server",
+                inference_foretoken_io_model_group!="",
+                inference_foretoken_io_model_role!=""
+              }[5m]),
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_inter_token_latency_seconds:quantile5m
+        expr: |
+          label_replace(
+            histogram_quantile(0.50, sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+              foretoken:model_server_inter_token_latency_seconds_bucket:rate5m
+            )),
+            "quantile", "p50", "__name__", ".*"
+          )
+          or
+          label_replace(
+            histogram_quantile(0.90, sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+              foretoken:model_server_inter_token_latency_seconds_bucket:rate5m
+            )),
+            "quantile", "p90", "__name__", ".*"
+          )
+          or
+          label_replace(
+            histogram_quantile(0.99, sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+              foretoken:model_server_inter_token_latency_seconds_bucket:rate5m
+            )),
+            "quantile", "p99", "__name__", ".*"
+          )
+
+      - record: foretoken:model_server_preemptions:rate5m
+        expr: |
+          sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name) (
+            label_replace(label_replace(label_replace(
+              rate(vllm:num_preemptions_total{
+                endpoint="model-server",
+                inference_foretoken_io_model_group!="",
+                inference_foretoken_io_model_role!=""
+              }[5m]),
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      # Request length distributions keep the histogram buckets for heatmap panels.
+      - record: foretoken:model_server_request_prompt_tokens_bucket:rate5m
+        expr: |
+          sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+            label_replace(label_replace(label_replace(
+              rate(vllm:request_prompt_tokens_bucket{
+                endpoint="model-server",
+                inference_foretoken_io_model_group!="",
+                inference_foretoken_io_model_role!=""
+              }[5m]),
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_request_generation_tokens_bucket:rate5m
+        expr: |
+          sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name, le) (
+            label_replace(label_replace(label_replace(
+              rate(vllm:request_generation_tokens_bucket{
+                endpoint="model-server",
+                inference_foretoken_io_model_group!="",
+                inference_foretoken_io_model_role!=""
+              }[5m]),
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
       - record: foretoken:model_server_prefix_cache_hit_ratio:rate5m
         expr: |
           label_replace(
@@ -612,44 +768,126 @@ groups:
             )
           )
 
+      # With honor_labels=false, exported_* holds workload identity while the
+      # plain labels identify the exporter Pod. Restore workload labels before
+      # aggregation; label_replace leaves non-conflicting labels unchanged.
       - record: foretoken:accelerator_gpu_utilization_ratio
         expr: |
-          max by (vendor, node, device_id) (
+          max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
+            label_replace(label_replace(label_replace(label_replace(
             label_replace(label_replace(label_replace(
-              DCGM_FI_DEV_GPU_UTIL / 100,
-              "vendor", "nvidia", "__name__", ".*"
+              label_replace(label_replace(
+                DCGM_FI_DEV_GPU_UTIL{
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                } / 100,
+                "vendor", "nvidia", "__name__", ".*"
+              ), "device_id", "$1", "UUID", "(.+)")
+              or
+              label_replace(label_replace(
+                mx_gpu_usage{
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                } / 100,
+                "vendor", "metax", "__name__", ".*"
+              ), "device_id", "$1", "uuid", "(.+)"),
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
             ), "node", "$1", "Hostname", "(.+)"
-            ), "device_id", "$1", "UUID", "(.+)"
-            )
-          )
-          or
-          max by (vendor, node, device_id) (
-            label_replace(label_replace(label_replace(
-              mx_gpu_usage / 100,
-              "vendor", "metax", "__name__", ".*"
-            ), "node", "$1", "Hostname", "(.+)"
-            ), "device_id", "$1", "uuid", "(.+)"
+            ), "namespace", "$1", "exported_namespace", "(.+)"
+            ), "pod", "$1", "exported_pod", "(.+)"
+            ), "container", "$1", "exported_container", "(.+)"
             )
           )
 
       - record: foretoken:accelerator_gpu_memory_usage_ratio
         expr: |
-          max by (vendor, node, device_id) (
+          max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
+            label_replace(label_replace(label_replace(label_replace(
             label_replace(label_replace(label_replace(
-              DCGM_FI_DEV_FB_USED
-              /
-              clamp_min(DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE, 1),
-              "vendor", "nvidia", "__name__", ".*"
+              label_replace(label_replace(
+                (
+                  DCGM_FI_DEV_FB_USED{
+                    inference_foretoken_io_model_group!="",
+                    inference_foretoken_io_model_role!=""
+                  }
+                  /
+                  clamp_min(
+                    DCGM_FI_DEV_FB_USED{
+                      inference_foretoken_io_model_group!="",
+                      inference_foretoken_io_model_role!=""
+                    }
+                    +
+                    DCGM_FI_DEV_FB_FREE{
+                      inference_foretoken_io_model_group!="",
+                      inference_foretoken_io_model_role!=""
+                    },
+                    1
+                  )
+                ),
+                "vendor", "nvidia", "__name__", ".*"
+              ), "device_id", "$1", "UUID", "(.+)")
+              or
+              label_replace(label_replace(
+                mx_memory_usage{
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                } / 100,
+                "vendor", "metax", "__name__", ".*"
+              ), "device_id", "$1", "uuid", "(.+)"),
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
             ), "node", "$1", "Hostname", "(.+)"
-            ), "device_id", "$1", "UUID", "(.+)"
+            ), "namespace", "$1", "exported_namespace", "(.+)"
+            ), "pod", "$1", "exported_pod", "(.+)"
+            ), "container", "$1", "exported_container", "(.+)"
             )
           )
-          or
-          max by (vendor, node, device_id) (
+
+      # Power and temperature exist only for NVIDIA devices; the vendor label keeps the
+      # series shape aligned with the utilization and memory rules.
+      - record: foretoken:accelerator_gpu_power_watts
+        expr: |
+          max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
+            label_replace(label_replace(label_replace(label_replace(
             label_replace(label_replace(label_replace(
-              mx_memory_usage / 100,
-              "vendor", "metax", "__name__", ".*"
+              label_replace(label_replace(
+                DCGM_FI_DEV_POWER_USAGE{
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                },
+                "vendor", "nvidia", "__name__", ".*"
+              ), "device_id", "$1", "UUID", "(.+)"),
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
             ), "node", "$1", "Hostname", "(.+)"
-            ), "device_id", "$1", "uuid", "(.+)"
+            ), "namespace", "$1", "exported_namespace", "(.+)"
+            ), "pod", "$1", "exported_pod", "(.+)"
+            ), "container", "$1", "exported_container", "(.+)"
+            )
+          )
+
+      - record: foretoken:accelerator_gpu_temperature_celsius
+        expr: |
+          max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
+            label_replace(label_replace(label_replace(label_replace(
+            label_replace(label_replace(label_replace(
+              label_replace(label_replace(
+                DCGM_FI_DEV_GPU_TEMP{
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role!=""
+                },
+                "vendor", "nvidia", "__name__", ".*"
+              ), "device_id", "$1", "UUID", "(.+)"),
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            ), "node", "$1", "Hostname", "(.+)"
+            ), "namespace", "$1", "exported_namespace", "(.+)"
+            ), "pod", "$1", "exported_pod", "(.+)"
+            ), "container", "$1", "exported_container", "(.+)"
             )
           )

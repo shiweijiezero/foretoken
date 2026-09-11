@@ -82,7 +82,7 @@ continuous ten-minute backlog.
 ## ForetokenModelServerKVCachePressureHigh
 
 The highest KV-cache usage among engines in a model group has remained at or
-above 95% for ten minutes.
+above the configured threshold (95% by default) for ten minutes.
 
 1. Confirm the group, role, and model labels, then inspect scheduler waiting and
    running requests.
@@ -91,9 +91,9 @@ above 95% for ten minutes.
 3. Compare individual Pods or engines to find the hotspot.
 
 The recorded value is the maximum across engines at each evaluation, not a
-fleet average; the engine contributing the maximum can change over time. The
-95% threshold is an initial warning policy and should be tuned from measured
-workload behavior.
+fleet average; the engine contributing the maximum can change over time. Tune
+`observability.alerts.thresholds.kvCacheUsageRatio` from measured workload
+behavior.
 
 ## ForetokenAcceleratorGPUUtilizationHigh
 

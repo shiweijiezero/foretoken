@@ -33,7 +33,7 @@ Pod 不指定宿主机 GPU 编号。k3d 可以在创建 Kubernetes 节点容器�
 
 主机需要：
 
-- Python 3.10 或更高版本；
+- Python 3.11 或更高版本；
 - Linux；
 - NVIDIA 驱动程序；
 - NVIDIA Container Toolkit；
