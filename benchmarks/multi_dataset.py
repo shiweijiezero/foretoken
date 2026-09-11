@@ -11,18 +11,18 @@ import re
 from dataclasses import replace
 from typing import Any
 
-from benchmarks.config import HttpBenchmarkConfig
-from benchmarks.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.request_execution.standard import StandardHttpLoadBenchmark
-from benchmarks.results.metrics import (
-    merge_request_measurements,
-    summarize_http_measurements,
-)
-from benchmarks.results.publication import (
+from benchmarks.config.benchmark import BenchmarkConfig
+from benchmarks.episodes.generated_load import GeneratedLoadBenchmark
+from benchmarks.model_service import ModelService
+from benchmarks.results.metrics import RequestMeasurement, summarize_measurements
+from benchmarks.results.output import (
+    BenchmarkRun,
+    ConsoleSink,
+    LocalDirectorySink,
+    ResultSink,
     build_benchmark_run_record,
-    open_local_result_directory,
-    publish_results,
     resolved_load_record,
+    result_directory_path,
 )
 from benchmarks.results.wandb import wandb_group_name
 
@@ -51,40 +51,50 @@ class MultiDatasetBenchmark:
 
     def __init__(
         self,
-        benchmark: HttpBenchmarkConfig,
-        endpoint: BenchmarkRuntimeEndpoint,
+        benchmark: BenchmarkConfig,
+        service: ModelService,
     ) -> None:
         self.benchmark = benchmark
-        self.endpoint = endpoint
+        self.service = service
 
-    def run(self) -> dict[str, Any]:
-        """Benchmark each dataset in order and publish one compatible merged result."""
+    def run(self) -> BenchmarkRun:
+        """Benchmark each dataset in order and publish one merged result."""
         load_record = resolved_load_record(self.benchmark)
         dataset_selectors = list(
-            self.benchmark.resolved_dataset.dataset_selectors
+            self.benchmark.resolved_workload.dataset_selectors
         )
         total_requests = int(load_record["number"])
         request_counts = _allocate_request_counts(
             total_requests, len(dataset_selectors)
         )
-        run_record = build_benchmark_run_record(
+        record = build_benchmark_run_record(
             self.benchmark,
-            self.endpoint,
+            self.service,
             "multi_dataset",
             load_record,
         )
-        run_record["datasets"] = dataset_selectors
-        run_record["dataset_request_counts"] = request_counts
-        result_directory = open_local_result_directory(self.benchmark)
+        record["datasets"] = dataset_selectors
+        record["dataset_request_counts"] = request_counts
 
-        wandb_enabled = self.benchmark.outputs.includes("wandb")
+        # The merged result is printed and saved locally; each child dataset
+        # owns its own W&B run inside the shared group.
+        output_dir = result_directory_path(self.benchmark)
+        sinks: list[ResultSink] = []
+        if not self.benchmark.outputs.includes("quiet"):
+            sinks.append(ConsoleSink())
+        if self.benchmark.outputs.includes("local"):
+            sinks.append(LocalDirectorySink(self.benchmark, output_dir))
+        for sink in sinks:
+            sink.open(record)
+
         wandb_group = (
-            wandb_group_name(self.benchmark, self.endpoint)
-            if wandb_enabled
+            wandb_group_name(self.benchmark, self.service)
+            if self.benchmark.outputs.includes("wandb")
             else None
         )
 
-        dataset_measurements: list[dict[str, Any]] = []
+        measurements: list[RequestMeasurement] = []
+        total_time = 0.0
         dataset_results: list[dict[str, Any]] = []
         for index, (dataset_selector, request_count) in enumerate(
             zip(dataset_selectors, request_counts)
@@ -107,45 +117,40 @@ class MultiDatasetBenchmark:
             child_name = _dataset_directory_name(index, dataset_selector)
             child_benchmark = replace(
                 self.benchmark,
-                request_dataset=replace(
-                    self.benchmark.resolved_dataset,
+                workload=replace(
+                    self.benchmark.resolved_workload,
                     dataset_selectors=[dataset_selector],
                 ),
-                load_schedule=replace(
-                    self.benchmark.load_schedule,
+                load=replace(
+                    self.benchmark.load,
                     request_count=request_count,
                 ),
             )
-            child_result = StandardHttpLoadBenchmark(
+            child = GeneratedLoadBenchmark(
                 child_benchmark,
-                self.endpoint,
+                self.service,
                 label=child_name,
-                output_dir=os.path.join(
-                    result_directory.output_dir, child_name
-                ),
+                output_dir=os.path.join(output_dir, child_name),
                 wandb_group=wandb_group,
-                collect_request_measurements=True,
             ).run()
-            dataset_measurements.append(child_result["raw"])
+            if child.measurements is None:
+                raise RuntimeError("generated load did not return measurements")
+            measurements.extend(child.measurements)
+            total_time += float(child.metrics["benchmark_time"])
             dataset_results.append(
-                {
-                    "dataset": dataset_selector,
-                    "number": request_count,
-                    "metrics": child_result["metrics"],
-                    "output_dir": child_result["output_dir"],
-                }
+                {"dataset": dataset_selector, "metrics": child.metrics}
             )
 
-        if not dataset_measurements:
+        if not dataset_results:
             raise ValueError(
                 f"No requests dispatched for datasets={dataset_selectors} "
                 f"with total number={total_requests}"
             )
 
-        merged_measurements = merge_request_measurements(dataset_measurements)
-        metrics = summarize_http_measurements(
-            self.benchmark,
-            merged_measurements,
+        metrics = summarize_measurements(
+            measurements,
+            total_time=total_time,
+            stream=self.benchmark.generation.stream,
             arrival_rate=load_record["rate"],
             request_count=total_requests,
             reported_concurrency=load_record["resolved_parallel"],
@@ -186,7 +191,7 @@ class MultiDatasetBenchmark:
             )
             metrics["conversation"] = {
                 "attempted_num": total_requests,
-                "max_turns": self.benchmark.resolved_dataset.max_turns,
+                "max_turns": self.benchmark.resolved_workload.max_turns,
                 "avg_turn_requests": (
                     metrics["request_num"] / total_requests
                     if total_requests
@@ -208,19 +213,14 @@ class MultiDatasetBenchmark:
                 "eligible_cache_hit_rate_percent": dict(empty_distribution),
                 "per_dataset": child_conversations,
             }
-        publish_results(
-            self.benchmark,
-            result_directory,
-            run_record,
-            merged_measurements,
-            metrics,
+        run = BenchmarkRun(
+            record=record,
+            metrics=metrics,
+            measurements=measurements,
+            artifacts={},
         )
-
-        return {
-            "mode": "multi_dataset",
-            "metrics": metrics,
-            "output_dir": result_directory.output_dir,
-            "datasets": dataset_selectors,
-            "dataset_request_counts": request_counts,
-            "wandb_group": wandb_group,
-        }
+        for sink in sinks:
+            sink.publish(run)
+        for sink in sinks:
+            sink.close()
+        return run

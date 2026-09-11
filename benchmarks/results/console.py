@@ -8,8 +8,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from benchmarks.config import HttpBenchmarkConfig
-from benchmarks.deployment import BenchmarkRuntimeEndpoint
+from benchmarks.config.benchmark import BenchmarkConfig
+from benchmarks.model_service import ModelService
 from benchmarks.results.metrics import generation_tokens_per_second_per_gpu
 
 logger = logging.getLogger(__name__)
@@ -25,25 +25,21 @@ def configure_logging(console_enabled: bool) -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
-def print_benchmark_endpoint(
-    endpoint_url: str,
-    models: tuple[str, ...],
-    hostname: str,
-) -> None:
-    """Print the public benchmark endpoint selected from the Foretoken deployment."""
-    print(f"Model service: {endpoint_url}")
-    if hostname:
-        print(f"Hostname: {hostname}")
-    print(f"Models: {', '.join(models)}")
+def print_model_service(service: ModelService) -> None:
+    """Print the public model service selected from the Foretoken deployment."""
+    print(f"Model service: {service.chat_completions_url}")
+    if service.hostname:
+        print(f"Hostname: {service.hostname}")
+    print(f"Models: {', '.join(service.models)}")
 
 
 def format_benchmark_config(
-    benchmark: HttpBenchmarkConfig,
-    endpoint: BenchmarkRuntimeEndpoint,
+    benchmark: BenchmarkConfig,
+    service: ModelService,
 ) -> str:
     """Build a user-visible HTTP benchmark configuration summary."""
-    dataset = benchmark.resolved_dataset
-    trace = benchmark.arrival_trace
+    dataset = benchmark.resolved_workload
+    trace = benchmark.trace
     if trace.trace_selector:
         dataset_label = (
             f"trace={trace.trace_selector}, "
@@ -88,7 +84,7 @@ def format_benchmark_config(
         if trace.synthetic_prefix_reuse:
             trace_lines += "  Trace Prefix: synthetic hash-id blocks\n"
     else:
-        schedule = benchmark.load_schedule
+        schedule = benchmark.load
         concurrency_label = (
             "no concurrency limit"
             if schedule.unbounded_concurrency
@@ -125,8 +121,8 @@ def format_benchmark_config(
     )
     return (
         "\n===== Foretoken Benchmark Configuration ====\n"
-        f"  URL        : {endpoint.url}\n"
-        f"  Model      : {endpoint.model}\n"
+        f"  URL        : {service.chat_completions_url}\n"
+        f"  Model      : {service.model}\n"
         f"{concurrency_line}"
         f"  {count_name:<11}: {request_count_label}\n"
         f"  Arrival rate: {arrival_rate_label}\n"

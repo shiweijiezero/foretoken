@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Map Foretoken standard HTTP workloads to EvalScope public benchmark APIs."""
+"""Map Foretoken generated HTTP workloads to EvalScope public benchmark APIs."""
 
 from __future__ import annotations
 
@@ -16,14 +16,17 @@ if TYPE_CHECKING:
     from evalscope.perf.utils.perf_models import BenchmarkSummary, PercentileResult
     from evalscope.perf.utils.trace_metrics import TraceLevelSummary
 
-from benchmarks.config import HttpBenchmarkConfig
-from benchmarks.deployment import BenchmarkRuntimeEndpoint
-from benchmarks.datasets.datasets import (
-    load_chat_conversations,
-    resolve_tokenizer_path,
+from benchmarks.config.benchmark import BenchmarkConfig
+from benchmarks.model_service import ModelService
+from benchmarks.results.metrics import (
+    RequestMeasurement,
+    generation_tokens_per_second_per_user,
+)
+from benchmarks.tasks.conversations import (
+    load_conversation_tasks,
     split_chat_conversation,
 )
-from benchmarks.results.metrics import generation_tokens_per_second_per_user
+from benchmarks.tasks.huggingface import resolve_tokenizer_path
 
 
 EVALSCOPE_API = "foretoken_openai"
@@ -70,17 +73,15 @@ def _evalscope_arguments_type() -> tuple[str, type]:
 
 
 def _materialize_evalscope_request_dataset(
-    benchmark: HttpBenchmarkConfig,
+    benchmark: BenchmarkConfig,
     output_dir: str,
 ) -> tuple[str, str]:
     """Normalize conversations and select the EvalScope single-turn or multi-turn plugin."""
-    conversations = load_chat_conversations(benchmark)
+    conversations = [task.messages() for task in load_conversation_tasks(benchmark)]
     turn_lists = [split_chat_conversation(messages) for messages in conversations]
+    max_turns = benchmark.resolved_workload.max_turns
     effective_turn_lists = [
-        turns[: benchmark.resolved_dataset.max_turns]
-        if benchmark.resolved_dataset.max_turns is not None
-        and benchmark.resolved_dataset.max_turns > 0
-        else turns
+        turns[:max_turns] if max_turns is not None and max_turns > 0 else turns
         for turns in turn_lists
     ]
     dataset_name = (
@@ -100,29 +101,29 @@ def _materialize_evalscope_request_dataset(
 
 
 def _evalscope_arguments(
-    benchmark: HttpBenchmarkConfig,
-    endpoint: BenchmarkRuntimeEndpoint,
+    benchmark: BenchmarkConfig,
+    service: ModelService,
     output_dir: str,
 ) -> Any:
-    """Map one Foretoken standard workload to EvalScope point arguments."""
+    """Map one Foretoken generated workload to EvalScope point arguments."""
     EVALSCOPE_API, ForetokenEvalScopeArguments = _evalscope_arguments_type()
 
-    schedule = benchmark.load_schedule
+    schedule = benchmark.load
     generation = benchmark.generation
-    dataset = benchmark.resolved_dataset
+    dataset = benchmark.resolved_workload
     is_random = dataset.dataset_selectors == ["random"]
     omit_temperature = (
         generation.temperature is None
         and "temperature" not in generation.extra_body
     )
     argument_values: dict[str, Any] = {
-        "model": endpoint.model,
-        "url": endpoint.url,
+        "model": service.model,
+        "url": service.chat_completions_url,
         "api": EVALSCOPE_API,
-        "api_key": benchmark.endpoint.api_key,
-        "headers": endpoint.headers,
-        "total_timeout": benchmark.endpoint.timeout_seconds,
-        "read_timeout": benchmark.endpoint.timeout_seconds,
+        "api_key": service.api_key,
+        "headers": service.request_headers,
+        "total_timeout": benchmark.service.timeout_seconds,
+        "read_timeout": benchmark.service.timeout_seconds,
         "no_test_connection": True,
         "number": schedule.request_count,
         "parallel": schedule.max_concurrency,
@@ -250,7 +251,7 @@ def _trace_metric_distribution(
 
 
 def _map_evalscope_metrics(
-    benchmark: HttpBenchmarkConfig,
+    benchmark: BenchmarkConfig,
     summary: BenchmarkSummary,
     percentiles: PercentileResult,
     trace_summary: TraceLevelSummary | None = None,
@@ -258,7 +259,7 @@ def _map_evalscope_metrics(
     single_turn: bool,
 ) -> dict[str, Any]:
     """Map typed EvalScope results to Foretoken metric fields."""
-    schedule = benchmark.load_schedule
+    schedule = benchmark.load
     reported_concurrency = (
         -1 if schedule.unbounded_concurrency else schedule.max_concurrency
     )
@@ -333,7 +334,7 @@ def _map_evalscope_metrics(
         )
         metrics["conversation"] = {
             "attempted_num": conversation_count,
-            "max_turns": benchmark.resolved_dataset.max_turns,
+            "max_turns": benchmark.resolved_workload.max_turns,
             "avg_turn_requests": (
                 int(summary.total_requests) / conversation_count
                 if conversation_count
@@ -377,72 +378,50 @@ def _map_evalscope_metrics(
     return metrics
 
 
-def _read_evalscope_request_measurements(
-    output_dir: str,
-    total_time: float,
-) -> dict[str, Any]:
-    """Read EvalScope 1.11.1 SQLite records for multi-dataset merging.
+def _read_evalscope_request_measurements(output_dir: str) -> list[RequestMeasurement]:
+    """Read EvalScope 1.11.1 SQLite records as per-request measurements.
 
-    ``run_one_benchmark`` returns aggregate types only.  Multi-dataset runs
-    need the per-request rows to combine success counts and latency samples,
-    while single-dataset runs can publish EvalScope's database unchanged and
-    avoid interpreting its storage schema.
+    ``run_one_benchmark`` returns aggregate types only; the ``result`` table holds
+    the per-request rows that multi-dataset runs merge. EvalScope persists HTTP
+    turns without conversation identity, so conversation fields stay unset.
     """
     database_path = os.path.join(output_dir, "benchmark_data.db")
     with sqlite3.connect(database_path) as connection:
         rows = connection.execute(
             """
-            SELECT success, is_stream, start_time, completed_time, latency,
-                   first_chunk_latency, prompt_tokens, completion_tokens,
-                   time_per_output_token, inter_token_latencies
+            SELECT success, start_time, latency, first_chunk_latency,
+                   prompt_tokens, completion_tokens, time_per_output_token,
+                   inter_token_latencies
             FROM result
             ORDER BY start_time
             """
         ).fetchall()
     if not rows:
-        return {
-            "results": [],
-            "total_time": total_time,
-            "local_artifact": "benchmark_data.db",
-        }
-    first_start = min(float(row[2]) for row in rows)
-    results = []
-    for row in rows:
-        inter_token_latencies = json.loads(row[9] or "[]")
-        results.append(
-            {
-                "success": bool(row[0]),
-                "status_code": None,
-                "stream": bool(row[1]),
-                "latency": float(row[4] or 0.0),
-                "ttft": (
-                    float(row[5]) if row[5] is not None else None
-                ),
-                "tpot": (
-                    float(row[8]) if row[8] is not None else None
-                ),
-                "itl_samples": inter_token_latencies,
-                "input_tokens": int(row[6] or 0),
-                "output_tokens": int(row[7] or 0),
-                "error": None,
-                "end_time": float(row[3]) - first_start,
-            }
+        return []
+    first_start = min(float(row[1]) for row in rows)
+    return [
+        RequestMeasurement(
+            started_at=float(row[1]) - first_start,
+            ttft=float(row[3]) if row[3] is not None else None,
+            latency=float(row[2] or 0.0),
+            tpot=float(row[6]) if row[6] is not None else None,
+            itl_samples=tuple(float(value) for value in json.loads(row[7] or "[]")),
+            input_tokens=int(row[4] or 0),
+            output_tokens=int(row[5] or 0),
+            succeeded=bool(row[0]),
+            conversation_id=None,
+            turn=None,
         )
-    return {
-        "results": results,
-        "total_time": total_time,
-        "local_artifact": "benchmark_data.db",
-    }
+        for row in rows
+    ]
 
 
 def run_evalscope_standard_load(
-    benchmark: HttpBenchmarkConfig,
-    endpoint: BenchmarkRuntimeEndpoint,
+    benchmark: BenchmarkConfig,
+    service: ModelService,
     output_dir: str,
-    *,
-    collect_request_measurements: bool = False,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Run a standard workload through EvalScope public point execution and return mapped results."""
+) -> tuple[dict[str, Any], list[RequestMeasurement]]:
+    """Run a generated workload through EvalScope and return its metrics and per-request measurements."""
     try:
         from evalscope.perf.main import run_one_benchmark
         from evalscope.perf.utils.handler import PerfBenchmarkInterrupted
@@ -459,8 +438,8 @@ def run_evalscope_standard_load(
         False,
         os.path.join(output_dir, "benchmark.log"),
     )
-    arguments = _evalscope_arguments(benchmark, endpoint, output_dir)
-    seed_everything(benchmark.resolved_dataset.random_seed)
+    arguments = _evalscope_arguments(benchmark, service, output_dir)
+    seed_everything(benchmark.resolved_workload.random_seed)
     materialized_dataset = (
         arguments.dataset_path
         if arguments.dataset in {"line_by_line", "custom_multi_turn"}
@@ -482,14 +461,4 @@ def run_evalscope_standard_load(
         benchmark, summary, percentiles, trace_summary,
         single_turn=not arguments.multi_turn,
     )
-    if collect_request_measurements:
-        measurements = _read_evalscope_request_measurements(
-            output_dir, float(summary.time_taken)
-        )
-    else:
-        measurements = {
-            "results": [],
-            "total_time": float(summary.time_taken),
-            "local_artifact": "benchmark_data.db",
-        }
-    return metrics, measurements
+    return metrics, _read_evalscope_request_measurements(output_dir)

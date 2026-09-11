@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Discover, temporarily deploy, and clean up a Foretoken service for HTTP benchmarks."""
+"""Resolve the model service a benchmark measures, including temporary Kustomize deployments."""
 
 from __future__ import annotations
 
@@ -10,16 +10,13 @@ import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from types import MappingProxyType
-from typing import Any, Mapping
-from urllib.parse import urlsplit, urlunsplit
+from typing import Any
 
 import httpx
 import yaml
 
-from benchmarks.config import ChatCompletionsEndpoint
+from benchmarks.config.benchmark import ModelServiceSource
 from foretoken.kubernetes import (
-    FrontendEndpoint,
     Kubectl,
     load_deployment,
     resolve_frontend_endpoint,
@@ -32,32 +29,34 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class BenchmarkRuntimeEndpoint:
-    """Store immutable endpoint and capacity resolved for one benchmark run."""
+class ModelService:
+    """Describe one OpenAI-compatible model service that is ready for benchmark requests.
 
-    url: str
+    ``chat_completions_url`` preserves the public endpoint selected by the user or
+    deployment. ``routing_host`` is the HTTP ``Host`` header a Gateway HTTP listener
+    needs to route by hostname; it is empty for LoadBalancer, HTTPS, and user-supplied
+    URLs. Every client derives its ``Authorization`` header from ``api_key``.
+    """
+
+    chat_completions_url: str
     model: str
+    api_key: str
     models: tuple[str, ...]
-    headers: Mapping[str, str]
     hostname: str
     gpu_count: int
+    routing_host: str
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "headers", MappingProxyType(dict(self.headers)))
+    @property
+    def api_root(self) -> str:
+        """Return the OpenAI client base URL derived from the Chat Completions endpoint."""
+        return self.chat_completions_url.rstrip("/").removesuffix(
+            "/chat/completions"
+        )
 
-
-def direct_benchmark_endpoint(
-    endpoint: ChatCompletionsEndpoint,
-) -> BenchmarkRuntimeEndpoint:
-    """Build the runtime endpoint for an already supplied OpenAI-compatible URL."""
-    return BenchmarkRuntimeEndpoint(
-        url=endpoint.url,
-        model=endpoint.model,
-        models=(endpoint.model,),
-        headers={},
-        hostname="",
-        gpu_count=1,
-    )
+    @property
+    def request_headers(self) -> dict[str, str]:
+        """Return the routing headers every request must carry, without credentials."""
+        return {"Host": self.routing_host} if self.routing_host else {}
 
 
 def _select_model(models: Iterable[str], requested: str) -> str:
@@ -75,10 +74,6 @@ def _select_model(models: Iterable[str], requested: str) -> str:
             + ", ".join(available)
         )
     return available[0]
-
-
-def _chat_url(endpoint: FrontendEndpoint) -> str:
-    return f"{endpoint.url}/v1/chat/completions"
 
 
 def _model_gpu_count(deployment: ForetokenDeployment, model: str) -> int:
@@ -101,22 +96,8 @@ def _model_gpu_count(deployment: ForetokenDeployment, model: str) -> int:
     return total
 
 
-def select_benchmark_model(
-    deployment: ForetokenDeployment,
-    requested_model: str,
-) -> tuple[str, int]:
-    """Return the public model selected for this benchmark and the deployment GPU count."""
-    model = _select_model(deployment.models.values(), requested_model)
-    return model, _model_gpu_count(deployment, model)
-
-
-def _api_root(chat_url: str) -> str:
-    parsed = urlsplit(chat_url)
-    return urlunsplit((parsed.scheme, parsed.netloc, "", "", ""))
-
-
 def _wait_for_models(
-    url: str,
+    api_root: str,
     headers: dict[str, str],
     timeout: float,
     expected_models: Iterable[str],
@@ -133,7 +114,7 @@ def _wait_for_models(
     ) as client:
         while time.monotonic() < deadline:
             try:
-                response = client.get(f"{_api_root(url)}/v1/models")
+                response = client.get(f"{api_root}/models")
                 response.raise_for_status()
                 models = tuple(
                     sorted(
@@ -154,40 +135,40 @@ def _wait_for_models(
     raise DeploymentError(f"frontend did not become ready: {last_error}")
 
 
-def discover_benchmark_endpoint(
+def _discover_model_service(
     deployment: ForetokenDeployment,
     kubectl: Kubectl,
-    timeout: str,
-    *,
-    requested_model: str,
-    api_key: str,
-) -> BenchmarkRuntimeEndpoint:
-    """Wait for the rendered service to become ready and return the public HTTP benchmark endpoint."""
-    wait_seconds = timeout_seconds(timeout)
-    model, gpu_count = select_benchmark_model(deployment, requested_model)
-    wait_for_resources(deployment.service_refs(), kubectl, timeout)
-    endpoint = resolve_frontend_endpoint(deployment, kubectl, timeout)
-    url = _chat_url(endpoint)
+    source: ModelServiceSource,
+) -> ModelService:
+    """Wait for the rendered service to become ready and return its public model service."""
+    wait_seconds = timeout_seconds(source.wait_timeout)
+    model = _select_model(deployment.models.values(), source.model)
+    gpu_count = _model_gpu_count(deployment, model)
+    wait_for_resources(deployment.service_refs(), kubectl, source.wait_timeout)
+    endpoint = resolve_frontend_endpoint(deployment, kubectl, source.wait_timeout)
+    chat_completions_url = f"{endpoint.url}/v1/chat/completions"
+    api_root = f"{endpoint.url}/v1"
     headers = {"Host": endpoint.routing_host} if endpoint.routing_host else {}
     models = _wait_for_models(
-        url,
+        api_root,
         headers,
         wait_seconds,
         deployment.models.values(),
-        api_key,
+        source.api_key,
     )
     if model not in models:
         raise DeploymentError(
             f"model {model!r} is not advertised by the frontend; "
             f"available models: {', '.join(models)}"
         )
-    return BenchmarkRuntimeEndpoint(
-        url,
-        model,
-        models,
-        headers,
-        deployment.hostname,
-        gpu_count,
+    return ModelService(
+        chat_completions_url=chat_completions_url,
+        model=model,
+        api_key=source.api_key,
+        models=models,
+        hostname=deployment.hostname,
+        gpu_count=gpu_count,
+        routing_host=endpoint.routing_host,
     )
 
 
@@ -247,16 +228,28 @@ def _delete_objects(
 
 
 @contextmanager
-def benchmark_endpoint_from_kustomize(
-    kustomize_path: str,
-    timeout: str,
-    *,
-    requested_model: str,
-    api_key: str,
-) -> Iterator[BenchmarkRuntimeEndpoint]:
-    """Reuse a complete deployment, or create and clean up only objects missing for this benchmark."""
+def resolve_model_service(source: ModelServiceSource) -> Iterator[ModelService]:
+    """Yield the model service selected by the benchmark user.
+
+    A URL source is used as given without touching Kubernetes. A Kustomize source
+    reuses a complete deployment unchanged, or creates only the missing objects
+    and deletes them again after the benchmark; a partially present deployment is
+    rejected.
+    """
+    if source.url:
+        yield ModelService(
+            chat_completions_url=source.url,
+            model=source.model,
+            api_key=source.api_key,
+            models=(source.model,),
+            hostname="",
+            gpu_count=1,
+            routing_host="",
+        )
+        return
+
     kubectl = Kubectl()
-    deployment = load_deployment(kustomize_path, kubectl)
+    deployment = load_deployment(source.kustomize_path, kubectl)
     presence = _service_presence(deployment, kubectl)
     if any(presence) and not all(presence):
         raise DeploymentError(
@@ -271,18 +264,12 @@ def benchmark_endpoint_from_kustomize(
         try:
             kubectl.apply(yaml.safe_dump_all(created))
         except Exception:
-            _delete_objects(kubectl, created, timeout)
+            _delete_objects(kubectl, created, source.wait_timeout)
             raise
 
     try:
-        yield discover_benchmark_endpoint(
-            deployment,
-            kubectl,
-            timeout,
-            requested_model=requested_model,
-            api_key=api_key,
-        )
+        yield _discover_model_service(deployment, kubectl, source)
     finally:
         if created:
             logger.info("Cleaning up Foretoken service from %s", deployment.path)
-            _delete_objects(kubectl, created, timeout)
+            _delete_objects(kubectl, created, source.wait_timeout)

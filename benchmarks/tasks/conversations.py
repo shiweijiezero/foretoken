@@ -1,45 +1,48 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Read dataset rows and normalize them into requests or conversations."""
+"""Read conversation rows from JSONL or Hugging Face sources and normalize them into tasks."""
 
 from __future__ import annotations
 
 import json
-import logging
-import os
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
 
-from benchmarks.config import ChatRequestDataset, HttpBenchmarkConfig
-
-logger = logging.getLogger(__name__)
-
-# Remote tokenizers download only files needed for tokenization and decoding.
-_TOKENIZER_ALLOW_PATTERNS = (
-    "tokenizer*",
-    "vocab*",
-    "merges*",
-    "special_tokens_map*",
-    "added_tokens*",
-    "chat_template*",
-    "tokenization*",
-    "config.json",
+from benchmarks.config.benchmark import BenchmarkConfig, ChatRequestDataset
+from benchmarks.tasks.huggingface import (
+    is_hf_dataset_spec,
+    is_hf_file_uri,
+    iter_hf_rows,
+    resolve_hf_file_uri,
 )
 
 
 @dataclass(frozen=True)
-class ChatRequestContent:
-    """Represent one independent Chat Completions request without episode state."""
+class Turn:
+    """One Chat Completions message, including fields beyond role and content."""
 
-    prompt: str | None = None
-    messages: list[dict[str, Any]] | None = None
-    tools: list[dict[str, Any]] | None = None
+    role: str
+    content: Any
+    extra: Mapping[str, Any] = field(default_factory=dict)
 
 
-_HF_DATASETS_PREFIX = "hf://datasets/"
-_HF_FILE_URI_FORMAT = "hf://datasets/<org>/<repo>[@<revision>]/<path>"
+@dataclass(frozen=True)
+class Task:
+    """One benchmark episode input: the chat turns to run and source metadata such as tools."""
+
+    id: str
+    turns: tuple[Turn, ...]
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def messages(self) -> list[dict[str, Any]]:
+        """Return the turns as OpenAI Chat Completions messages."""
+        return [
+            {"role": turn.role, "content": turn.content, **turn.extra}
+            for turn in self.turns
+        ]
 
 
 def iter_jsonl_rows(
@@ -63,153 +66,6 @@ def iter_jsonl_rows(
                 ) from error
             yield jsonl_path, line_number, row_index, row
             row_index += 1
-
-
-def _configured_hub_cache_dir() -> str | None:
-    """Return the Hugging Face cache directory selected by the runtime environment."""
-    for variable in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
-        value = os.environ.get(variable)
-        if value:
-            return str(Path(value).expanduser())
-
-    home = os.environ.get("HF_HOME")
-    if home:
-        return str(Path(home).expanduser() / "hub")
-
-    xdg_cache = os.environ.get("XDG_CACHE_HOME")
-    if xdg_cache:
-        return str(Path(xdg_cache).expanduser() / "huggingface" / "hub")
-    return None
-
-
-def resolve_tokenizer_path(tokenizer_path: str) -> str:
-    """Return a local tokenizer path, downloading a Hub repository when needed."""
-    local = Path(tokenizer_path).expanduser()
-    if local.exists():
-        return str(local.resolve())
-    if local.is_absolute() or tokenizer_path.startswith(("./", "../", "~")):
-        raise ValueError(
-            f"Tokenizer path does not exist locally: {tokenizer_path!r}; "
-            "pass an existing directory or a Hugging Face repository ID"
-        )
-
-    from huggingface_hub import snapshot_download
-
-    cache_dir = _configured_hub_cache_dir()
-    logger.info(
-        "Resolving tokenizer from Hugging Face repo %r%s",
-        tokenizer_path,
-        f" into {cache_dir!r}" if cache_dir else "",
-    )
-    download_args: dict[str, Any] = {
-        "repo_id": tokenizer_path,
-        "allow_patterns": list(_TOKENIZER_ALLOW_PATTERNS),
-    }
-    if cache_dir:
-        # Hugging Face resolves its default cache during import, so pass the
-        # runtime-selected directory explicitly for remote benchmark processes.
-        download_args["cache_dir"] = cache_dir
-    return snapshot_download(**download_args)
-
-
-def is_hf_file_uri(source: str) -> bool:
-    """Return whether a source is a canonical Hugging Face dataset file URI."""
-    return source.startswith(_HF_DATASETS_PREFIX)
-
-
-def parse_hf_file_uri(uri: str) -> tuple[str, Optional[str], str]:
-    """Parse a Hugging Face dataset file URI into repository, revision, and path."""
-    if not is_hf_file_uri(uri):
-        raise ValueError(
-            f"Invalid HF file URI {uri!r}. Use {_HF_FILE_URI_FORMAT}."
-        )
-    remainder = uri[len(_HF_DATASETS_PREFIX) :]
-    if not remainder or remainder.startswith("/"):
-        raise ValueError(
-            f"Invalid HF file URI {uri!r}. Use {_HF_FILE_URI_FORMAT}."
-        )
-    if "@" in remainder:
-        repo_id, after_at = remainder.split("@", 1)
-        if not repo_id or "/" not in after_at:
-            raise ValueError(
-                f"Invalid HF file URI {uri!r}. Use {_HF_FILE_URI_FORMAT}."
-            )
-        revision, filename = after_at.split("/", 1)
-        if not revision or not filename:
-            raise ValueError(
-                f"Invalid HF file URI {uri!r}. Use {_HF_FILE_URI_FORMAT}."
-            )
-        return repo_id, revision, filename
-    parts = remainder.split("/")
-    if len(parts) >= 3 and all(parts):
-        return f"{parts[0]}/{parts[1]}", None, "/".join(parts[2:])
-    if len(parts) == 2 and all(parts):
-        return parts[0], None, parts[1]
-    raise ValueError(
-        f"Invalid HF file URI {uri!r}. Use {_HF_FILE_URI_FORMAT}."
-    )
-
-
-def resolve_hf_file_uri(uri: str) -> str:
-    """Download a Hugging Face dataset file and return its local cache path."""
-    from huggingface_hub import hf_hub_download
-
-    repo_id, revision, filename = parse_hf_file_uri(uri)
-    return hf_hub_download(
-        repo_id=repo_id,
-        filename=filename,
-        repo_type="dataset",
-        revision=revision,
-    )
-
-
-def parse_hf_dataset_spec(spec: str) -> tuple[str, str]:
-    """Parse a Hugging Face dataset selector into dataset ID and split/config."""
-    if ":" not in spec:
-        raise ValueError(
-            f"Invalid Hugging Face dataset spec {spec!r}. "
-            "Use 'org/name:split' (split is required)."
-        )
-    dataset_id, split = spec.rsplit(":", 1)
-    if not dataset_id or not split:
-        raise ValueError(
-            f"Invalid Hugging Face dataset spec {spec!r}. Use 'org/name:split'."
-        )
-    return dataset_id, split
-
-
-def is_hf_dataset_spec(spec: str) -> bool:
-    """Return whether a selector names a supported Hugging Face dataset."""
-    try:
-        parse_hf_dataset_spec(spec)
-    except ValueError:
-        return False
-    return True
-
-
-def _load_hf_data(dataset_id: str, split: str) -> Any:
-    """Stream one Hugging Face split or builder configuration."""
-    from datasets import get_dataset_config_names, get_dataset_split_names, load_dataset
-
-    configs = get_dataset_config_names(dataset_id)
-    if split in configs:
-        data_splits = get_dataset_split_names(dataset_id, split)
-        if len(data_splits) != 1:
-            raise ValueError(
-                f"Hugging Face dataset {dataset_id!r} config {split!r} has "
-                f"multiple data splits {data_splits}; expected exactly one."
-            )
-        return load_dataset(
-            dataset_id, name=split, split=data_splits[0], streaming=True
-        )
-    return load_dataset(dataset_id, split=split, streaming=True)
-
-
-def iter_hf_rows(spec: str) -> Iterator[tuple[int, Any]]:
-    """Yield zero-based row indexes and values from a Hugging Face selector."""
-    dataset_id, split = parse_hf_dataset_spec(spec)
-    for row_index, row in enumerate(_load_hf_data(dataset_id, split)):
-        yield row_index, dict(row)
 
 
 def iter_dataset_rows(
@@ -278,17 +134,48 @@ def _extract_row_content(
     )
 
 
-def _normalize_chat_request(
+def _message_turns(
+    messages: Any,
+    dataset_path: Path,
+    line_number: int,
+) -> tuple[Turn, ...]:
+    """Convert a non-empty list of role/content messages into turns."""
+    if not isinstance(messages, list) or not messages:
+        raise ValueError(f"Invalid messages at {dataset_path}:{line_number}")
+    turns: list[Turn] = []
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict) or not {"role", "content"} <= message.keys():
+            raise ValueError(
+                f"Invalid message {index} at {dataset_path}:{line_number}"
+            )
+        turns.append(
+            Turn(
+                role=str(message["role"]),
+                content=message["content"],
+                extra={
+                    key: value
+                    for key, value in message.items()
+                    if key not in {"role", "content"}
+                },
+            )
+        )
+    return tuple(turns)
+
+
+def _request_task(
     row: Any,
     dataset_path: Path,
     line_number: int,
-) -> ChatRequestContent:
+    row_index: int,
+) -> Task:
+    """Read one row as an independent request whose tools, if any, travel in the task metadata."""
     messages, prompt, tools = _extract_row_content(row, dataset_path, line_number)
+    metadata = {"tools": tools} if tools else {}
     if prompt is not None:
-        return ChatRequestContent(prompt=prompt, tools=tools)
-    if not isinstance(messages, list) or not messages:
-        raise ValueError(f"Invalid messages at {dataset_path}:{line_number}")
-    return ChatRequestContent(messages=messages, tools=tools)
+        turns: tuple[Turn, ...] = (Turn(role="user", content=prompt),)
+    else:
+        turns = _message_turns(messages, dataset_path, line_number)
+    return Task(id=f"{dataset_path}:{row_index}", turns=turns, metadata=metadata)
 
 
 def _sharegpt_messages(
@@ -322,12 +209,13 @@ def _sharegpt_messages(
     return messages
 
 
-def _normalize_chat_conversation(
+def _conversation_task(
     row: Any,
     dataset_path: Path,
     line_number: int,
-) -> list[dict[str, Any]]:
-    """Read one OpenAI or ShareGPT record for EvalScope to run as a real conversation."""
+    row_index: int,
+) -> Task:
+    """Read one OpenAI or ShareGPT record as a conversation the engine runs turn by turn."""
     messages, prompt, tools = _extract_row_content(
         row,
         dataset_path,
@@ -392,7 +280,10 @@ def _normalize_chat_conversation(
             "Each multi-turn delta must contain a user message at "
             f"{dataset_path}:{line_number}"
         )
-    return messages
+    return Task(
+        id=f"{dataset_path}:{row_index}",
+        turns=_message_turns(messages, dataset_path, line_number),
+    )
 
 
 def split_chat_conversation(
@@ -413,102 +304,79 @@ def split_chat_conversation(
     return turns
 
 
-def _load_dataset_values(
+def _load_dataset_tasks(
     dataset_selector: str,
     requested_count: int,
     row_offset: int,
-    consumer: Callable[[Any, Path, int], Any],
+    normalize: Callable[[Any, Path, int, int], Task],
     kind: str,
-) -> list[Any]:
+) -> list[Task]:
     """Consume one shared dataset-row iterator into requests or conversations."""
-    values: list[Any] = []
+    tasks: list[Task] = []
     for dataset_path, line_number, row_index, row in iter_dataset_rows(
         dataset_selector
     ):
         if row_index < row_offset:
             continue
-        values.append(consumer(row, dataset_path, line_number))
-        if len(values) >= requested_count:
+        tasks.append(normalize(row, dataset_path, line_number, row_index))
+        if len(tasks) >= requested_count:
             break
-    if len(values) < requested_count:
+    if len(tasks) < requested_count:
         raise ValueError(
-            f"Loaded {len(values)} {kind} from {dataset_selector!r} "
+            f"Loaded {len(tasks)} {kind} from {dataset_selector!r} "
             f"(offset={row_offset}), need {requested_count}"
         )
-    return values
+    return tasks
 
 
-def _load_dataset_requests(
-    dataset_selector: str,
-    request_count: int,
-    row_offset: int,
-) -> list[ChatRequestContent]:
-    return _load_dataset_values(
-        dataset_selector,
-        request_count,
-        row_offset,
-        _normalize_chat_request,
-        "requests",
-    )
+def load_conversation_tasks(benchmark: BenchmarkConfig) -> list[Task]:
+    """Read complete conversation scripts for EvalScope interactive multi-turn runs."""
+    workload = benchmark.resolved_workload
+    conversation_count = benchmark.load.request_count
+    row_offset = int(workload.row_offset)
+    if workload.fixed_prompt and not workload.dataset_selectors:
+        return [
+            Task(
+                id=f"prompt:{index}",
+                turns=(Turn(role="user", content=workload.fixed_prompt),),
+            )
+            for index in range(conversation_count)
+        ]
 
-
-def _load_dataset_conversations(
-    dataset_selector: str,
-    conversation_count: int,
-    row_offset: int,
-) -> list[list[dict[str, Any]]]:
-    return _load_dataset_values(
+    if len(workload.dataset_selectors) != 1:
+        raise ValueError(
+            "A conversation child run requires exactly one dataset source"
+        )
+    dataset_selector = workload.dataset_selectors[0]
+    if dataset_selector == "random":
+        raise ValueError("EvalScope owns standard random dataset generation")
+    return _load_dataset_tasks(
         dataset_selector,
         conversation_count,
         row_offset,
-        _normalize_chat_conversation,
+        _conversation_task,
         "conversations",
     )
 
 
-def load_chat_conversations(
-    benchmark: HttpBenchmarkConfig,
-) -> list[list[dict[str, Any]]]:
-    """Read complete conversation scripts for EvalScope interactive multi-turn runs."""
-    dataset = benchmark.resolved_dataset
-    conversation_count = benchmark.load_schedule.request_count
-    row_offset = int(dataset.row_offset)
-    if dataset.fixed_prompt and not dataset.dataset_selectors:
-        return [
-            [{"role": "user", "content": dataset.fixed_prompt}]
-            for _ in range(conversation_count)
-        ]
-
-    if len(dataset.dataset_selectors) != 1:
-        raise ValueError(
-            "A conversation child run requires exactly one dataset source"
-        )
-    dataset_selector = dataset.dataset_selectors[0]
-    if dataset_selector == "random":
-        raise ValueError("EvalScope owns standard random dataset generation")
-    return _load_dataset_conversations(
-        dataset_selector, conversation_count, row_offset
-    )
-
-
-def load_indexed_chat_requests(
+def load_indexed_request_tasks(
     dataset_selector: str,
     row_indexes: list[int],
-) -> list[ChatRequestContent]:
-    """Read chat requests by dataset row index while preserving ``row_indexes`` order."""
+) -> list[Task]:
+    """Read request tasks by dataset row index while preserving ``row_indexes`` order."""
     if not row_indexes:
         return []
     if dataset_selector == "random":
         raise ValueError("Indexed request loading does not support random data")
 
     requested_indexes = set(row_indexes)
-    loaded: dict[int, ChatRequestContent] = {}
+    loaded: dict[int, Task] = {}
     for dataset_label, line_number, row_index, row in iter_dataset_rows(
         dataset_selector
     ):
         if row_index in requested_indexes:
-            loaded[row_index] = _normalize_chat_request(
-                row, dataset_label, line_number
+            loaded[row_index] = _request_task(
+                row, dataset_label, line_number, row_index
             )
             if len(loaded) == len(requested_indexes):
                 break
@@ -522,41 +390,47 @@ def load_indexed_chat_requests(
     return [loaded[row_index] for row_index in row_indexes]
 
 
-def load_chat_requests(
-    benchmark: HttpBenchmarkConfig,
+def load_request_tasks(
+    benchmark: BenchmarkConfig,
     *,
     dataset_selector: Optional[str] = None,
     request_count: Optional[int] = None,
-) -> list[ChatRequestContent]:
+) -> list[Task]:
     """Read the independent Chat Completions requests required by one HTTP workload."""
-    dataset: ChatRequestDataset = benchmark.resolved_dataset
+    workload: ChatRequestDataset = benchmark.resolved_workload
     count = (
-        benchmark.load_schedule.request_count
+        benchmark.load.request_count
         if request_count is None
         else request_count
     )
-    row_offset = int(dataset.row_offset)
+    row_offset = int(workload.row_offset)
 
-    if dataset.fixed_prompt and dataset_selector is None:
+    if workload.fixed_prompt and dataset_selector is None:
         return [
-            ChatRequestContent(prompt=dataset.fixed_prompt) for _ in range(count)
+            Task(
+                id=f"prompt:{index}",
+                turns=(Turn(role="user", content=workload.fixed_prompt),),
+            )
+            for index in range(count)
         ]
 
     if dataset_selector is None:
-        if not dataset.dataset_selectors:
+        if not workload.dataset_selectors:
             raise ValueError(
                 "No workload source. Pass --prompt or --dataset "
                 "(random | local JSONL | org/name:split | "
                 "hf://datasets/...)."
             )
-        if len(dataset.dataset_selectors) != 1:
+        if len(workload.dataset_selectors) != 1:
             raise ValueError(
-                "load_chat_requests requires dataset_selector= when multiple "
+                "load_request_tasks requires dataset_selector= when multiple "
                 "--dataset values are configured"
             )
-        dataset_selector = dataset.dataset_selectors[0]
+        dataset_selector = workload.dataset_selectors[0]
 
     if dataset_selector == "random":
         raise ValueError("EvalScope owns standard random dataset generation")
 
-    return _load_dataset_requests(dataset_selector, count, row_offset)
+    return _load_dataset_tasks(
+        dataset_selector, count, row_offset, _request_task, "requests"
+    )

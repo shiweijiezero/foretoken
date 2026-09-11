@@ -1,16 +1,35 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Read and expand explicit benchmark parameter combinations."""
+"""Read JSONL sweep points, expand them, and run each one against a single model service."""
 
 from __future__ import annotations
 
+import logging
+import os
 from collections import Counter
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Callable
 
-from benchmarks.config import HttpBenchmarkConfig, normalize_output_token_limit
-from benchmarks.datasets.datasets import iter_jsonl_rows
+from benchmarks.config.benchmark import (
+    BenchmarkConfig,
+    ParameterSweepConfig,
+    normalize_output_token_limit,
+)
+from benchmarks.episodes.generated_load import GeneratedLoadBenchmark
+from benchmarks.model_service import ModelService
+from benchmarks.results.console import log_sweep_results
+from benchmarks.results.output import (
+    BenchmarkRun,
+    result_directory_path,
+    write_json,
+)
+from benchmarks.results.pareto import plot_sweep_pareto
+from benchmarks.results.wandb import wandb_group_name
+from benchmarks.tasks.conversations import iter_jsonl_rows
+
+logger = logging.getLogger(__name__)
 
 SweepPoint = dict[str, object]
 _LOAD_CAST = {"parallel": int, "number": int, "rate": float}
@@ -44,16 +63,12 @@ def _preserve_value(value: Any) -> Any:
     return value
 
 
-# One deployment experiment may change only request and workload choices; endpoint, credentials, traces, and output ownership remain fixed.
+# One deployment experiment may change only request and workload choices; the service, credentials, traces, and output ownership remain fixed.
 _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
-    "parallel": ("load_schedule", "max_concurrency", int),
-    "number": ("load_schedule", "request_count", int),
-    "rate": ("load_schedule", "arrival_rate", float),
-    "open_loop": (
-        "load_schedule",
-        "unbounded_concurrency",
-        _preserve_value,
-    ),
+    "parallel": ("load", "max_concurrency", int),
+    "number": ("load", "request_count", int),
+    "rate": ("load", "arrival_rate", float),
+    "open_loop": ("load", "unbounded_concurrency", _preserve_value),
     "max_tokens": ("generation", "max_tokens", normalize_output_token_limit),
     "stream": ("generation", "stream", _preserve_value),
     "top_p": ("generation", "top_p", _preserve_value),
@@ -64,23 +79,15 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "presence_penalty": ("generation", "presence_penalty", _preserve_value),
     "repetition_penalty": ("generation", "repetition_penalty", _preserve_value),
     "extra_body": ("generation", "extra_body", dict),
-    "dataset": ("request_dataset", "dataset_selectors", _dataset_selectors),
-    "dataset_offset": ("request_dataset", "row_offset", int),
-    "tokenizer_path": ("request_dataset", "tokenizer", str),
-    "random_seed": ("request_dataset", "random_seed", int),
-    "min_prompt_length": (
-        "request_dataset",
-        "minimum_prompt_tokens",
-        int,
-    ),
-    "max_prompt_length": (
-        "request_dataset",
-        "maximum_prompt_tokens",
-        int,
-    ),
-    "prefix_length": ("request_dataset", "shared_prefix_tokens", int),
-    "prompt": ("request_dataset", "fixed_prompt", str),
-    "max_turns": ("request_dataset", "max_turns", int),
+    "dataset": ("workload", "dataset_selectors", _dataset_selectors),
+    "dataset_offset": ("workload", "row_offset", int),
+    "tokenizer_path": ("workload", "tokenizer", str),
+    "random_seed": ("workload", "random_seed", int),
+    "min_prompt_length": ("workload", "minimum_prompt_tokens", int),
+    "max_prompt_length": ("workload", "maximum_prompt_tokens", int),
+    "prefix_length": ("workload", "shared_prefix_tokens", int),
+    "prompt": ("workload", "fixed_prompt", str),
+    "max_turns": ("workload", "max_turns", int),
 }
 
 
@@ -120,7 +127,7 @@ def expand_load_points(item: SweepPoint) -> list[SweepPoint]:
 
     if "rate" in multi and "parallel" in multi:
         raise ValueError(
-            "Cannot sweep both rate and parallel in one bench-params line; "
+            "Cannot sweep both rate and parallel in one sweep line; "
             "pass one multi-value list at a time."
         )
 
@@ -186,14 +193,14 @@ def expand_load_points(item: SweepPoint) -> list[SweepPoint]:
 def load_sweep_points(path: str) -> list[SweepPoint]:
     """Read JSONL and expand it into executable HTTP benchmark points."""
     if not path:
-        raise ValueError("Parameter sweep requires --bench-params PATH")
+        raise ValueError("Parameter sweep requires --sweep PATH")
 
     points: list[SweepPoint] = []
     explicit_names: list[str] = []
     for _, line_no, _, record in iter_jsonl_rows(path, allow_comments=True):
         if not isinstance(record, dict):
             raise TypeError(
-                "Each bench-params JSONL line must be an object, "
+                "Each sweep JSONL line must be an object, "
                 f"got {type(record)} on line {line_no}"
             )
         expanded = expand_load_points(record)
@@ -214,9 +221,9 @@ def load_sweep_points(path: str) -> list[SweepPoint]:
 
 
 def apply_sweep_point(
-    benchmark: HttpBenchmarkConfig,
+    benchmark: BenchmarkConfig,
     sweep_point: SweepPoint,
-) -> HttpBenchmarkConfig:
+) -> BenchmarkConfig:
     """Copy the benchmark configuration and apply an allowlisted parameter point."""
     section_updates: dict[str, dict[str, Any]] = {}
     for raw_key, raw_value in sweep_point.items():
@@ -226,7 +233,7 @@ def apply_sweep_point(
         if field is None:
             allowed = ", ".join(sorted(_SWEEP_FIELDS))
             raise ValueError(
-                f"Unsupported bench-params key {raw_key!r}. "
+                f"Unsupported sweep key {raw_key!r}. "
                 "Only fields that change request execution may be swept; "
                 f"allowed keys: {allowed}"
             )
@@ -241,3 +248,130 @@ def apply_sweep_point(
             **{section: replace(section_value, **updates)},
         )
     return updated_benchmark
+
+
+class ParameterSweepBenchmark:
+    """Own parameter expansion, repeated runs, W&B grouping, and Pareto artifacts."""
+
+    def __init__(
+        self,
+        benchmark: BenchmarkConfig,
+        service: ModelService,
+    ) -> None:
+        self.benchmark = benchmark
+        self.service = service
+
+    def run(self) -> BenchmarkRun:
+        """Run all parameter points and return the highest-throughput point as the result metrics."""
+        sweep = self.benchmark.sweep
+        if sweep.num_runs < 1:
+            raise ValueError(f"--num-runs must be >= 1, got {sweep.num_runs}")
+
+        combinations = load_sweep_points(sweep.path)
+        if not combinations:
+            raise ValueError("Parameter sweep contains no combinations")
+
+        experiment_name = sweep.experiment_name.strip().replace("/", "-")
+        experiment_dir = result_directory_path(
+            self.benchmark,
+            os.path.join(self.benchmark.outputs.output_dir, experiment_name)
+            if experiment_name
+            else None,
+        )
+        local_enabled = self.benchmark.outputs.includes("local")
+        wandb_group = (
+            wandb_group_name(self.benchmark, self.service)
+            if self.benchmark.outputs.includes("wandb")
+            else None
+        )
+
+        plan = {
+            "mode": "parameter_sweep",
+            "sweep": sweep.path,
+            "num_runs": sweep.num_runs,
+            "wandb_group": wandb_group,
+            "combinations": [
+                {
+                    "dir": sweep_directory_name(sweep_point_name(point)),
+                    "bench": dict(point),
+                }
+                for point in combinations
+            ],
+            "base": self.benchmark.to_dict(),
+        }
+        if local_enabled:
+            os.makedirs(experiment_dir, exist_ok=True)
+            write_json(experiment_dir, "config.json", plan)
+
+        all_points: list[dict[str, Any]] = []
+        for combination in combinations:
+            combination_name = sweep_directory_name(sweep_point_name(combination))
+            combination_root = os.path.join(experiment_dir, combination_name)
+            point_benchmark = apply_sweep_point(self.benchmark, combination)
+            point_benchmark.validate()
+            point_benchmark = replace(
+                point_benchmark,
+                sweep=ParameterSweepConfig(),
+            )
+
+            for run_number in range(sweep.num_runs):
+                logger.info(
+                    "Sweep %s run=%s/%s bench=%s",
+                    combination_name,
+                    run_number + 1,
+                    sweep.num_runs,
+                    dict(combination),
+                )
+                run_dir = os.path.join(combination_root, f"run={run_number}")
+                label = (
+                    f"{combination_name}-run{run_number}"
+                    if sweep.num_runs > 1
+                    else combination_name
+                )
+                result = GeneratedLoadBenchmark(
+                    point_benchmark,
+                    self.service,
+                    label=label,
+                    output_dir=run_dir,
+                    wandb_group=wandb_group,
+                ).run()
+                point = dict(result.metrics)
+                point["combination"] = combination_name
+                point["parameter_group"] = str(combination["_parameter_group"])
+                point["run_number"] = run_number
+                point["gpu_count"] = self.service.gpu_count
+                if point_benchmark.is_multi_turn:
+                    point["multi_turn"] = True
+                point["bench"] = dict(combination)
+                point["label"] = f"{combination_name}|p={point['parallel']}"
+                all_points.append(point)
+
+        artifacts: dict[str, Path] = {}
+        if len(all_points) > 1:
+            if local_enabled:
+                fig_path = plot_sweep_pareto(all_points, experiment_dir)
+                artifacts["pareto"] = fig_path
+                logger.info("Pareto plot: %s", fig_path)
+            if not self.benchmark.outputs.includes("quiet"):
+                log_sweep_results(all_points)
+
+        if local_enabled:
+            write_json(experiment_dir, "sweep_points.json", all_points)
+        best = max(
+            all_points,
+            key=lambda item: item["throughput"][
+                "generation_tokens_per_second"
+            ],
+        )
+        logger.info(
+            "Sweep done: %s combinations, %s points, output_dir=%s",
+            len(combinations),
+            len(all_points),
+            experiment_dir,
+        )
+        return BenchmarkRun(
+            record=plan,
+            metrics=best,
+            measurements=None,
+            artifacts=artifacts,
+        )

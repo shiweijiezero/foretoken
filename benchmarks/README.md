@@ -61,7 +61,7 @@ foretoken bench \
 | Generate prompts with controlled token lengths | `--dataset random --tokenizer-path TOKENIZER` |
 | Replay recorded arrival times | `--trace TRACE --dataset DATASET` |
 | Combine datasets in one result | Comma-separate the `--dataset` selectors |
-| Compare workload and generation settings | `--bench-params FILE.jsonl` with a Kustomize deployment |
+| Compare workload and generation settings | `--sweep FILE.jsonl` with a Kustomize deployment |
 
 Copyable commands for each workload are in [Benchmark Recipes](docs/examples.md).
 

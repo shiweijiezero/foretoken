@@ -220,7 +220,7 @@ Trace replay uses independent requests. Do not add a positive `--max-turns`, `--
 
 ## Sweep benchmark parameters
 
-Parameter sweeps are available for Foretoken Kustomize deployments. The maintained file `benchmarks/examples/bench_params.jsonl` defines two groups of concurrency points:
+Parameter sweeps are available for Foretoken Kustomize deployments. The maintained file `benchmarks/examples/sweep.jsonl` defines two groups of concurrency points:
 
 ```jsonl
 {"_benchmark_name": "n10", "parallel": [1, 2, 4, 8], "number": 10, "max_tokens": 64}
@@ -235,7 +235,7 @@ foretoken bench examples/quickstart \
   --tokenizer-path Qwen/Qwen3-0.6B \
   --min-prompt-length 128 \
   --max-prompt-length 512 \
-  --bench-params benchmarks/examples/bench_params.jsonl \
+  --sweep benchmarks/examples/sweep.jsonl \
   --experiment-name quickstart-sweep \
   --output local
 ```

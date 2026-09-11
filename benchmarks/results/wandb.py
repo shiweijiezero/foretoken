@@ -14,8 +14,8 @@ from typing import Any, Optional
 
 import wandb
 
-from benchmarks.config import HttpBenchmarkConfig, WandbRunConfig
-from benchmarks.deployment import BenchmarkRuntimeEndpoint
+from benchmarks.config.benchmark import BenchmarkConfig, WandbRunConfig
+from benchmarks.model_service import ModelService
 from benchmarks.results.metrics import percentile_summary
 
 logger = logging.getLogger(__name__)
@@ -69,12 +69,12 @@ def wandb_run_timestamp() -> str:
 
 
 def wandb_group_name(
-    config: HttpBenchmarkConfig,
-    endpoint: BenchmarkRuntimeEndpoint,
+    config: BenchmarkConfig,
+    service: ModelService,
 ) -> str:
     """Return the configured W&B name or a default name from the runtime model and timestamp."""
     run_name = config.wandb.run_name.strip()
-    return run_name or f"{endpoint.model}_{wandb_run_timestamp()}"
+    return run_name or f"{service.model}_{wandb_run_timestamp()}"
 
 
 def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
@@ -187,8 +187,8 @@ class WandbBenchmarkRun:
 
     def start(
         self,
-        config: HttpBenchmarkConfig,
-        endpoint: BenchmarkRuntimeEndpoint,
+        config: BenchmarkConfig,
+        service: ModelService,
         *,
         output_dir: str,
         parallel: int,
@@ -202,7 +202,7 @@ class WandbBenchmarkRun:
             return
 
         os.makedirs(output_dir, exist_ok=True)
-        base = group or wandb_group_name(config, endpoint)
+        base = group or wandb_group_name(config, service)
         name = f"{base}_{name_suffix}" if name_suffix else base
         init_kwargs: dict[str, Any] = {
             "project": wandb_config.project,

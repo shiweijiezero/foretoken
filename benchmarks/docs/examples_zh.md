@@ -220,7 +220,7 @@ foretoken bench \
 
 ## 扫描评测参数
 
-参数扫描只支持 Foretoken Kustomize 部署。仓库维护的 `benchmarks/examples/bench_params.jsonl` 定义了两组并发负载点：
+参数扫描只支持 Foretoken Kustomize 部署。仓库维护的 `benchmarks/examples/sweep.jsonl` 定义了两组并发负载点：
 
 ```jsonl
 {"_benchmark_name": "n10", "parallel": [1, 2, 4, 8], "number": 10, "max_tokens": 64}
@@ -235,7 +235,7 @@ foretoken bench examples/quickstart \
   --tokenizer-path Qwen/Qwen3-0.6B \
   --min-prompt-length 128 \
   --max-prompt-length 512 \
-  --bench-params benchmarks/examples/bench_params.jsonl \
+  --sweep benchmarks/examples/sweep.jsonl \
   --experiment-name quickstart-sweep \
   --output local
 ```

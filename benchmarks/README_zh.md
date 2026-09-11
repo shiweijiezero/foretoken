@@ -61,7 +61,7 @@ foretoken bench \
 | 按 token 长度生成随机提示词 | `--dataset random --tokenizer-path TOKENIZER` |
 | 按记录的到达时间回放请求 | `--trace TRACE --dataset DATASET` |
 | 汇总多个数据集 | 在 `--dataset` 中用逗号分隔多个选择器 |
-| 比较多组负载和生成参数 | 对 Kustomize 部署使用 `--bench-params FILE.jsonl` |
+| 比较多组负载和生成参数 | 对 Kustomize 部署使用 `--sweep FILE.jsonl` |
 
 每类负载的可复制命令见[评测配方](docs/examples_zh.md)。
 

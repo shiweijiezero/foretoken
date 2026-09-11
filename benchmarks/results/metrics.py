@@ -1,15 +1,37 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Aggregate HTTP request observations and compute benchmark metrics."""
+"""Aggregate per-request measurements into benchmark metrics."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import numpy as np
 
-from benchmarks.config import HttpBenchmarkConfig
+
+@dataclass(frozen=True)
+class RequestMeasurement:
+    """Client-side observation of one model request, shared by every benchmark path.
+
+    ``started_at`` is seconds from the start of the run to the request send.
+    Streaming engines may provide TTFT, TPOT, and inter-token latency samples;
+    non-streamed or failed requests leave them empty. ``conversation_id`` and
+    ``turn`` identify the conversation and its request index when the path tracks
+    them; EvalScope records leave both unset.
+    """
+
+    started_at: float
+    ttft: float | None
+    latency: float
+    tpot: float | None
+    itl_samples: tuple[float, ...]
+    input_tokens: int
+    output_tokens: int
+    succeeded: bool
+    conversation_id: str | None
+    turn: int | None
 
 
 def percentile_summary(values: list[float]) -> dict[str, float | None]:
@@ -64,97 +86,62 @@ def generation_tokens_per_second_per_gpu(
     return float(generation_tokens_per_second) / float(gpu_count)
 
 
-def attach_user_throughput(
-    metrics: dict[str, Any],
+def summarize_measurements(
+    measurements: list[RequestMeasurement],
     *,
-    parallel: int,
+    total_time: float,
+    stream: bool,
+    arrival_rate: float,
+    request_count: int,
+    reported_concurrency: int,
+    include_user_throughput: bool = True,
 ) -> dict[str, Any]:
-    """Add concurrency and per-user output throughput to an existing metrics dictionary."""
-    metrics["parallel"] = int(parallel)
-    throughput = metrics["throughput"]
-    generation_tokens_per_second = float(throughput["generation_tokens_per_second"])
-    throughput[
-        "generation_tokens_per_second_per_user"
-    ] = generation_tokens_per_second_per_user(
-        generation_tokens_per_second,
-        parallel,
-    )
-    return metrics
+    """Aggregate request measurements and workload coordinates into the published metrics.
 
+    Latency distributions use successful requests only; throughput divides
+    successful request and token counts by ``total_time``. TTFT and TPOT are
+    reported only for streamed runs. Inter-token latency is included when the
+    request engine records those samples.
+    """
+    successful = [item for item in measurements if item.succeeded]
+    latencies = [item.latency for item in successful]
+    ttfts: list[float] = []
+    tpots: list[float] = []
+    itls: list[float] = []
+    if stream:
+        ttfts = [item.ttft for item in successful if item.ttft is not None]
+        tpots = [item.tpot for item in successful if item.tpot is not None]
+        itls = [value for item in successful for value in item.itl_samples]
 
-def merge_request_measurements(
-    dataset_measurements: list[dict[str, Any]],
-) -> dict[str, Any]:
-    """Merge request results in dataset order and add the runtime of each dataset."""
-    if not dataset_measurements:
-        raise ValueError(
-            "merge_request_measurements requires at least one dataset"
-        )
-    results: list[Any] = []
-    total_time = 0.0
-    for measurements in dataset_measurements:
-        results.extend(measurements["results"])
-        total_time += float(measurements["total_time"])
-    return {"results": results, "total_time": total_time}
-
-
-def summarize_request_measurements(output: dict[str, Any]) -> dict[str, Any]:
-    """Aggregate per-request results for one HTTP workload point into the existing metrics structure."""
-    results = output["results"]
-    successful = [result for result in results if result["success"]]
-
-    stream_modes = {bool(result["stream"]) for result in results}
-    if not results:
-        streamed = True
-    elif len(stream_modes) != 1:
-        raise ValueError(f"mixed stream modes in one run: {sorted(stream_modes)}")
-    else:
-        streamed = stream_modes.pop()
-
-    latencies = [float(result["latency"]) for result in successful]
-    if streamed:
-        ttfts = [
-            float(result["ttft"])
-            for result in successful
-            if result["ttft"] is not None
-        ]
-        tpots = [
-            float(result["tpot"])
-            for result in successful
-            if result["tpot"] is not None
-        ]
-        itls = [
-            float(value)
-            for result in successful
-            for value in result.get("itl_samples", [])
-        ]
-    else:
-        ttfts = []
-        tpots = []
-        itls = []
-
-    output_tokens = sum(int(result["output_tokens"]) for result in successful)
-    input_tokens = sum(int(result["input_tokens"]) for result in successful)
-    total_time = float(output["total_time"])
+    output_tokens = sum(item.output_tokens for item in successful)
+    input_tokens = sum(item.input_tokens for item in successful)
     success_count = len(successful)
-    failed_count = len(results) - success_count
+    request_num = len(measurements)
 
+    throughput: dict[str, Any] = {
+        "requests_per_second": success_count / total_time,
+        "generation_tokens_per_second": output_tokens / total_time,
+        "prompt_tokens_per_second": input_tokens / total_time,
+        "total_tokens_per_second": (input_tokens + output_tokens) / total_time,
+    }
+    if include_user_throughput:
+        throughput["generation_tokens_per_second_per_user"] = (
+            generation_tokens_per_second_per_user(
+                throughput["generation_tokens_per_second"],
+                reported_concurrency,
+            )
+        )
     return {
-        "request_num": len(results),
+        "request_num": request_num,
         "success_num": success_count,
-        "failed_num": failed_count,
-        "success_rate": success_count / len(results) if results else 0.0,
-        "stream": streamed,
+        "failed_num": request_num - success_count,
+        "success_rate": success_count / request_num if request_num else 0.0,
+        "stream": stream,
         "latency": percentile_summary(latencies),
         "ttft": percentile_summary(ttfts),
         "tpot": percentile_summary(tpots),
         "itl": percentile_summary(itls),
-        "throughput": {
-            "requests_per_second": success_count / total_time,
-            "generation_tokens_per_second": output_tokens / total_time,
-            "prompt_tokens_per_second": input_tokens / total_time,
-            "total_tokens_per_second": (input_tokens + output_tokens) / total_time,
-        },
+        "throughput": throughput,
         "avg_input_tokens": (
             input_tokens / success_count if success_count else None
         ),
@@ -162,29 +149,7 @@ def summarize_request_measurements(output: dict[str, Any]) -> dict[str, Any]:
             output_tokens / success_count if success_count else None
         ),
         "benchmark_time": total_time,
+        "rate": arrival_rate,
+        "number": request_count,
+        "parallel": reported_concurrency,
     }
-
-
-def summarize_http_measurements(
-    benchmark: HttpBenchmarkConfig,
-    request_measurements: dict[str, Any],
-    *,
-    arrival_rate: float,
-    request_count: int,
-    reported_concurrency: int,
-    include_user_throughput: bool = True,
-) -> dict[str, Any]:
-    """Add workload coordinates to aggregated request observations for publication."""
-    metrics = summarize_request_measurements(request_measurements)
-    configured_stream = bool(benchmark.generation.stream)
-    if metrics["stream"] != configured_stream:
-        raise RuntimeError(
-            "recorded stream mode does not match the requests that ran: "
-            f"config={configured_stream} results={metrics['stream']}"
-        )
-    metrics["rate"] = arrival_rate
-    metrics["number"] = request_count
-    metrics["parallel"] = reported_concurrency
-    if include_user_throughput:
-        attach_user_throughput(metrics, parallel=reported_concurrency)
-    return metrics

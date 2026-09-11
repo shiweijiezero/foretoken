@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Parse the current HTTP benchmark command and build the domain configuration."""
+"""Parse the ``foretoken bench`` command and build the benchmark configuration."""
 
 from __future__ import annotations
 
@@ -11,15 +11,14 @@ from collections.abc import Sequence
 from dataclasses import MISSING, fields
 from typing import Any
 
-from benchmarks.config import (
+from benchmarks.config.benchmark import (
     ArrivalTraceSchedule,
-    BenchmarkDeploymentConfig,
+    BenchmarkConfig,
     BenchmarkOutputConfig,
-    ChatCompletionsEndpoint,
     ChatCompletionsGeneration,
     ChatRequestDataset,
-    HttpBenchmarkConfig,
     HttpLoadSchedule,
+    ModelServiceSource,
     ParameterSweepConfig,
     WandbRunConfig,
 )
@@ -50,7 +49,7 @@ def _dataset_selectors(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
+def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     # Service source
     parser.add_argument(
         "kustomize_path",
@@ -60,28 +59,28 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--url",
-        default=_default(ChatCompletionsEndpoint, "url"),
+        default=_default(ModelServiceSource, "url"),
         help="Model service URL, including /v1/chat/completions",
     )
     parser.add_argument(
         "--model",
-        default=_default(ChatCompletionsEndpoint, "model"),
+        default=_default(ModelServiceSource, "model"),
         help="Model name; inferred when the deployment contains one model",
     )
     parser.add_argument(
         "--api-key",
-        default=_default(ChatCompletionsEndpoint, "api_key"),
+        default=_default(ModelServiceSource, "api_key"),
         help="API key",
     )
     parser.add_argument(
         "--timeout",
         type=int,
-        default=_default(ChatCompletionsEndpoint, "timeout_seconds"),
+        default=_default(ModelServiceSource, "timeout_seconds"),
         help="Request timeout seconds",
     )
     parser.add_argument(
         "--wait-timeout",
-        default=_default(BenchmarkDeploymentConfig, "wait_timeout"),
+        default=_default(ModelServiceSource, "wait_timeout"),
         help="Timeout for each deployment readiness stage",
     )
 
@@ -323,8 +322,9 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
 
     # Parameter sweep
     parser.add_argument(
-        "--bench-params",
-        default=_default(ParameterSweepConfig, "bench_params"),
+        "--sweep",
+        metavar="PATH",
+        default=_default(ParameterSweepConfig, "path"),
         help=(
             "JSONL parameter combinations; parallel, number, and rate may be lists"
         ),
@@ -342,19 +342,17 @@ def _add_performance_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _http_benchmark_config(namespace: argparse.Namespace) -> HttpBenchmarkConfig:
-    return HttpBenchmarkConfig(
-        deployment=BenchmarkDeploymentConfig(
+def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
+    return BenchmarkConfig(
+        service=ModelServiceSource(
             kustomize_path=namespace.kustomize_path or "",
-            wait_timeout=namespace.wait_timeout,
-        ),
-        endpoint=ChatCompletionsEndpoint(
             url=namespace.url,
             model=namespace.model,
             api_key=namespace.api_key,
             timeout_seconds=namespace.timeout,
+            wait_timeout=namespace.wait_timeout,
         ),
-        load_schedule=HttpLoadSchedule(
+        load=HttpLoadSchedule(
             max_concurrency=namespace.parallel,
             request_count=namespace.number,
             arrival_rate=namespace.rate,
@@ -372,7 +370,7 @@ def _http_benchmark_config(namespace: argparse.Namespace) -> HttpBenchmarkConfig
             repetition_penalty=namespace.repetition_penalty,
             extra_body=namespace.extra_body,
         ),
-        request_dataset=ChatRequestDataset(
+        workload=ChatRequestDataset(
             dataset_selectors=namespace.dataset,
             row_offset=namespace.dataset_offset,
             tokenizer=namespace.tokenizer_path,
@@ -383,7 +381,7 @@ def _http_benchmark_config(namespace: argparse.Namespace) -> HttpBenchmarkConfig
             fixed_prompt=namespace.prompt,
             max_turns=namespace.max_turns,
         ),
-        arrival_trace=ArrivalTraceSchedule(
+        trace=ArrivalTraceSchedule(
             trace_selector=namespace.trace_path,
             start_offset_seconds=namespace.trace_start,
             duration_seconds=namespace.trace_duration,
@@ -399,18 +397,18 @@ def _http_benchmark_config(namespace: argparse.Namespace) -> HttpBenchmarkConfig
             entity=namespace.wandb_entity,
             run_name=namespace.wandb_run_name,
         ),
-        parameter_sweep=ParameterSweepConfig(
-            bench_params=namespace.bench_params,
+        sweep=ParameterSweepConfig(
+            path=namespace.sweep,
             num_runs=namespace.num_runs,
             experiment_name=namespace.experiment_name,
         ),
     )
 
 
-def parse_http_benchmark_arguments(
+def parse_benchmark_arguments(
     argv: Sequence[str] | None = None,
-) -> HttpBenchmarkConfig:
-    """Parse HTTP benchmark arguments after top-level ``foretoken bench``."""
+) -> BenchmarkConfig:
+    """Parse benchmark arguments after top-level ``foretoken bench``."""
     parser = argparse.ArgumentParser(
         prog="foretoken bench",
         description=(
@@ -419,7 +417,7 @@ def parse_http_benchmark_arguments(
         ),
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    _add_performance_arguments(parser)
+    _add_benchmark_arguments(parser)
 
     parsed_args = parser.parse_args(argv)
-    return _http_benchmark_config(parsed_args)
+    return _benchmark_config(parsed_args)
