@@ -108,35 +108,12 @@ def parse_deployment(path: Path, rendered: str) -> ForetokenDeployment:
                 raise DeploymentError(
                     "RuntimeCache requires metadata.name, metadata.namespace, and spec"
                 )
-            initial_size = str(spec.get("initialSize") or "").strip()
             directory = spec.get("directory", "")
             if not isinstance(directory, str) or (
                 "directory" in spec and not directory
             ):
                 raise DeploymentError(
                     f"RuntimeCache/{name} directory must be a nonempty path string"
-                )
-            if directory and any(
-                field in spec
-                for field in ("initialSize", "maxSize", "storageClassName")
-            ):
-                raise DeploymentError(
-                    f"RuntimeCache/{name} directory cannot be combined with PVC size or storageClassName"
-                )
-            if spec.get("accessMode", "ReadWriteMany") not in {
-                "ReadWriteOnce",
-                "ReadWriteMany",
-            }:
-                raise DeploymentError(
-                    f"RuntimeCache/{name} has an unsupported accessMode"
-                )
-            if spec.get("retentionPolicy", "Retain") not in {"Delete", "Retain"}:
-                raise DeploymentError(
-                    f"RuntimeCache/{name} has an unsupported retentionPolicy"
-                )
-            if not initial_size and not directory:
-                raise DeploymentError(
-                    f"RuntimeCache/{name} requires spec.initialSize without directory"
                 )
             runtime_caches.append(
                 RuntimeCacheManifest(

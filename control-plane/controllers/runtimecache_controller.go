@@ -113,7 +113,7 @@ func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request
 
 func runtimeCachePVCName(cache *inferencev1alpha1.RuntimeCache) string {
 	if cache.Spec.Directory != "" {
-		return runtimeCacheDirectoryPVCName(cache)
+		return cache.Name
 	}
 	identity := strings.ReplaceAll(string(cache.UID), "-", "")
 	if identity == "" {
@@ -127,11 +127,6 @@ func runtimeCachePVCName(cache *inferencev1alpha1.RuntimeCache) string {
 		prefix = strings.TrimRight(prefix[:limit], "-.")
 	}
 	return prefix + "-" + identity
-}
-
-// runtimeCacheDirectoryPVCName keeps retained directory claims reusable across cache recreation.
-func runtimeCacheDirectoryPVCName(cache *inferencev1alpha1.RuntimeCache) string {
-	return cache.Name
 }
 
 // runtimeCacheDirectoryPVName identifies the static volume for one namespace and cache.

@@ -1260,6 +1260,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "foretoken-model-files"
+version = "0.0.1"
+
+[[package]]
 name = "foretoken-model-protocol"
 version = "0.0.1"
 dependencies = [
@@ -1279,6 +1283,7 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "bytes",
+ "foretoken-model-files",
  "foretoken-model-protocol",
  "futures",
  "http-body-util",
@@ -1374,6 +1379,7 @@ version = "0.0.1"
 dependencies = [
  "foretoken-chat",
  "foretoken-engine-core-client",
+ "foretoken-model-files",
  "foretoken-tokenizer",
  "hf-hub",
  "thiserror 2.0.20",
