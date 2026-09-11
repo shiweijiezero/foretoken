@@ -55,7 +55,9 @@ observability:
   alerts:
     # The language is attached to alert labels so a shared Lark receiver can render one language consistently.
     language: zh
+    # Alert rules fire at these values, and the dashboard draws them as reference lines.
     thresholds:
+      kvCacheUsageRatio: 0.95
       acceleratorUtilizationRatio: 0.95
       acceleratorMemoryUsageRatio: 0.95
       nvidiaTemperatureCelsius: 85

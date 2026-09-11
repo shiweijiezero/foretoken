@@ -7,7 +7,7 @@
 
 This guide explains how to build Foretoken images from source, configure the Kubernetes platform to use them, and redeploy source changes. Model services remain separate and are deployed with `foretoken deploy`.
 
-Prepare Python 3.10+, Git, Docker with BuildKit, Make, kubectl, Helm, and a Rust toolchain managed by rustup. Run commands from the Foretoken repository root.
+Prepare Python 3.11+, Git, Docker with BuildKit, Make, kubectl, Helm, and a Rust toolchain managed by rustup. Run commands from the Foretoken repository root.
 
 ## 1. Prepare the target Kubernetes cluster
 

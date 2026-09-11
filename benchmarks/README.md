@@ -8,7 +8,7 @@ The service must provide an OpenAI-compatible Chat Completions API. Pass the ful
 
 ## Install
 
-Python 3.10 or later is required. Install the command and its benchmark dependencies:
+Python 3.11 or later is required. Install the command and its benchmark dependencies:
 
 ```bash
 pip install 'foretoken[bench]'

@@ -256,12 +256,18 @@
             "thresholds": {
               "type": "object",
               "required": [
+                "kvCacheUsageRatio",
                 "acceleratorUtilizationRatio",
                 "acceleratorMemoryUsageRatio",
                 "nvidiaTemperatureCelsius",
                 "nvidiaPowerWatts"
               ],
               "properties": {
+                "kvCacheUsageRatio": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
                 "acceleratorUtilizationRatio": {
                   "type": "number",
                   "minimum": 0,

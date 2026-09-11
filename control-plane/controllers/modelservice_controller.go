@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	crmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -64,12 +65,15 @@ func (reconciler *ModelServiceReconciler) autoscalingRecommendationHistory() *co
 
 // SetupWithManager registers the ModelService controller and its owned resources.
 func (reconciler *ModelServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(manager).
+	if err := ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelService{}).
 		Owns(&inferencev1alpha1.ModelPool{}).
 		Watches(&inferencev1alpha1.KVService{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesForKVService)).
 		Watches(&inferencev1alpha1.RuntimeCache{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelServicesInNamespace)).
-		Complete(reconciler)
+		Complete(reconciler); err != nil {
+		return err
+	}
+	return crmetrics.Registry.Register(newAutoscalingCollector(manager.GetCache()))
 }
 
 // Reconcile materializes stable ModelPools and aggregates their serving readiness.

@@ -8,7 +8,7 @@
 
 ## 安装
 
-需要 Python 3.10 或更高版本。安装命令行工具和评测依赖：
+需要 Python 3.11 或更高版本。安装命令行工具和评测依赖：
 
 ```bash
 pip install 'foretoken[bench]'

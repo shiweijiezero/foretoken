@@ -7,7 +7,7 @@
 
 本指南介绍如何从源码构建 Foretoken 镜像、配置 Kubernetes 平台使用这些镜像，以及修改源码后如何重新部署。模型服务仍通过 `foretoken deploy` 单独部署。
 
-准备好 Python 3.10+、Git、启用 BuildKit 的 Docker、Make、kubectl、Helm 和由 rustup 管理的 Rust 工具链。命令均在 Foretoken 仓库根目录执行。
+准备好 Python 3.11+、Git、启用 BuildKit 的 Docker、Make、kubectl、Helm 和由 rustup 管理的 Rust 工具链。命令均在 Foretoken 仓库根目录执行。
 
 ## 1. 准备目标 Kubernetes 集群
 
