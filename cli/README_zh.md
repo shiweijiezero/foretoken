@@ -101,13 +101,7 @@ foretoken install --values platform-values.yaml
 
 ## 部署和管理模型服务
 
-部署一个 Kustomize 根目录中的前端服务和全部模型。使用发布的 0.0.2 CLI 时，获取匹配的示例：
-
-```bash
-git clone https://github.com/shiweijiezero/foretoken.git
-cd foretoken
-git checkout v0.0.2
-```
+从[快速开始](../README_zh.md)准备的仓库目录执行，部署一个 Kustomize 根目录中的前端服务和全部模型。
 
 源码安装使用相应 checkout 中的示例及[模型存储配置](../docs/model-storage_zh.md)。资源和存储要求见[多模型示例](../examples/multi-model-quickstart/README_zh.md)。单模型部署使用 `examples/quickstart`。
 

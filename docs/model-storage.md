@@ -5,7 +5,7 @@
 
 English | [简体中文](model-storage_zh.md)
 
-Keep model downloads and runtime caches in one directory so new Pods can reuse them. Directory caching uses the [current-source CLI and platform](custom-deployment.md); the released 0.0.2 examples use dynamic PVCs.
+Keep model downloads and runtime caches in one directory so new Pods can reuse them. Directory caching uses the [current-source CLI and platform](custom-deployment.md).
 
 ## Use a data directory
 

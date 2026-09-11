@@ -36,7 +36,10 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 ### 1. 安装命令行工具
 
 ```bash
-pip install foretoken==0.0.2
+pip install foretoken
+
+# 从源码目录安装：
+# pip install -e .
 ```
 
 ### 2. 安装 Kubernetes 平台
@@ -44,6 +47,9 @@ pip install foretoken==0.0.2
 ```bash
 # 使用 GHCR 发布的镜像：
 foretoken install
+
+# 从源码目录构建并安装：
+# foretoken install -e .
 ```
 
 沐曦 GPU 的部署请参照[沐曦部署指南](docs/metax-deployment_zh.md)。
@@ -55,7 +61,7 @@ foretoken install
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-git checkout v0.0.2
+git checkout v0.0.2 # 与已安装发布版匹配；源码安装使用相应 checkout。
 
 foretoken deploy examples/quickstart --timeout 20m
 ```
@@ -76,7 +82,7 @@ curl --fail-with-body --no-buffer \
 ### 5. 运行评测
 
 ```bash
-pip install 'foretoken[bench]==0.0.2'
+pip install 'foretoken[bench]'
 foretoken bench examples/quickstart
 ```
 

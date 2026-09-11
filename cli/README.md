@@ -101,13 +101,7 @@ foretoken install --values platform-values.yaml
 
 ## Deploy and operate model services
 
-Deploy one frontend and all models rendered by a Kustomize root. For the published 0.0.2 CLI, obtain its matching examples:
-
-```bash
-git clone https://github.com/shiweijiezero/foretoken.git
-cd foretoken
-git checkout v0.0.2
-```
+Run from the repository checkout prepared in the [Quick Start](../README.md). Deploy one frontend and all models rendered by a Kustomize root.
 
 Source installations use their checkout’s examples and [model storage configuration](../docs/model-storage.md). See the [multi-model example](../examples/multi-model-quickstart/README.md) for capacity and storage requirements. Use `examples/quickstart` for a single model.
 

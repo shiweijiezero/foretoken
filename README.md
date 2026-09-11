@@ -36,7 +36,10 @@ Start with a GPU-enabled Kubernetes cluster and Python 3.11+, `kubectl`, and Hel
 ### 1. Install the command-line tool
 
 ```bash
-pip install foretoken==0.0.2
+pip install foretoken
+
+# From a source checkout:
+# pip install -e .
 ```
 
 ### 2. Install the Kubernetes platform
@@ -44,6 +47,9 @@ pip install foretoken==0.0.2
 ```bash
 # Use release images from GHCR:
 foretoken install
+
+# Build and install from a source checkout:
+# foretoken install -e .
 ```
 
 For deployment on MetaX GPUs, follow the [MetaX deployment guide](docs/metax-deployment.md).
@@ -55,7 +61,7 @@ This installs the Foretoken CRDs and controller in the `foretoken-platform` name
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-git checkout v0.0.2
+git checkout v0.0.2 # Match the installed release; source installations use their checkout.
 
 foretoken deploy examples/quickstart --timeout 20m
 ```
@@ -76,7 +82,7 @@ curl --fail-with-body --no-buffer \
 ### 5. Run a benchmark
 
 ```bash
-pip install 'foretoken[bench]==0.0.2'
+pip install 'foretoken[bench]'
 foretoken bench examples/quickstart
 ```
 

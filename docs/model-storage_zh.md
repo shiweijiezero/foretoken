@@ -5,7 +5,7 @@
 
 [English](model-storage.md) | 简体中文
 
-将下载的模型和运行时缓存放在同一个目录，供后续 Pod 复用。目录缓存使用[当前源码的 CLI 和平台](custom-deployment_zh.md)；已发布的 0.0.2 示例使用动态 PVC。
+将下载的模型和运行时缓存放在同一个目录，供后续 Pod 复用。目录缓存使用[当前源码的 CLI 和平台](custom-deployment_zh.md)。
 
 ## 使用数据目录
 

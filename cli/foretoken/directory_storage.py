@@ -21,11 +21,6 @@ from foretoken.manifest import (
     RuntimeCacheManifest,
 )
 
-_CACHE_LABEL = "inference.foretoken.io/runtime-cache"
-_NAMESPACE_LABEL = "inference.foretoken.io/runtime-cache-namespace"
-_MANAGER_ANNOTATION = "inference.foretoken.io/directory-volume-manager"
-_MANAGER = "foretoken-deploy"
-
 
 class DirectoryVolumes:
     """Own static PV preparation and cleanup for CLI deployment operations.
@@ -33,6 +28,11 @@ class DirectoryVolumes:
     The controller remains the single owner of PVC names, capacity and retention.
     The CLI supplies prepared filesystem locations and preserves their contents.
     """
+
+    owner_annotation = (
+        "inference.foretoken.io/directory-volume-manager",
+        "foretoken-deploy",
+    )
 
     def __init__(self, kubectl: Kubectl) -> None:
         self.kubectl = kubectl
@@ -86,24 +86,25 @@ class DirectoryVolumes:
                 raise DeploymentError(
                     f"PVC/{claim['metadata']['name']} is not owned by RuntimeCache/{cache.name}"
                 )
-            self._bind(cache, claim, path, hostnames, timeout)
+            self._bind(claim, path, hostnames, timeout)
 
     def _bind(
         self,
-        cache: RuntimeCacheManifest,
         claim: dict[str, Any],
         path: str,
         hostnames: list[str],
         timeout: str,
     ) -> None:
         """Create a volume once or rebind its retained data to a recreated claim."""
-        desired = _persistent_volume(cache, claim, path, hostnames)
+        desired = _persistent_volume(claim, path, hostnames)
+        key, owner = self.owner_annotation
+        desired["metadata"]["annotations"] = {key: owner}
         name = desired["metadata"]["name"]
         current = self.kubectl.get_if_exists("pv", name)
         if current is None:
             self.kubectl.run(["create", "-f", "-"], input_text=yaml.safe_dump(desired))
             return
-        if not _owned_volume(current, cache):
+        if not self._owns_volume(current):
             raise DeploymentError(f"PV/{name} belongs to another deployment")
         spec = current["spec"]
         expected_claim = desired["spec"]["claimRef"]
@@ -156,24 +157,36 @@ class DirectoryVolumes:
         """Delete deployment resources and explicitly disposable PVs, never directory files."""
         volumes = []
         for cache in deployment.runtime_caches:
-            if cache.directory and cache.retention_policy == "Delete":
-                selector = (
-                    f"{_CACHE_LABEL}={cache.name},{_NAMESPACE_LABEL}={cache.namespace}"
-                )
-                for volume in self.kubectl.list_cluster_resources(
-                    ["pv"], label_selector=selector
-                ):
-                    if _owned_volume(volume, cache):
-                        volumes.append((cache, volume))
+            if not cache.directory or cache.retention_policy != "Delete":
+                continue
+            resource = self.kubectl.get_if_exists(
+                "runtimecache", cache.name, cache.namespace
+            )
+            if resource is None:
+                continue
+            claim_name = resource.get("status", {}).get("claimName")
+            if not claim_name:
+                continue
+            claim = self.kubectl.get_if_exists("pvc", claim_name, cache.namespace)
+            if claim is None or not claim["spec"].get("volumeName"):
+                continue
+            volume = self.kubectl.get_if_exists("pv", claim["spec"]["volumeName"])
+            if volume is not None and self._owns_volume(volume):
+                reference = volume["spec"].get("claimRef") or {}
+                if reference.get("uid") != claim["metadata"]["uid"]:
+                    raise DeploymentError(
+                        f"PV/{volume['metadata']['name']} is assigned to another claim"
+                    )
+                volumes.append(volume)
         self.kubectl.delete(deployment.rendered, timeout)
-        for cache, previous in volumes:
+        for previous in volumes:
             name = previous["metadata"]["name"]
             current = self.kubectl.get_if_exists("pv", name)
             if current is None:
                 continue
             if current["metadata"]["uid"] != previous["metadata"][
                 "uid"
-            ] or not _owned_volume(current, cache):
+            ] or not self._owns_volume(current):
                 raise DeploymentError(f"PV/{name} changed during deletion")
             claim = current["spec"].get("claimRef") or {}
             if claim and self.kubectl.get_if_exists(
@@ -183,6 +196,11 @@ class DirectoryVolumes:
             self.kubectl.run(
                 ["delete", "pv", name, "--wait=true", f"--timeout={timeout}"]
             )
+
+    def _owns_volume(self, volume: dict[str, Any]) -> bool:
+        """Recognize this lifecycle's persistent marker before checking claim and path."""
+        key, owner = self.owner_annotation
+        return (volume.get("metadata", {}).get("annotations") or {}).get(key) == owner
 
 
 def _resolve_directory(
@@ -285,7 +303,7 @@ def _docker(args: list[str]) -> str:
 
 
 def _persistent_volume(
-    cache: RuntimeCacheManifest, claim: dict[str, Any], path: str, hostnames: list[str]
+    claim: dict[str, Any], path: str, hostnames: list[str]
 ) -> dict[str, Any]:
     """Match the controller's claim without redefining its name, capacity or access mode."""
     metadata, pvc_spec = claim["metadata"], claim["spec"]
@@ -323,20 +341,6 @@ def _persistent_volume(
         "kind": "PersistentVolume",
         "metadata": {
             "name": pvc_spec["volumeName"],
-            "labels": {_CACHE_LABEL: cache.name, _NAMESPACE_LABEL: cache.namespace},
-            "annotations": {_MANAGER_ANNOTATION: _MANAGER},
         },
         "spec": spec,
     }
-
-
-def _owned_volume(volume: dict[str, Any], cache: RuntimeCacheManifest) -> bool:
-    """Identify only PVs prepared for this namespace/cache by the deploy command."""
-    metadata = volume.get("metadata") or {}
-    labels = metadata.get("labels") or {}
-    annotations = metadata.get("annotations") or {}
-    return (
-        labels.get(_CACHE_LABEL) == cache.name
-        and labels.get(_NAMESPACE_LABEL) == cache.namespace
-        and annotations.get(_MANAGER_ANNOTATION) == _MANAGER
-    )
