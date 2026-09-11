@@ -11,6 +11,7 @@ license.workspace = true
 foretoken-chat = { path = "../chat" }
 foretoken-engine-core-client = { path = "../engine-core-client" }
 foretoken-tokenizer = { path = "../tokenizer" }
+foretoken-model-files.workspace = true
 hf-hub.workspace = true
 thiserror.workspace = true
 vllm-text.workspace = true

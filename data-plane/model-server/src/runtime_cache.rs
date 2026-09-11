@@ -101,48 +101,18 @@ impl Config {
         self.observation_port
     }
 
-    /// Resolve a user-provided model or tokenizer directory within the mounted cache.
-    ///
-    /// Hub identifiers without a corresponding directory remain remote. Local files are not
-    /// rewritten to their parent; the inference engine owns model-format validation.
-    pub fn local_artifact_path(&self, identifier: &str) -> Result<Option<String>, String> {
-        let relative = Path::new(identifier);
-        if relative.is_absolute() {
-            if !relative.is_dir() {
-                return Err(format!(
-                    "local artifact {identifier:?} must be a model or tokenizer directory"
-                ));
-            }
-            return Ok(Some(identifier.to_owned()));
-        }
-        if relative
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
-            return Err(format!(
-                "artifact {identifier:?} must stay below the RuntimeCache directory"
-            ));
-        }
-        let unresolved = self.mount_path.join(relative);
-        let candidate = match fs::canonicalize(&unresolved) {
-            Ok(path) => path,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => {
-                return Err(format!(
-                    "could not resolve artifact {identifier:?}: {error}"
-                ));
-            }
-        };
-        let root = fs::canonicalize(&self.mount_path).map_err(|error| error.to_string())?;
-        if !candidate.starts_with(root) || !candidate.is_dir() {
-            return Err(format!(
-                "artifact {identifier:?} must be a directory within the RuntimeCache"
-            ));
-        }
-        candidate
-            .to_str()
-            .map(|path| Some(path.to_owned()))
-            .ok_or_else(|| "local artifact path is not UTF-8".into())
+    /// Resolve a mounted model or tokenizer directory for the engine launcher.
+    pub fn local_artifact_path(&self, identifier: &str) -> io::Result<Option<String>> {
+        foretoken_model_files::resolve_directory(Some(&self.mount_path), identifier)?
+            .map(|path| {
+                path.into_os_string().into_string().map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "local artifact path is not UTF-8",
+                    )
+                })
+            })
+            .transpose()
     }
 
     /// Creates the selected cache directories and verifies that the child can write them.

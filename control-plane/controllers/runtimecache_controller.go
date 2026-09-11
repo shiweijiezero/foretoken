@@ -134,7 +134,7 @@ func runtimeCacheDirectoryPVCName(cache *inferencev1alpha1.RuntimeCache) string 
 	return cache.Name
 }
 
-// runtimeCacheDirectoryPVName matches the CLI's namespace-qualified static volume name.
+// runtimeCacheDirectoryPVName identifies the static volume for one namespace and cache.
 // Namespaces cannot contain dots, so this separator keeps distinct cache identities separate.
 func runtimeCacheDirectoryPVName(cache *inferencev1alpha1.RuntimeCache) string {
 	return "foretoken." + cache.Namespace + "." + cache.Name

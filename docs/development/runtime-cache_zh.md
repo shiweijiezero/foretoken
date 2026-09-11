@@ -1,98 +1,32 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# 持久化运行时缓存
+# 运行时缓存生命周期
 
 [English](runtime-cache.md) | 简体中文
 
-## 复用一个数据目录
+部署配置见[模型存储](../model-storage_zh.md)。
 
-当前源码的示例将下载的模型、分词器文件和引擎缓存集中存放在 `./data`。目录模式需要使用同一源码构建的 CLI 和控制器，已发布的 0.0.2 包不提供该能力。
+## 存储职责
 
-```yaml
-apiVersion: inference.foretoken.io/v1alpha1
-kind: RuntimeCache
-metadata:
-  name: models
-spec:
-  directory: ./data
-  accessMode: ReadWriteMany
-```
+命名空间中的 RuntimeCache 管理 PVC，并发布 claim 名称与就绪状态。工作负载控制器将该 claim 挂载给 model-server 和 frontend。管理员提供的 `workload.cache.claimName` 优先使用，不由 RuntimeCache 控制器管理。
 
-`directory` 与 `initialSize`、`maxSize`、`storageClassName` 互斥。目录模式不设置容量上限，实际空间和配额由底层文件系统决定。静态 PV 与 PVC 中的内部申请值只是为了满足 Kubernetes 的绑定要求，不表示 Foretoken 预分配或限制了相应磁盘空间。
+动态缓存通过 StorageClass 申请存储。配置 `maxSize` 后，控制器在各挂载点观测到的最低空闲比例达到 20% 时申请扩容，将容量逐次翻倍至上限。扩容申请失败时，工作负载仍可以使用已经绑定的卷。
 
-### 本机 k3d
+目录模式中，CLI 在提交用户配置前解析节点可见路径。RuntimeCache 控制器创建 PVC，决定 claim 名称、volume 名称、访问模式和绑定容量；CLI 读取该 claim 来准备静态 PV，不维护另一套命名和容量计算。绑定容量不会创建文件系统配额。
 
-创建集群前准备示例目录，并让工作负载用户可以读写它（标准镜像使用 UID/GID 65532）。将目录映射到计划运行 frontend 和模型的节点：
+本地 k3d 挂载和单节点目录会配置 PV 节点亲和性。多节点绝对路径表示同一个文件系统已在所有节点的对应位置共享，不负责安装共享存储或跨节点传输文件。
 
-```bash
-mkdir -p examples/quickstart/data
-k3d cluster create "$CLUSTER" \
-  --config deploy/k3d/config.yaml \
-  --volume "$PWD/examples/quickstart/data:/var/lib/foretoken/data@all"
-```
+## 保留与重部署
 
-创建 GPU 节点时还需要保留 [k3d 指南](../k3d-deployment_zh.md)中的 GPU 配置。随后安装当前源码并部署：
+保留已删除缓存时，控制器移除 PVC 的 owner。新的目录缓存只有在路径、卷绑定和归属一致时，才能重新接管原 claim。删除 Namespace 仍会删除其中的 PVC。
 
-```bash
-pip install -e .
-foretoken install -e .
-foretoken deploy examples/quickstart
-```
+CLI 默认保留目录 PV。Namespace 重建后，旧 claim 已不存在时，可以把同一 PV 重新绑定到控制器创建的新 PVC；资源版本和旧 claim 前置条件防止覆盖并发绑定修改。其他部署拥有的 PV，或路径、节点位置不同的 PV，不会被接管。
 
-CLI 相对 Kustomize 根目录解析 `./data`，不受当前工作目录影响。它会核实可写的 Docker bind mount，包括仓库根目录等上级目录的挂载，并限制 PV 只在能访问该目录的节点使用。这些节点内的挂载目标路径必须一致。远程 Docker 的文件系统不属于客户端本机，此路径不接受远程 Docker endpoint。重建 k3d 时需要重新配置 bind mount，模型文件仍保留在宿主目录中。
+设置 `retentionPolicy: Delete` 时，控制器在工作负载释放 PVC 后删除它，CLI 随后删除自己的目录 PV 对象。PV 回收策略仍为 Retain，不删除文件。动态卷使用其 StorageClass 的回收策略。
 
-### 其他 Kubernetes 集群
+## 模型文件与运行时缓存
 
-填写管理员已经在目标节点准备好的绝对目录：
+model-files 库统一负责数据面两端的本地模型和 tokenizer 目录解析。相对引用限制在挂载根目录内，单个文件会明确报错，不会被替换成父目录。库不下载模型，也不校验模型格式；这些职责属于推理引擎与 tokenizer loader。本地文件解析后，公开模型标识保持不变。
 
-```yaml
-spec:
-  directory: /srv/foretoken/data
-  accessMode: ReadWriteMany
-```
-
-单节点集群会将 PV 固定到该节点。多节点集群中，这个声明表示同一个共享文件系统已经在**所有节点**按此路径挂载，并具有工作负载所需权限。只有路径相同不能证明目录共享；不满足此条件时应使用共享文件系统或普通存储 PVC。CLI 不上传客户端文件、不安装共享文件系统，也不验证远端文件系统身份。
-
-除常规 namespace 权限外，部署用户还需有读取节点、创建和读取静态 PersistentVolume 的权限；namespaced PVC 仍由控制器管理。单独用 `kubectl apply` 提交 RuntimeCache 不会准备 PV，目录声明应通过 `foretoken deploy` 部署。有些集群准入策略禁止 hostPath，应选择动态存储而不是放宽集群策略。
-
-## 加载目录中的模型
-
-空目录可以直接配合 `Qwen/Qwen3-0.6B` 这类 Hub 标识使用。推理引擎和 frontend 按各自既有缓存布局下载文件，所有缓存位于挂载目录内；后续 Pod 会复用已下载文件，上游检查修订时仍可能联网。
-
-使用已有 checkpoint 时，将完整模型目录放到 `data` 下：
-
-```text
-examples/quickstart/data/checkpointA/A3/
-├── config.json
-├── tokenizer.json
-├── tokenizer_config.json
-└── model.safetensors
-```
-
-将 `ModelService.spec.model` 设置为 `checkpointA/A3`。model-server 和 frontend 都会相对数据根目录定位文件，对外请求仍使用 `checkpointA/A3` 作为模型 ID。模型格式与 tokenizer 的有效性由推理引擎校验；单独配置的 tokenizer 目录不需要模型权重。已存在的单个 checkpoint 文件会明确报错，不会悄悄改为加载父目录。相对路径和软链接不能越过数据根目录。显式绝对模型目录仍按原来的 Pod 内路径解释。
-
-## 动态 PVC 存储
-
-需要集群创建存储卷时，删除 `directory` 并选择 StorageClass：
-
-```yaml
-spec:
-  initialSize: 10Gi
-  storageClassName: shared-storage
-  accessMode: ReadWriteMany
-```
-
-省略 `storageClassName` 使用集群默认值。`initialSize` 是实际申请容量，很多存储驱动会按该容量创建并限制存储卷。K3s `local-path` 不实施目录容量上限，其实际空间取决于节点文件系统；不能将这个行为推广到所有 CSI 块卷或网络卷。
-
-只有驱动支持在线卷和文件系统扩容时才设置 `maxSize`。Foretoken 会在各挂载点观测到的最低空闲比例达到 20% 时申请扩容，将请求容量逐次翻倍直到 `maxSize`。该上限只能增大，不能移除或减小；PVC 不支持缩容。正在进行的下载仍可能在扩容结束前耗尽空间。
-
-## 保留、重建与恢复
-
-两种模式均默认 `retentionPolicy: Retain`。删除目录模式部署会保留文件和 PV；如果同时删除 Namespace，Kubernetes 仍会删除其中的 PVC 对象。再次部署相同 namespace/cache 名称时会复用未变化的目录绑定，包括其原 PVC 已删除的保留 PV。CLI 不接管其他 owner、目录或节点位置的现有 PV；更换目录请使用新的 cache 名称，不要把现有 claim 指向其他数据。
-
-显式设置 `retentionPolicy: Delete` 时，目录模式会在工作负载终止后删除 PVC 和 CLI 创建的 PV 对象，但仍保留目录文件。只有不再需要文件时才单独清理。动态 PVC 删除后是否删除底层数据，由 StorageClass 的回收策略决定。
-
-model-server 启动过程中如果持久缓存不可写，Foretoken 会停止失败的 EngineCore，改用 Pod 临时缓存重试；frontend 缺少 Hub 缓存文件时也可以下载到临时卷。这不会把预先放置的本地 checkpoint 迁移到临时存储，也不能使尚未挂载的 PVC 可用。临时缓存会随 Pod 删除。
-
-管理员也可以在平台 values 中设置 `workload.cache.claimName`，挂载已有 PVC。Foretoken 不创建、扩容或删除该 claim；所有使用这组配置的 workload namespace 都必须提供同名 PVC。
+运行时缓存挂载保存模型来源服务的缓存以及引擎编译缓存。model-server 拥有启动写入检查和一次临时缓存重试：先停止失败的 EngineCore，再在 Pod 的 `/tmp` 下重试。Frontend 缺少 Hub 缓存时可使用临时 tokenizer 缓存。该回退不会切换已运行引擎的存储路径，也不会复制预先准备的本地 checkpoint。

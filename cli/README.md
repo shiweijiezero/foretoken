@@ -13,8 +13,7 @@ For a new cluster, start by installing the command-line tool. If `foretoken --ve
 
 ## Before you start
 
-You need Python 3.10 or later, an active Kubernetes context, `kubectl`, and Helm. GPU nodes must already have their vendor driver and Kubernetes device plugin. Source installation also requires Docker and Make, plus either a local kind/k3d cluster or an OCI registry reachable by every target node.
-
+You need Python 3.11 or later, an active Kubernetes context, `kubectl`, and Helm. GPU nodes must already have their vendor driver and Kubernetes device plugin.
 ## Install the command-line tool
 
 Install the published Foretoken command-line tool package with pip:
@@ -34,7 +33,7 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-This step only installs the `foretoken` command in the current Python environment; it does not change the Kubernetes cluster. Run `foretoken --version` to see the command-line tool and corresponding platform version.
+Run `foretoken --version` to check the installed command-line tool version.
 
 ## Install the Kubernetes platform
 
@@ -52,7 +51,7 @@ During installation, the command-line tool discovers Prometheus and accelerator 
 
 ### Gateway mode
 
-The command-line tool creates a dedicated `GatewayClass` and `Gateway` only when the cluster runs Envoy Gateway:
+Gateway mode creates a dedicated `GatewayClass` and `Gateway`, installing Envoy Gateway if no compatible controller is available:
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -71,7 +70,7 @@ Add `--gateway-section-name LISTENER` only when more than one listener matches.
 
 ### Current source
 
-Build Foretoken images from the current source tree and configure the platform to use them:
+Prepare the build tools listed in the [source deployment guide](../docs/custom-deployment.md), then build and install from the repository root:
 
 ```bash
 foretoken install -e .
@@ -90,19 +89,23 @@ Registry login authorizes the local image push. Private registries also need `im
 
 Repeatable `--values` files provide platform image, runtime, and hardware settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
 
-### RuntimeCache directory deployment
-
-Directory mode requires the current-source CLI and matching controller, not the published 0.0.2 package. Add `directory: ./data` to the deployment's `RuntimeCache` in `cache.yaml` to use one local directory for preloaded model files and runtime caches. `foretoken deploy` resolves the path relative to the Kustomize root and creates a static `hostPath` PV and matching PVC. k3d clusters must bind the directory into the node when created. On ordinary Kubernetes, the `directory` field explicitly declares that a shared filesystem already exposes the resolved absolute path on every target node; the command does not upload or install storage. Remove `directory` and set `initialSize` for dynamic PVC provisioning. Remote Kubernetes requires an absolute node path instead of a client-relative directory. See [Persistent Runtime Cache](../docs/development/runtime-cache.md).
-
 ## Deploy and operate model services
 
-Deploy one frontend and all models rendered by a Kustomize root. The multi-model example starts with two GPUs, 12 CPU cores, and 100 GiB memory, and can scale to four GPUs. It also needs a prepared directory or storage supporting `ReadWriteMany`; online expansion is optional; see the [multi-model example](../examples/multi-model-quickstart/README.md), or use `examples/quickstart` for the smallest path.
+Deploy one frontend and all models rendered by a Kustomize root. For the published 0.0.2 CLI, obtain its matching examples:
 
 ```bash
-foretoken deploy examples/multi-model-quickstart
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
+git checkout v0.0.2
 ```
 
-The command applies the configuration, reports each `FrontendService` and `ModelService` state when it changes, and exits when every service reports Ready for its current configuration. Change the default ten-minute deadline with `--timeout`.
+Source installations use their checkout’s examples and [model storage configuration](../docs/model-storage.md). See the [multi-model example](../examples/multi-model-quickstart/README.md) for capacity and storage requirements. Use `examples/quickstart` for a single model.
+
+```bash
+foretoken deploy examples/multi-model-quickstart --timeout 20m
+```
+
+The command applies the configuration, reports service state changes, and exits when every service is Ready. Without `--timeout`, it waits up to ten minutes.
 
 Inspect the same deployment without applying it:
 

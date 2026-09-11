@@ -7,7 +7,12 @@
 
 This guide explains how to build Foretoken images from source, configure the Kubernetes platform to use them, and redeploy source changes. Model services remain separate and are deployed with `foretoken deploy`.
 
-Use Python 3.10 or later. Run every command from the Foretoken repository root unless it says otherwise.
+Prepare Python 3.11+, Git, Docker with BuildKit, Make, kubectl, Helm, and a Rust toolchain managed by rustup. Get the current source and run commands from its root:
+
+```bash
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
+```
 
 ## 1. Prepare the target Kubernetes cluster
 
@@ -34,20 +39,21 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
-Build Foretoken images from the current source and configure the platform to use them in the active Kubernetes context:
+For a local kind or k3d cluster, build and import the images directly:
 
 ```bash
 foretoken install -e .
 ```
 
-A standard kind or k3d context builds and imports local images. Other Kubernetes contexts need a registry reachable by every target node. Before the first source installation, sign in to its registry host with an account that can push the target repository:
+For other clusters, use a registry reachable by every target node. Replace `example` with a namespace you can push to:
 
 ```bash
+export REGISTRY=ghcr.io/example/foretoken
 docker login ghcr.io
-foretoken install -e . --registry ghcr.io/example/foretoken
+foretoken install -e . --registry "$REGISTRY"
 ```
 
-Registry login authorizes the local image push. A private registry also needs the same pull Secret name in the platform namespace and every workload namespace so nodes can pull the images. Reference it through a values file:
+For a private registry, create a pull Secret with the same name in the platform namespace and each workload namespace. Save its references in `platform-values.yaml`:
 
 ```yaml
 imagePullSecrets:
@@ -59,13 +65,9 @@ workload:
 
 ```bash
 foretoken install -e . \
-  --registry registry.example.com/foretoken \
+  --registry "$REGISTRY" \
   --values platform-values.yaml
 ```
-
-The command reuses the repository's build, import, and push lifecycle before running the same platform and observability installation used for release images. This is the complete, recommended source installation path; continue with [section 3](#3-confirm-the-platform-deployment) after it succeeds.
-
-For lower-level image import and raw Helm diagnosis, see the maintainer [source image lifecycle guide](development/source-image-lifecycle.md).
 
 ## 3. Confirm the platform deployment
 
@@ -83,10 +85,10 @@ The Deployment should report all desired replicas as Ready. Model workloads appe
 
 The Quick Start workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. With k3d, first configure the GPUs as described in [Deploy Foretoken with k3d](k3d-deployment.md), then confirm that the current Kubernetes context points to the target k3d cluster.
 
-To start the example frontend and `Qwen/Qwen3-0.6B` model service, deploy from the repository root using the command-line tool installed in section 2:
+Prepare the [model storage](model-storage.md) declared in `examples/quickstart/cache.yaml`, then deploy from the repository root:
 
 ```bash
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 The command discovers the rendered services, reports state changes, and exits when the current configuration is ready.

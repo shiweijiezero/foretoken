@@ -13,8 +13,7 @@ Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平
 
 ## 开始前
 
-需要准备 Python 3.10 或更高版本、当前 Kubernetes context、`kubectl` 和 Helm。GPU 节点需要预先安装厂商驱动和 Kubernetes device plugin。源码安装还需要 Docker 和 Make，以及本地 kind/k3d 集群或所有目标节点都能访问的 OCI registry。
-
+需要准备 Python 3.11 或更高版本、当前 Kubernetes context、`kubectl` 和 Helm。GPU 节点需要预先安装厂商驱动和 Kubernetes device plugin。
 ## 安装命令行工具
 
 使用 pip 安装已经发布的 Foretoken 命令行工具包：
@@ -34,7 +33,7 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-这一步只会在当前 Python 环境中安装 `foretoken` 命令，不会修改 Kubernetes 集群。运行 `foretoken --version` 可以查看命令行工具及其对应的平台版本。
+运行 `foretoken --version` 查看已安装的命令行工具版本。
 
 ## 安装 Kubernetes 平台
 
@@ -52,7 +51,7 @@ foretoken install
 
 ### 网关模式
 
-只有集群运行 Envoy Gateway 时，命令行工具才会创建专用的 `GatewayClass` 和 `Gateway`：
+网关模式会创建专用的 `GatewayClass` 和 `Gateway`，集群没有可复用的控制器时自动安装 Envoy Gateway：
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -71,7 +70,7 @@ foretoken install \
 
 ### 当前源码
 
-从当前源码构建 Foretoken 镜像，并配置平台使用这些镜像：
+按[源码部署指南](../docs/custom-deployment_zh.md)准备构建工具，再从仓库根目录安装：
 
 ```bash
 foretoken install -e .
@@ -90,19 +89,23 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。发布镜像安装与源码安装模式会记录在 Helm 元数据中，不能静默切换。原本通过 Helm 直接安装的发布实例继续使用原有 Helm 生命周期，命令行工具不会自动接管。
 
-### RuntimeCache 目录部署
-
-目录模式需要当前源码 CLI 和匹配的控制器，不适用于已发布的 0.0.2 包。在部署目录的 `cache.yaml` 中为 `RuntimeCache` 增加 `directory: ./data`，即可使用同一个本地目录保存预加载模型文件和运行时缓存。`foretoken deploy` 会以 Kustomize 根目录为基准解析路径，并创建静态 `hostPath` PV 和匹配的 PVC。k3d 集群必须在创建节点时绑定该目录。普通 Kubernetes 中，`directory` 字段明确表示共享文件系统已经在所有目标节点的相同绝对路径提供该目录；命令不会上传文件或安装存储系统。删除 `directory` 并设置 `initialSize` 后即可动态创建 PVC。普通远程 Kubernetes 需要填写节点绝对路径，不能直接提交客户端相对路径。详见[持久化运行时缓存](../docs/development/runtime-cache_zh.md)。
-
 ## 部署和管理模型服务
 
-部署一个 Kustomize 根目录中渲染出的前端服务和全部模型。多模型示例起步需要 2 张 GPU、12 个 CPU 核心和 100 GiB 内存，扩容后最多需要 4 张 GPU；此外需按缓存指南准备目录或支持 `ReadWriteMany` 的存储；在线扩容为可选能力。完整配置见[多模型示例](../examples/multi-model-quickstart/README_zh.md)，最小路径请使用 `examples/quickstart`。
+部署一个 Kustomize 根目录中的前端服务和全部模型。使用发布的 0.0.2 CLI 时，获取匹配的示例：
 
 ```bash
-foretoken deploy examples/multi-model-quickstart
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
+git checkout v0.0.2
 ```
 
-该命令会应用配置，在 `FrontendService` 和 `ModelService` 状态变化时输出进度，并在所有服务的当前配置均已就绪后退出。默认等待十分钟，可通过 `--timeout` 调整。
+源码安装使用相应 checkout 中的示例及[模型存储配置](../docs/model-storage_zh.md)。资源和存储要求见[多模型示例](../examples/multi-model-quickstart/README_zh.md)。单模型部署使用 `examples/quickstart`。
+
+```bash
+foretoken deploy examples/multi-model-quickstart --timeout 20m
+```
+
+该命令会应用配置、输出服务状态变化，并在所有服务就绪后退出。未指定 `--timeout` 时最多等待十分钟。
 
 不应用配置，直接查看同一部署的状态：
 

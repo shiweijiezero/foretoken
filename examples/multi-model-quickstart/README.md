@@ -10,17 +10,14 @@ This example serves two models through one frontend:
 - `Qwen/Qwen3-0.6B` scales from one to three replicas from queue demand.
 - `unsloth/Llama-3.2-1B-Instruct` runs as one fixed replica.
 
-Each replica uses one GPU. The full scaling range needs four schedulable GPUs: up to three for Qwen and one for Llama. The example's `ReadWriteMany` `RuntimeCache` uses `./data` for preloaded model files and runtime caches and is materialized as a static directory PV. On other Kubernetes clusters, set an absolute path that is already shared on every node; remove `directory` and set `initialSize` to use a dynamic PVC instead. See the [cache guide](../../docs/development/runtime-cache.md). For the smallest deployment, see [Single-Model Quick Start](../quickstart/README.md).
-
-Directory mode requires the current-source CLI and matching images, not the published 0.0.2 package.
+The initial deployment requests two GPUs, 12 CPU cores, and 100 GiB memory. At full scale, three Qwen replicas and one Llama replica request four GPUs, 20 CPU cores, and 196 GiB memory, including the frontend. Allow additional capacity for the platform. Models and runtime caches share the `./data` directory configured in `cache.yaml`. For the smallest deployment, see [Single-Model Quick Start](../quickstart/README.md).
 
 ## Deploy
 
-Complete the platform installation in the [root Quick Start](../../README.md). For k3d, bind this directory into the node when creating the cluster as described in the [k3d guide](../../docs/k3d-deployment.md):
+Install the [current-source platform](../../docs/custom-deployment.md) and prepare the [model storage](../../docs/model-storage.md). Run from the repository root:
 
 ```bash
-mkdir -p examples/multi-model-quickstart/data
-foretoken deploy examples/multi-model-quickstart
+foretoken deploy examples/multi-model-quickstart --timeout 20m
 export FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 ```
 
@@ -28,7 +25,7 @@ export FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
 
 The Qwen service evaluates queue demand every five seconds. It starts with one replica, changes by at most one replica per evaluation, and delays scale down for five minutes. See the [autoscaling guide](../../docs/autoscaling.md) for the configuration and status contract.
 
-In one terminal, watch the Qwen capacity resources:
+Open a separate terminal to watch the Qwen capacity resources:
 
 ```bash
 kubectl get modelpool,modelgroup \
@@ -36,11 +33,9 @@ kubectl get modelpool,modelgroup \
   --watch
 ```
 
-In another terminal, run a bounded concurrent workload. It sends 32 requests with at most eight in flight:
+In the terminal used for deployment, send 32 requests with at most eight in flight:
 
 ```bash
-export FRONTEND_URL="$(foretoken endpoint examples/multi-model-quickstart)"
-
 seq 1 32 | xargs -P8 -I{} sh -c '
   curl --fail --silent --show-error \
     "$FRONTEND_URL/v1/chat/completions" \

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](metax-deployment_zh.md)
 
-Once a Foretoken cluster is configured for MetaX GPUs, deploying a model follows the same workflow as on other GPUs: prepare its configuration, run `foretoken deploy`, and send an HTTP request. Foretoken manages deployment and request routing; the MetaX runtime in the model image executes the model on the GPU. Model users do not need to install vLLM, PyTorch, or MACA themselves.
+Deploy a model on a MetaX-enabled Foretoken cluster and call it through an OpenAI-compatible HTTP API.
 
 This guide uses `Qwen/Qwen3-0.6B`. If the cluster is not ready yet, its administrator should complete [MetaX platform setup](development/metax-platform.md) first.
 
@@ -24,7 +24,7 @@ If the platform exposes services directly through a `LoadBalancer` instead of Ga
 
 ## 1. Deploy the example model
 
-The example already includes the model, cache, and frontend service. No vLLM launch command is needed.
+The example includes the model, cache, and frontend service.
 
 Add `hostname` under the existing `spec` in `examples/quickstart/frontend.yaml`. Replace the example hostname with the one assigned by your administrator and keep the other settings:
 
@@ -36,10 +36,10 @@ spec:
 Deploy the example:
 
 ```bash
-foretoken deploy examples/quickstart
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
-Foretoken prepares the model cache and starts the services. The command exits when the current configuration is Ready. The first deployment downloads the model, so startup time depends on network and storage performance.
+The command exits when the model and frontend services are Ready.
 
 To select another model, edit `examples/quickstart/model.yaml`. See the [single-model example](../examples/quickstart/README.md) for resources and cache settings. If you need a different namespace in a shared cluster, update both `namespace.yaml` and `kustomization.yaml`; changing only kubectl's default namespace does not change these manifests.
 
@@ -58,7 +58,7 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-The response arrives in chunks and ends with `data: [DONE]`. This confirms that a request completed through Foretoken, not merely that the model container started.
+The response arrives in chunks and ends with `data: [DONE]`.
 
 If you changed the model, update the request's `model` value as well. To list the names available from this service:
 
@@ -87,5 +87,3 @@ The example includes its namespace, so deletion also removes resources and the e
 - **Deployment keeps waiting or a Pod is Pending:** run `kubectl describe pod --namespace foretoken-demo <pod-name>`. Share events about unavailable GPU, CPU, memory, or unbound cache volumes with the administrator.
 - **HTTP 404:** check that the configured `hostname` matches the request Host. A `model_not_found` response instead means the model name is wrong; check `/v1/models`.
 - **HTTP 503:** inspect `foretoken status` and Pod logs to confirm that the model loaded and the services are Ready before investigating the access endpoint.
-
-The MetaX source environment described here has been validated for text generation and JSON-constrained output, not audio inference. Image versions, source installation, and runtime dependencies are covered in [platform setup](development/metax-platform.md).
