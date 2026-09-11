@@ -27,9 +27,10 @@ WORKDIR /workspace
 
 COPY data-plane/ ./data-plane/
 
+# Bullseye cannot load procedural macros linked against the frontend builder's newer glibc.
 RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=foretoken-cargo-target,target=/workspace/data-plane/target,sharing=locked \
+    --mount=type=cache,id=foretoken-cargo-target-model-server,target=/workspace/data-plane/target,sharing=locked \
     cargo build --locked --release \
       --manifest-path data-plane/Cargo.toml \
       --package foretoken-model-server \

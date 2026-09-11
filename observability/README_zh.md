@@ -121,7 +121,7 @@ foretoken install --values examples/observability/observability.yaml
 | 模型服务 | `foretoken:model_server_generation_tokens:rate5m` | 每秒生成的 token 数 |
 | 模型服务 | `foretoken:model_server_requests_running:sum` | 正在运行的请求数 |
 | 模型服务 | `foretoken:model_server_requests_waiting:sum` | 调度器中等待的请求数 |
-| 模型服务 | `foretoken:model_server_e2e_request_latency_seconds:quantile5m` | model-server 内的请求延迟，分 `p50`、`p90`、`p99` |
+| 模型服务 | `foretoken:model_server_e2e_request_latency_seconds:quantile5m` | 从 Frontend handler 开始处理到生成完成的时间，分 `p50`、`p90`、`p99` |
 | 模型服务 | `foretoken:model_server_time_to_first_token_seconds:quantile5m` | 首 token 延迟，分 `p50`、`p90`、`p99` |
 | 模型服务 | `foretoken:model_server_time_per_output_token_seconds:quantile5m` | 每输出 token 的时间，分 `p50`、`p90`、`p99` |
 | 模型服务 | `foretoken:model_server_inter_token_latency_seconds:quantile5m` | 相邻输出 token 之间的间隔，分 `p50`、`p90`、`p99` |
@@ -140,7 +140,7 @@ foretoken install --values examples/observability/observability.yaml
 | 加速器 | `foretoken:accelerator_gpu_power_watts` | 每块 NVIDIA 设备的功耗 |
 | 加速器 | `foretoken:accelerator_gpu_temperature_celsius` | 每块 NVIDIA 设备的温度 |
 
-记录规则保留命名空间、Frontend 服务、模型组、模型角色、模型名称和 Prefill/Decode pipeline scope 标签。Frontend 延迟在响应头发出时结束，流式响应的 token 发送时间不计入；model-server 延迟在生成完成时结束。流式响应可能先以 `2xx` 开始、之后再失败，因此 5xx 比例不是推理成功率。加速器规则只覆盖 Foretoken 工作负载使用的设备。
+记录规则保留命名空间、Frontend 服务、模型组、模型角色、模型名称和 Prefill/Decode pipeline scope 标签。Frontend 延迟在响应头发出时结束，流式响应的 token 发送时间不计入；生成完成延迟和首 token 延迟都从 JSON 解码后的 Frontend handler 入口开始计时，跨进程测量要求节点时钟同步。流式响应可能先以 `2xx` 开始、之后再失败，因此 5xx 比例不是推理成功率。加速器规则只覆盖 Foretoken 工作负载使用的设备。
 
 ## 单次 Profiling（实验性，需源码构建）
 

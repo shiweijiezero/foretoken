@@ -121,7 +121,7 @@ The dashboard and alerts query these recording rules. Model-serving rules are de
 | Model serving | `foretoken:model_server_generation_tokens:rate5m` | Generated tokens per second |
 | Model serving | `foretoken:model_server_requests_running:sum` | Requests currently running |
 | Model serving | `foretoken:model_server_requests_waiting:sum` | Requests waiting in the scheduler |
-| Model serving | `foretoken:model_server_e2e_request_latency_seconds:quantile5m` | Request latency inside the model server, as `p50`, `p90`, and `p99` |
+| Model serving | `foretoken:model_server_e2e_request_latency_seconds:quantile5m` | Time from Frontend handler entry to generation completion, as `p50`, `p90`, and `p99` |
 | Model serving | `foretoken:model_server_time_to_first_token_seconds:quantile5m` | Time to first token, as `p50`, `p90`, and `p99` |
 | Model serving | `foretoken:model_server_time_per_output_token_seconds:quantile5m` | Time per output token, as `p50`, `p90`, and `p99` |
 | Model serving | `foretoken:model_server_inter_token_latency_seconds:quantile5m` | Gap between consecutive output tokens, as `p50`, `p90`, and `p99` |
@@ -140,7 +140,7 @@ The dashboard and alerts query these recording rules. Model-serving rules are de
 | Accelerator | `foretoken:accelerator_gpu_power_watts` | Per-device NVIDIA power draw |
 | Accelerator | `foretoken:accelerator_gpu_temperature_celsius` | Per-device NVIDIA temperature |
 
-Rules keep the namespace, Frontend service, model group, model role, model name, and Prefill/Decode pipeline scope labels. Frontend latency ends when response headers are sent, so for streaming responses it does not include token delivery; model-server latency ends when generation completes. A streaming response can start with `2xx` and fail later, so the 5xx ratio is not an inference success rate. Accelerator rules cover only devices used by Foretoken workloads.
+Rules keep the namespace, Frontend service, model group, model role, model name, and Prefill/Decode pipeline scope labels. Frontend latency ends when response headers are sent, so for streaming responses it does not include token delivery; generation completion latency and TTFT start when the Frontend handler begins after JSON decoding. These cross-process measurements require synchronized node clocks. A streaming response can start with `2xx` and fail later, so the 5xx ratio is not an inference success rate. Accelerator rules cover only devices used by Foretoken workloads.
 
 ## One-off profiling (experimental, source build)
 
