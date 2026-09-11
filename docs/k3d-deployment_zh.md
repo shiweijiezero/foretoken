@@ -7,28 +7,6 @@
 
 k3d 在 Docker 容器中运行轻量级 Kubernetes 发行版 k3s。它适合在一台共享 GPU 服务器上创建相互隔离、可随时删除的 Foretoken 集群，同时继续使用标准 Helm、CRD 和 Kubernetes API。k3d 集群的节点位于同一台 Docker 主机；跨物理机器部署使用 k3s 或 Kubernetes。
 
-创建 k3d 集群后，使用 `foretoken install` 安装 Foretoken Kubernetes 平台。如需从当前源码构建平台镜像而不是使用发布镜像，使用 `foretoken install -e .`。源码模式只把发生变化的本地镜像导入当前 k3d 集群；模型服务单独部署。
-
-## k3d 如何限定物理 GPU
-
-标准 Kubernetes Pod 请求的是 GPU 类型和数量：
-
-```yaml
-resources:
-  limits:
-    nvidia.com/gpu: 1
-```
-
-Pod 不指定宿主机 GPU 编号。k3d 可以在创建 Kubernetes 节点容器时先限制 Docker 可见设备：
-
-```text
-宿主机物理 GPU 6、7
-→ Docker --gpus '"device=6,7"'
-→ k3d 节点容器
-→ k3s NVIDIA 设备插件
-→ Foretoken Pod
-```
-
 ## 前置条件
 
 主机需要：
@@ -42,10 +20,11 @@ Pod 不指定宿主机 GPU 编号。k3d 可以在创建 Kubernetes 节点容器�
 
 ## 1. 进入仓库并选择 GPU
 
-后续命令都在 Foretoken 仓库根目录执行：
+获取源码后，从仓库根目录执行后续命令：
 
 ```bash
-cd /path/to/your/foretoken
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 ```
 
 查看 GPU：
@@ -54,7 +33,7 @@ cd /path/to/your/foretoken
 nvidia-smi
 ```
 
-快速开始工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。以下示例选择 GPU 6、7，并将集群命名为 `foretoken-qwen-test`：
+选择没有其他任务的 GPU。快速开始需要 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。下面以 GPU 6、7 和集群名 `foretoken-qwen-test` 为例，按实际空卡修改。Docker 限定节点可见的物理卡，Pod 再从中申请 GPU 数量：
 
 ```bash
 export GPU_INDICES=6,7
@@ -113,14 +92,12 @@ for LDCONFIG_PATH in \
   add_k3d_mount "$LDCONFIG_PATH"
 done
 
-# RuntimeCache 目录模式会在节点中复用这些宿主机目录。
-for DATA_DIR in \
-  "$PWD/examples/quickstart/data" \
-  "$PWD/examples/multi-model-quickstart/data"; do
-  mkdir -p "$DATA_DIR"
-  add_k3d_mount "$(realpath "$DATA_DIR")"
-done
+# 模型下载和运行时缓存保存在示例目录中。
+mkdir -p examples/quickstart/data
+add_k3d_mount "$(realpath examples/quickstart/data)"
 ```
+
+为 frontend 和 model-server 的运行用户配置 `examples/quickstart/data` 写权限；标准 frontend 使用 UID/GID 65532。其他存储方式见[模型存储](model-storage_zh.md)。
 
 创建包含单个 server 节点的集群：
 
@@ -158,46 +135,28 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 
 ## 4. 安装并访问 Foretoken
 
-使用 pip 安装命令行工具：
-
-```bash
-pip install foretoken
-```
-
-或使用 uv 创建并激活虚拟环境后安装：
-
-```bash
-uv venv
-source .venv/bin/activate
-uv pip install foretoken
-```
-
 ### 4.1 选择部署方式
 
-- **使用发布镜像**：先运行 `git checkout v0.0.2` 使用匹配的发布示例，再执行 [第 4.2 节：本地模式](#42-本地模式) 或 [第 4.3 节：网关模式](#43-网关模式)。
-- **以本地模式部署源码**：按[源码部署指南](custom-deployment_zh.md)准备构建工具，执行下面的命令，再进入[第 4.4 节：发送请求](#44-发送-openai-api-兼容格式的请求)。
+下面的目录型示例使用当前仓库构建的平台。按[源码部署指南](custom-deployment_zh.md)准备工具，然后安装：
 
 ```bash
 pip install -e .
 foretoken install -e .
-foretoken deploy examples/quickstart --timeout 20m
-FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
+```
+
+使用发布包和镜像时，从所选[发布页面](https://github.com/shiweijiezero/foretoken/releases)取得示例，再安装：
+
+```bash
+pip install foretoken
+foretoken install
 ```
 
 ### 4.2 本地模式
 
-使用发布镜像安装 Foretoken 并部署快速开始示例：
+部署快速开始示例，解析 k3s ServiceLB 为前端分配的地址：
 
 ```bash
-foretoken install
-
 foretoken deploy examples/quickstart --timeout 20m
-```
-
-解析 k3s ServiceLB 为前端服务分配的地址：
-
-```bash
 FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
 FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
@@ -211,10 +170,11 @@ spec:
   hostname: foretoken.example.com
 ```
 
-安装网关模式并使用发布镜像部署快速开始示例。集群没有已就绪的 Envoy Controller 时，命令行工具会自动安装 Envoy Gateway：
+启用网关模式并部署快速开始示例，命令会按需安装 Envoy Gateway：
 
 ```bash
-foretoken install --frontend-mode gateway
+foretoken install -e . --frontend-mode gateway
+# 发布安装使用：foretoken install --frontend-mode gateway
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
@@ -240,9 +200,6 @@ curl "$FORETOKEN_FRONTEND_URL/v1/chat/completions" \
 printf '\n'
 ```
 
-Foretoken 的 YAML 仍声明标准的 `nvidia.com/gpu` 资源；创建 k3d 集群时选择宿主机 GPU。
-
-
 ## 5. 清理
 
 删除集群：
@@ -251,4 +208,4 @@ Foretoken 的 YAML 仍声明标准的 `nvidia.com/gpu` 资源；创建 k3d 集�
 k3d cluster delete "$CLUSTER"
 ```
 
-删除集群会停止其中所有 Pod、删除集群内的 Kubernetes 资源，并释放分配给 k3d 节点容器的 GPU。
+删除集群会停止其中的 Pod 并释放 GPU。保留 `examples/quickstart/data`，创建新集群时恢复相同 bind mount，即可复用已下载的模型。

@@ -12,6 +12,7 @@ Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平
 ## 开始前
 
 需要准备 Python 3.11 或更高版本、当前 Kubernetes context、`kubectl` 和 Helm。GPU 节点需要预先安装厂商驱动和 Kubernetes device plugin。
+
 ## 安装命令行工具
 
 使用 pip 安装已经发布的 Foretoken 命令行工具包：
@@ -103,7 +104,7 @@ foretoken install --values platform-values.yaml
 
 从[快速开始](../README_zh.md)准备的仓库目录执行，部署一个 Kustomize 根目录中的前端服务和全部模型。
 
-源码安装使用相应 checkout 中的示例及[模型存储配置](../docs/model-storage_zh.md)。资源和存储要求见[多模型示例](../examples/multi-model-quickstart/README_zh.md)。单模型部署使用 `examples/quickstart`。
+资源要求见[多模型示例](../examples/multi-model-quickstart/README_zh.md)，目录和 PVC 配置见[模型存储](../docs/model-storage_zh.md)。单模型部署使用 `examples/quickstart`。
 
 ```bash
 foretoken deploy examples/multi-model-quickstart --timeout 20m

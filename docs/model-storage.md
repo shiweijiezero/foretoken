@@ -5,11 +5,11 @@
 
 English | [简体中文](model-storage_zh.md)
 
-Keep model downloads and runtime caches in one directory so new Pods can reuse them. Directory caching uses the [current-source CLI and platform](custom-deployment.md).
+Keep model downloads and runtime caches in one directory so new Pods can reuse them.
 
 ## Use a data directory
 
-The source examples declare the data directory in `cache.yaml`:
+Declare the data directory in `cache.yaml`:
 
 ```yaml
 apiVersion: inference.foretoken.io/v1alpha1

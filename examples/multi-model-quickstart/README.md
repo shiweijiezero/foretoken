@@ -14,7 +14,7 @@ The initial deployment requests two GPUs, 12 CPU cores, and 100 GiB memory. At f
 
 ## Deploy
 
-Install the [current-source platform](../../docs/custom-deployment.md) and prepare the [model storage](../../docs/model-storage.md). Run from the repository root:
+Install the [platform from source](../../docs/custom-deployment.md) and prepare the [model storage](../../docs/model-storage.md). Run from the repository root:
 
 ```bash
 foretoken deploy examples/multi-model-quickstart --timeout 20m

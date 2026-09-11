@@ -5,11 +5,11 @@
 
 [English](model-storage.md) | 简体中文
 
-将下载的模型和运行时缓存放在同一个目录，供后续 Pod 复用。目录缓存使用[当前源码的 CLI 和平台](custom-deployment_zh.md)。
+将下载的模型和运行时缓存放在同一个目录，供后续 Pod 复用。
 
 ## 使用数据目录
 
-源码示例在 `cache.yaml` 中声明数据目录：
+在 `cache.yaml` 中声明数据目录：
 
 ```yaml
 apiVersion: inference.foretoken.io/v1alpha1

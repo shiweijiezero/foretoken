@@ -33,9 +33,11 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 Start with a GPU-enabled Kubernetes cluster and Python 3.11+, `kubectl`, and Helm installed locally.
 
-### 1. Install the command-line tool
+### 1. Get the examples and install the command-line tool
 
 ```bash
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 pip install foretoken
 
 # From a source checkout:
@@ -43,6 +45,8 @@ pip install foretoken
 ```
 
 ### 2. Install the Kubernetes platform
+
+Use the source commands for the directory-backed examples in this checkout. For a release installation, use the examples supplied with that [release](https://github.com/shiweijiezero/foretoken/releases).
 
 ```bash
 # Use release images from GHCR:
@@ -54,19 +58,17 @@ foretoken install
 
 For deployment on MetaX GPUs, follow the [MetaX deployment guide](docs/metax-deployment.md).
 
-This installs the Foretoken CRDs and controller in the `foretoken-platform` namespace and waits for the controller to become ready. The default mode exposes the frontend through a `LoadBalancer` Service. For current-source installation and directory caching, see the [source deployment guide](docs/custom-deployment.md).
+The platform runs in the `foretoken-platform` namespace and exposes model services through a `LoadBalancer` Service. See the [source deployment guide](docs/custom-deployment.md) for build tools and remote clusters.
 
 ### 3. Deploy the Quick Start
 
-```bash
-git clone https://github.com/shiweijiezero/foretoken.git
-cd foretoken
-git checkout v0.0.2 # Match the installed release; source installations use their checkout.
+Prepare the [model storage](docs/model-storage.md) in `examples/quickstart/cache.yaml`, then deploy:
 
+```bash
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-The release example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and a runtime cache PVC starting at 10 GiB, using a default `StorageClass` that supports expansion. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
+This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. Models and runtime caches are kept in the directory configured by `cache.yaml`. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
 
 ### 4. Send a test request
 
@@ -83,6 +85,9 @@ curl --fail-with-body --no-buffer \
 
 ```bash
 pip install 'foretoken[bench]'
+
+# From a source checkout:
+# pip install -e '.[bench]'
 foretoken bench examples/quickstart
 ```
 
@@ -104,6 +109,8 @@ Then run:
 ```bash
 # Install the platform in Gateway mode
 foretoken install --frontend-mode gateway
+# For a source-installed platform:
+# foretoken install -e . --frontend-mode gateway
 
 # Deploy the Quick Start
 foretoken deploy examples/quickstart --timeout 20m

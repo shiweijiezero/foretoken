@@ -13,7 +13,7 @@
 
 ## 部署
 
-安装[当前源码平台](../../docs/custom-deployment_zh.md)并准备[模型存储](../../docs/model-storage_zh.md)，再从仓库根目录部署：
+从源码[安装平台](../../docs/custom-deployment_zh.md)并准备[模型存储](../../docs/model-storage_zh.md)，再从仓库根目录部署：
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m

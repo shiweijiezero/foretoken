@@ -13,7 +13,7 @@ Configure the model, replica count, resources, and parallelism in [`model.yaml`]
 
 ## Deploy
 
-Install the [current-source platform](../../docs/custom-deployment.md) and prepare the [model storage](../../docs/model-storage.md). Run from the repository root:
+Install the [platform from source](../../docs/custom-deployment.md) and prepare the [model storage](../../docs/model-storage.md). Run from the repository root:
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m

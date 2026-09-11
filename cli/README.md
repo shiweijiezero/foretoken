@@ -12,6 +12,7 @@ The Foretoken command-line tool installs the shared Kubernetes platform, deploys
 ## Before you start
 
 You need Python 3.11 or later, an active Kubernetes context, `kubectl`, and Helm. GPU nodes must already have their vendor driver and Kubernetes device plugin.
+
 ## Install the command-line tool
 
 Install the published Foretoken command-line tool package with pip:
@@ -103,7 +104,7 @@ foretoken install --values platform-values.yaml
 
 Run from the repository checkout prepared in the [Quick Start](../README.md). Deploy one frontend and all models rendered by a Kustomize root.
 
-Source installations use their checkout’s examples and [model storage configuration](../docs/model-storage.md). See the [multi-model example](../examples/multi-model-quickstart/README.md) for capacity and storage requirements. Use `examples/quickstart` for a single model.
+See the [multi-model example](../examples/multi-model-quickstart/README.md) for resources and [model storage](../docs/model-storage.md) for directory or PVC configuration. Use `examples/quickstart` for a single model.
 
 ```bash
 foretoken deploy examples/multi-model-quickstart --timeout 20m
