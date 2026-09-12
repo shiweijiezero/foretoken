@@ -65,6 +65,12 @@ spec:
                 description: KVMasterSpec configures the KVService-level Mooncake
                   Master singleton.
                 properties:
+                  fsGroup:
+                    description: FSGroup sets the group used to access the mounted
+                      Master volumes; omitted values preserve image and driver behavior.
+                    format: int64
+                    minimum: 0
+                    type: integer
                   image:
                     minLength: 1
                     type: string
@@ -256,6 +262,12 @@ spec:
                           required:
                           - size
                           type: object
+                        fsGroup:
+                          description: FSGroup sets the group used to access client
+                            volumes without changing the image user.
+                          format: int64
+                          minimum: 0
+                          type: integer
                         image:
                           minLength: 1
                           type: string
@@ -359,6 +371,23 @@ spec:
                             rule: '!has(self.limits) || !has(self.limits.memory) ||
                               quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                               <= 0'
+                        storageRegistration:
+                          description: StorageRegistration enables provider registration
+                            checks for a Store client.
+                          properties:
+                            enabled:
+                              description: Enabled requests provider registration
+                                checks instead of infrastructure-only readiness.
+                              type: boolean
+                            port:
+                              default: 9300
+                              description: Port is the client HTTP management port
+                                used for registration checks.
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                          type: object
                       required:
                       - image
                       - memoryCapacity
@@ -407,11 +436,13 @@ spec:
                 - name
                 x-kubernetes-list-type: map
               timeouts:
-                description: KVTimeouts defines lifecycle budgets for future Store
-                  clients.
+                description: KVTimeouts defines lifecycle budgets for Store clients.
                 properties:
                   drain:
-                    description: Duration is a positive Go-style duration.
+                    description: |-
+                      Drain bounds a leaving client's exit: the wait for its memory segments to leave
+                      Master and for in-flight SSD readers after its SSD metadata is dropped, and the
+                      process termination grace period.
                     minLength: 2
                     pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
@@ -446,8 +477,8 @@ spec:
                 == 1 : true)'
           status:
             description: |-
-              KVServiceStatus reports infrastructure and Pool materialization only; it does
-              not claim provider registration, usable Store state, or available capacity.
+              KVServiceStatus reports infrastructure and Pool materialization. Provider
+              registration is reflected by the dependent KVGroups when explicitly enabled.
             properties:
               binding:
                 description: KVServiceBinding is the immutable current requester configuration

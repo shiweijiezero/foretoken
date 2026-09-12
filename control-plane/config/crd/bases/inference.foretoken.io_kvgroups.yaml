@@ -90,6 +90,12 @@ spec:
                     - retentionPolicy
                     - size
                     type: object
+                  fsGroup:
+                    description: FSGroup preserves the resolved volume access group
+                      for the client Pod.
+                    format: int64
+                    minimum: 0
+                    type: integer
                   image:
                     type: string
                   memoryCapacityBytes:
@@ -188,6 +194,23 @@ spec:
                     - message: resources.requests.memory must not exceed resources.limits.memory
                       rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                         <= 0'
+                  storageRegistration:
+                    description: StorageRegistration enables provider registration
+                      checks for a Store client.
+                    properties:
+                      enabled:
+                        description: Enabled requests provider registration checks
+                          instead of infrastructure-only readiness.
+                        type: boolean
+                      port:
+                        default: 9300
+                        description: Port is the client HTTP management port used
+                          for registration checks.
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                    type: object
                 required:
                 - disk
                 - image
@@ -215,6 +238,11 @@ spec:
                 - name
                 - uid
                 type: object
+              masterAdminPort:
+                format: int32
+                maximum: 65535
+                minimum: 1
+                type: integer
               masterRPCPort:
                 format: int32
                 maximum: 65535
@@ -233,11 +261,13 @@ spec:
                 minLength: 1
                 type: string
               timeouts:
-                description: KVTimeouts defines lifecycle budgets for future Store
-                  clients.
+                description: KVTimeouts defines lifecycle budgets for Store clients.
                 properties:
                   drain:
-                    description: Duration is a positive Go-style duration.
+                    description: |-
+                      Drain bounds a leaving client's exit: the wait for its memory segments to leave
+                      Master and for in-flight SSD readers after its SSD metadata is dropped, and the
+                      process termination grace period.
                     minLength: 2
                     pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
@@ -270,8 +300,9 @@ spec:
               rule: self == oldSelf
           status:
             description: |-
-              KVGroupStatus reports requested capacity and Kubernetes infrastructure only.
-              It never represents Mooncake registration or usable Store capacity.
+              KVGroupStatus reports requested capacity, Kubernetes infrastructure, and, when
+              storageRegistration is enabled, provider registration plus the drain outcome of a
+              deleting Group.
             properties:
               conditions:
                 items:

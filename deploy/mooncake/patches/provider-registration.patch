@@ -1,0 +1,255 @@
+diff --git a/mooncake-store/include/client_service.h b/mooncake-store/include/client_service.h
+index 621b4edd..db3effe7 100644
+--- a/mooncake-store/include/client_service.h
++++ b/mooncake-store/include/client_service.h
+@@ -620,6 +620,18 @@ class Client {
+         return 0;
+     }
+ 
++    // Return segment identities that the process expects to retain so the admin
++    // endpoint and Master state can be cross-checked.
++    std::vector<UUID> GetMountedSegmentIds() const {
++        std::lock_guard<std::mutex> lock(mounted_segments_mutex_);
++        std::vector<UUID> ids;
++        ids.reserve(mounted_segments_.size());
++        for (const auto& [id, segment] : mounted_segments_) {
++            ids.push_back(id);
++        }
++        return ids;
++    }
++
+     bool is_ping_healthy() const { return last_ping_success_.load(); }
+ 
+     /**
+diff --git a/mooncake-store/include/master_admin_service.h b/mooncake-store/include/master_admin_service.h
+index 5ced9118..798747cc 100644
+--- a/mooncake-store/include/master_admin_service.h
++++ b/mooncake-store/include/master_admin_service.h
+@@ -81,6 +81,8 @@ class MasterAdminServer {
+                               coro_http::coro_http_response& resp);
+     void HandleGetSegmentsDetail(coro_http::coro_http_request& req,
+                                  coro_http::coro_http_response& resp);
++    void HandleClientRegistration(coro_http::coro_http_request& req,
++                                  coro_http::coro_http_response& resp);
+     void HandleQuerySegment(coro_http::coro_http_request& req,
+                             coro_http::coro_http_response& resp);
+     void HandleCreateDrainJob(coro_http::coro_http_request& req,
+diff --git a/mooncake-store/include/master_service.h b/mooncake-store/include/master_service.h
+index ac73ecfa..9d8826bb 100644
+--- a/mooncake-store/include/master_service.h
++++ b/mooncake-store/include/master_service.h
+@@ -646,6 +646,15 @@ class MasterService {
+     auto OffloadObjectHeartbeat(const UUID& client_id, bool enable_offloading)
+         -> tl::expected<std::vector<OffloadTaskItem>, ErrorCode>;
+ 
++    struct ClientSsdRegistration {
++        bool registered{false};
++        int64_t capacity_bytes{0};
++    };
++
++    // Read existing SSD membership and capacity without creating registration
++    // state or triggering offload.
++    ClientSsdRegistration GetClientSsdRegistration(const UUID& client_id);
++
+     auto ReportSsdCapacity(const UUID& client_id,
+                            int64_t ssd_total_capacity_bytes)
+         -> tl::expected<void, ErrorCode>;
+diff --git a/mooncake-store/include/rpc_service.h b/mooncake-store/include/rpc_service.h
+index 8e2cfa48..11798a82 100644
+--- a/mooncake-store/include/rpc_service.h
++++ b/mooncake-store/include/rpc_service.h
+@@ -204,6 +204,9 @@ class WrappedMasterService {
+     tl::expected<std::vector<MasterService::SegmentDetailInfo>, ErrorCode>
+     GetSegmentsDetailForAdmin();
+ 
++    MasterService::ClientSsdRegistration GetClientSsdRegistrationForAdmin(
++        const UUID& client_id);
++
+     tl::expected<std::pair<uint64_t, uint64_t>, ErrorCode> QuerySegmentForAdmin(
+         const std::string& segment);
+ 
+diff --git a/mooncake-store/src/file_storage.cpp b/mooncake-store/src/file_storage.cpp
+index 7500059f..df917d64 100644
+--- a/mooncake-store/src/file_storage.cpp
++++ b/mooncake-store/src/file_storage.cpp
+@@ -347,10 +347,9 @@ tl::expected<void, ErrorCode> FileStorage::Init() {
+             return mount_file_storage_result;
+         }
+     }
+-    // Report configured SSD capacity to Master so it can populate
+-    // file_total_capacity_ (the denominator in "SSD Storage: X / Y").
+-    // Called once at init; old Masters that lack this RPC will log an error
+-    // but FileStorage continues normally.
++    // Report SSD capacity for Master accounting. Heartbeat retries failures and
++    // remounts report the current capacity again.
++    // A Master without this RPC does not affect the existing FileStorage path.
+     if (config_.total_size_limit > 0) {
+         auto cap_result = client_->ReportSsdCapacity(config_.total_size_limit);
+         if (!cap_result) {
+@@ -830,6 +829,17 @@ tl::expected<void, ErrorCode> FileStorage::Heartbeat() {
+         }
+     }
+ 
++    // Refresh capacity idempotently because restoring an old Master snapshot
++    // can leave the registered SSD capacity stale.
++    // A reporting failure does not block offload work acquired in this cycle.
++    if (config_.total_size_limit > 0) {
++        auto capacity_result = client_->ReportSsdCapacity(config_.total_size_limit);
++        if (!capacity_result) {
++            LOG(WARNING) << "Failed to refresh SSD capacity: "
++                         << capacity_result.error();
++        }
++    }
++
+     // === STEP 2: Persist offloaded objects (trigger actual data migration) ===
+     if (!offloading_objects.empty()) {
+         auto offload_result = OffloadObjects(offloading_objects);
+diff --git a/mooncake-store/src/master_admin_service.cpp b/mooncake-store/src/master_admin_service.cpp
+index 798ca553..2c8a8aec 100644
+--- a/mooncake-store/src/master_admin_service.cpp
++++ b/mooncake-store/src/master_admin_service.cpp
+@@ -738,6 +738,33 @@ void MasterAdminServer::HandleGetSegmentsDetail(
+     });
+ }
+ 
++namespace {
++struct HttpClientRegistrationResponse {
++    std::string client_id;
++    bool ssd_registered{false};
++    int64_t ssd_reported_capacity_bytes{0};
++};
++YLT_REFL(HttpClientRegistrationResponse, client_id, ssd_registered,
++         ssd_reported_capacity_bytes);
++}  // namespace
++
++void MasterAdminServer::HandleClientRegistration(
++    coro_http::coro_http_request& req, coro_http::coro_http_response& resp) {
++    UUID client_id;
++    if (!StringToUuid(std::string(req.get_query_value("client_id")), client_id)) {
++        resp.set_status_and_content(coro_http::status_type::bad_request,
++                                    "client_id must be a UUID");
++        return;
++    }
++    WithActiveService(resp, [&](auto service) {
++        auto registration = service->GetClientSsdRegistrationForAdmin(client_id);
++        HttpClientRegistrationResponse payload{
++            UuidToString(client_id), registration.registered,
++            registration.capacity_bytes};
++        WriteJsonResponse(resp, coro_http::status_type::ok, payload);
++    });
++}
++
+ void MasterAdminServer::HandleQuerySegment(
+     coro_http::coro_http_request& req, coro_http::coro_http_response& resp) {
+     WithActiveService(resp, [&](auto service) {
+@@ -1210,6 +1237,11 @@ void MasterAdminServer::RegisterHandler() {
+             HandleGetSegmentsDetail(req, resp);
+         });
+ 
++    http_server_.set_http_handler<GET>(
++        "/api/v1/clients/registration",
++        [this](coro_http_request& req, coro_http_response& resp) {
++            HandleClientRegistration(req, resp);
++        });
+     http_server_.set_http_handler<GET>(
+         "/query_segment",
+         [this](coro_http_request& req, coro_http_response& resp) {
+diff --git a/mooncake-store/src/master_service.cpp b/mooncake-store/src/master_service.cpp
+index e899f21a..04b3ef56 100644
+--- a/mooncake-store/src/master_service.cpp
++++ b/mooncake-store/src/master_service.cpp
+@@ -4967,6 +4967,19 @@ auto MasterService::OffloadObjectHeartbeat(const UUID& client_id,
+     return {};
+ }
+ 
++MasterService::ClientSsdRegistration MasterService::GetClientSsdRegistration(
++    const UUID& client_id) {
++    std::shared_lock<std::shared_mutex> snapshot_lock(snapshot_mutex_);
++    auto access = segment_manager_.getLocalDiskSegmentAccess();
++    auto& segments = access.getClientLocalDiskSegment();
++    auto it = segments.find(client_id);
++    if (it == segments.end()) {
++        return {};
++    }
++    MutexLocker locker(&it->second->offloading_mutex_);
++    return {true, it->second->ssd_total_capacity_bytes};
++}
++
+ auto MasterService::ReportSsdCapacity(const UUID& client_id,
+                                       int64_t ssd_total_capacity_bytes)
+     -> tl::expected<void, ErrorCode> {
+diff --git a/mooncake-store/src/real_client.cpp b/mooncake-store/src/real_client.cpp
+index 314d7cf5..90632851 100644
+--- a/mooncake-store/src/real_client.cpp
++++ b/mooncake-store/src/real_client.cpp
+@@ -28,6 +28,8 @@
+ #include "utils.h"
+ #include "rpc_types.h"
+ #include "file_storage.h"
++#include <ylt/reflection/user_reflect_macro.hpp>
++#include <ylt/struct_json/json_writer.h>
+ #include "device/accelerator_registry.h"
+ #include "default_config.h"
+ #include "uds_transport.h"
+@@ -1657,6 +1659,15 @@ int RealClient::health_check() {
+     return HC_HEALTHY;
+ }
+ 
++namespace {
++struct ClientRegistrationResponse {
++    std::string client_id;
++    std::vector<std::string> memory_segment_ids;
++    bool ssd_enabled{false};
++};
++YLT_REFL(ClientRegistrationResponse, client_id, memory_segment_ids, ssd_enabled);
++}  // namespace
++
+ int RealClient::start_http_server(int port) {
+     using namespace coro_http;
+ 
+@@ -1694,6 +1705,29 @@ int RealClient::start_http_server(int port) {
+             resp.set_status_and_content(http_status, std::move(body));
+         });
+ 
++    http_server_->set_http_handler<GET>(
++        "/registration",
++        [this, registration_client = client_, ssd_enabled = file_storage_ != nullptr](
++            coro_http_request &, coro_http_response &resp) {
++            if (closed_.load() || !registration_client) {
++                resp.set_status_and_content(status_type::service_unavailable,
++                                            "client not initialized");
++                return;
++            }
++            ClientRegistrationResponse payload;
++            payload.client_id = UuidToString(registration_client->getClientId());
++            for (const auto &id : registration_client->GetMountedSegmentIds()) {
++                payload.memory_segment_ids.push_back(UuidToString(id));
++            }
++            std::sort(payload.memory_segment_ids.begin(),
++                      payload.memory_segment_ids.end());
++            payload.ssd_enabled = ssd_enabled;
++            std::string body;
++            struct_json::to_json(payload, body);
++            resp.add_header("Content-Type", "application/json");
++            resp.set_status_and_content(status_type::ok, std::move(body));
++        });
++
+     http_server_->set_http_handler<GET>(
+         "/metrics", [this](coro_http_request &req, coro_http_response &resp) {
+             if (!client_) {
+diff --git a/mooncake-store/src/rpc_service.cpp b/mooncake-store/src/rpc_service.cpp
+index d5de362f..caf8cd71 100644
+--- a/mooncake-store/src/rpc_service.cpp
++++ b/mooncake-store/src/rpc_service.cpp
+@@ -1143,6 +1143,11 @@ WrappedMasterService::GetSegmentsDetailForAdmin() {
+     return master_service_.GetSegmentsDetail();
+ }
+ 
++MasterService::ClientSsdRegistration
++WrappedMasterService::GetClientSsdRegistrationForAdmin(const UUID& client_id) {
++    return master_service_.GetClientSsdRegistration(client_id);
++}
++
+ tl::expected<std::pair<uint64_t, uint64_t>, ErrorCode>
+ WrappedMasterService::QuerySegmentForAdmin(const std::string& segment) {
+     return master_service_.QuerySegments(segment);

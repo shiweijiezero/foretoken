@@ -89,7 +89,7 @@ func desiredKVMasterResources(service *inferencev1alpha1.KVService) (*corev1.Con
 		ObjectMeta: metav1.ObjectMeta{Name: masterName, Namespace: service.Namespace, Labels: labels},
 		Spec: appsv1.DeploymentSpec{Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{Labels: labels},
-			Spec: corev1.PodSpec{AutomountServiceAccountToken: &automountToken, Volumes: volumes, SecurityContext: &corev1.PodSecurityContext{SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{
+			Spec: corev1.PodSpec{AutomountServiceAccountToken: &automountToken, Volumes: volumes, SecurityContext: &corev1.PodSecurityContext{FSGroup: service.Spec.Master.FSGroup, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{
 				Name: "master", Image: service.Spec.Master.Image, ImagePullPolicy: corev1.PullIfNotPresent,
 				Command: []string{"mooncake_master"}, Args: []string{"--config_path=/etc/mooncake/master.yaml", "--enable_offload"},
 				Env:             []corev1.EnvVar{{Name: "MOONCAKE_SNAPSHOT_LOCAL_PATH", Value: "/data/snapshots"}},

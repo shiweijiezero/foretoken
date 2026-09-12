@@ -8,6 +8,7 @@ package main
 import (
 	"errors"
 	"flag"
+	"net/http"
 	"os"
 	"time"
 
@@ -267,6 +268,11 @@ func main() {
 		ctrl.Log.Error(err, "unable to create manager")
 		os.Exit(1)
 	}
+	controlPlaneNamespace := os.Getenv("POD_NAMESPACE")
+	if controlPlaneNamespace == "" {
+		ctrl.Log.Error(errors.New("POD_NAMESPACE is required"), "unable to configure control-plane networking")
+		os.Exit(1)
+	}
 
 	// Controllers are registered explicitly so each resource keeps one lifecycle owner.
 	if err := (&controllers.RuntimeCacheReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
@@ -319,7 +325,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to register KVPool controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.KVGroupReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.KVGroupReconciler{Client: manager.GetClient(), HTTPClient: &http.Client{Timeout: 2 * time.Second}, ControlPlaneNamespace: controlPlaneNamespace}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register KVGroup controller")
 		os.Exit(1)
 	}
@@ -339,11 +345,6 @@ func main() {
 		}},
 	}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelPool controller")
-		os.Exit(1)
-	}
-	controlPlaneNamespace := os.Getenv("POD_NAMESPACE")
-	if controlPlaneNamespace == "" {
-		ctrl.Log.Error(errors.New("POD_NAMESPACE is required"), "unable to configure ModelGroup drain networking")
 		os.Exit(1)
 	}
 	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {

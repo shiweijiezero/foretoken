@@ -21,6 +21,8 @@ DATA_PLANE_PACKAGES := \
 	foretoken-tracing
 DATA_PLANE_FMT_PACKAGES := $(foreach package,$(DATA_PLANE_PACKAGES),--package $(package))
 
+MOONCAKE_IMAGE ?= foretoken-mooncake:dev
+
 VLLM_METAX_VERSION ?= 0.24.0
 VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)
 VLLM_METAX_PYTHON ?= /opt/foretoken-vllm/bin/python
@@ -92,3 +94,20 @@ image-model-server-metax: image-vllm-metax
 
 image-benchmark:
 	docker build -f benchmarks/Dockerfile -t foretoken-benchmark:dev .
+
+.PHONY: mooncake-source image-mooncake
+mooncake-source:
+	git submodule update --init third_party/mooncake
+	git -C third_party/mooncake submodule update --init extern/pybind11 extern/yalantinglibs
+	@if ! git -C third_party/mooncake apply --reverse --check \
+		"../../deploy/mooncake/patches/cache-loss.patch" >/dev/null 2>&1; then \
+		if ! git -C third_party/mooncake apply --reverse --check \
+			"../../deploy/mooncake/patches/provider-registration.patch" >/dev/null 2>&1; then \
+			git -C third_party/mooncake apply "../../deploy/mooncake/patches/provider-registration.patch"; \
+		fi; \
+		git -C third_party/mooncake apply "../../deploy/mooncake/patches/cache-loss.patch"; \
+	fi
+
+image-mooncake: mooncake-source
+	docker build $(if $(BUILD_JOBS),--build-arg BUILD_JOBS=$(BUILD_JOBS),) \
+		-f deploy/mooncake/Dockerfile -t "$(MOONCAKE_IMAGE)" .
