@@ -7,11 +7,12 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-The Foretoken command-line tool installs the shared Kubernetes platform, deploys model services from Kustomize configurations, reports serving readiness, resolves frontend endpoints, and runs benchmarks through one `foretoken` entry point.
+The Foretoken command-line tool installs the shared Kubernetes platform, deploys model services from Kustomize configurations, reports serving readiness, resolves frontend URLs, and runs benchmarks through one `foretoken` entry point.
 
 ## Before you start
 
 You need Python 3.11 or later, an active Kubernetes context, `kubectl`, and Helm. GPU nodes must already have their vendor driver and Kubernetes device plugin.
+
 ## Install the command-line tool
 
 Install the published Foretoken command-line tool package with pip:
@@ -147,44 +148,17 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 `--host` returns the host and optional port for direct access, or the configured routing hostname for an HTTP Gateway. `foretoken endpoint` waits for the LoadBalancer or Gateway address; use `foretoken deploy` to wait for the services to become ready.
 
-## Run benchmarks
+## Benchmark model services
 
-Install the optional benchmark dependencies with pip:
-
-```bash
-pip install 'foretoken[bench]'
-
-# For source installation from the repository:
-# pip install -e .
-# pip install -e '.[bench]'
-```
-
-Or install the benchmark dependencies in the activated uv environment:
-
-```bash
-uv pip install 'foretoken[bench]'
-```
-
-Then run the benchmark:
-
-```bash
-foretoken bench examples/multi-model-quickstart --model Qwen/Qwen3-0.6B
-```
-
-The command-line tool uses the active `kubectl` context and honors standard Kubernetes configuration such as `KUBECONFIG`.
+Use `foretoken bench` to measure model-service performance. Commands and examples are in [Model Service Benchmarks](../benchmarks/README.md).
 
 ## Clean up
 
-Delete the resources rendered by the same configuration:
+Delete the deployed services before uninstalling the platform:
 
 ```bash
 foretoken delete examples/multi-model-quickstart
-```
-
-The command waits for deletion and ignores resources that are already absent. After deleting all Foretoken services, remove the platform release:
-
-```bash
 foretoken uninstall
 ```
 
-The command refuses to run while model services remain. It removes what `foretoken install` installed and leaves reused cluster components and the Foretoken CRDs in place.
+Foretoken CRDs and reused cluster components are retained. Managed MetalLB is also retained while other services depend on it.

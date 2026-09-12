@@ -21,7 +21,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 | Feature | Description | Status |
 |---|---|---|
-| Benchmarking | Performance benchmarks and parameter sweeps, correctness evaluation, and SLO simulation | In development |
+| [Benchmarking](benchmarks/README.md) | Measure model-service performance | In development |
 | Profiling | Use PyTorch Profiler and Nsight to identify compute, communication, and CPU/GPU bottlenecks | Planned |
 | Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics; see [MetaX deployment](docs/metax-deployment.md) | In development |
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
@@ -78,18 +78,18 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-### 5. Run a benchmark
+### 5. Measure the model service
 
 ```bash
 pip install 'foretoken[bench]'
 
-# For source installation from the repository:
-# pip install -e .
+# From a source checkout:
 # pip install -e '.[bench]'
-foretoken bench examples/quickstart
+
+foretoken bench examples/quickstart --output local,wandb
 ```
 
-See [Benchmarking](benchmarks/README.md) for datasets, remote endpoints, result storage, and parameter sweeps.
+Run `wandb login` before the first upload, or use `--output local` for local results only. See [Model Service Benchmarks](benchmarks/README.md) for more examples.
 
 ## Gateway Mode
 

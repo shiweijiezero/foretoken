@@ -21,7 +21,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 | 功能 | 说明 | 状态 |
 |---|---|---|
-| 评测 | 性能压测与参数扫描、正确性评测和 SLO 仿真 | 开发中 |
+| [性能评测](benchmarks/README_zh.md) | 评测模型服务性能 | 开发中 |
 | 性能剖析 | PyTorch Profiler 和 Nsight 定位计算、通信及 CPU/GPU 性能瓶颈 | 规划中 |
 | 硬件适配 | 统一设备能力、运行时、通信和指标接口；参阅[沐曦部署指南](docs/metax-deployment_zh.md) | 开发中 |
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
@@ -78,18 +78,18 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-### 5. 运行评测
+### 5. 测量模型服务性能
 
 ```bash
 pip install 'foretoken[bench]'
 
 # 如果使用源码安装：
-# pip install -e .
 # pip install -e '.[bench]'
-foretoken bench examples/quickstart
+
+foretoken bench examples/quickstart --output local,wandb
 ```
 
-数据集、远程服务、结果保存和参数扫描见[评测指南](benchmarks/README_zh.md)。
+首次上传前运行 `wandb login`；仅需本地结果时使用 `--output local`。更多示例见[模型服务性能评测](benchmarks/README_zh.md)。
 
 ## 网关模式
 

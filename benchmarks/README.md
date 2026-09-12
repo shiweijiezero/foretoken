@@ -1,31 +1,44 @@
-# Benchmarks
+# Model Service Benchmarks
 
 English | [简体中文](README_zh.md)
 
-Use `foretoken bench` to measure latency and throughput against a Foretoken deployment or an existing OpenAI-compatible endpoint.
+Use `foretoken bench` to measure model-service performance.
 
-## Before you start
+The service must provide an OpenAI-compatible Chat Completions API. Pass the full `/v1/chat/completions` URL when benchmarking an existing service.
 
-Run benchmark commands from the repository root with Python 3.11 or later:
+## Install
+
+Python 3.11 or later is required. Install the command and its benchmark dependencies:
 
 ```bash
 pip install 'foretoken[bench]'
 
-# For source installation from the repository:
-# pip install -e .
+# From a source checkout:
 # pip install -e '.[bench]'
 ```
 
-For a Foretoken deployment, install the platform before benchmarking a Kustomize configuration:
+## Run your first benchmark
+
+The examples save results locally and upload them to Weights & Biases (W&B). Run `wandb login` before the first upload; use `--output local` if you only need local results.
+
+Choose a Foretoken deployment or an existing service URL.
+
+### Foretoken Kustomize deployment
+
+From the repository root, install the Foretoken platform and benchmark the [Quick Start deployment](../examples/quickstart/README.md):
 
 ```bash
 foretoken install
-foretoken bench examples/quickstart
+foretoken bench examples/quickstart --number 10 --output local,wandb
 ```
 
-The command reuses the Quick Start when it is already running. Otherwise it deploys the rendered resources and removes only the resources it created after the benchmark.
+If the model service is already running, the command reuses it. Otherwise, it deploys the Kustomize resources, waits for the service, runs the benchmark, and removes only the resources it created. When no `--prompt` or `--dataset` is provided, a Kustomize benchmark sends `Hello`.
 
-To benchmark an existing endpoint, Foretoken and its Kubernetes platform are not required:
+A deployment containing one model supplies the model name automatically. For a multi-model deployment, add `--model MODEL_ID`.
+
+### Existing model service
+
+An existing service needs only the benchmark client, not a Foretoken platform or Kubernetes cluster:
 
 ```bash
 foretoken bench \
@@ -33,33 +46,78 @@ foretoken bench \
   --model Qwen/Qwen3-0.6B \
   --prompt "Hello" \
   --parallel 2 \
-  --number 20
+  --number 20 \
+  --output local,wandb
 ```
 
-## Results and output
+`--url` requires `--model`. Do not pass a Kustomize path together with `--url`.
 
-Without `--output`, the benchmark prints a summary, writes local artifacts under `results/`, and attempts a W&B upload. If W&B is unavailable, local results remain available.
+## Choose a workload
 
-`--output` replaces the default output choices:
-
-| Goal | `--output` value |
+| Goal | Workload source |
 | --- | --- |
-| Default console, local artifacts, and W&B | omit `--output` |
-| Local artifacts only | `local` |
-| Local artifacts without console output | `local,quiet` |
-| Local artifacts and W&B without console output | `local,wandb,quiet` |
-| W&B only | `wandb` |
+| Repeat one prompt as one-turn conversations | `--prompt TEXT` |
+| Use local conversations | `--dataset FILE.jsonl` |
+| Use a Hugging Face dataset | `--dataset ORG/NAME`, with `:SPLIT` when a choice is needed |
+| Use a file from a Hugging Face dataset repository | `--dataset hf://datasets/ORG/NAME@REVISION/PATH` |
+| Generate prompts with controlled token lengths | `--dataset random --tokenizer-path TOKENIZER` |
+| Replay recorded arrival times | `--trace TRACE --dataset DATASET` |
+| Combine datasets in one result | Comma-separate the `--dataset` selectors |
+| Compare workload and generation settings | `--sweep FILE.jsonl` with a Kustomize deployment |
 
-To suppress console output while retaining results, combine `quiet` with `local`, `wandb`, or both. Use `--output-dir PATH` to change the local artifact directory.
+Copyable commands for each workload are in [Benchmark Recipes](docs/examples.md).
 
-## Metrics
+## How conversations run
 
-The summary includes request latency, time to first token (TTFT), time per output token (TPOT), failure rate, input/output token counts, and output throughput.
+For dataset workloads, each row is one conversation. All user turns run by default; use `--max-turns N` to limit them. Later turns use the model's actual previous answers rather than the dataset's reference answers. Fixed and random prompts are single-turn conversations.
 
-For parameter sweeps, `token/s/user` means output throughput divided by the configured closed-loop `--parallel` value. It is not a count of real users or active sessions. In open-loop runs (`--rate`), its denominator is one, so it equals total output throughput. `token/s/GPU` divides output throughput by the configured GPU count for that point.
+See the [local JSONL](docs/examples.md#use-a-local-jsonl-dataset) and [ShareGPT](docs/examples.md#run-sharegpt-conversations) examples for supported data formats.
 
-A sweep always writes every valid point. It creates `pareto/PARETO.png` only when the sweep has at least two valid points.
+Dataset rows can include `tools` and recorded tool-call/result messages. Recorded tool exchanges stay together as input history. Foretoken does not execute tools: if a newly generated call needs a result before the next turn, the conversation stops with an error. Tool execution belongs to a harness.
 
-## Next steps
+## Control the request load
 
-Scenario recipes for datasets, random prompts, trace replay, prefix reuse, multiple datasets, and parameter sweeps are in [Benchmark examples](docs/examples.md). The command reference and result formats are exposed through `foretoken bench --help` and the generated local artifacts.
+The default `--rate -1` sends requests as fast as possible within the `--parallel` limit. Requests are not retried by default; `--max-retries N` allows up to `N` additional attempts for transient failures, included in request latency.
+
+- `--parallel N` limits concurrent requests or conversations; `-1` removes the limit.
+- `--number N` sets the conversation count; fixed and random prompts produce one-turn conversations.
+- `--rate R` schedules Poisson arrivals averaging `R` requests per second; `-1` removes pacing.
+
+Use `--rate 5 --parallel -1` to send at the chosen rate without a concurrency cap. With both values set to `-1`, all requests start as fast as possible. Multi-turn conversations currently require `--rate -1`.
+
+## Find and read results
+
+When local output is enabled, the command prints the result directory after the run. Results are stored under `results/<timestamp>/` by default. Use `--output-dir PATH` to choose another parent directory.
+
+Start with these values in the console summary or `metrics.json`:
+
+- **Success rate**: confirm the model service completed the intended workload before comparing performance.
+- **Latency**: end-to-end request time; use p95 or p99 to understand tail behavior.
+- **TTFT**: time to first token for streamed responses.
+- **TPOT**: time per output token after the first token for streamed responses.
+- **Generation tokens/s**: total output throughput.
+- **Generation tokens/s/user**: output throughput divided by the configured concurrency, `--parallel`. With `--parallel -1`, this equals total output throughput.
+- **Requests/s**: successfully completed requests per second.
+
+With `--no-stream`, request latency and throughput remain available, but TTFT, TPOT, and inter-token latency are not reported.
+
+Parameter sweeps also report generation tokens per second per GPU, calculated from the GPU capacity declared for the selected model.
+
+For conversation datasets, request metrics count the HTTP turns that actually ran. The conversation section reports conversation-level latency and attempted conversations per second. A failed turn stops that conversation, so successful turns are not the same as successful conversations.
+
+`raw_output.json` contains per-request records. Standard workloads also retain `benchmark_data.db` and `benchmark.log`. See [parameter sweeps](docs/examples.md#sweep-benchmark-parameters) to compare configurations.
+
+## Select result destinations
+
+By default, the command prints a summary, saves local results, and attempts to upload the run to Weights & Biases (W&B). If W&B is unavailable, local results remain available.
+
+| Goal | Option |
+| --- | --- |
+| Local results only | `--output local` |
+| Local results without console output | `--output local,quiet` |
+| Local results and W&B | omit `--output`, or use `--output local,wandb` |
+| W&B only | `--output wandb` |
+
+Use `--wandb-project`, `--wandb-entity`, and `--wandb-run-name` to place and name W&B runs.
+
+Run `foretoken bench --help` for all options.
