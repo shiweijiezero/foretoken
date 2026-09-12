@@ -54,7 +54,7 @@ To suppress console output while retaining results, combine `quiet` with `local`
 
 ## Metrics
 
-The summary includes request latency, time to first token (TTFT), time per output token (TPOT), failure rate, input/output token counts, and output throughput.
+The summary includes request latency, time to first token (TTFT), time per output token (TPOT), failure rate, input/output token counts, and output throughput. Before each run, an uncounted probe request warms the service and is excluded from metrics.
 
 For parameter sweeps, `token/s/user` means output throughput divided by the configured closed-loop `--parallel` value. It is not a count of real users or active sessions. In open-loop runs (`--rate`), its denominator is one, so it equals total output throughput. `token/s/GPU` divides output throughput by the configured GPU count for that point.
 
@@ -62,4 +62,4 @@ A sweep always writes every valid point. It creates `pareto/PARETO.png` only whe
 
 ## Next steps
 
-Scenario recipes for datasets, random prompts, trace replay, prefix reuse, multiple datasets, and parameter sweeps are in [Benchmark examples](docs/examples.md). The command reference and result formats are exposed through `foretoken bench --help` and the generated local artifacts.
+Scenario recipes for datasets, random prompts, trace replay, prefix reuse, multiple datasets, parameter sweeps, and SLA concurrency search are in [Benchmark examples](docs/examples.md). The command reference and result formats are exposed through `foretoken bench --help` and the generated local artifacts.

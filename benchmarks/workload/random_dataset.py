@@ -64,7 +64,7 @@ def _build_perf_arguments(
     min_prompt_length: int,
     max_prompt_length: int,
 ) -> Arguments:
-    """Map ``BenchConfig`` to EvalScope ``Arguments`` for random generation."""
+    """Build the random-prompt generator arguments for this config."""
     dataset = config.dataset
     apply_chat = dataset.resolve_apply_chat_template(config.endpoint.url)
     return Arguments.model_construct(
@@ -90,7 +90,6 @@ def _build_perf_arguments(
         max_tokens=config.generation.max_tokens,
         temperature=config.generation.temperature,
         stream=config.generation.stream,
-        sla_auto_tune=config.output.sla_auto_tune,
     )
 
 

@@ -190,6 +190,7 @@ class TraceRunner(Runner):
         client = self.create_client(active_limit, request_count)
 
         try:
+            await self.ensure_connection(client)
             raw_output = await self._replay(
                 client,
                 requests,

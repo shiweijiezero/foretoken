@@ -36,8 +36,7 @@ class SweepRunner(Runner):
 
     async def run(self) -> dict[str, Any]:
         sweep = self.config.param_sweep
-        if sweep.num_runs < 1:
-            raise ValueError(f"--num-runs must be >= 1, got {sweep.num_runs}")
+        num_runs = self.config.num_runs
 
         combinations = list(load_param_sweep(sweep.bench_params))
         if not combinations:
@@ -57,7 +56,7 @@ class SweepRunner(Runner):
         plan = {
             "mode": "sweep",
             "bench_params": sweep.bench_params,
-            "num_runs": sweep.num_runs,
+            "num_runs": num_runs,
             "experiment_dir": experiment_dir,
             "wandb_group": wandb_group,
             "combinations": [
@@ -82,18 +81,18 @@ class SweepRunner(Runner):
                 param_sweep=ParamSweepConfig(),
             )
 
-            for run_number in range(sweep.num_runs):
+            for run_number in range(num_runs):
                 logger.info(
                     "Sweep %s run=%s/%s bench=%s",
                     comb_name,
                     run_number + 1,
-                    sweep.num_runs,
+                    num_runs,
                     dict(bench_comb),
                 )
                 run_dir = os.path.join(comb_root, f"run={run_number}")
                 label = (
                     f"{comb_name}-run{run_number}"
-                    if sweep.num_runs > 1
+                    if num_runs > 1
                     else comb_name
                 )
                 result = await RunBenchmark(

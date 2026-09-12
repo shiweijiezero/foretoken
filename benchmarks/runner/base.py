@@ -65,6 +65,33 @@ class Runner(ABC):
             headers=endpoint.headers,
         )
 
+    async def ensure_connection(self, client: OpenAICompatClient) -> None:
+        """Send one uncounted probe before benchmarking."""
+        endpoint = self.config.endpoint
+        # One short completion is enough to warm connect + prefill paths.
+        deadline = time.perf_counter() + endpoint.timeout
+        while True:
+            result = await client.generate(
+                prompt="hello",
+                max_tokens=1,
+                stream=self.config.generation.stream,
+                extra_body=self._generation_overrides,
+            )
+            if result["success"]:
+                logger.info("Test connection successful.")
+                return
+            status = result["status_code"]
+            if status is not None and 400 <= status < 500:
+                raise TimeoutError(
+                    f"Test connection failed (HTTP {status}): {result['error']}"
+                )
+            logger.warning(
+                "Retrying test connection... <%s>", result["error"]
+            )
+            if time.perf_counter() >= deadline:
+                raise TimeoutError("Test connection failed")
+            await asyncio.sleep(10)
+
     def create_writer(self, output_dir: Optional[str] = None) -> ResultWriter:
         """Create a local JSON writer for this run or experiment root.
 

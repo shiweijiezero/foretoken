@@ -154,3 +154,53 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
         )
     lines.append("============================================")
     logger.info("\n%s", "\n".join(lines))
+
+
+def _format_sla_criteria(params: list[dict[str, str]]) -> str:
+    """Render SLA groups as `(a AND b) OR (c)` using user-facing limits."""
+    return " OR ".join(
+        "(" + " AND ".join(f"{name} {limit}" for name, limit in group.items()) + ")"
+        for group in params
+    )
+
+
+def log_sla_search_start(
+    *,
+    variable: str,
+    lower_bound: int,
+    upper_bound: int,
+    params: list[dict[str, str]],
+) -> None:
+    """Log SLA search bounds and criteria before the first probe."""
+    logger.info("Starting SLA Auto-tune for %s", variable)
+    logger.info("SLA Range: [%s, %s]", lower_bound, upper_bound)
+    logger.info("SLA Params: %s", params)
+
+
+def log_sla_summary(
+    *,
+    params: list[dict[str, str]],
+    variable: str,
+    sla_results_table: list[dict[str, Any]],
+    output_dir: str,
+) -> None:
+    """Log the SLA search outcome from the tuner results table."""
+    row = sla_results_table[-1] if sla_results_table else None
+    if row is None:
+        max_satisfied: Any = None
+        note = "No SLA outcome recorded"
+    else:
+        raw = row["Max Satisfied"]
+        max_satisfied = None if raw == "None" else raw
+        note = str(row["Note"])
+    satisfied = "None" if max_satisfied is None else str(max_satisfied)
+    lines = [
+        "========== SLA Auto-tune Summary ==========",
+        f"  Criteria      : {_format_sla_criteria(params)}",
+        f"  Variable      : {variable}",
+        f"  Max satisfied : {satisfied}",
+        f"  Note          : {note}",
+        f"  Output        : {output_dir}",
+        "============================================",
+    ]
+    logger.info("\n%s", "\n".join(lines))

@@ -26,7 +26,7 @@ foretoken bench \
   --tokenizer-path Qwen/Qwen3-0.6B \
   --random-seed 0 \
   --min-prompt-length 128 --max-prompt-length 512 \
-  --parallel 4 --number 20 --max-tokens 64 \
+  --parallel 4 --max-tokens 64 \
   --rate 5
 ```
 
@@ -94,6 +94,34 @@ foretoken bench \
   --parallel 4 \
   --number 20
 ```
+
+## SLA 并发搜索
+
+通过二分查找算法，自动寻找满足 SLA 约束的最大并发数
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen/Qwen3-0.6B \
+  --dataset random \
+  --tokenizer-path Qwen/Qwen3-0.6B \
+  --min-prompt-length 128 --max-prompt-length 512 \
+  --parallel 4 --max-tokens 64 \
+  --sla-auto-tune \
+  --sla-params '[{"avg_ttft": "<=0.2", "avg_tpot": "<=0.025"}]' \
+  --sla-upper-bound 32 \
+  --sla-number-multiplier 5
+```
+
+`--sla-params` 为 JSON 数组，支持 AND、OR，以及二者混用：
+
+- AND（同一对象内多条件）：`--sla-params '[{"avg_ttft":"<=0.2","avg_tpot":"<=0.025"}]'`
+- OR（数组内多个对象）：`--sla-params '[{"p99_ttft":"<0.05"},{"p99_ttft":"<0.01"}]'`
+- AND 与 OR 混用：`--sla-params '[{"avg_ttft":"<=0.2","avg_tpot":"<=0.025"},{"rps":">=10"}]'`
+
+约束条件使用 `<`、`<=`、`>` 或 `>=`，阈值须为有限数值。延迟阈值单位为秒。支持指标：`avg_latency`、`p99_latency`、`p95_latency`、`avg_ttft`、`p99_ttft`、`p95_ttft`、`p50_ttft`、`avg_tpot`、`p99_tpot`、`p95_tpot`、`p50_tpot`、`rps`、`tps`。TTFT/TPOT 要求流式响应（默认开启）。
+
+搜索从 `--parallel` 开始，在 `--sla-lower-bound` 与 `--sla-upper-bound` 之间进行（默认 1 和 65536）。每个并发按 `--num-runs` 重复（默认 1），对各轮指标取均值。每轮请求数为 `round(parallel × --sla-number-multiplier)`（默认倍数 2），忽略 `--number`。使用 `--dataset random` 时，数据偏移逐轮递增，以避免重复提示词命中 KV 缓存；其他数据集保持配置的数据起点。
 
 ## 参数扫描
 

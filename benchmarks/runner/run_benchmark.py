@@ -45,6 +45,7 @@ class RunBenchmark(Runner):
                 group=self.spec.wandb_group,
             )
             try:
+                await self.ensure_connection(client)
                 raw_output = await self.dispatch(
                     client,
                     requests,

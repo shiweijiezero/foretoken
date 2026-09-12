@@ -95,6 +95,34 @@ foretoken bench \
   --number 20
 ```
 
+## SLA concurrency search
+
+Binary search for the maximum concurrency that still meets the SLA constraints.
+
+```bash
+foretoken bench \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --model Qwen/Qwen3-0.6B \
+  --dataset random \
+  --tokenizer-path Qwen/Qwen3-0.6B \
+  --min-prompt-length 128 --max-prompt-length 512 \
+  --parallel 4 --max-tokens 64 \
+  --sla-auto-tune \
+  --sla-params '[{"avg_ttft": "<=0.2", "avg_tpot": "<=0.025"}]' \
+  --sla-upper-bound 32 \
+  --sla-number-multiplier 5
+```
+
+`--sla-params` is a JSON array that supports AND, OR, and mixing both:
+
+- AND (multiple conditions in one object): `--sla-params '[{"avg_ttft":"<=0.2","avg_tpot":"<=0.025"}]'`
+- OR (multiple objects in the array): `--sla-params '[{"p99_ttft":"<0.05"},{"p99_ttft":"<0.01"}]'`
+- AND and OR together: `--sla-params '[{"avg_ttft":"<=0.2","avg_tpot":"<=0.025"},{"rps":">=10"}]'`
+
+Constraint operators use `<`, `<=`, `>`, or `>=` with a finite limit. Latency limits are in seconds. Supported metrics: `avg_latency`, `p99_latency`, `p95_latency`, `avg_ttft`, `p99_ttft`, `p95_ttft`, `p50_ttft`, `avg_tpot`, `p99_tpot`, `p95_tpot`, `p50_tpot`, `rps`, `tps`. TTFT/TPOT require streaming (default on).
+
+Search starts at `--parallel` within `--sla-lower-bound` and `--sla-upper-bound` (defaults: 1 and 65536). Each concurrency repeats `--num-runs` times (default 1), with metrics averaged across runs. Each run sends `round(parallel × --sla-number-multiplier)` requests (default multiplier 2); `--number` is ignored. With `--dataset random`, the dataset offset advances between runs to avoid repeating prompts in the KV cache. Other datasets keep the configured offset.
+
 ## Parameter sweep
 
 `--bench-params` accepts a JSONL file. Each line overrides request execution fields; list-valued `parallel`, `number`, and `rate` expand into separate points. A `rate` of `-1` sends requests as fast as possible.

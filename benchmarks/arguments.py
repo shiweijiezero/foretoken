@@ -21,6 +21,7 @@ from benchmarks.config import (
     LoadConfig,
     OutputConfig,
     ParamSweepConfig,
+    SLAConfig,
     EndpointConfig,
     WandbConfig,
 )
@@ -52,6 +53,33 @@ def _json_object(value: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise argparse.ArgumentTypeError("must be a JSON object")
     return parsed
+
+
+def _sla_params(value: str) -> list[dict[str, str]]:
+    """Parse SLA groups from a non-empty JSON array of objects."""
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError(f"invalid JSON: {exc.msg}") from exc
+    if not isinstance(parsed, list):
+        raise argparse.ArgumentTypeError("must be a JSON array of objects")
+    if not parsed:
+        raise argparse.ArgumentTypeError("must be non-empty")
+    normalized: list[dict[str, str]] = []
+    for index, group in enumerate(parsed):
+        if not isinstance(group, dict) or not group:
+            raise argparse.ArgumentTypeError(
+                f"item {index} must be a non-empty JSON object"
+            )
+        if not all(
+            isinstance(name, str) and isinstance(limit, str)
+            for name, limit in group.items()
+        ):
+            raise argparse.ArgumentTypeError(
+                f"item {index} values must be strings like '<=0.05'"
+            )
+        normalized.append(dict(group))
+    return normalized
 
 
 def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
@@ -294,13 +322,46 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         help="Max user turns for custom_multi_turn",
     )
 
-    # Output
+    # SLA
     parser.add_argument(
         "--sla-auto-tune",
         action=argparse.BooleanOptionalAction,
-        default=_default(OutputConfig, "sla_auto_tune"),
-        help="Enable SLA auto-tune search",
+        default=_default(SLAConfig, "auto_tune"),
+        help="Binary-search maximum concurrency satisfying latency constraints",
     )
+    parser.add_argument(
+        "--sla-params",
+        type=_sla_params,
+        default=_default(SLAConfig, "params"),
+        help=(
+            "JSON array of objects: AND within an object, short-circuit OR "
+            "across objects after each probe; "
+            'e.g. [{"avg_ttft":"<=0.2","avg_tpot":"<=0.025"}]'
+        ),
+    )
+    parser.add_argument(
+        "--sla-lower-bound",
+        type=int,
+        default=_default(SLAConfig, "lower_bound"),
+        help="Inclusive minimum concurrency for SLA search",
+    )
+    parser.add_argument(
+        "--sla-upper-bound",
+        type=int,
+        default=_default(SLAConfig, "upper_bound"),
+        help="Inclusive maximum concurrency for SLA search",
+    )
+    parser.add_argument(
+        "--sla-number-multiplier",
+        type=float,
+        default=_default(SLAConfig, "number_multiplier"),
+        help=(
+            "Requests per SLA probe as a multiple of concurrency "
+            "(number = round(parallel * multiplier); ignores --number)"
+        ),
+    )
+
+    # Output
     parser.add_argument(
         "--output",
         type=_output_destinations,
@@ -344,8 +405,11 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--num-runs",
         type=int,
-        default=_default(ParamSweepConfig, "num_runs"),
-        help="Runs per parameter combination",
+        default=_default(BenchConfig, "num_runs"),
+        help=(
+            "Repeats per load point: each sweep combination, or each SLA "
+            "concurrency (averaged)"
+        ),
     )
     parser.add_argument(
         "--experiment-name",
@@ -403,7 +467,6 @@ def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
         output=OutputConfig(
             destinations=namespace.output,
             output_dir=namespace.output_dir,
-            sla_auto_tune=namespace.sla_auto_tune,
         ),
         wandb=WandbConfig(
             project=namespace.wandb_project,
@@ -412,9 +475,16 @@ def _bench_config(namespace: argparse.Namespace) -> BenchConfig:
         ),
         param_sweep=ParamSweepConfig(
             bench_params=namespace.bench_params,
-            num_runs=namespace.num_runs,
             experiment_name=namespace.experiment_name,
         ),
+        sla=SLAConfig(
+            auto_tune=namespace.sla_auto_tune,
+            params=namespace.sla_params,
+            lower_bound=namespace.sla_lower_bound,
+            upper_bound=namespace.sla_upper_bound,
+            number_multiplier=namespace.sla_number_multiplier,
+        ),
+        num_runs=namespace.num_runs,
     )
 
 

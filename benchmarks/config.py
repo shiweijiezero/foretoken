@@ -7,9 +7,33 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from math import isfinite
+import re
 from typing import Any, Optional
 
+from evalscope.perf.arguments import Arguments
 from evalscope.perf.multi_turn_args import IntOrRange
+
+
+# Latency limits are in seconds; rps/tps are throughputs.
+_SLA_METRICS = frozenset(
+    {
+        "avg_latency",
+        "p99_latency",
+        "p95_latency",
+        "avg_ttft",
+        "p99_ttft",
+        "p95_ttft",
+        "p50_ttft",
+        "avg_tpot",
+        "p99_tpot",
+        "p95_tpot",
+        "p50_tpot",
+        "rps",
+        "tps",
+    }
+)
+_SLA_LIMIT_RE = re.compile(r"^(<=|>=|<|>)\s*(.+)$")
 
 
 @dataclass
@@ -146,7 +170,6 @@ class OutputConfig:
     destinations: tuple[str, ...] = ("local", "wandb")
     output_dir: str = "results"
     gpu_count: int = 1
-    sla_auto_tune: bool = False
 
     def includes(self, destination: str) -> bool:
         return destination in self.destinations
@@ -177,8 +200,53 @@ class ParamSweepConfig:
     """Bench-params JSONL sweep for a Foretoken Kustomize deployment."""
 
     bench_params: str = ""
-    num_runs: int = 1
     experiment_name: str = ""
+
+
+@dataclass
+class SLAConfig:
+    """Latency limits and concurrency bounds for SLA search."""
+
+    auto_tune: bool = False
+    # AND within a dict; short-circuit OR across list items after each probe.
+    params: list[dict[str, str]] = field(default_factory=list)
+    lower_bound: int = Arguments.model_fields["sla_lower_bound"].default
+    upper_bound: int = Arguments.model_fields["sla_upper_bound"].default
+    number_multiplier: float = 2.0
+
+    def metric_names(self) -> set[str]:
+        """Return metric names referenced by any SLA group."""
+        return {name for group in self.params for name in group}
+
+    def validate(self) -> None:
+        """Validate search bounds, metric names, and comparison operators."""
+        if not 1 <= self.lower_bound <= self.upper_bound:
+            raise ValueError(
+                "SLA search requires 1 <= --sla-lower-bound <= --sla-upper-bound"
+            )
+        if not isfinite(self.number_multiplier) or self.number_multiplier <= 0:
+            raise ValueError("--sla-number-multiplier must be a finite value > 0")
+        if not self.params:
+            raise ValueError(
+                "--sla-params must be a non-empty JSON array of objects"
+            )
+        names = self.metric_names()
+        if names - _SLA_METRICS:
+            raise ValueError(
+                f"SLA metrics must be one of {', '.join(sorted(_SLA_METRICS))}"
+            )
+        for group in self.params:
+            for name, limit in group.items():
+                match = _SLA_LIMIT_RE.match(limit.strip())
+                if not match:
+                    raise ValueError(
+                        f"SLA limit for {name} must be a comparison like "
+                        f"'<=0.05'; got {limit!r}"
+                    )
+                if not isfinite(float(match.group(2))):
+                    raise ValueError(
+                        f"SLA limit for {name} must be finite; got {limit!r}"
+                    )
 
 
 @dataclass
@@ -192,13 +260,46 @@ class BenchConfig:
     output: OutputConfig = field(default_factory=OutputConfig)
     wandb: WandbConfig = field(default_factory=WandbConfig)
     param_sweep: ParamSweepConfig = field(default_factory=ParamSweepConfig)
+    sla: SLAConfig = field(default_factory=SLAConfig)
+    num_runs: int = 1
 
     def validate(self) -> None:
         """Validate nested configs before a run starts."""
         self.load.validate()
         self.output.validate()
+        if self.num_runs < 1:
+            raise ValueError(f"--num-runs must be >= 1, got {self.num_runs}")
         dataset = self.dataset
         has_trace = bool(dataset.trace_path)
+        if self.sla.auto_tune:
+            if (
+                has_trace
+                or dataset.is_multi
+                or self.param_sweep.bench_params
+                or self.load.open_loop
+                or self.load.rate != -1
+            ):
+                raise ValueError(
+                    "--sla-auto-tune requires one closed-loop workload without "
+                    "--trace, --bench-params, --open-loop or --rate"
+                )
+            self.sla.validate()
+            if not (
+                self.sla.lower_bound
+                <= self.load.parallel
+                <= self.sla.upper_bound
+            ):
+                raise ValueError(
+                    "--parallel must be within "
+                    "[--sla-lower-bound, --sla-upper-bound] for SLA search"
+                )
+            if not self.generation.stream and any(
+                name.endswith(("_ttft", "_tpot"))
+                for name in self.sla.metric_names()
+            ):
+                raise ValueError("TTFT/TPOT SLA constraints require --stream")
+        elif self.sla.params:
+            raise ValueError("--sla-params requires --sla-auto-tune")
         if not has_trace and not dataset.prompt and not dataset.dataset:
             raise ValueError(
                 "No workload source. Pass --prompt or --dataset "
@@ -326,8 +427,17 @@ class BenchConfig:
                 if open_loop
                 else str(self.load.parallel)
             )
+            if self.sla.auto_tune:
+                parallel_label = (
+                    f"{self.sla.lower_bound}..{self.sla.upper_bound} "
+                    f"(SLA search, start={self.load.parallel})"
+                )
             parallel_line = f"  Concurrency: {parallel_label}\n"
-            number_label = str(self.load.number)
+            number_label = (
+                f"{self.sla.number_multiplier:g}×concurrency (SLA search)"
+                if self.sla.auto_tune
+                else str(self.load.number)
+            )
             rate = float(self.load.rate)
             if rate > 0:
                 mode = "open-loop" if open_loop else "closed-loop"
