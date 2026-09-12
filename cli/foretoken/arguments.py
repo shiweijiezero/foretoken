@@ -243,7 +243,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "bench",
         add_help=False,
-        help="Measure HTTP latency and throughput for an inference service",
+        help="Benchmark Foretoken or other OpenAI-compatible model services",
     )
     return parser
 
