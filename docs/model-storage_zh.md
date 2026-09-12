@@ -21,7 +21,7 @@ spec:
   accessMode: ReadWriteMany
 ```
 
-本机 k3d 的 `./data` 相对示例的 Kustomize 目录解析。在创建集群前准备目录，并将它绑定到运行模型和 frontend 的节点；[k3d 指南](k3d-deployment_zh.md)包含这部分挂载。目录需允许 Pod 运行用户写入，标准 frontend 使用 UID/GID 65532。
+本机 k3d 的 `./data` 相对示例的 Kustomize 目录解析。在创建集群前准备目录，并将它绑定到运行模型和 frontend 的节点；[k3d 指南](k3d-deployment_zh.md)包含这部分挂载。首次下载前，为宿主用户和两个 Pod 运行用户配置目录权限；继承共享组或默认 ACL 可让下载后新建的子目录继续可写。
 
 其他 Kubernetes 集群填写节点上的绝对路径：
 
@@ -32,6 +32,17 @@ spec:
 ```
 
 单节点集群可以使用本地目录。多节点集群需在每个节点的此路径挂载同一个共享文件系统。部署命令使用已有目录，不会从 CLI 所在机器上传文件。目录模式需要读取节点和创建静态 PersistentVolume 的权限。
+
+在目录所属机器上，先核对所选 frontend、引擎镜像及 Pod security context 的实际运行 UID。标准 frontend 使用 65532，引擎 UID 由镜像和 Pod 配置决定。Linux 文件系统支持 ACL 时，可按下面方式填写实际 UID（此处以 root 引擎为例）：
+
+```bash
+export DATA_DIR="$(realpath examples/quickstart/data)"
+export FRONTEND_UID=65532
+export ENGINE_UID=0
+setfacl -m "u:$(id -u):rwx,u:$FRONTEND_UID:rwx,u:$ENGINE_UID:rwx,d:u:$(id -u):rwx,d:u:$FRONTEND_UID:rwx,d:u:$ENGINE_UID:rwx" "$DATA_DIR"
+```
+
+其他 Kubernetes 集群将 `DATA_DIR` 换成已经准备的节点目录。默认 ACL 作用于新建子目录，已有模型树保持原权限；为需要的用户或共享组配置访问权限，不递归修改模型所有者。
 
 目录容量由底层文件系统和配额决定，不与 `initialSize`、`maxSize`、`storageClassName` 同时配置。
 

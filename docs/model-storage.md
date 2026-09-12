@@ -21,7 +21,7 @@ spec:
   accessMode: ReadWriteMany
 ```
 
-For local k3d, `./data` is relative to the example's Kustomize directory. Create it before the cluster and bind it into the nodes that run the model and frontend. The [k3d guide](k3d-deployment.md) includes these mounts. The directory must be writable by the Pod users; the standard frontend uses UID/GID 65532.
+For local k3d, `./data` is relative to the example's Kustomize directory. Create it before the cluster and bind it into the nodes that run the model and frontend. The [k3d guide](k3d-deployment.md) includes these mounts. Grant the host user and both Pod users access before the first download. An inherited group or default ACL also makes newly downloaded subdirectories writable.
 
 For other Kubernetes clusters, use an absolute node path:
 
@@ -32,6 +32,17 @@ spec:
 ```
 
 On a single-node cluster this is a local directory. On a multi-node cluster, prepare the same shared filesystem at this path on every node. The command uses the existing directory; it does not upload files from the CLI machine. Deploying this mode requires permission to read nodes and create static PersistentVolumes.
+
+On the machine that owns the directory, check the runtime users of the selected frontend and engine images. The standard frontend uses UID 65532; the engine UID comes from its image and Pod security context. For a Linux filesystem with ACL support, set the actual UIDs below (the example engine runs as root):
+
+```bash
+export DATA_DIR="$(realpath examples/quickstart/data)"
+export FRONTEND_UID=65532
+export ENGINE_UID=0
+setfacl -m "u:$(id -u):rwx,u:$FRONTEND_UID:rwx,u:$ENGINE_UID:rwx,d:u:$(id -u):rwx,d:u:$FRONTEND_UID:rwx,d:u:$ENGINE_UID:rwx" "$DATA_DIR"
+```
+
+Use the prepared node path for `DATA_DIR` on other Kubernetes clusters. Default ACLs apply to new children; existing model trees retain their current permissions. Configure the intended users or shared group without recursively changing model ownership.
 
 Directory capacity is determined by its filesystem and quotas. Do not set `initialSize`, `maxSize`, or `storageClassName` with `directory`.
 
