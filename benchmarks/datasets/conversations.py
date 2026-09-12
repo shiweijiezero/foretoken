@@ -144,14 +144,14 @@ def _message_turns(
         raise ValueError(f"Invalid messages at {dataset_path}:{line_number}")
     turns: list[Turn] = []
     for index, message in enumerate(messages):
-        if not isinstance(message, dict) or not {"role", "content"} <= message.keys():
+        if not isinstance(message, dict) or "role" not in message or ("content" not in message and not message.get("tool_calls")):
             raise ValueError(
                 f"Invalid message {index} at {dataset_path}:{line_number}"
             )
         turns.append(
             Turn(
                 role=str(message["role"]),
-                content=message["content"],
+                content=message.get("content"),
                 extra={
                     key: value
                     for key, value in message.items()
@@ -171,6 +171,10 @@ def _request_task(
     """Read one row as an independent request whose tools, if any, travel in the task metadata."""
     messages, prompt, tools = _extract_row_content(row, dataset_path, line_number)
     metadata = {"tools": tools} if tools else {}
+    if isinstance(row, dict):
+        for key in ("tool_choice", "parallel_tool_calls"):
+            if key in row:
+                metadata[key] = row[key]
     if prompt is not None:
         turns: tuple[Turn, ...] = (Turn(role="user", content=prompt),)
     else:
@@ -225,80 +229,64 @@ def _conversation_task(
     if prompt is not None:
         messages = [{"role": "user", "content": prompt}]
 
-    if tools:
-        raise ValueError(
-            "Conversation mode does not support top-level tools because EvalScope's "
-            "ordinary conversation runner does not execute tool calls"
-        )
-    if not isinstance(messages, list) or not messages:
-        raise ValueError(
-            f"Invalid messages at {dataset_path}:{line_number}"
-        )
-    if not any(
-        isinstance(message, dict) and message.get("role") == "user"
-        for message in messages
-    ):
-        raise ValueError(
-            f"Conversation has no user message at {dataset_path}:{line_number}"
-        )
-    turn_has_messages = False
-    turn_has_user = False
-    for index, message in enumerate(messages):
-        if not isinstance(message, dict) or not {"role", "content"} <= message.keys():
-            raise ValueError(
-                f"Invalid conversation message {index} at "
-                f"{dataset_path}:{line_number}"
-            )
-        role = message["role"]
-        if role == "assistant":
-            if turn_has_messages and not turn_has_user:
-                raise ValueError(
-                    "Each multi-turn delta must contain a user message at "
-                    f"{dataset_path}:{line_number}"
-                )
-            turn_has_messages = False
-            turn_has_user = False
-        else:
-            turn_has_messages = True
-            turn_has_user = turn_has_user or role == "user"
-        if role != "assistant" and message["content"] is None:
-            raise ValueError(
-                f"Empty conversation message {index} at "
-                f"{dataset_path}:{line_number}"
-            )
-        if (
-            role == "tool"
-            or "tool_calls" in message
-            or "tool_call_id" in message
-        ):
-            raise ValueError(
-                "Conversation mode does not support scripted tool messages or tool "
-                "calls; use user/assistant conversation data"
-            )
-    if turn_has_messages and not turn_has_user:
-        raise ValueError(
-            "Each multi-turn delta must contain a user message at "
-            f"{dataset_path}:{line_number}"
-        )
-    return Task(
-        id=f"{dataset_path}:{row_index}",
-        turns=_message_turns(messages, dataset_path, line_number),
-    )
+    turns = _message_turns(messages, dataset_path, line_number)
+    if not any(turn.role == "user" for turn in turns):
+        raise ValueError(f"Conversation has no user message at {dataset_path}:{line_number}")
+    fields = {"tools": tools} if tools else {}
+    if isinstance(row, dict):
+        for key in ("tool_choice", "parallel_tool_calls"):
+            if key in row:
+                fields[key] = row[key]
+    task = Task(id=f"{dataset_path}:{row_index}", turns=turns, metadata=fields)
+    split_chat_conversation(task.messages())
+    return task
 
 
 def split_chat_conversation(
     messages: list[dict[str, Any]],
 ) -> list[list[dict[str, Any]]]:
-    """Split at reference assistant boundaries into EvalScope user-turn increments."""
+    """Split answer turns while retaining recorded tool calls and their results as context.
+
+    A recorded call/result block is prefilled history, not a tool invocation.
+    Ordinary reference answers are replaced by the benchmark engine's responses.
+    """
     turns: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
-    for message in messages:
-        if message["role"] == "assistant":
-            if current:
-                turns.append(current)
-                current = []
-        else:
+    pending_tools: set[str] = set()
+    for index, message in enumerate(messages):
+        role = message["role"]
+        calls = message.get("tool_calls") or []
+        has_recorded_result = (
+            index + 1 < len(messages) and messages[index + 1]["role"] == "tool"
+        )
+        if role == "assistant" and calls and has_recorded_result:
+            if pending_tools:
+                raise ValueError("Recorded tool calls require results before another call")
+            ids = [call.get("id") for call in calls]
+            if (
+                any(not isinstance(value, str) or not value for value in ids)
+                or len(set(ids)) != len(ids)
+            ):
+                raise ValueError("Recorded tool calls require distinct non-empty IDs")
+            pending_tools.update(ids)
             current.append(message)
+        elif role == "tool":
+            call_id = message.get("tool_call_id")
+            if call_id not in pending_tools:
+                raise ValueError("Recorded tool result has no matching pending tool_call_id")
+            pending_tools.remove(call_id)
+            current.append(message)
+        else:
+            if pending_tools:
+                raise ValueError("Recorded tool calls need matching results; tool execution requires a harness")
+            if role == "assistant":
+                if current:
+                    turns.append(current)
+                    current = []
+            else:
+                current.append(message)
+    if pending_tools:
+        raise ValueError("Recorded tool calls need matching results; tool execution requires a harness")
     if current:
         turns.append(current)
     return turns
@@ -418,7 +406,7 @@ def load_request_tasks(
         if not workload.dataset_selectors:
             raise ValueError(
                 "No workload source. Pass --prompt or --dataset "
-                "(random | local JSONL | org/name:split | "
+                "(random | local JSONL | org/name[:split] | "
                 "hf://datasets/...)."
             )
         if len(workload.dataset_selectors) != 1:

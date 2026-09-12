@@ -58,7 +58,7 @@ foretoken bench \
 | --- | --- |
 | Repeat one prompt as one-turn conversations | `--prompt TEXT` |
 | Use local conversations | `--dataset FILE.jsonl` |
-| Use a Hugging Face dataset | `--dataset ORG/NAME:SPLIT` |
+| Use a Hugging Face dataset | `--dataset ORG/NAME`, with `:SPLIT` when a choice is needed |
 | Use a file from a Hugging Face dataset repository | `--dataset hf://datasets/ORG/NAME@REVISION/PATH` |
 | Generate prompts with controlled token lengths | `--dataset random --tokenizer-path TOKENIZER` |
 | Replay recorded arrival times | `--trace TRACE --dataset DATASET` |
@@ -73,18 +73,17 @@ For dataset workloads, each row is one conversation. All user turns run by defau
 
 See the [local JSONL](docs/examples.md#use-a-local-jsonl-dataset) and [ShareGPT](docs/examples.md#run-sharegpt-conversations) examples for supported data formats.
 
-Conversation datasets do not support tool definitions, tool calls, or `tool` role messages. A multi-turn conversation cannot use a positive `--rate` or `--open-loop`.
+Dataset rows can include `tools` and recorded tool-call/result messages. Recorded tool exchanges stay together as input history. Foretoken does not execute tools: if a newly generated call needs a result before the next turn, the conversation stops with an error. Tool execution belongs to a harness.
 
 ## Control the request load
 
 The default `--rate -1` sends requests as fast as possible within the `--parallel` limit. Requests are not retried by default; `--max-retries N` allows up to `N` additional attempts for transient failures, included in request latency.
 
-- `--parallel N` sets the concurrency limit.
+- `--parallel N` limits concurrent requests or conversations; `-1` removes the limit.
 - `--number N` sets the conversation count; fixed and random prompts produce one-turn conversations.
-- `--rate R` schedules Poisson arrivals at `R` requests per second while retaining the concurrency limit.
-- `--open-loop --rate R` removes the concurrency limit and preserves the requested arrival rate.
+- `--rate R` schedules Poisson arrivals averaging `R` requests per second; `-1` removes pacing.
 
-Use a positive `--rate` with `--open-loop`; an unlimited as-fast-as-possible workload is not supported.
+Use `--rate 5 --parallel -1` to send at the chosen rate without a concurrency cap. With both values set to `-1`, all requests start as fast as possible. Multi-turn conversations currently require `--rate -1`.
 
 ## Find and read results
 
@@ -97,7 +96,7 @@ Start with these values in the console summary or `metrics.json`:
 - **TTFT**: time to first token for streamed responses.
 - **TPOT**: time per output token after the first token for streamed responses.
 - **Generation tokens/s**: total output throughput.
-- **Generation tokens/s/user**: output throughput divided by the configured concurrency, `--parallel`. With `--open-loop`, this equals total output throughput.
+- **Generation tokens/s/user**: output throughput divided by the configured concurrency, `--parallel`. With `--parallel -1`, this equals total output throughput.
 - **Requests/s**: successfully completed requests per second.
 
 With `--no-stream`, request latency and throughput remain available, but TTFT, TPOT, and inter-token latency are not reported.

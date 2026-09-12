@@ -62,24 +62,18 @@ class HttpLoadSchedule:
     request_count: int = 100
     # -1 sends as fast as possible; positive values use a Poisson arrival rate.
     arrival_rate: float = -1.0
-    unbounded_concurrency: bool = False
 
     def validate(self) -> None:
         """Reject load coordinates that would block or cannot express the requested schedule."""
-        if self.max_concurrency < 1:
+        if self.max_concurrency != -1 and self.max_concurrency < 1:
             raise ValueError(
-                f"--parallel must be >= 1; got {self.max_concurrency}"
+                f"--parallel must be -1 or >= 1; got {self.max_concurrency}"
             )
         rate_value = float(self.arrival_rate)
         if rate_value != -1 and rate_value <= 0:
             raise ValueError(
                 "--rate must be -1 (send as fast as possible) or > 0; "
                 f"got {self.arrival_rate}"
-            )
-        if self.unbounded_concurrency and rate_value == -1:
-            raise ValueError(
-                "--open-loop requires a positive --rate; EvalScope does not "
-                "define an unbounded as-fast-as-possible schedule"
             )
         if self.request_count < 1:
             raise ValueError(
@@ -92,6 +86,8 @@ class ChatCompletionsGeneration:
     """Store Chat Completions generation parameters applied to each measured request."""
 
     max_tokens: OutputTokenLimit = 4096
+    min_output_length: int | None = None
+    max_output_length: int | None = None
     stream: bool = True
     top_p: Optional[float] = None
     top_k: Optional[int] = None
@@ -106,11 +102,32 @@ class ChatCompletionsGeneration:
         self.max_tokens = normalize_output_token_limit(self.max_tokens)
 
     def validate(self) -> None:
-        """Keep streaming under the dedicated flag rather than the raw request body."""
+        """Validate output length bounds and generation fields owned by dedicated options."""
+        lengths = (self.min_output_length, self.max_output_length)
+        if any(value is not None for value in lengths):
+            if any(value is None for value in lengths):
+                raise ValueError("--min-output-length and --max-output-length must be supplied together")
+            if not 1 <= self.min_output_length <= self.max_output_length:
+                raise ValueError("output lengths must satisfy 1 <= min <= max")
+            conflicts = {
+                "max_tokens", "max_completion_tokens", "min_tokens",
+                "ignore_eos", "stop", "stop_token_ids",
+            } & self.extra_body.keys()
+            if conflicts:
+                raise ValueError(
+                    "output length control conflicts with --extra-body fields: "
+                    + ", ".join(sorted(conflicts))
+                )
         if "stream" in self.extra_body:
             raise ValueError(
                 "stream must be set via --stream/--no-stream, not extra_body"
             )
+
+    def sample_output_length(self) -> int | None:
+        """Choose an exact synthetic output target, or None for ordinary generation."""
+        if self.min_output_length is None:
+            return None
+        return random.randint(self.min_output_length, self.max_output_length)
 
     def sample_max_tokens(self) -> int:
         """Return the fixed limit or sample from the configured inclusive range."""
@@ -298,27 +315,24 @@ class BenchmarkConfig:
         self.generation.validate()
         workload = self.resolved_workload
         workload.validate()
+        if self.generation.min_output_length is not None and workload.dataset_selectors != ["random"]:
+            raise ValueError("output length control requires --dataset random")
         self.trace.validate()
 
         trace = self.trace
         has_trace = bool(trace.trace_selector)
         if not has_trace:
-            unsupported_body_fields = {
-                "messages",
-                "tools",
-                "tool_choice",
-                "parallel_tool_calls",
-            } & self.generation.extra_body.keys()
+            unsupported_body_fields = {"messages"} & self.generation.extra_body.keys()
             if unsupported_body_fields:
                 names = ", ".join(sorted(unsupported_body_fields))
                 raise ValueError(
-                    "Multi-turn mode cannot use these --extra-body fields because "
-                    f"they replace conversation or require a tool loop: {names}"
+                    "Conversation mode cannot use these --extra-body fields because "
+                    f"they replace the conversation: {names}"
                 )
             if not workload.fixed_prompt and not workload.dataset_selectors:
                 raise ValueError(
                     "No workload source. Pass --prompt or --dataset "
-                    "(random | local JSONL | org/name:split | "
+                    "(random | local JSONL | org/name[:split] | "
                     "hf://datasets/...)."
                 )
         if self.sweep.path and workload.has_multiple_datasets:
@@ -342,9 +356,9 @@ class BenchmarkConfig:
                     "--trace requires --dataset; fixed --prompt payloads are "
                     "not supported"
                 )
-            if self.load.unbounded_concurrency or self.load.arrival_rate != -1:
+            if self.load.arrival_rate != -1:
                 raise ValueError(
-                    "--trace uses record timestamps; omit --rate and --open-loop"
+                    "--trace uses record timestamps; omit --rate"
                 )
             if self.load.max_concurrency != 1 or self.load.request_count != 100:
                 raise ValueError(
@@ -376,7 +390,6 @@ class BenchmarkConfig:
             "parallel": self.load.max_concurrency,
             "number": self.load.request_count,
             "rate": self.load.arrival_rate,
-            "open_loop": self.load.unbounded_concurrency,
         }
         workload = self.resolved_workload
         dataset = {
@@ -387,6 +400,7 @@ class BenchmarkConfig:
             "min_prompt_length": workload.minimum_prompt_tokens,
             "max_prompt_length": workload.maximum_prompt_tokens,
             "prefix_length": workload.shared_prefix_tokens,
+            "apply_chat_template": workload.apply_chat_template,
             "prompt": workload.fixed_prompt,
             "trace_path": self.trace.trace_selector,
             "trace_start": self.trace.start_offset_seconds,

@@ -64,7 +64,7 @@ def compute_tpot(
 
 
 def configured_user_denominator(parallel: int) -> int:
-    """Return the denominator for per-user throughput; unbounded open-loop uses one."""
+    """Return the denominator for per-user throughput; unlimited concurrency uses one."""
     return 1 if parallel < 0 else int(parallel)
 
 

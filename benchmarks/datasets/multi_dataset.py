@@ -136,7 +136,10 @@ class MultiDatasetBenchmark:
             )
             if child.measurements is None:
                 raise RuntimeError("generated load did not return measurements")
-            measurements.extend(child.measurements)
+            measurements.extend(
+                replace(item, started_at=item.started_at + total_time)
+                for item in child.measurements
+            )
             total_time += float(child.metrics["benchmark_time"])
             dataset_results.append(
                 {"dataset": dataset_selector, "metrics": child.metrics}

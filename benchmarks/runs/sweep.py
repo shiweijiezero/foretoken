@@ -68,8 +68,9 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "parallel": ("load", "max_concurrency", int),
     "number": ("load", "request_count", int),
     "rate": ("load", "arrival_rate", float),
-    "open_loop": ("load", "unbounded_concurrency", _preserve_value),
     "max_tokens": ("generation", "max_tokens", normalize_output_token_limit),
+    "min_output_length": ("generation", "min_output_length", int),
+    "max_output_length": ("generation", "max_output_length", int),
     "stream": ("generation", "stream", _preserve_value),
     "top_p": ("generation", "top_p", _preserve_value),
     "top_k": ("generation", "top_k", _preserve_value),
@@ -86,6 +87,7 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "min_prompt_length": ("workload", "minimum_prompt_tokens", int),
     "max_prompt_length": ("workload", "maximum_prompt_tokens", int),
     "prefix_length": ("workload", "shared_prefix_tokens", int),
+    "apply_chat_template": ("workload", "apply_chat_template", _preserve_value),
     "prompt": ("workload", "fixed_prompt", str),
     "max_turns": ("workload", "max_turns", int),
 }

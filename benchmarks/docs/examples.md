@@ -42,14 +42,17 @@ foretoken bench \
   --random-seed 0 \
   --min-prompt-length 128 \
   --max-prompt-length 512 \
+  --min-output-length 64 \
+  --max-output-length 256 \
   --prefix-length 64 \
   --parallel 4 \
   --number 20 \
-  --max-tokens 64 \
   --output local,wandb
 ```
 
 By default, the length range applies to prompt content. Add `--apply-chat-template` to account for the selected tokenizer's chat-template overhead when generating random prompts. `--prefix-length` adds a shared prefix. The service may use a different template, so check the actual input-token counts in the results.
+
+The output bounds select an inclusive target length per request, overriding `--max-tokens`. The service must support `min_tokens` and `ignore_eos` and report output token usage. Requests that do not reach the sampled target are recorded as failures. Omit both output bounds for ordinary generation that can end early.
 
 ## Use a local JSONL dataset
 
@@ -86,7 +89,7 @@ foretoken bench \
 
 ## Use a Hugging Face dataset
 
-A dataset selector includes its split or configuration after the final colon:
+Use the repository ID alone when its default configuration has a single split. Add `:train` or another split name when choosing among multiple splits. An explicit configuration name is also accepted when that configuration has one split:
 
 ```bash
 foretoken bench \
@@ -131,7 +134,11 @@ foretoken bench \
   --output local,wandb
 ```
 
-The reference `gpt` text is replaced by the model's actual answer before the next `human` turn. Conversation datasets may contain system messages and structured message content, including image content arrays supported by the model service. They cannot contain top-level tool definitions, tool calls, or `tool` role messages.
+The next `human` turn uses the model's actual answer. Conversation datasets can include system messages and images supported by the model service.
+
+## Include tool data
+
+OpenAI-style rows can provide `tools`, `tool_choice`, and `parallel_tool_calls`. Recorded `assistant.tool_calls` and matching `tool` results are kept together as input history. Foretoken sends these records but does not execute tools. A new tool call can be the final response; if it requires execution before another turn, that conversation stops with an error until a harness can supply the result.
 
 ## Combine multiple datasets
 
@@ -164,7 +171,7 @@ foretoken bench \
   --output local,wandb
 ```
 
-Remove the concurrency cap for an open-loop workload:
+Use `--parallel -1` to keep sending at that rate without a concurrency cap:
 
 ```bash
 foretoken bench \
@@ -172,16 +179,16 @@ foretoken bench \
   --model "$MODEL_ID" \
   --prompt "Hello" \
   --rate 5 \
-  --open-loop \
+  --parallel -1 \
   --number 100 \
   --output local,wandb
 ```
 
-Actual multi-turn conversations do not support positive `--rate` or `--open-loop`.
+Use `--rate -1 --parallel -1` to start the entire request budget as fast as possible. Multi-turn conversations require `--rate -1`; `--parallel` then controls concurrent conversations.
 
 ## Replay a StudyChat trace
 
-Each trace record is an independent request. Use the trace window and `--trace-max-concurrency` to control replay, not `--max-turns`, `--parallel`, `--number`, `--rate`, or `--open-loop`.
+Each trace record is an independent request. Use the trace window and `--trace-max-concurrency` to control replay, not `--max-turns`, `--parallel`, `--number`, or `--rate`.
 
 `--trace` supplies arrival timestamps; `--dataset` supplies request content. When both select StudyChat, the recorded request content is used directly.
 
@@ -189,8 +196,8 @@ Each trace record is an independent request. Use the trace window and `--trace-m
 foretoken bench \
   --url "$MODEL_SERVICE_URL" \
   --model "$MODEL_ID" \
-  --trace KrisQ/StudyChat:train \
-  --dataset KrisQ/StudyChat:train \
+  --trace KrisQ/StudyChat \
+  --dataset KrisQ/StudyChat \
   --trace-start 600 \
   --trace-duration 300 \
   --trace-max-concurrency 32 \
@@ -247,7 +254,7 @@ Each valid point is saved under the experiment directory. When at least two poin
 
 A JSONL row may change:
 
-- load fields such as `parallel`, `number`, `rate`, and `open_loop`;
+- load fields such as `parallel`, `number`, and `rate`;
 - generation fields such as `max_tokens`, `stream`, sampling parameters, and `extra_body`;
 - dataset fields such as `dataset`, `max_turns`, prompt lengths, seed, and offset.
 

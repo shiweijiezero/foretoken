@@ -174,10 +174,8 @@ def resolved_load_record(benchmark: BenchmarkConfig) -> dict[str, Any]:
         "parallel": max_concurrency,
         "number": int(load.request_count),
         "rate": float(load.arrival_rate),
-        "open_loop": load.unbounded_concurrency,
-        "resolved_parallel": (
-            -1 if load.unbounded_concurrency else max_concurrency
-        ),
+        "open_loop": max_concurrency == -1,
+        "resolved_parallel": max_concurrency,
     }
 
 

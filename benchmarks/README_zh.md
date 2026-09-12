@@ -58,7 +58,7 @@ foretoken bench \
 | --- | --- |
 | 将固定提示词作为单轮对话重复发送 | `--prompt TEXT` |
 | 使用本地对话数据 | `--dataset FILE.jsonl` |
-| 使用 Hugging Face 数据集 | `--dataset ORG/NAME:SPLIT` |
+| 使用 Hugging Face 数据集 | `--dataset ORG/NAME`，需要明确选择时添加 `:SPLIT` |
 | 使用 Hugging Face 数据集仓库中的文件 | `--dataset hf://datasets/ORG/NAME@REVISION/PATH` |
 | 按 token 长度生成随机提示词 | `--dataset random --tokenizer-path TOKENIZER` |
 | 按记录的到达时间回放请求 | `--trace TRACE --dataset DATASET` |
@@ -73,18 +73,17 @@ foretoken bench \
 
 数据格式见[本地 JSONL 示例](docs/examples_zh.md#使用本地-jsonl-数据)和 [ShareGPT 示例](docs/examples_zh.md#执行-sharegpt-多轮对话)。
 
-对话数据不支持工具定义、tool call 或 `tool` role 消息。实际包含多轮的对话不能使用正数 `--rate` 或 `--open-loop`。
+数据行可以携带 `tools` 和已有的工具调用、结果消息。已有工具交互作为完整历史传入，不重新执行工具。如果模型新生成的工具调用需要结果才能继续下一轮，对话会停止并报告原因；工具执行由 harness 负责。
 
 ## 控制请求负载
 
 默认 `--rate -1`，在 `--parallel` 并发限制内尽快发送请求。默认不重试；`--max-retries N` 允许对暂时性故障最多额外尝试 `N` 次，重试耗时计入请求延迟。
 
-- `--parallel N` 设置并发上限。
+- `--parallel N` 限制同时进行的请求或对话数，`-1` 表示不限并发。
 - `--number N` 设置对话数；固定提示词和随机提示词各生成单轮对话。
-- `--rate R` 按每秒 `R` 个请求的泊松到达过程调度，同时保留并发上限。
-- `--open-loop --rate R` 去掉并发上限，保持指定的请求到达率。
+- `--rate R` 以平均每秒 `R` 个请求的泊松到达过程发送，`-1` 表示不限速。
 
-`--open-loop` 必须配合正数 `--rate`；不支持无并发上限且按最快速度发送的组合。
+例如 `--rate 5 --parallel -1` 按指定速率发送，不限制并发。两者都为 `-1` 时，全部请求尽快启动。多轮对话目前要求 `--rate -1`。
 
 ## 查找和阅读结果
 
@@ -97,7 +96,7 @@ foretoken bench \
 - **TTFT**：流式响应从请求发出到首个 token 的时间。
 - **TPOT**：流式响应产生首个 token 后，每个输出 token 的平均时间。
 - **Generation tokens/s**：模型总输出吞吐量。
-- **Generation tokens/s/user**：总输出吞吐量除以配置的并发数 `--parallel`；使用 `--open-loop` 时，该值等于总输出吞吐量。
+- **Generation tokens/s/user**：总输出吞吐量除以配置的并发数 `--parallel`；使用 `--parallel -1` 时，该值等于总输出吞吐量。
 - **Requests/s**：每秒成功完成的请求数。
 
 使用 `--no-stream` 时，仍会统计请求延迟和吞吐量，但不报告 TTFT、TPOT 和 token 间隔。

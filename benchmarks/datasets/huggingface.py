@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+from functools import cache
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
@@ -126,23 +127,24 @@ def resolve_hf_file_uri(uri: str) -> str:
     )
 
 
-def parse_hf_dataset_spec(spec: str) -> tuple[str, str]:
-    """Parse a Hugging Face dataset selector into dataset ID and split/config."""
-    if ":" not in spec:
-        raise ValueError(
-            f"Invalid Hugging Face dataset spec {spec!r}. "
-            "Use 'org/name:split' (split is required)."
-        )
-    dataset_id, split = spec.rsplit(":", 1)
-    if not dataset_id or not split:
-        raise ValueError(
-            f"Invalid Hugging Face dataset spec {spec!r}. Use 'org/name:split'."
-        )
-    return dataset_id, split
+def parse_hf_dataset_spec(spec: str) -> tuple[str, str | None]:
+    """Parse a repository ID and optional explicit split or configuration."""
+    dataset_id, separator, selection = spec.partition(":")
+    parts = dataset_id.split("/")
+    if len(parts) != 2 or any(
+        not part or not all(char.isalnum() or char in "-_." for char in part) or part in {".", ".."}
+        for part in parts
+    ):
+        raise ValueError(f"Invalid Hugging Face dataset: {spec!r}; use org/name[:split]")
+    if separator and not selection:
+        raise ValueError(f"Empty dataset selection in {spec!r}")
+    return dataset_id, selection if separator else None
 
 
 def is_hf_dataset_spec(spec: str) -> bool:
-    """Return whether a selector names a supported Hugging Face dataset."""
+    """Distinguish repository selectors from local paths and file URIs."""
+    if spec.startswith(("/", "./", "../", "~")) or spec.endswith((".jsonl", ".json")):
+        return False
     try:
         parse_hf_dataset_spec(spec)
     except ValueError:
@@ -150,26 +152,52 @@ def is_hf_dataset_spec(spec: str) -> bool:
     return True
 
 
-def _load_hf_data(dataset_id: str, split: str) -> Any:
-    """Stream one Hugging Face split or builder configuration."""
-    from datasets import get_dataset_config_names, get_dataset_split_names, load_dataset
+@cache
+def resolve_hf_dataset_spec(spec: str) -> tuple[str, str, str]:
+    """Resolve the upstream default configuration and sole split, or require a choice.
 
+    Dataset metadata, not a repository-name lookup table, owns the defaults.
+    The resolved identity is also used when binding trace rows to dataset rows.
+    """
+    from datasets import get_dataset_config_names, get_dataset_split_names, load_dataset_builder
+
+    dataset_id, selection = parse_hf_dataset_spec(spec)
     configs = get_dataset_config_names(dataset_id)
-    if split in configs:
-        data_splits = get_dataset_split_names(dataset_id, split)
-        if len(data_splits) != 1:
-            raise ValueError(
-                f"Hugging Face dataset {dataset_id!r} config {split!r} has "
-                f"multiple data splits {data_splits}; expected exactly one."
-            )
-        return load_dataset(
-            dataset_id, name=split, split=data_splits[0], streaming=True
-        )
-    return load_dataset(dataset_id, split=split, streaming=True)
+    if selection in configs:
+        config = selection
+        split = None
+    else:
+        # The builder selects the repository's declared default configuration.
+        # Its own error lists configurations when no default is available.
+        config = load_dataset_builder(dataset_id).config.name
+        split = selection
+    splits = get_dataset_split_names(dataset_id, config)
+    if split is None:
+        if len(splits) != 1:
+            choices = ", ".join(splits)
+            raise ValueError(f"Dataset {dataset_id!r} has multiple splits ({choices}); specify org/name:split")
+        split = splits[0]
+    if split not in splits:
+        raise ValueError(f"Unknown split {split!r} for {dataset_id!r}; choose from {', '.join(splits)}")
+    return dataset_id, config, split
+
+
+def same_dataset_source(left: str, right: str) -> bool:
+    """Compare selectors after resolving optional Hugging Face metadata choices."""
+    if left == right:
+        return True
+    if Path(left).expanduser().is_file() or Path(right).expanduser().is_file():
+        return Path(left).expanduser().resolve() == Path(right).expanduser().resolve()
+    if is_hf_dataset_spec(left) and is_hf_dataset_spec(right):
+        return resolve_hf_dataset_spec(left) == resolve_hf_dataset_spec(right)
+    return False
 
 
 def iter_hf_rows(spec: str) -> Iterator[tuple[int, Any]]:
-    """Yield zero-based row indexes and values from a Hugging Face selector."""
-    dataset_id, split = parse_hf_dataset_spec(spec)
-    for row_index, row in enumerate(_load_hf_data(dataset_id, split)):
+    """Stream rows from the selected Hugging Face configuration and split."""
+    from datasets import load_dataset
+
+    dataset_id, config, split = resolve_hf_dataset_spec(spec)
+    data = load_dataset(dataset_id, name=config, split=split, streaming=True)
+    for row_index, row in enumerate(data):
         yield row_index, dict(row)

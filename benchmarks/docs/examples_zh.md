@@ -42,14 +42,17 @@ foretoken bench \
   --random-seed 0 \
   --min-prompt-length 128 \
   --max-prompt-length 512 \
+  --min-output-length 64 \
+  --max-output-length 256 \
   --prefix-length 64 \
   --parallel 4 \
   --number 20 \
-  --max-tokens 64 \
   --output local,wandb
 ```
 
 长度范围默认只计算提示词正文。添加 `--apply-chat-template` 后，随机生成时会计入所选 tokenizer 的对话模板开销。`--prefix-length` 增加共享前缀。服务端可能使用不同模板，最终输入 token 数以评测结果为准。
+
+输出上下界用于为每次请求随机选择目标长度，包含边界值，并覆盖 `--max-tokens`。服务需要支持 `min_tokens`、`ignore_eos` 并返回输出 token 用量；未达到目标长度的请求记为失败。不传这两个参数时，仍按普通生成方式允许提前结束。
 
 ## 使用本地 JSONL 数据
 
@@ -86,7 +89,7 @@ foretoken bench \
 
 ## 使用 Hugging Face 数据集
 
-数据集选择器需要在最后一个冒号后写明 split 或 configuration：
+默认配置只有一个数据划分时，直接写仓库 ID 即可。有多个划分时，用 `:train` 等后缀明确选择；也可以指定只有一个划分的配置名称：
 
 ```bash
 foretoken bench \
@@ -131,7 +134,11 @@ foretoken bench \
   --output local,wandb
 ```
 
-进入下一个 `human` 轮次前，模型的真实回答会替换参考 `gpt` 内容。对话数据可以包含 system 消息，以及模型服务支持的图片 content 数组等结构化消息内容，但不能包含顶层工具定义、tool call 或 `tool` role 消息。
+下一个 `human` 轮次使用模型的真实回答。对话数据也可以包含 system 消息和模型服务支持的图片。
+
+## 携带工具数据
+
+OpenAI 格式的数据行可以设置 `tools`、`tool_choice` 和 `parallel_tool_calls`。已有的 `assistant.tool_calls` 与对应 `tool` 结果会作为完整历史传入，Foretoken 不重新执行工具。模型新生成的工具调用可以作为最后一轮输出；如果后续轮次需要先执行工具，该对话会停止并报告原因，等待 harness 接入后提供执行能力。
 
 ## 汇总多个数据集
 
@@ -164,7 +171,7 @@ foretoken bench \
   --output local,wandb
 ```
 
-如需 open-loop 负载，可去掉并发上限：
+使用 `--parallel -1` 去掉并发上限，继续按指定速率发送：
 
 ```bash
 foretoken bench \
@@ -172,16 +179,16 @@ foretoken bench \
   --model "$MODEL_ID" \
   --prompt "你好" \
   --rate 5 \
-  --open-loop \
+  --parallel -1 \
   --number 100 \
   --output local,wandb
 ```
 
-实际包含多轮的对话不支持正数 `--rate` 或 `--open-loop`。
+使用 `--rate -1 --parallel -1` 时，指定数量的请求会尽快全部启动。多轮对话要求 `--rate -1`，此时 `--parallel` 控制同时进行的对话数。
 
 ## 回放 StudyChat 轨迹
 
-每条轨迹记录是独立请求。使用时间窗口和 `--trace-max-concurrency` 控制回放，不使用 `--max-turns`、`--parallel`、`--number`、`--rate` 或 `--open-loop`。
+每条轨迹记录是独立请求。使用时间窗口和 `--trace-max-concurrency` 控制回放，不使用 `--max-turns`、`--parallel`、`--number` 或 `--rate`。
 
 `--trace` 提供请求到达时间，`--dataset` 提供请求内容。两者都选择 StudyChat 时，命令直接使用记录中的请求内容。
 
@@ -189,8 +196,8 @@ foretoken bench \
 foretoken bench \
   --url "$MODEL_SERVICE_URL" \
   --model "$MODEL_ID" \
-  --trace KrisQ/StudyChat:train \
-  --dataset KrisQ/StudyChat:train \
+  --trace KrisQ/StudyChat \
+  --dataset KrisQ/StudyChat \
   --trace-start 600 \
   --trace-duration 300 \
   --trace-max-concurrency 32 \
@@ -247,7 +254,7 @@ foretoken bench examples/quickstart \
 
 JSONL 每行可以修改以下参数：
 
-- `parallel`、`number`、`rate` 和 `open_loop` 等负载字段；
+- `parallel`、`number` 和 `rate` 等负载字段；
 - `max_tokens`、`stream`、采样参数和 `extra_body` 等生成字段；
 - `dataset`、`max_turns`、提示词长度、随机种子和偏移等数据字段。
 

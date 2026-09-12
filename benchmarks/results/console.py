@@ -69,7 +69,6 @@ def format_benchmark_config(
         concurrency_line = ""
         request_count_label = "trace-driven"
         arrival_rate_label = "trace timestamps"
-        open_loop_line = ""
         duration = (
             "until end"
             if trace.duration_seconds is None
@@ -87,7 +86,7 @@ def format_benchmark_config(
         schedule = benchmark.load
         concurrency_label = (
             "no concurrency limit"
-            if schedule.unbounded_concurrency
+            if schedule.max_concurrency == -1
             else str(schedule.max_concurrency)
         )
         concurrency_name = (
@@ -98,19 +97,9 @@ def format_benchmark_config(
         concurrency_line = f"  {concurrency_name}: {concurrency_label}\n"
         request_count_label = str(schedule.request_count)
         if schedule.arrival_rate > 0:
-            mode = (
-                "open-loop"
-                if schedule.unbounded_concurrency
-                else "closed-loop"
-            )
-            arrival_rate_label = (
-                f"{schedule.arrival_rate:g} req/s ({mode}, Poisson arrivals)"
-            )
+            arrival_rate_label = f"{schedule.arrival_rate:g} req/s (Poisson arrivals)"
         else:
             arrival_rate_label = "no rate limit"
-        open_loop_line = (
-            f"  Open-loop  : {schedule.unbounded_concurrency}\n"
-        )
         trace_lines = ""
 
     count_name = "Conversations" if benchmark.is_multi_turn else "Requests"
@@ -126,7 +115,6 @@ def format_benchmark_config(
         f"{concurrency_line}"
         f"  {count_name:<11}: {request_count_label}\n"
         f"  Arrival rate: {arrival_rate_label}\n"
-        f"{open_loop_line}"
         f"  Stream     : {benchmark.generation.stream}\n"
         f"  Dataset    : {dataset_label}\n"
         f"{max_turns_line}"
@@ -207,8 +195,6 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
         lines.append(f"  Datasets   : {run_record['datasets']}")
     elif run_record.get("dataset"):
         lines.append(f"  Dataset    : {run_record['dataset']}")
-    if run_record["open_loop"]:
-        lines.append("  Open-loop  : True")
     if float(rate) > 0:
         lines.append(f"  Arrival rate: {rate} req/s")
     metric_lines = [
@@ -301,7 +287,7 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
     for item in results:
         parallel = item["parallel"]
         parallel_label = (
-            "open-loop" if int(parallel) < 0 else str(int(parallel))
+            "unlimited" if int(parallel) < 0 else str(int(parallel))
         )
         rate = float(item["rate"])
         rate_label = "no limit" if rate == -1 else f"{rate:g}"

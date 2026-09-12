@@ -36,6 +36,8 @@ from benchmarks.datasets.synthetic import (
 )
 from benchmarks.datasets.traces import ArrivalTraceEvent, ArrivalTraceReader
 
+from benchmarks.datasets.huggingface import same_dataset_source
+
 logger = logging.getLogger(__name__)
 
 
@@ -87,7 +89,9 @@ def bind_arrival_trace_requests(
                     else None
                 ),
             )
-    elif workload.dataset_selectors[0] == trace.trace_selector:
+    elif same_dataset_source(workload.dataset_selectors[0], trace.trace_selector):
+        if workload.row_offset:
+            raise ValueError("--dataset-offset is not supported when trace and dataset select the same source")
         if all(event.request is not None for event in events):
             return request_origin, [
                 replace(event, request_origin=request_origin) for event in events
@@ -123,6 +127,8 @@ def _request_measurement(record: dict[str, Any]) -> RequestMeasurement:
         succeeded=bool(record["success"]),
         conversation_id=record["conversation_id"],
         turn=None,
+        status_code=record["status_code"],
+        error_message=record["error"],
     )
 
 

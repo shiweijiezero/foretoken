@@ -7,10 +7,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 import math
 import os
+import random
 import sqlite3
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -44,7 +45,8 @@ def _evalscope_arguments_type() -> tuple[str, type]:
         from pydantic import Field
         from evalscope.perf.arguments import Arguments
         from evalscope.perf.plugin.api.openai_api import OpenaiPlugin
-        from evalscope.perf.plugin.registry import register_api
+        from evalscope.perf.plugin.registry import register_api, register_dataset
+        from evalscope.perf.plugin.datasets.base import DatasetPluginBase, Turn as EvalScopeTurn
     except ModuleNotFoundError as error:
         raise ValueError(
             "standard HTTP loads require EvalScope; install benchmark "
@@ -56,6 +58,31 @@ def _evalscope_arguments_type() -> tuple[str, type]:
 
         omit_temperature: bool = Field(default=False, exclude=True, repr=False)
         max_retries: int = Field(default=0, ge=0)
+        output_length_range: tuple[int, int] | None = None
+
+    @register_dataset("foretoken_conversations")
+    class ForetokenConversationDataset(DatasetPluginBase):
+        """Supply prepared turn deltas and request fields to EvalScope's existing strategies."""
+
+        def build_messages(self) -> Any:
+            """Yield single-request message lists or multi-turn deltas from prepared rows."""
+            for line in self.dataset_line_by_line(self.query_parameters.dataset_path):
+                row = json.loads(line)
+                deltas = row["turns"]
+                turns = []
+                for index, messages in enumerate(deltas):
+                    # Metadata travels with the conversation context and is stripped
+                    # by the API adapter before sending any request to the service.
+                    last_turn = index == len(deltas) - 1
+                    marker = {
+                        "role": "system",
+                        "content": "",
+                        "_foretoken_request": {"fields": row["fields"], "last_turn": last_turn},
+                    }
+                    turns.append(
+                        EvalScopeTurn(messages=[marker, *messages], is_final=last_turn)
+                    )
+                yield turns if self.query_parameters.multi_turn else turns[0].messages
 
     @register_api(EVALSCOPE_API)
     class ForetokenOpenaiPlugin(OpenaiPlugin):
@@ -66,13 +93,33 @@ def _evalscope_arguments_type() -> tuple[str, type]:
             effective_param = param or self.param
             if isinstance(messages, str) and not effective_param.tokenize_prompt:
                 messages = [{"role": "user", "content": messages}]
+            metadata = None
+            if isinstance(messages, list):
+                markers = [
+                    message["_foretoken_request"]
+                    for message in messages
+                    if isinstance(message, dict) and "_foretoken_request" in message
+                ]
+                if markers:
+                    metadata = markers[-1]
+                    messages = [message for message in messages if "_foretoken_request" not in message]
             request = super().build_request(messages, effective_param)
+            if metadata is not None:
+                for key, value in metadata["fields"].items():
+                    request.setdefault(key, value)
+                request["_foretoken_last_turn"] = metadata["last_turn"]
             if effective_param.omit_temperature:
                 request.pop("temperature", None)
+            if effective_param.output_length_range is not None:
+                target = random.randint(*effective_param.output_length_range)
+                request.update(max_tokens=target, min_tokens=target, ignore_eos=True)
             return request
 
-        async def process_request(self, client_session: Any, url: str, headers: dict, body: dict) -> Any:
+        async def process_request(
+            self, client_session: Any, url: str, headers: dict, body: dict
+        ) -> Any:
             """Retry transient failures before any response content, counting wait time in latency."""
+            last_turn = body.pop("_foretoken_last_turn", True)
             started_at = time.perf_counter()
             for attempt in range(self.param.max_retries + 1):
                 result = await super().process_request(client_session, url, headers, body)
@@ -81,10 +128,33 @@ def _evalscope_arguments_type() -> tuple[str, type]:
                     name in (result.error or "")
                     for name in ("aiohttp.client_exceptions.", "TimeoutError", "ConnectionResetError")
                 )
-                retryable = transport_error or (status is not None and (status in (408, 409, 429) or status >= 500))
-                if result.success or result.response_messages or not retryable or attempt == self.param.max_retries:
+                retryable = transport_error or (
+                    status is not None and (status in (408, 409, 429) or status >= 500)
+                )
+                if (
+                    result.success or result.response_messages
+                    or not retryable or attempt == self.param.max_retries
+                ):
                     break
                 await asyncio.sleep(min(0.5 * 2 ** min(attempt, 4), 8.0))
+            http_status = 200 if result.success else result.status_code
+            if result.success and not last_turn and any(
+                choice.get("finish_reason") in ("tool_calls", "function_call")
+                or (choice.get("message") or choice.get("delta") or {}).get("tool_calls")
+                for response in result.response_messages if isinstance(response, dict)
+                for choice in response.get("choices", [])
+            ):
+                result.success = False
+                result.error = "Model requested tool execution before the next turn; a harness is required"
+            if result.success and self.param.output_length_range is not None:
+                actual = result.completion_tokens
+                expected = body["max_tokens"]
+                if actual != expected:
+                    result.success = False
+                    result.error = (
+                        f"Output length mismatch: requested {expected} tokens, service reported {actual}; "
+                        "verify min_tokens and ignore_eos support"
+                    )
             if attempt:
                 elapsed_before_attempt = result.start_time - started_at
                 result.start_time = started_at
@@ -97,10 +167,11 @@ def _evalscope_arguments_type() -> tuple[str, type]:
             diagnostic = {
                 "start_time": result.start_time,
                 "latency": completed_at - result.start_time,
-                "status_code": 200 if result.success else result.status_code,
+                "status_code": http_status,
                 "error": None if result.success else result.error,
             }
-            with open(os.path.join(self.param.outputs_dir, "request_diagnostics.jsonl"), "a", encoding="utf-8") as file:
+            diagnostics_path = Path(self.param.outputs_dir) / "request_diagnostics.jsonl"
+            with diagnostics_path.open("a", encoding="utf-8") as file:
                 file.write(json.dumps(diagnostic, ensure_ascii=False) + "\n")
             return result
 
@@ -111,29 +182,22 @@ def _evalscope_arguments_type() -> tuple[str, type]:
 def _materialize_evalscope_request_dataset(
     benchmark: BenchmarkConfig,
     output_dir: str,
-) -> tuple[str, str]:
-    """Normalize conversations and select the EvalScope single-turn or multi-turn plugin."""
-    conversations = [task.messages() for task in load_conversation_tasks(benchmark)]
-    turn_lists = [split_chat_conversation(messages) for messages in conversations]
+) -> tuple[str, bool]:
+    """Prepare complete tool-aware turn deltas and report whether they need multi-turn workers."""
+    tasks = load_conversation_tasks(benchmark)
+    turn_lists = [split_chat_conversation(task.messages()) for task in tasks]
     max_turns = benchmark.resolved_workload.max_turns
     effective_turn_lists = [
         turns[:max_turns] if max_turns is not None and max_turns > 0 else turns
         for turns in turn_lists
     ]
-    dataset_name = (
-        "custom_multi_turn"
-        if any(len(turns) > 1 for turns in effective_turn_lists)
-        else "line_by_line"
-    )
+    multi_turn = any(len(turns) > 1 for turns in effective_turn_lists)
     path = Path(output_dir) / "request_dataset.jsonl"
     with path.open("w", encoding="utf-8") as file:
-        for messages, turns in zip(conversations, effective_turn_lists):
-            if dataset_name == "line_by_line":
-                json.dump({"messages": turns[0]}, file, ensure_ascii=False)
-            else:
-                json.dump(messages, file, ensure_ascii=False)
+        for task, turns in zip(tasks, effective_turn_lists):
+            json.dump({"turns": turns, "fields": dict(task.metadata)}, file, ensure_ascii=False)
             file.write("\n")
-    return str(path), dataset_name
+    return str(path), multi_turn
 
 
 def _evalscope_arguments(
@@ -163,10 +227,18 @@ def _evalscope_arguments(
         "read_timeout": benchmark.service.timeout_seconds,
         "no_test_connection": True,
         "number": schedule.request_count,
-        "parallel": schedule.max_concurrency,
+        # With no pacing, the finite request budget is also the maximum
+        # possible concurrency; reuse EvalScope's existing worker scheduler.
+        "parallel": (
+            schedule.request_count if schedule.max_concurrency == -1 else schedule.max_concurrency
+        ),
         "rate": schedule.arrival_rate,
-        "open_loop": schedule.unbounded_concurrency,
+        "open_loop": schedule.max_concurrency == -1 and schedule.arrival_rate > 0,
         "max_tokens": generation.max_tokens,
+        "output_length_range": (
+            (generation.min_output_length, generation.max_output_length)
+            if generation.min_output_length is not None else None
+        ),
         "stream": generation.stream,
         "top_p": generation.top_p,
         "top_k": generation.top_k,
@@ -213,28 +285,26 @@ def _evalscope_arguments(
             }
         )
     else:
-        dataset_path, dataset_name = _materialize_evalscope_request_dataset(
+        dataset_path, multi_turn = _materialize_evalscope_request_dataset(
             benchmark, output_dir
         )
-        if dataset_name == "custom_multi_turn" and (
-            schedule.unbounded_concurrency or schedule.arrival_rate != -1
-        ):
+        if multi_turn and schedule.arrival_rate != -1:
             Path(dataset_path).unlink(missing_ok=True)
             raise ValueError(
-                "Multi-turn conversations require --rate -1 and no --open-loop; "
+                "Multi-turn conversations require --rate -1; "
                 "rate schedules independent requests"
             )
         argument_values.update(
             {
-                "dataset": dataset_name,
+                "dataset": "foretoken_conversations",
                 "dataset_path": dataset_path,
                 "dataset_offset": 0,
-                "multi_turn": dataset_name == "custom_multi_turn",
+                "multi_turn": multi_turn,
                 # EvalScope uses None for an unbounded custom conversation; -1
                 # is Foretoken's explicit complete-conversation spelling.
                 "max_turns": (
                     None
-                    if dataset_name == "line_by_line" or dataset.max_turns == -1
+                    if not multi_turn or dataset.max_turns == -1
                     else dataset.max_turns
                 ),
             }
@@ -296,9 +366,7 @@ def _map_evalscope_metrics(
 ) -> dict[str, Any]:
     """Map typed EvalScope results to Foretoken metric fields."""
     schedule = benchmark.load
-    reported_concurrency = (
-        -1 if schedule.unbounded_concurrency else schedule.max_concurrency
-    )
+    reported_concurrency = schedule.max_concurrency
     if benchmark.generation.stream and summary.succeed_requests:
         ttft = _metric_distribution(
             summary.avg_ttft, percentiles, "ttft", scale=0.001
@@ -488,7 +556,7 @@ def run_evalscope_standard_load(
     seed_everything(benchmark.resolved_workload.random_seed)
     materialized_dataset = (
         arguments.dataset_path
-        if arguments.dataset in {"line_by_line", "custom_multi_turn"}
+        if arguments.dataset == "foretoken_conversations"
         else None
     )
     try:

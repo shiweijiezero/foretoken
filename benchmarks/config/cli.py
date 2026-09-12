@@ -97,7 +97,7 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         default=_default(HttpLoadSchedule, "max_concurrency"),
         help=(
             "Maximum concurrent conversations; a fixed or random prompt is one "
-            "turn; ignored with --open-loop"
+            "turn; -1 means no concurrency limit"
         ),
     )
     parser.add_argument(
@@ -117,12 +117,6 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
             ">0 uses Poisson arrivals"
         ),
     )
-    parser.add_argument(
-        "--open-loop",
-        action="store_true",
-        default=_default(HttpLoadSchedule, "unbounded_concurrency"),
-        help="Schedule single-turn requests without a concurrency cap; requires --rate > 0",
-    )
 
     # Chat Completions generation parameters
     parser.add_argument(
@@ -134,6 +128,16 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
             "Max generation tokens: one value (fixed) or two values "
             "MIN MAX for uniform sampling per request"
         ),
+    )
+    parser.add_argument(
+        "--min-output-length", type=int,
+        default=_default(ChatCompletionsGeneration, "min_output_length"),
+        help="Minimum sampled output length for random workloads; requires --max-output-length",
+    )
+    parser.add_argument(
+        "--max-output-length", type=int,
+        default=_default(ChatCompletionsGeneration, "max_output_length"),
+        help="Maximum sampled output length; requires service support for min_tokens and ignore_eos",
     )
     sampling = parser.add_argument_group("sampling parameters")
     sampling.add_argument(
@@ -201,7 +205,7 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         default=_default(ChatRequestDataset, "dataset_selectors"),
         help=(
             "Comma-separated dataset selectors: random, JSONL path, Hugging Face "
-            "org/name:split, or hf://datasets/...; --number is shared"
+            "org/name[:split], or hf://datasets/...; --number is shared"
         ),
     )
     parser.add_argument(
@@ -369,10 +373,11 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             max_concurrency=namespace.parallel,
             request_count=namespace.number,
             arrival_rate=namespace.rate,
-            unbounded_concurrency=namespace.open_loop,
         ),
         generation=ChatCompletionsGeneration(
             max_tokens=namespace.max_tokens,
+            min_output_length=namespace.min_output_length,
+            max_output_length=namespace.max_output_length,
             stream=namespace.stream,
             top_p=namespace.top_p,
             top_k=namespace.top_k,

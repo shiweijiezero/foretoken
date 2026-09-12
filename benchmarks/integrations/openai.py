@@ -55,19 +55,25 @@ class ChatCompletionsLoadClient:
     async def send(self, task: Task) -> dict[str, Any]:
         """Send one independent request for ``task`` and return its raw observation record."""
         stream = self._generation.stream
+        target_length = self._generation.sample_output_length()
         request_fields: dict[str, Any] = {
             "model": self._model,
             "messages": task.messages(),
-            "max_tokens": self._generation.sample_max_tokens(),
+            "max_tokens": target_length if target_length is not None else self._generation.sample_max_tokens(),
             "stream": stream,
         }
         if self._request_overrides:
             request_fields["extra_body"] = self._request_overrides
+        if target_length is not None:
+            request_fields["max_tokens"] = target_length
+            request_fields["extra_body"] = {
+                **self._request_overrides, "min_tokens": target_length, "ignore_eos": True
+            }
         if stream:
             request_fields["stream_options"] = {"include_usage": True}
-        tools = task.metadata.get("tools")
-        if tools:
-            request_fields["tools"] = tools
+        for key in ("tools", "tool_choice", "parallel_tool_calls"):
+            if key in task.metadata and key not in self._request_overrides:
+                request_fields[key] = task.metadata[key]
 
         started_at = time.perf_counter()
         ttft: Optional[float] = None
@@ -96,6 +102,12 @@ class ChatCompletionsLoadClient:
             status_code = getattr(exc, "status_code", None)
             error_message = str(exc)
 
+        if success and target_length is not None and output_tokens != target_length:
+            success = False
+            error_message = (
+                f"Output length mismatch: requested {target_length} tokens, service reported {output_tokens}; "
+                "verify min_tokens and ignore_eos support"
+            )
         latency = time.perf_counter() - started_at
         # TTFT and TPOT are defined only for streamed token arrivals.
         if not stream:

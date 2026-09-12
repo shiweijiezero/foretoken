@@ -71,14 +71,14 @@ def _parse_studychat_event(
         raise ValueError(f"Invalid messages at {dataset_path}:{line_number}")
     turns: list[Turn] = []
     for index, message in enumerate(messages):
-        if not isinstance(message, dict) or not {"role", "content"} <= message.keys():
+        if not isinstance(message, dict) or "role" not in message or ("content" not in message and not message.get("tool_calls")):
             raise ValueError(
                 f"Invalid message {index} at {dataset_path}:{line_number}"
             )
         turns.append(
             Turn(
                 role=str(message["role"]),
-                content=message["content"],
+                content=message.get("content"),
                 extra={
                     key: value
                     for key, value in message.items()
@@ -103,7 +103,10 @@ def _parse_studychat_event(
     return ArrivalTraceEvent(
         timestamp_seconds=timestamp_ms / 1000.0,
         source_row_index=source_row_index,
-        request=Task(id=f"{dataset_path}:{source_row_index}", turns=tuple(turns)),
+        request=Task(
+            id=f"{dataset_path}:{source_row_index}", turns=tuple(turns),
+            metadata={key: row[key] for key in ("tools", "tool_choice", "parallel_tool_calls") if key in row},
+        ),
         input_tokens=input_tokens,
         conversation_id=str(conversation_id),
     )
