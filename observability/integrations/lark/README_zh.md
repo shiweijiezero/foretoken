@@ -11,8 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 这里的清单是部署来源，不会创建第二套 Alertmanager。应用清单后，集群中会生成一个 `AlertmanagerConfig`。Webhook URL 必须保存在 Kubernetes Secret 中，不得写入仓库。
 
-Chart 会为每条告警添加 `notification_language` 标签。安装 Chart 时将
-`observability.alerts.language` 设为 `zh`、`en` 或 `bilingual`，Payload 就会选择中文、英文或双语消息。由于一条 Alertmanager 消息可能包含多条告警，这个选择作用于一次部署共享的消息，不能针对同一条消息中的不同接收人单独选择语言。
+Foretoken 会为每条告警添加 `notification_language` 标签。在[可观测性示例](../../../examples/observability/observability.yaml)中将 `observability.alerts.language` 设为 `zh`、`en` 或 `bilingual`，通过 `foretoken install --values` 传入，Payload 就会选择中文、英文或双语消息。由于一条 Alertmanager 消息可能包含多条告警，这个选择作用于一次部署共享的消息，不能针对同一条消息中的不同接收人单独选择语言。
 
 ## 前提条件
 
@@ -46,7 +45,9 @@ kubectl apply \
 
 ## 消息契约
 
-路由选择 Foretoken 告警规则统一添加的 `service=foretoken` 标签。Payload 按告警名称分组，逐一列出受影响目标，以 `Asia/Shanghai` 显示触发和解除时间，并根据语言选择每条告警规则的中文或英文 `summary`、`description` 和 `runbook_url`。
+路由选择 Foretoken 告警规则统一添加的 `service=foretoken` 标签。Payload 按稳定的机器告警名称分组，根据语言显示告警名称（`alertname_zh`）、级别、字段标题、摘要和详情。资源名称和设备编号保持原样，方便定位目标；每个目标的触发和解除时间按 `Asia/Shanghai` 显示。
+
+GPU 消息包含评估读数、单位、阈值和持续时间。解除通知保留最后评估时的说明，不会重新测量设备读数。
 
 模板同时处理 `model_group` 这类记录规则标准化标签，以及 `inference_foretoken_io_model_group` 这类 ServiceMonitor 原始标签，因为抓取失败发生在记录规则标准化之前。
 

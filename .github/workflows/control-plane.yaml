@@ -105,7 +105,6 @@ jobs:
           grep -q 'ForetokenModelServerSchedulerBacklog' /tmp/foretoken-observability.yaml
           grep -q 'ForetokenModelServerKVCachePressureHigh' /tmp/foretoken-observability.yaml
           grep -q 'ForetokenAcceleratorGPUUtilizationHigh' /tmp/foretoken-observability.yaml
-          grep -q 'ForetokenAcceleratorGPUMemoryUsageHigh' /tmp/foretoken-observability.yaml
           grep -q 'ForetokenNVIDIAGPUTemperatureHigh' /tmp/foretoken-observability.yaml
           grep -q 'ForetokenNVIDIAGPUPowerUsageHigh' /tmp/foretoken-observability.yaml
           grep -q 'observability/runbooks/alerts.md' /tmp/foretoken-observability.yaml

@@ -43,8 +43,10 @@ spec:
             {{- $state := dict "zh" "触发" "en" "firing" -}}
             {{- if eq .Status "resolved" }}{{ $state = dict "zh" "解除" "en" "resolved" }}{{ end -}}
             {{- $lines = append $lines (dict "zh" "" "en" "") -}}
-            {{- $lines = append $lines (dict "zh" (printf "[%s] %s" $state.zh .Labels.alertname) "en" (printf "[%s] %s" $state.en .Labels.alertname)) -}}
-            {{- $lines = append $lines (dict "zh" (printf "级别：%s" .Labels.severity) "en" (printf "Severity: %s" .Labels.severity)) -}}
+            {{- $nameZh := or .Annotations.alertname_zh .Labels.alertname -}}
+            {{- $severityZh := or (index (dict "warning" "警告" "critical" "严重" "info" "提示") .Labels.severity) .Labels.severity -}}
+            {{- $lines = append $lines (dict "zh" (printf "[%s] %s" $state.zh $nameZh) "en" (printf "[%s] %s" $state.en .Labels.alertname)) -}}
+            {{- $lines = append $lines (dict "zh" (printf "级别：%s" $severityZh) "en" (printf "Severity: %s" .Labels.severity)) -}}
             {{- with .Labels.namespace }}{{ $lines = append $lines (dict "zh" (printf "命名空间：%s" .) "en" (printf "Namespace: %s" .)) }}{{ end -}}
             {{- with .Labels.pod }}{{ $lines = append $lines (dict "zh" (printf "Pod: %s" .) "en" (printf "Pod: %s" .)) }}{{ end -}}
             {{- with .Labels.instance }}{{ $lines = append $lines (dict "zh" (printf "实例：%s" .) "en" (printf "Instance: %s" .)) }}{{ end -}}
@@ -62,7 +64,7 @@ spec:
             {{- end -}}
             {{- $lines = append $lines (dict "zh" (printf "摘要：%s" .Annotations.summary_zh) "en" (printf "Summary: %s" .Annotations.summary)) -}}
             {{- $lines = append $lines (dict "zh" (printf "详情：%s" .Annotations.description_zh) "en" (printf "Details: %s" .Annotations.description)) -}}
-            {{- with .Annotations.runbook_url }}{{ $lines = append $lines (dict "zh" (printf "Runbook: %s" .) "en" (printf "Runbook: %s" .)) }}{{ end -}}
+            {{- with .Annotations.runbook_url }}{{ $lines = append $lines (dict "zh" (printf "排障手册：%s" .) "en" (printf "Runbook: %s" .)) }}{{ end -}}
             {{- if and (eq .Status "resolved") (eq .Labels.alertname "ForetokenMetricsTargetDown") -}}
             {{- $lines = append $lines (dict "zh" "说明：抓取失败告警已解除；可能是抓取恢复，也可能是旧目标被移除，不代表原 Pod 或节点已恢复。" "en" "Note: a resolved scrape failure may mean that scraping recovered or that the old target disappeared; it does not prove that the original Pod or node recovered.") -}}
             {{- end -}}

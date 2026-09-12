@@ -51,7 +51,6 @@ DEVICE_LEGEND = "{{node}} / {{device_id}}"
 # the dashboard ConfigMap, so the alert rules and the lines always agree.
 KV_CACHE_THRESHOLD = "foretoken_alert_threshold_kv_cache_usage_ratio"
 GPU_UTILIZATION_THRESHOLD = "foretoken_alert_threshold_accelerator_utilization_ratio"
-GPU_MEMORY_THRESHOLD = "foretoken_alert_threshold_accelerator_memory_usage_ratio"
 GPU_TEMPERATURE_THRESHOLD = "foretoken_alert_threshold_nvidia_temperature_celsius"
 GPU_POWER_THRESHOLD = "foretoken_alert_threshold_nvidia_power_watts"
 
@@ -198,7 +197,8 @@ def distribution(title: str, description: str, rule: str) -> heatmap.Panel:
     )
 
 
-def by_device(title: str, description: str, rule: str, *, unit: str, threshold: str) -> timeseries.Panel:
+def by_device(title: str, description: str, rule: str, *, unit: str, threshold: str | None = None) -> timeseries.Panel:
+    """Build a per-device GPU panel with an optional alert threshold for the system dashboard."""
     return series(
         title,
         description,
@@ -636,7 +636,6 @@ def build() -> dashboard_models.Dashboard:
             ],
             unit="percentunit",
             span=6,
-            reference_line=GPU_MEMORY_THRESHOLD,
         )
     )
     board.with_panel(
@@ -654,7 +653,6 @@ def build() -> dashboard_models.Dashboard:
             "Memory utilization of each Foretoken-attributed GPU.",
             "foretoken:accelerator_gpu_memory_usage_ratio",
             unit="percentunit",
-            threshold=GPU_MEMORY_THRESHOLD,
         )
     )
     board.with_panel(

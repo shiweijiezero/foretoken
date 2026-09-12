@@ -2417,26 +2417,10 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never",
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
+            "showPoints": "never"
           },
           "max": 1,
           "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#0ca30c",
-                "value": null
-              },
-              {
-                "color": "#d03b3b",
-                "value": "foretoken_alert_threshold_accelerator_memory_usage_ratio"
-              }
-            ]
-          },
           "unit": "percentunit"
         },
         "overrides": []
@@ -2571,26 +2555,10 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never",
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
+            "showPoints": "never"
           },
           "max": 1,
           "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#0ca30c",
-                "value": null
-              },
-              {
-                "color": "#d03b3b",
-                "value": "foretoken_alert_threshold_accelerator_memory_usage_ratio"
-              }
-            ]
-          },
           "unit": "percentunit"
         },
         "overrides": []

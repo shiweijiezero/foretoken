@@ -21,7 +21,6 @@ runbook instead of looking for one file per algorithm:
 | `ForetokenModelServerSchedulerBacklog` | Aggregated vLLM stage scheduler waiting queue is nonzero | 10 minutes |
 | `ForetokenModelServerKVCachePressureHigh` | Maximum vLLM KV-cache usage is high | 10 minutes |
 | `ForetokenAcceleratorGPUUtilizationHigh` | Normalized NVIDIA or MetaX GPU utilization is high | 15 minutes |
-| `ForetokenAcceleratorGPUMemoryUsageHigh` | Normalized NVIDIA or MetaX GPU memory usage is high | 10 minutes |
 | `ForetokenNVIDIAGPUTemperatureHigh` | NVIDIA GPU temperature exceeds the configured threshold | 10 minutes |
 | `ForetokenNVIDIAGPUPowerUsageHigh` | NVIDIA GPU power usage exceeds the configured threshold | 10 minutes |
 
@@ -34,6 +33,10 @@ kubectl get pods,services,endpointslices --namespace "$NAMESPACE" -o wide
 
 If a recording series disappears, inspect the raw `up` metric and Pod health
 first. Missing metrics mean unavailable data, not a value of zero.
+
+Accelerator alerts use recording series attributed to Foretoken workloads by
+the exporter's model-group and model-role Pod labels. Samples without those
+labels are excluded, including from temperature and power alerts.
 
 ## ForetokenMetricsTargetDown
 
@@ -101,30 +104,24 @@ Normalized NVIDIA or MetaX utilization has stayed above the configured
 threshold. Check recent request rate, scheduler waiting and running requests,
 and the affected node or device before adding capacity.
 
-## ForetokenAcceleratorGPUMemoryUsageHigh
-
-Normalized GPU memory usage has stayed above the configured threshold. Check
-KV-cache pressure, request lengths, model replicas, and per-device hotspots;
-high memory use alone does not identify the cause of a failure.
-
 ## ForetokenNVIDIAGPUTemperatureHigh
 
 An NVIDIA DCGM temperature reading has stayed above the configured threshold.
-Check node airflow, device health, power usage, and workload placement. This
-rule is absent when the cluster does not expose the NVIDIA DCGM metric.
+Check node airflow, device health, power usage, and workload placement. No alert
+fires without a Foretoken-attributed NVIDIA DCGM temperature series.
 
 ## ForetokenNVIDIAGPUPowerUsageHigh
 
 An NVIDIA DCGM power reading has stayed above the configured threshold. Compare
 the reading with the device power limit and workload, then inspect thermal and
-node health before changing capacity. This rule is absent without the DCGM
-metric.
+node health before changing capacity. No alert fires without a
+Foretoken-attributed NVIDIA DCGM power series.
 
 ## GPU threshold policy
 
-The Chart provides default thresholds for normalized utilization and memory
-pressure, plus NVIDIA temperature and power readings. Override them in
-`observability.alerts.thresholds` when installing the Chart. Utilization and
-memory rules cover NVIDIA and MetaX normalized metrics; temperature and power
+The Chart provides default thresholds for normalized utilization, plus NVIDIA
+temperature and power readings. Override them in
+`observability.alerts.thresholds` when installing the Chart. Utilization rules
+cover NVIDIA and MetaX normalized metrics; temperature and power
 currently apply only when the NVIDIA DCGM metrics exist. These are warning
 signals for capacity and thermal review, not automatic remediation.

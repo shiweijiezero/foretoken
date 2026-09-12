@@ -258,7 +258,6 @@
               "required": [
                 "kvCacheUsageRatio",
                 "acceleratorUtilizationRatio",
-                "acceleratorMemoryUsageRatio",
                 "nvidiaTemperatureCelsius",
                 "nvidiaPowerWatts"
               ],
@@ -269,11 +268,6 @@
                   "maximum": 1
                 },
                 "acceleratorUtilizationRatio": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
-                },
-                "acceleratorMemoryUsageRatio": {
                   "type": "number",
                   "minimum": 0,
                   "maximum": 1
