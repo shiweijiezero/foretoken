@@ -41,8 +41,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "#0ca30c",
-            "mode": "fixed"
+            "mode": "thresholds"
           },
           "noValue": "0",
           "thresholds": {
@@ -64,7 +63,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 3,
+        "w": 6,
         "x": 0,
         "y": 1
       },
@@ -110,8 +109,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "#0ca30c",
-            "mode": "fixed"
+            "mode": "thresholds"
           },
           "noValue": "0",
           "thresholds": {
@@ -133,8 +131,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 3,
-        "x": 3,
+        "w": 6,
+        "x": 6,
         "y": 1
       },
       "options": {
@@ -198,8 +196,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 3,
-        "x": 6,
+        "w": 6,
+        "x": 12,
         "y": 1
       },
       "options": {
@@ -244,8 +242,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "#0ca30c",
-            "mode": "fixed"
+            "mode": "thresholds"
           },
           "noValue": "0",
           "thresholds": {
@@ -271,8 +268,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 3,
-        "x": 9,
+        "w": 6,
+        "x": 18,
         "y": 1
       },
       "options": {
@@ -336,9 +333,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 3,
-        "x": 12,
-        "y": 1
+        "w": 6,
+        "x": 0,
+        "y": 5
       },
       "options": {
         "colorMode": "value",
@@ -401,9 +398,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 3,
-        "x": 15,
-        "y": 1
+        "w": 6,
+        "x": 6,
+        "y": 5
       },
       "options": {
         "colorMode": "value",
@@ -447,8 +444,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "#eb6834",
-            "mode": "fixed"
+            "mode": "thresholds"
           },
           "noValue": "0",
           "thresholds": {
@@ -470,9 +466,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 3,
-        "x": 18,
-        "y": 1
+        "w": 6,
+        "x": 12,
+        "y": 5
       },
       "options": {
         "colorMode": "value",
@@ -538,9 +534,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 3,
-        "x": 21,
-        "y": 1
+        "w": 6,
+        "x": 18,
+        "y": 5
       },
       "options": {
         "colorMode": "value",
@@ -581,7 +577,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 9
       },
       "id": 0,
       "panels": [],
@@ -663,7 +659,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 6
+        "y": 10
       },
       "options": {
         "legend": {
@@ -726,7 +722,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 6
+        "y": 10
       },
       "options": {
         "legend": {
@@ -831,7 +827,7 @@
         "h": 8,
         "w": 6,
         "x": 12,
-        "y": 6
+        "y": 10
       },
       "options": {
         "legend": {
@@ -861,7 +857,7 @@
           "refId": "A"
         }
       ],
-      "title": "Frontend response-start latency",
+      "title": "Response-start latency",
       "transparent": false,
       "type": "timeseries"
     },
@@ -921,7 +917,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 6
+        "y": 10
       },
       "options": {
         "legend": {
@@ -961,7 +957,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 18
       },
       "id": 0,
       "panels": [],
@@ -997,7 +993,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 15
+        "y": 19
       },
       "options": {
         "legend": {
@@ -1087,7 +1083,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 15
+        "y": 19
       },
       "options": {
         "legend": {
@@ -1188,7 +1184,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 15
+        "y": 19
       },
       "options": {
         "legend": {
@@ -1238,7 +1234,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Maximum per-model-group quantile from the shared Frontend arrival time to the model-server terminal output. Does not measure downstream client body consumption.",
+      "description": "Maximum per-model-group quantile from Frontend handler entry, after JSON decoding, to the model-server terminal output. Excludes downstream client body consumption. Frontend and model-server clocks must be synchronized.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1304,7 +1300,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 23
+        "y": 27
       },
       "options": {
         "legend": {
@@ -1343,7 +1339,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Maximum per-model-group TTFT quantile, using the same Frontend arrival-time boundary for chat and completion requests.",
+      "description": "Maximum per-model-group TTFT quantile from Frontend handler entry, after JSON decoding, to the first token received by model-server. Chat and completion requests share this origin.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1409,7 +1405,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 23
+        "y": 27
       },
       "options": {
         "legend": {
@@ -1514,7 +1510,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 23
+        "y": 27
       },
       "options": {
         "legend": {
@@ -1619,7 +1615,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 31
+        "y": 35
       },
       "options": {
         "legend": {
@@ -1724,7 +1720,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 31
+        "y": 35
       },
       "options": {
         "legend": {
@@ -1799,7 +1795,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 31
+        "y": 35
       },
       "options": {
         "legend": {
@@ -1843,7 +1839,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 43
       },
       "options": {
         "calculate": false,
@@ -1903,7 +1899,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 39
+        "y": 43
       },
       "options": {
         "calculate": false,
@@ -1959,7 +1955,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 51
       },
       "id": 0,
       "panels": [],
@@ -2009,7 +2005,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 48
+        "y": 52
       },
       "options": {
         "legend": {
@@ -2101,7 +2097,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 48
+        "y": 52
       },
       "options": {
         "legend": {
@@ -2162,7 +2158,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 48
+        "y": 52
       },
       "options": {
         "legend": {
@@ -2223,7 +2219,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 56
+        "y": 60
       },
       "options": {
         "legend": {
@@ -2282,7 +2278,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 56
+        "y": 60
       },
       "options": {
         "legend": {
@@ -2322,7 +2318,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 64
+        "y": 68
       },
       "id": 0,
       "panels": [],
@@ -2372,7 +2368,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 65
+        "y": 69
       },
       "options": {
         "legend": {
@@ -2433,7 +2429,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 65
+        "y": 69
       },
       "options": {
         "legend": {
@@ -2510,7 +2506,7 @@
         "h": 8,
         "w": 6,
         "x": 12,
-        "y": 65
+        "y": 69
       },
       "options": {
         "legend": {
@@ -2571,7 +2567,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 65
+        "y": 69
       },
       "options": {
         "legend": {
@@ -2646,7 +2642,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 73
+        "y": 77
       },
       "options": {
         "legend": {
@@ -2721,7 +2717,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 73
+        "y": 77
       },
       "options": {
         "legend": {
@@ -2811,7 +2807,7 @@
         "h": 8,
         "w": 6,
         "x": 12,
-        "y": 73
+        "y": 77
       },
       "options": {
         "legend": {
@@ -2901,7 +2897,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 73
+        "y": 77
       },
       "options": {
         "legend": {
@@ -2941,7 +2937,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 81
+        "y": 85
       },
       "id": 0,
       "panels": [
@@ -2970,7 +2966,7 @@
             "h": 8,
             "w": 8,
             "x": 0,
-            "y": 82
+            "y": 86
           },
           "options": {
             "legend": {
@@ -3029,7 +3025,7 @@
             "h": 8,
             "w": 8,
             "x": 8,
-            "y": 82
+            "y": 86
           },
           "options": {
             "legend": {
@@ -3088,7 +3084,7 @@
             "h": 8,
             "w": 8,
             "x": 16,
-            "y": 82
+            "y": 86
           },
           "options": {
             "legend": {
@@ -3132,7 +3128,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 90
+        "y": 94
       },
       "id": 0,
       "panels": [
@@ -3161,7 +3157,7 @@
             "h": 8,
             "w": 8,
             "x": 0,
-            "y": 91
+            "y": 95
           },
           "options": {
             "legend": {
@@ -3220,7 +3216,7 @@
             "h": 8,
             "w": 8,
             "x": 8,
-            "y": 91
+            "y": 95
           },
           "options": {
             "legend": {
@@ -3279,7 +3275,7 @@
             "h": 8,
             "w": 8,
             "x": 16,
-            "y": 91
+            "y": 95
           },
           "options": {
             "legend": {
@@ -3323,7 +3319,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 99
+        "y": 103
       },
       "id": 0,
       "panels": [],
@@ -3355,7 +3351,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 100
+        "y": 104
       },
       "options": {
         "legend": {
@@ -3380,7 +3376,7 @@
           },
           "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_recommendation_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / recommendation",
+          "legendFormat": "recommendation / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "A"
         },
@@ -3391,7 +3387,7 @@
           },
           "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_adjusted_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / adjusted",
+          "legendFormat": "adjusted / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "B"
         },
@@ -3402,7 +3398,7 @@
           },
           "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / applied",
+          "legendFormat": "applied / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "C"
         }
@@ -3436,7 +3432,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 100
+        "y": 104
       },
       "options": {
         "legend": {
@@ -3461,7 +3457,7 @@
           },
           "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / applied",
+          "legendFormat": "applied / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "A"
         },
@@ -3472,7 +3468,7 @@
           },
           "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_ready_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / ready",
+          "legendFormat": "ready / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "B"
         },
@@ -3483,7 +3479,7 @@
           },
           "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_routable_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / routable",
+          "legendFormat": "routable / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "C"
         }
@@ -3517,7 +3513,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 100
+        "y": 104
       },
       "options": {
         "legend": {
@@ -3542,7 +3538,7 @@
           },
           "expr": "time() - max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_observation_timestamp_seconds{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / observation",
+          "legendFormat": "observation / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "A"
         },
@@ -3553,7 +3549,7 @@
           },
           "expr": "time() - max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_evaluation_timestamp_seconds{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
           "instant": false,
-          "legendFormat": "{{modelservice}} / {{target_name}} / {{role}} / evaluation",
+          "legendFormat": "evaluation / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
           "refId": "B"
         }
@@ -3572,7 +3568,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 108
+        "y": 112
       },
       "options": {
         "cellHeight": "sm",

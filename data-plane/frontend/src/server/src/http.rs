@@ -746,6 +746,9 @@ async fn completions(
     State(state): State<AppState>,
     request: Result<Json<CompletionRequest>, JsonRejection>,
 ) -> Response {
+    // Handler entry, after JSON decoding, is the shared TTFT and completion-latency origin.
+    // All fan-out requests include the same frontend admission and preprocessing time.
+    let arrival_time = Some(vllm_llm::current_unix_timestamp_secs());
     let Json(request) = match request {
         Ok(request) => request,
         Err(_) => return client_error(),
@@ -786,7 +789,7 @@ async fn completions(
                     priority: request.priority,
                     cache_salt: request.cache_salt.clone(),
                     session_id: request.session_id.clone(),
-                    arrival_time: Some(vllm_llm::current_unix_timestamp_secs()),
+                    arrival_time,
                     tool_call_parser: ParserSelection::None,
                     reasoning_parser: ParserSelection::None,
                 })
@@ -826,6 +829,7 @@ async fn chat_completions(
     State(state): State<AppState>,
     request: Result<Json<ChatCompletionRequest>, JsonRejection>,
 ) -> Response {
+    let arrival_time = Some(vllm_llm::current_unix_timestamp_secs());
     let Json(request) = match request {
         Ok(request) => request,
         Err(_) => return client_error(),
@@ -866,13 +870,23 @@ async fn chat_completions(
         // OpenAI's omitted tool_choice defaults to auto when tools are supplied.
         tool_choice = ChatToolChoice::Auto;
     }
-    chat_with_request(state, request, id, messages, tools, tool_choice).await
+    chat_with_request(
+        state,
+        request,
+        id,
+        arrival_time,
+        messages,
+        tools,
+        tool_choice,
+    )
+    .await
 }
 
 async fn chat_with_request(
     state: AppState,
     request: ChatCompletionRequest,
     id: String,
+    arrival_time: Option<f64>,
     messages: Vec<ChatMessage>,
     tools: Vec<ChatTool>,
     tool_choice: ChatToolChoice,
@@ -959,7 +973,7 @@ async fn chat_with_request(
                 priority: chat.priority,
                 cache_salt: chat.cache_salt.clone(),
                 session_id: chat.session_id.clone(),
-                arrival_time: None,
+                arrival_time,
                 tool_call_parser: if tool_requested {
                     ParserSelection::Auto
                 } else {
