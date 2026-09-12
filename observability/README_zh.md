@@ -142,6 +142,10 @@ foretoken install --values examples/observability/observability.yaml
 
 记录规则保留命名空间、Frontend 服务、模型组、模型角色、模型名称和 Prefill/Decode pipeline scope 标签。Frontend 延迟在响应头发出时结束，流式响应的 token 发送时间不计入；生成完成延迟和首 token 延迟都从 JSON 解码后的 Frontend handler 入口开始计时，跨进程测量要求节点时钟同步。流式响应可能先以 `2xx` 开始、之后再失败，因此 5xx 比例不是推理成功率。加速器规则只覆盖 Foretoken 工作负载使用的设备。
 
+## 性能剖析
+
+对已有诊断服务采集一段 CPU/GPU 执行时间线，见[性能剖析指南](profiling_zh.md)。该功能独立于指标采集。
+
 ## 停止采集
 
 删除全部 Foretoken 服务后，`foretoken uninstall` 会删除由 CLI 管理的 Prometheus 和 DCGM Exporter release。复用的 Prometheus、DCGM Exporter 和 mxExporter 保持不变。

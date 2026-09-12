@@ -16,6 +16,7 @@ from foretoken.arguments import (
     DeployCommand,
     EndpointCommand,
     InstallCommand,
+    ProfileCommand,
     StatusCommand,
     UninstallCommand,
     parse_arguments,
@@ -178,6 +179,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
         elif isinstance(command, BenchCommand):
             _bench(command.arguments)
+        elif isinstance(command, ProfileCommand):
+            from foretoken.profiling import capture
+
+            capture(command)
     except DeploymentError as exc:
         raise SystemExit(str(exc)) from exc
     except KeyboardInterrupt:

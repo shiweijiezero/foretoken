@@ -169,6 +169,21 @@ impl VllmBackend {
         };
         llm.shutdown().await.map_err(BackendError::from_llm)
     }
+
+    /// Runs one native utility for the capture supervisor; callers own deadlines and escalation.
+    pub async fn set_profiling(&self, start: bool) -> Result<(), String> {
+        let guard = self.llm.read().await;
+        let client = guard
+            .as_ref()
+            .ok_or("engine is unavailable")?
+            .engine_core_client();
+        let result = if start {
+            client.start_profile(None).await
+        } else {
+            client.stop_profile(None).await
+        };
+        result.map_err(|error| error.to_string())
+    }
 }
 
 struct InflightGuard {

@@ -13,6 +13,7 @@ use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
 use foretoken_model_server::config::RuntimeConfig;
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
+use foretoken_model_server::profiling;
 use foretoken_model_server::runtime_cache;
 use foretoken_model_server::runtime_transport::LOOPBACK_HOST;
 use tokio::net::TcpListener;
@@ -34,6 +35,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Resolve the controller-owned launch plan before starting any engine or network task.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
+    if let Some(profile) = &config.profiling {
+        profile.prepare()?;
+    }
     let cache_shutdown = Arc::new(Notify::new());
     let cache_config = runtime_cache::Config::from_env().map_err(std::io::Error::other)?;
     let mut cache_server = if let Some(server_config) = cache_config.clone() {
@@ -162,6 +166,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     health.set_client_healthy(true);
     health.set_accepting(true);
     let backend = Arc::new(VllmBackend::new(Llm::new(client), max_concurrent_requests));
+    let mut profiler = config
+        .profiling
+        .clone()
+        .map(|config| profiling::Supervisor::new(config, backend.clone(), health.clone()));
 
     // Expose only the restricted group-local API after EngineCore is connected and healthy.
     let listener = match TcpListener::bind(config.listen_address).await {
@@ -177,6 +185,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let shutdown = Arc::new(Notify::new());
     let server_shutdown = shutdown.clone();
     let mut app_state = AppState::new(backend.clone(), health.clone(), metadata);
+    if let Some(profiler) = &profiler {
+        app_state = app_state.with_profiling(profiler.handle());
+    }
     if let Some(kv_events) = kv_events {
         app_state = app_state.with_kv_events(kv_events);
     }
@@ -202,6 +213,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ChildExited(String),
         Server(String),
         CacheServer(String),
+        Profiling(String),
     }
     let stop = tokio::select! {
         () = shutdown_signal() => Stop::Signal,
@@ -218,13 +230,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(error) => format!("HTTP server failed: {error}"),
         }),
         reason = wait_cache_server(&mut cache_server) => Stop::CacheServer(reason),
+        result = async {
+            match &mut profiler {
+                Some(profiler) => profiler.run().await,
+                None => std::future::pending().await,
+            }
+        } => Stop::Profiling(result.err().unwrap_or_else(|| "capture supervisor stopped".into())),
     };
     match &stop {
         Stop::Signal => info!("received shutdown signal"),
         Stop::ClientUnhealthy(reason)
         | Stop::ChildExited(reason)
         | Stop::Server(reason)
-        | Stop::CacheServer(reason) => warn!(%reason),
+        | Stop::CacheServer(reason)
+        | Stop::Profiling(reason) => warn!(%reason),
     }
 
     // Stop new admission before draining HTTP handlers, the client, and finally the child process.
@@ -233,8 +252,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     shutdown.notify_waiters();
     cache_shutdown.notify_waiters();
     let deadline = Instant::now() + config.launch.drain_timeout();
+    // Diagnostic shutdown must not wait on an engine utility holding the backend read lock.
+    // Confirm process exit first, then release owned utility tasks and drain the ordinary client.
+    if let Some(profiler) = &mut profiler {
+        engine.shutdown(config.launch.drain_timeout()).await?;
+        engine.wait_for_exit().await;
+        profiler
+            .engine_stopped("diagnostic runtime terminated")
+            .await;
+    }
     if !matches!(&stop, Stop::Server(_)) {
-        match tokio::time::timeout(config.launch.drain_timeout(), server.as_mut()).await {
+        match tokio::time::timeout(
+            deadline.saturating_duration_since(Instant::now()),
+            server.as_mut(),
+        )
+        .await
+        {
             Ok(Ok(())) => {}
             Ok(Err(error)) => error!(%error, "HTTP server failed while draining"),
             Err(_) => {
@@ -257,7 +290,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Stop::ClientUnhealthy(reason)
         | Stop::ChildExited(reason)
         | Stop::Server(reason)
-        | Stop::CacheServer(reason) => Err(std::io::Error::other(reason).into()),
+        | Stop::CacheServer(reason)
+        | Stop::Profiling(reason) => Err(std::io::Error::other(reason).into()),
     }
 }
 
@@ -338,10 +372,13 @@ async fn start_engine_attempt(
     };
     let handshake_port = allocate_handshake_port(LOOPBACK_HOST)
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
-    let managed_engine = config
+    let mut managed_engine = config
         .launch
         .managed_engine(handshake_port)
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+    if let Some(profile) = &config.profiling {
+        managed_engine.python_args.push(profile.engine_argument());
+    }
     let protocol_timeout = startup_deadline.saturating_duration_since(Instant::now());
     if protocol_timeout.is_zero() {
         return Err(EngineStartupFailure::Other(io::Error::other(

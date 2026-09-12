@@ -173,6 +173,16 @@ foretoken bench examples/multi-model-quickstart --model Qwen/Qwen3-0.6B
 
 The command-line tool uses the active `kubectl` context and honors standard Kubernetes configuration such as `KUBECONFIG`.
 
+## Capture a diagnostic profile
+
+The experimental source-only command captures one Torch window on an existing, prepared diagnostic ModelService:
+
+```bash
+foretoken profile examples/quickstart --profile-engine pytorch --profile-duration 15s
+```
+
+It does not generate requests, deploy services or download traces. The service owns automatic stop and persistent output even if the CLI disconnects. Follow the [profiling prerequisites and limitations](../observability/profiling.md) before using it.
+
 ## Clean up
 
 Delete the resources rendered by the same configuration:

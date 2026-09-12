@@ -75,6 +75,17 @@ class BenchCommand:
     arguments: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class ProfileCommand:
+    """Request one runtime-owned Torch window on an existing diagnostic service."""
+
+    kustomize_path: str
+    model: str | None
+    profile_duration: str
+    profile_engine: str
+    timeout: str
+
+
 ParsedCommand = (
     InstallCommand
     | UninstallCommand
@@ -83,6 +94,7 @@ ParsedCommand = (
     | StatusCommand
     | EndpointCommand
     | BenchCommand
+    | ProfileCommand
 )
 
 
@@ -240,6 +252,34 @@ def _build_parser() -> argparse.ArgumentParser:
         help="print the HTTP Host value instead of the URL",
     )
 
+    profile = subparsers.add_parser(
+        "profile",
+        help="Capture one experimental Torch window on an existing diagnostic ModelService",
+        description=(
+            "Request runtime-owned Torch capture. The platform must prepare diagnostic "
+            "storage before service deployment. This command does not generate requests "
+            "or download traces; results remain on the artifact PVC."
+        ),
+    )
+    profile.add_argument(
+        "kustomize_path",
+        metavar="PATH",
+        help="Kustomize root of an existing deployment; not applied",
+    )
+    profile.add_argument("--model", help="model identifier when PATH contains several models")
+    profile.add_argument(
+        "--profile-duration",
+        required=True,
+        help="recording duration, such as 15s; excludes profiler startup and export",
+    )
+    profile.add_argument(
+        "--profile-engine",
+        choices=("pytorch",),
+        required=True,
+        help="engine profiler to use; currently only pytorch is supported",
+    )
+    _add_wait_timeout_argument(profile, "capture completion")
+
     subparsers.add_parser(
         "bench",
         add_help=False,
@@ -294,6 +334,14 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
         return DeployCommand(parsed_args.kustomize_path, parsed_args.timeout)
     if parsed_args.command == "delete":
         return DeleteCommand(parsed_args.kustomize_path, parsed_args.timeout)
+    if parsed_args.command == "profile":
+        return ProfileCommand(
+            parsed_args.kustomize_path,
+            parsed_args.model,
+            parsed_args.profile_duration,
+            parsed_args.profile_engine,
+            parsed_args.timeout,
+        )
     if parsed_args.command == "status":
         if bool(parsed_args.kustomize_path) == bool(parsed_args.namespace):
             parser.error("status requires either PATH or --namespace")

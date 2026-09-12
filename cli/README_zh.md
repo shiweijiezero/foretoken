@@ -173,6 +173,16 @@ foretoken bench examples/multi-model-quickstart --model Qwen/Qwen3-0.6B
 
 命令行工具使用当前 `kubectl` context，并遵循 `KUBECONFIG` 等标准 Kubernetes 配置。
 
+## 采集诊断 Profile
+
+实验性的源码命令可对已有、准备好的诊断 ModelService 采集一次 Torch 窗口：
+
+```bash
+foretoken profile examples/quickstart --profile-engine pytorch --profile-duration 15s
+```
+
+它不生成请求、不部署服务，也不下载 trace。服务负责自动停止和持久保存，即使命令断线也不依赖本机回收。使用前请查看[采集前提与限制](../observability/profiling_zh.md)。
+
 ## 清理
 
 删除同一配置渲染出的资源：

@@ -68,6 +68,9 @@ spec:
             {{- range .Values.workload.imagePullSecrets }}
             - {{ printf "--workload-image-pull-secret=%s" .name | quote }}
             {{- end }}
+            {{- range $namespace, $claim := .Values.profiling.artifactClaims }}
+            - {{ printf "--profiling-artifact-claim=%s/%s" $namespace $claim | quote }}
+            {{- end }}
             {{- with .Values.workload.cache.claimName }}
             - {{ printf "--cache-claim=%s" . | quote }}
             - {{ printf "--cache-mount-path=%s" $.Values.workload.cache.mountPath | quote }}

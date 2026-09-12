@@ -22,7 +22,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 | 功能 | 说明 | 状态 |
 |---|---|---|
 | 评测 | 性能压测与参数扫描、正确性评测和 SLO 仿真 | 开发中 |
-| 性能剖析 | PyTorch Profiler 和 Nsight 定位计算、通信及 CPU/GPU 性能瓶颈 | 规划中 |
+| 性能剖析 | PyTorch Profiler 和 Nsight 定位计算、通信及 CPU/GPU 性能瓶颈 | 开发中 |
 | 硬件适配 | 统一设备能力、运行时、通信和指标接口；参阅[沐曦部署指南](docs/metax-deployment_zh.md) | 开发中 |
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
 | 分布式推理 | 聚合部署、Prefill/Decode 分离和 WideEP 并行策略 | 研究中 |

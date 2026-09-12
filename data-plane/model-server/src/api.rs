@@ -17,7 +17,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
 use futures::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::backend::{Backend, BackendError, GenerateInput, TokenEvent};
 use crate::kv_event_adapter::{KvDeltaError, KvEventAdapter};
@@ -127,6 +127,7 @@ pub struct AppState {
     metadata: RuntimeMetadataResponse,
     kv_events: Option<Arc<KvEventAdapter>>,
     runtime_cache: Option<runtime_cache::Config>,
+    profiling: Option<crate::profiling::Handle>,
 }
 impl AppState {
     /// Builds state consumed by internal HTTP handlers; the server owns the supplied backend state.
@@ -141,6 +142,7 @@ impl AppState {
             metadata,
             kv_events: None,
             runtime_cache: None,
+            profiling: None,
         }
     }
     /// Attaches the shared KV delta source used by the index endpoint and returns updated state.
@@ -156,6 +158,12 @@ impl AppState {
         self.runtime_cache = Some(config);
         self
     }
+
+    /// Attaches diagnostic control on the existing internal listener without transferring supervision.
+    pub fn with_profiling(mut self, handle: crate::profiling::Handle) -> Self {
+        self.profiling = Some(handle);
+        self
+    }
 }
 
 /// Constructs the group-local API consumed by the Pod-local frontend, not an OpenAI router.
@@ -169,6 +177,10 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
         .route("/v1/internal/metadata", get(metadata))
         .route("/v1/internal/telemetry", get(telemetry))
         .route("/v1/internal/admission/close", post(close_admission))
+        .route(
+            "/v1/internal/profiling",
+            get(profile_observation).post(profile_control),
+        )
         .route("/v1/internal/generate", post(generate))
         .route("/v1/internal/abort", post(abort))
         .route(KV_INDEX_DELTA_PATH, get(kv_index_delta))
@@ -176,6 +188,37 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
             internal_generate_request_body_limit_bytes,
         ))
         .with_state(state)
+}
+
+#[derive(Deserialize)]
+struct ProfileQuery {
+    run_uid: Option<String>,
+}
+
+// Return runtime identity even before a run exists, so the reconciler can persist a fixed plan.
+async fn profile_observation(
+    State(state): State<AppState>,
+    Query(query): Query<ProfileQuery>,
+) -> Response {
+    match state.profiling {
+        Some(handle) => Json(handle.observe(query.run_uid.as_deref())).into_response(),
+        None => StatusCode::NOT_IMPLEMENTED.into_response(),
+    }
+}
+
+// The handler acknowledges acceptance only; polling exposes the independently supervised result.
+async fn profile_control(
+    State(state): State<AppState>,
+    Json(request): Json<crate::profiling::Request>,
+) -> Response {
+    let Some(handle) = state.profiling else {
+        return StatusCode::NOT_IMPLEMENTED.into_response();
+    };
+    let uid = request.run_uid.clone();
+    match handle.control(request) {
+        Ok(()) => (StatusCode::ACCEPTED, Json(handle.observe(Some(&uid)))).into_response(),
+        Err(error) => (StatusCode::CONFLICT, error).into_response(),
+    }
 }
 async fn healthz(State(state): State<AppState>) -> StatusCode {
     status(state.health.healthy())

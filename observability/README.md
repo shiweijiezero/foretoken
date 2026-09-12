@@ -142,6 +142,10 @@ The dashboard and alerts query these recording rules. Model-serving rules are de
 
 Rules keep the namespace, Frontend service, model group, model role, model name, and Prefill/Decode pipeline scope labels. Frontend latency ends when response headers are sent, so for streaming responses it does not include token delivery; generation completion latency and TTFT start when the Frontend handler begins after JSON decoding. These cross-process measurements require synchronized node clocks. A streaming response can start with `2xx` and fail later, so the 5xx ratio is not an inference success rate. Accelerator rules cover only devices used by Foretoken workloads.
 
+## Profiling
+
+For a short CPU/GPU capture on an existing diagnostic service, see [Profiling](profiling.md). It is separate from metrics collection.
+
 ## Remove collection
 
 After all Foretoken services are deleted, `foretoken uninstall` removes the CLI-managed Prometheus and DCGM Exporter releases. Reused Prometheus, DCGM Exporter, and mxExporter installations are left unchanged.

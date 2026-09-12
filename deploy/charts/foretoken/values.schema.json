@@ -12,6 +12,18 @@
     "runtime"
   ],
   "properties": {
+    "profiling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifactClaims"],
+      "properties": {
+        "artifactClaims": {
+          "type": "object",
+          "propertyNames": {"pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63},
+          "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"}
+        }
+      }
+    },
     "image": {
       "type": "object",
       "required": [
