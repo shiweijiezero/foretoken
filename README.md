@@ -80,7 +80,16 @@ curl --fail-with-body --no-buffer \
 
 ### 5. Measure the model service
 
-See [Model Service Benchmarks](benchmarks/README.md) to measure latency and throughput.
+```bash
+pip install 'foretoken[bench]'
+
+# From a source checkout:
+# pip install -e '.[bench]'
+
+foretoken bench examples/quickstart --output local,wandb
+```
+
+Run `wandb login` before the first upload, or use `--output local` for local results only. See [Model Service Benchmarks](benchmarks/README.md) for more examples.
 
 ## Gateway Mode
 

@@ -80,7 +80,16 @@ curl --fail-with-body --no-buffer \
 
 ### 5. 测量模型服务性能
 
-按照[模型服务性能评测](benchmarks/README_zh.md)测量服务的延迟与吞吐量。
+```bash
+pip install 'foretoken[bench]'
+
+# 如果使用源码安装：
+# pip install -e '.[bench]'
+
+foretoken bench examples/quickstart --output local,wandb
+```
+
+首次上传前运行 `wandb login`；仅需本地结果时使用 `--output local`。更多示例见[模型服务性能评测](benchmarks/README_zh.md)。
 
 ## 网关模式
 
