@@ -10,8 +10,6 @@ from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Optional
 
 OutputTokenLimit = int | list[int]
-DEFAULT_DEPLOYMENT_PROMPT = "Hello"
-DEFAULT_WAIT_TIMEOUT = "15m"
 
 
 def normalize_output_token_limit(value: int | list[int]) -> OutputTokenLimit:
@@ -44,7 +42,7 @@ class ModelServiceSource:
     api_key: str = "EMPTY"
     timeout_seconds: int = 300
     max_retries: int = 0
-    wait_timeout: str = DEFAULT_WAIT_TIMEOUT
+    wait_timeout: str = "15m"
 
     def validate(self) -> None:
         """Require exactly one service source and an explicit model for a URL."""
@@ -93,7 +91,7 @@ class HttpLoadSchedule:
 class ChatCompletionsGeneration:
     """Store Chat Completions generation parameters applied to each measured request."""
 
-    max_tokens: OutputTokenLimit = 128
+    max_tokens: OutputTokenLimit = 4096
     stream: bool = True
     top_p: Optional[float] = None
     top_k: Optional[int] = None
@@ -282,7 +280,7 @@ class BenchmarkConfig:
         if workload.fixed_prompt:
             return replace(workload, dataset_selectors=[])
         if self.service.kustomize_path and not workload.dataset_selectors:
-            return replace(workload, fixed_prompt=DEFAULT_DEPLOYMENT_PROMPT)
+            return replace(workload, fixed_prompt="Hello")
         return workload
 
     @property

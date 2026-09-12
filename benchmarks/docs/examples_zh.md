@@ -2,14 +2,17 @@
 
 [English](examples.md) | 简体中文
 
-以下配方都使用统一入口 `foretoken bench`。评测已有模型服务时，先设置完整的 Chat Completions URL 和模型名称：
+如果已按默认模式部署[快速开始示例](../../examples/quickstart/README_zh.md)，先在仓库根目录获取服务地址：
 
 ```bash
-export MODEL_SERVICE_URL=http://127.0.0.1:8008/v1/chat/completions
+MODEL_SERVICE_BASE_URL="$(foretoken endpoint examples/quickstart)"
+export MODEL_SERVICE_URL="${MODEL_SERVICE_BASE_URL%/}/v1/chat/completions"
 export MODEL_ID=Qwen/Qwen3-0.6B
 ```
 
-模型服务需要支持 OpenAI-compatible Chat Completions 协议。评测 Foretoken 部署时，将命令中的 `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"` 替换为 `examples/quickstart` 等 Kustomize 路径。
+评测其他已有服务时，使用该服务的实际 Chat Completions URL 和模型 ID。也可以把以下命令中的 `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"` 换成 `examples/quickstart`，由 Foretoken 自动发现服务。Gateway 模式使用这种 Kustomize 写法，路由请求头会自动配置。
+
+示例使用 `--output local,wandb` 保存并上传结果。首次上传前运行 `wandb login`；仅需本地结果时改用 `--output local`。
 
 ## 重复发送固定提示词
 
@@ -21,7 +24,7 @@ foretoken bench \
   --parallel 4 \
   --number 20 \
   --max-tokens 64 \
-  --output local
+  --output local,wandb
 ```
 
 Kustomize 评测未传 `--prompt` 或 `--dataset` 时，默认发送 `Hello`。
@@ -43,7 +46,7 @@ foretoken bench \
   --parallel 4 \
   --number 20 \
   --max-tokens 64 \
-  --output local
+  --output local,wandb
 ```
 
 长度范围默认只计算提示词正文。添加 `--apply-chat-template` 后，随机生成时会计入所选 tokenizer 的对话模板开销。`--prefix-length` 增加共享前缀。服务端可能使用不同模板，最终输入 token 数以评测结果为准。
@@ -64,7 +67,7 @@ foretoken bench \
   --dataset /tmp/foretoken-conversations.jsonl \
   --number 2 \
   --parallel 2 \
-  --output local
+  --output local,wandb
 ```
 
 默认 `--max-turns -1`，会执行完整对话。第二行的追问会接着模型的第一轮回答继续，而不固定使用数据集里的“火星”。
@@ -78,7 +81,7 @@ foretoken bench \
   --dataset /tmp/foretoken-conversations.jsonl \
   --max-turns 1 \
   --number 2 \
-  --output local
+  --output local,wandb
 ```
 
 ## 使用 Hugging Face 数据集
@@ -92,7 +95,7 @@ foretoken bench \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
   --parallel 4 \
   --number 20 \
-  --output local
+  --output local,wandb
 ```
 
 也可以直接选择 Hugging Face 数据集仓库中的 JSONL 文件：
@@ -104,7 +107,7 @@ foretoken bench \
   --dataset hf://datasets/ORG/REPOSITORY@REVISION/path/to/data.jsonl \
   --parallel 4 \
   --number 20 \
-  --output local
+  --output local,wandb
 ```
 
 请将 `ORG`、`REPOSITORY`、`REVISION` 和文件路径替换为数据集仓库中的实际值。
@@ -125,7 +128,7 @@ foretoken bench \
   --max-turns 2 \
   --parallel 2 \
   --number 1 \
-  --output local
+  --output local,wandb
 ```
 
 进入下一个 `human` 轮次前，模型的真实回答会替换参考 `gpt` 内容。对话数据可以包含 system 消息，以及模型服务支持的图片 content 数组等结构化消息内容，但不能包含顶层工具定义、tool call 或 `tool` role 消息。
@@ -141,7 +144,7 @@ foretoken bench \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train,ianncity/GLM-5.2-Conversation:train \
   --parallel 4 \
   --number 20 \
-  --output local
+  --output local,wandb
 ```
 
 随机提示词不能与其他数据集混用，多数据集也不能与参数扫描组合。
@@ -158,7 +161,7 @@ foretoken bench \
   --rate 5 \
   --parallel 16 \
   --number 100 \
-  --output local
+  --output local,wandb
 ```
 
 如需 open-loop 负载，可去掉并发上限：
@@ -171,7 +174,7 @@ foretoken bench \
   --rate 5 \
   --open-loop \
   --number 100 \
-  --output local
+  --output local,wandb
 ```
 
 实际包含多轮的对话不支持正数 `--rate` 或 `--open-loop`。
@@ -191,7 +194,7 @@ foretoken bench \
   --trace-start 600 \
   --trace-duration 300 \
   --trace-max-concurrency 32 \
-  --output local
+  --output local,wandb
 ```
 
 从轨迹开始后的第 600 秒起回放，持续 300 秒。请求保持原始相对到达时间；并发限制导致的等待会计入回放延迟指标。
@@ -213,7 +216,7 @@ foretoken bench \
   --trace-synthetic-prefix-reuse \
   --trace-max-concurrency 16 \
   --max-tokens 64 \
-  --output local
+  --output local,wandb
 ```
 
 共享前缀按轨迹中的 512-token 块生成。服务端重新分词可能改变块边界，实际缓存命中应结合模型服务的指标确认。
@@ -237,7 +240,7 @@ foretoken bench examples/quickstart \
   --max-prompt-length 512 \
   --sweep benchmarks/examples/sweep.jsonl \
   --experiment-name quickstart-sweep \
-  --output local
+  --output local,wandb
 ```
 
 每个有效负载点都会保存在实验目录中。至少两个负载点成功时，`pareto/PARETO.png` 会比较每个配置用户的生成吞吐量与每张 GPU 的生成吞吐量。

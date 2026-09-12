@@ -2,14 +2,17 @@
 
 English | [简体中文](examples_zh.md)
 
-These recipes use one command, `foretoken bench`. For commands against an existing model service, set its full Chat Completions URL and model name first:
+For the [Quick Start](../../examples/quickstart/README.md) already deployed in the default mode, resolve its address from the repository root:
 
 ```bash
-export MODEL_SERVICE_URL=http://127.0.0.1:8008/v1/chat/completions
+MODEL_SERVICE_BASE_URL="$(foretoken endpoint examples/quickstart)"
+export MODEL_SERVICE_URL="${MODEL_SERVICE_BASE_URL%/}/v1/chat/completions"
 export MODEL_ID=Qwen/Qwen3-0.6B
 ```
 
-The service must support the OpenAI-compatible Chat Completions protocol. To benchmark a Foretoken deployment instead, replace `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"` with a Kustomize path such as `examples/quickstart`.
+For another existing service, use its actual Chat Completions URL and model ID. To let Foretoken discover the service directly, replace `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"` below with `examples/quickstart`. Use this Kustomize form in Gateway mode so routing headers are configured automatically.
+
+The examples use `--output local,wandb` to save and upload results. Run `wandb login` before the first upload, or use `--output local` to save locally only.
 
 ## Repeat a fixed prompt
 
@@ -21,7 +24,7 @@ foretoken bench \
   --parallel 4 \
   --number 20 \
   --max-tokens 64 \
-  --output local
+  --output local,wandb
 ```
 
 A Kustomize benchmark uses `Hello` when neither `--prompt` nor `--dataset` is provided.
@@ -43,7 +46,7 @@ foretoken bench \
   --parallel 4 \
   --number 20 \
   --max-tokens 64 \
-  --output local
+  --output local,wandb
 ```
 
 By default, the length range applies to prompt content. Add `--apply-chat-template` to account for the selected tokenizer's chat-template overhead when generating random prompts. `--prefix-length` adds a shared prefix. The service may use a different template, so check the actual input-token counts in the results.
@@ -64,7 +67,7 @@ foretoken bench \
   --dataset /tmp/foretoken-conversations.jsonl \
   --number 2 \
   --parallel 2 \
-  --output local
+  --output local,wandb
 ```
 
 The default `--max-turns -1` runs the complete conversation. In the second row, the follow-up question uses the model's first answer, which may differ from `Mars.` in the dataset.
@@ -78,7 +81,7 @@ foretoken bench \
   --dataset /tmp/foretoken-conversations.jsonl \
   --max-turns 1 \
   --number 2 \
-  --output local
+  --output local,wandb
 ```
 
 ## Use a Hugging Face dataset
@@ -92,7 +95,7 @@ foretoken bench \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
   --parallel 4 \
   --number 20 \
-  --output local
+  --output local,wandb
 ```
 
 A file inside a Hugging Face dataset repository can be selected directly:
@@ -104,7 +107,7 @@ foretoken bench \
   --dataset hf://datasets/ORG/REPOSITORY@REVISION/path/to/data.jsonl \
   --parallel 4 \
   --number 20 \
-  --output local
+  --output local,wandb
 ```
 
 Replace `ORG`, `REPOSITORY`, `REVISION`, and the file path with values from the dataset repository.
@@ -125,7 +128,7 @@ foretoken bench \
   --max-turns 2 \
   --parallel 2 \
   --number 1 \
-  --output local
+  --output local,wandb
 ```
 
 The reference `gpt` text is replaced by the model's actual answer before the next `human` turn. Conversation datasets may contain system messages and structured message content, including image content arrays supported by the model service. They cannot contain top-level tool definitions, tool calls, or `tool` role messages.
@@ -141,7 +144,7 @@ foretoken bench \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train,ianncity/GLM-5.2-Conversation:train \
   --parallel 4 \
   --number 20 \
-  --output local
+  --output local,wandb
 ```
 
 Random prompts cannot be mixed with another dataset. Multiple datasets cannot be combined with a parameter sweep.
@@ -158,7 +161,7 @@ foretoken bench \
   --rate 5 \
   --parallel 16 \
   --number 100 \
-  --output local
+  --output local,wandb
 ```
 
 Remove the concurrency cap for an open-loop workload:
@@ -171,7 +174,7 @@ foretoken bench \
   --rate 5 \
   --open-loop \
   --number 100 \
-  --output local
+  --output local,wandb
 ```
 
 Actual multi-turn conversations do not support positive `--rate` or `--open-loop`.
@@ -191,7 +194,7 @@ foretoken bench \
   --trace-start 600 \
   --trace-duration 300 \
   --trace-max-concurrency 32 \
-  --output local
+  --output local,wandb
 ```
 
 The replay starts 600 seconds into the trace and covers the next 300 seconds. Requests keep their recorded relative arrival times. If the concurrency limit delays a request, the delay appears in the replay metrics.
@@ -213,7 +216,7 @@ foretoken bench \
   --trace-synthetic-prefix-reuse \
   --trace-max-concurrency 16 \
   --max-tokens 64 \
-  --output local
+  --output local,wandb
 ```
 
 Shared prefixes are generated from the trace's 512-token blocks. Server-side tokenization can change these boundaries, so verify cache hits with the model service's metrics.
@@ -237,7 +240,7 @@ foretoken bench examples/quickstart \
   --max-prompt-length 512 \
   --sweep benchmarks/examples/sweep.jsonl \
   --experiment-name quickstart-sweep \
-  --output local
+  --output local,wandb
 ```
 
 Each valid point is saved under the experiment directory. When at least two points succeed, `pareto/PARETO.png` compares generation tokens per second per configured user with generation tokens per second per GPU.

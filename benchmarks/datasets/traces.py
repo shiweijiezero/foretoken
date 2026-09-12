@@ -14,6 +14,9 @@ from typing import Any
 
 from benchmarks.datasets.conversations import Task, Turn, iter_dataset_rows
 
+# Each Mooncake hash ID identifies one fixed-size input-token block.
+MOONCAKE_BLOCK_TOKENS = 512
+
 logger = logging.getLogger(__name__)
 
 

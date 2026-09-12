@@ -19,6 +19,8 @@ pip install 'foretoken[bench]'
 
 ## 完成第一次评测
 
+示例会保存本地结果并上传到 Weights & Biases（W&B）。首次上传前运行 `wandb login`；仅需本地结果时使用 `--output local`。
+
 选择 Foretoken 部署或已有服务 URL。
 
 ### Foretoken Kustomize 部署
@@ -27,7 +29,7 @@ pip install 'foretoken[bench]'
 
 ```bash
 foretoken install
-foretoken bench examples/quickstart --number 10 --output local
+foretoken bench examples/quickstart --number 10 --output local,wandb
 ```
 
 模型服务已经运行时，命令会直接复用；尚未部署时，命令会应用 Kustomize 资源、等待服务就绪、完成评测，并且只清理本次创建的资源。Kustomize 评测未指定 `--prompt` 或 `--dataset` 时，默认发送 `Hello`。
@@ -45,7 +47,7 @@ foretoken bench \
   --prompt "你好" \
   --parallel 2 \
   --number 20 \
-  --output local
+  --output local,wandb
 ```
 
 使用 `--url` 时必须同时提供 `--model`，并且不能再传 Kustomize 路径。

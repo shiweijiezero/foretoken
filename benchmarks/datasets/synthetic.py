@@ -14,8 +14,7 @@ from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
 from benchmarks.datasets.conversations import Task, Turn
 from benchmarks.datasets.huggingface import resolve_tokenizer_path
-
-_MOONCAKE_BLOCK_TOKENS = 512
+from benchmarks.datasets.traces import MOONCAKE_BLOCK_TOKENS
 
 
 def create_trace_random_dataset_plugin(
@@ -131,7 +130,7 @@ def generate_synthetic_prefix_reuse_requests(
         generator = random.Random(workload.random_seed + hash_id)
         return tuple(
             generator.choice(allowed_token_ids)
-            for _ in range(_MOONCAKE_BLOCK_TOKENS)
+            for _ in range(MOONCAKE_BLOCK_TOKENS)
         )
 
     tasks: list[Task] = []
@@ -142,11 +141,11 @@ def generate_synthetic_prefix_reuse_requests(
                 "selected trace event"
             )
         expected_blocks = (
-            input_length + _MOONCAKE_BLOCK_TOKENS - 1
-        ) // _MOONCAKE_BLOCK_TOKENS
+            input_length + MOONCAKE_BLOCK_TOKENS - 1
+        ) // MOONCAKE_BLOCK_TOKENS
         if len(hash_ids) != expected_blocks:
             raise ValueError(
-                "Mooncake hash_ids must cover every 512-token input block; "
+                f"Mooncake hash_ids must cover every {MOONCAKE_BLOCK_TOKENS}-token input block; "
                 f"got {len(hash_ids)} hash_ids for input_length={input_length}"
             )
 

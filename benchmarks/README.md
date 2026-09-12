@@ -19,6 +19,8 @@ pip install 'foretoken[bench]'
 
 ## Run your first benchmark
 
+The examples save results locally and upload them to Weights & Biases (W&B). Run `wandb login` before the first upload; use `--output local` if you only need local results.
+
 Choose a Foretoken deployment or an existing service URL.
 
 ### Foretoken Kustomize deployment
@@ -27,7 +29,7 @@ From the repository root, install the Foretoken platform and benchmark the [Quic
 
 ```bash
 foretoken install
-foretoken bench examples/quickstart --number 10 --output local
+foretoken bench examples/quickstart --number 10 --output local,wandb
 ```
 
 If the model service is already running, the command reuses it. Otherwise, it deploys the Kustomize resources, waits for the service, runs the benchmark, and removes only the resources it created. When no `--prompt` or `--dataset` is provided, a Kustomize benchmark sends `Hello`.
@@ -45,7 +47,7 @@ foretoken bench \
   --prompt "Hello" \
   --parallel 2 \
   --number 20 \
-  --output local
+  --output local,wandb
 ```
 
 `--url` requires `--model`. Do not pass a Kustomize path together with `--url`.
