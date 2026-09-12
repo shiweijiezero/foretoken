@@ -5,7 +5,7 @@
 
 English | [简体中文](model-storage_zh.md)
 
-Keep model downloads and runtime caches in one directory so new Pods can reuse them.
+Use one persistent data root for model files and runtime caches. Foretoken manages the directories beneath it so new Pods can reuse the data.
 
 ## Use a data directory
 
@@ -45,10 +45,10 @@ An empty `data` directory is sufficient: models download into the cache on first
 
 ## Load a local model
 
-Place a complete model directory below `data`, for example:
+Foretoken keeps models in the `models` area of the data root. Place a complete model directory there:
 
 ```text
-examples/quickstart/data/checkpointA/A3/
+examples/quickstart/data/models/checkpointA/A3/
 ├── config.json
 ├── tokenizer.json
 ├── tokenizer_config.json
@@ -62,7 +62,7 @@ spec:
   model: checkpointA/A3
 ```
 
-Use `checkpointA/A3` as the model name in API requests. File formats and required tokenizer files follow the inference engine's model loader. A single checkpoint file must first be packaged as a supported model directory. Relative paths and symlinks stay within `data`; absolute model paths refer to directories inside the Pod.
+The model root is resolved automatically; keep `checkpointA/A3` as the model name in API requests. File formats and required tokenizer files follow the inference engine's model loader. A single checkpoint file must first be packaged as a supported model directory. Relative paths and symlinks stay within the model root; absolute model paths refer to directories inside the Pod.
 
 ## Use a StorageClass
 

@@ -5,7 +5,7 @@
 
 [English](model-storage.md) | 简体中文
 
-将下载的模型和运行时缓存放在同一个目录，供后续 Pod 复用。
+使用一个持久数据根目录保存模型文件和运行时缓存。内部目录由 Foretoken 管理，后续 Pod 继续复用其中的数据。
 
 ## 使用数据目录
 
@@ -45,10 +45,10 @@ foretoken deploy examples/quickstart --timeout 20m
 
 ## 加载本地模型
 
-将完整模型目录放在 `data` 下，例如：
+Foretoken 将模型保存在数据根目录的 `models` 区域。将完整模型目录放在这里：
 
 ```text
-examples/quickstart/data/checkpointA/A3/
+examples/quickstart/data/models/checkpointA/A3/
 ├── config.json
 ├── tokenizer.json
 ├── tokenizer_config.json
@@ -62,7 +62,7 @@ spec:
   model: checkpointA/A3
 ```
 
-API 请求中的模型名称也使用 `checkpointA/A3`。模型格式及必需的 tokenizer 文件遵循推理引擎的加载要求；单个 checkpoint 文件需要先整理成支持的模型目录。相对路径和软链接不能越过 `data`；绝对模型路径指 Pod 内的目录。
+系统自动解析模型根目录，API 请求中的模型名称也使用 `checkpointA/A3`，无需填写中间目录。模型格式及必需的 tokenizer 文件遵循推理引擎的加载要求；单个 checkpoint 文件需要先整理成支持的模型目录。相对路径和软链接不能越过模型根目录；绝对模型路径指 Pod 内的目录。
 
 ## 使用 StorageClass
 

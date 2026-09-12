@@ -62,8 +62,8 @@ pub async fn load_hf_text_backend(
     if model_id.is_empty() || revision.is_empty() {
         return Err(TextBackendLoadError::MissingModelOrRevision);
     }
-    let cache_root = std::env::var_os("FORETOKEN_CACHE_MOUNT_PATH").map(PathBuf::from);
-    if let Some(local) = foretoken_model_files::resolve_directory(cache_root.as_deref(), model_id)
+    let model_root = std::env::var_os(foretoken_model_files::MODEL_ROOT_ENV).map(PathBuf::from);
+    if let Some(local) = foretoken_model_files::resolve_directory(model_root.as_deref(), model_id)
         .map_err(TextBackendLoadError::LocalModelPath)?
     {
         let local = local

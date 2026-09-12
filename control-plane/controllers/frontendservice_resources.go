@@ -12,6 +12,7 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -64,12 +65,16 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	if routerFilter == "" || routerScorer == "" || routerPicker == "" {
 		return nil, nil, nil, fmt.Errorf("frontend routerPipeline was not defaulted")
 	}
-	tokenizerCachePath := "/var/cache/foretoken/models"
 	cacheMountPath := "/var/cache/foretoken"
+	if profile.RuntimeCache != nil {
+		cacheMountPath = profile.RuntimeCache.MountPath
+	}
+	modelRoot := runtimeconfig.ModelDirectory(cacheMountPath)
 	frontendEnv := []corev1.EnvVar{
 		{Name: "FORETOKEN_LISTEN_ADDRESS", Value: fmt.Sprintf("0.0.0.0:%d", profile.Port)},
 		{Name: "FORETOKEN_SERVING_SNAPSHOT", Value: "/etc/foretoken/serving/serving.json"},
-		{Name: "HF_HOME", Value: tokenizerCachePath},
+		{Name: "HF_HOME", Value: modelRoot},
+		{Name: runtimeconfig.ModelRootEnv, Value: modelRoot},
 		{Name: "FORETOKEN_REQUEST_TIMEOUT_SECONDS", Value: strconv.FormatInt(requestTimeoutSeconds, 10)},
 		{Name: "FORETOKEN_STREAM_IDLE_SECONDS", Value: strconv.FormatInt(streamIdleSeconds, 10)},
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
@@ -79,12 +84,9 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	}
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {
-		tokenizerCachePath = profile.RuntimeCache.MountPath + "/models"
-		cacheMountPath = profile.RuntimeCache.MountPath
-		frontendEnv[2].Value = tokenizerCachePath
 		frontendEnv = append(frontendEnv,
 			corev1.EnvVar{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cacheMountPath},
-			corev1.EnvVar{Name: "FORETOKEN_TEMPORARY_HF_CACHE_DIR", Value: "/tmp/foretoken-runtime-cache/models/hub"},
+			corev1.EnvVar{Name: "FORETOKEN_TEMPORARY_HF_CACHE_DIR", Value: runtimeconfig.ModelDirectory("/tmp/foretoken-runtime-cache") + "/hub"},
 		)
 		cacheVolume.VolumeSource = corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: profile.RuntimeCache.ClaimName}}
 	}

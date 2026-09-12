@@ -7,11 +7,14 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-/// Resolve a directory for frontend or model-server, relative to an optional cache root.
+/// Controller-projected model root, distinct from the complete runtime-cache mount.
+pub const MODEL_ROOT_ENV: &str = "FORETOKEN_MODEL_ROOT";
+
+/// Resolve a directory for frontend or model-server, relative to an optional model root.
 ///
 /// A missing relative directory leaves the identifier available for Hub resolution.
 /// Absolute directories keep their Pod-local meaning. Relative links must stay inside
-/// the cache; individual files are not replaced by their parent directory. The inference
+/// the model root; individual files are not replaced by their parent directory. The inference
 /// engine owns validation of the files within a resolved model or tokenizer directory.
 pub fn resolve_directory(root: Option<&Path>, identifier: &str) -> io::Result<Option<PathBuf>> {
     let path = Path::new(identifier);
@@ -40,7 +43,7 @@ pub fn resolve_directory(root: Option<&Path>, identifier: &str) -> io::Result<Op
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("artifact {identifier:?} must stay below the cache directory"),
+            format!("artifact {identifier:?} must stay below the model directory"),
         ));
     }
     let directory = match fs::canonicalize(root.join(path)) {
@@ -51,7 +54,7 @@ pub fn resolve_directory(root: Option<&Path>, identifier: &str) -> io::Result<Op
     if !directory.starts_with(fs::canonicalize(root)?) || !directory.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("artifact {identifier:?} must be a directory within the cache"),
+            format!("artifact {identifier:?} must be a directory within the model root"),
         ));
     }
     Ok(Some(directory))
