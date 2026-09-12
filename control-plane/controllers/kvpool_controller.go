@@ -165,7 +165,7 @@ func desiredKVGroupSpec(pool *inferencev1alpha1.KVPool, service *inferencev1alph
 	if client.Disk == nil {
 		return inferencev1alpha1.KVGroupSpec{}, fmt.Errorf("KVPool %q requires disk for standalone Store offload", pool.Name)
 	}
-	if client.RDMAResourceName == "" {
+	if client.Protocol == "rdma" && client.RDMAResourceName == "" {
 		return inferencev1alpha1.KVGroupSpec{}, fmt.Errorf("KVPool %q requires rdmaResourceName", pool.Name)
 	}
 	_, _, _, masterService := kvMasterNames(service)

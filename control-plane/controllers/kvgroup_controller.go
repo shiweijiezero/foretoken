@@ -112,12 +112,17 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup) (*appsv1.Deployme
 		return nil, nil, nil, nil, fmt.Errorf("KVGroup drain timeout must be positive")
 	}
 	terminationGracePeriodSeconds := int64(math.Ceil(drain.Seconds()))
-	if group.Spec.Client.Disk.Size == "" || group.Spec.Client.RDMAResourceName == "" {
-		return nil, nil, nil, nil, fmt.Errorf("KVGroup disk and RDMA resource are required for standalone Store offload")
+	if group.Spec.Client.Disk.Size == "" {
+		return nil, nil, nil, nil, fmt.Errorf("KVGroup disk is required for standalone Store offload")
 	}
-	rdmaCount := *resource.NewQuantity(int64(group.Spec.Client.RDMAResourceCount), resource.DecimalSI)
-	rdmaName := corev1.ResourceName(group.Spec.Client.RDMAResourceName)
-	requests[rdmaName], limits[rdmaName] = rdmaCount, rdmaCount
+	if group.Spec.Client.Protocol == "rdma" {
+		if group.Spec.Client.RDMAResourceName == "" {
+			return nil, nil, nil, nil, fmt.Errorf("KVGroup RDMA resource is required for RDMA transport")
+		}
+		rdmaCount := *resource.NewQuantity(int64(group.Spec.Client.RDMAResourceCount), resource.DecimalSI)
+		rdmaName := corev1.ResourceName(group.Spec.Client.RDMAResourceName)
+		requests[rdmaName], limits[rdmaName] = rdmaCount, rdmaCount
+	}
 	labels := map[string]string{kvGroupLabel: kvLabelValue(group.Name), kvServiceLabel: kvLabelValue(group.Spec.KVPoolRef.Name)}
 	workloadName := kvGroupWorkloadName(group)
 	pvcName := kvChildName(group.Name+"-offload", string(group.UID))
@@ -125,7 +130,7 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup) (*appsv1.Deployme
 	automountToken, allowPrivilegeEscalation, readOnlyRootFilesystem := false, false, true
 	args := []string{
 		fmt.Sprintf("--master_server_address=%s:%d", group.Spec.MasterServiceDNS, group.Spec.MasterRPCPort),
-		"--host=$(POD_IP)", fmt.Sprintf("--port=%d", port), "--protocol=rdma",
+		"--host=$(POD_IP)", fmt.Sprintf("--port=%d", port), "--protocol=" + group.Spec.Client.Protocol,
 		fmt.Sprintf("--global_segment_size=%s", group.Spec.Client.MemoryCapacityBytes), "--enable_offload=true", "--metadata_server=P2PHANDSHAKE",
 	}
 	pvc := &corev1.PersistentVolumeClaim{
@@ -143,7 +148,9 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup) (*appsv1.Deployme
 			{Name: "POD_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
 			{Name: "MOONCAKE_OFFLOAD_FILE_STORAGE_PATH", Value: "/data/mooncake-offload"},
 			{Name: "MOONCAKE_OFFLOAD_STORAGE_BACKEND_DESCRIPTOR", Value: "bucket_storage_backend"},
+			// Capacity reporting and bucket storage use the same disk budget.
 			{Name: "MOONCAKE_OFFLOAD_TOTAL_SIZE_LIMIT_BYTES", Value: string(group.Spec.Client.Disk.Size)},
+			{Name: "MOONCAKE_OFFLOAD_BUCKET_MAX_TOTAL_SIZE", Value: string(group.Spec.Client.Disk.Size)},
 		},
 		Resources:       corev1.ResourceRequirements{Requests: requests, Limits: limits},
 		VolumeMounts:    []corev1.VolumeMount{{Name: "offload-storage", MountPath: "/data/mooncake-offload"}, {Name: "shm", MountPath: "/dev/shm"}},
@@ -173,17 +180,22 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup) (*appsv1.Deployme
 func (reconciler *KVGroupReconciler) applyOwned(ctx context.Context, group *inferencev1alpha1.KVGroup, desired client.Object) error {
 	current := desired.DeepCopyObject().(client.Object)
 	err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current)
-	if apierrors.IsNotFound(err) {
-		if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
-			return err
-		}
-		return reconciler.Create(ctx, desired)
-	}
-	if err != nil {
+	missing := apierrors.IsNotFound(err)
+	if err != nil && !missing {
 		return err
 	}
-	if !metav1.IsControlledBy(current, group) {
+	if !missing && !metav1.IsControlledBy(current, group) {
 		return fmt.Errorf("%T %q is not controlled by KVGroup", current, current.GetName())
+	}
+	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
+		return err
+	}
+	if _, ok := desired.(*appsv1.Deployment); ok {
+		// The stable field owner preserves the Deployment controller's revision annotation.
+		return reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner("foretoken-kvgroup"), client.ForceOwnership)
+	}
+	if missing {
+		return reconciler.Create(ctx, desired)
 	}
 	if desiredService, ok := desired.(*corev1.Service); ok {
 		existing := current.(*corev1.Service)
@@ -191,14 +203,12 @@ func (reconciler *KVGroupReconciler) applyOwned(ctx context.Context, group *infe
 	}
 	if desiredPVC, ok := desired.(*corev1.PersistentVolumeClaim); ok {
 		existing := current.(*corev1.PersistentVolumeClaim)
+		preservePVCBindingAndMetadata(desiredPVC, existing)
 		if retention := existing.Annotations[kvGroupDiskRetentionAnnotation]; retention != "" {
 			desiredPVC.Annotations[kvGroupDiskRetentionAnnotation] = retention
 		}
 	}
 	desired.SetResourceVersion(current.GetResourceVersion())
-	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
-		return err
-	}
 	return reconciler.Update(ctx, desired)
 }
 

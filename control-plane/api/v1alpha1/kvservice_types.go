@@ -98,12 +98,14 @@ type KVDisk struct {
 // user-provided gap between capacity and memory resources reserves runtime overhead;
 // Foretoken deliberately does not guess a fixed overhead amount.
 // +kubebuilder:validation:XValidation:rule="has(self.disk)",message="client.disk is required when standalone Store offload is enabled"
+// +kubebuilder:validation:XValidation:rule="self.protocol == 'rdma' ? has(self.rdmaResourceName) : !has(self.rdmaResourceName) && !has(self.rdmaResourceCount)",message="RDMA requires rdmaResourceName; TCP must omit RDMA resources"
 // +kubebuilder:validation:XValidation:rule="quantity(self.memoryCapacity).compareTo(quantity(self.resources.requests.memory)) < 0",message="client.memoryCapacity must be less than client.resources.requests.memory to reserve runtime overhead"
 // +kubebuilder:validation:XValidation:rule="!has(self.resources.limits) || !has(self.resources.limits.memory) || quantity(self.memoryCapacity).compareTo(quantity(self.resources.limits.memory)) < 0",message="client.memoryCapacity must be less than client.resources.limits.memory to reserve runtime overhead"
 type KVClientTemplate struct {
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
-	// +kubebuilder:validation:Enum=rdma
+	// Protocol is shared by storage clients and model requesters bound to this KVService.
+	// +kubebuilder:validation:Enum=tcp;rdma
 	Protocol string `json:"protocol"`
 	// +optional
 	// +kubebuilder:default=50052
@@ -111,10 +113,11 @@ type KVClientTemplate struct {
 	// +kubebuilder:validation:Maximum=65535
 	Port      int32       `json:"port,omitempty"`
 	Resources KVResources `json:"resources"`
-	// +kubebuilder:validation:MinLength=1
-	RDMAResourceName string `json:"rdmaResourceName"`
 	// +optional
-	// +kubebuilder:default=1
+	// +kubebuilder:validation:MinLength=1
+	RDMAResourceName string `json:"rdmaResourceName,omitempty"`
+	// RDMAResourceCount defaults to one during RDMA client normalization and is unused for TCP.
+	// +optional
 	// +kubebuilder:validation:Minimum=1
 	RDMAResourceCount int32        `json:"rdmaResourceCount,omitempty"`
 	MemoryCapacity    ByteQuantity `json:"memoryCapacity"`
@@ -159,6 +162,8 @@ type KVServiceBinding struct {
 }
 
 // KVServiceSpec declares a Foretoken-owned Mooncake standalone Store.
+// All storage pools use one protocol so requesters and storage clients share the same transport.
+// +kubebuilder:validation:XValidation:rule="self.storagePools.all(pool, pool.client.protocol == self.storagePools[0].client.protocol)",message="storagePools must use the same client protocol"
 // +kubebuilder:validation:XValidation:rule="self.storagePools.all(pool, self.storagePools.exists(other, other.name == pool.name) ? self.storagePools.filter(other, other.name == pool.name).size() == 1 : true)",message="storagePools names must be unique"
 type KVServiceSpec struct {
 	// +kubebuilder:validation:Enum=mooncakeStandaloneStore
@@ -202,6 +207,7 @@ const (
 
 // NormalizedKVPoolTemplate is the immutable client configuration compiled from
 // a KVService storagePools entry. Pool identity and desiredGroups stay outside it.
+// +kubebuilder:validation:XValidation:rule="self.client.protocol != 'rdma' || has(self.client.rdmaResourceCount)",message="normalized RDMA clients require rdmaResourceCount"
 type NormalizedKVPoolTemplate struct {
 	Client KVClientTemplate `json:"client"`
 	// +optional

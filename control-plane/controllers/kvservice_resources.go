@@ -94,7 +94,7 @@ func desiredKVMasterResources(service *inferencev1alpha1.KVService) (*corev1.Con
 				Command: []string{"mooncake_master"}, Args: []string{"--config_path=/etc/mooncake/master.yaml", "--enable_offload"},
 				Env:             []corev1.EnvVar{{Name: "MOONCAKE_SNAPSHOT_LOCAL_PATH", Value: "/data/snapshots"}},
 				Ports:           []corev1.ContainerPort{{Name: "rpc", ContainerPort: rpcPort}, {Name: "metadata", ContainerPort: metadataPort}, {Name: "metrics", ContainerPort: metricsPort}},
-				VolumeMounts:    []corev1.VolumeMount{{Name: "config", MountPath: "/etc/mooncake", ReadOnly: true}, {Name: "snapshots", MountPath: "/data/snapshots"}, {Name: "snapshots", MountPath: "/data/mooncake-offload"}, {Name: "tmp", MountPath: "/tmp"}},
+				VolumeMounts:    []corev1.VolumeMount{{Name: "config", MountPath: "/etc/mooncake", ReadOnly: true}, {Name: "snapshots", MountPath: "/data/snapshots"}, {Name: "tmp", MountPath: "/tmp"}},
 				Resources:       corev1.ResourceRequirements{Requests: requests, Limits: limits},
 				SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, ReadOnlyRootFilesystem: &readOnlyRootFilesystem, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
 				LivenessProbe:   tcpProbe("rpc", 10), ReadinessProbe: tcpProbe("rpc", 5),
@@ -118,6 +118,22 @@ func desiredKVMasterResources(service *inferencev1alpha1.KVService) (*corev1.Con
 		pvc.Spec.StorageClassName = &service.Spec.Master.Snapshot.StorageClassName
 	}
 	return config, requesterConfig, deployment, kubeService, pvc, nil
+}
+
+// preservePVCBindingAndMetadata keeps provider-assigned PVC fields and metadata during updates.
+// Callers initialize desired.Annotations; resource owners retain capacity, StorageClass, and retention decisions.
+func preservePVCBindingAndMetadata(desired, existing *corev1.PersistentVolumeClaim) {
+	desired.Spec.VolumeName = existing.Spec.VolumeName
+	desired.Spec.VolumeMode = existing.Spec.VolumeMode
+	if desired.Spec.StorageClassName == nil {
+		desired.Spec.StorageClassName = existing.Spec.StorageClassName
+	}
+	desired.Finalizers = existing.Finalizers
+	for key, value := range existing.Annotations {
+		if _, present := desired.Annotations[key]; !present {
+			desired.Annotations[key] = value
+		}
+	}
 }
 
 func kvResources(resources inferencev1alpha1.KVResources) (corev1.ResourceList, corev1.ResourceList, error) {
@@ -178,7 +194,7 @@ func mooncakeSnapshotIntervalSeconds(value inferencev1alpha1.Duration) (int64, e
 func mooncakeMasterConfig(rpcPort, metadataPort, metricsPort int32, snapshotIntervalSeconds int64, snapshotRetentionCount int32) string {
 	// Field names follow llm-d v0.8.0's Master ConfigMap. Snapshot retention is
 	// provider history, not a Foretoken cache TTL or eviction policy.
-	return fmt.Sprintf("rpc_port: %d\nrpc_address: \"0.0.0.0\"\nenable_metric_reporting: true\nmetrics_port: %d\nenable_http_metadata_server: true\nhttp_metadata_server_host: \"0.0.0.0\"\nhttp_metadata_server_port: %d\ncluster_id: \"mooncake_cluster\"\nroot_fs_dir: \"/data/mooncake-offload\"\nenable_snapshot: true\nenable_snapshot_restore: true\nsnapshot_interval_seconds: %d\nsnapshot_retention_count: %d\nsnapshot_object_store_type: \"local\"\n", rpcPort, metricsPort, metadataPort, snapshotIntervalSeconds, snapshotRetentionCount)
+	return fmt.Sprintf("rpc_port: %d\nrpc_address: \"0.0.0.0\"\nenable_metric_reporting: true\nmetrics_port: %d\nenable_http_metadata_server: true\nhttp_metadata_server_host: \"0.0.0.0\"\nhttp_metadata_server_port: %d\ncluster_id: \"mooncake_cluster\"\nenable_snapshot: true\nenable_snapshot_restore: true\nsnapshot_interval_seconds: %d\nsnapshot_retention_count: %d\nsnapshot_object_store_type: \"local\"\n", rpcPort, metricsPort, metadataPort, snapshotIntervalSeconds, snapshotRetentionCount)
 }
 
 func tcpProbe(port string, periodSeconds int32) *corev1.Probe {
@@ -191,9 +207,11 @@ func desiredKVRequesterConfig(service *inferencev1alpha1.KVService, masterServic
 	if err != nil {
 		return nil, fmt.Errorf("parse requester.localBufferSize: %w", err)
 	}
+	// The API requires one or more pools with a shared protocol; requesters use it directly.
+	protocol := service.Spec.StoragePools[0].Client.Protocol
 	name := kvChildName(service.Name+"-requester-config", string(service.UID)+":"+strconv.FormatInt(service.Generation, 10))
 	endpoint := fmt.Sprintf("%s.%s.svc:%d", masterService, service.Namespace, rpcPort)
-	payload, err := json.Marshal(map[string]any{"mode": "standalone-store", "metadata_server": "P2PHANDSHAKE", "master_server_address": endpoint, "global_segment_size": 0, "local_buffer_size": strconv.FormatInt(bytes, 10) + "B", "protocol": "rdma", "device_name": "", "enable_offload": true})
+	payload, err := json.Marshal(map[string]any{"mode": "standalone-store", "metadata_server": "P2PHANDSHAKE", "master_server_address": endpoint, "global_segment_size": 0, "local_buffer_size": strconv.FormatInt(bytes, 10) + "B", "protocol": protocol, "device_name": "", "enable_offload": true})
 	if err != nil {
 		return nil, err
 	}

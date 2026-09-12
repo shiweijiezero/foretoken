@@ -138,11 +138,15 @@ spec:
                         minimum: 1
                         type: integer
                       protocol:
+                        description: Protocol is shared by storage clients and model
+                          requesters bound to this KVService.
                         enum:
+                        - tcp
                         - rdma
                         type: string
                       rdmaResourceCount:
-                        default: 1
+                        description: RDMAResourceCount defaults to one during RDMA
+                          client normalization and is unused for TCP.
                         format: int32
                         minimum: 1
                         type: integer
@@ -223,13 +227,16 @@ spec:
                     - image
                     - memoryCapacity
                     - protocol
-                    - rdmaResourceName
                     - resources
                     type: object
                     x-kubernetes-validations:
                     - message: client.disk is required when standalone Store offload
                         is enabled
                       rule: has(self.disk)
+                    - message: RDMA requires rdmaResourceName; TCP must omit RDMA
+                        resources
+                      rule: 'self.protocol == ''rdma'' ? has(self.rdmaResourceName)
+                        : !has(self.rdmaResourceName) && !has(self.rdmaResourceCount)'
                     - message: client.memoryCapacity must be less than client.resources.requests.memory
                         to reserve runtime overhead
                       rule: quantity(self.memoryCapacity).compareTo(quantity(self.resources.requests.memory))
@@ -246,6 +253,9 @@ spec:
                 required:
                 - client
                 type: object
+                x-kubernetes-validations:
+                - message: normalized RDMA clients require rdmaResourceCount
+                  rule: self.client.protocol != 'rdma' || has(self.client.rdmaResourceCount)
             required:
             - desiredGroups
             - kvServiceRef
