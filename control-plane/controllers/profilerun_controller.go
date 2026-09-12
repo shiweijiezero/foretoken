@@ -37,29 +37,13 @@ type ProfileRunReconciler struct {
 	HTTPClient *http.Client
 }
 
-type profileParticipant struct {
-	GroupName string `json:"groupName"`
-	GroupUID  string `json:"groupUID"`
-	PodName   string `json:"podName"`
-	PodUID    string `json:"podUID"`
-	RuntimeID string `json:"runtimeID"`
-	Endpoint  string `json:"endpoint"`
-}
-
-type profilePlan struct {
-	ServiceUID        string                    `json:"serviceUID"`
-	ServingGeneration int64                     `json:"servingGeneration"`
-	Revisions         []api.ServingPoolRevision `json:"revisions"`
-	ArtifactClaim     string                    `json:"artifactClaim"`
-	Participants      []profileParticipant      `json:"participants"`
-}
-
 type profileRecord struct {
 	RunUID          string  `json:"runUid"`
 	Phase           string  `json:"phase"`
 	StartedAtUnixMS *int64  `json:"startedAtUnixMs"`
 	ArtifactDir     *string `json:"artifactDir"`
 	Message         string  `json:"message"`
+	GPUActivity     *bool   `json:"gpuActivity"`
 }
 
 type profileObservation struct {
@@ -74,7 +58,7 @@ type profileObservation struct {
 func (r *ProfileRunReconciler) SetupWithManager(manager ctrl.Manager) error {
 	r.APIReader = manager.GetAPIReader()
 	r.HTTPClient = &http.Client{Timeout: 5 * time.Second}
-	return ctrl.NewControllerManagedBy(manager).For(&api.ProfileRun{}).Owns(&corev1.ConfigMap{}).Complete(r)
+	return ctrl.NewControllerManagedBy(manager).For(&api.ProfileRun{}).Complete(r)
 }
 
 // Reconcile persists recovery state before starting work, then observes the same runtime identities.
@@ -86,12 +70,9 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 	if profileTerminal(run.Status.Phase) {
 		return ctrl.Result{}, r.removeProfileFinalizer(ctx, run)
 	}
-	planObject := new(corev1.ConfigMap)
-	planName := "profile-" + string(run.UID)
-	err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: planName}, planObject)
-	if apierrors.IsNotFound(err) {
+	if run.Status.Plan == nil {
 		if run.Status.Phase != "" {
-			return ctrl.Result{}, fmt.Errorf("capture recovery plan is missing; refusing to reselect runtimes or release the finalizer")
+			return ctrl.Result{}, fmt.Errorf("capture recovery plan is missing; refusing to reselect runtimes")
 		}
 		if run.Spec.Action != "Capture" || !run.DeletionTimestamp.IsZero() {
 			run.Status.Phase = "Cancelled"
@@ -107,45 +88,19 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 			run.Status.Phase, run.Status.Reason, run.Status.Message = "Failed", "TargetUnavailable", err.Error()
 			return ctrl.Result{}, r.writeProfileStatus(ctx, run)
 		}
-		data, err := json.Marshal(plan)
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		immutable := true
-		planObject = &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: planName, Namespace: run.Namespace}, Immutable: &immutable, Data: map[string]string{"plan.json": string(data)}}
-		if err := controllerutil.SetControllerReference(run, planObject, r.Scheme()); err != nil {
-			return ctrl.Result{}, err
-		}
-		if err := r.Create(ctx, planObject); err != nil {
-			return ctrl.Result{}, err
-		}
-		// Never start native work in the same reconciliation that first writes its recovery plan.
-		return ctrl.Result{Requeue: true}, nil
-	}
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	if !metav1.IsControlledBy(planObject, run) {
-		return ctrl.Result{}, fmt.Errorf("capture plan is not owned by this ProfileRun")
-	}
-	var plan profilePlan
-	if err := json.Unmarshal([]byte(planObject.Data["plan.json"]), &plan); err != nil {
-		return ctrl.Result{}, fmt.Errorf("decode capture plan: %w", err)
-	}
-	if len(plan.Participants) == 0 {
-		return ctrl.Result{}, fmt.Errorf("capture plan contains no participants")
-	}
-	if run.Status.Phase == "" {
+		run.Status.Plan = &plan
 		run.Status.Phase = "Starting"
+		// Persist participant identities before any native operation can be accepted.
 		return ctrl.Result{Requeue: true}, r.writeProfileStatus(ctx, run)
 	}
+	plan := *run.Status.Plan
 
 	action := run.Spec.Action
 	if !run.DeletionTimestamp.IsZero() || run.Status.Reason != "" {
 		action = "Cancel"
 	}
 	service := new(api.ModelService)
-	err = r.APIReader.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: run.Spec.ModelServiceRef.Name}, service)
+	err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: run.Spec.ModelServiceRef.Name}, service)
 	if err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, err
 	}
@@ -172,6 +127,7 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 	allDone, anyStopping := true, false
 	capturing := 0
 	completed := int32(0)
+	gpuActive := 0
 	hasArtifacts := false
 	for _, participant := range plan.Participants {
 		pod := new(corev1.Pod)
@@ -251,6 +207,9 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 				action = "Cancel"
 			} else {
 				completed++
+				if record.GPUActivity != nil && *record.GPUActivity {
+					gpuActive++
+				}
 			}
 		case "Cancelled", "Failed":
 			if record.Phase == "Failed" && run.Status.Reason == "" {
@@ -283,6 +242,7 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 			run.Status.Phase = "Cancelled"
 		default:
 			run.Status.Phase = "Succeeded"
+			run.Status.Message = fmt.Sprintf("GPU kernel activity recorded on %d/%d runtimes", gpuActive, len(plan.Participants))
 		}
 		if hasArtifacts {
 			run.Status.Artifact = &api.ProfileArtifactReference{ClaimName: plan.ArtifactClaim, Path: "runs/" + string(run.UID)}
@@ -292,7 +252,7 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 }
 
 // profileCohortUnchanged detects scale/replacement changes without retargeting the fixed execution plan.
-func (r *ProfileRunReconciler) profileCohortUnchanged(ctx context.Context, namespace string, plan profilePlan) (bool, error) {
+func (r *ProfileRunReconciler) profileCohortUnchanged(ctx context.Context, namespace string, plan api.ProfileExecutionPlan) (bool, error) {
 	groups := new(api.ModelGroupList)
 	if err := r.APIReader.List(ctx, groups, client.InNamespace(namespace)); err != nil {
 		return false, err
@@ -313,8 +273,8 @@ func (r *ProfileRunReconciler) profileCohortUnchanged(ctx context.Context, names
 }
 
 // prepareProfile resolves the committed serving cohort without introducing a second routing policy.
-func (r *ProfileRunReconciler) prepareProfile(ctx context.Context, run *api.ProfileRun) (profilePlan, error) {
-	var plan profilePlan
+func (r *ProfileRunReconciler) prepareProfile(ctx context.Context, run *api.ProfileRun) (api.ProfileExecutionPlan, error) {
+	var plan api.ProfileExecutionPlan
 	service := new(api.ModelService)
 	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: run.Namespace, Name: run.Spec.ModelServiceRef.Name}, service); err != nil {
 		return plan, err
@@ -364,7 +324,7 @@ func (r *ProfileRunReconciler) prepareProfile(ctx context.Context, run *api.Prof
 					return plan, fmt.Errorf("diagnostic runtimes must share the namespace artifact claim")
 				}
 				plan.ArtifactClaim = observation.ArtifactClaim
-				plan.Participants = append(plan.Participants, profileParticipant{group.Name, string(group.UID), pod.Name, string(pod.UID), observation.RuntimeID, endpoint})
+				plan.Participants = append(plan.Participants, api.ProfileParticipant{GroupName: group.Name, GroupUID: string(group.UID), PodName: pod.Name, PodUID: string(pod.UID), RuntimeID: observation.RuntimeID, Endpoint: endpoint})
 				selected++
 			}
 			if selected != int(group.Spec.MemberCount) {

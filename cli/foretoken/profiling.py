@@ -10,7 +10,7 @@ import sys
 import time
 
 from foretoken.arguments import ProfileCommand
-from foretoken.kubernetes import Kubectl, timeout_seconds
+from foretoken.kubernetes import Kubectl, load_deployment, timeout_seconds
 from foretoken.manifest import DeploymentError
 
 
@@ -20,16 +20,27 @@ def capture(command: ProfileCommand) -> None:
     if wait_seconds <= 0:
         raise DeploymentError("--timeout must be positive")
     kubectl = Kubectl()
+    deployment = load_deployment(command.kustomize_path, kubectl)
+    selected = [
+        name
+        for name, model in deployment.models.items()
+        if command.model is None or model == command.model
+    ]
+    if len(selected) != 1:
+        raise DeploymentError(
+            "profile requires one ModelService; select a unique model with --model"
+        )
+    namespace = deployment.namespace
     spec: dict[str, object] = {
-        "modelServiceRef": {"name": command.model_service},
+        "modelServiceRef": {"name": selected[0]},
+        "engine": command.profile_engine,
+        "duration": command.profile_duration,
         "action": "Capture",
     }
-    if command.duration is not None:
-        spec["duration"] = command.duration
     resource = {
         "apiVersion": "inference.foretoken.io/v1alpha1",
         "kind": "ProfileRun",
-        "metadata": {"generateName": "profile-", "namespace": command.namespace},
+        "metadata": {"generateName": "profile-", "namespace": namespace},
         "spec": spec,
     }
     created = json.loads(
@@ -39,9 +50,9 @@ def capture(command: ProfileCommand) -> None:
         ).stdout
     )
     name, uid = created["metadata"]["name"], created["metadata"]["uid"]
-    print(f"ProfileRun {command.namespace}/{name}", flush=True)
+    print(f"ProfileRun {namespace}/{name}", flush=True)
     print(
-        f"Inspect later: kubectl get profilerun {name} -n {command.namespace} -o yaml",
+        f"Inspect later: kubectl get profilerun {name} -n {namespace} -o yaml",
         flush=True,
     )
     deadline = time.monotonic() + wait_seconds
@@ -55,7 +66,7 @@ def capture(command: ProfileCommand) -> None:
                         "profilerun",
                         name,
                         "-n",
-                        command.namespace,
+                        namespace,
                         "-o",
                         "json",
                         "--request-timeout=20s",
@@ -76,7 +87,7 @@ def capture(command: ProfileCommand) -> None:
                 artifact = status.get("artifact")
                 if artifact:
                     print(
-                        f"Artifacts: PVC {command.namespace}/{artifact['claimName']} "
+                        f"Artifacts: PVC {namespace}/{artifact['claimName']} "
                         f"— {artifact['path']}",
                         flush=True,
                     )
@@ -99,7 +110,7 @@ def capture(command: ProfileCommand) -> None:
                     "profilerun",
                     name,
                     "-n",
-                    command.namespace,
+                    namespace,
                     "--type=json",
                     "-p",
                     json.dumps(patch),
@@ -117,6 +128,6 @@ def capture(command: ProfileCommand) -> None:
             )
         raise
     raise DeploymentError(
-        f"stopped waiting after {command.timeout}; ProfileRun {command.namespace}/{name} "
+        f"stopped waiting after {command.timeout}; ProfileRun {namespace}/{name} "
         "remains controller-owned. Inspect its status with the command above."
     )

@@ -142,25 +142,9 @@ The dashboard and alerts query these recording rules. Model-serving rules are de
 
 Rules keep the namespace, Frontend service, model group, model role, model name, and Prefill/Decode pipeline scope labels. Frontend latency ends when response headers are sent, so for streaming responses it does not include token delivery; generation completion latency and TTFT start when the Frontend handler begins after JSON decoding. These cross-process measurements require synchronized node clocks. A streaming response can start with `2xx` and fail later, so the 5xx ratio is not an inference success rate. Accelerator rules cover only devices used by Foretoken workloads.
 
-## One-off profiling (experimental, source build)
+## Profiling
 
-On an already prepared diagnostic ModelService, request one Torch capture:
-
-```bash
-foretoken profile MODEL_SERVICE -n foretoken-diagnostic --duration 15s
-```
-
-This command does not send inference requests. Run a small, authorized workload through the service's normal frontend while the command reports `Capturing`. The runtime stops automatically and the command prints the retained artifact PVC and path. Ctrl-C requests cancellation; losing the terminal connection or reaching `--timeout` only stops local observation, not the runtime's deadline. The default capture duration is 15 seconds; the default CLI wait is 10 minutes, including export.
-
-Platform preparation is a one-time operator task, independent of `observability.mode` and alerting:
-
-1. Prepare an otherwise empty diagnostic namespace and a dedicated artifact PVC there. All participating Pods must be able to write it; use shared storage with `ReadWriteMany` for Pods across nodes. Do not reuse the model cache or KV-store claim.
-2. Set the namespace and existing claim in a copy of [`deploy/profiling-values.example.yaml`](../deploy/profiling-values.example.yaml), and pass it to a [source installation](../docs/custom-deployment.md) with `foretoken install -e . --values YOUR_VALUES_FILE`. The CRDs, controller and model-server image must come from the same source. Supply the registry option required by your cluster. Enabling this binding changes ModelGroup Pod templates, so do it before deploying diagnostic services, not on an occupied shared namespace.
-3. Deploy a diagnostic ModelService into that namespace and wait for it to be Ready. The operator grants the caller Kubernetes permission to create/get/patch ProfileRuns; an inference token alone is insufficient. Each capture thereafter needs only the command above, with no service YAML changes or manual port-forward.
-
-Artifacts are uncompressed `.pt.trace.json` files plus a manifest on the PVC. Access them through your platform's storage access and open the trace in [Perfetto](https://ui.perfetto.dev/); the command does not download files. Captures without the expected worker traces and GPU kernel activity fail instead of reporting success. Keep the workload small: profiling adds overhead and trace files can be large, as explained in [vLLM's profiling guide](https://docs.vllm.ai/en/stable/contributing/profiling/).
-
-The experimentally validated configuration is a single-worker NVIDIA service using vLLM 0.26.0. `bench --profile`, delay, sampling limits, repeated windows, Nsight and MetaX are not available. Multi-worker capture and injected native-utility or storage failures still need hardware validation. Native profiling failure can terminate the selected diagnostic runtime; use a service where that interruption is acceptable. Unconfirmed runtime shutdown retains the ProfileRun finalizer and recovery plan for operator diagnosis. See the [profiling design](../docs/development/profiling.md) for lifecycle and recovery details.
+For a short CPU/GPU capture on an existing diagnostic service, see [Profiling](profiling.md). It is separate from metrics collection.
 
 ## Remove collection
 

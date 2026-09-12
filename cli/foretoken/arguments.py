@@ -79,9 +79,10 @@ class BenchCommand:
 class ProfileCommand:
     """Request one runtime-owned Torch window on an existing diagnostic service."""
 
-    model_service: str
-    namespace: str
-    duration: str | None
+    kustomize_path: str
+    model: str | None
+    profile_duration: str
+    profile_engine: str
     timeout: str
 
 
@@ -260,11 +261,22 @@ def _build_parser() -> argparse.ArgumentParser:
             "or download traces; results remain on the artifact PVC."
         ),
     )
-    profile.add_argument("model_service", metavar="MODEL_SERVICE")
-    profile.add_argument("-n", "--namespace", required=True)
     profile.add_argument(
-        "--duration",
-        help="recording window, such as 15s (default: ProfileRun API default)",
+        "kustomize_path",
+        metavar="PATH",
+        help="Kustomize root of an existing deployment; not applied",
+    )
+    profile.add_argument("--model", help="model identifier when PATH contains several models")
+    profile.add_argument(
+        "--profile-duration",
+        required=True,
+        help="recording duration, such as 15s; excludes profiler startup and export",
+    )
+    profile.add_argument(
+        "--profile-engine",
+        choices=("pytorch",),
+        required=True,
+        help="engine profiler to use; currently only pytorch is supported",
     )
     _add_wait_timeout_argument(profile, "capture completion")
 
@@ -324,9 +336,10 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
         return DeleteCommand(parsed_args.kustomize_path, parsed_args.timeout)
     if parsed_args.command == "profile":
         return ProfileCommand(
-            parsed_args.model_service,
-            parsed_args.namespace,
-            parsed_args.duration,
+            parsed_args.kustomize_path,
+            parsed_args.model,
+            parsed_args.profile_duration,
+            parsed_args.profile_engine,
             parsed_args.timeout,
         )
     if parsed_args.command == "status":

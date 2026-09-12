@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](profiling_zh.md)
 
-The experimental implementation captures one time-bounded Torch window on an existing diagnostic ModelService. It is independent of benchmark execution and monitoring. Start with the [operator guide](../../observability/README.md#one-off-profiling-experimental-source-build) for preparation, the command and artifact access.
+The experimental implementation captures one time-bounded Torch window on an existing diagnostic ModelService. It is independent of benchmark execution and monitoring. Start with the [operator guide](../../observability/profiling.md) for preparation, the command and artifact access.
 
 ## Ownership and execution
 
@@ -52,13 +52,14 @@ metadata:
 spec:
   modelServiceRef:
     name: diagnostic-model
+  engine: pytorch
   duration: 15s
   action: Capture
 ```
 
-The API fixes target and duration at creation. Actions move from `Capture` to `Finish` or `Cancel`; cancellation cannot be reversed. The Kubernetes UID distinguishes runs even when a resource name is reused.
+The API fixes target, engine and duration at creation. Actions move from `Capture` to `Finish` or `Cancel`; cancellation cannot be reversed. The Kubernetes UID distinguishes runs even when a resource name is reused.
 
-Before native work starts, reconciliation persists a deletion finalizer and an immutable, run-owned ConfigMap execution plan. It resolves the ModelService's committed serving generation with existing routing helpers and checks the Pod → ReplicaSet → Deployment → ModelGroup ownership chain. The plan stores fixed service, group, Pod and runtime identities. Controller restart reads the same plan rather than selecting replacement instances.
+Before native work starts, reconciliation persists a deletion finalizer and a typed execution plan in ProfileRun status. It resolves the ModelService's committed serving generation with existing routing helpers and checks the Pod → ReplicaSet → Deployment → ModelGroup ownership chain. The plan stores fixed service, group, Pod and runtime identities. Controller restart reads the same plan rather than selecting replacement instances.
 
 Status progresses through `Starting`, `Capturing` and `Stopping` to `Succeeded`, `Failed` or `Cancelled`. All selected participants must be capturing before the run reports `Capturing`; success requires every expected participant's result. Sending an HTTP operation alone is not completion. The runtime rejects competing captures and handles same-run retries without restarting or extending the window.
 
@@ -68,7 +69,7 @@ An unreachable or replaced participant or changed serving cohort causes cancella
 
 State updates hold a short lock. Native utilities run in tasks owned by the supervisor, outside that lock and independently of HTTP request tasks. Cancellation changes desired action; it does not abandon an in-flight utility.
 
-The ProfileRun API owns the default 15-second duration; the runtime starts that timer after native start succeeds. Native start and stop/flush have separate 30-second and 120-second budgets. Early `Finish` stops a shorter window. The CLI's default 10-minute observation timeout changes none of these deadlines.
+The caller specifies the duration; the runtime starts that timer after native start succeeds. Native start and stop/flush have separate 30-second and 120-second budgets. Early `Finish` stops a shorter window. The CLI's default 10-minute observation timeout changes none of these deadlines.
 
 A failed or timed-out utility leaves native profiler state uncertain. The diagnostic runtime closes admission and follows its existing engine process-group shutdown path before releasing the utility task. This can interrupt inference on that service. Failure to confirm termination is reported rather than represented as success. Partial output remains for storage-owner diagnosis.
 
@@ -81,17 +82,27 @@ Each runtime writes to a dedicated, shared-writable artifact PVC, separate from 
 <artifact-volume>/runs/<run-uid>/<runtime-id>/
 ```
 
-Before starting, staging must be empty; unhandled output is not erased. After native stop/flush, success requires one valid Torch trace containing GPU kernel activity per expected worker. Validation streams events rather than loading the whole trace into memory. Cancellation retains available output without claiming completeness.
+Before starting, staging must be empty; unhandled output is not erased. After native stop/flush, success requires one valid Torch trace per expected worker. GPU activity is reported separately; a valid idle window does not fail publication. Validation streams events rather than loading the whole trace into memory. Cancellation retains available output without claiming completeness.
 
 The supervisor writes and flushes the manifest, renames the whole staging directory on the same filesystem, and flushes destination directories before publishing the artifact reference. Atomicity is per participant, not a distributed transaction. Later captures recreate staging and use a different run path. Publication failure neither produces success nor deletes recoverable data.
 
-The manifest's `startedAtUnixMs` follows native start; `stoppedAtUnixMs` follows stop/flush, so their difference includes export and is not pure recording duration. ProfileRun `finishedAt` is controller-observed completion. The command returns a PVC/path reference, not a workstation download. Namespace or PVC deletion remains a storage-owner operation and can remove artifacts.
+The manifest's `startedAtUnixMs` follows native start, `recordingEndedAtUnixMs` marks the stop request, and `exportedAtUnixMs` follows stop/flush. Native workers may stop at slightly different times; these control timestamps do not claim exact GPU event boundaries. ProfileRun `finishedAt` is controller-observed completion. The command returns a PVC/path reference, not a workstation download. Namespace or PVC deletion remains a storage-owner operation and can remove artifacts.
 
-## Validation scope
+## Incremental delivery
 
-Real Kubernetes acceptance covered a single-worker NVIDIA A100 service with vLLM 0.26.0: two separate captures, Ctrl-C cancellation with retained output, automatic completion after CLI termination, controller restart recovery, and usable inference afterward. Perfetto parsed the traces with GPU kernel counts matching the original JSON; CPU slice-overlap import diagnostics remain and were not hidden by modifying files.
+Each step is a separately usable and validated PR, not a horizontal split between CLI and runtime:
 
-Native-utility hangs, failed storage publication, multi-worker coverage and profiling overhead still require hardware measurement. Direct lifecycle checks do not replace those experiments. Benchmark integration, delay, sampling limits, repeated windows, Nsight and MetaX are outside this implementation; none is required to use the independent command.
+1. Existing-service single PyTorch capture: this implementation, with explicit `--profile-engine pytorch` and `--profile-duration`.
+2. Server-owned delayed start through `--profile-delay`, including cancellation while waiting.
+3. `deploy --profile`, reusing the capture client after readiness without deleting the service afterward.
+4. `bench --profile`, integrated with the existing executor's actual dispatch events rather than a second load generator.
+5. Request-path observation together with bounded request sampling and a service-wide request limit. Only then can omission of `--profile-engine` mean request-only capture.
+6. NVIDIA Nsight Systems via `--profile-engine nsight`, with report finalization while serving remains running.
+7. MetaX mcTracer via `--profile-engine mctracer`, validated against its actual noninteractive control and export capabilities.
+
+All entrypoints keep the same `--profile-*` names. Delay, sampling and additional engines are not accepted as inactive placeholders in this implementation. Engine-step, repeated-window and gap options are deferred. Tool preparation remains deployment-owned; selecting a tool cannot retrofit missing instrumentation or restart the target implicitly.
+
+Acceptance must use actual engine traces and verify repeated independent runs, idle capture, cancellation, CLI loss, controller recovery, native failure and artifact publication failures. Multi-worker coverage and overhead need their own hardware evidence; a successful single-worker run does not establish them.
 
 ## Upstream references
 

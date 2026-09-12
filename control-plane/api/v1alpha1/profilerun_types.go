@@ -16,12 +16,14 @@ type ProfileServiceReference struct {
 }
 
 // ProfileRunSpec requests a bounded capture without changing serving configuration.
-// +kubebuilder:validation:XValidation:rule="self.modelServiceRef == oldSelf.modelServiceRef && self.duration == oldSelf.duration",message="capture target and duration are immutable"
+// +kubebuilder:validation:XValidation:rule="self.modelServiceRef == oldSelf.modelServiceRef && self.duration == oldSelf.duration && self.engine == oldSelf.engine",message="capture target, engine and duration are immutable"
 // +kubebuilder:validation:XValidation:rule="oldSelf.action == 'Capture' || self.action == oldSelf.action || (oldSelf.action == 'Finish' && self.action == 'Cancel')",message="capture actions cannot move backwards"
 // +kubebuilder:validation:XValidation:rule="duration(self.duration) >= duration('1ms')",message="capture duration must be at least 1ms"
 type ProfileRunSpec struct {
 	ModelServiceRef ProfileServiceReference `json:"modelServiceRef"`
-	// +kubebuilder:default="15s"
+	// Engine selects the native profiler prepared by the diagnostic runtime.
+	// +kubebuilder:validation:Enum=pytorch
+	Engine   string   `json:"engine"`
 	Duration Duration `json:"duration"`
 	// +kubebuilder:default=Capture
 	// +kubebuilder:validation:Enum=Capture;Finish;Cancel
@@ -34,8 +36,31 @@ type ProfileArtifactReference struct {
 	Path      string `json:"path"`
 }
 
+// ProfileParticipant fixes the runtime that may execute this capture.
+// Replacement Pods and processes cannot inherit an in-flight operation.
+type ProfileParticipant struct {
+	GroupName string `json:"groupName"`
+	GroupUID  string `json:"groupUID"`
+	PodName   string `json:"podName"`
+	PodUID    string `json:"podUID"`
+	RuntimeID string `json:"runtimeID"`
+	Endpoint  string `json:"endpoint"`
+}
+
+// ProfileExecutionPlan is controller-owned recovery state, persisted before any start.
+type ProfileExecutionPlan struct {
+	ServiceUID        string                `json:"serviceUID"`
+	ServingGeneration int64                 `json:"servingGeneration"`
+	Revisions         []ServingPoolRevision `json:"revisions"`
+	ArtifactClaim     string                `json:"artifactClaim"`
+	Participants      []ProfileParticipant  `json:"participants"`
+}
+
 // ProfileRunStatus publishes observed capture progress, not benchmark completion.
 type ProfileRunStatus struct {
+	// Plan is fixed once selected; reconciliation never retargets replacement runtimes.
+	// +optional
+	Plan *ProfileExecutionPlan `json:"plan,omitempty"`
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// +optional

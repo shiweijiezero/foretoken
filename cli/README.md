@@ -178,10 +178,10 @@ The command-line tool uses the active `kubectl` context and honors standard Kube
 The experimental source-only command captures one Torch window on an existing, prepared diagnostic ModelService:
 
 ```bash
-foretoken profile MODEL_SERVICE -n foretoken-diagnostic --duration 15s
+foretoken profile examples/quickstart --profile-engine pytorch --profile-duration 15s
 ```
 
-It does not generate requests, deploy services or download traces. The service owns automatic stop and persistent output even if the CLI disconnects. Follow the [profiling prerequisites and limitations](../observability/README.md#one-off-profiling-experimental-source-build) before using it.
+It does not generate requests, deploy services or download traces. The service owns automatic stop and persistent output even if the CLI disconnects. Follow the [profiling prerequisites and limitations](../observability/profiling.md) before using it.
 
 ## Clean up
 

@@ -63,7 +63,6 @@ spec:
                 - Cancel
                 type: string
               duration:
-                default: 15s
                 description: Duration is a positive Go-style duration.
                 minLength: 2
                 pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
@@ -71,6 +70,12 @@ spec:
                 x-kubernetes-validations:
                 - message: must be a positive duration
                   rule: duration(self) > duration('0s')
+              engine:
+                description: Engine selects the native profiler prepared by the diagnostic
+                  runtime.
+                enum:
+                - pytorch
+                type: string
               modelServiceRef:
                 description: ProfileServiceReference selects one existing ModelService
                   in the run namespace.
@@ -84,12 +89,13 @@ spec:
             required:
             - action
             - duration
+            - engine
             - modelServiceRef
             type: object
             x-kubernetes-validations:
-            - message: capture target and duration are immutable
+            - message: capture target, engine and duration are immutable
               rule: self.modelServiceRef == oldSelf.modelServiceRef && self.duration
-                == oldSelf.duration
+                == oldSelf.duration && self.engine == oldSelf.engine
             - message: capture actions cannot move backwards
               rule: oldSelf.action == 'Capture' || self.action == oldSelf.action ||
                 (oldSelf.action == 'Finish' && self.action == 'Cancel')
@@ -135,6 +141,73 @@ spec:
                 - Failed
                 - Cancelled
                 type: string
+              plan:
+                description: Plan is fixed once selected; reconciliation never retargets
+                  replacement runtimes.
+                properties:
+                  artifactClaim:
+                    type: string
+                  participants:
+                    items:
+                      description: |-
+                        ProfileParticipant fixes the runtime that may execute this capture.
+                        Replacement Pods and processes cannot inherit an in-flight operation.
+                      properties:
+                        endpoint:
+                          type: string
+                        groupName:
+                          type: string
+                        groupUID:
+                          type: string
+                        podName:
+                          type: string
+                        podUID:
+                          type: string
+                        runtimeID:
+                          type: string
+                      required:
+                      - endpoint
+                      - groupName
+                      - groupUID
+                      - podName
+                      - podUID
+                      - runtimeID
+                      type: object
+                    type: array
+                  revisions:
+                    items:
+                      description: ServingPoolRevision selects one prepared ModelPool
+                        cohort for the active service generation.
+                      properties:
+                        poolName:
+                          maxLength: 63
+                          minLength: 1
+                          type: string
+                        poolUID:
+                          minLength: 1
+                          type: string
+                        revision:
+                          maxLength: 63
+                          minLength: 1
+                          type: string
+                      required:
+                      - poolName
+                      - poolUID
+                      - revision
+                      type: object
+                    type: array
+                  serviceUID:
+                    type: string
+                  servingGeneration:
+                    format: int64
+                    type: integer
+                required:
+                - artifactClaim
+                - participants
+                - revisions
+                - serviceUID
+                - servingGeneration
+                type: object
               reason:
                 type: string
               startedAt:

@@ -76,6 +76,7 @@ impl Config {
                 "torch_profiler_dir": self.staging(),
                 "torch_profiler_use_gzip": false,
                 "torch_profiler_dump_cuda_time_total": false,
+                "torch_profiler_with_stack": false,
                 "ignore_frontend": true,
             })
         )
@@ -109,7 +110,9 @@ pub struct Record {
     pub phase: String,
     pub duration_ms: u64,
     pub started_at_unix_ms: Option<u64>,
-    pub stopped_at_unix_ms: Option<u64>,
+    pub recording_ended_at_unix_ms: Option<u64>,
+    pub exported_at_unix_ms: Option<u64>,
+    pub gpu_activity: Option<bool>,
     pub artifact_dir: Option<String>,
     pub message: String,
 }
@@ -202,7 +205,9 @@ impl Handle {
                     phase: if capture { "Starting" } else { "Cancelled" }.into(),
                     duration_ms: request.duration_ms,
                     started_at_unix_ms: None,
-                    stopped_at_unix_ms: None,
+                    recording_ended_at_unix_ms: None,
+                    exported_at_unix_ms: None,
+                    gpu_activity: None,
                     artifact_dir: None,
                     message: String::new(),
                 },
@@ -346,9 +351,12 @@ impl Supervisor {
                 _ = action.changed() => {},
             }
         }
-        self.update(uid, |record| record.phase = "Stopping".into());
+        self.update(uid, |record| {
+            record.phase = "Stopping".into();
+            record.recording_ended_at_unix_ms = Some(now_ms());
+        });
         self.native_operation(false).await?;
-        self.update(uid, |record| record.stopped_at_unix_ms = Some(now_ms()));
+        self.update(uid, |record| record.exported_at_unix_ms = Some(now_ms()));
         let mut record = self
             .handle
             .observe(Some(uid))
@@ -399,7 +407,8 @@ impl Supervisor {
             self.update(&uid, |record| {
                 record.phase = "Failed".into();
                 record.message = reason.into();
-                record.stopped_at_unix_ms = Some(now_ms());
+                // Process exit confirms stop, but does not establish an export completion time.
+                record.recording_ended_at_unix_ms.get_or_insert_with(now_ms);
             });
         }
         // Staging is deliberately retained on engine failure for storage-owner diagnosis.
@@ -419,6 +428,7 @@ fn seal(config: &Config, mut record: Record, cancelled: bool) -> io::Result<Reco
     let staging = config.staging();
     if !cancelled {
         let mut traces = 0;
+        let mut gpu_activity = false;
         for entry in fs::read_dir(&staging)? {
             let path = entry?.path();
             if path
@@ -428,11 +438,7 @@ fn seal(config: &Config, mut record: Record, cancelled: bool) -> io::Result<Reco
             {
                 let file = File::open(path)?;
                 let trace: TorchTrace = serde_json::from_reader(BufReader::new(&file))?;
-                if !trace.events.0 {
-                    return Err(io::Error::other(
-                        "Torch trace contains no GPU kernel activity",
-                    ));
-                }
+                gpu_activity |= trace.events.0;
                 file.sync_all()?;
                 traces += 1;
             }
@@ -442,6 +448,10 @@ fn seal(config: &Config, mut record: Record, cancelled: bool) -> io::Result<Reco
                 "expected {} worker traces, received {traces}",
                 config.workers
             )));
+        }
+        record.gpu_activity = Some(gpu_activity);
+        if !gpu_activity {
+            record.message = "No GPU kernel activity was recorded in this window".into();
         }
     }
     let relative = format!("runs/{}/{}", record.run_uid, config.runtime_id);
