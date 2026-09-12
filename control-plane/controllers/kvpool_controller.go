@@ -61,11 +61,11 @@ func (reconciler *KVPoolReconciler) Reconcile(ctx context.Context, request ctrl.
 	}
 	groups, err := reconciler.reconcileGroups(ctx, pool, service)
 	if err != nil {
-		statusErr := reconciler.updateStatus(ctx, pool, inferencev1alpha1.KVPoolPhaseDegraded, false, false, "ApplyFailed", "KVGroups were not fully materialized")
+		statusErr := reconciler.updateStatus(ctx, pool, inferencev1alpha1.KVPoolPhaseDegraded, false, groups.ready, "ApplyFailed", "KVGroups were not fully materialized")
 		return ctrl.Result{}, errors.Join(err, statusErr)
 	}
 	phase := inferencev1alpha1.KVPoolPhaseProgressing
-	if groups.ready {
+	if groups.converged {
 		phase = inferencev1alpha1.KVPoolPhaseReady
 	}
 	if pool.Spec.DesiredGroups == 0 {
@@ -75,92 +75,84 @@ func (reconciler *KVPoolReconciler) Reconcile(ctx context.Context, request ctrl.
 }
 
 type kvGroupState struct {
-	materialized, ready bool
-	reason, message     string
+	materialized, ready, converged bool
+	reason, message                string
 }
 
-// Converge immutable revisions in phases: remove superseded or excess ordinals, wait for
-// deletion, create missing ordinals, then aggregate child materialization and readiness.
+// reconcileGroups observes compatible instances before converging deletion and creation; write errors retain observed availability.
 func (reconciler *KVPoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.KVPool, service *inferencev1alpha1.KVService) (kvGroupState, error) {
 	groups, err := reconciler.ownedGroups(ctx, pool)
 	if err != nil {
 		return kvGroupState{}, err
 	}
-	desired, err := desiredKVGroupSpec(pool, service, 0)
+	desired, err := desiredKVGroupSpec(pool, service)
 	if err != nil {
 		return kvGroupState{}, err
 	}
 	current := make(map[int32]*inferencev1alpha1.KVGroup, len(groups))
-	rolloutPending := false
+	var retiring []*inferencev1alpha1.KVGroup
+	readyCount := int32(0)
+	materialized := true
 	for index := range groups {
 		group := &groups[index]
-		if group.Spec.Revision != desired.Revision {
-			// No consumer binds Groups yet. Remove candidates before replacement;
-			// this is not a claim of lossless block drain or migration.
-			rolloutPending = true
-			if err := reconciler.Delete(ctx, group); err != nil && !apierrors.IsNotFound(err) {
-				return kvGroupState{}, err
-			}
+		if group.Spec.Revision != desired.Revision || group.Spec.Ordinal >= pool.Spec.DesiredGroups {
+			retiring = append(retiring, group)
+			materialized = false
 			continue
 		}
 		if current[group.Spec.Ordinal] != nil {
 			return kvGroupState{}, fmt.Errorf("KVPool owns duplicate KVGroups for ordinal %d", group.Spec.Ordinal)
 		}
+		spec := desired
+		spec.Ordinal = group.Spec.Ordinal
+		if !reflect.DeepEqual(group.Spec, spec) {
+			return kvGroupState{}, fmt.Errorf("KVGroup %q has an unexpected immutable spec", group.Name)
+		}
 		current[group.Spec.Ordinal] = group
-	}
-	scalePending := false
-	for ordinal, group := range current {
-		if ordinal < pool.Spec.DesiredGroups {
-			continue
+		if !group.DeletionTimestamp.IsZero() {
+			materialized = false
 		}
-		scalePending = true
+		if kvGroupReady(group) {
+			readyCount++
+		}
+	}
+	// Observe retained instances before changing capacity; write errors retain confirmed availability.
+	state := kvGroupState{ready: readyCount > 0}
+	for _, group := range retiring {
 		if err := reconciler.Delete(ctx, group); err != nil && !apierrors.IsNotFound(err) {
-			return kvGroupState{}, err
+			return state, err
 		}
-		delete(current, ordinal)
 	}
-	if rolloutPending || scalePending {
-		return kvGroupState{reason: "ReplacementPending", message: "Superseded or excess KVGroups were removed; waiting for convergence"}, nil
-	}
-	for ordinal := int32(0); ordinal < pool.Spec.DesiredGroups; ordinal++ {
-		spec, err := desiredKVGroupSpec(pool, service, ordinal)
-		if err != nil {
-			return kvGroupState{}, err
-		}
-		if group := current[ordinal]; group != nil {
-			if !reflect.DeepEqual(group.Spec, spec) {
-				return kvGroupState{}, fmt.Errorf("KVGroup %q has an unexpected immutable spec", group.Name)
-			}
-			continue
-		}
-		group := &inferencev1alpha1.KVGroup{ObjectMeta: metav1.ObjectMeta{Namespace: pool.Namespace, Name: kvGroupObjectName(pool, spec.Revision, ordinal)}, Spec: spec}
-		if err := controllerutil.SetControllerReference(pool, group, reconciler.Scheme()); err != nil {
-			return kvGroupState{}, err
-		}
-		if err := reconciler.Create(ctx, group); err != nil {
-			return kvGroupState{}, fmt.Errorf("create KVGroup ordinal %d: %w", ordinal, err)
-		}
-		current[ordinal] = group
-	}
-	materialized := int32(len(current)) == pool.Spec.DesiredGroups
-	ready := materialized && pool.Spec.DesiredGroups > 0
-	if ready {
+	pending := len(retiring) > 0
+	if !pending {
 		for ordinal := int32(0); ordinal < pool.Spec.DesiredGroups; ordinal++ {
-			if !kvGroupReady(current[ordinal]) {
-				ready = false
-				break
+			if current[ordinal] != nil {
+				continue
+			}
+			spec := desired
+			spec.Ordinal = ordinal
+			group := &inferencev1alpha1.KVGroup{ObjectMeta: metav1.ObjectMeta{Namespace: pool.Namespace, Name: kvGroupObjectName(pool, spec.Revision, ordinal)}, Spec: spec}
+			if err := controllerutil.SetControllerReference(pool, group, reconciler.Scheme()); err != nil {
+				return state, err
+			}
+			if err := reconciler.Create(ctx, group); err != nil {
+				return state, fmt.Errorf("create KVGroup ordinal %d: %w", ordinal, err)
 			}
 		}
 	}
-	message := "All requested KVGroups were materialized"
-	if pool.Spec.DesiredGroups == 0 {
-		message = "KVPool has no requested client capacity"
+	state.materialized = materialized
+	state.converged = materialized && readyCount == pool.Spec.DesiredGroups
+	state.reason, state.message = "Applied", "All requested KVGroups were materialized"
+	if pending {
+		state.reason, state.message = "ReplacementPending", "Superseded or excess KVGroups are being removed"
+	} else if pool.Spec.DesiredGroups == 0 {
+		state.message = "KVPool has no requested client capacity"
 	}
-	return kvGroupState{materialized: materialized, ready: ready, reason: "Applied", message: message}, nil
+	return state, nil
 }
 
-// desiredKVGroupSpec binds one KVPool ordinal to the current KVService master endpoint.
-func desiredKVGroupSpec(pool *inferencev1alpha1.KVPool, service *inferencev1alpha1.KVService, ordinal int32) (inferencev1alpha1.KVGroupSpec, error) {
+// desiredKVGroupSpec resolves shared client and Master configuration; callers set each ordinal.
+func desiredKVGroupSpec(pool *inferencev1alpha1.KVPool, service *inferencev1alpha1.KVService) (inferencev1alpha1.KVGroupSpec, error) {
 	client := pool.Spec.Template.Client
 	if client.Disk == nil {
 		return inferencev1alpha1.KVGroupSpec{}, fmt.Errorf("KVPool %q requires disk for standalone Store offload", pool.Name)
@@ -175,7 +167,7 @@ func desiredKVGroupSpec(pool *inferencev1alpha1.KVPool, service *inferencev1alph
 	if retention == "" {
 		retention = inferencev1alpha1.RetentionPolicyDelete
 	}
-	return inferencev1alpha1.KVGroupSpec{KVPoolRef: inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)}, Revision: revision, Ordinal: ordinal, MasterServiceDNS: fmt.Sprintf("%s.%s.svc.cluster.local", masterService, pool.Namespace), MasterRPCPort: rpc, Client: inferencev1alpha1.KVGroupClientConfig{Image: client.Image, Protocol: client.Protocol, Port: client.Port, Resources: client.Resources, RDMAResourceName: client.RDMAResourceName, RDMAResourceCount: client.RDMAResourceCount, MemoryCapacityBytes: client.MemoryCapacity, Disk: inferencev1alpha1.KVGroupDisk{StorageClassName: client.Disk.StorageClassName, Size: client.Disk.Size, RetentionPolicy: retention}, NodeSelector: pool.Spec.Template.NodeSelector}, Timeouts: service.Spec.Timeouts}, nil
+	return inferencev1alpha1.KVGroupSpec{KVPoolRef: inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)}, Revision: revision, MasterServiceDNS: fmt.Sprintf("%s.%s.svc.cluster.local", masterService, pool.Namespace), MasterRPCPort: rpc, Client: inferencev1alpha1.KVGroupClientConfig{Image: client.Image, Protocol: client.Protocol, Port: client.Port, Resources: client.Resources, RDMAResourceName: client.RDMAResourceName, RDMAResourceCount: client.RDMAResourceCount, MemoryCapacityBytes: client.MemoryCapacity, Disk: inferencev1alpha1.KVGroupDisk{StorageClassName: client.Disk.StorageClassName, Size: client.Disk.Size, RetentionPolicy: retention}, NodeSelector: pool.Spec.Template.NodeSelector}, Timeouts: service.Spec.Timeouts}, nil
 }
 
 func kvPoolRevision(template inferencev1alpha1.NormalizedKVPoolTemplate, masterService string, rpcPort int32) string {
@@ -251,9 +243,9 @@ func (reconciler *KVPoolReconciler) updateStatus(ctx context.Context, pool *infe
 	pool.Status.ObservedGeneration = pool.Generation
 	pool.Status.Phase = phase
 	meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: conditionGroupsMaterialized, Status: conditionStatus(materialized), Reason: reason, Message: message, ObservedGeneration: pool.Generation})
-	readyReason, readyMessage := "ClientInfrastructureNotReady", "One or more Mooncake client workloads are not Kubernetes-ready"
+	readyReason, readyMessage := "ClientInfrastructureNotReady", "No requested Mooncake client workload is Kubernetes-ready"
 	if ready {
-		readyReason, readyMessage = "ClientInfrastructureReady", "All requested Mooncake client workloads are Kubernetes-ready"
+		readyReason, readyMessage = "ClientInfrastructureReady", "At least one requested Mooncake client workload is Kubernetes-ready"
 	}
 	if pool.Spec.DesiredGroups == 0 {
 		readyReason, readyMessage = "ScaledToZero", "KVPool has no requested client capacity"
