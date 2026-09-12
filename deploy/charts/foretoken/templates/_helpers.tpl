@@ -58,6 +58,21 @@ false
 {{- end -}}
 {{- end }}
 
+{{/*
+Replaces `foretoken_alert_threshold_<snake_case name>` placeholders in alert rules and the
+dashboard with the values under observability.alerts.thresholds. A quoted placeholder becomes a
+bare number so JSON and Go template pipelines receive a numeric value.
+*/}}
+{{- define "foretoken.substituteAlertThresholds" -}}
+{{- $text := .text -}}
+{{- range $name, $value := .thresholds -}}
+{{- $token := printf "foretoken_alert_threshold_%s" (snakecase $name) -}}
+{{- $text = replace (printf "%q" $token) (toString $value) $text -}}
+{{- $text = replace $token (toString $value) $text -}}
+{{- end -}}
+{{- $text -}}
+{{- end }}
+
 {{- define "foretoken.observabilityLabels" -}}
 {{ include "foretoken.labels" . }}
 {{- with .Values.observability.additionalLabels }}

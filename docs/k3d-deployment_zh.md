@@ -33,7 +33,7 @@ Pod 不指定宿主机 GPU 编号。k3d 可以在创建 Kubernetes 节点容器�
 
 主机需要：
 
-- Python 3.10 或更高版本；
+- Python 3.11 或更高版本；
 - Linux；
 - NVIDIA 驱动程序；
 - NVIDIA Container Toolkit；
@@ -117,11 +117,6 @@ done
 创建包含单个 server 节点的集群：
 
 ```bash
-if k3d cluster get "$CLUSTER" >/dev/null 2>&1; then
-  printf '集群 %s 已存在，请更换名称或显式删除已有集群。\n' "$CLUSTER" >&2
-  exit 1
-fi
-
 k3d cluster create "$CLUSTER" \
   --config deploy/k3d/config.yaml \
   --gpus "\"device=$GPU_INDICES\"" \
@@ -158,7 +153,7 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 使用 pip 安装命令行工具：
 
 ```bash
-pip install -e .
+pip install foretoken
 ```
 
 或使用 uv 创建并激活虚拟环境后安装：
@@ -166,17 +161,20 @@ pip install -e .
 ```bash
 uv venv
 source .venv/bin/activate
-uv pip install -e .
+uv pip install foretoken
 ```
 
 ### 4.1 选择部署方式
 
 - **使用发布镜像**：继续执行 [第 4.2 节：本地模式](#42-本地模式) 或 [第 4.3 节：网关模式](#43-网关模式)。
-- **以本地模式部署源码**：执行下面的完整命令，然后直接进入[第 4.4 节：发送请求](#44-发送-openai-api-兼容请求)。
+- **以本地模式部署源码**：按[源码部署指南](custom-deployment_zh.md)准备构建工具，执行下面的命令，再进入[第 4.4 节：发送请求](#44-发送-openai-api-兼容格式的请求)。
 
 ```bash
+pip install -e .
 foretoken install -e .
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
+FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
+FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/quickstart --host)"
 ```
 
 ### 4.2 本地模式
@@ -186,7 +184,7 @@ foretoken deploy examples/quickstart --timeout 6m
 ```bash
 foretoken install
 
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 解析 k3s ServiceLB 为前端服务分配的地址：
@@ -209,7 +207,7 @@ spec:
 
 ```bash
 foretoken install --frontend-mode gateway
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 解析已配置的 Gateway 入口：

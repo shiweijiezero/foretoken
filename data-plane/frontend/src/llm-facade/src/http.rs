@@ -140,7 +140,9 @@ fn classify_reqwest(error: reqwest::Error) -> LlmFacadeError {
     }
 }
 fn classify_status(status: reqwest::StatusCode) -> LlmFacadeError {
-    if status == reqwest::StatusCode::SERVICE_UNAVAILABLE || status.is_server_error() {
+    if status == reqwest::StatusCode::BAD_REQUEST {
+        LlmFacadeError::InvalidRequest
+    } else if status == reqwest::StatusCode::SERVICE_UNAVAILABLE || status.is_server_error() {
         LlmFacadeError::Unavailable
     } else if status.is_client_error() {
         LlmFacadeError::Rejected

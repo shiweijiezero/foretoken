@@ -18,12 +18,21 @@ spec:
 | Stage | Current values | Default | Effect |
 | --- | --- | --- | --- |
 | Filter | `allow_all` | `allow_all` | Retains every compatible, healthy target |
-| Scorer | `kv_least_loaded`, `least_loaded`, `uniform` | `kv_least_loaded` | Ranks retained targets |
+| Scorer | `kv_least_loaded`, `least_loaded`, `uniform`, `queue_depth`, `running_request`, `kv_cache_utilization` | `kv_least_loaded` | Ranks retained targets |
 | Picker | `max`, `round_robin` | `round_robin` | Selects among the highest-scoring targets |
 
 Each pipeline stage selects an algorithm by name. Deployments with additional routing implementations can use their names in the same `routerPipeline` fields.
 
 `kv_least_loaded` prefers confirmed local KV-prefix locality, then lower load. `least_loaded` ignores KV locality and ranks by current request load. `uniform` gives every candidate the same score; `round_robin` then rotates deterministically among tied targets, while `max` chooses a deterministic tied target.
+
+Set `scorer` to `queue_depth` to prefer fewer requests waiting in the engine scheduler, `running_request` to prefer fewer running requests, or `kv_cache_utilization` to prefer lower measured KV-cache utilization.
+
+These policies use current Model Server endpoint gauges. They do not add prefix locality,
+pending dispatches, or downstream-stage load. All DP ranks of one Model Server share its
+endpoint score; these policies do not distinguish load between ranks. Gauges are usable after
+the first telemetry response, without waiting for the rate observation window. An unobserved gauge is treated
+as zero. Later omissions preserve the previous value while its measured snapshot remains in retained
+history. After a timestamp or counter reset, omitted gauges remain unobserved until reported again.
 
 A target is eligible only when it is healthy and supports the requested model, input length, and capabilities. For services with separate prefill/decode or encoder/prefill/decode stages, routing keeps the selected stages compatible with one another.
 

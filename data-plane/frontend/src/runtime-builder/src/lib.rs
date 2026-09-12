@@ -225,7 +225,9 @@ async fn model_runtimes(
                 "no healthy runtime metadata for model {model}"
             ))
         })?;
-        let model_dtype = registry.effective_model_dtype(&model);
+        let model_dtype = registry
+            .effective_model_dtype(&model)
+            .map_err(RuntimeBuildError::ModelRuntime)?;
         let HfSnapshotRuntime {
             text_processor,
             tokenizer,

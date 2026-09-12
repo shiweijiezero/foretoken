@@ -15,9 +15,33 @@ use crate::{RouteCandidate, RouteScore, RouterRequest, RoutingProgress};
 // `kv_least_loaded_scorer.rs`, the `KvLeastLoadedScorer` type, and the user-facing name.
 declare_router_algorithms! {
     descriptor = ScorerDescriptor;
+    kv_cache_utilization_scorer => KvCacheUtilizationScorer = "kv_cache_utilization",
     kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded",
     least_loaded_scorer => LeastLoadedScorer = "least_loaded",
+    running_request_scorer => RunningRequestScorer = "running_request",
+    queue_depth_scorer => QueueDepthScorer = "queue_depth",
     uniform_scorer => UniformScorer = "uniform",
+}
+
+/// Converts request-count observations into inverse min-max preferences.
+pub(super) fn inverse_normalized_scores(counts: impl IntoIterator<Item = u64>) -> Vec<RouteScore> {
+    let counts = counts.into_iter().collect::<Vec<_>>();
+    let Some(minimum) = counts.iter().copied().min() else {
+        return Vec::new();
+    };
+    let maximum = counts.iter().copied().max().expect("nonempty counts");
+    counts
+        .into_iter()
+        .map(|count| RouteScore {
+            preference: if maximum == minimum {
+                1.0
+            } else {
+                // Subtract integer counts before conversion to preserve large adjacent differences.
+                (maximum - count) as f64 / (maximum - minimum) as f64
+            },
+            ..RouteScore::default()
+        })
+        .collect()
 }
 
 /// Scores the complete filtered compatible, healthy route target snapshot for one routing round.

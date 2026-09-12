@@ -27,15 +27,13 @@ If you only need to serve a single model on one GPU, using an inference engine s
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
 | Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP parallelism | Research |
 | Control plane | Model services, replica management, autoscaling, updates, and failure recovery | In development |
-| [Observability](observability/README.md) | Collect runtime metrics, evaluate alerts, and profile CPU/GPU bottlenecks | In development |
+| [Observability](observability/README.md) | Collect service and accelerator metrics, evaluate alerts, and inspect the system Dashboard | In development |
 
 ## Quick Start
 
-This Quick Start requires Python 3.10+, Kubernetes with an expandable default `StorageClass`, `kubectl`, Helm, one GPU, and a working `LoadBalancer` (k3s ServiceLB is sufficient for k3d). See the [k3d guide](docs/k3d-deployment.md) for a single-machine test cluster.
+Start with a GPU-enabled Kubernetes cluster and Python 3.11+, `kubectl`, and Helm installed locally.
 
 ### 1. Install the command-line tool
-
-Install the published command-line tool package:
 
 ```bash
 pip install foretoken
@@ -46,25 +44,28 @@ pip install foretoken
 
 ### 2. Install the Kubernetes platform
 
-By default, installation uses the Foretoken images published on GHCR:
-
 ```bash
-# Release images:
+# Use release images from GHCR:
 foretoken install
 
 # Source installation from the repository:
 # foretoken install -e .
 ```
 
+For deployment on MetaX GPUs, follow the [MetaX deployment guide](docs/metax-deployment.md).
+
 This installs the Foretoken CRDs and controller in the `foretoken-platform` namespace and waits for the controller to become ready. The default mode exposes the frontend through a `LoadBalancer` Service. Source installation rebuilds the images and updates the cluster; to deploy the current source to a remote cluster, see the [source deployment guide](docs/custom-deployment.md).
 
 ### 3. Deploy the Quick Start
 
 ```bash
-foretoken deploy examples/quickstart
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
+
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
-This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and an automatically expanding runtime cache PVC starting at 10 GiB. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
+This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and a runtime cache PVC starting at 10 GiB, using a default `StorageClass` that supports expansion. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
 
 ### 4. Send a test request
 
@@ -94,7 +95,7 @@ See [Benchmarking](benchmarks/README.md) for datasets, remote endpoints, result 
 
 Gateway mode provides a shared entry point through Kubernetes Gateway and a hostname. It suits clusters that already use Gateway or manage external traffic centrally.
 
-Foretoken creates its default Gateway for Envoy Gateway. Install Envoy Gateway, then add the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
+Add the public hostname under `spec` in `examples/quickstart/frontend.yaml`:
 
 ```yaml
 spec:
@@ -104,18 +105,11 @@ spec:
 Then run:
 
 ```bash
-# Install Envoy Gateway
-helm upgrade --install envoy-gateway \
-  oci://docker.io/envoyproxy/gateway-helm \
-  --namespace envoy-gateway-system \
-  --create-namespace \
-  --wait
-
 # Install the platform in Gateway mode
 foretoken install --frontend-mode gateway
 
 # Deploy the Quick Start
-foretoken deploy examples/quickstart
+foretoken deploy examples/quickstart --timeout 20m
 
 # Resolve the Gateway address and request hostname
 FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
@@ -129,7 +123,7 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-See the [command-line tool guide](cli/README.md) to reuse a Gateway from another controller, select a listener, or configure TLS.
+The command installs Envoy Gateway when needed. See the [command-line tool guide](cli/README.md) to reuse an existing Gateway or select a listener.
 
 ## Stop and Uninstall
 
@@ -142,6 +136,12 @@ foretoken uninstall
 ```
 
 The uninstall command preserves Foretoken CRDs and reused cluster components. It removes the platform and the monitoring or Gateway resources managed by the command-line tool.
+
+## Deployment Guides
+
+- [Source builds and private registries](docs/custom-deployment.md)
+- [Single-machine GPU clusters with k3d](docs/k3d-deployment.md)
+- [MetaX GPUs](docs/metax-deployment.md)
 
 ## Related Projects
 

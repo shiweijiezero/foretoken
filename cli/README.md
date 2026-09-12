@@ -9,12 +9,9 @@ English | [简体中文](README_zh.md)
 
 The Foretoken command-line tool installs the shared Kubernetes platform, deploys model services from Kustomize configurations, reports serving readiness, resolves frontend endpoints, and runs benchmarks through one `foretoken` entry point.
 
-For a new cluster, start by installing the command-line tool. If `foretoken --version` already works, go straight to platform installation. If the cluster already has the Foretoken platform, start with model deployment.
-
 ## Before you start
 
-You need Python 3.10 or later, an active Kubernetes context, `kubectl`, and Helm. GPU nodes must already have their vendor driver and Kubernetes device plugin. Source installation also requires Docker and Make, plus either a local kind/k3d cluster or an OCI registry reachable by every target node.
-
+You need Python 3.11 or later, an active Kubernetes context, `kubectl`, and Helm. GPU nodes must already have their vendor driver and Kubernetes device plugin.
 ## Install the command-line tool
 
 Install the published Foretoken command-line tool package with pip:
@@ -34,7 +31,7 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-This step only installs the `foretoken` command in the current Python environment; it does not change the Kubernetes cluster. Run `foretoken --version` to see the command-line tool and corresponding platform version.
+Run `foretoken --version` to check the installed command-line tool version.
 
 ## Install the Kubernetes platform
 
@@ -48,11 +45,11 @@ The default uses release images and local access through a `LoadBalancer` Servic
 foretoken install
 ```
 
-During installation, the command-line tool discovers Prometheus and accelerator metric exporters. It reuses compatible shared instances, installs managed Prometheus and NVIDIA DCGM Exporter releases when needed, and connects to the mxExporter already provided by a MetaX cluster. See [Observability](../observability/README.md) for monitoring selection and configuration.
+Installation also sets up monitoring, reusing a Prometheus and GPU metrics exporter already in the cluster when they exist. See [Observability](../observability/README.md).
 
 ### Gateway mode
 
-The command-line tool creates a dedicated `GatewayClass` and `Gateway` only when the cluster runs Envoy Gateway:
+Gateway mode creates a dedicated `GatewayClass` and `Gateway`, installing Envoy Gateway if no compatible controller is available:
 
 ```bash
 foretoken install --frontend-mode gateway
@@ -71,7 +68,7 @@ Add `--gateway-section-name LISTENER` only when more than one listener matches.
 
 ### Current source
 
-Build Foretoken images from the current source tree and configure the platform to use them:
+Prepare the build tools listed in the [source deployment guide](../docs/custom-deployment.md), then build and install from the repository root:
 
 ```bash
 foretoken install -e .
@@ -88,7 +85,19 @@ Registry login authorizes the local image push. Private registries also need `im
 
 ### Installation options
 
-Repeatable `--values` files provide platform image, runtime, and hardware settings. Release and source installs record their mode in Helm metadata and cannot switch silently. Releases originally installed directly with Helm remain under their existing Helm lifecycle and are not adopted automatically.
+Repeatable `--values` files provide platform image, runtime, and hardware settings.
+
+Model services are reached through an IP address outside the cluster. k3d, k3s, and cloud clusters assign one automatically. Clusters built with kubeadm, RKE2, or kubespray have no address assignment by default, so installation there ends with `LoadBalancer support Not verified`. Give Foretoken a range of unused addresses in the nodes' subnet, confirmed with the cluster administrator, and it assigns them to services:
+
+```yaml
+loadBalancer:
+  managedAddresses:
+    - 192.168.1.240-192.168.1.250
+```
+
+```bash
+foretoken install --values platform-values.yaml
+```
 
 ### Persistent runtime cache
 
@@ -96,13 +105,20 @@ Create one `RuntimeCache` in a workload namespace to let Foretoken provision and
 
 ## Deploy and operate model services
 
-Deploy one frontend and all models rendered by a Kustomize root. The multi-model example needs up to four GPUs, 12 CPU cores, 100 GiB memory, and a default `ReadWriteMany` StorageClass with online expansion; use `examples/quickstart` for the smallest path.
+Deploy one frontend and all models rendered by a Kustomize root. Run from the repository root; if you have not obtained the configurations yet:
 
 ```bash
-foretoken deploy examples/multi-model-quickstart
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 ```
 
-The command applies the configuration, reports each `FrontendService` and `ModelService` state when it changes, and exits when every service reports Ready for its current configuration. Change the default ten-minute deadline with `--timeout`.
+See the [multi-model example](../examples/multi-model-quickstart/README.md) for capacity and storage requirements. Use `examples/quickstart` for a single model.
+
+```bash
+foretoken deploy examples/multi-model-quickstart --timeout 20m
+```
+
+The command applies the configuration, reports service state changes, and exits when every service is Ready. Without `--timeout`, it waits up to ten minutes.
 
 Inspect the same deployment without applying it:
 
@@ -171,4 +187,4 @@ The command waits for deletion and ignores resources that are already absent. Af
 foretoken uninstall
 ```
 
-The command preserves Foretoken CRDs and refuses to uninstall while user-owned services remain. It removes monitoring and Gateway resources managed by the command-line tool with the platform, while reused cluster components remain unchanged.
+The command refuses to run while model services remain. It removes what `foretoken install` installed and leaves reused cluster components and the Foretoken CRDs in place.

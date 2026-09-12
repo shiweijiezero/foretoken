@@ -6,7 +6,7 @@
 
 ## 开始前
 
-从仓库根目录使用 Python 3.10 或更高版本运行评测命令：
+从仓库根目录使用 Python 3.11 或更高版本运行评测命令：
 
 ```bash
 pip install 'foretoken[bench]'

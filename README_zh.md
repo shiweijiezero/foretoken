@@ -27,15 +27,13 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
 | 分布式推理 | 聚合部署、Prefill/Decode 分离和 WideEP 并行策略 | 研究中 |
 | 控制面 | 模型服务、副本管理、扩缩容、更新和故障恢复 | 开发中 |
-| [可观测性](observability/README_zh.md) | 采集运行指标、评估告警并分析 CPU/GPU 性能瓶颈 | 开发中 |
+| [可观测性](observability/README_zh.md) | 采集服务和加速器指标、评估告警，并通过系统看板查看运行状态 | 开发中 |
 
 ## 快速开始
 
-本快速开始需要 Python 3.10 以上版本、配置了可扩容默认 `StorageClass` 的 Kubernetes 集群、`kubectl`、Helm、至少一块 GPU，以及可用的 `LoadBalancer`（k3d 使用 k3s ServiceLB 即可）。如需准备单机测试集群，请参阅 [k3d 指南](docs/k3d-deployment_zh.md)。
+准备好 GPU Kubernetes 集群，并在本机安装 Python 3.11+、`kubectl` 和 Helm。
 
 ### 1. 安装命令行工具
-
-安装已经发布的命令行工具包：
 
 ```bash
 pip install foretoken
@@ -46,25 +44,28 @@ pip install foretoken
 
 ### 2. 安装 Kubernetes 平台
 
-默认使用 Foretoken 发布在 GHCR 的镜像：
-
 ```bash
-# 使用发布镜像：
+# 使用 GHCR 发布的镜像：
 foretoken install
 
 # 如果使用源码安装：
 # foretoken install -e .
 ```
 
+沐曦 GPU 的部署请参照[沐曦部署指南](docs/metax-deployment_zh.md)。
+
 该命令会在 `foretoken-platform` 命名空间中安装 Foretoken CRD 和控制器，并等待控制器就绪。默认模式通过 `LoadBalancer` 类型的 Kubernetes `Service` 提供前端地址。源码安装会重新构建镜像并更新集群；如果要将当前源码部署到远程集群，请参阅[源码部署指南](docs/custom-deployment_zh.md)。
 
 ### 3. 部署快速开始示例
 
 ```bash
-foretoken deploy examples/quickstart
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
+
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
-该示例部署一个前端服务、一个 `Qwen/Qwen3-0.6B` 模型副本和一个从 10 GiB 起自动扩容的运行时缓存 PVC。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
+该示例部署一个前端服务、一个 `Qwen/Qwen3-0.6B` 模型副本和一个从 10 GiB 起的运行时缓存 PVC，缓存需要支持扩容的默认 `StorageClass`。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
 
 ### 4. 发送测试请求
 
@@ -94,7 +95,7 @@ foretoken bench examples/quickstart
 
 网关模式通过 Kubernetes Gateway 和域名提供统一入口，适合已经使用 Gateway 或需要集中管理外部流量的集群。
 
-Foretoken 默认创建的 Gateway 使用 Envoy Gateway。先安装 Envoy Gateway，并在 `examples/quickstart/frontend.yaml` 的 `spec` 中添加访问域名：
+在 `examples/quickstart/frontend.yaml` 的 `spec` 中添加访问域名：
 
 ```yaml
 spec:
@@ -104,18 +105,11 @@ spec:
 然后运行：
 
 ```bash
-# 安装 Envoy Gateway
-helm upgrade --install envoy-gateway \
-  oci://docker.io/envoyproxy/gateway-helm \
-  --namespace envoy-gateway-system \
-  --create-namespace \
-  --wait
-
 # 安装平台并启用网关模式
 foretoken install --frontend-mode gateway
 
 # 部署快速开始示例
-foretoken deploy examples/quickstart
+foretoken deploy examples/quickstart --timeout 20m
 
 # 获取网关地址和请求域名
 FORETOKEN_FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
@@ -129,7 +123,7 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-要复用其他 Gateway Controller 管理的 Gateway、指定 listener 或配置 TLS，见[命令行工具使用指南](cli/README_zh.md)。
+命令会按需安装 Envoy Gateway。复用已有 Gateway 或指定 listener，见[命令行工具使用指南](cli/README_zh.md)。
 
 ## 停止与卸载
 
@@ -142,6 +136,12 @@ foretoken uninstall
 ```
 
 卸载时会保留 Foretoken CRD 和复用的集群组件，并删除平台以及由命令行工具管理的监控或 Gateway 资源。
+
+## 部署指南
+
+- [源码构建与私有镜像仓库](docs/custom-deployment_zh.md)
+- [使用 k3d 创建单机 GPU 集群](docs/k3d-deployment_zh.md)
+- [沐曦 GPU](docs/metax-deployment_zh.md)
 
 ## 相关项目
 

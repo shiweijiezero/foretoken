@@ -13,10 +13,10 @@ Configure the model, replica count, resources, and parallelism in [`model.yaml`]
 
 ## Deploy
 
-First complete the [root Quick Start](../../README.md) through platform installation. Then deploy this example:
+Follow the [root Quick Start](../../README.md) to install the platform and obtain the repository, then run from the repository root:
 
 ```bash
-foretoken deploy examples/quickstart
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 The command reports each service state as it changes and exits when the current configuration is ready.

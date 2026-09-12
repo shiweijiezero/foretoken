@@ -35,8 +35,8 @@ pub struct RouteCandidate {
     pub pipeline_scope_id: Option<String>,
     /// Exact data-parallel replica selected within the route target.
     pub data_parallel_rank: u32,
-    /// Latest route-target observation for this routing round, when telemetry covers the Router
-    /// observation window. It is aggregate telemetry shared by every DP rank of this target.
+    /// Latest route-target gauges and available windowed statistics for this routing round.
+    /// It is aggregate telemetry shared by every DP rank of this target.
     pub route_target_stats: Option<Arc<RouteTargetStats>>,
 }
 
@@ -63,9 +63,12 @@ impl RouteCandidate {
     }
 }
 
-/// Lexicographically ordered route score; larger values are preferred.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+/// Numeric preference followed by lexicographic locality and load; larger values are preferred.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct RouteScore {
+    /// Raw numeric scorer output. Locality policies leave this at zero; metric policies leave the
+    /// remaining fields at zero so their floating-point scores reach Picker without quantization.
+    pub preference: f64,
     /// Complete prompt tokens in the best readable prefix.
     pub matched_tokens: i64,
     /// Storage preference after equal prefix length: Device > HostPinned > Disk > External.
@@ -76,11 +79,44 @@ pub struct RouteScore {
     pub load: i64,
 }
 
+impl PartialEq for RouteScore {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for RouteScore {}
+
+impl PartialOrd for RouteScore {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for RouteScore {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.preference.total_cmp(&other.preference).then_with(|| {
+            (
+                self.matched_tokens,
+                self.tier_preference,
+                self.locality_preference,
+                self.load,
+            )
+                .cmp(&(
+                    other.matched_tokens,
+                    other.tier_preference,
+                    other.locality_preference,
+                    other.load,
+                ))
+        })
+    }
+}
+
 /// Router-owned view of a candidate and the parallel score produced by a `RouteScorer`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScoredCandidate {
     /// Routable ModelGroup scored in the current routing round.
     pub candidate: RouteCandidate,
-    /// Lexicographic score assigned by the Scorer.
+    /// Numeric or locality preference assigned by the Scorer.
     pub score: RouteScore,
 }

@@ -1315,6 +1315,7 @@ dependencies = [
  "foretoken-kv-indexer",
  "foretoken-model-protocol",
  "inventory",
+ "prometheus-client",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
@@ -1392,6 +1393,10 @@ version = "0.0.1"
 dependencies = [
  "vllm-tracing",
 ]
+
+[[package]]
+name = "foretoken-xtask"
+version = "0.0.1"
 
 [[package]]
 name = "form_urlencoded"

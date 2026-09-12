@@ -7,17 +7,7 @@
 
 本维护者指南说明手工镜像导入和原始 Helm 操作。除非另有说明，命令均从 Foretoken 仓库根目录执行。
 
-## 从公开源码构建 MetaX vLLM
-
-MetaX 将 [`vLLM-metax`](https://github.com/MetaX-MACA/vLLM-metax) 作为硬件插件发布，每个 `vX.Y.Z` tag 与相同版本的 upstream vLLM 对齐。以目标版本对应的 MetaX 官方 vLLM image 为基础，一条命令即可创建由 uv 管理的源码覆盖层，并构建 Foretoken model-server image：
-
-```bash
-METAX_BASE_IMAGE=<matching-metax-vllm-image> \
-VLLM_METAX_VERSION=0.24.0 \
-make image-model-server-metax
-```
-
-构建结果为 `foretoken-vllm-metax:0.24.0` 和 `foretoken-model-server:dev`。虚拟环境位于 `/opt/foretoken-vllm`，不会使用宿主机 Python 环境。基础镜像提供匹配的 MACA、PyTorch、mcoplib 和原生依赖，uv 在覆盖层中安装指定版本的公开 `vLLM-metax` 与 upstream vLLM tag。基础镜像应从 [vLLM-MetaX 版本矩阵](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html)选择。Foretoken 当前支持 MetaX 已公开发布的 0.20 至 0.24 版本。
+沐曦镜像准备方式见[准备沐曦 Foretoken 平台](metax-platform_zh.md#构建镜像)。
 
 ## 直接导入本地镜像
 

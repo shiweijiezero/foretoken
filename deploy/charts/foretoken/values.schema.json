@@ -6,6 +6,7 @@
     "imagePullSecrets",
     "controller",
     "workload",
+    "loadBalancer",
     "frontend",
     "observability",
     "runtime"
@@ -137,6 +138,23 @@
       },
       "additionalProperties": false
     },
+    "loadBalancer": {
+      "type": "object",
+      "required": [
+        "managedAddresses"
+      ],
+      "properties": {
+        "managedAddresses": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
     "frontend": {
       "type": "object",
       "required": [
@@ -219,6 +237,60 @@
         },
         "scrapeTimeout": {
           "type": "string"
+        },
+        "alerts": {
+          "type": "object",
+          "required": [
+            "language",
+            "thresholds"
+          ],
+          "properties": {
+            "language": {
+              "type": "string",
+              "enum": [
+                "zh",
+                "en",
+                "bilingual"
+              ]
+            },
+            "thresholds": {
+              "type": "object",
+              "required": [
+                "kvCacheUsageRatio",
+                "acceleratorUtilizationRatio",
+                "acceleratorMemoryUsageRatio",
+                "nvidiaTemperatureCelsius",
+                "nvidiaPowerWatts"
+              ],
+              "properties": {
+                "kvCacheUsageRatio": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "acceleratorUtilizationRatio": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "acceleratorMemoryUsageRatio": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "nvidiaTemperatureCelsius": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "nvidiaPowerWatts": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

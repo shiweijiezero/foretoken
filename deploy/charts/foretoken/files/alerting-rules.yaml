@@ -1,0 +1,135 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Defines conservative, actionable Foretoken alerts over scrape and recording-rule signals.
+
+groups:
+  - name: foretoken.alerting
+    rules:
+      - alert: ForetokenMetricsTargetDown
+        expr: |
+          (
+            up{endpoint="http", inference_foretoken_io_frontend_service!=""} == 0
+          )
+          or
+          (
+            up{endpoint="model-server", inference_foretoken_io_model_group!=""} == 0
+          )
+        for: 5m
+        labels:
+          service: foretoken
+          severity: warning
+          notification_language: foretoken_alert_language
+        annotations:
+          summary: 'Foretoken metrics target {{ $labels.endpoint }} cannot be scraped'
+          summary_zh: 'Foretoken 指标目标 {{ $labels.endpoint }} 无法抓取'
+          description: 'Prometheus has failed to scrape {{ $labels.endpoint }} at {{ $labels.instance }} in namespace {{ $labels.namespace }} for 5 minutes. This checks metrics reachability, not request readiness or a confirmed user outage.'
+          description_zh: 'Prometheus 已连续 5 分钟无法抓取命名空间 {{ $labels.namespace }} 中 {{ $labels.instance }} 的 {{ $labels.endpoint }} 指标。这只检查指标可达性，不代表请求未就绪或已经发生用户故障。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenmetricstargetdown'
+
+      - alert: ForetokenFrontendHTTPResponseStart5xxRatioHigh
+        expr: |
+          (
+            foretoken:frontend_http_response_start_5xx_ratio:rate5m > 0.05
+          )
+          and on (namespace, frontend_service)
+          (
+            sum by (namespace, frontend_service) (
+              foretoken:frontend_http_response_starts:rate5m
+            ) >= 0.1
+          )
+        for: 10m
+        labels:
+          service: foretoken
+          severity: warning
+          notification_language: foretoken_alert_language
+        annotations:
+          summary: 'Frontend {{ $labels.frontend_service }} has elevated response-start 5xx errors'
+          summary_zh: 'Frontend {{ $labels.frontend_service }} 的响应开始 5xx 错误偏高'
+          description: 'More than 5% of HTTP response starts for Frontend {{ $labels.frontend_service }} have been 5xx for 10 minutes with at least 0.1 response starts per second. Errors after a stream starts are not counted, so this is not an inference failure SLO.'
+          description_zh: 'Frontend {{ $labels.frontend_service }} 的 HTTP 响应开始事件中，5xx 比例在至少每秒 0.1 个响应开始事件的流量下连续 10 分钟超过 5%。流式响应开始后的错误不计入此指标，因此它不是推理失败 SLO。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenfrontendhttpresponsestart5xxratiohigh'
+
+      - alert: ForetokenModelServerSchedulerBacklog
+        expr: foretoken:model_server_requests_waiting:sum > 0
+        for: 10m
+        labels:
+          service: foretoken
+          severity: warning
+          notification_language: foretoken_alert_language
+        annotations:
+          summary: 'vLLM scheduler backlog persists for model group {{ $labels.model_group }}'
+          summary_zh: '模型组 {{ $labels.model_group }} 的 vLLM scheduler 队列持续排队'
+          description: 'The vLLM scheduler for {{ $labels.model_group }}/{{ $labels.model_role }} has continuously had waiting stage requests for 10 minutes. This is not a user count or the Frontend admission queue.'
+          description_zh: '模型组 {{ $labels.model_group }}/{{ $labels.model_role }} 的 vLLM stage scheduler 队列已连续 10 分钟存在 waiting requests。这不是用户数量，也不是 Frontend admission queue。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenmodelserverschedulerbacklog'
+
+      - alert: ForetokenModelServerKVCachePressureHigh
+        expr: foretoken:model_server_kv_cache_usage_ratio:max >= foretoken_alert_threshold_kv_cache_usage_ratio
+        for: 10m
+        labels:
+          service: foretoken
+          severity: warning
+          notification_language: foretoken_alert_language
+        annotations:
+          summary: 'KV-cache pressure is high for model group {{ $labels.model_group }}'
+          summary_zh: '模型组 {{ $labels.model_group }} 的 KV Cache 压力偏高'
+          description: 'The maximum KV-cache usage across vLLM engines in {{ $labels.model_group }}/{{ $labels.model_role }} has stayed at or above {{ "foretoken_alert_threshold_kv_cache_usage_ratio" | humanizePercentage }} for 10 minutes. The engine contributing the maximum can change between evaluations.'
+          description_zh: '{{ $labels.model_group }}/{{ $labels.model_role }} 中 vLLM engine 的最高 KV Cache 使用率已连续 10 分钟不低于 {{ "foretoken_alert_threshold_kv_cache_usage_ratio" | humanizePercentage }}。每次计算中的最大值可能来自不同 engine。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenmodelserverkvcachepressurehigh'
+
+      - alert: ForetokenAcceleratorGPUUtilizationHigh
+        expr: foretoken:accelerator_gpu_utilization_ratio >= foretoken_alert_threshold_accelerator_utilization_ratio
+        for: 15m
+        labels:
+          service: foretoken
+          severity: warning
+          notification_language: foretoken_alert_language
+        annotations:
+          summary: 'Accelerator utilization is high on {{ $labels.vendor }} device {{ $labels.device_id }}'
+          summary_zh: '{{ $labels.vendor }} 加速器 {{ $labels.device_id }} 利用率偏高'
+          description: 'Accelerator utilization has stayed at or above foretoken_alert_threshold_accelerator_utilization_ratio for 15 minutes. Sustained utilization is a capacity signal, not proof of an outage.'
+          description_zh: '{{ $labels.vendor }} 加速器利用率已连续 15 分钟不低于 foretoken_alert_threshold_accelerator_utilization_ratio。持续高利用率表示容量压力，不代表已经发生故障。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenacceleratorgpuutilizationhigh'
+
+      - alert: ForetokenAcceleratorGPUMemoryUsageHigh
+        expr: foretoken:accelerator_gpu_memory_usage_ratio >= foretoken_alert_threshold_accelerator_memory_usage_ratio
+        for: 10m
+        labels:
+          service: foretoken
+          severity: warning
+          notification_language: foretoken_alert_language
+        annotations:
+          summary: 'Accelerator memory usage is high on {{ $labels.vendor }} device {{ $labels.device_id }}'
+          summary_zh: '{{ $labels.vendor }} 加速器 {{ $labels.device_id }} 显存使用率偏高'
+          description: 'Accelerator memory usage has stayed at or above foretoken_alert_threshold_accelerator_memory_usage_ratio for 10 minutes. Check KV-cache pressure, request lengths, and replica capacity before scaling.'
+          description_zh: '{{ $labels.vendor }} 加速器显存使用率已连续 10 分钟不低于 foretoken_alert_threshold_accelerator_memory_usage_ratio。扩容前先检查 KV Cache 压力、请求长度和副本容量。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenacceleratorgpumemoryusagehigh'
+
+      - alert: ForetokenNVIDIAGPUTemperatureHigh
+        expr: DCGM_FI_DEV_GPU_TEMP >= foretoken_alert_threshold_nvidia_temperature_celsius
+        for: 10m
+        labels:
+          service: foretoken
+          severity: warning
+          notification_language: foretoken_alert_language
+        annotations:
+          summary: 'NVIDIA GPU temperature is high'
+          summary_zh: 'NVIDIA GPU 温度偏高'
+          description: 'An NVIDIA GPU temperature has stayed at or above foretoken_alert_threshold_nvidia_temperature_celsius°C for 10 minutes. Check the device, node airflow, and workload before changing capacity.'
+          description_zh: 'NVIDIA GPU 温度已连续 10 分钟不低于 foretoken_alert_threshold_nvidia_temperature_celsius°C。调整容量前先检查设备、节点散热和 workload。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokennvidiagputemperaturehigh'
+
+      - alert: ForetokenNVIDIAGPUPowerUsageHigh
+        expr: DCGM_FI_DEV_POWER_USAGE >= foretoken_alert_threshold_nvidia_power_watts
+        for: 10m
+        labels:
+          service: foretoken
+          severity: warning
+          notification_language: foretoken_alert_language
+        annotations:
+          summary: 'NVIDIA GPU power usage is high'
+          summary_zh: 'NVIDIA GPU 功耗偏高'
+          description: 'An NVIDIA GPU power reading has stayed at or above foretoken_alert_threshold_nvidia_power_watts W for 10 minutes. Compare the reading with the device power limit and workload before taking action.'
+          description_zh: 'NVIDIA GPU 功耗读数已连续 10 分钟不低于 foretoken_alert_threshold_nvidia_power_watts W。采取措施前先将读数与设备功耗上限和 workload 对比。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokennvidiagpupowerusagehigh'

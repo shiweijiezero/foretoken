@@ -54,7 +54,7 @@ impl Default for RecordingBackend {
             aborts: Mutex::new(Vec::new()),
             telemetry: BackendTelemetry {
                 running_requests: 0,
-                max_concurrent_requests: 7,
+                max_concurrent_requests: Some(7),
                 ..Default::default()
             },
             metrics: Ok(OPENMETRICS_FIXTURE),
@@ -343,7 +343,7 @@ async fn metadata_and_telemetry_expose_typed_runtime_snapshots() {
     let backend = Arc::new(RecordingBackend {
         telemetry: BackendTelemetry {
             running_requests: 3,
-            max_concurrent_requests: 7,
+            max_concurrent_requests: Some(7),
             scheduler_running_requests: Some(2),
             scheduler_waiting_requests: Some(1),
             kv_cache_usage: Some(0.75),

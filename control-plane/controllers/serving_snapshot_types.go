@@ -88,19 +88,11 @@ type servingSnapshotEPDComponent struct {
 	PoolUID                  string   `json:"pool_uid"`
 	PoolName                 string   `json:"pool_name"`
 	Role                     string   `json:"role"`
-	PipelineScopeID          string   `json:"pipeline_scope_id"`
 	Model                    string   `json:"model"`
 	Revision                 string   `json:"revision"`
 	Tokenizer                string   `json:"tokenizer"`
 	TokenizerRevision        string   `json:"tokenizer_revision"`
 	MaxInputTokens           *int32   `json:"max_input_tokens,omitempty"`
-	ProfileName              string   `json:"profile_name,omitempty"`
-	ProfileRevision          string   `json:"profile_revision,omitempty"`
-	Connector                string   `json:"connector,omitempty"`
-	Protocol                 string   `json:"protocol,omitempty"`
-	ECProfileName            string   `json:"ec_profile_name,omitempty"`
-	ECProfileRevision        string   `json:"ec_profile_revision,omitempty"`
-	ECConnector              string   `json:"ec_connector,omitempty"`
 	Capabilities             []string `json:"capabilities"`
 	Endpoint                 string   `json:"endpoint"`
 	PrefillBootstrapEndpoint string   `json:"prefill_bootstrap_endpoint,omitempty"`

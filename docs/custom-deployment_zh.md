@@ -7,7 +7,7 @@
 
 本指南介绍如何从源码构建 Foretoken 镜像、配置 Kubernetes 平台使用这些镜像，以及修改源码后如何重新部署。模型服务仍通过 `foretoken deploy` 单独部署。
 
-需要 Python 3.10 或更高版本。除非另有说明，所有命令均从 Foretoken 仓库根目录执行。
+准备好 Python 3.11+、Git、启用 BuildKit 的 Docker、Make、kubectl、Helm 和由 rustup 管理的 Rust 工具链。命令均在 Foretoken 仓库根目录执行。
 
 ## 1. 准备目标 Kubernetes 集群
 
@@ -34,20 +34,21 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
-从当前源码构建 Foretoken 镜像，并配置当前 Kubernetes context 中的平台使用这些镜像：
+本地 kind 或 k3d 集群可以直接构建并导入镜像：
 
 ```bash
 foretoken install -e .
 ```
 
-当前 context 是标准 kind 或 k3d 时，命令会构建并导入本地镜像。其他 Kubernetes context 需要提供所有目标节点都能访问的 registry。首次从源码安装前，先使用有目标仓库推送权限的账户登录 registry：
+其他集群需要使用所有目标节点都能访问的镜像仓库。将 `example` 替换为有推送权限的命名空间：
 
 ```bash
+export REGISTRY=ghcr.io/example/foretoken
 docker login ghcr.io
-foretoken install -e . --registry ghcr.io/example/foretoken
+foretoken install -e . --registry "$REGISTRY"
 ```
 
-登录 registry 用于授权本机推送镜像。私有 registry 还需要在平台命名空间和每个 workload 命名空间中创建同名 pull Secret，让节点能够拉取镜像，并通过 values 文件引用：
+使用私有镜像仓库时，在平台命名空间和每个工作负载命名空间中创建同名的镜像拉取 Secret，并将以下配置保存为 `platform-values.yaml`：
 
 ```yaml
 imagePullSecrets:
@@ -59,13 +60,9 @@ workload:
 
 ```bash
 foretoken install -e . \
-  --registry registry.example.com/foretoken \
+  --registry "$REGISTRY" \
   --values platform-values.yaml
 ```
-
-命令会复用仓库已有的构建、导入和推送生命周期，再执行与发布镜像相同的平台和可观测性安装。这是完整且推荐的源码安装路径；命令成功后直接进入[第 3 节](#3-确认平台部署完成)。
-
-需要排查底层镜像导入或原始 Helm 操作时，参阅维护者[源码镜像手工生命周期](development/source-image-lifecycle_zh.md)。
 
 ## 3. 确认平台部署完成
 
@@ -86,7 +83,7 @@ Deployment 应显示所有期望副本均已 Ready。模型工作负载只会在
 需要启动示例前端服务和 `Qwen/Qwen3-0.6B` 模型服务时，使用第 2 节已安装的命令行工具从仓库根目录部署：
 
 ```bash
-foretoken deploy examples/quickstart --timeout 6m
+foretoken deploy examples/quickstart --timeout 20m
 ```
 
 该命令会发现渲染后的服务、输出状态变化，并在当前配置就绪后退出。

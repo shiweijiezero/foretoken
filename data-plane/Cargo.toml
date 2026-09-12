@@ -20,8 +20,17 @@ members = [
     "frontend/src/tracing",
     "model-protocol",
     "model-server",
+    "xtask",
 ]
 exclude = ["third_party/vllm"]
+
+[workspace.metadata.foretoken]
+vllm_source = "third_party/vllm"
+vllm_patches = [
+    "patches/vllm-chat-request-processor.patch",
+    "patches/vllm-engine-core-version-compatibility.patch",
+    "patches/vllm-managed-engine-environment.patch",
+]
 
 [workspace.package]
 version = "0.0.1"
@@ -40,6 +49,7 @@ foretoken-model-protocol = { path = "model-protocol" }
 futures = "0.3.31"
 hf-hub = { version = "0.5.0", default-features = false, features = ["tokio"] }
 inventory = "0.3.20"
+prometheus-client = "0.24.1"
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rmp-serde = "1.3.1"
 rmpv = { version = "1.3.1", features = ["with-serde"] }

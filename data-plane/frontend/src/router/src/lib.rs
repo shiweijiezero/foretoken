@@ -5,6 +5,7 @@
 
 pub mod algorithm;
 mod inventory;
+mod metrics;
 mod request;
 mod route_target_stats;
 mod selection;
@@ -14,6 +15,7 @@ pub use inventory::{
     ModelRouteTable, RouteDecision, RouteInventory, RouteTarget, RouteTargetId, RouteTargetSet,
     ScalingTarget, ScalingTargetKind,
 };
+pub use metrics::render_metrics;
 pub use request::RouterRequest;
 pub use route_target_stats::{RouteTargetLatencyStats, RouteTargetStats, RouteTargetStatsReader};
 pub use selection::{

@@ -7,17 +7,7 @@ English | [简体中文](source-image-lifecycle_zh.md)
 
 This maintainer guide covers manual image import and raw Helm operations. Run commands from the Foretoken repository root unless stated otherwise.
 
-## Build MetaX vLLM from public source
-
-MetaX publishes [`vLLM-metax`](https://github.com/MetaX-MACA/vLLM-metax) as a hardware plugin, with each `vX.Y.Z` tag aligned to the same upstream vLLM tag. Starting from MetaX's released vLLM image for the selected version, one command creates a uv-managed source overlay and builds the Foretoken model-server image:
-
-```bash
-METAX_BASE_IMAGE=<matching-metax-vllm-image> \
-VLLM_METAX_VERSION=0.24.0 \
-make image-model-server-metax
-```
-
-The build creates `foretoken-vllm-metax:0.24.0` and `foretoken-model-server:dev`. Its virtual environment is stored in `/opt/foretoken-vllm`; the host Python environment is not used. The base image supplies the matching MACA, PyTorch, mcoplib, and native dependencies, while uv installs the selected public `vLLM-metax` and upstream vLLM tags into the overlay. Select the base image from the [vLLM-MetaX release matrix](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html). Foretoken currently supports the public MetaX releases from 0.20 through 0.24.
+For MetaX image preparation, see [Prepare Foretoken for MetaX GPUs](metax-platform.md#build-the-images).
 
 ## Import local images directly
 
