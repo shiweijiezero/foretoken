@@ -62,8 +62,14 @@ pub async fn load_hf_text_backend(
     if model_id.is_empty() || revision.is_empty() {
         return Err(TextBackendLoadError::MissingModelOrRevision);
     }
-    if Path::new(model_id).is_dir() {
-        return HfTextBackend::from_model(model_id)
+    let model_root = std::env::var_os(foretoken_model_files::MODEL_ROOT_ENV).map(PathBuf::from);
+    if let Some(local) = foretoken_model_files::resolve_directory(model_root.as_deref(), model_id)
+        .map_err(TextBackendLoadError::LocalModelPath)?
+    {
+        let local = local
+            .to_str()
+            .ok_or(TextBackendLoadError::NonUtf8CachePath)?;
+        return HfTextBackend::from_model(local)
             .await
             .map_err(|_| TextBackendLoadError::LocalModel);
     }
@@ -200,6 +206,8 @@ pub enum TextBackendLoadError {
     MissingModelOrRevision,
     #[error("could not load tokenizer files from the local model directory")]
     LocalModel,
+    #[error("invalid local model path: {0}")]
+    LocalModelPath(#[source] std::io::Error),
     #[error("could not initialize the Hugging Face client")]
     HubClient,
     #[error("Hugging Face snapshot is not available in the offline cache")]

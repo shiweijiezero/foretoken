@@ -25,6 +25,8 @@ import (
 
 const (
 	runtimeCacheFinalizer                       = "inference.foretoken.io/runtimecache-protection"
+	runtimeCacheDirectoryBookkeepingSize        = "1Gi"
+	runtimeCacheDirectoryAnnotation             = "inference.foretoken.io/runtime-cache-directory"
 	runtimeCacheLabel                           = "inference.foretoken.io/runtime-cache"
 	runtimeCacheRetentionAnnotation             = "inference.foretoken.io/runtime-cache-retention"
 	runtimeCacheExpansionFreeSpaceDivisor int64 = 5
@@ -110,6 +112,9 @@ func (reconciler *RuntimeCacheReconciler) Reconcile(ctx context.Context, request
 }
 
 func runtimeCachePVCName(cache *inferencev1alpha1.RuntimeCache) string {
+	if cache.Spec.Directory != "" {
+		return cache.Name
+	}
 	identity := strings.ReplaceAll(string(cache.UID), "-", "")
 	if identity == "" {
 		identity = "cache"
@@ -124,11 +129,27 @@ func runtimeCachePVCName(cache *inferencev1alpha1.RuntimeCache) string {
 	return prefix + "-" + identity
 }
 
+// runtimeCacheDirectoryPVName identifies the static volume for one namespace and cache.
+// Namespaces cannot contain dots, so this separator keeps distinct cache identities separate.
+func runtimeCacheDirectoryPVName(cache *inferencev1alpha1.RuntimeCache) string {
+	return "foretoken." + cache.Namespace + "." + cache.Name
+}
+
 // desiredRuntimeCachePVC builds the immutable storage class, access mode, and retention contract.
 func desiredRuntimeCachePVC(cache *inferencev1alpha1.RuntimeCache) (*corev1.PersistentVolumeClaim, error) {
-	size, err := resource.ParseQuantity(string(cache.Spec.InitialSize))
+	initialSize := cache.Spec.InitialSize
+	if initialSize == "" {
+		if cache.Spec.Directory == "" {
+			return nil, fmt.Errorf("runtime cache initialSize is required without directory")
+		}
+		initialSize = inferencev1alpha1.ResourceQuantity(runtimeCacheDirectoryBookkeepingSize)
+	}
+	size, err := resource.ParseQuantity(string(initialSize))
 	if err != nil || size.Sign() <= 0 {
 		return nil, fmt.Errorf("runtime cache initialSize must be a positive Kubernetes quantity")
+	}
+	if cache.Spec.Directory != "" && cache.Spec.MaxSize != "" {
+		return nil, fmt.Errorf("directory-backed runtime cache %q cannot set maxSize", cache.Name)
 	}
 	accessMode := corev1.PersistentVolumeAccessMode(cache.Spec.AccessMode)
 	if accessMode == "" {
@@ -153,7 +174,12 @@ func desiredRuntimeCachePVC(cache *inferencev1alpha1.RuntimeCache) (*corev1.Pers
 			}},
 		},
 	}
-	if cache.Spec.StorageClassName != "" {
+	if cache.Spec.Directory != "" {
+		pvc.Annotations[runtimeCacheDirectoryAnnotation] = cache.Spec.Directory
+		storageClassName := ""
+		pvc.Spec.StorageClassName = &storageClassName
+		pvc.Spec.VolumeName = runtimeCacheDirectoryPVName(cache)
+	} else if cache.Spec.StorageClassName != "" {
 		pvc.Spec.StorageClassName = &cache.Spec.StorageClassName
 	}
 	return pvc, nil
@@ -179,7 +205,26 @@ func (reconciler *RuntimeCacheReconciler) reconcilePVC(ctx context.Context, cach
 		return nil, false, err
 	}
 	if !metav1.IsControlledBy(current, cache) {
-		return nil, false, fmt.Errorf("PersistentVolumeClaim %q is not controlled by RuntimeCache", current.Name)
+		// A Retain claim has its old controller reference removed at cache deletion.
+		// Only reclaim the same directory binding; unrelated claims must remain untouched.
+		if cache.Spec.Directory == "" || len(current.OwnerReferences) != 0 ||
+			current.Labels[runtimeCacheLabel] != cache.Name ||
+			current.Annotations[runtimeCacheRetentionAnnotation] != string(inferencev1alpha1.RuntimeCacheRetentionPolicyRetain) ||
+			current.Annotations[runtimeCacheDirectoryAnnotation] != cache.Spec.Directory ||
+			current.Spec.VolumeName != desired.Spec.VolumeName ||
+			!reflect.DeepEqual(current.Spec.StorageClassName, desired.Spec.StorageClassName) ||
+			!reflect.DeepEqual(current.Spec.AccessModes, desired.Spec.AccessModes) ||
+			!current.DeletionTimestamp.IsZero() {
+			return nil, false, fmt.Errorf("PersistentVolumeClaim %q is not controlled by RuntimeCache", current.Name)
+		}
+		base := current.DeepCopy()
+		if err := controllerutil.SetControllerReference(cache, current, reconciler.Scheme()); err != nil {
+			return nil, false, err
+		}
+		current.Annotations[runtimeCacheRetentionAnnotation] = desired.Annotations[runtimeCacheRetentionAnnotation]
+		if err := reconciler.Patch(ctx, current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+			return nil, false, err
+		}
 	}
 	currentRequest := current.Spec.Resources.Requests[corev1.ResourceStorage]
 	desiredRequest := desired.Spec.Resources.Requests[corev1.ResourceStorage]

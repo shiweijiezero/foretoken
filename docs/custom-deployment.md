@@ -7,7 +7,12 @@
 
 This guide explains how to build Foretoken images from source, configure the Kubernetes platform to use them, and redeploy source changes. Model services remain separate and are deployed with `foretoken deploy`.
 
-Prepare Python 3.11+, Git, Docker with BuildKit, Make, kubectl, Helm, and a Rust toolchain managed by rustup. Run commands from the Foretoken repository root.
+Prepare Python 3.11+, Git, Docker with BuildKit, Make, kubectl, Helm, and a Rust toolchain managed by rustup. Get the current source and run commands from its root:
+
+```bash
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
+```
 
 ## 1. Prepare the target Kubernetes cluster
 
@@ -80,7 +85,7 @@ The Deployment should report all desired replicas as Ready. Model workloads appe
 
 The Quick Start workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. With k3d, first configure the GPUs as described in [Deploy Foretoken with k3d](k3d-deployment.md), then confirm that the current Kubernetes context points to the target k3d cluster.
 
-To start the example frontend and `Qwen/Qwen3-0.6B` model service, deploy from the repository root using the command-line tool installed in section 2:
+Prepare the [model storage](model-storage.md) declared in `examples/quickstart/cache.yaml`, then deploy from the repository root:
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m

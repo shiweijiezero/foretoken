@@ -7,7 +7,12 @@
 
 本指南介绍如何从源码构建 Foretoken 镜像、配置 Kubernetes 平台使用这些镜像，以及修改源码后如何重新部署。模型服务仍通过 `foretoken deploy` 单独部署。
 
-准备好 Python 3.11+、Git、启用 BuildKit 的 Docker、Make、kubectl、Helm 和由 rustup 管理的 Rust 工具链。命令均在 Foretoken 仓库根目录执行。
+准备好 Python 3.11+、Git、启用 BuildKit 的 Docker、Make、kubectl、Helm 和由 rustup 管理的 Rust 工具链。获取当前源码，并从仓库根目录执行命令：
+
+```bash
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
+```
 
 ## 1. 准备目标 Kubernetes 集群
 
@@ -80,7 +85,7 @@ Deployment 应显示所有期望副本均已 Ready。模型工作负载只会在
 
 快速开始工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。使用 k3d 时，先按[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)完成 GPU 配置，并确认当前 Kubernetes 上下文指向目标 k3d 集群。
 
-需要启动示例前端服务和 `Qwen/Qwen3-0.6B` 模型服务时，使用第 2 节已安装的命令行工具从仓库根目录部署：
+准备好 `examples/quickstart/cache.yaml` 声明的[模型存储](model-storage_zh.md)，再从仓库根目录部署：
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m

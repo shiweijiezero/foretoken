@@ -22,11 +22,11 @@ use tracing::warn;
 const OBSERVATION_VERSION: u8 = 1;
 const WRITE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const TEMPORARY_CACHE_ROOT: &str = "/tmp/foretoken-runtime-cache";
-const CACHE_ENV: [(&str, &str); 4] = [
-    ("HF_HOME", "models"),
-    ("VLLM_CACHE_ROOT", "vllm"),
-    ("TORCHINDUCTOR_CACHE_DIR", "torch"),
-    ("TRITON_CACHE_DIR", "triton"),
+const CACHE_ENV: [&str; 4] = [
+    "HF_HOME",
+    "VLLM_CACHE_ROOT",
+    "TORCHINDUCTOR_CACHE_DIR",
+    "TRITON_CACHE_DIR",
 ];
 
 /// Selects persistent storage or the Pod-scoped temporary retry cache.
@@ -49,6 +49,8 @@ impl Mode {
 #[derive(Clone)]
 pub struct Config {
     mount_path: PathBuf,
+    model_root: PathBuf,
+    cache_directories: Vec<(&'static str, PathBuf)>,
     temporary_root: PathBuf,
     pod_uid: String,
     observation_port: u16,
@@ -73,6 +75,22 @@ impl Config {
         if !mount_path.is_absolute() || mount_path == Path::new("/") {
             return Err("FORETOKEN_CACHE_MOUNT_PATH must be an absolute non-root path".into());
         }
+        let model_root = std::env::var_os(foretoken_model_files::MODEL_ROOT_ENV)
+            .map(PathBuf::from)
+            .ok_or("FORETOKEN_MODEL_ROOT must be set when a RuntimeCache is mounted")?;
+        if !model_root.is_absolute() {
+            return Err("FORETOKEN_MODEL_ROOT must be absolute".into());
+        }
+        // Relocate only directories projected beneath this data root. Provider-specific
+        // paths outside it keep their own owner and are not part of the temporary retry.
+        let cache_directories = CACHE_ENV
+            .into_iter()
+            .filter_map(|name| {
+                let path = PathBuf::from(std::env::var_os(name)?);
+                let relative = path.strip_prefix(&mount_path).ok()?.to_path_buf();
+                Some((name, relative))
+            })
+            .collect();
         let pod_uid = std::env::var("FORETOKEN_POD_UID")
             .map_err(|_| "FORETOKEN_POD_UID must be set when a RuntimeCache is mounted")?;
         if pod_uid.is_empty() {
@@ -89,6 +107,8 @@ impl Config {
         }
         Ok(Some(Self {
             mount_path,
+            model_root,
+            cache_directories,
             temporary_root: Path::new(TEMPORARY_CACHE_ROOT).join(&pod_uid),
             pod_uid,
             observation_port,
@@ -101,10 +121,25 @@ impl Config {
         self.observation_port
     }
 
+    /// Resolve a mounted model or tokenizer directory for the engine launcher.
+    pub fn local_artifact_path(&self, identifier: &str) -> io::Result<Option<String>> {
+        foretoken_model_files::resolve_directory(Some(&self.model_root), identifier)?
+            .map(|path| {
+                path.into_os_string().into_string().map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "local artifact path is not UTF-8",
+                    )
+                })
+            })
+            .transpose()
+    }
+
     /// Creates the selected cache directories and verifies that the child can write them.
     pub fn prepare(&self, mode: Mode) -> io::Result<()> {
         let root = self.root(mode);
-        for (_, directory) in CACHE_ENV {
+        fs::create_dir_all(root)?;
+        for (_, directory) in &self.cache_directories {
             fs::create_dir_all(root.join(directory))?;
         }
         self.probe_writable(mode)
@@ -115,11 +150,11 @@ impl Config {
         if mode == Mode::Persistent {
             return Vec::new();
         }
-        CACHE_ENV
-            .into_iter()
+        self.cache_directories
+            .iter()
             .map(|(name, directory)| {
                 (
-                    name.to_owned(),
+                    (*name).to_owned(),
                     self.root(mode).join(directory).display().to_string(),
                 )
             })
@@ -238,6 +273,7 @@ fn filesystem_capacity(config: &Config) -> Result<(u64, u64), String> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -262,6 +298,8 @@ mod tests {
         let temporary = root.join("temporary");
         let config = Config {
             mount_path: persistent.clone(),
+            model_root: persistent.join("models"),
+            cache_directories: vec![("HF_HOME", PathBuf::from("models"))],
             temporary_root: temporary.clone(),
             pod_uid: "pod".into(),
             observation_port: 9001,

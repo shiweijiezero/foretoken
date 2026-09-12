@@ -16,7 +16,7 @@ Foretoken 使用三个镜像：controller 管理 Kubernetes 中的模型服务�
 集群管理员负责准备：
 
 - Kubernetes 1.29 或更高版本、沐曦驱动和 MetaX device plugin；节点应发布 `metax-tech.com/gpu` 资源。
-- 模型缓存存储。默认单模型示例使用可在线扩容的 `ReadWriteOnce` 默认 StorageClass，缓存从 10 GiB 起步。其他存储方式见[运行时缓存指南](runtime-cache_zh.md)。
+- 目标节点上的可写模型目录，或用于模型缓存的 StorageClass。按[模型存储](../model-storage_zh.md)配置示例的 `cache.yaml`。
 - 可供客户端访问的 Gateway 地址；下面使用 Envoy Gateway。已有平台应由原管理员维护，不要安装第二套控制器接管它。
 
 构建机器需要 Foretoken 源码、支持 BuildKit 的 Docker 和 Make；安装平台需要 kubectl、Helm 及对应集群权限。源码构建会访问 GitHub、PyPI、MetaX Python 软件源及容器镜像仓库。
@@ -55,8 +55,6 @@ make image-model-server
 make image-frontend
 docker build -f control-plane/Dockerfile -t foretoken-control-plane:dev .
 ```
-
-使用同一份源码的三个镜像，避免旧 frontend 无法读取新 model-server 返回的信息，或旧控制面缺少示例所需的 RuntimeCache CRD。
 
 ### 3. 将镜像提供给节点
 

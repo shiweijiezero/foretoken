@@ -10,11 +10,11 @@ This example serves two models through one frontend:
 - `Qwen/Qwen3-0.6B` scales from one to three replicas from queue demand.
 - `unsloth/Llama-3.2-1B-Instruct` runs as one fixed replica.
 
-The initial deployment requests two GPUs, 12 CPU cores, and 100 GiB memory. At full scale, three Qwen replicas and one Llama replica request four GPUs, 20 CPU cores, and 196 GiB memory, including the frontend. Allow additional capacity for the platform. The example also creates an automatically expanding `ReadWriteMany` runtime cache PVC starting at 10 GiB through the namespace's default `StorageClass`. For the smallest deployment, see [Single-Model Quick Start](../quickstart/README.md).
+The initial deployment requests two GPUs, 12 CPU cores, and 100 GiB memory. At full scale, three Qwen replicas and one Llama replica request four GPUs, 20 CPU cores, and 196 GiB memory, including the frontend. Allow additional capacity for the platform. Models and runtime caches share the `./data` directory configured in `cache.yaml`. For the smallest deployment, see [Single-Model Quick Start](../quickstart/README.md).
 
 ## Deploy
 
-Follow the [root Quick Start](../../README.md) to install the platform and obtain the repository, then run from the repository root:
+Install the [platform from source](../../docs/custom-deployment.md) and prepare the [model storage](../../docs/model-storage.md). Run from the repository root:
 
 ```bash
 foretoken deploy examples/multi-model-quickstart --timeout 20m

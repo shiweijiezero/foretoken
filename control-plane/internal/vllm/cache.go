@@ -9,6 +9,7 @@ import (
 	"path"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -17,7 +18,8 @@ func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, source *infer
 	env := make([]corev1.EnvVar, 0, 6)
 	if cache != nil {
 		env = append(env,
-			corev1.EnvVar{Name: "HF_HOME", Value: path.Join(cache.MountPath, "models")},
+			corev1.EnvVar{Name: runtimeconfig.ModelRootEnv, Value: runtimeconfig.ModelDirectory(cache.MountPath)},
+			corev1.EnvVar{Name: "HF_HOME", Value: runtimeconfig.ModelDirectory(cache.MountPath)},
 			corev1.EnvVar{Name: "VLLM_CACHE_ROOT", Value: path.Join(cache.MountPath, "vllm")},
 			corev1.EnvVar{Name: "TORCHINDUCTOR_CACHE_DIR", Value: path.Join(cache.MountPath, "torch")},
 			corev1.EnvVar{Name: "TRITON_CACHE_DIR", Value: path.Join(cache.MountPath, "triton")},

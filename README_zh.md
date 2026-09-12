@@ -33,39 +33,42 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 准备好 GPU Kubernetes 集群，并在本机安装 Python 3.11+、`kubectl` 和 Helm。
 
-### 1. 安装命令行工具
+### 1. 获取示例并安装命令行工具
 
 ```bash
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 pip install foretoken
 
-# 如果使用源码安装：
+# 从源码目录安装：
 # pip install -e .
 ```
 
 ### 2. 安装 Kubernetes 平台
 
+使用当前仓库的目录型示例时，执行源码安装命令；使用发布镜像时，从相应[发布页面](https://github.com/shiweijiezero/foretoken/releases)取得随版本提供的示例。
+
 ```bash
 # 使用 GHCR 发布的镜像：
 foretoken install
 
-# 如果使用源码安装：
+# 从源码目录构建并安装：
 # foretoken install -e .
 ```
 
 沐曦 GPU 的部署请参照[沐曦部署指南](docs/metax-deployment_zh.md)。
 
-该命令会在 `foretoken-platform` 命名空间中安装 Foretoken CRD 和控制器，并等待控制器就绪。默认模式通过 `LoadBalancer` 类型的 Kubernetes `Service` 提供前端地址。源码安装会重新构建镜像并更新集群；如果要将当前源码部署到远程集群，请参阅[源码部署指南](docs/custom-deployment_zh.md)。
+平台运行在 `foretoken-platform` 命名空间，通过 `LoadBalancer` 类型的 Kubernetes `Service` 提供模型服务地址。构建工具和远程集群部署见[源码部署指南](docs/custom-deployment_zh.md)。
 
 ### 3. 部署快速开始示例
 
-```bash
-git clone https://github.com/shiweijiezero/foretoken.git
-cd foretoken
+准备好 `examples/quickstart/cache.yaml` 中的[模型存储](docs/model-storage_zh.md)，再部署：
 
+```bash
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-该示例部署一个前端服务、一个 `Qwen/Qwen3-0.6B` 模型副本和一个从 10 GiB 起的运行时缓存 PVC，缓存需要支持扩容的默认 `StorageClass`。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
+该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型文件和运行时缓存保存在 `cache.yaml` 配置的目录中。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
 
 ### 4. 发送测试请求
 
@@ -83,8 +86,7 @@ curl --fail-with-body --no-buffer \
 ```bash
 pip install 'foretoken[bench]'
 
-# 如果使用源码安装：
-# pip install -e .
+# 从源码目录安装：
 # pip install -e '.[bench]'
 foretoken bench examples/quickstart
 ```
@@ -107,6 +109,8 @@ spec:
 ```bash
 # 安装平台并启用网关模式
 foretoken install --frontend-mode gateway
+# 源码安装的平台：
+# foretoken install -e . --frontend-mode gateway
 
 # 部署快速开始示例
 foretoken deploy examples/quickstart --timeout 20m

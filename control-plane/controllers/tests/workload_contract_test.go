@@ -48,7 +48,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		for _, item := range pod.Containers[0].Env {
 			env[item.Name] = item
 		}
-		if env["HF_HOME"].Value != "/cache/models" || env["VLLM_CACHE_ROOT"].Value != "/cache/vllm" || env["TORCHINDUCTOR_CACHE_DIR"].Value != "/cache/torch" || env["TRITON_CACHE_DIR"].Value != "/cache/triton" || env["FORETOKEN_CACHE_OBSERVATION_PORT"].Value != "9001" {
+		if env["FORETOKEN_MODEL_ROOT"].Value != "/cache/models" || env["HF_HOME"].Value != "/cache/models" || env["VLLM_CACHE_ROOT"].Value != "/cache/vllm" || env["TORCHINDUCTOR_CACHE_DIR"].Value != "/cache/torch" || env["TRITON_CACHE_DIR"].Value != "/cache/triton" || env["FORETOKEN_CACHE_OBSERVATION_PORT"].Value != "9001" {
 			t.Fatalf("runtime cache environment = %#v", env)
 		}
 		cacheMounted := false
