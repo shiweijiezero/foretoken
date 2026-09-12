@@ -294,12 +294,22 @@ func validateAutoscalingConfig(config *inferencev1alpha1.ModelAutoscalingConfig)
 	}
 	decision := config.Decision
 	switch decision.Algorithm {
+	case inferencev1alpha1.AutoscalingDecisionAlgorithmAIMD:
+		if decision.AIMD == nil || decision.Queue != nil || decision.QueueThreshold != nil {
+			return fmt.Errorf("autoscaling AIMD decision configuration is invalid")
+		}
+		additiveIncrease := valueOrDefault(decision.AIMD.AdditiveIncrease, 1)
+		multiplicativeDecreasePercent := valueOrDefault(decision.AIMD.MultiplicativeDecreasePercent, 50)
+		scaleUpQueuedRequests := valueOrDefaultInt64(decision.AIMD.ScaleUpQueuedRequests, 0)
+		if additiveIncrease <= 0 || multiplicativeDecreasePercent <= 0 || multiplicativeDecreasePercent >= 100 || scaleUpQueuedRequests < 0 {
+			return fmt.Errorf("autoscaling AIMD decision configuration is invalid")
+		}
 	case inferencev1alpha1.AutoscalingDecisionAlgorithmQueue:
-		if decision.Queue == nil || decision.QueueThreshold != nil || valueOrDefaultInt64(decision.Queue.TargetAverageQueuedRequests, 1) <= 0 {
+		if decision.AIMD != nil || decision.Queue == nil || decision.QueueThreshold != nil || valueOrDefaultInt64(decision.Queue.TargetAverageQueuedRequests, 1) <= 0 {
 			return fmt.Errorf("autoscaling queue decision configuration is invalid")
 		}
 	case inferencev1alpha1.AutoscalingDecisionAlgorithmQueueThreshold:
-		if decision.QueueThreshold == nil || decision.Queue != nil {
+		if decision.AIMD != nil || decision.QueueThreshold == nil || decision.Queue != nil {
 			return fmt.Errorf("autoscaling queue_threshold decision configuration is invalid")
 		}
 		scaleUp := valueOrDefaultInt64(decision.QueueThreshold.ScaleUpQueuedRequests, 1)

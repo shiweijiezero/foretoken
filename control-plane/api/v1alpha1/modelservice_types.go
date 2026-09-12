@@ -168,10 +168,11 @@ type ModelPoolTemplate struct {
 }
 
 // AutoscalingDecisionAlgorithm selects how observed demand is converted into desired replica capacity.
-// +kubebuilder:validation:Enum=queue;queue_threshold
+// +kubebuilder:validation:Enum=aimd;queue;queue_threshold
 type AutoscalingDecisionAlgorithm string
 
 const (
+	AutoscalingDecisionAlgorithmAIMD           AutoscalingDecisionAlgorithm = "aimd"
 	AutoscalingDecisionAlgorithmQueue          AutoscalingDecisionAlgorithm = "queue"
 	AutoscalingDecisionAlgorithmQueueThreshold AutoscalingDecisionAlgorithm = "queue_threshold"
 )
@@ -219,10 +220,35 @@ type ModelAutoscalingQueueThresholdDecisionConfig struct {
 	ScaleDownQueuedRequests *int64 `json:"scaleDownQueuedRequests,omitempty"`
 }
 
+// ModelAutoscalingAIMDDecisionConfig configures additive growth and multiplicative idle reduction.
+type ModelAutoscalingAIMDDecisionConfig struct {
+	// AdditiveIncrease is the number of replicas added when queue pressure exceeds the threshold.
+	// +optional
+	// +kubebuilder:default=1
+	// +kubebuilder:validation:Minimum=1
+	AdditiveIncrease *int32 `json:"additiveIncrease,omitempty"`
+
+	// MultiplicativeDecreasePercent is the percentage of current replicas retained when idle.
+	// +optional
+	// +kubebuilder:default=50
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=99
+	MultiplicativeDecreasePercent *int32 `json:"multiplicativeDecreasePercent,omitempty"`
+
+	// ScaleUpQueuedRequests is the aggregate queue depth that must be exceeded to add capacity.
+	// +optional
+	// +kubebuilder:default=0
+	// +kubebuilder:validation:Minimum=0
+	ScaleUpQueuedRequests *int64 `json:"scaleUpQueuedRequests,omitempty"`
+}
+
 // ModelAutoscalingDecisionConfig configures desired-capacity calculation.
-// +kubebuilder:validation:XValidation:rule="self.algorithm == 'queue' ? has(self.queue) && !has(self.queueThreshold) : has(self.queueThreshold) && !has(self.queue)",message="autoscaling decision must configure exactly the selected algorithm"
+// +kubebuilder:validation:XValidation:rule="(self.algorithm == 'aimd' && has(self.aimd) && !has(self.queue) && !has(self.queueThreshold)) || (self.algorithm == 'queue' && !has(self.aimd) && has(self.queue) && !has(self.queueThreshold)) || (self.algorithm == 'queue_threshold' && !has(self.aimd) && !has(self.queue) && has(self.queueThreshold))",message="autoscaling decision must configure exactly the selected algorithm"
 type ModelAutoscalingDecisionConfig struct {
 	Algorithm AutoscalingDecisionAlgorithm `json:"algorithm"`
+
+	// +optional
+	AIMD *ModelAutoscalingAIMDDecisionConfig `json:"aimd,omitempty"`
 
 	// +optional
 	Queue *ModelAutoscalingQueueDecisionConfig `json:"queue,omitempty"`
