@@ -20,6 +20,4 @@ foretoken bench examples/quickstart \
 
 ![命令行汇总](../imgs/multi-dataset-benchmark-output.png)
 
-![第一个数据集的 W&B 页面](../imgs/multi-dataset-first-wandb.png)
-
-![第二个数据集的 W&B 页面](../imgs/multi-dataset-second-wandb.png)
+![同一 W&B group 中的数据集曲线对比](../imgs/multi-dataset-wandb.png)

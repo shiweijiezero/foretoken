@@ -16,7 +16,8 @@ import wandb
 
 from benchmarks.config.benchmark import BenchmarkConfig, WandbRunConfig
 from benchmarks.model_service import ModelService
-from benchmarks.results.metrics import percentile_summary
+from benchmarks.results.metrics import RequestMeasurement, percentile_summary
+from benchmarks.results.timeseries import ELAPSED_TIME, REQUEST_INDEX, request_series, time_series
 
 logger = logging.getLogger(__name__)
 
@@ -243,11 +244,27 @@ class WandbBenchmarkRun:
         """Publish the final aggregated HTTP benchmark metrics."""
         if self._run is None:
             return
-        message = wandb_metric_fields(metrics)
-        if "replay_delay" in metrics:
-            self._run.summary.update(message)
-        else:
-            self._run.log(message)
+        self._run.summary.update(wandb_metric_fields(metrics))
+
+    def log_request_history(
+        self, measurements: list[RequestMeasurement], *, duration: float, stream: bool
+    ) -> None:
+        """Publish completed-run observations on explicit time and send-order axes."""
+        if self._run is None:
+            return
+        self._run.define_metric(ELAPSED_TIME)
+        self._run.define_metric(REQUEST_INDEX)
+        series = (
+            (ELAPSED_TIME, time_series(measurements, duration=duration, stream=stream)),
+            (REQUEST_INDEX, request_series(measurements, stream=stream)),
+        )
+        for axis, rows in series:
+            defined = {axis}
+            for row in rows:
+                for key in row.keys() - defined:
+                    self._run.define_metric(key, step_metric=axis, step_sync=False)
+                    defined.add(key)
+                self._run.log(row)
 
     def log_trace_measurements(self, results: list[dict[str, Any]]) -> None:
         """Upload trace history organized by scheduled time after replay completes."""

@@ -137,6 +137,12 @@ class WandbSink:
         )
 
     def publish(self, run: BenchmarkRun) -> None:
+        if run.measurements is not None:
+            self.wandb_run.log_request_history(
+                run.measurements,
+                duration=float(run.metrics["benchmark_time"]),
+                stream=bool(run.metrics["stream"]),
+            )
         raw_output = run.artifacts.get("raw_output")
         if raw_output is not None:
             self.wandb_run.log_trace_measurements(

@@ -20,6 +20,4 @@ A short run over two local datasets:
 
 ![Combined CLI output](../imgs/multi-dataset-benchmark-output.png)
 
-![First dataset in W&B](../imgs/multi-dataset-first-wandb.png)
-
-![Second dataset in W&B](../imgs/multi-dataset-second-wandb.png)
+![Dataset curves compared in one W&B group](../imgs/multi-dataset-wandb.png)

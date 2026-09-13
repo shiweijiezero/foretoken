@@ -23,6 +23,17 @@ Request latency distributions use successful requests. `--no-stream` retains lat
 
 For multi-turn data, each HTTP turn is a request. A failed turn stops that conversation; successful turns are not successful conversations. Multi-dataset runs keep conversation percentiles per dataset instead of averaging them.
 
-Trace results additionally report replay delay, measured from scheduled arrival to actual send. E2EL and TTFT labeled `including replay delay` include this wait. Trace history buckets use scheduled arrival time, not completion time.
+## Curves
+
+W&B records two views after each run:
+
+- **Time/** uses elapsed seconds. One-second windows show successful completion throughput, failure rate, p95 request timings, and time-weighted mean in-flight requests. Completed, successful, and failed request counts are cumulative. The last window uses its actual duration.
+- **Requests/** uses request index in send order, starting at one. It shows each request's E2EL, token counts, success, and available streaming timings.
+
+Time-window token throughput attributes a successful request's tokens to the window in which it finishes; it is not a measurement of individual token emission times. Windows without completions have zero throughput but no latency or failure-rate sample. These histories are uploaded after completion, not streamed live.
+
+Task runs in the same W&B group share these axes for comparison. Final metrics remain in Summary.
+
+Trace results also report replay delay from scheduled arrival to actual send. E2EL and TTFT labeled `including replay delay` include that wait. **Trace/** charts use scheduled arrival time; **Time/** charts use actual request completion windows.
 
 Retries are disabled by default. `--max-retries N` allows up to `N` additional attempts for transient failures; retry time is included in logical request latency.
