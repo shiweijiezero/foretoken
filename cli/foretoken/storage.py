@@ -47,7 +47,7 @@ class DirectoryVolumes:
         context = self.kubectl.current_context()
         nodes = self.kubectl.list_cluster_resources(["nodes"])
         if not nodes:
-            raise DeploymentError("directory storage requires a Kubernetes node")
+            raise DeploymentError("directory-backed storage requires a Kubernetes node")
         locations = []
         for cache in caches:
             path, hostnames = _resolve_directory(cache, deployment.path, context, nodes)

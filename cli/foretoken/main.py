@@ -20,7 +20,7 @@ from foretoken.arguments import (
     UninstallCommand,
     parse_arguments,
 )
-from foretoken.directory_storage import DirectoryVolumes
+from foretoken.storage import DirectoryVolumes
 from foretoken.kubernetes import (
     Kubectl,
     ResourceProgress,
