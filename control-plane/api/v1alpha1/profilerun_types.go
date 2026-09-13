@@ -52,7 +52,7 @@ type ProfileExecutionPlan struct {
 	ServiceUID        string                `json:"serviceUID"`
 	ServingGeneration int64                 `json:"servingGeneration"`
 	Revisions         []ServingPoolRevision `json:"revisions"`
-	ArtifactClaim     string                `json:"artifactClaim"`
+	RuntimeCacheClaim string                `json:"runtimeCacheClaim"`
 	Participants      []ProfileParticipant  `json:"participants"`
 }
 

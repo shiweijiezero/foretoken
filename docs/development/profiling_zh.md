@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](profiling.md) | 简体中文
 
-当前实验实现对已有诊断 ModelService 执行一次有时长上限的 Torch 采集，不依赖 benchmark 或监控功能。准备环境、执行命令和取得产物，请先看[操作指南](../../observability/profiling_zh.md)。
+当前实验实现对已有诊断 ModelService 执行一次有时长上限的 Torch 采集，不依赖 benchmark 或监控功能。执行命令和取得产物，请先看[操作指南](../../observability/profiling_zh.md)。
 
 ## 职责与执行路径
 
@@ -17,15 +17,17 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 在采集前准备运行环境
 
-平台通过 `profiling.artifactClaims` 将诊断命名空间绑定到已有 PVC。ModelGroup 控制器在正常 Pod 模板中添加挂载和运行身份。这会改变部署，因此应在部署诊断服务前完成；ProfileRun 本身不拥有或修改工作负载与 PVC。
+Profiling 只使用 ModelService 已解析的 RuntimeCache 持久存储绑定。ModelGroup 控制器已经把该 PVC 挂载为数据根目录，并向 model-server 提供 claim、Pod 和 Group 身份。Runtime 在数据根目录下派生 `profiles/`，不会使用 KV offload 或 connector 卷。ProfileRun 不拥有或修改工作负载与存储。
 
-Model-server 镜像内建 PyTorch 采集支持，[vLLM 补丁](../../data-plane/patches/vllm-python-profiling.patch)在原生控制入口返回启停错误，并在后续采集前重新创建已完成的 Torch 状态。Runtime 启动时准备进程身份及独占 staging 目录，收到采集请求后才启动 profiler。
+没有持久 RuntimeCache 的 serving Group 不能参与采集，控制器会在启动原生 profiler 前报告错误。RuntimeCache 已回退到 Pod 本地临时目录时，runtime 会报告 profiling 不可用。这两种情况都不会创建其他卷，也不会把结果改写到临时存储。
+
+Model-server 镜像内建 PyTorch 采集支持，[vLLM 补丁](../../data-plane/patches/vllm-python-profiling.patch)在原生控制入口返回启停错误，并在后续采集前重新创建已完成的 Torch 状态。Runtime 启动时准备进程身份及独占 staging 目录，只有收到采集请求后才启动 profiler。
 
 ## 采集身份与恢复
 
 API 在创建后固定目标、采集工具和时长。动作从 `Capture` 推进到 `Finish` 或 `Cancel`，取消不可撤销。即使资源同名，Kubernetes UID 也能区分不同采集。
 
-启动原生采集前，控制器先持久化删除 finalizer，并在 ProfileRun status 中保存类型明确的执行计划。它复用已有路由辅助逻辑，解析 ModelService 已提交的 serving generation，并核对 Pod → ReplicaSet → Deployment → ModelGroup 的归属链。计划记录固定的服务、Group、Pod 和 runtime 身份。控制器重启后读取原计划，不重新选择替代实例。
+启动原生采集前，控制器先持久化删除 finalizer，并在 ProfileRun status 中保存类型明确的执行计划。它复用已有路由辅助逻辑，解析 ModelService 已提交的 serving generation，并核对 Pod → ReplicaSet → Deployment → ModelGroup 的归属链。计划记录固定的 RuntimeCache claim，以及服务、Group、Pod 和 runtime 身份。控制器重启后读取原计划，不重新选择替代实例或存储。
 
 状态依次经过 `Starting`、`Capturing`、`Stopping`，最终为 `Succeeded`、`Failed` 或 `Cancelled`。只有全部参与实例都在采集时，运行才报告 `Capturing`；成功也需要核对全部预期参与者。发出 HTTP 操作不代表采集完成。Runtime 拒绝竞争采集，同一 UID 的重试不重启窗口，也不延长时限。
 
@@ -41,18 +43,18 @@ API 在创建后固定目标、采集工具和时长。动作从 `Capture` 推�
 
 ## 先封存，再发布结果
 
-Runtime 使用平台提供的独立、共享可写产物 PVC，不复用模型缓存或 KV 存储：
+每个 runtime 都在 RuntimeCache PVC 提供的持久数据根目录下写入：
 
 ```text
-<artifact-volume>/.staging/<runtime-id>/
-<artifact-volume>/runs/<run-uid>/<runtime-id>/
+<data-root>/profiles/.staging/<runtime-id>/
+<data-root>/profiles/runs/<run-uid>/<runtime-id>/
 ```
 
 开始前要求 staging 为空，不删除尚未处理的残留输出。原生停止/flush 完成后，成功采集必须为每个预期 worker 提供一份合法 Torch trace。GPU 活动单独报告，合法的空闲窗口不导致发布失败。逐事件读取避免将整个大文件加载进内存。取消时保留已有输出，但不将其视为完整采集。
 
 Supervisor 写入并 flush manifest，在同一文件系统内重命名整个 staging 目录，再 flush 目标目录，随后发布结果引用。原子性属于单个参与者，不是分布式事务。后续采集重建 staging，使用不同 run 目录。封存失败不发布成功，也不删除可恢复数据。
 
-Manifest 的 `startedAtUnixMs` 在原生启动后记录，`recordingEndedAtUnixMs` 表示发起停止，`exportedAtUnixMs` 表示停止/flush 返回。不同 worker 的实际停止时间可能略有差异，这些控制时间戳不冒充精确 GPU 事件边界。ProfileRun 的 `finishedAt` 是控制器观察到完成的时间。命令返回 PVC 和路径，不代表已下载到本机。删除命名空间或 PVC 仍由存储管理者负责，也可能删除产物。
+Manifest 的 `startedAtUnixMs` 在原生启动后记录，`recordingEndedAtUnixMs` 表示发起停止，`exportedAtUnixMs` 表示停止/flush 返回。不同 worker 的实际停止时间可能略有差异，这些控制时间戳不冒充精确 GPU 事件边界。ProfileRun 的 `finishedAt` 是控制器观察到完成的时间。命令返回 RuntimeCache PVC 和 `profiles/runs/...` 路径，不代表已下载到本机；产物随 RuntimeCache 存储生命周期保留或删除。
 
 ## 常用命令规划
 
@@ -90,7 +92,7 @@ foretoken profile examples/quickstart --profile-duration 5s --profile-engine mct
 6. NVIDIA Nsight Systems：增加 `--profile-engine nsight`，验证服务持续运行时完成报告导出。
 7. 沐曦 mcTracer：增加 `--profile-engine mctracer`，根据实际工具验证非交互启停和导出。
 
-所有入口使用同名的 `--profile-*` 参数，随对应能力交付。引擎 step、重复窗口及间隔参数暂缓。匹配的模型镜像提供采集工具，部署负责挂载产物存储，采集请求负责选择记录窗口。
+所有入口使用同名的 `--profile-*` 参数，随对应能力交付。引擎 step、重复窗口及间隔参数暂缓。匹配的模型镜像提供采集工具，部署负责解析 RuntimeCache 持久存储，采集请求负责选择记录窗口。
 
 验收需使用真实引擎产物，覆盖多次独立采集、空闲窗口、取消、CLI 退出、控制器恢复、原生失败和产物发布失败。多 worker 覆盖和开销必须有各自的硬件证据，单 worker 成功不代表这些验证已经完成。
 

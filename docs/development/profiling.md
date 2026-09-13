@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](profiling_zh.md)
 
-The experimental implementation captures one time-bounded Torch window on an existing diagnostic ModelService. It is independent of benchmark execution and monitoring. Start with the [operator guide](../../observability/profiling.md) for preparation, the command and artifact access.
+The experimental implementation captures one time-bounded Torch window on an existing diagnostic ModelService. It is independent of benchmark execution and monitoring. Start with the [operator guide](../../observability/profiling.md) for the command and result access.
 
 ## Ownership and execution
 
@@ -17,15 +17,17 @@ The command does not generate traffic, change serving configuration, deploy a be
 
 ## Prepare before capture
 
-The platform's `profiling.artifactClaims` maps a diagnostic namespace to an existing PVC. The ModelGroup controller projects the mount and runtime identity into its normal Pod template. This changes workloads at deployment time, so configure it before deploying diagnostic services. ProfileRun does not own or mutate workloads or PVCs.
+The ModelService's resolved RuntimeCache binding is the only persistent storage binding used by profiling. The ModelGroup controller already mounts its PVC as the data root and projects the claim, Pod and Group identities required by model-server. The runtime derives `profiles/` below that root; it never uses KV offload or connector volumes. ProfileRun does not own or mutate workloads or storage.
 
-The model-server image includes PyTorch capture support. The [vLLM backport](../../data-plane/patches/vllm-python-profiling.patch) reports start/stop failures at the native control boundary and recreates completed Torch state before subsequent captures. Runtime startup prepares process identity and private staging; profiling begins when a capture is requested.
+A serving Group without a persistent RuntimeCache cannot participate in capture. The controller reports this before starting native work, while a runtime that has fallen back to Pod-local temporary cache storage reports profiling unavailable. Neither case creates another volume or redirects results to temporary storage.
+
+The model-server image includes PyTorch capture support. The [vLLM backport](../../data-plane/patches/vllm-python-profiling.patch) reports start/stop failures at the native control boundary and recreates completed Torch state before subsequent captures. Runtime startup prepares process identity and private staging; profiling begins only when a capture is requested.
 
 ## Identity and recovery
 
 The API fixes target, engine and duration at creation. Actions move from `Capture` to `Finish` or `Cancel`; cancellation cannot be reversed. The Kubernetes UID distinguishes runs even when a resource name is reused.
 
-Before native work starts, reconciliation persists a deletion finalizer and a typed execution plan in ProfileRun status. It resolves the ModelService's committed serving generation with existing routing helpers and checks the Pod → ReplicaSet → Deployment → ModelGroup ownership chain. The plan stores fixed service, group, Pod and runtime identities. Controller restart reads the same plan rather than selecting replacement instances.
+Before native work starts, reconciliation persists a deletion finalizer and a typed execution plan in ProfileRun status. It resolves the ModelService's committed serving generation with existing routing helpers and checks the Pod → ReplicaSet → Deployment → ModelGroup ownership chain. The plan stores the fixed RuntimeCache claim together with service, Group, Pod and runtime identities. Controller restart reads the same plan rather than selecting replacement instances or storage.
 
 Status progresses through `Starting`, `Capturing` and `Stopping` to `Succeeded`, `Failed` or `Cancelled`. All selected participants must be capturing before the run reports `Capturing`; success requires every expected participant's result. Sending an HTTP operation alone is not completion. The runtime rejects competing captures and handles same-run retries without restarting or extending the window.
 
@@ -41,18 +43,18 @@ Without an active capture, the runtime retains its normal request-drain and shut
 
 ## Seal before publication
 
-Each runtime writes to a dedicated, shared-writable artifact PVC, separate from runtime cache and KV storage:
+Each runtime writes below the persistent data root supplied by its RuntimeCache PVC:
 
 ```text
-<artifact-volume>/.staging/<runtime-id>/
-<artifact-volume>/runs/<run-uid>/<runtime-id>/
+<data-root>/profiles/.staging/<runtime-id>/
+<data-root>/profiles/runs/<run-uid>/<runtime-id>/
 ```
 
 Before starting, staging must be empty; unhandled output is not erased. After native stop/flush, success requires one valid Torch trace per expected worker. GPU activity is reported separately; a valid idle window does not fail publication. Validation streams events rather than loading the whole trace into memory. Cancellation retains available output without claiming completeness.
 
 The supervisor writes and flushes the manifest, renames the whole staging directory on the same filesystem, and flushes destination directories before publishing the artifact reference. Atomicity is per participant, not a distributed transaction. Later captures recreate staging and use a different run path. Publication failure neither produces success nor deletes recoverable data.
 
-The manifest's `startedAtUnixMs` follows native start, `recordingEndedAtUnixMs` marks the stop request, and `exportedAtUnixMs` follows stop/flush. Native workers may stop at slightly different times; these control timestamps do not claim exact GPU event boundaries. ProfileRun `finishedAt` is controller-observed completion. The command returns a PVC/path reference, not a workstation download. Namespace or PVC deletion remains a storage-owner operation and can remove artifacts.
+The manifest's `startedAtUnixMs` follows native start, `recordingEndedAtUnixMs` marks the stop request, and `exportedAtUnixMs` follows stop/flush. Native workers may stop at slightly different times; these control timestamps do not claim exact GPU event boundaries. ProfileRun `finishedAt` is controller-observed completion. The command returns the RuntimeCache PVC and a `profiles/runs/...` path, not a workstation download. Retention follows the RuntimeCache storage lifecycle.
 
 ## Planned command recipes
 
@@ -90,7 +92,7 @@ Each step is a separately usable and validated PR, not a horizontal split betwee
 6. NVIDIA Nsight Systems via `--profile-engine nsight`, with report finalization while serving remains running.
 7. MetaX mcTracer via `--profile-engine mctracer`, validated against its actual noninteractive control and export capabilities.
 
-All entrypoints share the same `--profile-*` names as their capabilities ship. Engine-step, repeated-window and gap options are deferred. Matching model images provide the capture tools, deployment mounts artifact storage, and each capture selects its recording window.
+All entrypoints share the same `--profile-*` names as their capabilities ship. Engine-step, repeated-window and gap options are deferred. Matching model images provide the capture tools, deployment resolves persistent RuntimeCache storage, and each capture selects its recording window.
 
 Acceptance must use actual engine traces and verify repeated independent runs, idle capture, cancellation, CLI loss, controller recovery, native failure and artifact publication failures. Multi-worker coverage and overhead need their own hardware evidence; a successful single-worker run does not establish them.
 

@@ -256,9 +256,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "profile",
         help="Capture one experimental Torch window on an existing diagnostic ModelService",
         description=(
-            "Request runtime-owned Torch capture. The platform must prepare diagnostic "
-            "storage before service deployment. This command does not generate requests "
-            "or download traces; results remain on the artifact PVC."
+            "Request runtime-owned Torch capture for a service using persistent "
+            "RuntimeCache storage. This command does not generate requests or download "
+            "traces; results remain under the cache's profiles directory."
         ),
     )
     profile.add_argument(

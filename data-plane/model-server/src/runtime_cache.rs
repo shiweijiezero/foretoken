@@ -20,6 +20,7 @@ use tokio::sync::Notify;
 use tracing::warn;
 
 const OBSERVATION_VERSION: u8 = 1;
+const RUNTIME_CACHE_CLAIM_ENV: &str = "FORETOKEN_RUNTIME_CACHE_CLAIM";
 const WRITE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const TEMPORARY_CACHE_ROOT: &str = "/tmp/foretoken-runtime-cache";
 const CACHE_ENV: [&str; 4] = [
@@ -48,11 +49,12 @@ impl Mode {
 
 #[derive(Clone)]
 pub struct Config {
-    mount_path: PathBuf,
+    pub(crate) claim_name: String,
+    pub(crate) mount_path: PathBuf,
     model_root: PathBuf,
     cache_directories: Vec<(&'static str, PathBuf)>,
     temporary_root: PathBuf,
-    pod_uid: String,
+    pub(crate) pod_uid: String,
     observation_port: u16,
     temporary: Arc<AtomicBool>,
 }
@@ -75,6 +77,10 @@ impl Config {
         if !mount_path.is_absolute() || mount_path == Path::new("/") {
             return Err("FORETOKEN_CACHE_MOUNT_PATH must be an absolute non-root path".into());
         }
+        let claim_name = std::env::var(RUNTIME_CACHE_CLAIM_ENV)
+            .ok()
+            .filter(|value| !value.is_empty())
+            .ok_or("FORETOKEN_RUNTIME_CACHE_CLAIM must be set when a RuntimeCache is mounted")?;
         let model_root = std::env::var_os(foretoken_artifacts::MODEL_ROOT_ENV)
             .map(PathBuf::from)
             .ok_or("FORETOKEN_MODEL_ROOT must be set when a RuntimeCache is mounted")?;
@@ -106,6 +112,7 @@ impl Config {
             return Err("FORETOKEN_CACHE_OBSERVATION_PORT must not be zero".into());
         }
         Ok(Some(Self {
+            claim_name,
             mount_path,
             model_root,
             cache_directories,
@@ -297,6 +304,7 @@ mod tests {
         std::fs::write(&persistent, b"not a directory").unwrap();
         let temporary = root.join("temporary");
         let config = Config {
+            claim_name: "cache".into(),
             mount_path: persistent.clone(),
             model_root: persistent.join("models"),
             cache_directories: vec![("HF_HOME", PathBuf::from("models"))],

@@ -145,8 +145,6 @@ spec:
                 description: Plan is fixed once selected; reconciliation never retargets
                   replacement runtimes.
                 properties:
-                  artifactClaim:
-                    type: string
                   participants:
                     items:
                       description: |-
@@ -196,15 +194,17 @@ spec:
                       - revision
                       type: object
                     type: array
+                  runtimeCacheClaim:
+                    type: string
                   serviceUID:
                     type: string
                   servingGeneration:
                     format: int64
                     type: integer
                 required:
-                - artifactClaim
                 - participants
                 - revisions
+                - runtimeCacheClaim
                 - serviceUID
                 - servingGeneration
                 type: object

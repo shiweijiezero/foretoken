@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -18,53 +18,54 @@ use uuid::Uuid;
 use crate::api::RuntimeHealth;
 use crate::backend::VllmBackend;
 
-const ARTIFACT_ROOT: &str = "/var/lib/foretoken/profiles";
+const PROFILE_DIRECTORY: &str = "profiles";
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Startup-only diagnostic binding projected by the workload controller.
+/// Diagnostic identity and storage derived from the mounted persistent RuntimeCache.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
-    pub claim: String,
-    pub pod_uid: String,
-    pub group_uid: String,
-    pub runtime_id: String,
-    pub workers: usize,
+    runtime_cache_claim: String,
+    data_root: PathBuf,
+    pod_uid: String,
+    group_uid: String,
+    runtime_id: String,
+    workers: usize,
 }
 
 impl Config {
-    /// Reads an optional platform binding; a fresh identity distinguishes process replacements.
-    pub fn from_env(workers: usize) -> Result<Option<Self>, String> {
-        let claim = match std::env::var("FORETOKEN_PROFILE_ARTIFACT_CLAIM") {
-            Ok(value) if !value.is_empty() => value,
-            Ok(_) | Err(std::env::VarError::NotPresent) => return Ok(None),
-            Err(error) => return Err(error.to_string()),
-        };
-        let required = |name: &str| {
-            std::env::var(name).map_err(|_| format!("{name} is required for diagnostic capture"))
-        };
-        Ok(Some(Self {
-            claim,
-            pod_uid: required("FORETOKEN_POD_UID")?,
-            group_uid: required("FORETOKEN_MODEL_GROUP_UID")?,
+    /// Builds profiling identity and paths from the already validated RuntimeCache mount.
+    pub fn from_runtime_cache(
+        cache: &crate::runtime_cache::Config,
+        group_uid: String,
+        workers: usize,
+    ) -> Self {
+        Self {
+            runtime_cache_claim: cache.claim_name.clone(),
+            data_root: cache.mount_path.clone(),
+            pod_uid: cache.pod_uid.clone(),
+            group_uid,
             runtime_id: Uuid::new_v4().to_string(),
             workers,
-        }))
+        }
+    }
+
+    fn profile_root(&self) -> PathBuf {
+        self.data_root.join(PROFILE_DIRECTORY)
     }
 
     fn staging(&self) -> PathBuf {
-        Path::new(ARTIFACT_ROOT)
-            .join(".staging")
-            .join(&self.runtime_id)
+        self.profile_root().join(".staging").join(&self.runtime_id)
     }
 
     /// Prepares this process's isolated staging directory before the inference engine starts.
     pub fn prepare(&self) -> io::Result<()> {
-        // The mount must already exist; never silently substitute Pod-local storage.
-        fs::metadata(ARTIFACT_ROOT)?;
-        fs::create_dir_all(Path::new(ARTIFACT_ROOT).join("runs"))?;
+        // The persistent mount must already exist; never substitute Pod-local storage.
+        fs::metadata(&self.data_root)?;
+        let profile_root = self.profile_root();
+        fs::create_dir_all(profile_root.join("runs"))?;
         fs::create_dir_all(self.staging())?;
-        File::open(ARTIFACT_ROOT)?.sync_all()
+        File::open(profile_root)?.sync_all()
     }
 
     /// Renders the native Torch configuration; iteration schedules remain disabled for this path.
@@ -130,7 +131,7 @@ pub struct Observation {
     runtime_id: String,
     pod_uid: String,
     group_uid: String,
-    artifact_claim: String,
+    runtime_cache_claim: String,
     capture: Option<Record>,
 }
 
@@ -161,7 +162,7 @@ impl Handle {
             runtime_id: self.config.runtime_id.clone(),
             pod_uid: self.config.pod_uid.clone(),
             group_uid: self.config.group_uid.clone(),
-            artifact_claim: self.config.claim.clone(),
+            runtime_cache_claim: self.config.runtime_cache_claim.clone(),
             capture: uid.and_then(|uid| state.entries.get(uid).map(|entry| entry.record.clone())),
         }
     }
@@ -471,18 +472,22 @@ fn seal(config: &Config, mut record: Record, cancelled: bool) -> io::Result<Reco
             record.message = "No GPU kernel activity was recorded in this window".into();
         }
     }
-    let relative = format!("runs/{}/{}", record.run_uid, config.runtime_id);
+    let relative = format!(
+        "{PROFILE_DIRECTORY}/runs/{}/{}",
+        record.run_uid, config.runtime_id
+    );
     record.artifact_dir = Some(relative.clone());
     let mut manifest = File::create(staging.join("manifest.json"))?;
     serde_json::to_writer(&mut manifest, &record)?;
     manifest.write_all(b"\n")?;
     manifest.sync_all()?;
     File::open(&staging)?.sync_all()?;
-    let destination = Path::new(ARTIFACT_ROOT).join(relative);
+    let runs = config.profile_root().join("runs");
+    let destination = config.data_root.join(&relative);
     fs::create_dir_all(destination.parent().expect("run directory has parent"))?;
     fs::rename(&staging, &destination)?;
     File::open(destination.parent().expect("run directory has parent"))?.sync_all()?;
-    File::open(Path::new(ARTIFACT_ROOT).join("runs"))?.sync_all()?;
+    File::open(runs)?.sync_all()?;
     Ok(record)
 }
 

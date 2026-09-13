@@ -61,3 +61,5 @@ spec:
 使用 `storageClassName` 选择 StorageClass。只有存储驱动支持在线扩容时，才增加 `maxSize`。
 
 需要挂载其他系统管理的 PVC 时，在平台 values 中设置 `workload.cache.claimName`，并在每个工作负载命名空间创建该 PVC。
+
+诊断采集复用同一数据根目录，并将结果写入 `profiles/`；操作方法见[性能剖析指南](../observability/profiling_zh.md)。

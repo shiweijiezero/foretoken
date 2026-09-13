@@ -14,7 +14,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-const runtimeCacheVolumeName = "runtime-cache"
+const (
+	runtimeCacheVolumeName = "runtime-cache"
+	runtimeCacheClaimEnv   = "FORETOKEN_RUNTIME_CACHE_CLAIM"
+)
 
 func runtimeCacheObservationPort(runtimePort int32) int32 {
 	if runtimePort < 65535 {

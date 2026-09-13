@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"path"
 	"reflect"
 	"strconv"
 	"time"
@@ -29,6 +30,7 @@ import (
 
 const profileFinalizer = "inference.foretoken.io/profile-stop"
 const profilePath = "/v1/internal/profiling"
+const profileArtifactRoot = "profiles/runs"
 
 // ProfileRunReconciler owns capture coordination, never serving resources or artifact storage.
 type ProfileRunReconciler struct {
@@ -47,11 +49,11 @@ type profileRecord struct {
 }
 
 type profileObservation struct {
-	RuntimeID     string         `json:"runtimeId"`
-	PodUID        string         `json:"podUid"`
-	GroupUID      string         `json:"groupUid"`
-	ArtifactClaim string         `json:"artifactClaim"`
-	Capture       *profileRecord `json:"capture"`
+	RuntimeID         string         `json:"runtimeId"`
+	PodUID            string         `json:"podUid"`
+	GroupUID          string         `json:"groupUid"`
+	RuntimeCacheClaim string         `json:"runtimeCacheClaim"`
+	Capture           *profileRecord `json:"capture"`
 }
 
 // SetupWithManager registers the existing manager as the sole capture coordinator.
@@ -160,7 +162,7 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 			action = "Cancel"
 			continue
 		}
-		if observation.RuntimeID != participant.RuntimeID || observation.PodUID != participant.PodUID || observation.GroupUID != participant.GroupUID {
+		if observation.RuntimeID != participant.RuntimeID || observation.PodUID != participant.PodUID || observation.GroupUID != participant.GroupUID || observation.RuntimeCacheClaim != plan.RuntimeCacheClaim {
 			if run.Status.Reason == "" {
 				run.Status.Reason, run.Status.Message = "RuntimeReplaced", "the selected engine process was replaced"
 			}
@@ -189,7 +191,8 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 		if record == nil || record.RunUID != string(run.UID) {
 			return ctrl.Result{}, fmt.Errorf("runtime returned an invalid capture identity")
 		}
-		if record.ArtifactDir != nil && *record.ArtifactDir == "runs/"+string(run.UID)+"/"+participant.RuntimeID {
+		expectedArtifact := profileParticipantArtifactPath(string(run.UID), participant.RuntimeID)
+		if record.ArtifactDir != nil && *record.ArtifactDir == expectedArtifact {
 			hasArtifacts = true
 		}
 		if record.StartedAtUnixMS != nil {
@@ -200,7 +203,7 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 		}
 		switch record.Phase {
 		case "Succeeded":
-			if record.ArtifactDir == nil || *record.ArtifactDir != "runs/"+string(run.UID)+"/"+participant.RuntimeID {
+			if record.ArtifactDir == nil || *record.ArtifactDir != expectedArtifact {
 				if run.Status.Reason == "" {
 					run.Status.Reason, run.Status.Message = "InvalidArtifact", "runtime did not publish the expected artifact reference"
 				}
@@ -245,7 +248,7 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 			run.Status.Message = fmt.Sprintf("GPU kernel activity recorded on %d/%d runtimes", gpuActive, len(plan.Participants))
 		}
 		if hasArtifacts {
-			run.Status.Artifact = &api.ProfileArtifactReference{ClaimName: plan.ArtifactClaim, Path: "runs/" + string(run.UID)}
+			run.Status.Artifact = &api.ProfileArtifactReference{ClaimName: plan.RuntimeCacheClaim, Path: profileRunArtifactPath(string(run.UID))}
 		}
 	}
 	return ctrl.Result{RequeueAfter: time.Second}, r.writeProfileStatus(ctx, run)
@@ -300,6 +303,14 @@ func (r *ProfileRunReconciler) prepareProfile(ctx context.Context, run *api.Prof
 			if !routingGroupOwnedBy(&group, &pool) || group.Spec.Revision != serviceServingRevision(service, &pool) || !routingGroupReady(&group) {
 				continue
 			}
+			cache := group.Spec.Artifacts.Cache
+			if cache == nil {
+				return plan, fmt.Errorf("ModelService %s has no persistent RuntimeCache; add one to the deployment and redeploy before profiling", service.Name)
+			}
+			if plan.RuntimeCacheClaim != "" && plan.RuntimeCacheClaim != cache.ClaimName {
+				return plan, fmt.Errorf("serving runtimes use different RuntimeCache claims")
+			}
+			plan.RuntimeCacheClaim = cache.ClaimName
 			pods := new(corev1.PodList)
 			if err := r.APIReader.List(ctx, pods, client.InNamespace(run.Namespace), client.MatchingLabels{modelGroupLabel: group.Name}); err != nil {
 				return plan, err
@@ -317,13 +328,9 @@ func (r *ProfileRunReconciler) prepareProfile(ctx context.Context, run *api.Prof
 				if err != nil {
 					return plan, fmt.Errorf("ModelGroup %s is not prepared for profiling: %w", group.Name, err)
 				}
-				if observation.GroupUID != string(group.UID) || observation.PodUID != string(pod.UID) || observation.RuntimeID == "" || observation.ArtifactClaim == "" {
-					return plan, fmt.Errorf("runtime returned incomplete diagnostic identity")
+				if observation.GroupUID != string(group.UID) || observation.PodUID != string(pod.UID) || observation.RuntimeID == "" || observation.RuntimeCacheClaim != cache.ClaimName {
+					return plan, fmt.Errorf("runtime returned an incomplete or mismatched RuntimeCache identity")
 				}
-				if plan.ArtifactClaim != "" && plan.ArtifactClaim != observation.ArtifactClaim {
-					return plan, fmt.Errorf("diagnostic runtimes must share the namespace artifact claim")
-				}
-				plan.ArtifactClaim = observation.ArtifactClaim
 				plan.Participants = append(plan.Participants, api.ProfileParticipant{GroupName: group.Name, GroupUID: string(group.UID), PodName: pod.Name, PodUID: string(pod.UID), RuntimeID: observation.RuntimeID, Endpoint: endpoint})
 				selected++
 			}
@@ -385,6 +392,9 @@ func (r *ProfileRunReconciler) profileHTTP(ctx context.Context, endpoint, uid st
 		return observation, err
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotImplemented {
+		return observation, fmt.Errorf("runtime profiling is unavailable; ensure the ModelService uses a writable persistent RuntimeCache and redeploy it")
+	}
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusAccepted {
 		return observation, fmt.Errorf("profiling endpoint returned HTTP %d", response.StatusCode)
 	}
@@ -394,6 +404,14 @@ func (r *ProfileRunReconciler) profileHTTP(ctx context.Context, endpoint, uid st
 
 func profileTerminal(phase string) bool {
 	return phase == "Succeeded" || phase == "Failed" || phase == "Cancelled"
+}
+
+func profileRunArtifactPath(runUID string) string {
+	return path.Join(profileArtifactRoot, runUID)
+}
+
+func profileParticipantArtifactPath(runUID, runtimeID string) string {
+	return path.Join(profileRunArtifactPath(runUID), runtimeID)
 }
 
 // writeProfileStatus publishes only observed progress while preserving user-owned intent.

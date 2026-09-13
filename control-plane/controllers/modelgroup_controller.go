@@ -52,11 +52,10 @@ const (
 // ModelGroupReconciler owns the Kubernetes workload for one execution Group.
 type ModelGroupReconciler struct {
 	client.Client
-	DrainClient             ModelGroupDrainClient
-	Now                     func() time.Time
-	ControlPlaneNamespace   string
-	ImagePullSecrets        []corev1.LocalObjectReference
-	ProfilingArtifactClaims map[string]string
+	DrainClient           ModelGroupDrainClient
+	Now                   func() time.Time
+	ControlPlaneNamespace string
+	ImagePullSecrets      []corev1.LocalObjectReference
 }
 
 // SetupWithManager registers the ModelGroup controller and its owned resources.
@@ -146,9 +145,6 @@ func (reconciler *ModelGroupReconciler) validateModelPoolOwnership(ctx context.C
 func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment, error) {
 	desired, err := desiredDeployment(group, reconciler.ImagePullSecrets)
 	if err != nil {
-		return nil, err
-	}
-	if err := configureProfilingWorkload(desired, reconciler.ProfilingArtifactClaims[group.Namespace]); err != nil {
 		return nil, err
 	}
 	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
@@ -263,6 +259,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeCacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
 		env = append(env,
 			corev1.EnvVar{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
+			corev1.EnvVar{Name: runtimeCacheClaimEnv, Value: cache.ClaimName},
 			corev1.EnvVar{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(runtimeCacheObservationPort(group.Spec.Runtime.Port)))},
 			corev1.EnvVar{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		)

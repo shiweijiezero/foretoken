@@ -167,13 +167,13 @@ The command-line tool uses the active `kubectl` context and honors standard Kube
 
 ## Capture a diagnostic profile
 
-The experimental source-only command captures one Torch window on an existing, prepared diagnostic ModelService:
+The experimental source-only command captures one Torch window on an existing ModelService that uses persistent RuntimeCache storage:
 
 ```bash
 foretoken profile examples/quickstart --profile-engine pytorch --profile-duration 15s
 ```
 
-It does not generate requests, deploy services or download traces. The service owns automatic stop and persistent output even if the CLI disconnects. Follow the [profiling prerequisites and limitations](../observability/profiling.md) before using it.
+It does not generate requests, deploy services or download traces. The service owns automatic stop and stores output below `profiles/` on its RuntimeCache PVC even if the CLI disconnects. See [Profiling](../observability/profiling.md) for capture and result access.
 
 ## Clean up
 

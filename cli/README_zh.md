@@ -167,13 +167,13 @@ foretoken bench examples/multi-model-quickstart --model Qwen/Qwen3-0.6B
 
 ## 采集诊断 Profile
 
-实验性的源码命令可对已有、准备好的诊断 ModelService 采集一次 Torch 窗口：
+实验性的源码命令可对使用持久 RuntimeCache 的已有 ModelService 采集一次 Torch 窗口：
 
 ```bash
 foretoken profile examples/quickstart --profile-engine pytorch --profile-duration 15s
 ```
 
-它不生成请求、不部署服务，也不下载 trace。服务负责自动停止和持久保存，即使命令断线也不依赖本机回收。使用前请查看[采集前提与限制](../observability/profiling_zh.md)。
+它不生成请求、不部署服务，也不下载 trace。服务负责自动停止，并把结果写入 RuntimeCache PVC 的 `profiles/` 目录，即使命令断线也不依赖本机回收。采集和查看结果见[性能剖析指南](../observability/profiling_zh.md)。
 
 ## 清理
 

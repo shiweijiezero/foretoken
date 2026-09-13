@@ -87,7 +87,7 @@ def capture(command: ProfileCommand) -> None:
                 artifact = status.get("artifact")
                 if artifact:
                     print(
-                        f"Artifacts: PVC {namespace}/{artifact['claimName']} "
+                        f"Artifacts: RuntimeCache PVC {namespace}/{artifact['claimName']} "
                         f"— {artifact['path']}",
                         flush=True,
                     )
