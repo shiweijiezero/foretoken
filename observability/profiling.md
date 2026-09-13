@@ -30,7 +30,7 @@ The runtime stops recording after the requested duration, then exports the files
 | `--model MODEL_ID` | Select one model from a multi-model directory |
 | `--timeout 10m` | How long the CLI observes the run, not how long the runtime records |
 
-Ctrl-C requests cancellation and retains available output. After a lost terminal or observation timeout, capture still ends at its original deadline. Use the printed ProfileRun name to inspect progress.
+Ctrl-C requests cancellation and retains available output. After a lost terminal or observation timeout, capture still ends at its original deadline. Use the printed inspection command to check progress.
 
 ## Common commands
 
@@ -47,12 +47,6 @@ Allow more time to observe a slow export without extending capture:
 ```bash
 foretoken profile examples/quickstart \
   --profile-engine pytorch --profile-duration 15s --timeout 20m
-```
-
-After the command prints the run name, inspect it from another terminal. Replace `<run-name>` with that name and use the deployment namespace:
-
-```bash
-kubectl get profilerun <run-name> -n foretoken-demo -o yaml
 ```
 
 ## Prepare the deployment

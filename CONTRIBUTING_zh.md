@@ -52,7 +52,7 @@
 
 外部贡献者应从 fork（派生仓库）提交 PR。有主仓库写权限的维护者可以为每个 PR 在主仓库创建一个短期分支。不要额外创建用于 CI 中转或刷新检查的分支；PR 合并或关闭后应立即删除源分支。主仓库中的其他分支只用于承载明确的长期开发任务及其多个相关 PR。
 
-普通修复和维护使用[常规模板](.github/PULL_REQUEST_TEMPLATE/default_zh.md)，需要说明设计和接口的新增功能使用[功能模板](.github/PULL_REQUEST_TEMPLATE/feature_zh.md)。在 GitHub 创建 PR 时，通过 compare URL 的 `template=default_zh.md` 或 `template=feature_zh.md` 查询参数选择；命令行创建时使用对应模板编写描述。每个 PR 只承担一项职责，并从最终差异中删除无关格式化、生成文件漂移、本地产物和过时路径。
+使用 [PR 模板](.github/PULL_REQUEST_TEMPLATE_zh.md)，只保留适用章节。每个 PR 聚焦一项职责。
 
 面向用户的行为、命令、配置或状态发生变化时，应同步更新相关中英文文档和示例。PR 尚未准备好接受完整评审时，请标为草稿状态。
 

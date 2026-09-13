@@ -30,7 +30,7 @@ foretoken profile examples/quickstart \
 | `--model MODEL_ID` | 从多模型目录中选择一个模型 |
 | `--timeout 10m` | CLI 等待进度的时间，不是 runtime 的采集时长 |
 
-Ctrl-C 请求取消并保留已有结果。终端断线或等待超时后，采集仍按原时限结束；可用打印的 ProfileRun 名称查询进度。
+Ctrl-C 请求取消并保留已有结果。终端断线或等待超时后，采集仍按原时限结束；可使用命令输出的查询指令查看进度。
 
 ## 常用命令
 
@@ -47,12 +47,6 @@ foretoken profile examples/multi-model-quickstart \
 ```bash
 foretoken profile examples/quickstart \
   --profile-engine pytorch --profile-duration 15s --timeout 20m
-```
-
-命令打印运行名称后，可在另一个终端查询。将 `<run-name>` 替换为打印的名称，并使用实际命名空间：
-
-```bash
-kubectl get profilerun <run-name> -n foretoken-demo -o yaml
 ```
 
 ## 部署前准备

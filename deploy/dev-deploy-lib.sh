@@ -3,6 +3,12 @@
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 build_dev_images() {
+  # Reuse the chart default unless the caller selects another engine image.
+  local engine_image=${INFERENCE_ENGINE_IMAGE:-}
+  if [[ -z "$engine_image" ]]; then
+    engine_image=$(python3 -c 'import sys, yaml; print(yaml.safe_load(open(sys.argv[1]))["runtime"]["vllm"]["image"])' \
+      "$ROOT/deploy/charts/foretoken/values.yaml")
+  fi
   export DOCKER_BUILDKIT=1
 
   docker build \
@@ -18,7 +24,7 @@ build_dev_images() {
     .
 
   docker build \
-    --build-arg INFERENCE_ENGINE_IMAGE="$INFERENCE_ENGINE_IMAGE" \
+    --build-arg INFERENCE_ENGINE_IMAGE="$engine_image" \
     --build-arg FORETOKEN_VLLM_PYTHON \
     -f data-plane/model-server/Dockerfile \
     -t "$MODEL_SERVER_IMAGE" \

@@ -184,4 +184,4 @@ Keep each PR focused on one responsibility and make its final diff the smallest 
 - Do not commit credentials, private infrastructure details, personal absolute paths, local caches, temporary outputs, or experiment artifacts.
 - Report the commands actually run and their results. State important unverified areas directly; do not claim CI, hardware, Kubernetes, or performance validation that did not occur.
 
-Use [.github/PULL_REQUEST_TEMPLATE/default.md](../../.github/PULL_REQUEST_TEMPLATE/default.md) to present the problem, changes, validation evidence, performance, impact, and related issue or proposal without copying this guide into the PR body.
+Use [.github/PULL_REQUEST_TEMPLATE.md](../../.github/PULL_REQUEST_TEMPLATE.md) to present the problem, changes, validation evidence, performance, impact, and related issue or proposal without copying this guide into the PR body.

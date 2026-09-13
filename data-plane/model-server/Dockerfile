@@ -9,7 +9,7 @@
 # current vLLM adapter uses vllm.entrypoints.cli.main.
 
 ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye
-ARG INFERENCE_ENGINE_IMAGE=ghcr.io/shiweijiezero/foretoken/model-server:0.0.2
+ARG INFERENCE_ENGINE_IMAGE
 ARG FORETOKEN_VLLM_PYTHON
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.9.10
 

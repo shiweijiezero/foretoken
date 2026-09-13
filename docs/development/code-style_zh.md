@@ -184,4 +184,4 @@ Quick Start 只保留一条默认成功路径。替代方案放在读者真正�
 - 不提交凭据、私有基础设施信息、个人绝对路径、本地缓存、临时输出或实验产物。
 - 只报告实际执行的命令和结果。重要内容未验证时直接说明，不声称执行过实际上未完成的 CI、硬件、Kubernetes 或性能验证。
 
-使用 [.github/PULL_REQUEST_TEMPLATE/default_zh.md](../../.github/PULL_REQUEST_TEMPLATE/default_zh.md) 说明问题、改动、验证证据、性能表现、影响及关联议题或提案，不在 PR 描述中复制本文。
+使用 [.github/PULL_REQUEST_TEMPLATE_zh.md](../../.github/PULL_REQUEST_TEMPLATE_zh.md) 说明问题、改动、验证证据、性能表现、影响及关联议题或提案，不在 PR 描述中复制本文。
