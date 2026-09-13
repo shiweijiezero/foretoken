@@ -90,6 +90,12 @@ spec:
                     - retentionPolicy
                     - size
                     type: object
+                  fsGroup:
+                    description: FSGroup preserves the resolved volume access group
+                      for the client Pod.
+                    format: int64
+                    minimum: 0
+                    type: integer
                   image:
                     type: string
                   memoryCapacityBytes:
@@ -110,6 +116,7 @@ spec:
                     type: integer
                   protocol:
                     enum:
+                    - tcp
                     - rdma
                     type: string
                   rdmaResourceCount:
@@ -187,16 +194,36 @@ spec:
                     - message: resources.requests.memory must not exceed resources.limits.memory
                       rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                         <= 0'
+                  storageRegistration:
+                    description: StorageRegistration enables provider registration
+                      checks for a Store client.
+                    properties:
+                      enabled:
+                        description: Enabled requests provider registration checks
+                          instead of infrastructure-only readiness.
+                        type: boolean
+                      port:
+                        default: 9300
+                        description: Port is the client HTTP management port used
+                          for registration checks.
+                        format: int32
+                        maximum: 65535
+                        minimum: 1
+                        type: integer
+                    type: object
                 required:
                 - disk
                 - image
                 - memoryCapacityBytes
                 - port
                 - protocol
-                - rdmaResourceCount
-                - rdmaResourceName
                 - resources
                 type: object
+                x-kubernetes-validations:
+                - message: resolved RDMA clients require resource name and count;
+                    TCP must omit RDMA resources
+                  rule: 'self.protocol == ''rdma'' ? has(self.rdmaResourceName) &&
+                    has(self.rdmaResourceCount) : !has(self.rdmaResourceName) && !has(self.rdmaResourceCount)'
               kvPoolRef:
                 description: LocalObjectReference identifies an object in the same
                   namespace by stable UID.
@@ -211,6 +238,11 @@ spec:
                 - name
                 - uid
                 type: object
+              masterAdminPort:
+                format: int32
+                maximum: 65535
+                minimum: 1
+                type: integer
               masterRPCPort:
                 format: int32
                 maximum: 65535
@@ -229,11 +261,11 @@ spec:
                 minLength: 1
                 type: string
               timeouts:
-                description: KVTimeouts defines lifecycle budgets for future Store
-                  clients.
+                description: KVTimeouts defines lifecycle budgets for Store clients.
                 properties:
                   drain:
-                    description: Duration is a positive Go-style duration.
+                    description: Drain is the Kubernetes termination grace period
+                      for a leaving Store client.
                     minLength: 2
                     pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
@@ -266,8 +298,8 @@ spec:
               rule: self == oldSelf
           status:
             description: |-
-              KVGroupStatus reports requested capacity and Kubernetes infrastructure only.
-              It never represents Mooncake registration or usable Store capacity.
+              KVGroupStatus reports requested capacity, Kubernetes infrastructure, and optional
+              provider registration.
             properties:
               conditions:
                 items:
@@ -337,7 +369,6 @@ spec:
                 - Provisioning
                 - Ready
                 - Degraded
-                - Draining
                 - Terminating
                 type: string
               requestedDiskCapacityBytes:

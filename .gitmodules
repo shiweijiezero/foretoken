@@ -2,3 +2,6 @@
 	path = data-plane/third_party/vllm
 	url = https://github.com/vllm-project/vllm.git
 	shallow = true
+[submodule "third_party/mooncake"]
+	path = third_party/mooncake
+	url = https://github.com/kvcache-ai/Mooncake.git

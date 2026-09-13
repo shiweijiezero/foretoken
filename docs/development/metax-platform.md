@@ -14,7 +14,7 @@ Foretoken uses three images: the controller manages Kubernetes model services, t
 ## What the administrator provides
 
 - Kubernetes 1.29 or later, MetaX drivers, and the MetaX device plugin publishing `metax-tech.com/gpu`.
-- Model-cache storage. The maintained Quick Start uses the default `ReadWriteOnce` StorageClass with online expansion and starts its cache at 10 GiB. See [Runtime Cache](runtime-cache.md) for other storage choices.
+- A writable model directory on the target nodes, or a StorageClass for model-cache volumes. Configure the example's `cache.yaml` as described in [Model storage](../model-storage.md).
 - A reachable Gateway endpoint. The commands below use Envoy Gateway; an existing platform should remain under its current owner's control.
 - Prometheus, Prometheus Operator, `ServiceMonitor`/`PrometheusRule` CRDs, and mxExporter when monitoring is required. See [Observability](../../observability/README.md).
 
@@ -50,8 +50,6 @@ make image-model-server
 make image-frontend
 docker build -f control-plane/Dockerfile -t foretoken-control-plane:dev .
 ```
-
-Build these images from the same checkout as model-server. Do not combine a newly built model-server with an older frontend or controller.
 
 ### 3. Push or import the images
 

@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+**
+!LICENSE
+!third_party/
+!third_party/mooncake/
+!third_party/mooncake/**
+!deploy/
+!deploy/mooncake/
+!deploy/mooncake/Dockerfile
+!deploy/mooncake/NOTICE
+!deploy/mooncake/patches/
+!deploy/mooncake/patches/**
+third_party/mooncake/**/.git
+third_party/mooncake/**/.git/**
+third_party/mooncake/**/build
+third_party/mooncake/**/build/**
+third_party/mooncake/**/__pycache__
+third_party/mooncake/**/__pycache__/**
+third_party/mooncake/**/.gpu_cache
+third_party/mooncake/**/.gpu_cache/**

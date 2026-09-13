@@ -338,10 +338,30 @@ async fn start_engine_attempt(
     };
     let handshake_port = allocate_handshake_port(LOOPBACK_HOST)
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
-    let managed_engine = config
+    let mut managed_engine = config
         .launch
         .managed_engine(handshake_port)
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+    // Resolve mounted local artifacts without changing the public model identity or
+    // overriding an independently configured tokenizer. Hub cache paths stay upstream-owned.
+    if let Some(cache) = cache {
+        if let Some(model) = cache
+            .local_artifact_path(&config.launch.artifacts.model)
+            .map_err(EngineStartupFailure::Other)?
+        {
+            managed_engine.model = model;
+        }
+        if let Some(tokenizer) = cache
+            .local_artifact_path(&config.launch.artifacts.tokenizer)
+            .map_err(EngineStartupFailure::Other)?
+        {
+            for argument in &mut managed_engine.python_args {
+                if argument.starts_with("--tokenizer=") {
+                    *argument = format!("--tokenizer={tokenizer}");
+                }
+            }
+        }
+    }
     let protocol_timeout = startup_deadline.saturating_duration_since(Instant::now());
     if protocol_timeout.is_zero() {
         return Err(EngineStartupFailure::Other(io::Error::other(

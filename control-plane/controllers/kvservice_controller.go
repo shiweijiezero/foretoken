@@ -42,6 +42,7 @@ type kvServiceStatus struct {
 	infrastructure kvServiceCondition
 	pools          kvServiceCondition
 	ready          kvServiceCondition
+	binding        *inferencev1alpha1.KVServiceBinding
 }
 
 // SetupWithManager registers KVService reconciliation for master infrastructure and KVPools.
@@ -73,7 +74,8 @@ func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ct
 		}
 		return ctrl.Result{Requeue: true}, nil
 	}
-	if err := reconciler.reconcileInfrastructure(ctx, service); err != nil {
+	binding, err := reconciler.reconcileInfrastructure(ctx, service)
+	if err != nil {
 		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, service, kvServiceStatus{
 			phase:          inferencev1alpha1.KVServicePhaseDegraded,
 			infrastructure: kvServiceCondition{reason: "ApplyFailed", message: "Master infrastructure was not fully materialized"},
@@ -81,66 +83,117 @@ func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ct
 			ready:          kvServiceCondition{reason: "InfrastructureNotReady", message: "Master infrastructure is not ready"},
 		}))
 	}
-	if err := reconciler.reconcilePools(ctx, service); err != nil {
-		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, service, kvServiceStatus{
-			phase:          inferencev1alpha1.KVServicePhaseDegraded,
-			infrastructure: kvServiceCondition{reason: "ApplyFailed", message: "Master infrastructure was not fully materialized"},
-			pools:          kvServiceCondition{reason: "ApplyFailed", message: "KVPools were not fully materialized"},
-			ready:          kvServiceCondition{reason: "PoolsNotReady", message: "KVPools are not ready"},
-		}))
-	}
 	infrastructureReady, err := reconciler.infrastructureReady(ctx, service)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	poolsMaterialized, poolsReady, err := reconciler.poolState(ctx, service)
-	if err != nil {
-		return ctrl.Result{}, err
+	pools, err := reconciler.ownedPools(ctx, service)
+	poolsConverged, capacityAvailable := false, false
+	if err == nil {
+		poolsConverged, capacityAvailable, err = kvPoolState(service, pools)
 	}
-	ready := infrastructureReady && poolsMaterialized && poolsReady
+	if err != nil {
+		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, service, kvServiceStatus{
+			phase:          inferencev1alpha1.KVServicePhaseDegraded,
+			infrastructure: infrastructureCondition(infrastructureReady),
+			pools:          kvServiceCondition{reason: "ObservationFailed", message: "KVPool state could not be observed"},
+			ready:          kvServiceCondition{reason: "ObservationFailed", message: "Client availability could not be determined"},
+		}))
+	}
+	// Use one complete observation for availability and writes so a Pool
+	// create or delete failure does not revoke other compatible capacity.
+	applyErr := reconciler.reconcilePools(ctx, service, pools)
+	ready := infrastructureReady && capacityAvailable
 	phase := inferencev1alpha1.KVServicePhaseProgressing
-	if ready {
+	if ready && poolsConverged {
 		phase = inferencev1alpha1.KVServicePhaseReady
 	}
-	readyCondition := kvServiceCondition{reason: "DependenciesNotReady", message: "Master infrastructure or KVPools are not ready"}
+	readyCondition := kvServiceCondition{reason: "DependenciesNotReady", message: "Master infrastructure or requested client capacity is not Kubernetes-ready"}
 	if ready {
-		readyCondition = kvServiceCondition{ready: true, reason: "Ready", message: "Master infrastructure is available and all KVPools are materialized"}
+		readyCondition = kvServiceCondition{ready: true, reason: "Available", message: "Master and compatible client infrastructure are Kubernetes-ready"}
 	}
-	return ctrl.Result{}, reconciler.updateStatus(ctx, service, kvServiceStatus{
+	status := kvServiceStatus{
 		phase:          phase,
 		infrastructure: infrastructureCondition(infrastructureReady),
-		pools:          poolsCondition(poolsMaterialized && poolsReady),
+		pools:          poolsCondition(poolsConverged),
 		ready:          readyCondition,
-	})
+		binding:        binding,
+	}
+	if applyErr != nil {
+		status.phase = inferencev1alpha1.KVServicePhaseDegraded
+		status.pools = kvServiceCondition{reason: "ApplyFailed", message: "KVPools were not fully materialized"}
+	}
+	return ctrl.Result{}, errors.Join(applyErr, reconciler.updateStatus(ctx, service, status))
 }
 
 // reconcileInfrastructure applies the master resources and maintains their requester configuration lifecycle.
-func (reconciler *KVServiceReconciler) reconcileInfrastructure(ctx context.Context, service *inferencev1alpha1.KVService) error {
+func (reconciler *KVServiceReconciler) reconcileInfrastructure(ctx context.Context, service *inferencev1alpha1.KVService) (*inferencev1alpha1.KVServiceBinding, error) {
 	config, requesterConfig, deployment, kubeService, pvc, err := desiredKVMasterResources(service)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	for _, object := range []client.Object{config, requesterConfig, deployment, kubeService} {
+	requesterName, err := reconciler.reconcileRequesterConfig(ctx, service, requesterConfig)
+	if err != nil {
+		return nil, err
+	}
+	for _, object := range []client.Object{config, deployment, kubeService} {
 		if err := reconciler.applyOwned(ctx, service, object); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	if err := reconciler.removeStaleRequesterConfigs(ctx, service, requesterConfig.Name); err != nil {
-		return err
+	if err := reconciler.removeStaleRequesterConfigs(ctx, service, requesterName); err != nil {
+		return nil, err
 	}
 	if pvc != nil {
 		if err := reconciler.applyOwned(ctx, service, pvc); err != nil {
-			return err
+			return nil, err
 		}
 	} else if err := reconciler.reconcileSnapshotRemoval(ctx, service); err != nil {
-		return err
+		return nil, err
 	}
-	return nil
+	return desiredKVServiceBinding(service, requesterName), nil
+}
+
+// reconcileRequesterConfig reuses a configuration with the same connection
+// settings. Referenced configurations are created once and never updated in place.
+// Querying resources instead of relying only on status avoids duplicate versions
+// after a restart or a temporary loss of readiness.
+func (reconciler *KVServiceReconciler) reconcileRequesterConfig(ctx context.Context, service *inferencev1alpha1.KVService, desired *corev1.ConfigMap) (string, error) {
+	configs := new(corev1.ConfigMapList)
+	if err := reconciler.List(ctx, configs, client.InNamespace(service.Namespace), client.MatchingLabels(desired.Labels)); err != nil {
+		return "", err
+	}
+	var selected *corev1.ConfigMap
+	for index := range configs.Items {
+		config := &configs.Items[index]
+		if !config.DeletionTimestamp.IsZero() || !metav1.IsControlledBy(config, service) || !reflect.DeepEqual(config.Data, desired.Data) || len(config.BinaryData) != 0 {
+			continue
+		}
+		if service.Status.Binding != nil && config.Name == service.Status.Binding.ConfigMapName {
+			return config.Name, nil
+		}
+		if selected == nil || config.CreationTimestamp.Before(&selected.CreationTimestamp) || (config.CreationTimestamp.Equal(&selected.CreationTimestamp) && config.Name < selected.Name) {
+			selected = config
+		}
+	}
+	if selected != nil {
+		return selected.Name, nil
+	}
+	if err := controllerutil.SetControllerReference(service, desired, reconciler.Scheme()); err != nil {
+		return "", err
+	}
+	if err := reconciler.Create(ctx, desired); err != nil {
+		return "", fmt.Errorf("create requester configuration: %w", err)
+	}
+	return desired.Name, nil
 }
 
 // removeStaleRequesterConfigs deletes unreferenced requester ConfigMaps still owned by the KVService.
 func (reconciler *KVServiceReconciler) removeStaleRequesterConfigs(ctx context.Context, service *inferencev1alpha1.KVService, currentName string) error {
 	referenced := map[string]struct{}{currentName: {}}
+	if service.Status.Binding != nil {
+		referenced[service.Status.Binding.ConfigMapName] = struct{}{}
+	}
 	pools := new(inferencev1alpha1.ModelPoolList)
 	if err := reconciler.List(ctx, pools, client.InNamespace(service.Namespace)); err != nil {
 		return err
@@ -203,20 +256,27 @@ func (reconciler *KVServiceReconciler) applyOwned(ctx context.Context, owner *in
 	current := desired.DeepCopyObject().(client.Object)
 	key := client.ObjectKeyFromObject(desired)
 	err := reconciler.Get(ctx, key, current)
-	if apierrors.IsNotFound(err) {
-		if err := controllerutil.SetControllerReference(owner, desired, reconciler.Scheme()); err != nil {
-			return err
-		}
-		return reconciler.Create(ctx, desired)
-	}
-	if err != nil {
+	missing := apierrors.IsNotFound(err)
+	if err != nil && !missing {
 		return err
 	}
-	if !metav1.IsControlledBy(current, owner) {
+	if !missing && !metav1.IsControlledBy(current, owner) {
 		return fmt.Errorf("%T %q is not controlled by KVService", current, current.GetName())
+	}
+	if err := controllerutil.SetControllerReference(owner, desired, reconciler.Scheme()); err != nil {
+		return err
+	}
+	if _, ok := desired.(*appsv1.Deployment); ok {
+		// Take ownership of workload fields previously written by Update while
+		// preserving the Deployment controller's revision annotation.
+		return reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner("foretoken-kvservice"), client.ForceOwnership)
+	}
+	if missing {
+		return reconciler.Create(ctx, desired)
 	}
 	if desiredPVC, ok := desired.(*corev1.PersistentVolumeClaim); ok {
 		currentPVC := current.(*corev1.PersistentVolumeClaim)
+		preservePVCBindingAndMetadata(desiredPVC, currentPVC)
 		if retention, recorded := currentPVC.Annotations[snapshotRetentionAnnotation]; recorded {
 			desiredPVC.Annotations[snapshotRetentionAnnotation] = retention
 		}
@@ -229,24 +289,14 @@ func (reconciler *KVServiceReconciler) applyOwned(ctx context.Context, owner *in
 		desiredService.Spec.IPFamilyPolicy = currentService.Spec.IPFamilyPolicy
 	}
 	desired.SetResourceVersion(current.GetResourceVersion())
-	if err := controllerutil.SetControllerReference(owner, desired, reconciler.Scheme()); err != nil {
-		return err
-	}
 	return reconciler.Update(ctx, desired)
 }
 
 // reconcilePools converges the KVService storage-pool intent into owned KVPools.
-func (reconciler *KVServiceReconciler) reconcilePools(ctx context.Context, service *inferencev1alpha1.KVService) error {
-	owned, err := reconciler.ownedPools(ctx, service)
-	if err != nil {
-		return err
-	}
+func (reconciler *KVServiceReconciler) reconcilePools(ctx context.Context, service *inferencev1alpha1.KVService, owned []inferencev1alpha1.KVPool) error {
 	byName := map[string]*inferencev1alpha1.KVPool{}
 	for index := range owned {
 		pool := &owned[index]
-		if byName[pool.Spec.PoolName] != nil {
-			return fmt.Errorf("KVService owns duplicate KVPools for poolName %q", pool.Spec.PoolName)
-		}
 		byName[pool.Spec.PoolName] = pool
 	}
 	desiredNames := map[string]struct{}{}
@@ -269,12 +319,13 @@ func (reconciler *KVServiceReconciler) reconcilePools(ctx context.Context, servi
 			continue
 		}
 		if pool.Spec.KVServiceRef == desiredSpec.KVServiceRef && pool.Spec.PoolName == desiredSpec.PoolName && pool.Spec.Revision == desiredSpec.Revision && reflect.DeepEqual(pool.Spec.Template, desiredSpec.Template) {
-			// Scaling is the sole mutable KVPool field. Keep the Pool, Groups 0..N-1,
-			// and their PVCs intact; KVPool reconciles only the ordinal delta.
+			// Keep the Pool, Groups 0..N-1, and their PVCs intact while updating
+			// mutable capacity or the resolved Master admin port.
 			base := pool.DeepCopy()
 			pool.Spec.DesiredGroups = desiredSpec.DesiredGroups
+			pool.Spec.MasterAdminPort = desiredSpec.MasterAdminPort
 			if err := reconciler.Patch(ctx, pool, client.MergeFrom(base)); err != nil {
-				return fmt.Errorf("scale KVPool %q: %w", pool.Name, err)
+				return fmt.Errorf("update KVPool %q: %w", pool.Name, err)
 			}
 			continue
 		}
@@ -296,19 +347,29 @@ func (reconciler *KVServiceReconciler) reconcilePools(ctx context.Context, servi
 	return nil
 }
 
+// normalizedKVPoolSpec freezes client configuration and the resolved admin port for a KVPool.
 func normalizedKVPoolSpec(service *inferencev1alpha1.KVService, template inferencev1alpha1.KVStoragePoolTemplate) inferencev1alpha1.KVPoolSpec {
-	if template.Replicas == 0 { /* explicit zero is preserved; API defaulting supplies omitted value */
-	}
 	if template.Client.Port == 0 {
 		template.Client.Port = 50052
 	}
-	if template.Client.RDMAResourceCount == 0 {
+	if template.Client.Protocol == "rdma" && template.Client.RDMAResourceCount == 0 {
 		template.Client.RDMAResourceCount = 1
+	}
+	if template.Client.StorageRegistration != nil {
+		registration := *template.Client.StorageRegistration
+		if registration.Port == 0 {
+			registration.Port = inferencev1alpha1.DefaultStorageRegistrationPort
+		}
+		template.Client.StorageRegistration = &registration
 	}
 	normalized := inferencev1alpha1.NormalizedKVPoolTemplate{Client: template.Client, NodeSelector: template.NodeSelector}
 	_, _, _, masterService := kvMasterNames(service)
 	rpcPort, _, _ := masterPorts(service.Spec.Master)
-	return inferencev1alpha1.KVPoolSpec{KVServiceRef: inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)}, PoolName: template.Name, Revision: kvPoolRevision(normalized, masterService, rpcPort), DesiredGroups: template.Replicas, Template: normalized}
+	adminPort := int32(0)
+	if template.Client.StorageRegistration != nil && template.Client.StorageRegistration.Enabled {
+		_, _, adminPort = masterPorts(service.Spec.Master)
+	}
+	return inferencev1alpha1.KVPoolSpec{KVServiceRef: inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)}, PoolName: template.Name, Revision: kvPoolRevision(normalized, masterService, rpcPort), MasterAdminPort: adminPort, DesiredGroups: template.Replicas, Template: normalized}
 }
 
 func poolObjectName(service *inferencev1alpha1.KVService, poolName string) string {
@@ -351,35 +412,40 @@ func (reconciler *KVServiceReconciler) infrastructureReady(ctx context.Context, 
 	return frontendDeploymentAvailable(deployment), nil
 }
 
-// poolState aggregates materialization and readiness across the KVService KVPools.
-func (reconciler *KVServiceReconciler) poolState(ctx context.Context, service *inferencev1alpha1.KVService) (bool, bool, error) {
-	pools, err := reconciler.ownedPools(ctx, service)
-	if err != nil {
-		return false, false, err
-	}
-	if len(pools) != len(service.Spec.StoragePools) {
-		return false, false, nil
-	}
+// kvPoolState validates the complete Pool observation before writes and reports
+// convergence separately from compatible client Kubernetes availability.
+func kvPoolState(service *inferencev1alpha1.KVService, pools []inferencev1alpha1.KVPool) (bool, bool, error) {
 	byName := make(map[string]*inferencev1alpha1.KVPool, len(pools))
 	for index := range pools {
 		pool := &pools[index]
-		if !pool.DeletionTimestamp.IsZero() || byName[pool.Spec.PoolName] != nil {
-			return false, false, nil
+		if byName[pool.Spec.PoolName] != nil {
+			return false, false, fmt.Errorf("KVService owns duplicate KVPools for poolName %q", pool.Spec.PoolName)
 		}
 		byName[pool.Spec.PoolName] = pool
 	}
-	ready := true
+	converged, available := len(pools) == len(service.Spec.StoragePools), false
 	for _, template := range service.Spec.StoragePools {
 		pool := byName[template.Name]
-		if pool == nil || !reflect.DeepEqual(pool.Spec, normalizedKVPoolSpec(service, template)) {
-			return false, false, nil
+		desired := normalizedKVPoolSpec(service, template)
+		if pool == nil || !pool.DeletionTimestamp.IsZero() || pool.Spec.KVServiceRef != desired.KVServiceRef || pool.Spec.Revision != desired.Revision || pool.Spec.MasterAdminPort != desired.MasterAdminPort || !reflect.DeepEqual(pool.Spec.Template, desired.Template) {
+			converged = false
+			continue
 		}
+		// Pool templates are immutable; only capacity changes. A previous
+		// availability result remains valid when the desired count grows.
+		// Pools with changed templates or transports were excluded above, and a
+		// zero-target Pool provides no capacity.
 		condition := meta.FindStatusCondition(pool.Status.Conditions, conditionReady)
-		if pool.Status.ObservedGeneration != pool.Generation || condition == nil || condition.Status != metav1.ConditionTrue || condition.ObservedGeneration != pool.Generation {
-			ready = false
+		if template.Replicas > 0 && condition != nil && condition.Status == metav1.ConditionTrue {
+			available = true
+		}
+		materialized := meta.FindStatusCondition(pool.Status.Conditions, conditionGroupsMaterialized)
+		settled := pool.Status.Phase == inferencev1alpha1.KVPoolPhaseReady || (template.Replicas == 0 && pool.Status.Phase == inferencev1alpha1.KVPoolPhasePending)
+		if pool.Spec.DesiredGroups != desired.DesiredGroups || pool.Status.ObservedGeneration != pool.Generation || materialized == nil || materialized.Status != metav1.ConditionTrue || materialized.ObservedGeneration != pool.Generation || !settled {
+			converged = false
 		}
 	}
-	return true, ready, nil
+	return converged, available, nil
 }
 
 func (reconciler *KVServiceReconciler) reconcileDelete(ctx context.Context, service *inferencev1alpha1.KVService) (ctrl.Result, error) {
@@ -486,7 +552,7 @@ func (reconciler *KVServiceReconciler) updateStatus(ctx context.Context, service
 	service.Status.ObservedGeneration = service.Generation
 	service.Status.Phase = desired.phase
 	if desired.ready.ready {
-		service.Status.Binding = desiredKVServiceBinding(service)
+		service.Status.Binding = desired.binding
 	} else {
 		service.Status.Binding = nil
 	}
@@ -499,11 +565,10 @@ func (reconciler *KVServiceReconciler) updateStatus(ctx context.Context, service
 	return reconciler.Status().Patch(ctx, service, client.MergeFrom(base))
 }
 
-func desiredKVServiceBinding(service *inferencev1alpha1.KVService) *inferencev1alpha1.KVServiceBinding {
+// desiredKVServiceBinding projects the selected configuration version to model
+// consumers; changing the replica count does not change that version.
+func desiredKVServiceBinding(service *inferencev1alpha1.KVService, requesterName string) *inferencev1alpha1.KVServiceBinding {
 	_, _, _, masterService := kvMasterNames(service)
-	// Requester ConfigMaps are UID/generation-scoped, so a resolved consumer cannot
-	// accidentally attach to a same-name KVService recreated after deletion.
-	requesterName := kvChildName(service.Name+"-requester-config", string(service.UID)+":"+fmt.Sprint(service.Generation))
 	rpcPort, _, _ := masterPorts(service.Spec.Master)
 	return &inferencev1alpha1.KVServiceBinding{
 		Revision:       kvPoolRevision(inferencev1alpha1.NormalizedKVPoolTemplate{}, requesterName, rpcPort),

@@ -100,20 +100,11 @@ loadBalancer:
 foretoken install --values platform-values.yaml
 ```
 
-### Persistent runtime cache
-
-Create one `RuntimeCache` in a workload namespace to let Foretoken provision and manage a shared cache PVC. Existing PVCs remain supported through `workload.cache.claimName`. See [Persistent Runtime Cache](../docs/development/runtime-cache.md).
-
 ## Deploy and operate model services
 
-Deploy one frontend and all models rendered by a Kustomize root. Run from the repository root; if you have not obtained the configurations yet:
+Run from the repository checkout prepared in the [Quick Start](../README.md). Deploy one frontend and all models rendered by a Kustomize root.
 
-```bash
-git clone https://github.com/shiweijiezero/foretoken.git
-cd foretoken
-```
-
-See the [multi-model example](../examples/multi-model-quickstart/README.md) for capacity and storage requirements. Use `examples/quickstart` for a single model.
+See the [multi-model example](../examples/multi-model-quickstart/README.md) for resources and [model storage](../docs/model-storage.md) for directory or PVC configuration. Use `examples/quickstart` for a single model.
 
 ```bash
 foretoken deploy examples/multi-model-quickstart --timeout 20m

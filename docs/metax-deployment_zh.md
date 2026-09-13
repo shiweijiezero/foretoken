@@ -24,7 +24,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 1. 部署示例模型
 
-示例配置包含模型、缓存和前端服务。
+在 `examples/quickstart/cache.yaml` 中填写管理员准备的目录或 StorageClass，配置方式见[模型存储](model-storage_zh.md)。
 
 在 `examples/quickstart/frontend.yaml` 已有的 `spec` 中加入 `hostname`，将示例域名替换为管理员分配的域名，保留其余配置：
 
@@ -80,7 +80,7 @@ kubectl get pods --namespace foretoken-demo
 foretoken delete examples/quickstart
 ```
 
-该示例包含 namespace，删除时也会删除其中的资源和示例缓存。只在本示例独占的 namespace 中使用这条清理命令，不要用它清理共享 namespace。平台本身由管理员维护，不需要每次部署都安装或卸载。
+该示例包含 namespace，删除时会清理其中的服务和 PVC 对象。目录中的模型文件保留供复用，动态卷按存储保留策略处理。示例使用独立 namespace，共享平台由管理员维护。
 
 ## 请求未成功时
 
