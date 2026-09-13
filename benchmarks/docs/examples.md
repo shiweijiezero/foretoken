@@ -32,4 +32,4 @@ Use the actual Chat Completions URL and model ID for other services. In Gateway 
 - [Parameter sweeps](coomon_commands/sweep.md)
 - [W&B output](coomon_commands/wandb.md)
 
-Metric definitions are in [Result metrics](coomon_commands/metrics.md). All options are listed by `foretoken bench --help`.
+Metric definitions are in [Result metrics](../metrics.md). All options are listed by `foretoken bench --help`.

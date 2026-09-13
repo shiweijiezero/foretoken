@@ -2,22 +2,22 @@
 
 [English](huggingface.md) | 简体中文 · [常用命令](../examples_zh.md)
 
-完成[准备步骤](../examples_zh.md#准备)后，选择数据集及数据划分：
+完成[准备步骤](../examples_zh.md#准备)后，直接使用公开的 StudyChat 数据集：
 
 ```bash
 foretoken bench examples/quickstart \
-  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
-  --parallel 4 --number 20 --output local,wandb
+  --dataset KrisQ/StudyChat \
+  --parallel 2 --number 2 --output local,wandb
 ```
 
-默认配置只有一个数据划分时可以省略后缀。需要选择时添加 `:train` 等划分名称；也可以指定只有一个划分的配置名称。
+该仓库的默认配置只有一个数据划分，无需后缀。有多个划分的数据集可添加 `:train` 等名称选择。
 
-使用仓库中的 JSONL 文件时，将下面的组织、仓库、版本和路径替换为文件实际位置：
+也可以直接指定仓库里的 [JSONL 文件](https://huggingface.co/datasets/KrisQ/StudyChat/blob/main/data.jsonl)：
 
 ```bash
 foretoken bench examples/quickstart \
-  --dataset hf://datasets/ORG/REPOSITORY@REVISION/path/to/data.jsonl \
-  --parallel 4 --number 20 --output local,wandb
+  --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
+  --parallel 2 --number 2 --output local,wandb
 ```
 
-数据行采用与本地数据相同的[对话格式](conversations_zh.md)。`--dataset-offset` 可跳过开头的数据行，再选取指定数量。
+直接指定文件时会将文件下载到 Hugging Face 缓存。数据行使用与[本地对话数据](conversations_zh.md)相同的格式。添加 `--max-turns 1` 可只评测首轮，`--dataset-offset` 可跳过开头的数据行。

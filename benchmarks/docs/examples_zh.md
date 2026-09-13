@@ -32,4 +32,4 @@ export MODEL_ID=Qwen/Qwen3-0.6B
 - [参数扫描](coomon_commands/sweep_zh.md)
 - [W&B 输出](coomon_commands/wandb_zh.md)
 
-指标定义见[结果指标](coomon_commands/metrics_zh.md)。全部参数见 `foretoken bench --help`。
+指标定义见[结果指标](../metrics_zh.md)。全部参数见 `foretoken bench --help`。

@@ -1,6 +1,6 @@
 # Result metrics
 
-English | [简体中文](metrics_zh.md) · [Common commands](../examples.md)
+English | [简体中文](metrics_zh.md) · [Common commands](docs/examples.md)
 
 `metrics.json` contains aggregate results; `raw_output.json` contains per-request records. Standard workloads also retain `benchmark_data.db` and `benchmark.log`.
 

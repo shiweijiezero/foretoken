@@ -2,22 +2,22 @@
 
 English | [简体中文](huggingface_zh.md) · [Common commands](../examples.md)
 
-After [setup](../examples.md#setup), select a dataset and split:
+After [setup](../examples.md#setup), use the public StudyChat dataset:
 
 ```bash
 foretoken bench examples/quickstart \
-  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
-  --parallel 4 --number 20 --output local,wandb
+  --dataset KrisQ/StudyChat \
+  --parallel 2 --number 2 --output local,wandb
 ```
 
-The suffix can be omitted when the repository's default configuration has one split. If a choice is needed, specify `:train` or another split. A configuration name is also accepted when that configuration has a single split.
+The repository's default configuration has one split, so no suffix is needed. For datasets with multiple splits, append the split name, such as `:train`.
 
-For a JSONL file in a dataset repository, replace the organization, repository, revision, and path below with the file's actual location:
+To select the repository's [JSONL file](https://huggingface.co/datasets/KrisQ/StudyChat/blob/main/data.jsonl) directly:
 
 ```bash
 foretoken bench examples/quickstart \
-  --dataset hf://datasets/ORG/REPOSITORY@REVISION/path/to/data.jsonl \
-  --parallel 4 --number 20 --output local,wandb
+  --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
+  --parallel 2 --number 2 --output local,wandb
 ```
 
-Rows use the same [conversation formats](conversations.md) as local data. `--dataset-offset` skips rows before selecting the requested count.
+File selection downloads the file into the Hugging Face cache. Rows use the same [conversation formats](conversations.md) as local data. Add `--max-turns 1` for first-turn-only evaluation, or `--dataset-offset` to skip initial rows.

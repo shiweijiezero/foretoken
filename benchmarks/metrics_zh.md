@@ -1,6 +1,6 @@
 # 结果指标
 
-[English](metrics.md) | 简体中文 · [常用命令](../examples_zh.md)
+[English](metrics.md) | 简体中文 · [常用命令](docs/examples_zh.md)
 
 `metrics.json` 保存汇总指标，`raw_output.json` 保存逐请求记录。标准负载还保留 `benchmark_data.db` 和 `benchmark.log`。
 

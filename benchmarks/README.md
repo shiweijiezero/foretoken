@@ -114,4 +114,4 @@ Start with success rate, end-to-end latency (E2EL), and output token throughput.
 
 The examples save results locally and upload them to W&B. Use `--output local` for local results only, and `--output-dir` to change the parent directory.
 
-See [Common commands](docs/examples.md) for individual guides and examples, or [Result metrics](docs/coomon_commands/metrics.md) for metric definitions. Run `foretoken bench --help` for all options.
+See [Common commands](docs/examples.md) for individual guides and examples, or [Result metrics](metrics.md) for metric definitions. Run `foretoken bench --help` for all options.

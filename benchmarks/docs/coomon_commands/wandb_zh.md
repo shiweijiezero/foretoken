@@ -16,4 +16,4 @@ foretoken bench examples/quickstart \
 
 `--wandb-entity` 选择账号或团队。group 和运行名分别设置。扫描、多数据集在未指定 group 时自动分组，各子运行会在名称后追加标识。单次评测默认不分组。
 
-仅本地输出用 `--output local`，不打印汇总用 `--output local,quiet`，仅上传用 `--output wandb`。指标定义见[结果指标](metrics_zh.md)。已有截图放在对应命令说明中，例如[固定提示词](fixed-prompt_zh.md#输出示例)。
+仅本地输出用 `--output local`，不打印汇总用 `--output local,quiet`，仅上传用 `--output wandb`。
