@@ -13,21 +13,34 @@ The experimental implementation captures one time-bounded Torch window on an exi
 
 A capture must stop and retain results even when its initiating command disconnects. Its identity and lifetime belong to a namespaced `ProfileRun`, not to the command process or `ModelService.spec`.
 
-```text
-ordinary workload ── public frontend ──> model-server
-                                            │
-foretoken profile ── Kubernetes API          │
-                          │                 │
-                      ProfileRun            │
-                          │                 │
-                 existing controller ────────┘
-                    internal HTTP           │
-                                     runtime supervisor
-                                            │
-                                      vLLM / Torch
-                                            │
-                                      artifact PVC
+```mermaid
+flowchart LR
+    subgraph traffic["Inference traffic"]
+        client["Workload"] --> frontend["Frontend"]
+    end
+    subgraph control["Capture control"]
+        cli["foretoken profile"] -->|"Submit / inspect"| run["Kubernetes API<br/>ProfileRun"]
+        run -->|"Observe intent"| controller["ProfileRun controller"]
+        controller -.->|"Publish status"| run
+    end
+    subgraph runtime["Model runtime · model-server"]
+        serving["Inference API"] --> engine["vLLM · PyTorch Profiler"]
+        supervisor["Runtime supervisor"] -->|"Start / stop"| engine
+    end
+    storage[("Persistent artifacts<br/>PVC")]
+    frontend --> serving
+    controller -->|"Internal HTTP"| supervisor
+    supervisor -.->|"Publish status"| controller
+    engine -->|"Export traces"| storage
+    supervisor -->|"Seal / publish manifest"| storage
+    classDef request fill:#eff6ff,stroke:#2563eb,color:#172554
+    classDef capture fill:#f0fdfa,stroke:#0f766e,color:#134e4a
+    classDef artifact fill:#faf5ff,stroke:#7e22ce,color:#3b0764
+    class client,frontend,serving,engine request
+    class cli,run,controller,supervisor capture
+    class storage artifact
 ```
+
 
 The CLI creates and observes the run; Ctrl-C requests cancellation. The existing control-plane manager selects the serving cohort, sends intent through model-server's existing internal listener, and publishes observed status. The runtime supervisor owns native start, automatic stop, export and failure handling. The platform owns the dedicated artifact PVC and retention.
 
@@ -87,6 +100,27 @@ Before starting, staging must be empty; unhandled output is not erased. After na
 The supervisor writes and flushes the manifest, renames the whole staging directory on the same filesystem, and flushes destination directories before publishing the artifact reference. Atomicity is per participant, not a distributed transaction. Later captures recreate staging and use a different run path. Publication failure neither produces success nor deletes recoverable data.
 
 The manifest's `startedAtUnixMs` follows native start, `recordingEndedAtUnixMs` marks the stop request, and `exportedAtUnixMs` follows stop/flush. Native workers may stop at slightly different times; these control timestamps do not claim exact GPU event boundaries. ProfileRun `finishedAt` is controller-observed completion. The command returns a PVC/path reference, not a workstation download. Namespace or PVC deletion remains a storage-owner operation and can remove artifacts.
+
+## Planned command recipes
+
+These recipes map to the delivery steps below. See the [operator guide](../../observability/profiling.md) for current capture commands. All entrypoints share option names.
+
+```bash
+# Capture after deployment readiness and an initial delay
+foretoken deploy examples/quickstart --profile   --profile-delay 30s --profile-duration 15s --profile-engine pytorch
+
+# Capture during a benchmark
+foretoken bench examples/quickstart --dataset random --profile   --profile-duration 15s --profile-engine pytorch
+
+# Sample request paths under existing traffic
+foretoken profile examples/quickstart --profile-duration 30s   --profile-request-sampling 0.01 --profile-request-limit 100
+
+# NVIDIA Nsight Systems
+foretoken profile examples/quickstart --profile-duration 5s --profile-engine nsight
+
+# MetaX mcTracer
+foretoken profile examples/quickstart --profile-duration 5s --profile-engine mctracer
+```
 
 ## Incremental delivery
 

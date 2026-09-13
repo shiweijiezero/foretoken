@@ -32,6 +32,26 @@ foretoken profile examples/quickstart \
 
 Ctrl-C 请求取消，并保留已经产生的结果。终端断线或等待超时不会取消已接受的采集，runtime 仍会自动停止。不要因为命令不再等待就重复发起采集，应先用它输出的查询命令检查原运行状态。
 
+## 常用命令
+
+从多模型部署中选择一个模型：
+
+```bash
+foretoken profile examples/multi-model-quickstart   --model Qwen/Qwen3-0.6B   --profile-engine pytorch --profile-duration 15s
+```
+
+为较慢的导出延长本地等待，不延长采集：
+
+```bash
+foretoken profile examples/quickstart   --profile-engine pytorch --profile-duration 15s --timeout 20m
+```
+
+命令打印运行名称后，可在另一个终端查询。将 `<run-name>` 替换为打印的名称，并使用实际命名空间：
+
+```bash
+kubectl get profilerun <run-name> -n foretoken-demo -o yaml
+```
+
 ## 部署前准备
 
 这些准备在模型部署前完成，不需要每次采集重新操作：

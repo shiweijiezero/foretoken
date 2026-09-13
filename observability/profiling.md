@@ -32,6 +32,26 @@ The runtime stops recording after the requested duration, then exports the files
 
 Ctrl-C requests cancellation and retains available output. A lost terminal or an observation timeout does not cancel an accepted run: the runtime still stops automatically. Do not submit another capture just because the first command stopped waiting. Use its printed inspection command to check the original run.
 
+## Common commands
+
+Select one model from a multi-model deployment:
+
+```bash
+foretoken profile examples/multi-model-quickstart   --model Qwen/Qwen3-0.6B   --profile-engine pytorch --profile-duration 15s
+```
+
+Allow more time to observe a slow export without extending capture:
+
+```bash
+foretoken profile examples/quickstart   --profile-engine pytorch --profile-duration 15s --timeout 20m
+```
+
+After the command prints the run name, inspect it from another terminal. Replace `<run-name>` with that name and use the deployment namespace:
+
+```bash
+kubectl get profilerun <run-name> -n foretoken-demo -o yaml
+```
+
 ## Prepare the deployment
 
 Preparation happens before model deployment, not during each capture:

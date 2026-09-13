@@ -42,7 +42,7 @@ kind create cluster \
   --config deploy/kind/multi-node.yaml
 ```
 
-After creating the cluster, build and import the local images. The vLLM adapter supports the EngineCore protocols shipped by vLLM 0.20 through 0.28; Python image compatibility is a separate requirement. The model-server build applies the [profiling backport](../../data-plane/patches/vllm-python-profiling.patch) to the installed engine, with source compatibility checked for vLLM 0.24.0 and 0.26.0. The runtime image must use glibc, as the maintained NVIDIA and MetaX images do. A different engine source must accept the backport or supply the exact patched implementation; otherwise the build stops rather than producing an image with incomplete profiling support. The build does not upgrade vLLM, PyTorch, or accelerator libraries.
+After creating the cluster, build and import the local images. Choose an engine image compatible with the EngineCore protocol and the [profiling adapter](profiling.md#prepare-before-capture).
 
 The inference-engine image normally provides its Python executable as `python`. If it requires a specific executable, set both build inputs:
 

@@ -13,21 +13,34 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 发起命令断线后，采集仍须停止并保留结果。因此，一次采集的身份和生命周期属于命名空间内的 `ProfileRun`，不属于命令进程，也不放进长期服务配置 `ModelService.spec`。
 
-```text
-普通负载 ── 公开 Frontend ─────────> model-server
-                                          │
-foretoken profile ── Kubernetes API        │
-                          │               │
-                      ProfileRun          │
-                          │               │
-                    现有控制器 ────────────┘
-                     内部 HTTP            │
-                                    runtime supervisor
-                                          │
-                                     vLLM / Torch
-                                          │
-                                      产物 PVC
+```mermaid
+flowchart LR
+    subgraph traffic["推理请求"]
+        client["业务流量"] --> frontend["Frontend"]
+    end
+    subgraph control["采集控制"]
+        cli["foretoken profile"] -->|"提交 / 查询"| run["Kubernetes API<br/>ProfileRun"]
+        run -->|"观察意图"| controller["ProfileRun controller"]
+        controller -.->|"发布状态"| run
+    end
+    subgraph runtime["模型运行时 · model-server"]
+        serving["Inference API"] --> engine["vLLM · PyTorch Profiler"]
+        supervisor["Runtime supervisor"] -->|"启动 / 停止"| engine
+    end
+    storage[("持久产物<br/>PVC")]
+    frontend --> serving
+    controller -->|"内部 HTTP"| supervisor
+    supervisor -.->|"发布状态"| controller
+    engine -->|"导出 trace"| storage
+    supervisor -->|"封存 / 发布 manifest"| storage
+    classDef request fill:#eff6ff,stroke:#2563eb,color:#172554
+    classDef capture fill:#f0fdfa,stroke:#0f766e,color:#134e4a
+    classDef artifact fill:#faf5ff,stroke:#7e22ce,color:#3b0764
+    class client,frontend,serving,engine request
+    class cli,run,controller,supervisor capture
+    class storage artifact
 ```
+
 
 CLI 创建并观察运行，Ctrl-C 请求取消。现有控制面管理器选定服务实例，通过 model-server 已有的内部监听接口发送采集意图，并发布观察到的状态。Runtime supervisor 负责原生启动、自动停止、导出和失败处置。平台负责独立产物 PVC 及其保留周期。
 
@@ -87,6 +100,27 @@ Runtime 使用平台提供的独立、共享可写产物 PVC，不复用模型�
 Supervisor 写入并 flush manifest，在同一文件系统内重命名整个 staging 目录，再 flush 目标目录，随后发布结果引用。原子性属于单个参与者，不是分布式事务。后续采集重建 staging，使用不同 run 目录。封存失败不发布成功，也不删除可恢复数据。
 
 Manifest 的 `startedAtUnixMs` 在原生启动后记录，`recordingEndedAtUnixMs` 表示发起停止，`exportedAtUnixMs` 表示停止/flush 返回。不同 worker 的实际停止时间可能略有差异，这些控制时间戳不冒充精确 GPU 事件边界。ProfileRun 的 `finishedAt` 是控制器观察到完成的时间。命令返回 PVC 和路径，不代表已下载到本机。删除命名空间或 PVC 仍由存储管理者负责，也可能删除产物。
+
+## 常用命令规划
+
+下列用法随分阶段交付逐步接入；当前采集命令见[操作指南](../../observability/profiling_zh.md)。三个入口复用同名参数。
+
+```bash
+# 部署就绪后延迟采集
+foretoken deploy examples/quickstart --profile   --profile-delay 30s --profile-duration 15s --profile-engine pytorch
+
+# 压测期间采集
+foretoken bench examples/quickstart --dataset random --profile   --profile-duration 15s --profile-engine pytorch
+
+# 真实流量下抽样记录请求链路
+foretoken profile examples/quickstart --profile-duration 30s   --profile-request-sampling 0.01 --profile-request-limit 100
+
+# NVIDIA Nsight Systems
+foretoken profile examples/quickstart --profile-duration 5s --profile-engine nsight
+
+# 沐曦 mcTracer
+foretoken profile examples/quickstart --profile-duration 5s --profile-engine mctracer
+```
 
 ## 分阶段交付
 
