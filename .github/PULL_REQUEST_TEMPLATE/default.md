@@ -4,7 +4,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
 <!-- Keep the sections that apply to this change and remove the others.
-Chinese template: .github/PULL_REQUEST_TEMPLATE_zh.md -->
+Chinese template: .github/PULL_REQUEST_TEMPLATE/default_zh.md
+For a new feature requiring design and interface explanation, use
+.github/PULL_REQUEST_TEMPLATE/feature.md (compare URL: ?template=feature.md). -->
 
 ## Summary
 

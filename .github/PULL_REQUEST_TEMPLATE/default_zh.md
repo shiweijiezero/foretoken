@@ -4,7 +4,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
 <!-- 只保留适用于当前改动的章节，其余直接删除。
-英文模板：.github/PULL_REQUEST_TEMPLATE.md -->
+英文模板：.github/PULL_REQUEST_TEMPLATE/default.md
+需要说明设计和接口的新增功能，可使用 .github/PULL_REQUEST_TEMPLATE/feature_zh.md
+（创建 PR 的 compare URL 添加 ?template=feature_zh.md）。 -->
 
 ## 概要
 
