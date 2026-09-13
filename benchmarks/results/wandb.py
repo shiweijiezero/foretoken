@@ -72,9 +72,8 @@ def wandb_group_name(
     config: BenchmarkConfig,
     service: ModelService,
 ) -> str:
-    """Return the configured W&B name or a default name from the runtime model and timestamp."""
-    run_name = config.wandb.run_name.strip()
-    return run_name or f"{service.model}_{wandb_run_timestamp()}"
+    """Resolve the explicit group or generate one for a multi-run composition."""
+    return config.wandb.group.strip() or f"{service.model}_{wandb_run_timestamp()}"
 
 
 def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
@@ -202,7 +201,8 @@ class WandbBenchmarkRun:
             return
 
         os.makedirs(output_dir, exist_ok=True)
-        base = group or wandb_group_name(config, service)
+        base = wandb_config.run_name.strip() or f"{service.model}_{wandb_run_timestamp()}"
+        group = wandb_config.group.strip() or group
         name = f"{base}_{name_suffix}" if name_suffix else base
         init_kwargs: dict[str, Any] = {
             "project": wandb_config.project,

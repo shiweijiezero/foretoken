@@ -89,7 +89,7 @@ pip install 'foretoken[bench]'
 foretoken bench examples/quickstart --output local,wandb
 ```
 
-Run `wandb login` before the first upload, or use `--output local` for local results only. See [Model Service Benchmarks](benchmarks/README.md) for more examples.
+Run `wandb login` before first using W&B. See [Model Service Benchmarks](benchmarks/README.md) for more examples.
 
 ## Gateway Mode
 

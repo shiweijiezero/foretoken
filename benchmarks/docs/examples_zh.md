@@ -262,7 +262,7 @@ JSONL 每行可以修改以下参数：
 
 ## 上传结果到 W&B
 
-W&B 默认启用。首次使用先登录，再按需指定项目和运行名称：
+指定项目、分组和运行名称：
 
 ```bash
 wandb login
@@ -270,8 +270,33 @@ wandb login
 foretoken bench examples/quickstart \
   --number 20 \
   --wandb-project foretoken-bench \
+  --wandb-group qwen-comparison \
   --wandb-run-name quickstart \
   --output local,wandb
 ```
 
-只需要本地结果时使用 `--output local`。结果目录和指标解释见[模型服务性能评测](../README_zh.md)。
+扫描和多数据集评测在未指定 group 时自动分组，各子运行会在运行名后追加自己的标识。单次评测默认不分组，也可用 `--wandb-group` 指定。
+
+仅保存本地结果用 `--output local`，不打印控制台汇总用 `--output local,quiet`，仅上传用 `--output wandb`。`--wandb-entity` 可指定账号或团队。
+
+## 理解结果
+
+`metrics.json` 保存汇总指标，`raw_output.json` 保存逐请求记录。标准负载还保留 `benchmark_data.db` 和 `benchmark.log`。
+
+| 指标 | 含义 |
+| --- | --- |
+| Success rate | 成功请求数除以尝试请求数 |
+| Latency | 请求耗时；成功的流式请求计时到最后一个 `choices` 非空的分片 |
+| TTFT | 从发送请求到收到首个 `choices` 非空分片的时间 |
+| TPOT | `(Latency − TTFT) / (输出 token 数 − 1)`；输出不足两个 token 时不可用 |
+| ITL | 相邻 `choices` 非空分片的到达间隔；一个分片可能包含多个 token |
+| Requests/s | 每秒成功完成的请求数 |
+| Generation tokens/s | 成功请求的输出 token 总数除以运行时间 |
+| Generation tokens/s/user | 总输出吞吐量除以配置的并发数；`--parallel -1` 时等于总输出吞吐量 |
+| Generation tokens/s/GPU | 总输出吞吐量除以模型声明的 GPU 容量，用于扫描结果比较 |
+
+`--no-stream` 保留延迟和吞吐量，不报告 TTFT、TPOT 和 ITL。仅含用量统计的分片不计入流式计时。
+
+多轮数据的请求指标统计实际执行的 HTTP 轮次，某轮失败会终止当前对话。对话指标统计尝试的对话及其耗时，成功轮次数不等于成功对话数。多数据集汇总保留各数据集的对话百分位，不直接平均百分位数。
+
+默认不重试。`--max-retries N` 允许对暂时性故障最多额外尝试 `N` 次，重试耗时计入该次请求延迟。

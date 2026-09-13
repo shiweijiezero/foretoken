@@ -328,6 +328,11 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         help="W&B entity",
     )
     parser.add_argument(
+        "--wandb-group",
+        default=_default(WandbRunConfig, "group"),
+        help="Group related runs; automatically assigned for sweeps and multiple datasets",
+    )
+    parser.add_argument(
         "--wandb-run-name",
         default=_default(WandbRunConfig, "run_name"),
         help=(
@@ -414,6 +419,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
         wandb=WandbRunConfig(
             project=namespace.wandb_project,
             entity=namespace.wandb_entity,
+            group=namespace.wandb_group,
             run_name=namespace.wandb_run_name,
         ),
         sweep=ParameterSweepConfig(

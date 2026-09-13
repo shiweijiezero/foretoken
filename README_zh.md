@@ -89,7 +89,7 @@ pip install 'foretoken[bench]'
 foretoken bench examples/quickstart --output local,wandb
 ```
 
-首次上传前运行 `wandb login`；仅需本地结果时使用 `--output local`。更多示例见[模型服务性能评测](benchmarks/README_zh.md)。
+首次使用 W&B 请先运行 `wandb login`。更多示例见[模型服务性能评测](benchmarks/README_zh.md)。
 
 ## 网关模式
 

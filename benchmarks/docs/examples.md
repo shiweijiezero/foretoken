@@ -262,7 +262,7 @@ The model service, credentials, trace source, and result destinations remain fix
 
 ## Upload results to W&B
 
-W&B upload is enabled by default. Log in once, then choose a project and run name if desired:
+Choose a project, group, and run name:
 
 ```bash
 wandb login
@@ -270,8 +270,33 @@ wandb login
 foretoken bench examples/quickstart \
   --number 20 \
   --wandb-project foretoken-bench \
+  --wandb-group qwen-comparison \
   --wandb-run-name quickstart \
   --output local,wandb
 ```
 
-Use `--output local` when only local results are needed. See [Model Service Benchmarks](../README.md) for result locations and metric definitions.
+Sweeps and multi-dataset runs generate a group when none is supplied and append each child label to the run name. A single run is ungrouped unless `--wandb-group` is set.
+
+Use `--output local` for local results only, `--output local,quiet` to suppress the console summary, or `--output wandb` for W&B only. Set `--wandb-entity` to choose the account or team.
+
+## Interpret results
+
+`metrics.json` contains aggregate results; `raw_output.json` contains individual request records. Standard workloads also retain `benchmark_data.db` and `benchmark.log`.
+
+| Metric | Meaning |
+| --- | --- |
+| Success rate | Successful requests divided by attempted requests |
+| Latency | Request duration; for successful streamed requests, measured through the last chunk with non-empty `choices` |
+| TTFT | Time from sending the request to the first chunk with non-empty `choices` |
+| TPOT | `(latency − TTFT) / (output tokens − 1)`; unavailable for fewer than two output tokens |
+| ITL | Intervals between chunks with non-empty `choices`; a chunk can contain multiple tokens |
+| Requests/s | Successfully completed requests per second |
+| Generation tokens/s | Successful requests' output tokens divided by run duration |
+| Generation tokens/s/user | Output throughput divided by configured concurrency; with `--parallel -1`, equals total output throughput |
+| Generation tokens/s/GPU | Output throughput divided by the model's declared GPU capacity, used in sweep comparisons |
+
+With `--no-stream`, latency and throughput remain available, but TTFT, TPOT, and ITL are not reported. Usage-only chunks do not advance streaming timing.
+
+For multi-turn data, request metrics count the HTTP turns that ran. A failed turn stops its conversation. Conversation metrics describe attempted conversations and their durations; successful turns are not a count of successful conversations. Multi-dataset runs retain conversation percentiles per dataset rather than averaging them.
+
+Retries are disabled by default. `--max-retries N` allows up to `N` additional attempts for transient failures. Retry time is included in the logical request's latency.

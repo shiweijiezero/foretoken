@@ -262,6 +262,7 @@ class WandbRunConfig:
 
     project: str = "foretoken-bench"
     entity: str = ""
+    group: str = ""
     run_name: str = ""
 
 
@@ -442,6 +443,7 @@ class BenchmarkConfig:
             "wandb": {
                 "project": self.wandb.project,
                 "entity": self.wandb.entity,
+                "group": self.wandb.group,
                 "run_name": self.wandb.run_name,
             },
             "sweep": {
