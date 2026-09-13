@@ -56,7 +56,7 @@ foretoken install
 
 For deployment on MetaX GPUs, follow the [MetaX deployment guide](docs/metax-deployment.md).
 
-The platform runs in the `foretoken-platform` namespace and exposes model services through a `LoadBalancer` Service. See the [source deployment guide](docs/custom-deployment.md) for build tools and remote clusters.
+See the [source deployment guide](docs/custom-deployment.md) for build tools and remote clusters.
 
 ### 3. Deploy the Quick Start
 

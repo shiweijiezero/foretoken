@@ -56,7 +56,7 @@ foretoken install
 
 沐曦 GPU 的部署请参照[沐曦部署指南](docs/metax-deployment_zh.md)。
 
-平台运行在 `foretoken-platform` 命名空间，通过 `LoadBalancer` 类型的 Kubernetes `Service` 提供模型服务地址。构建工具和远程集群部署见[源码部署指南](docs/custom-deployment_zh.md)。
+构建工具和远程集群部署见[源码部署指南](docs/custom-deployment_zh.md)。
 
 ### 3. 部署快速开始示例
 
