@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+use foretoken_artifacts::ModelSource;
 use foretoken_model_server::launch::LaunchPlanV1;
 
 fn plan() -> LaunchPlanV1 {
-    LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"model":"model","revision":"rev","tokenizer":"tokenizer","tokenizerRevision":"tokenizer-rev"},"parallelism":{"tp":2,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":30,"drainSeconds":7},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":["--max-model-len=32768"]}"#).unwrap()
+    LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"model","revision":"rev","tokenizer":"tokenizer","tokenizerRevision":"tokenizer-rev"},"parallelism":{"tp":2,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":30,"drainSeconds":7},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":["--max-model-len=32768"]}"#).unwrap()
 }
 
 // Protects launch from unsupported node and context-parallel topology combinations.
@@ -56,13 +57,22 @@ fn renders_supported_owned_arguments() {
         "ipc:///tmp/foretoken-kv-events.sock"
     );
     assert_eq!(event_config["topic"], "foretoken-kv-v1");
+
+    let mut local = plan();
+    local.artifacts.source = ModelSource::Local;
+    let local_args = local.render_vllm_args().unwrap();
+    assert!(
+        !local_args
+            .iter()
+            .any(|arg| arg.starts_with("--revision=") || arg.starts_with("--tokenizer-revision="))
+    );
 }
 
 // Protects role-specific EC launch configuration for encoder and prefill.
 #[test]
 fn ec_plan_renders_one_owned_config_for_each_role() {
-    let producer = LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"producer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
-    let consumer = LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"consumer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
+    let producer = LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"producer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
+    let consumer = LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"consumer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
 
     let args = producer.render_vllm_args().unwrap();
     let rendered: Vec<_> = args
@@ -91,7 +101,7 @@ fn ec_plan_renders_one_owned_config_for_each_role() {
 // Protects E/P/D launch from incomplete or mismatched EC configuration.
 #[test]
 fn rejects_invalid_ec_pairing() {
-    let invalid = r#"{"version":1,"nodeCount":1,"artifacts":{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"profile","profileRevision":"r1","connector":"arbitrary","role":"producer","sharedStoragePath":"relative"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#;
+    let invalid = r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"profile","profileRevision":"r1","connector":"arbitrary","role":"producer","sharedStoragePath":"relative"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#;
     assert!(LaunchPlanV1::parse(invalid).is_err());
 }
 
@@ -122,7 +132,7 @@ fn kv_variants_render_expected_semantics() {
     ];
     for (kv, want) in cases {
         let source = format!(
-            r#"{{"version":1,"nodeCount":1,"artifacts":{{"model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"}},"parallelism":{{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1}},"kv":{kv},"lifecycle":{{"startupSeconds":1,"drainSeconds":1}},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}}"#
+            r#"{{"version":1,"nodeCount":1,"artifacts":{{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"}},"parallelism":{{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1}},"kv":{kv},"lifecycle":{{"startupSeconds":1,"drainSeconds":1}},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}}"#
         );
         let rendered = LaunchPlanV1::parse(&source)
             .unwrap()

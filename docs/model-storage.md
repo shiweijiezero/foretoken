@@ -44,6 +44,7 @@ Set the public model identifier in `model.yaml`:
 ```yaml
 spec:
   model: checkpointA/A3
+  source: local
 ```
 
 The model server and frontend resolve this identifier below `data/models`. A tokenizer-only directory may be placed in `data/models/tokenizers`; model format validation remains with the inference engine.

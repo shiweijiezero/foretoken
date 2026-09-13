@@ -36,7 +36,7 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 			}
 		}
 		pool := get(t, ctx, c, client.ObjectKey{Namespace: service.Namespace, Name: "chat-default"}, new(inferencev1alpha1.ModelPool))
-		if !metav1.IsControlledBy(pool, service) || pool.Spec.ModelServiceRef.UID != string(service.UID) || pool.Spec.DesiredGroups != 1 || pool.Spec.Template.Tokenizer != service.Spec.Model || pool.Spec.Template.ModelRevision != "main" || pool.Spec.Template.TokenizerRevision != "main" {
+		if !metav1.IsControlledBy(pool, service) || pool.Spec.ModelServiceRef.UID != string(service.UID) || pool.Spec.DesiredGroups != 1 || pool.Spec.Template.Tokenizer != service.Spec.Model || pool.Spec.Template.Source != inferencev1alpha1.ModelSourceHF || pool.Spec.Template.ModelRevision != "main" || pool.Spec.Template.TokenizerRevision != "main" {
 			t.Fatalf("materialized pool = %#v", pool)
 		}
 		group := modelGroup(pool, "chat-r1-0", 0)
@@ -64,8 +64,9 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 	// ModelScope repositories use master as their source-native default revision in both runtimes.
 	t.Run("ModelService compiles ModelScope source identity", func(t *testing.T) {
 		service := modelService("modelscope", 1)
+		service.Spec.Source = inferencev1alpha1.ModelSourceModelScope
 		c := controllerClient(t, service)
-		r := &controllers.ModelServiceReconciler{Client: c, SourceProfile: controllers.ModelSourceProfile{Provider: inferencev1alpha1.ModelSourceProviderModelScope}}
+		r := &controllers.ModelServiceReconciler{Client: c, HuggingFaceAccessProfile: controllers.HuggingFaceAccessProfile{Endpoint: "https://hub.example.com", TokenSecretName: "model-source", TokenSecretKey: "token"}}
 		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(service)}
 		for range 2 {
 			if _, err := r.Reconcile(ctx, request); err != nil {
@@ -73,7 +74,7 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 			}
 		}
 		pool := get(t, ctx, c, client.ObjectKey{Namespace: service.Namespace, Name: "modelscope-default"}, new(inferencev1alpha1.ModelPool))
-		if pool.Spec.Template.ModelRevision != "master" || pool.Spec.Template.TokenizerRevision != "master" || pool.Spec.Template.SourceAccess == nil || pool.Spec.Template.SourceAccess.Provider != inferencev1alpha1.ModelSourceProviderModelScope {
+		if pool.Spec.Template.Source != inferencev1alpha1.ModelSourceModelScope || pool.Spec.Template.ModelRevision != "master" || pool.Spec.Template.TokenizerRevision != "master" || pool.Spec.Template.HuggingFaceAccess != nil {
 			t.Fatalf("ModelScope pool identity = %#v", pool.Spec.Template)
 		}
 	})

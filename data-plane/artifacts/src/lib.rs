@@ -7,6 +7,17 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
+/// Model and tokenizer resolution selected by one ModelService.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ModelSource {
+    Local,
+    Hf,
+    ModelScope,
+}
+
 /// Controller-projected model root, distinct from the complete runtime-cache mount.
 pub const MODEL_ROOT_ENV: &str = "FORETOKEN_MODEL_ROOT";
 

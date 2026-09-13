@@ -1163,12 +1163,16 @@ checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 [[package]]
 name = "foretoken-artifacts"
 version = "0.0.1"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "foretoken-backend-registry"
 version = "0.0.1"
 dependencies = [
  "axum",
+ "foretoken-artifacts",
  "foretoken-engine-core-client",
  "foretoken-kv-indexer",
  "foretoken-llm-facade",

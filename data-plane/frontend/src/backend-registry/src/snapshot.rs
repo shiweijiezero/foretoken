@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 //! Defines the controller-projected component/pipeline-scope routing snapshot contract.
+use foretoken_artifacts::ModelSource;
 use foretoken_model_protocol::ModelServerRole;
 use foretoken_router::{RouteTargetId, RouteTargetSet};
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,7 @@ pub struct ServingSnapshot {
 pub struct SnapshotModel {
     pub service_uid: String,
     pub model: String,
+    pub source: ModelSource,
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
@@ -45,6 +47,7 @@ pub struct SnapshotEpdComponent {
     pub route_target_id: RouteTargetId,
     pub role: ModelServerRole,
     pub model: String,
+    pub source: ModelSource,
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
@@ -77,6 +80,7 @@ pub struct SnapshotPdComponent {
     pub role: ModelServerRole,
     pub pipeline_scope_id: String,
     pub model: String,
+    pub source: ModelSource,
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
@@ -110,6 +114,7 @@ pub struct SnapshotGroup {
     pub pool_name: String,
     pub route_target_id: RouteTargetId,
     pub model: String,
+    pub source: ModelSource,
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
@@ -123,6 +128,7 @@ pub struct SnapshotGroup {
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelIdentity {
+    pub source: ModelSource,
     pub revision: String,
     pub tokenizer: String,
     pub tokenizer_revision: String,
@@ -168,12 +174,13 @@ impl ServingSnapshot {
     /// Registry projection uses this validation before materializing routes; the returned map is derived for the caller.
     pub fn model_identities(&self) -> Result<BTreeMap<String, ModelIdentity>, SnapshotError> {
         let mut identities = BTreeMap::new();
-        for (model, revision, tokenizer, tokenizer_revision, capabilities) in self
+        for (model, source, revision, tokenizer, tokenizer_revision, capabilities) in self
             .models
             .iter()
             .map(|model| {
                 (
                     &model.model,
+                    &model.source,
                     &model.revision,
                     &model.tokenizer,
                     &model.tokenizer_revision,
@@ -183,6 +190,7 @@ impl ServingSnapshot {
             .chain(self.groups.iter().map(|g| {
                 (
                     &g.model,
+                    &g.source,
                     &g.revision,
                     &g.tokenizer,
                     &g.tokenizer_revision,
@@ -192,6 +200,7 @@ impl ServingSnapshot {
             .chain(self.pd_components.iter().map(|c| {
                 (
                     &c.model,
+                    &c.source,
                     &c.revision,
                     &c.tokenizer,
                     &c.tokenizer_revision,
@@ -201,6 +210,7 @@ impl ServingSnapshot {
             .chain(self.epd_components.iter().map(|c| {
                 (
                     &c.model,
+                    &c.source,
                     &c.revision,
                     &c.tokenizer,
                     &c.tokenizer_revision,
@@ -216,6 +226,7 @@ impl ServingSnapshot {
                 return Err(SnapshotError::IncompleteModelIdentity);
             }
             let value = ModelIdentity {
+                source: *source,
                 revision: revision.clone(),
                 tokenizer: tokenizer.clone(),
                 tokenizer_revision: tokenizer_revision.clone(),

@@ -44,6 +44,7 @@ examples/quickstart/data/models/checkpointA/A3/
 ```yaml
 spec:
   model: checkpointA/A3
+  source: local
 ```
 
 model-server 和 frontend 会在 `data/models` 下解析该标识。只有 tokenizer 的目录可以放在 `data/models/tokenizers` 下；模型格式由推理引擎校验。

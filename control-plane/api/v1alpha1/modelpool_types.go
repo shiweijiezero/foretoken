@@ -69,21 +69,8 @@ type RuntimeCacheBinding struct {
 	MountPath string `json:"mountPath"`
 }
 
-// ModelSourceProvider identifies the remote model repository protocol.
-// +kubebuilder:validation:Enum=huggingface;modelscope
-type ModelSourceProvider string
-
-const (
-	ModelSourceProviderHuggingFace ModelSourceProvider = "huggingface"
-	ModelSourceProviderModelScope  ModelSourceProvider = "modelscope"
-)
-
-// ModelSourceAccess contains source settings consumed by frontend and runtime adapters.
-type ModelSourceAccess struct {
-	// Provider defaults to Hugging Face when omitted.
-	// +optional
-	Provider ModelSourceProvider `json:"provider,omitempty"`
-
+// HuggingFaceAccess contains platform-provided access settings for Hugging Face repositories.
+type HuggingFaceAccess struct {
 	// Endpoint is an optional Hugging Face-compatible Hub endpoint.
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
@@ -104,6 +91,8 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Model string `json:"model"`
 
+	Source ModelSource `json:"source"`
+
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
@@ -123,9 +112,9 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	RuntimeCache *RuntimeCacheBinding `json:"runtimeCache,omitempty"`
 
-	// SourceAccess is set by the ModelService controller from the selected runtime profile.
+	// HuggingFaceAccess is set by the ModelService controller for Hugging Face models.
 	// +optional
-	SourceAccess *ModelSourceAccess `json:"sourceAccess,omitempty"`
+	HuggingFaceAccess *HuggingFaceAccess `json:"huggingFaceAccess,omitempty"`
 
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`

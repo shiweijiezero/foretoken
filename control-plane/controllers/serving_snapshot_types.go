@@ -5,6 +5,8 @@
 
 package controllers
 
+import inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+
 const servingSnapshotKey = "serving.json"
 
 type servingSnapshot struct {
@@ -20,6 +22,7 @@ type servingSnapshot struct {
 type servingSnapshotModel struct {
 	ServiceUID          string                           `json:"service_uid"`
 	Model               string                           `json:"model"`
+	Source              inferencev1alpha1.ModelSource    `json:"source"`
 	Revision            string                           `json:"revision"`
 	Tokenizer           string                           `json:"tokenizer"`
 	TokenizerRevision   string                           `json:"tokenizer_revision"`
@@ -36,43 +39,45 @@ type servingSnapshotScalingTarget struct {
 }
 
 type servingSnapshotGroup struct {
-	RouteTargetID     string   `json:"route_target_id"`
-	ServiceUID        string   `json:"service_uid"`
-	PoolUID           string   `json:"pool_uid"`
-	PoolName          string   `json:"pool_name"`
-	Model             string   `json:"model"`
-	Revision          string   `json:"revision"`
-	Tokenizer         string   `json:"tokenizer"`
-	TokenizerRevision string   `json:"tokenizer_revision"`
-	MaxInputTokens    *int32   `json:"max_input_tokens,omitempty"`
-	Capabilities      []string `json:"capabilities,omitempty"`
-	Endpoint          string   `json:"endpoint"`
-	KVScopeID         string   `json:"kv_scope_id"`
-	DataParallelSize  int32    `json:"data_parallel_size"`
+	RouteTargetID     string                        `json:"route_target_id"`
+	ServiceUID        string                        `json:"service_uid"`
+	PoolUID           string                        `json:"pool_uid"`
+	PoolName          string                        `json:"pool_name"`
+	Model             string                        `json:"model"`
+	Source            inferencev1alpha1.ModelSource `json:"source"`
+	Revision          string                        `json:"revision"`
+	Tokenizer         string                        `json:"tokenizer"`
+	TokenizerRevision string                        `json:"tokenizer_revision"`
+	MaxInputTokens    *int32                        `json:"max_input_tokens,omitempty"`
+	Capabilities      []string                      `json:"capabilities,omitempty"`
+	Endpoint          string                        `json:"endpoint"`
+	KVScopeID         string                        `json:"kv_scope_id"`
+	DataParallelSize  int32                         `json:"data_parallel_size"`
 }
 
 // servingSnapshotPDComponent is one P or D component. Linked route sets express compatibility without P×D materialization.
 type servingSnapshotPDComponent struct {
-	RouteTargetID            string   `json:"route_target_id"`
-	ServiceUID               string   `json:"service_uid"`
-	PoolUID                  string   `json:"pool_uid"`
-	PoolName                 string   `json:"pool_name"`
-	Role                     string   `json:"role"`
-	PipelineScopeID          string   `json:"pipeline_scope_id"`
-	Model                    string   `json:"model"`
-	Revision                 string   `json:"revision"`
-	Tokenizer                string   `json:"tokenizer"`
-	TokenizerRevision        string   `json:"tokenizer_revision"`
-	MaxInputTokens           *int32   `json:"max_input_tokens,omitempty"`
-	ProfileName              string   `json:"profile_name"`
-	ProfileRevision          string   `json:"profile_revision"`
-	Connector                string   `json:"connector"`
-	Protocol                 string   `json:"protocol"`
-	Capabilities             []string `json:"capabilities"`
-	Endpoint                 string   `json:"endpoint"`
-	PrefillBootstrapEndpoint string   `json:"prefill_bootstrap_endpoint,omitempty"`
-	KVScopeID                string   `json:"kv_scope_id"`
-	DataParallelSize         int32    `json:"data_parallel_size"`
+	RouteTargetID            string                        `json:"route_target_id"`
+	ServiceUID               string                        `json:"service_uid"`
+	PoolUID                  string                        `json:"pool_uid"`
+	PoolName                 string                        `json:"pool_name"`
+	Role                     string                        `json:"role"`
+	PipelineScopeID          string                        `json:"pipeline_scope_id"`
+	Model                    string                        `json:"model"`
+	Source                   inferencev1alpha1.ModelSource `json:"source"`
+	Revision                 string                        `json:"revision"`
+	Tokenizer                string                        `json:"tokenizer"`
+	TokenizerRevision        string                        `json:"tokenizer_revision"`
+	MaxInputTokens           *int32                        `json:"max_input_tokens,omitempty"`
+	ProfileName              string                        `json:"profile_name"`
+	ProfileRevision          string                        `json:"profile_revision"`
+	Connector                string                        `json:"connector"`
+	Protocol                 string                        `json:"protocol"`
+	Capabilities             []string                      `json:"capabilities"`
+	Endpoint                 string                        `json:"endpoint"`
+	PrefillBootstrapEndpoint string                        `json:"prefill_bootstrap_endpoint,omitempty"`
+	KVScopeID                string                        `json:"kv_scope_id"`
+	DataParallelSize         int32                         `json:"data_parallel_size"`
 }
 
 type servingSnapshotPDPipelineScope struct {
@@ -83,21 +88,22 @@ type servingSnapshotPDPipelineScope struct {
 
 // servingSnapshotEPDComponent is one route in an E/P/D compatibility scope.
 type servingSnapshotEPDComponent struct {
-	RouteTargetID            string   `json:"route_target_id"`
-	ServiceUID               string   `json:"service_uid"`
-	PoolUID                  string   `json:"pool_uid"`
-	PoolName                 string   `json:"pool_name"`
-	Role                     string   `json:"role"`
-	Model                    string   `json:"model"`
-	Revision                 string   `json:"revision"`
-	Tokenizer                string   `json:"tokenizer"`
-	TokenizerRevision        string   `json:"tokenizer_revision"`
-	MaxInputTokens           *int32   `json:"max_input_tokens,omitempty"`
-	Capabilities             []string `json:"capabilities"`
-	Endpoint                 string   `json:"endpoint"`
-	PrefillBootstrapEndpoint string   `json:"prefill_bootstrap_endpoint,omitempty"`
-	KVScopeID                string   `json:"kv_scope_id"`
-	DataParallelSize         int32    `json:"data_parallel_size"`
+	RouteTargetID            string                        `json:"route_target_id"`
+	ServiceUID               string                        `json:"service_uid"`
+	PoolUID                  string                        `json:"pool_uid"`
+	PoolName                 string                        `json:"pool_name"`
+	Role                     string                        `json:"role"`
+	Model                    string                        `json:"model"`
+	Source                   inferencev1alpha1.ModelSource `json:"source"`
+	Revision                 string                        `json:"revision"`
+	Tokenizer                string                        `json:"tokenizer"`
+	TokenizerRevision        string                        `json:"tokenizer_revision"`
+	MaxInputTokens           *int32                        `json:"max_input_tokens,omitempty"`
+	Capabilities             []string                      `json:"capabilities"`
+	Endpoint                 string                        `json:"endpoint"`
+	PrefillBootstrapEndpoint string                        `json:"prefill_bootstrap_endpoint,omitempty"`
+	KVScopeID                string                        `json:"kv_scope_id"`
+	DataParallelSize         int32                         `json:"data_parallel_size"`
 }
 
 type servingSnapshotEPDPipelineScope struct {

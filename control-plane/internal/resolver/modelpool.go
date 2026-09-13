@@ -147,11 +147,12 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		Role: template.Role,
 		Artifacts: inferencev1alpha1.ModelGroupArtifacts{
 			Model:             effective.Model,
+			Source:            template.Source,
 			ModelRevision:     effective.Revision,
 			Tokenizer:         effective.Tokenizer,
 			TokenizerRevision: effective.TokenizerRevision,
 			Cache:             template.RuntimeCache.DeepCopy(),
-			SourceAccess:      template.SourceAccess.DeepCopy(),
+			HuggingFaceAccess: template.HuggingFaceAccess.DeepCopy(),
 		},
 		Runtime: inferencev1alpha1.ModelGroupRuntime{
 			Backend:                               template.Backend,

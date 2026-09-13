@@ -62,12 +62,12 @@ type GatewayParent struct {
 
 // FrontendRuntimeProfile contains platform-owned frontend settings and an optional production Gateway.
 type FrontendRuntimeProfile struct {
-	Image            string
-	Port             int32
-	ImagePullSecrets []corev1.LocalObjectReference
-	RuntimeCache     *inferencev1alpha1.RuntimeCacheBinding
-	SourceAccess     *inferencev1alpha1.ModelSourceAccess
-	Gateway          *GatewayParent
+	Image             string
+	Port              int32
+	ImagePullSecrets  []corev1.LocalObjectReference
+	RuntimeCache      *inferencev1alpha1.RuntimeCacheBinding
+	HuggingFaceAccess *inferencev1alpha1.HuggingFaceAccess
+	Gateway           *GatewayParent
 }
 
 // FrontendServiceReconciler owns the frontend workload and its optional HTTPRoute.

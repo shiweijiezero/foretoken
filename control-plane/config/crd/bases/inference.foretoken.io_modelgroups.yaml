@@ -111,27 +111,13 @@ spec:
                     - claimName
                     - mountPath
                     type: object
-                  model:
-                    maxLength: 1024
-                    minLength: 1
-                    type: string
-                  modelRevision:
-                    maxLength: 256
-                    minLength: 1
-                    type: string
-                  sourceAccess:
-                    description: SourceAccess contains runtime-adapter settings for
-                      loading the model.
+                  huggingFaceAccess:
+                    description: HuggingFaceAccess contains platform access settings
+                      for Hugging Face models.
                     properties:
                       endpoint:
                         description: Endpoint is an optional Hugging Face-compatible
                           Hub endpoint.
-                        type: string
-                      provider:
-                        description: Provider defaults to Hugging Face when omitted.
-                        enum:
-                        - huggingface
-                        - modelscope
                         type: string
                       tokenSecretKey:
                         type: string
@@ -140,6 +126,22 @@ spec:
                           optional namespace-local credential.
                         type: string
                     type: object
+                  model:
+                    maxLength: 1024
+                    minLength: 1
+                    type: string
+                  modelRevision:
+                    maxLength: 256
+                    minLength: 1
+                    type: string
+                  source:
+                    description: ModelSource selects how model and tokenizer identifiers
+                      are resolved.
+                    enum:
+                    - local
+                    - hf
+                    - modelscope
+                    type: string
                   tokenizer:
                     maxLength: 1024
                     minLength: 1
@@ -151,6 +153,7 @@ spec:
                 required:
                 - model
                 - modelRevision
+                - source
                 - tokenizer
                 - tokenizerRevision
                 type: object

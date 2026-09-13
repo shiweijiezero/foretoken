@@ -219,7 +219,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	if cache := group.Spec.Artifacts.Cache; cache != nil {
 		modelRoot = runtimeconfig.ModelDirectory(cache.MountPath)
 	}
-	env = append(env, vllmconfig.ModelSourceEnv(group.Spec.Artifacts.SourceAccess, modelRoot)...)
+	env = append(env, vllmconfig.ModelSourceEnv(group.Spec.Artifacts.Source, group.Spec.Artifacts.HuggingFaceAccess, modelRoot)...)
 	if group.Spec.PDRuntime != nil {
 		env = append(env,
 			corev1.EnvVar{Name: "VLLM_MOONCAKE_BOOTSTRAP_PORT", Value: strconv.Itoa(int(group.Spec.PDRuntime.BootstrapPort))},

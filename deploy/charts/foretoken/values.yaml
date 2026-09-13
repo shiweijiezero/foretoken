@@ -69,7 +69,7 @@ runtime:
     image: ghcr.io/shiweijiezero/foretoken/model-server:0.0.2
     profileRevision: default
     modelServerPort: 9000
-    # Select Hugging Face Hub, a compatible endpoint, or ModelScope for model artifacts.
+    # Optional Hugging Face-compatible endpoint and credential.
     modelSource:
       endpoint: ""
       tokenSecret:

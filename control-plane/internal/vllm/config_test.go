@@ -82,7 +82,7 @@ func TestBuildLaunchPlanRejectsStartupTimeoutOverflow(t *testing.T) {
 
 func testVLLMTemplate(gpus int32) inferencev1alpha1.NormalizedPoolTemplate {
 	return inferencev1alpha1.NormalizedPoolTemplate{
-		Model: "model", ModelRevision: "main", Tokenizer: "model", TokenizerRevision: "main",
+		Model: "model", Source: inferencev1alpha1.ModelSourceHF, ModelRevision: "main", Tokenizer: "model", TokenizerRevision: "main",
 		Backend: "vllm", Role: inferencev1alpha1.ModelRoleAggregate, NodeCount: 1, MemberCount: 1,
 		Resources:                             inferencev1alpha1.ModelResources{Requests: inferencev1alpha1.ModelResourceRequests{GPU: inferencev1alpha1.GPURequest{Count: gpus}}},
 		Parallelism:                           inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1},
@@ -94,7 +94,7 @@ func testVLLMTemplate(gpus int32) inferencev1alpha1.NormalizedPoolTemplate {
 func testGroup() inferencev1alpha1.ModelGroupSpec {
 	return inferencev1alpha1.ModelGroupSpec{
 		Role: inferencev1alpha1.ModelRoleAggregate, NodeCount: 1, MemberCount: 1,
-		Artifacts:   inferencev1alpha1.ModelGroupArtifacts{Model: "model", ModelRevision: "main", Tokenizer: "model", TokenizerRevision: "main"},
+		Artifacts:   inferencev1alpha1.ModelGroupArtifacts{Model: "model", Source: inferencev1alpha1.ModelSourceHF, ModelRevision: "main", Tokenizer: "model", TokenizerRevision: "main"},
 		Runtime:     inferencev1alpha1.ModelGroupRuntime{InternalGenerateRequestBodyLimitBytes: inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes},
 		Parallelism: inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1},
 		Timeouts:    inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"},

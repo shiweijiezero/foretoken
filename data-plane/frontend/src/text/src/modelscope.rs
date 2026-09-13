@@ -6,13 +6,11 @@
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
-use reqwest::header::COOKIE;
 use serde::Deserialize;
 use thiserror::Error;
 
 const MODELSCOPE_ENDPOINT: &str = "https://www.modelscope.cn";
 const MODELSCOPE_CACHE_ENV: &str = "MODELSCOPE_CACHE";
-const MODELSCOPE_TOKEN_ENV: &str = "MODELSCOPE_API_TOKEN";
 const TEMPORARY_MODELSCOPE_CACHE_DIR_ENV: &str = "FORETOKEN_TEMPORARY_MODELSCOPE_CACHE_DIR";
 
 #[derive(Deserialize)]
@@ -60,10 +58,7 @@ pub async fn resolve_snapshot(
     let client = reqwest::Client::builder()
         .user_agent(concat!("foretoken/", env!("CARGO_PKG_VERSION")))
         .build()?;
-    let token = std::env::var(MODELSCOPE_TOKEN_ENV)
-        .ok()
-        .filter(|token| !token.is_empty());
-    let files = repository_files(&client, token.as_deref(), model_id, revision).await?;
+    let files = repository_files(&client, model_id, revision).await?;
     let files = files
         .into_iter()
         .filter(|file| file.kind == "blob")
@@ -78,15 +73,7 @@ pub async fn resolve_snapshot(
         return Err(ModelScopeError::NoFrontendArtifact);
     }
     for file in files {
-        download_file(
-            &client,
-            token.as_deref(),
-            model_id,
-            revision,
-            &file,
-            &snapshot,
-        )
-        .await?;
+        download_file(&client, model_id, revision, &file, &snapshot).await?;
     }
     Ok(snapshot)
 }
@@ -117,7 +104,6 @@ fn model_directory(root: &Path, model_id: &str) -> Result<PathBuf, ModelScopeErr
 
 async fn repository_files(
     client: &reqwest::Client,
-    token: Option<&str>,
     model_id: &str,
     revision: &str,
 ) -> Result<Vec<RepositoryFile>, ModelScopeError> {
@@ -125,7 +111,7 @@ async fn repository_files(
     url.query_pairs_mut()
         .append_pair("Revision", revision)
         .append_pair("Recursive", "true");
-    let response = request(client.get(url), token).send().await?;
+    let response = client.get(url).send().await?;
     let status = response.status();
     let response: ApiResponse<RepositoryFiles> = response.json().await?;
     if !status.is_success() || response.code != 200 {
@@ -140,7 +126,6 @@ async fn repository_files(
 
 async fn download_file(
     client: &reqwest::Client,
-    token: Option<&str>,
     model_id: &str,
     revision: &str,
     file: &str,
@@ -162,7 +147,7 @@ async fn download_file(
     url.query_pairs_mut()
         .append_pair("Revision", revision)
         .append_pair("FilePath", file);
-    let response = request(client.get(url), token).send().await?;
+    let response = client.get(url).send().await?;
     if !response.status().is_success() {
         return Err(ModelScopeError::Download {
             file: file.into(),
@@ -203,13 +188,6 @@ fn model_url(model_id: &str, suffix: &str) -> Result<reqwest::Url, ModelScopeErr
     segments.extend(suffix.split('/'));
     drop(segments);
     Ok(url)
-}
-
-fn request(builder: reqwest::RequestBuilder, token: Option<&str>) -> reqwest::RequestBuilder {
-    match token {
-        Some(token) => builder.header(COOKIE, format!("m_session_id={token}")),
-        None => builder,
-    }
 }
 
 #[derive(Debug, Error)]

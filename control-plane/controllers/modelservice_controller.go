@@ -48,9 +48,9 @@ type ScalingMetricsProvider interface {
 // ModelServiceReconciler compiles ModelService intent and owns ModelPool specs.
 type ModelServiceReconciler struct {
 	client.Client
-	MetricsProvider ScalingMetricsProvider
-	CacheProfile    RuntimeCacheProfile
-	SourceProfile   ModelSourceProfile
+	MetricsProvider          ScalingMetricsProvider
+	CacheProfile             RuntimeCacheProfile
+	HuggingFaceAccessProfile HuggingFaceAccessProfile
 
 	recommendationHistoryOnce sync.Once
 	recommendationHistory     *core.RecommendationHistory
@@ -95,8 +95,7 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	runtimeSource := reconciler.SourceProfile.SourceAccess()
-	compiledPools, err := compiler.CompileModelService(service.Spec, runtimeSource)
+	compiledPools, err := compiler.CompileModelService(service.Spec)
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, service, modelServiceState{
 			compiled: conditionState{metav1.ConditionFalse, "InvalidIntent", err.Error()},
@@ -140,8 +139,12 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 		})
 		return ctrl.Result{}, errors.Join(readinessErr, statusErr)
 	}
+	huggingFaceAccess := reconciler.HuggingFaceAccessProfile.Access()
 	for index := range compiledPools {
 		compiledPools[index].Template.RuntimeCache = runtimeCache.DeepCopy()
+		if compiledPools[index].Template.Source == inferencev1alpha1.ModelSourceHF {
+			compiledPools[index].Template.HuggingFaceAccess = huggingFaceAccess.DeepCopy()
+		}
 	}
 
 	if err := reconciler.reconcilePools(ctx, service, compiledPools); err != nil {

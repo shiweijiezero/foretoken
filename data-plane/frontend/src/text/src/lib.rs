@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use foretoken_artifacts::ModelSource;
 use foretoken_chat::{
     ChatBackend, ChatRequestProcessor, DynChatBackend, HfChatBackend, LoadModelBackendsOptions,
 };
@@ -29,9 +30,6 @@ pub struct SnapshotRuntime {
     pub supports_multimodal: bool,
 }
 
-const MODEL_SOURCE_PROVIDER_ENV: &str = "FORETOKEN_MODEL_SOURCE_PROVIDER";
-const HUGGING_FACE_PROVIDER: &str = "huggingface";
-const MODELSCOPE_PROVIDER: &str = "modelscope";
 const HF_TOKEN_ENV: &str = "HF_TOKEN";
 const HF_HUB_OFFLINE_ENV: &str = "HF_HUB_OFFLINE";
 const TEMPORARY_HF_CACHE_DIR_ENV: &str = "FORETOKEN_TEMPORARY_HF_CACHE_DIR";
@@ -58,16 +56,18 @@ const MODEL_FILES: &[&str] = &[
 
 /// Loads a local tokenizer directory or resolves it through the selected remote provider.
 pub async fn load_text_backend(
+    source: ModelSource,
     model_id: &str,
     revision: &str,
 ) -> std::result::Result<HfTextBackend, TextBackendLoadError> {
     if model_id.is_empty() || revision.is_empty() {
         return Err(TextBackendLoadError::MissingModelOrRevision);
     }
-    let model_root = std::env::var_os(foretoken_artifacts::MODEL_ROOT_ENV).map(PathBuf::from);
-    if let Some(local) = foretoken_artifacts::resolve_directory(model_root.as_deref(), model_id)
-        .map_err(TextBackendLoadError::LocalModelPath)?
-    {
+    if source == ModelSource::Local {
+        let model_root = std::env::var_os(foretoken_artifacts::MODEL_ROOT_ENV).map(PathBuf::from);
+        let local = foretoken_artifacts::resolve_directory(model_root.as_deref(), model_id)
+            .map_err(TextBackendLoadError::LocalModelPath)?
+            .ok_or(TextBackendLoadError::LocalModelNotFound)?;
         let local = local
             .to_str()
             .ok_or(TextBackendLoadError::NonUtf8CachePath)?;
@@ -75,9 +75,7 @@ pub async fn load_text_backend(
             .await
             .map_err(|_| TextBackendLoadError::LocalModel);
     }
-    let provider =
-        std::env::var(MODEL_SOURCE_PROVIDER_ENV).unwrap_or_else(|_| HUGGING_FACE_PROVIDER.into());
-    if provider == MODELSCOPE_PROVIDER {
+    if source == ModelSource::ModelScope {
         let snapshot = modelscope::resolve_snapshot(model_id, revision, MODEL_FILES).await?;
         let snapshot = snapshot
             .to_str()
@@ -85,9 +83,6 @@ pub async fn load_text_backend(
         return HfTextBackend::from_model(snapshot)
             .await
             .map_err(|_| TextBackendLoadError::CachedModel);
-    }
-    if provider != HUGGING_FACE_PROVIDER {
-        return Err(TextBackendLoadError::UnsupportedProvider(provider));
     }
     if let Some(snapshot) = cached_model_snapshot(model_id, revision) {
         let snapshot = snapshot
@@ -147,12 +142,13 @@ pub async fn load_text_backend(
 
 /// Builds text lowering and chat rendering from the same pinned local snapshot.
 pub async fn load_snapshot_runtime(
+    source: ModelSource,
     model_id: &str,
     revision: &str,
     max_model_len: u32,
     model_dtype: Option<ModelDtype>,
 ) -> std::result::Result<SnapshotRuntime, TextBackendLoadError> {
-    let text_backend = load_text_backend(model_id, revision).await?;
+    let text_backend = load_text_backend(source, model_id, revision).await?;
     let tokenizer = text_backend.tokenizer();
     let chat_backend = HfChatBackend::from_resolved_model_files(
         text_backend.resolved_model_files().clone(),
@@ -222,10 +218,10 @@ pub enum TextBackendLoadError {
     MissingModelOrRevision,
     #[error("could not load tokenizer files from the local model directory")]
     LocalModel,
+    #[error("local model or tokenizer directory was not found")]
+    LocalModelNotFound,
     #[error("invalid local model path: {0}")]
     LocalModelPath(#[source] std::io::Error),
-    #[error("unsupported model source provider {0:?}")]
-    UnsupportedProvider(String),
     #[error(transparent)]
     ModelScope(#[from] modelscope::ModelScopeError),
     #[error("could not initialize the Hugging Face client")]

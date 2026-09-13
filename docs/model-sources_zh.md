@@ -5,11 +5,17 @@
 
 [English](model-sources.md)
 
-Foretoken 从同一来源加载模型权重，以及 frontend 需要的 tokenizer、配置和对话模板。未设置模型来源时使用 Hugging Face Hub，默认仍执行 `foretoken install`。
+每个 `ModelService` 分别选择模型、tokenizer、配置和对话模板的来源，默认使用 Hugging Face Hub。
 
-## 选择远端来源
+```yaml
+spec:
+  model: Qwen/Qwen3-0.6B
+  source: hf # 支持 local、hf、modelscope，默认为 hf。
+```
 
-使用 Hugging Face 兼容地址时，创建 `model-source-values.yaml`：
+使用 `source: modelscope` 时，相同模型标识会从 ModelScope 加载。同一个 frontend 后面的不同模型服务可以选择不同来源。
+
+使用 Hugging Face 兼容地址时，在平台 values 中设置访问地址并用该文件安装：
 
 ```yaml
 runtime:
@@ -18,42 +24,32 @@ runtime:
       endpoint: https://hub.example.com
 ```
 
-使用 ModelScope 时改为：
-
-```yaml
-runtime:
-  vllm:
-    modelSource:
-      provider: modelscope
-```
-
-使用所选配置安装平台：
-
 ```bash
 foretoken install --values model-source-values.yaml
 ```
 
-`endpoint` 只适用于 Hugging Face 来源。仓库访问或下载失败时，模型启动会直接报错，不会切换到其他来源。
-
-使用相同的公开模型标识部署维护中的示例：
-
-```bash
-foretoken deploy examples/quickstart --timeout 20m
-```
-
 ## 使用本地模型目录
 
-统一模型根目录下的完整目录优先于远端来源。将模型文件放到示例数据目录：
+将完整模型放到统一模型根目录：
 
 ```text
 examples/quickstart/data/models/checkpointA/A3/
 ```
 
-在 `ModelService` 中使用相同的相对标识：
+选择本地来源，并继续用相对路径作为公开模型标识：
 
 ```yaml
 spec:
   model: checkpointA/A3
+  source: local
 ```
 
-使用上面的部署命令即可。model-server 和 frontend 会复用该目录，公开模型标识保持不变。目录存储和 PVC 配置见[模型存储](model-storage_zh.md)。
+也可以使用 frontend 和 model-server Pod 中都已挂载的绝对目录。本地目录不存在或远端下载失败时，该模型不会就绪，Foretoken 不会切换来源。
+
+正常部署配置：
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+目录存储和 PVC 配置见[模型存储](model-storage_zh.md)。

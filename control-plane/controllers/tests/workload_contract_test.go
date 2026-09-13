@@ -28,7 +28,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		group := modelGroup(pool, "model-r1-0", 0)
 		group.Spec.Accelerator.RuntimeClassName = "nvidia"
 		group.Spec.Artifacts.Cache = &inferencev1alpha1.RuntimeCacheBinding{ClaimName: "runtime-cache", MountPath: "/cache"}
-		group.Spec.Artifacts.SourceAccess = &inferencev1alpha1.ModelSourceAccess{Provider: inferencev1alpha1.ModelSourceProviderModelScope, TokenSecretName: "model-source", TokenSecretKey: "token"}
+		group.Spec.Artifacts.Source = inferencev1alpha1.ModelSourceModelScope
 		c := controllerClient(t, service, pool, group)
 		r := &controllers.ModelGroupReconciler{Client: c, ControlPlaneNamespace: "foretoken-system", ImagePullSecrets: []corev1.LocalObjectReference{{Name: "registry-auth"}}}
 		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(group)}
@@ -49,7 +49,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		for _, item := range pod.Containers[0].Env {
 			env[item.Name] = item
 		}
-		if env["FORETOKEN_MODEL_ROOT"].Value != "/cache/models" || env["HF_HOME"].Value != "/cache/models" || env["MODELSCOPE_CACHE"].Value != "/cache/models/modelscope" || env["VLLM_USE_MODELSCOPE"].Value != "true" || env["FORETOKEN_MODEL_SOURCE_PROVIDER"].Value != "modelscope" || env["VLLM_CACHE_ROOT"].Value != "/cache/vllm" || env["TORCHINDUCTOR_CACHE_DIR"].Value != "/cache/torch" || env["TRITON_CACHE_DIR"].Value != "/cache/triton" || env["FORETOKEN_CACHE_OBSERVATION_PORT"].Value != "9001" || env["MODELSCOPE_API_TOKEN"].ValueFrom == nil || env["MODELSCOPE_API_TOKEN"].ValueFrom.SecretKeyRef.Name != "model-source" {
+		if env["FORETOKEN_MODEL_ROOT"].Value != "/cache/models" || env["HF_HOME"].Value != "/cache/models" || env["MODELSCOPE_CACHE"].Value != "/cache/models/modelscope" || env["VLLM_USE_MODELSCOPE"].Value != "true" || env["VLLM_CACHE_ROOT"].Value != "/cache/vllm" || env["TORCHINDUCTOR_CACHE_DIR"].Value != "/cache/torch" || env["TRITON_CACHE_DIR"].Value != "/cache/triton" || env["FORETOKEN_CACHE_OBSERVATION_PORT"].Value != "9001" || env["HF_TOKEN"].ValueFrom != nil {
 			t.Fatalf("runtime cache environment = %#v", env)
 		}
 		cacheMounted := false

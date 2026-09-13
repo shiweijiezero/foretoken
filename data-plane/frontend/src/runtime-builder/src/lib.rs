@@ -234,6 +234,7 @@ async fn model_runtimes(
             chat_processor,
             supports_multimodal,
         } = load_snapshot_runtime(
+            identity.source,
             &identity.tokenizer,
             &identity.tokenizer_revision,
             max_model_len,

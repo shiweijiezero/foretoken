@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 use vllm_managed_engine::ManagedEngineConfig;
 
+use foretoken_artifacts::ModelSource;
 use foretoken_model_protocol::RuntimeEcTransferMetadata;
 
 use crate::runtime_transport::{KV_EVENT_ENDPOINT, KV_EVENT_TOPIC, LOOPBACK_HOST};
@@ -39,6 +40,7 @@ pub struct LaunchPlanV1 {
 #[serde(deny_unknown_fields)]
 pub struct Artifacts {
     pub model: String,
+    pub source: ModelSource,
     pub revision: String,
     pub tokenizer: String,
     #[serde(rename = "tokenizerRevision")]
@@ -364,15 +366,23 @@ impl LaunchPlanV1 {
     pub fn render_vllm_args(&self) -> Result<Vec<String>, String> {
         self.validate()?;
         let p = &self.parallelism;
-        let mut args = vec![
-            format!("--revision={}", self.artifacts.revision),
-            format!("--tokenizer={}", self.artifacts.tokenizer),
-            format!("--tokenizer-revision={}", self.artifacts.tokenizer_revision),
+        let mut args = Vec::new();
+        if self.artifacts.source != ModelSource::Local {
+            args.push(format!("--revision={}", self.artifacts.revision));
+        }
+        args.push(format!("--tokenizer={}", self.artifacts.tokenizer));
+        if self.artifacts.source != ModelSource::Local {
+            args.push(format!(
+                "--tokenizer-revision={}",
+                self.artifacts.tokenizer_revision
+            ));
+        }
+        args.extend([
             format!("--tensor-parallel-size={}", p.tp),
             format!("--pipeline-parallel-size={}", p.pp),
             format!("--prefill-context-parallel-size={}", p.pcp),
             format!("--decode-context-parallel-size={}", p.dcp),
-        ];
+        ]);
         if let Some(ep) = &p.ep {
             args.push("--enable-expert-parallel".into());
             if !ep.backend.is_empty() {

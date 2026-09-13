@@ -50,7 +50,6 @@ impl Mode {
 #[derive(Clone)]
 pub struct Config {
     mount_path: PathBuf,
-    model_root: PathBuf,
     cache_directories: Vec<(&'static str, PathBuf)>,
     temporary_root: PathBuf,
     pod_uid: String,
@@ -108,7 +107,6 @@ impl Config {
         }
         Ok(Some(Self {
             mount_path,
-            model_root,
             cache_directories,
             temporary_root: Path::new(TEMPORARY_CACHE_ROOT).join(&pod_uid),
             pod_uid,
@@ -120,20 +118,6 @@ impl Config {
     /// Returns the controller-selected private observation port.
     pub fn observation_port(&self) -> u16 {
         self.observation_port
-    }
-
-    /// Resolve a mounted model or tokenizer directory for the engine launcher.
-    pub fn local_artifact_path(&self, identifier: &str) -> io::Result<Option<String>> {
-        foretoken_artifacts::resolve_directory(Some(&self.model_root), identifier)?
-            .map(|path| {
-                path.into_os_string().into_string().map_err(|_| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "local artifact path is not UTF-8",
-                    )
-                })
-            })
-            .transpose()
     }
 
     /// Creates the selected cache directories and verifies that the child can write them.
@@ -299,7 +283,6 @@ mod tests {
         let temporary = root.join("temporary");
         let config = Config {
             mount_path: persistent.clone(),
-            model_root: persistent.join("models"),
             cache_directories: vec![("HF_HOME", PathBuf::from("models"))],
             temporary_root: temporary.clone(),
             pod_uid: "pod".into(),

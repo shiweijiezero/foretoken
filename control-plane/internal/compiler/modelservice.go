@@ -7,6 +7,7 @@ package compiler
 
 import (
 	"fmt"
+	"path"
 	"sort"
 	"time"
 
@@ -15,9 +16,10 @@ import (
 )
 
 const (
-	defaultPoolName            = "default"
-	defaultHuggingFaceRevision = "main"
-	defaultModelScopeRevision  = "master"
+	defaultPoolName           = "default"
+	defaultHFRevision         = "main"
+	defaultModelScopeRevision = "master"
+	localArtifactRevision     = "local"
 )
 
 // ModelPool is one normalized Pool produced from ModelService intent.
@@ -27,11 +29,24 @@ type ModelPool struct {
 	Template      inferencev1alpha1.NormalizedPoolTemplate
 }
 
-// CompileModelService normalizes service intent with the platform-selected model source.
-func CompileModelService(spec inferencev1alpha1.ModelServiceSpec, source *inferencev1alpha1.ModelSourceAccess) ([]ModelPool, error) {
-	artifactRevision := defaultHuggingFaceRevision
-	if source != nil && source.Provider == inferencev1alpha1.ModelSourceProviderModelScope {
+// CompileModelService normalizes shorthand or advanced Pool intent without resolving platform access settings.
+func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, error) {
+	source := spec.Source
+	if source == "" {
+		source = inferencev1alpha1.ModelSourceHF
+	}
+	artifactRevision := defaultHFRevision
+	switch source {
+	case inferencev1alpha1.ModelSourceLocal:
+		artifactRevision = localArtifactRevision
+	case inferencev1alpha1.ModelSourceHF:
+	case inferencev1alpha1.ModelSourceModelScope:
 		artifactRevision = defaultModelScopeRevision
+	default:
+		return nil, fmt.Errorf("source must be local, hf, or modelscope")
+	}
+	if source != inferencev1alpha1.ModelSourceLocal && (path.IsAbs(spec.Model) || path.IsAbs(spec.Tokenizer)) {
+		return nil, fmt.Errorf("absolute model and tokenizer paths require source local")
 	}
 	timeouts, err := normalizeTimeouts(spec.Timeouts)
 	if err != nil {
@@ -125,7 +140,7 @@ func validateModelPoolRoles(pools []inferencev1alpha1.ModelPoolTemplate) error {
 	return nil
 }
 
-func compilePool(spec inferencev1alpha1.ModelServiceSpec, source *inferencev1alpha1.ModelSourceAccess, artifactRevision, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, parallelism inferencev1alpha1.Parallelism, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
+func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alpha1.ModelSource, artifactRevision, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, parallelism inferencev1alpha1.Parallelism, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
 	if nodes != 1 {
 		return ModelPool{}, fmt.Errorf("only single-node model groups are currently supported")
 	}
@@ -160,10 +175,10 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source *inferencev1alp
 		DesiredGroups: replicas,
 		Template: inferencev1alpha1.NormalizedPoolTemplate{
 			Model:                                 spec.Model,
+			Source:                                source,
 			ModelRevision:                         artifactRevision,
 			Tokenizer:                             tokenizer,
 			TokenizerRevision:                     artifactRevision,
-			SourceAccess:                          source.DeepCopy(),
 			Backend:                               spec.Backend,
 			Role:                                  role,
 			NodeCount:                             nodes,

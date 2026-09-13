@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use foretoken_backend_registry::{ServingSnapshot, SnapshotModel};
+use foretoken_backend_registry::{ModelSource, ServingSnapshot, SnapshotModel};
 use foretoken_router::{RouteTargetSet, RouterPipelineConfig, ScalingTarget, ScalingTargetKind};
 use foretoken_runtime_builder::{KvIndexCredential, RuntimeBuilder};
 use foretoken_server::{Generation, GenerationRequest, RuntimeGeneration};
@@ -21,6 +21,7 @@ async fn logical_only_snapshot_publishes_a_ready_scale_from_zero_runtime() {
         models: vec![SnapshotModel {
             service_uid: "service".into(),
             model: "model".into(),
+            source: ModelSource::Hf,
             revision: "r1".into(),
             tokenizer: "tokenizer".into(),
             tokenizer_revision: "r1".into(),

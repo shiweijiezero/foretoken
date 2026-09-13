@@ -29,9 +29,14 @@ func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding) []corev1.EnvV
 	return env
 }
 
-// ModelSourceEnv extends the shared source environment with vLLM's provider selector.
-func ModelSourceEnv(source *inferencev1alpha1.ModelSourceAccess, modelRoot string) []corev1.EnvVar {
-	env := runtimeconfig.ModelSourceEnv(source, modelRoot)
-	useModelScope := source != nil && source.Provider == inferencev1alpha1.ModelSourceProviderModelScope
-	return append(env, corev1.EnvVar{Name: "VLLM_USE_MODELSCOPE", Value: strconv.FormatBool(useModelScope)})
+// ModelSourceEnv returns source-specific environment for one vLLM ModelGroup.
+func ModelSourceEnv(source inferencev1alpha1.ModelSource, access *inferencev1alpha1.HuggingFaceAccess, modelRoot string) []corev1.EnvVar {
+	env := make([]corev1.EnvVar, 0, 4)
+	if source == inferencev1alpha1.ModelSourceHF {
+		env = append(env, runtimeconfig.HuggingFaceEnv(access)...)
+	}
+	if source == inferencev1alpha1.ModelSourceModelScope {
+		env = append(env, corev1.EnvVar{Name: "MODELSCOPE_CACHE", Value: path.Join(modelRoot, "modelscope")})
+	}
+	return append(env, corev1.EnvVar{Name: "VLLM_USE_MODELSCOPE", Value: strconv.FormatBool(source == inferencev1alpha1.ModelSourceModelScope)})
 }

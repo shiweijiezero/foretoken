@@ -9,6 +9,7 @@ metadata:
   name: multi-model-qwen3-0.6b
 spec:
   model: Qwen/Qwen3-0.6B
+  source: hf # Supported sources: local, hf, modelscope. Defaults to hf.
   backend: vllm
   replicas: 1
   autoscaling:

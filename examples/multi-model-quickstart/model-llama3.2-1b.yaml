@@ -9,6 +9,7 @@ metadata:
   name: multi-model-llama3.2-1b
 spec:
   model: unsloth/Llama-3.2-1B-Instruct
+  source: hf # Supported sources: local, hf, modelscope. Defaults to hf.
   backend: vllm
   replicas: 1
   nodes: 1

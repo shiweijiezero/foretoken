@@ -7,6 +7,7 @@ package controllers
 
 import (
 	"fmt"
+	"path"
 	"slices"
 	"strconv"
 	"time"
@@ -82,7 +83,8 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_ROUTER_SCORER", Value: string(routerScorer)},
 		{Name: "FORETOKEN_ROUTER_PICKER", Value: string(routerPicker)},
 	}
-	frontendEnv = append(frontendEnv, runtimeconfig.ModelSourceEnv(profile.SourceAccess, modelRoot)...)
+	frontendEnv = append(frontendEnv, runtimeconfig.HuggingFaceEnv(profile.HuggingFaceAccess)...)
+	frontendEnv = append(frontendEnv, corev1.EnvVar{Name: "MODELSCOPE_CACHE", Value: path.Join(modelRoot, "modelscope")})
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {
 		frontendEnv = append(frontendEnv,

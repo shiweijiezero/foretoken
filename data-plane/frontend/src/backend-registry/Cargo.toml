@@ -8,6 +8,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+foretoken-artifacts.workspace = true
 foretoken-engine-core-client = { path = "../engine-core-client" }
 foretoken-kv-indexer = { path = "../kv-indexer" }
 foretoken-llm-facade = { path = "../llm-facade" }

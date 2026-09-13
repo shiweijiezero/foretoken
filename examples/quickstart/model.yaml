@@ -8,7 +8,8 @@ kind: ModelService
 metadata:
   name: quickstart-qwen3-0.6b # Kubernetes name of this model service.
 spec:
-  model: Qwen/Qwen3-0.6B # Model artifact to serve, such as a Hugging Face repository or supported URI.
+  model: Qwen/Qwen3-0.6B # Public model identifier or local path.
+  source: hf # Supported sources: local, hf, modelscope. Defaults to hf.
   backend: vllm # Inference backend selected for this model service.
   replicas: 1 # Number of complete model replicas.
   nodes: 1 # Each replica currently runs on a single Kubernetes node.

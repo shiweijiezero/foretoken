@@ -5,11 +5,17 @@
 
 [中文](model-sources_zh.md)
 
-Foretoken loads model weights and frontend tokenizer, config, and chat-template files from the same source. Hugging Face Hub is used when no model-source values are set, so the default path remains `foretoken install`.
+Each `ModelService` selects the source for its model, tokenizer, config, and chat template. Hugging Face Hub is the default.
 
-## Select a remote source
+```yaml
+spec:
+  model: Qwen/Qwen3-0.6B
+  source: hf # Supported sources: local, hf, modelscope. Defaults to hf.
+```
 
-For a Hugging Face-compatible endpoint, create `model-source-values.yaml`:
+Use `source: modelscope` with the same model identifier to load it from ModelScope. Different model services behind one frontend may use different sources.
+
+For a Hugging Face-compatible endpoint, set the platform access configuration and install with that values file:
 
 ```yaml
 runtime:
@@ -18,42 +24,32 @@ runtime:
       endpoint: https://hub.example.com
 ```
 
-For ModelScope, use:
-
-```yaml
-runtime:
-  vllm:
-    modelSource:
-      provider: modelscope
-```
-
-Install the platform with the selected values:
-
 ```bash
 foretoken install --values model-source-values.yaml
 ```
 
-`endpoint` is only valid for the default Hugging Face provider. Repository or download errors stop model startup instead of switching sources.
-
-Deploy the maintained example with the same public model identifier:
-
-```bash
-foretoken deploy examples/quickstart --timeout 20m
-```
-
 ## Use a local model directory
 
-A complete directory below the configured model root takes precedence over remote sources. Place the files below the example data directory:
+Place a complete model below the configured model root:
 
 ```text
 examples/quickstart/data/models/checkpointA/A3/
 ```
 
-Use the same relative identifier in `ModelService`:
+Select the local source and keep the relative identifier as the public model name:
 
 ```yaml
 spec:
   model: checkpointA/A3
+  source: local
 ```
 
-Deploy with the command above. The model server and frontend reuse the directory without changing the public model identifier. See [Model storage](model-storage.md) for directory-backed and PVC-backed storage.
+An absolute directory already mounted in both frontend and model-server Pods is also supported. A missing local directory or a failed remote download stops that model from becoming ready; Foretoken does not switch sources.
+
+Deploy the configuration normally:
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+See [Model storage](model-storage.md) for directory-backed and PVC-backed storage.

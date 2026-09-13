@@ -8,6 +8,7 @@ mod route_target_stats;
 mod snapshot;
 mod snapshot_projection;
 
+pub use foretoken_artifacts::ModelSource;
 pub use registry::BackendRegistry;
 pub use snapshot::{
     ModelIdentity, ServingSnapshot, SnapshotEpdComponent, SnapshotEpdPipelineScope, SnapshotError,
