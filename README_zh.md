@@ -160,7 +160,7 @@ foretoken uninstall
 感谢所有为 Foretoken 做出贡献的开发者。
 
 <a href="https://github.com/shiweijiezero/foretoken/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=shiweijiezero/foretoken" alt="Foretoken 贡献者" />
+  <img src="https://contrib.rocks/image?repo=shiweijiezero/foretoken" width="320" alt="Foretoken 贡献者" />
 </a>
 
 ## 许可证
