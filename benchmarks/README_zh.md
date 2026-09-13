@@ -114,4 +114,4 @@ foretoken bench \
 
 示例同时保存本地结果并上传 W&B。仅需本地结果用 `--output local`，修改结果父目录用 `--output-dir`。
 
-详细数据格式、工具数据、指标口径和高级用法见[评测示例](docs/examples_zh.md)。全部参数见 `foretoken bench --help`。
+各类用法见[常用命令](docs/examples_zh.md)，指标定义见[结果指标](docs/coomon_commands/metrics_zh.md)。全部参数见 `foretoken bench --help`。

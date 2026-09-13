@@ -30,6 +30,7 @@ _FAILED_REQUESTS = "Failed requests"
 _REQUESTS_PER_SECOND = "Request throughput (req/s)"
 _AVERAGE_LATENCY = "Mean end-to-end latency (E2EL) (s)"
 _AVERAGE_INPUT_TOKENS = "Mean input tokens"
+_INPUT_TOKENS_PER_SECOND = "Input token throughput (tokens/s)"
 _GENERATION_TOKENS_PER_SECOND = "Output token throughput (tokens/s)"
 _TOTAL_TOKENS_PER_SECOND = "Total tokens per second (tokens/s)"
 _AVERAGE_TTFT = "Mean TTFT (ms)"
@@ -87,6 +88,9 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         _SUCCEED_REQUESTS: int(metrics["success_num"]),
         _FAILED_REQUESTS: int(metrics["failed_num"]),
         _REQUESTS_PER_SECOND: round(float(throughput["requests_per_second"]), 4),
+        _INPUT_TOKENS_PER_SECOND: round(
+            float(throughput["prompt_tokens_per_second"]), 4
+        ),
         _GENERATION_TOKENS_PER_SECOND: round(
             float(throughput["generation_tokens_per_second"]), 4
         ),

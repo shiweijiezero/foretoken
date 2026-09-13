@@ -247,6 +247,8 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
     lines.extend(
         [
             f"  Request throughput (req/s): {_format_metric(throughput['requests_per_second'])}",
+            f"  Input token throughput (tokens/s): "
+            f"{_format_metric(throughput['prompt_tokens_per_second'])}",
             f"  Output token throughput (tokens/s): "
             f"{_format_metric(generation_tokens_per_second)}",
             f"  Benchmark duration (s): {_format_metric(metrics['benchmark_time'])}",
