@@ -352,6 +352,11 @@ func (reconciler *RuntimeCacheReconciler) reconcileDelete(ctx context.Context, c
 		}
 		return ctrl.Result{}, reconciler.removeFinalizer(ctx, cache)
 	}
+	// Stable directory claim names may collide with unrelated PVCs that reconciliation
+	// refused to adopt. Deleting the cache must not grant ownership of those claims.
+	if !metav1.IsControlledBy(pvc, cache) {
+		return ctrl.Result{}, reconciler.removeFinalizer(ctx, cache)
+	}
 	retention := pvc.Annotations[runtimeCacheRetentionAnnotation]
 	if retention == string(inferencev1alpha1.RuntimeCacheRetentionPolicyRetain) {
 		if err := releaseRuntimeCachePVC(ctx, reconciler.Client, cache, pvc); err != nil {
@@ -363,7 +368,7 @@ func (reconciler *RuntimeCacheReconciler) reconcileDelete(ctx context.Context, c
 		return ctrl.Result{}, err
 	}
 	// Kubernetes PVC protection delays removal while a Pod still mounts the claim.
-	if err := reconciler.Delete(ctx, pvc); err != nil && !apierrors.IsNotFound(err) {
+	if err := reconciler.Delete(ctx, pvc, client.Preconditions{UID: &pvc.UID, ResourceVersion: &pvc.ResourceVersion}); err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{Requeue: true}, nil
@@ -382,7 +387,7 @@ func releaseRuntimeCachePVC(ctx context.Context, kubeClient client.Client, cache
 	if reflect.DeepEqual(base.OwnerReferences, pvc.OwnerReferences) {
 		return nil
 	}
-	return kubeClient.Patch(ctx, pvc, client.MergeFrom(base))
+	return kubeClient.Patch(ctx, pvc, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
 }
 
 func (reconciler *RuntimeCacheReconciler) removeFinalizer(ctx context.Context, cache *inferencev1alpha1.RuntimeCache) error {

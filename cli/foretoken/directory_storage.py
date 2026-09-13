@@ -261,11 +261,24 @@ def _resolve_directory(
         if not matches:
             continue
         _, mount, relative = max(matches, key=lambda match: match[0])
+        destination = Path(mount["Destination"]) / relative
+        # A child mount can hide the chosen host tree inside the node, even when
+        # the parent bind is writable. Bind only the directory actually exposed.
+        visible_mount = max(
+            (
+                candidate
+                for candidate in info["Mounts"]
+                if destination.is_relative_to(Path(candidate["Destination"]))
+            ),
+            key=lambda candidate: len(Path(candidate["Destination"]).parts),
+        )
+        if visible_mount != mount:
+            raise DeploymentError(
+                f"directory mount in {container} is hidden by {visible_mount['Destination']}"
+            )
         if not mount.get("RW"):
             raise DeploymentError(f"directory mount in {container} must be writable")
-        mappings.setdefault(str(Path(mount["Destination"]) / relative), []).append(
-            _hostname(node)
-        )
+        mappings.setdefault(str(destination), []).append(_hostname(node))
     if not mappings:
         raise DeploymentError(
             f"{context} does not mount {directory}; add a bind mount when creating its nodes"
