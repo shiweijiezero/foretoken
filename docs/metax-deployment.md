@@ -24,7 +24,7 @@ If the platform exposes services directly through a `LoadBalancer` instead of Ga
 
 ## 1. Deploy the example model
 
-The example includes the model, cache, and frontend service.
+Configure `examples/quickstart/cache.yaml` with the directory or StorageClass prepared by the administrator; see [Model storage](model-storage.md).
 
 Add `hostname` under the existing `spec` in `examples/quickstart/frontend.yaml`. Replace the example hostname with the one assigned by your administrator and keep the other settings:
 
@@ -80,7 +80,7 @@ When finished, remove the resources created by the same configuration:
 foretoken delete examples/quickstart
 ```
 
-The example includes its namespace, so deletion also removes resources and the example cache within it. Use this cleanup command only for a namespace dedicated to the example, not a shared namespace. The platform remains under its administrator's care; it does not need to be installed or uninstalled for each model deployment.
+The example includes its namespace, so deletion removes its services and PVC objects. Directory-backed model files remain available for reuse; dynamic volumes follow their storage retention policy. Use a namespace dedicated to the example. The administrator maintains the shared platform.
 
 ## If the request does not succeed
 

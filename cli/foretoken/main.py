@@ -21,6 +21,7 @@ from foretoken.arguments import (
     UninstallCommand,
     parse_arguments,
 )
+from foretoken.storage import DirectoryVolumes
 from foretoken.kubernetes import (
     Kubectl,
     ResourceProgress,
@@ -74,7 +75,7 @@ def _deploy(kustomize_path: str, timeout: str) -> None:
     timeout_seconds(timeout)
     namespace = deployment.namespace or "<current>"
     print(f"Applying {deployment.path} to namespace {namespace}")
-    kubectl.apply(deployment.rendered)
+    DirectoryVolumes(kubectl).apply(deployment, timeout)
     print(f"Waiting up to {timeout} for Foretoken services")
     started = time.monotonic()
     wait_for_resources(
@@ -93,13 +94,11 @@ def _delete(kustomize_path: str, timeout: str) -> None:
     timeout_seconds(timeout)
     namespace = deployment.namespace or "<current>"
     print(f"Deleting {deployment.path} from namespace {namespace}")
-    kubectl.delete(deployment.rendered, timeout)
+    DirectoryVolumes(kubectl).delete(deployment, timeout)
     print("Foretoken deployment deleted")
 
 
-def _status(
-    kustomize_path: str | None, namespace: str | None, watch: bool
-) -> None:
+def _status(kustomize_path: str | None, namespace: str | None, watch: bool) -> None:
     """Inspect a rendered deployment or all services in one namespace."""
     kubectl = Kubectl()
     deployment_resources = (

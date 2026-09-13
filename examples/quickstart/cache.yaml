@@ -6,7 +6,5 @@ kind: RuntimeCache
 metadata:
   name: models
 spec:
-  initialSize: 10Gi
-  maxSize: 100Gi
-  accessMode: ReadWriteOnce
-  retentionPolicy: Delete
+  directory: ./data
+  accessMode: ReadWriteMany

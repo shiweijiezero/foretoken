@@ -33,12 +33,14 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 Start with a GPU-enabled Kubernetes cluster and Python 3.11+, `kubectl`, and Helm installed locally.
 
-### 1. Install the command-line tool
+### 1. Get the examples and install the command-line tool
 
 ```bash
+git clone https://github.com/shiweijiezero/foretoken.git
+cd foretoken
 pip install foretoken
 
-# For source installation from the repository:
+# From a source checkout:
 # pip install -e .
 ```
 
@@ -48,24 +50,21 @@ pip install foretoken
 # Use release images from GHCR:
 foretoken install
 
-# Source installation from the repository:
+# Build and install from a source checkout:
 # foretoken install -e .
 ```
 
 For deployment on MetaX GPUs, follow the [MetaX deployment guide](docs/metax-deployment.md).
 
-This installs the Foretoken CRDs and controller in the `foretoken-platform` namespace and waits for the controller to become ready. The default mode exposes the frontend through a `LoadBalancer` Service. Source installation rebuilds the images and updates the cluster; to deploy the current source to a remote cluster, see the [source deployment guide](docs/custom-deployment.md).
+See the [source deployment guide](docs/custom-deployment.md) for build tools and remote clusters.
 
 ### 3. Deploy the Quick Start
 
 ```bash
-git clone https://github.com/shiweijiezero/foretoken.git
-cd foretoken
-
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-This example deploys one frontend service, one `Qwen/Qwen3-0.6B` model replica, and a runtime cache PVC starting at 10 GiB, using a default `StorageClass` that supports expansion. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
+This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica, requesting one GPU, 8 CPU, and 52 GiB memory. More deployments are available in [`examples/`](examples/).
 
 ### 4. Send a test request
 
@@ -83,8 +82,7 @@ curl --fail-with-body --no-buffer \
 ```bash
 pip install 'foretoken[bench]'
 
-# For source installation from the repository:
-# pip install -e .
+# From a source checkout:
 # pip install -e '.[bench]'
 foretoken bench examples/quickstart
 ```
@@ -107,6 +105,8 @@ Then run:
 ```bash
 # Install the platform in Gateway mode
 foretoken install --frontend-mode gateway
+# For a source-installed platform:
+# foretoken install -e . --frontend-mode gateway
 
 # Deploy the Quick Start
 foretoken deploy examples/quickstart --timeout 20m
@@ -160,7 +160,7 @@ See [Contributing to Foretoken](CONTRIBUTING.md) for development principles, col
 Thank you to everyone who has contributed to Foretoken.
 
 <a href="https://github.com/shiweijiezero/foretoken/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=shiweijiezero/foretoken" alt="Foretoken contributors" />
+  <img src="https://contrib.rocks/image?repo=shiweijiezero/foretoken" width="256" alt="Foretoken contributors" />
 </a>
 
 ## License

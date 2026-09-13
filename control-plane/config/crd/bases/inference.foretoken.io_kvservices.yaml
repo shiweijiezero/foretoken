@@ -53,8 +53,9 @@ spec:
           metadata:
             type: object
           spec:
-            description: KVServiceSpec declares a Foretoken-owned Mooncake standalone
-              Store.
+            description: |-
+              KVServiceSpec declares a Foretoken-owned Mooncake standalone Store.
+              All storage pools use one protocol so requesters and storage clients share the same transport.
             properties:
               backend:
                 enum:
@@ -64,6 +65,12 @@ spec:
                 description: KVMasterSpec configures the KVService-level Mooncake
                   Master singleton.
                 properties:
+                  fsGroup:
+                    description: FSGroup sets the group used to access the mounted
+                      Master volumes; omitted values preserve image and driver behavior.
+                    format: int64
+                    minimum: 0
+                    type: integer
                   image:
                     minLength: 1
                     type: string
@@ -255,6 +262,12 @@ spec:
                           required:
                           - size
                           type: object
+                        fsGroup:
+                          description: FSGroup sets the group used to access client
+                            volumes without changing the image user.
+                          format: int64
+                          minimum: 0
+                          type: integer
                         image:
                           minLength: 1
                           type: string
@@ -272,11 +285,15 @@ spec:
                           minimum: 1
                           type: integer
                         protocol:
+                          description: Protocol is shared by storage clients and model
+                            requesters bound to this KVService.
                           enum:
+                          - tcp
                           - rdma
                           type: string
                         rdmaResourceCount:
-                          default: 1
+                          description: RDMAResourceCount defaults to one during RDMA
+                            client normalization and is unused for TCP.
                           format: int32
                           minimum: 1
                           type: integer
@@ -354,17 +371,37 @@ spec:
                             rule: '!has(self.limits) || !has(self.limits.memory) ||
                               quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                               <= 0'
+                        storageRegistration:
+                          description: StorageRegistration enables provider registration
+                            checks for a Store client.
+                          properties:
+                            enabled:
+                              description: Enabled requests provider registration
+                                checks instead of infrastructure-only readiness.
+                              type: boolean
+                            port:
+                              default: 9300
+                              description: Port is the client HTTP management port
+                                used for registration checks.
+                              format: int32
+                              maximum: 65535
+                              minimum: 1
+                              type: integer
+                          type: object
                       required:
                       - image
                       - memoryCapacity
                       - protocol
-                      - rdmaResourceName
                       - resources
                       type: object
                       x-kubernetes-validations:
                       - message: client.disk is required when standalone Store offload
                           is enabled
                         rule: has(self.disk)
+                      - message: RDMA requires rdmaResourceName; TCP must omit RDMA
+                          resources
+                        rule: 'self.protocol == ''rdma'' ? has(self.rdmaResourceName)
+                          : !has(self.rdmaResourceName) && !has(self.rdmaResourceCount)'
                       - message: client.memoryCapacity must be less than client.resources.requests.memory
                           to reserve runtime overhead
                         rule: quantity(self.memoryCapacity).compareTo(quantity(self.resources.requests.memory))
@@ -399,11 +436,11 @@ spec:
                 - name
                 x-kubernetes-list-type: map
               timeouts:
-                description: KVTimeouts defines lifecycle budgets for future Store
-                  clients.
+                description: KVTimeouts defines lifecycle budgets for Store clients.
                 properties:
                   drain:
-                    description: Duration is a positive Go-style duration.
+                    description: Drain is the Kubernetes termination grace period
+                      for a leaving Store client.
                     minLength: 2
                     pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
@@ -430,14 +467,16 @@ spec:
             - timeouts
             type: object
             x-kubernetes-validations:
+            - message: storagePools must use the same client protocol
+              rule: self.storagePools.all(pool, pool.client.protocol == self.storagePools[0].client.protocol)
             - message: storagePools names must be unique
               rule: 'self.storagePools.all(pool, self.storagePools.exists(other, other.name
                 == pool.name) ? self.storagePools.filter(other, other.name == pool.name).size()
                 == 1 : true)'
           status:
             description: |-
-              KVServiceStatus reports infrastructure and Pool materialization only; it does
-              not claim provider registration, usable Store state, or available capacity.
+              KVServiceStatus reports infrastructure and Pool materialization. Provider
+              registration is reflected by the dependent KVGroups when explicitly enabled.
             properties:
               binding:
                 description: KVServiceBinding is the immutable current requester configuration

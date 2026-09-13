@@ -10,11 +10,11 @@
 - `Qwen/Qwen3-0.6B` 根据请求队列从 1 个副本扩缩到 3 个副本。
 - `unsloth/Llama-3.2-1B-Instruct` 固定运行 1 个副本。
 
-初始部署请求 2 张 GPU、12 个 CPU 核心和 100 GiB 内存。Qwen 扩容至 3 个副本、Llama 保持 1 个副本时，加上前端共请求 4 张 GPU、20 个 CPU 核心和 196 GiB 内存；还需为平台预留额外容量。示例还会通过命名空间的默认 `StorageClass` 创建一个从 10 GiB 起自动扩容的 `ReadWriteMany` 运行时缓存 PVC。如需最小部署，请参阅[单模型快速开始](../quickstart/README_zh.md)。
+初始部署请求 2 张 GPU、12 个 CPU 核心和 100 GiB 内存。Qwen 扩容至 3 个副本、Llama 保持 1 个副本时，加上前端共请求 4 张 GPU、20 个 CPU 核心和 196 GiB 内存；还需为平台预留额外容量。模型文件和运行时缓存共用 `cache.yaml` 配置的 `./data` 目录。如需最小部署，请参阅[单模型快速开始](../quickstart/README_zh.md)。
 
 ## 部署
 
-先按[快速开始](../../README_zh.md)安装平台并获取仓库，再从仓库根目录运行：
+从源码[安装平台](../../docs/custom-deployment_zh.md)并准备[模型存储](../../docs/model-storage_zh.md)，再从仓库根目录运行：
 
 ```bash
 foretoken deploy examples/multi-model-quickstart --timeout 20m

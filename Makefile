@@ -3,6 +3,8 @@
 
 # Provides build and verification entrypoints for the Rust data plane.
 
+MOONCAKE_IMAGE ?= foretoken-mooncake:dev
+
 VLLM_METAX_VERSION ?= 0.24.0
 VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)
 
@@ -60,3 +62,18 @@ image-model-server-metax: image-vllm-metax
 
 image-benchmark:
 	docker build -f benchmarks/Dockerfile -t foretoken-benchmark:dev .
+
+.PHONY: mooncake-source image-mooncake
+mooncake-source:
+	git submodule update --init third_party/mooncake
+	git -C third_party/mooncake submodule update --init extern/pybind11 extern/yalantinglibs
+	@for patch in provider-registration client-lifecycle; do \
+		if ! git -C third_party/mooncake apply --reverse --check \
+			"../../deploy/mooncake/patches/$$patch.patch" >/dev/null 2>&1; then \
+			git -C third_party/mooncake apply "../../deploy/mooncake/patches/$$patch.patch" || exit $$?; \
+		fi; \
+	done
+
+image-mooncake: mooncake-source
+	docker build $(if $(BUILD_JOBS),--build-arg BUILD_JOBS=$(BUILD_JOBS),) \
+		-f deploy/mooncake/Dockerfile -t "$(MOONCAKE_IMAGE)" .
