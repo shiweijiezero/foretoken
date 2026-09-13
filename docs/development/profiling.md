@@ -23,22 +23,6 @@ The model-server image includes PyTorch capture support. The [vLLM backport](../
 
 ## Identity and recovery
 
-The CLI submits this API intent; users do not write this YAML for each capture:
-
-```yaml
-apiVersion: inference.foretoken.io/v1alpha1
-kind: ProfileRun
-metadata:
-  generateName: profile-
-  namespace: foretoken-diagnostic
-spec:
-  modelServiceRef:
-    name: diagnostic-model
-  engine: pytorch
-  duration: 15s
-  action: Capture
-```
-
 The API fixes target, engine and duration at creation. Actions move from `Capture` to `Finish` or `Cancel`; cancellation cannot be reversed. The Kubernetes UID distinguishes runs even when a resource name is reused.
 
 Before native work starts, reconciliation persists a deletion finalizer and a typed execution plan in ProfileRun status. It resolves the ModelService's committed serving generation with existing routing helpers and checks the Pod → ReplicaSet → Deployment → ModelGroup ownership chain. The plan stores fixed service, group, Pod and runtime identities. Controller restart reads the same plan rather than selecting replacement instances.

@@ -23,22 +23,6 @@ Model-server 镜像内建 PyTorch 采集支持，[vLLM 补丁](../../data-plane/
 
 ## 采集身份与恢复
 
-以下是 CLI 提交的 API 意图，用户不需要为每次采集手写这份 YAML：
-
-```yaml
-apiVersion: inference.foretoken.io/v1alpha1
-kind: ProfileRun
-metadata:
-  generateName: profile-
-  namespace: foretoken-diagnostic
-spec:
-  modelServiceRef:
-    name: diagnostic-model
-  engine: pytorch
-  duration: 15s
-  action: Capture
-```
-
 API 在创建后固定目标、采集工具和时长。动作从 `Capture` 推进到 `Finish` 或 `Cancel`，取消不可撤销。即使资源同名，Kubernetes UID 也能区分不同采集。
 
 启动原生采集前，控制器先持久化删除 finalizer，并在 ProfileRun status 中保存类型明确的执行计划。它复用已有路由辅助逻辑，解析 ModelService 已提交的 serving generation，并核对 Pod → ReplicaSet → Deployment → ModelGroup 的归属链。计划记录固定的服务、Group、Pod 和 runtime 身份。控制器重启后读取原计划，不重新选择替代实例。
