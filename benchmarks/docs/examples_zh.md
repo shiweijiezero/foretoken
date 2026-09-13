@@ -279,6 +279,20 @@ foretoken bench examples/quickstart \
 
 仅保存本地结果用 `--output local`，不打印控制台汇总用 `--output local,quiet`，仅上传用 `--output wandb`。`--wandb-entity` 可指定账号或团队。
 
+## 结果截图
+
+以下小规模运行展示结果样式，命令和请求数量见命令行截图。命令行图片来自实际日志摘录，已隐藏内部地址与路径；W&B 图片对应同次运行。
+
+| 负载 | 命令行 | W&B |
+| --- | --- | --- |
+| 固定提示词 | [输出](imgs/fixed-prompt-cli.png) | [运行页面](imgs/fixed-prompt-wandb.png) |
+| 非流式 | [输出](imgs/nonstream-cli.png) | [运行页面](imgs/nonstream-wandb.png) |
+| 本地对话 | [输出](imgs/local-dataset-benchmark-output.png) | [运行页面](imgs/local-dataset-wandb-dashboard.png) |
+| 多数据集 | [输出](imgs/multi-dataset-benchmark-output.png) | [第一个数据集](imgs/multi-dataset-first-wandb.png)、[第二个数据集](imgs/multi-dataset-second-wandb.png) |
+| 指定到达率 | [输出](imgs/arrival-rate-cli.png) | [运行页面](imgs/arrival-rate-wandb.png) |
+| 随机长度 | [输出](imgs/random-dataset-benchmark-output.png) | [运行页面](imgs/random-dataset-wandb-dashboard.png) |
+| 本地 StudyChat 格式轨迹 | [输出](imgs/trace-studychat-benchmark-output.png) | [运行页面](imgs/trace-studychat-wandb-dashboard.png) |
+
 ## 理解结果
 
 `metrics.json` 保存汇总指标，`raw_output.json` 保存逐请求记录。标准负载还保留 `benchmark_data.db` 和 `benchmark.log`。
@@ -286,14 +300,16 @@ foretoken bench examples/quickstart \
 | 指标 | 含义 |
 | --- | --- |
 | Success rate | 成功请求数除以尝试请求数 |
-| Latency | 请求耗时；成功的流式请求计时到最后一个 `choices` 非空的分片 |
+| End-to-end latency (E2EL) | 请求端到端耗时；成功的流式请求计时到最后一个 `choices` 非空的分片 |
 | TTFT | 从发送请求到收到首个 `choices` 非空分片的时间 |
-| TPOT | `(Latency − TTFT) / (输出 token 数 − 1)`；输出不足两个 token 时不可用 |
+| TPOT | `(E2EL − TTFT) / (输出 token 数 − 1)`；输出不足两个 token 时不可用 |
 | ITL | 相邻 `choices` 非空分片的到达间隔；一个分片可能包含多个 token |
-| Requests/s | 每秒成功完成的请求数 |
-| Generation tokens/s | 成功请求的输出 token 总数除以运行时间 |
-| Generation tokens/s/user | 总输出吞吐量除以配置的并发数；`--parallel -1` 时等于总输出吞吐量 |
-| Generation tokens/s/GPU | 总输出吞吐量除以模型声明的 GPU 容量，用于扫描结果比较 |
+| Time to final-answer token (TTFAT) | 从整段对话开始到最终回答首个分片的时间 |
+| Request throughput (req/s) | 每秒成功完成的请求数 |
+| Output token throughput (tokens/s) | 成功请求的输出 token 总数除以运行时间 |
+| Output token throughput per user (tokens/s) | 总输出吞吐量除以配置的并发数；`--parallel -1` 时等于总输出吞吐量 |
+| Output token throughput per GPU (tokens/s) | 总输出吞吐量除以模型声明的 GPU 容量，用于扫描结果比较 |
+| Benchmark duration (s) | 整次评测的持续时间 |
 
 `--no-stream` 保留延迟和吞吐量，不报告 TTFT、TPOT 和 ITL。仅含用量统计的分片不计入流式计时。
 

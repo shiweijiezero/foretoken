@@ -110,8 +110,8 @@ def _plot_pareto_scatter(fig_path: Path, points: list[dict[str, Any]]) -> None:
         if points and all(bool(row["multi_turn"]) for row in points)
         else "user"
     )
-    ax.set_xlabel(f"Generation tokens/s/{denominator}")
-    ax.set_ylabel("Generation tokens/s/GPU")
+    ax.set_xlabel(f"Output token throughput per {denominator}\n(tokens/s)")
+    ax.set_ylabel("Output token throughput per GPU (tokens/s)")
     ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.6)
     ax.legend(
         title="Parameter group",

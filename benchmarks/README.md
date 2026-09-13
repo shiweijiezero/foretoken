@@ -110,7 +110,7 @@ For another service, use its actual Chat Completions URL and model name. In Gate
 
 Local results are saved in a separate directory under `results/`, printed when the run finishes. `metrics.json` contains the summary and `raw_output.json` contains per-request records.
 
-Start with success rate, latency, and output throughput. Streamed runs also report time to the first chunk (TTFT), average time per output token (TPOT), and inter-chunk intervals (ITL). `--no-stream` disables only these streaming metrics.
+Start with success rate, end-to-end latency (E2EL), and output token throughput. Streamed runs also report time to the first chunk (TTFT), average time per output token (TPOT), and inter-chunk intervals (ITL). `--no-stream` disables only these streaming metrics.
 
 The examples save results locally and upload them to W&B. Use `--output local` for local results only, and `--output-dir` to change the parent directory.
 

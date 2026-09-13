@@ -279,6 +279,20 @@ Sweeps and multi-dataset runs generate a group when none is supplied and append 
 
 Use `--output local` for local results only, `--output local,quiet` to suppress the console summary, or `--output wandb` for W&B only. Set `--wandb-entity` to choose the account or team.
 
+## Result screenshots
+
+These short runs illustrate the output. Commands and request counts appear in the CLI captures, which show redacted excerpts of actual logs. W&B images show the corresponding run pages.
+
+| Workload | CLI | W&B |
+| --- | --- | --- |
+| Fixed prompt | [Output](imgs/fixed-prompt-cli.png) | [Run](imgs/fixed-prompt-wandb.png) |
+| Non-streaming | [Output](imgs/nonstream-cli.png) | [Run](imgs/nonstream-wandb.png) |
+| Local conversations | [Output](imgs/local-dataset-benchmark-output.png) | [Run](imgs/local-dataset-wandb-dashboard.png) |
+| Multiple datasets | [Output](imgs/multi-dataset-benchmark-output.png) | [First dataset](imgs/multi-dataset-first-wandb.png), [second dataset](imgs/multi-dataset-second-wandb.png) |
+| Arrival rate | [Output](imgs/arrival-rate-cli.png) | [Run](imgs/arrival-rate-wandb.png) |
+| Random lengths | [Output](imgs/random-dataset-benchmark-output.png) | [Run](imgs/random-dataset-wandb-dashboard.png) |
+| Local StudyChat-format trace | [Output](imgs/trace-studychat-benchmark-output.png) | [Run](imgs/trace-studychat-wandb-dashboard.png) |
+
 ## Interpret results
 
 `metrics.json` contains aggregate results; `raw_output.json` contains individual request records. Standard workloads also retain `benchmark_data.db` and `benchmark.log`.
@@ -286,14 +300,16 @@ Use `--output local` for local results only, `--output local,quiet` to suppress 
 | Metric | Meaning |
 | --- | --- |
 | Success rate | Successful requests divided by attempted requests |
-| Latency | Request duration; for successful streamed requests, measured through the last chunk with non-empty `choices` |
+| End-to-end latency (E2EL) | Request duration; for successful streamed requests, measured through the last chunk with non-empty `choices` |
 | TTFT | Time from sending the request to the first chunk with non-empty `choices` |
-| TPOT | `(latency − TTFT) / (output tokens − 1)`; unavailable for fewer than two output tokens |
+| TPOT | `(E2EL − TTFT) / (output tokens − 1)`; unavailable for fewer than two output tokens |
 | ITL | Intervals between chunks with non-empty `choices`; a chunk can contain multiple tokens |
-| Requests/s | Successfully completed requests per second |
-| Generation tokens/s | Successful requests' output tokens divided by run duration |
-| Generation tokens/s/user | Output throughput divided by configured concurrency; with `--parallel -1`, equals total output throughput |
-| Generation tokens/s/GPU | Output throughput divided by the model's declared GPU capacity, used in sweep comparisons |
+| Time to final-answer token (TTFAT) | Time from the start of a conversation to the first chunk of its final answer |
+| Request throughput (req/s) | Successfully completed requests per second |
+| Output token throughput (tokens/s) | Successful requests' output tokens divided by run duration |
+| Output token throughput per user (tokens/s) | Output throughput divided by configured concurrency; with `--parallel -1`, equals total output throughput |
+| Output token throughput per GPU (tokens/s) | Output throughput divided by the model's declared GPU capacity, used in sweep comparisons |
+| Benchmark duration (s) | Duration of the whole benchmark run |
 
 With `--no-stream`, latency and throughput remain available, but TTFT, TPOT, and ITL are not reported. Usage-only chunks do not advance streaming timing.
 

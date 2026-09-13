@@ -27,10 +27,10 @@ _REQUEST_RATE = "Arrival rate (req/s)"
 _TOTAL_REQUESTS = "Requests"
 _SUCCEED_REQUESTS = "Successful requests"
 _FAILED_REQUESTS = "Failed requests"
-_REQUESTS_PER_SECOND = "Requests per second"
-_AVERAGE_LATENCY = "Mean latency (s)"
+_REQUESTS_PER_SECOND = "Request throughput (req/s)"
+_AVERAGE_LATENCY = "Mean end-to-end latency (E2EL) (s)"
 _AVERAGE_INPUT_TOKENS = "Mean input tokens"
-_GENERATION_TOKENS_PER_SECOND = "Generation tokens per second (tokens/s)"
+_GENERATION_TOKENS_PER_SECOND = "Output token throughput (tokens/s)"
 _TOTAL_TOKENS_PER_SECOND = "Total tokens per second (tokens/s)"
 _AVERAGE_TTFT = "Mean TTFT (ms)"
 _AVERAGE_TPOT = "Mean TPOT (ms)"
@@ -41,21 +41,21 @@ _CONVERSATIONS = "Conversations attempted"
 _CONVERSATIONS_PER_SECOND = "Attempted conversations per second"
 _AVERAGE_TURNS_PER_CONVERSATION = "Mean turn requests per conversation"
 _CONVERSATION_LATENCY = "Conversation latency (s)"
-_FINAL_ANSWER_TTFT = "Time to first token of final answer (s)"
+_FINAL_ANSWER_TTFT = "Time to final-answer token (TTFAT) (s)"
 
 _TRACE_MAX_BUCKETS = 10_000
 _TRACE_TIME = "Scheduled trace time (s)"
 _TRACE_PERCENTILE_METRICS = (
-    ("latency", "Request latency (s)", 1.0),
-    ("ttft", "Request TTFT (ms)", 1000.0),
+    ("latency", "End-to-end latency (E2EL) (s)", 1.0),
+    ("ttft", "TTFT (ms)", 1000.0),
     ("tpot", "TPOT (ms)", 1000.0),
     ("replay_delay", "Replay delay (s)", 1.0),
-    ("trace_e2e_ttft", "End-to-end TTFT (ms)", 1000.0),
-    ("trace_e2e_latency", "End-to-end latency (s)", 1.0),
+    ("trace_e2e_ttft", "TTFT including replay delay (ms)", 1000.0),
+    ("trace_e2e_latency", "E2EL including replay delay (s)", 1.0),
 )
 _TRACE_HISTORY_KEYS = {
     "requests_per_second": "Trace/Scheduled requests per second",
-    "successful_requests_per_second": "Trace/Successful requests per second",
+    "successful_requests_per_second": "Trace/Successful scheduled requests/s",
     **{
         key: f"Trace/{name} p95"
         for key, name, _ in _TRACE_PERCENTILE_METRICS

@@ -198,17 +198,17 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
     if float(rate) > 0:
         lines.append(f"  Arrival rate: {rate} req/s")
     metric_lines = [
-        _percentile_row("Latency", metrics["latency"]),
+        _percentile_row("End-to-end latency (E2EL)", metrics["latency"]),
         _percentile_row("TTFT", metrics["ttft"]),
     ]
     if run_record.get("trace_path"):
         metric_lines = [
-            _percentile_row("Request latency", metrics["latency"]),
-            _percentile_row("Request TTFT", metrics["ttft"]),
+            _percentile_row("End-to-end latency (E2EL)", metrics["latency"]),
+            _percentile_row("TTFT", metrics["ttft"]),
             _percentile_row("Replay delay", metrics["replay_delay"]),
-            _percentile_row("End-to-end TTFT", metrics["trace_e2e_ttft"]),
+            _percentile_row("TTFT including replay delay", metrics["trace_e2e_ttft"]),
             _percentile_row(
-                "End-to-end latency", metrics["trace_e2e_latency"]
+                "E2EL including replay delay", metrics["trace_e2e_latency"]
             ),
         ]
     metric_lines.append(_percentile_row("TPOT", metrics["tpot"]))
@@ -235,7 +235,7 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
                         "Conversation latency", conversation["latency"]
                     ),
                     _percentile_row(
-                        "Final-answer TTFT",
+                        "Time to final-answer token (TTFAT)",
                         conversation["time_to_final_answer_token"],
                     ),
                 ]
@@ -246,12 +246,10 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
         )
     lines.extend(
         [
-            f"  Turn requests/s: {_format_metric(throughput['requests_per_second'])}"
-            if multi_turn
-            else f"  Requests/s : {_format_metric(throughput['requests_per_second'])}",
-            f"  Generation tokens/s: "
+            f"  Request throughput (req/s): {_format_metric(throughput['requests_per_second'])}",
+            f"  Output token throughput (tokens/s): "
             f"{_format_metric(generation_tokens_per_second)}",
-            f"  Benchmark time: {_format_metric(metrics['benchmark_time'])}s",
+            f"  Benchmark duration (s): {_format_metric(metrics['benchmark_time'])}",
             "============================================",
         ]
     )
@@ -259,7 +257,7 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
         denominator = "concurrent conversation" if multi_turn else "user"
         lines.insert(
             -2,
-            f"  Generation tokens/s/{denominator}: "
+            f"  Output token throughput per {denominator} (tokens/s): "
             f"{_format_metric(throughput['generation_tokens_per_second_per_user'])}",
         )
     logger.info("\n%s", "\n".join(lines))
@@ -271,14 +269,14 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
     concurrency_name = "Concurrent conv." if multi_turn else "Concurrency"
     count_name = "Conversations" if multi_turn else "Requests"
     per_worker_name = (
-        "Generation tokens/s/conversation"
+        "Output tokens/s/conversation"
         if multi_turn
-        else "Generation tokens/s/user"
+        else "Output tokens/s/user"
     )
     header = (
         f"{concurrency_name:>12} {'Arrival rate':>12} {count_name:>8} "
-        f"{'Generation tokens/s':>15} {per_worker_name:>32} "
-        f"{'Generation tokens/s/GPU':>19} {'P99 latency':>12}"
+        f"{'Output tokens/s':>15} {per_worker_name:>32} "
+        f"{'Output tokens/s/GPU':>19} {'P99 E2EL (s)':>12}"
     )
     lines = [
         "========== Parameter Sweep Results =========",
