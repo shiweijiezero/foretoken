@@ -50,7 +50,7 @@ type ModelServiceReconciler struct {
 	client.Client
 	MetricsProvider ScalingMetricsProvider
 	CacheProfile    RuntimeCacheProfile
-	SourceProfile   RuntimeSourceProfile
+	SourceProfile   ModelSourceProfile
 
 	recommendationHistoryOnce sync.Once
 	recommendationHistory     *core.RecommendationHistory
@@ -95,7 +95,8 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	compiledPools, err := compiler.CompileModelService(service.Spec)
+	runtimeSource := reconciler.SourceProfile.SourceAccess()
+	compiledPools, err := compiler.CompileModelService(service.Spec, runtimeSource)
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, service, modelServiceState{
 			compiled: conditionState{metav1.ConditionFalse, "InvalidIntent", err.Error()},
@@ -139,10 +140,8 @@ func (reconciler *ModelServiceReconciler) Reconcile(ctx context.Context, request
 		})
 		return ctrl.Result{}, errors.Join(readinessErr, statusErr)
 	}
-	runtimeSource := reconciler.SourceProfile.RuntimeSource()
 	for index := range compiledPools {
 		compiledPools[index].Template.RuntimeCache = runtimeCache.DeepCopy()
-		compiledPools[index].Template.SourceAccess = runtimeSource.DeepCopy()
 	}
 
 	if err := reconciler.reconcilePools(ctx, service, compiledPools); err != nil {

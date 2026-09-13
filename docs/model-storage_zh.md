@@ -19,7 +19,7 @@ spec:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-Foretoken 会为该配置创建目录型存储。删除服务时目录会保留，后续部署可以继续复用其中的文件。
+Foretoken 会为该配置创建目录型存储。删除服务时目录会保留，后续部署可以继续复用其中的文件。选择 ModelScope 或 Hugging Face 兼容地址见[模型来源](model-sources_zh.md)。
 
 ## 选择目录位置
 

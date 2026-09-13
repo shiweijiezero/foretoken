@@ -53,7 +53,7 @@ type ModelGroupArtifacts struct {
 
 	// SourceAccess contains runtime-adapter settings for loading the model.
 	// +optional
-	SourceAccess *RuntimeSourceAccess `json:"sourceAccess,omitempty"`
+	SourceAccess *ModelSourceAccess `json:"sourceAccess,omitempty"`
 }
 
 // ModelGroupPDRuntimeConfig defines the resolved P/D transport runtime.

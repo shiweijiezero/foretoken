@@ -426,8 +426,14 @@ spec:
                       from the selected runtime profile.
                     properties:
                       endpoint:
-                        description: Endpoint is interpreted by the selected runtime
-                          adapter.
+                        description: Endpoint is an optional Hugging Face-compatible
+                          Hub endpoint.
+                        type: string
+                      provider:
+                        description: Provider defaults to Hugging Face when omitted.
+                        enum:
+                        - huggingface
+                        - modelscope
                         type: string
                       tokenSecretKey:
                         type: string

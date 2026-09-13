@@ -1161,6 +1161,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00b0228411908ca8685dba7fc2cdd70ec9990a6e753e89b6ac91a84c40fbaf4b"
 
 [[package]]
+name = "foretoken-artifacts"
+version = "0.0.1"
+
+[[package]]
 name = "foretoken-backend-registry"
 version = "0.0.1"
 dependencies = [
@@ -1258,10 +1262,6 @@ dependencies = [
  "serde",
  "vllm-metrics",
 ]
-
-[[package]]
-name = "foretoken-artifacts"
-version = "0.0.1"
 
 [[package]]
 name = "foretoken-model-protocol"
@@ -1377,11 +1377,13 @@ dependencies = [
 name = "foretoken-text"
 version = "0.0.1"
 dependencies = [
+ "foretoken-artifacts",
  "foretoken-chat",
  "foretoken-engine-core-client",
- "foretoken-artifacts",
  "foretoken-tokenizer",
  "hf-hub",
+ "reqwest 0.12.28",
+ "serde",
  "thiserror 2.0.20",
  "vllm-text",
 ]

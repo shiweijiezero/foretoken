@@ -19,7 +19,7 @@ Then deploy as usual:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-Foretoken creates the directory-backed volume for this configuration. The directory is retained when the service is deleted, so later deployments can reuse its contents.
+Foretoken creates the directory-backed volume for this configuration. The directory is retained when the service is deleted, so later deployments can reuse its contents. See [Model sources](model-sources.md) to select ModelScope or a Hugging Face-compatible endpoint.
 
 ## Choose where the directory lives
 

@@ -69,9 +69,22 @@ type RuntimeCacheBinding struct {
 	MountPath string `json:"mountPath"`
 }
 
-// RuntimeSourceAccess contains optional source settings consumed by the runtime adapter.
-type RuntimeSourceAccess struct {
-	// Endpoint is interpreted by the selected runtime adapter.
+// ModelSourceProvider identifies the remote model repository protocol.
+// +kubebuilder:validation:Enum=huggingface;modelscope
+type ModelSourceProvider string
+
+const (
+	ModelSourceProviderHuggingFace ModelSourceProvider = "huggingface"
+	ModelSourceProviderModelScope  ModelSourceProvider = "modelscope"
+)
+
+// ModelSourceAccess contains source settings consumed by frontend and runtime adapters.
+type ModelSourceAccess struct {
+	// Provider defaults to Hugging Face when omitted.
+	// +optional
+	Provider ModelSourceProvider `json:"provider,omitempty"`
+
+	// Endpoint is an optional Hugging Face-compatible Hub endpoint.
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
@@ -112,7 +125,7 @@ type NormalizedPoolTemplate struct {
 
 	// SourceAccess is set by the ModelService controller from the selected runtime profile.
 	// +optional
-	SourceAccess *RuntimeSourceAccess `json:"sourceAccess,omitempty"`
+	SourceAccess *ModelSourceAccess `json:"sourceAccess,omitempty"`
 
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`

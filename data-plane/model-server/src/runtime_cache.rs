@@ -22,8 +22,9 @@ use tracing::warn;
 const OBSERVATION_VERSION: u8 = 1;
 const WRITE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const TEMPORARY_CACHE_ROOT: &str = "/tmp/foretoken-runtime-cache";
-const CACHE_ENV: [&str; 4] = [
+const CACHE_ENV: [&str; 5] = [
     "HF_HOME",
+    "MODELSCOPE_CACHE",
     "VLLM_CACHE_ROOT",
     "TORCHINDUCTOR_CACHE_DIR",
     "TRITON_CACHE_DIR",

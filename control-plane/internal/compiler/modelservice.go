@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	defaultPoolName         = "default"
-	defaultArtifactRevision = "main"
+	defaultPoolName            = "default"
+	defaultHuggingFaceRevision = "main"
+	defaultModelScopeRevision  = "master"
 )
 
 // ModelPool is one normalized Pool produced from ModelService intent.
@@ -26,8 +27,12 @@ type ModelPool struct {
 	Template      inferencev1alpha1.NormalizedPoolTemplate
 }
 
-// CompileModelService normalizes shorthand or advanced Pool intent without resolving platform runtime defaults.
-func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, error) {
+// CompileModelService normalizes service intent with the platform-selected model source.
+func CompileModelService(spec inferencev1alpha1.ModelServiceSpec, source *inferencev1alpha1.ModelSourceAccess) ([]ModelPool, error) {
+	artifactRevision := defaultHuggingFaceRevision
+	if source != nil && source.Provider == inferencev1alpha1.ModelSourceProviderModelScope {
+		artifactRevision = defaultModelScopeRevision
+	}
 	timeouts, err := normalizeTimeouts(spec.Timeouts)
 	if err != nil {
 		return nil, err
@@ -43,7 +48,7 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	if len(spec.ModelPools) == 0 {
 		replicas := valueOrDefault(spec.Replicas, 1)
 		nodes := valueOrDefault(spec.Nodes, 1)
-		pool, err := compilePool(spec, defaultPoolName, inferencev1alpha1.ModelRoleAggregate, replicas, nodes, "", "", *spec.Resources, *spec.Parallelism, spec.MaxInputTokens, internalGenerateRequestBodyLimitBytes, spec.KVCache, spec.Features, timeouts)
+		pool, err := compilePool(spec, source, artifactRevision, defaultPoolName, inferencev1alpha1.ModelRoleAggregate, replicas, nodes, "", "", *spec.Resources, *spec.Parallelism, spec.MaxInputTokens, internalGenerateRequestBodyLimitBytes, spec.KVCache, spec.Features, timeouts)
 		if err != nil {
 			return nil, err
 		}
@@ -67,7 +72,7 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		}
 		replicas := valueOrDefault(entry.Replicas, 1)
 		nodes := valueOrDefault(entry.Nodes, 1)
-		pool, err := compilePool(spec, entry.Name, role, replicas, nodes, entry.Network, ecProfileForRole(spec.ECProfile, role), entry.Resources, entry.Parallelism, entry.MaxInputTokens, internalGenerateRequestBodyLimitBytes, entry.KVCache, entry.Features, timeouts)
+		pool, err := compilePool(spec, source, artifactRevision, entry.Name, role, replicas, nodes, entry.Network, ecProfileForRole(spec.ECProfile, role), entry.Resources, entry.Parallelism, entry.MaxInputTokens, internalGenerateRequestBodyLimitBytes, entry.KVCache, entry.Features, timeouts)
 		if err != nil {
 			return nil, fmt.Errorf("modelPools %q: %w", entry.Name, err)
 		}
@@ -120,7 +125,7 @@ func validateModelPoolRoles(pools []inferencev1alpha1.ModelPoolTemplate) error {
 	return nil
 }
 
-func compilePool(spec inferencev1alpha1.ModelServiceSpec, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, parallelism inferencev1alpha1.Parallelism, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
+func compilePool(spec inferencev1alpha1.ModelServiceSpec, source *inferencev1alpha1.ModelSourceAccess, artifactRevision, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, parallelism inferencev1alpha1.Parallelism, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
 	if nodes != 1 {
 		return ModelPool{}, fmt.Errorf("only single-node model groups are currently supported")
 	}
@@ -155,9 +160,10 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, name string, role infe
 		DesiredGroups: replicas,
 		Template: inferencev1alpha1.NormalizedPoolTemplate{
 			Model:                                 spec.Model,
-			ModelRevision:                         defaultArtifactRevision,
+			ModelRevision:                         artifactRevision,
 			Tokenizer:                             tokenizer,
-			TokenizerRevision:                     defaultArtifactRevision,
+			TokenizerRevision:                     artifactRevision,
+			SourceAccess:                          source.DeepCopy(),
 			Backend:                               spec.Backend,
 			Role:                                  role,
 			NodeCount:                             nodes,

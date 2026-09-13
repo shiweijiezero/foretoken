@@ -609,6 +609,13 @@
                 "tokenSecret"
               ],
               "properties": {
+                "provider": {
+                  "type": "string",
+                  "enum": [
+                    "huggingface",
+                    "modelscope"
+                  ]
+                },
                 "endpoint": {
                   "type": "string"
                 },
@@ -630,7 +637,28 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "provider": {
+                        "const": "modelscope"
+                      }
+                    },
+                    "required": [
+                      "provider"
+                    ]
+                  },
+                  "then": {
+                    "properties": {
+                      "endpoint": {
+                        "const": ""
+                      }
+                    }
+                  }
+                }
+              ]
             }
           },
           "additionalProperties": false

@@ -72,6 +72,9 @@ spec:
             - {{ printf "--cache-claim=%s" . | quote }}
             - {{ printf "--cache-mount-path=%s" $.Values.workload.cache.mountPath | quote }}
             {{- end }}
+            {{- with .Values.runtime.vllm.modelSource.provider }}
+            - {{ printf "--model-source-provider=%s" . | quote }}
+            {{- end }}
             {{- with .Values.runtime.vllm.modelSource.endpoint }}
             - {{ printf "--model-source-endpoint=%s" . | quote }}
             {{- end }}

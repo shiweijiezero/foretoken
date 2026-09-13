@@ -77,6 +77,7 @@ func main() {
 	var workloadImagePullSecretNames []string
 	var cacheClaimName string
 	var cacheMountPath string
+	var modelSourceProvider string
 	var modelSourceEndpoint string
 	var modelSourceTokenSecretName string
 	var modelSourceTokenSecretKey string
@@ -104,7 +105,8 @@ func main() {
 	})
 	flag.StringVar(&cacheClaimName, "cache-claim", "", "Existing namespace-local PVC shared by runtime workloads.")
 	flag.StringVar(&cacheMountPath, "cache-mount-path", "/var/cache/foretoken", "Absolute runtime cache root mounted into workload Pods.")
-	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional model source endpoint interpreted by the runtime adapter.")
+	flag.StringVar(&modelSourceProvider, "model-source-provider", "", "Remote model source provider: huggingface or modelscope; empty uses huggingface.")
+	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional Hugging Face-compatible Hub endpoint.")
 	flag.StringVar(&modelSourceTokenSecretName, "model-source-token-secret-name", "", "Namespace-local Secret containing the model source credential.")
 	flag.StringVar(&modelSourceTokenSecretKey, "model-source-token-secret-key", "", "Key in the model source credential Secret.")
 	flag.StringVar(&inferenceEngineProfileRevision, "inference-engine-profile-revision", "default", "Opaque revision of the configured inference engine profile.")
@@ -141,7 +143,7 @@ func main() {
 		workloadImagePullSecrets[index] = corev1.LocalObjectReference{Name: name}
 	}
 	cacheProfile := controllers.RuntimeCacheProfile{ClaimName: cacheClaimName, MountPath: cacheMountPath}
-	sourceProfile := controllers.RuntimeSourceProfile{Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
+	sourceProfile := controllers.ModelSourceProfile{Provider: inferencev1alpha1.ModelSourceProvider(modelSourceProvider), Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
 	if inferenceEngineImage == "" {
 		ctrl.Log.Error(errors.New("inference-engine-image must be nonempty"), "invalid inference engine profile")
@@ -296,6 +298,7 @@ func main() {
 				Image:            frontendImage,
 				Port:             int32(frontendPort),
 				ImagePullSecrets: workloadImagePullSecrets,
+				SourceAccess:     sourceProfile.SourceAccess(),
 				Gateway:          gateway,
 			},
 		}

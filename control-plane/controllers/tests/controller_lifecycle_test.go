@@ -61,6 +61,23 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 		}
 	})
 
+	// ModelScope repositories use master as their source-native default revision in both runtimes.
+	t.Run("ModelService compiles ModelScope source identity", func(t *testing.T) {
+		service := modelService("modelscope", 1)
+		c := controllerClient(t, service)
+		r := &controllers.ModelServiceReconciler{Client: c, SourceProfile: controllers.ModelSourceProfile{Provider: inferencev1alpha1.ModelSourceProviderModelScope}}
+		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(service)}
+		for range 2 {
+			if _, err := r.Reconcile(ctx, request); err != nil {
+				t.Fatal(err)
+			}
+		}
+		pool := get(t, ctx, c, client.ObjectKey{Namespace: service.Namespace, Name: "modelscope-default"}, new(inferencev1alpha1.ModelPool))
+		if pool.Spec.Template.ModelRevision != "master" || pool.Spec.Template.TokenizerRevision != "master" || pool.Spec.Template.SourceAccess == nil || pool.Spec.Template.SourceAccess.Provider != inferencev1alpha1.ModelSourceProviderModelScope {
+			t.Fatalf("ModelScope pool identity = %#v", pool.Spec.Template)
+		}
+	})
+
 	t.Run("ModelPool materializes groups and only cuts over a ready revision", func(t *testing.T) {
 		service := modelService("rollout", 1)
 		pool := modelPool(service, "rollout-default", 1)
