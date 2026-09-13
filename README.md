@@ -46,8 +46,6 @@ pip install foretoken
 
 ### 2. Install the Kubernetes platform
 
-Use the source commands for the directory-backed examples in this checkout. For a release installation, use the examples supplied with that [release](https://github.com/shiweijiezero/foretoken/releases).
-
 ```bash
 # Use release images from GHCR:
 foretoken install

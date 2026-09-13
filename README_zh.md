@@ -46,8 +46,6 @@ pip install foretoken
 
 ### 2. 安装 Kubernetes 平台
 
-使用当前仓库的目录型示例时，执行源码安装命令；使用发布镜像时，从相应[发布页面](https://github.com/shiweijiezero/foretoken/releases)取得随版本提供的示例。
-
 ```bash
 # 使用 GHCR 发布的镜像：
 foretoken install
