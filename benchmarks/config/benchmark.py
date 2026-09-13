@@ -5,8 +5,9 @@
 
 from __future__ import annotations
 
+import math
 import random
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Optional
 
 OutputTokenLimit = int | list[int]
@@ -70,7 +71,7 @@ class HttpLoadSchedule:
                 f"--parallel must be -1 or >= 1; got {self.max_concurrency}"
             )
         rate_value = float(self.arrival_rate)
-        if rate_value != -1 and rate_value <= 0:
+        if not math.isfinite(rate_value) or (rate_value != -1 and rate_value <= 0):
             raise ValueError(
                 "--rate must be -1 (send as fast as possible) or > 0; "
                 f"got {self.arrival_rate}"
@@ -225,9 +226,9 @@ class ArrivalTraceSchedule:
             if self.synthetic_prefix_reuse:
                 raise ValueError("--trace-synthetic-prefix-reuse requires --trace")
             return
-        if self.start_offset_seconds < 0:
+        if not math.isfinite(self.start_offset_seconds) or self.start_offset_seconds < 0:
             raise ValueError("--trace-start must be >= 0")
-        if self.duration_seconds is not None and self.duration_seconds <= 0:
+        if self.duration_seconds is not None and (not math.isfinite(self.duration_seconds) or self.duration_seconds <= 0):
             raise ValueError("--trace-duration must be > 0")
         if self.max_concurrency is not None and self.max_concurrency <= 0:
             raise ValueError("--trace-max-concurrency must be > 0")
@@ -360,7 +361,7 @@ class BenchmarkConfig:
                 raise ValueError(
                     "--trace uses record timestamps; omit --rate"
                 )
-            if self.load.max_concurrency != 1 or self.load.request_count != 100:
+            if self.load != HttpLoadSchedule():
                 raise ValueError(
                     "--trace replays the selected trace window; use "
                     "--trace-max-concurrency instead of --parallel/--number"
@@ -382,9 +383,14 @@ class BenchmarkConfig:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize only user configuration for result and W&B snapshots."""
-        service = asdict(self.service)
-        service.pop("api_key", None)
-        service["timeout"] = service.pop("timeout_seconds")
+        service = {
+            "kustomize_path": self.service.kustomize_path,
+            "url": self.service.url,
+            "model": self.service.model,
+            "timeout": self.service.timeout_seconds,
+            "max_retries": self.service.max_retries,
+            "wait_timeout": self.service.wait_timeout,
+        }
 
         load = {
             "parallel": self.load.max_concurrency,
@@ -414,9 +420,33 @@ class BenchmarkConfig:
         return {
             "service": service,
             "load": load,
-            "generation": asdict(self.generation),
+            "generation": {
+                "max_tokens": self.generation.max_tokens,
+                "min_output_length": self.generation.min_output_length,
+                "max_output_length": self.generation.max_output_length,
+                "stream": self.generation.stream,
+                "top_p": self.generation.top_p,
+                "top_k": self.generation.top_k,
+                "min_p": self.generation.min_p,
+                "temperature": self.generation.temperature,
+                "frequency_penalty": self.generation.frequency_penalty,
+                "presence_penalty": self.generation.presence_penalty,
+                "repetition_penalty": self.generation.repetition_penalty,
+                "extra_body": self.generation.extra_body,
+            },
             "dataset": dataset,
-            "output": asdict(self.outputs),
-            "wandb": asdict(self.wandb),
-            "sweep": asdict(self.sweep),
+            "output": {
+                "destinations": self.outputs.destinations,
+                "output_dir": self.outputs.output_dir,
+            },
+            "wandb": {
+                "project": self.wandb.project,
+                "entity": self.wandb.entity,
+                "run_name": self.wandb.run_name,
+            },
+            "sweep": {
+                "path": self.sweep.path,
+                "num_runs": self.sweep.num_runs,
+                "experiment_name": self.sweep.experiment_name,
+            },
         }

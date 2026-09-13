@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmarks.datasets.conversations import Task, Turn, iter_dataset_rows
+from benchmarks.datasets.conversations import Task, iter_dataset_rows, parse_message_turns
 
 # Each Mooncake hash ID identifies one fixed-size input-token block.
 MOONCAKE_BLOCK_TOKENS = 512
@@ -66,26 +66,7 @@ def _parse_studychat_event(
     if conversation_id is None or not str(conversation_id):
         raise ValueError(f"Empty chatId at {dataset_path}:{line_number}")
 
-    messages = row["messages"]
-    if not isinstance(messages, list) or not messages:
-        raise ValueError(f"Invalid messages at {dataset_path}:{line_number}")
-    turns: list[Turn] = []
-    for index, message in enumerate(messages):
-        if not isinstance(message, dict) or "role" not in message or ("content" not in message and not message.get("tool_calls")):
-            raise ValueError(
-                f"Invalid message {index} at {dataset_path}:{line_number}"
-            )
-        turns.append(
-            Turn(
-                role=str(message["role"]),
-                content=message.get("content"),
-                extra={
-                    key: value
-                    for key, value in message.items()
-                    if key not in {"role", "content"}
-                },
-            )
-        )
+    turns = parse_message_turns(row["messages"], dataset_path, line_number)
 
     input_tokens = row.get("input_length")
     if input_tokens is not None:
@@ -104,7 +85,7 @@ def _parse_studychat_event(
         timestamp_seconds=timestamp_ms / 1000.0,
         source_row_index=source_row_index,
         request=Task(
-            id=f"{dataset_path}:{source_row_index}", turns=tuple(turns),
+            id=f"{dataset_path}:{source_row_index}", turns=turns,
             metadata={key: row[key] for key in ("tools", "tool_choice", "parallel_tool_calls") if key in row},
         ),
         input_tokens=input_tokens,

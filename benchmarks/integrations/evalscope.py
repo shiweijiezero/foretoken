@@ -12,6 +12,7 @@ import os
 import random
 import sqlite3
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -21,9 +22,11 @@ if TYPE_CHECKING:
 
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
+from benchmarks.integrations.streaming import ChatStreamTiming
 from benchmarks.results.metrics import (
     RequestMeasurement,
     generation_tokens_per_second_per_user,
+    percentile_summary,
 )
 from benchmarks.datasets.conversations import (
     load_conversation_tasks,
@@ -33,7 +36,55 @@ from benchmarks.datasets.huggingface import resolve_tokenizer_path
 
 
 EVALSCOPE_API = "foretoken_openai"
+_EVALSCOPE_DATASET = "foretoken_conversations"
+_REQUEST_METADATA = "_foretoken_request"
+_FINAL_TURN = "_foretoken_last_turn"
 _EVALSCOPE_ARGUMENTS_TYPE: type | None = None
+
+
+class _TimedStreamResponse:
+    """Expose EvalScope's streaming response surface while observing arriving bytes.
+
+    The original response context owns the connection; this adapter neither
+    consumes ahead nor changes the bytes delivered to the upstream decoder.
+    """
+
+    def __init__(self, response: Any, timing: ChatStreamTiming) -> None:
+        self.status = response.status
+        self.headers = response.headers
+        self.content = self
+        self._content = response.content
+        self._timing = timing
+
+    async def iter_any(self):
+        """Timestamp complete SSE messages, preserving coalesced-message arrival times."""
+        from evalscope.perf.plugin.api.default_api import StreamedResponseHandler
+
+        decoder = StreamedResponseHandler()
+        async for data in self._content.iter_any():
+            received_at = time.perf_counter()
+            for message in decoder.add_chunk(data):
+                payload = message.removeprefix("data:").strip()
+                if payload != "[DONE]":
+                    self._timing.observe(json.loads(payload), received_at)
+            yield data
+
+
+class _TimedClientSession:
+    """Reuse the caller's aiohttp session and response cleanup for one measured attempt."""
+
+    def __init__(self, session: Any, timing: ChatStreamTiming) -> None:
+        self._session = session
+        self._timing = timing
+
+    @asynccontextmanager
+    async def post(self, **kwargs: Any):
+        """Wrap successful SSE responses; non-streaming and HTTP errors stay upstream-owned."""
+        async with self._session.post(**kwargs) as response:
+            if response.status == 200 and "text/event-stream" in response.headers.get("Content-Type", ""):
+                yield _TimedStreamResponse(response, self._timing)
+            else:
+                yield response
 
 
 def _evalscope_arguments_type() -> tuple[str, type]:
@@ -57,10 +108,10 @@ def _evalscope_arguments_type() -> tuple[str, type]:
         """EvalScope arguments carrying Foretoken request-field omission semantics."""
 
         omit_temperature: bool = Field(default=False, exclude=True, repr=False)
-        max_retries: int = Field(default=0, ge=0)
+        max_retries: int = Field(ge=0)
         output_length_range: tuple[int, int] | None = None
 
-    @register_dataset("foretoken_conversations")
+    @register_dataset(_EVALSCOPE_DATASET)
     class ForetokenConversationDataset(DatasetPluginBase):
         """Supply prepared turn deltas and request fields to EvalScope's existing strategies."""
 
@@ -77,7 +128,7 @@ def _evalscope_arguments_type() -> tuple[str, type]:
                     marker = {
                         "role": "system",
                         "content": "",
-                        "_foretoken_request": {"fields": row["fields"], "last_turn": last_turn},
+                        _REQUEST_METADATA: {"fields": row["fields"], "last_turn": last_turn},
                     }
                     turns.append(
                         EvalScopeTurn(messages=[marker, *messages], is_final=last_turn)
@@ -96,18 +147,18 @@ def _evalscope_arguments_type() -> tuple[str, type]:
             metadata = None
             if isinstance(messages, list):
                 markers = [
-                    message["_foretoken_request"]
+                    message[_REQUEST_METADATA]
                     for message in messages
-                    if isinstance(message, dict) and "_foretoken_request" in message
+                    if isinstance(message, dict) and _REQUEST_METADATA in message
                 ]
                 if markers:
                     metadata = markers[-1]
-                    messages = [message for message in messages if "_foretoken_request" not in message]
+                    messages = [message for message in messages if _REQUEST_METADATA not in message]
             request = super().build_request(messages, effective_param)
             if metadata is not None:
                 for key, value in metadata["fields"].items():
                     request.setdefault(key, value)
-                request["_foretoken_last_turn"] = metadata["last_turn"]
+                request[_FINAL_TURN] = metadata["last_turn"]
             if effective_param.omit_temperature:
                 request.pop("temperature", None)
             if effective_param.output_length_range is not None:
@@ -119,10 +170,21 @@ def _evalscope_arguments_type() -> tuple[str, type]:
             self, client_session: Any, url: str, headers: dict, body: dict
         ) -> Any:
             """Retry transient failures before any response content, counting wait time in latency."""
-            last_turn = body.pop("_foretoken_last_turn", True)
+            last_turn = body.pop(_FINAL_TURN, True)
             started_at = time.perf_counter()
             for attempt in range(self.param.max_retries + 1):
-                result = await super().process_request(client_session, url, headers, body)
+                timing = ChatStreamTiming()
+                result = await super().process_request(
+                    _TimedClientSession(client_session, timing), url, headers, body
+                )
+                # Update the upstream observation before its metrics consumer calls
+                # finalize(), so TPOT, SQLite, and conversation summaries agree.
+                if result.is_stream and timing.first_output_at is not None:
+                    result.first_chunk_latency = timing.first_output_at - result.start_time
+                    result.inter_chunk_latency = timing.intervals
+                    if result.success:
+                        result.completed_time = timing.last_output_at
+                        result.query_latency = result.completed_time - result.start_time
                 status = result.status_code
                 transport_error = status is None and any(
                     name in (result.error or "")
@@ -138,12 +200,13 @@ def _evalscope_arguments_type() -> tuple[str, type]:
                     break
                 await asyncio.sleep(min(0.5 * 2 ** min(attempt, 4), 8.0))
             http_status = 200 if result.success else result.status_code
-            if result.success and not last_turn and any(
+            has_tool_calls = any(
                 choice.get("finish_reason") in ("tool_calls", "function_call")
                 or (choice.get("message") or choice.get("delta") or {}).get("tool_calls")
                 for response in result.response_messages if isinstance(response, dict)
                 for choice in response.get("choices", [])
-            ):
+            )
+            if result.success and not last_turn and has_tool_calls:
                 result.success = False
                 result.error = "Model requested tool execution before the next turn; a harness is required"
             if result.success and self.param.output_length_range is not None:
@@ -169,6 +232,9 @@ def _evalscope_arguments_type() -> tuple[str, type]:
                 "latency": completed_at - result.start_time,
                 "status_code": http_status,
                 "error": None if result.success else result.error,
+                "input_tokens": result.prompt_tokens,
+                "output_tokens": result.completion_tokens,
+                "empty_stream": result.is_stream and timing.first_output_at is None,
             }
             diagnostics_path = Path(self.param.outputs_dir) / "request_diagnostics.jsonl"
             with diagnostics_path.open("a", encoding="utf-8") as file:
@@ -234,7 +300,9 @@ def _evalscope_arguments(
         ),
         "rate": schedule.arrival_rate,
         "open_loop": schedule.max_concurrency == -1 and schedule.arrival_rate > 0,
-        "max_tokens": generation.max_tokens,
+        "max_tokens": (
+            generation.max_tokens if generation.min_output_length is None else None
+        ),
         "output_length_range": (
             (generation.min_output_length, generation.max_output_length)
             if generation.min_output_length is not None else None
@@ -296,7 +364,7 @@ def _evalscope_arguments(
             )
         argument_values.update(
             {
-                "dataset": "foretoken_conversations",
+                "dataset": _EVALSCOPE_DATASET,
                 "dataset_path": dataset_path,
                 "dataset_offset": 0,
                 "multi_turn": multi_turn,
@@ -320,7 +388,7 @@ def _percentile_value(
     scale: float = 1.0,
 ) -> float | None:
     value = float(percentiles.get_p(label, field))
-    return value * scale if math.isfinite(value) else None
+    return value * scale if math.isfinite(value) and value >= 0 else None
 
 
 def _metric_distribution(
@@ -502,7 +570,7 @@ def _read_evalscope_request_measurements(output_dir: str) -> list[RequestMeasure
             """
             SELECT success, start_time, latency, first_chunk_latency,
                    prompt_tokens, completion_tokens, time_per_output_token,
-                   inter_token_latencies
+                   inter_token_latencies, completed_time
             FROM result
             ORDER BY start_time
             """
@@ -513,12 +581,30 @@ def _read_evalscope_request_measurements(output_dir: str) -> list[RequestMeasure
     return [
         RequestMeasurement(
             started_at=float(row[1]) - first_start,
-            ttft=float(row[3]) if row[3] is not None else None,
-            latency=float(row[2] if row[2] is not None else diagnostics.get(float(row[1]), {}).get("latency", 0.0)),
-            tpot=float(row[6]) if row[6] is not None else None,
-            itl_samples=tuple(float(value) for value in json.loads(row[7] or "[]")),
-            input_tokens=int(row[4] or 0),
-            output_tokens=int(row[5] or 0),
+            ttft=(
+                float(row[3]) if row[3] is not None
+                and not diagnostics.get(float(row[1]), {}).get("empty_stream") else None
+            ),
+            latency=float(
+                row[2] if row[2] is not None
+                else diagnostics.get(float(row[1]), {}).get("latency", float(row[8]) - float(row[1]))
+            ),
+            tpot=(
+                float(row[6]) if row[6] is not None
+                and not diagnostics.get(float(row[1]), {}).get("empty_stream") else None
+            ),
+            itl_samples=(
+                () if diagnostics.get(float(row[1]), {}).get("empty_stream")
+                else tuple(float(value) for value in json.loads(row[7] or "[]"))
+            ),
+            input_tokens=int(
+                row[4] if row[4] is not None
+                else diagnostics.get(float(row[1]), {}).get("input_tokens") or 0
+            ),
+            output_tokens=int(
+                row[5] if row[5] is not None
+                else diagnostics.get(float(row[1]), {}).get("output_tokens") or 0
+            ),
             succeeded=bool(row[0]),
             conversation_id=None,
             turn=None,
@@ -556,7 +642,7 @@ def run_evalscope_standard_load(
     seed_everything(benchmark.resolved_workload.random_seed)
     materialized_dataset = (
         arguments.dataset_path
-        if arguments.dataset == "foretoken_conversations"
+        if arguments.dataset == _EVALSCOPE_DATASET
         else None
     )
     try:
@@ -575,4 +661,20 @@ def run_evalscope_standard_load(
         benchmark, summary, percentiles, trace_summary,
         single_turn=not arguments.multi_turn,
     )
-    return metrics, _read_evalscope_request_measurements(output_dir)
+    measurements = _read_evalscope_request_measurements(output_dir)
+    if benchmark.generation.stream and any(
+        item.succeeded and item.ttft is None for item in measurements
+    ):
+        # Streams without choices chunks have no token-arrival timing.
+        # Exclude their upstream zeros rather than report instantaneous tokens.
+        successful = [item for item in measurements if item.succeeded]
+        metrics["ttft"] = percentile_summary([item.ttft for item in successful if item.ttft is not None])
+        metrics["tpot"] = percentile_summary([item.tpot for item in successful if item.tpot is not None])
+        metrics["itl"] = percentile_summary([value for item in successful for value in item.itl_samples])
+        conversation = metrics["conversation"]
+        for key in ("first_turn_ttft", "time_to_final_answer_token", "decode_tokens_per_second"):
+            conversation[key] = percentile_summary([])
+        if not arguments.multi_turn:
+            conversation["first_turn_ttft"] = dict(metrics["ttft"])
+            conversation["time_to_final_answer_token"] = dict(metrics["ttft"])
+    return metrics, measurements

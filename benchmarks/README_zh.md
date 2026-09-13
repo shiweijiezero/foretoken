@@ -87,7 +87,7 @@ foretoken bench \
 
 ## 查找和阅读结果
 
-启用本地结果时，命令会在评测结束后打印结果目录。结果默认位于 `results/<timestamp>/`，可用 `--output-dir PATH` 修改父目录。
+每次评测的本地结果保存在 `results/` 下的独立目录中，结束后会打印目录位置。用 `--output-dir PATH` 可以修改父目录。
 
 先在控制台汇总或 `metrics.json` 中查看以下指标：
 
@@ -95,6 +95,7 @@ foretoken bench \
 - **Latency**：请求端到端耗时，p95 和 p99 反映尾部延迟。
 - **TTFT**：流式响应从请求发出到首个 token 的时间。
 - **TPOT**：流式响应产生首个 token 后，每个输出 token 的平均时间。
+- **ITL**：客户端收到相邻输出分片的时间间隔，包含工具调用输出；一个分片可能包含多个 token。
 - **Generation tokens/s**：模型总输出吞吐量。
 - **Generation tokens/s/user**：总输出吞吐量除以配置的并发数 `--parallel`；使用 `--parallel -1` 时，该值等于总输出吞吐量。
 - **Requests/s**：每秒成功完成的请求数。

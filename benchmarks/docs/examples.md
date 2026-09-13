@@ -138,7 +138,7 @@ The next `human` turn uses the model's actual answer. Conversation datasets can 
 
 ## Include tool data
 
-OpenAI-style rows can provide `tools`, `tool_choice`, and `parallel_tool_calls`. Recorded `assistant.tool_calls` and matching `tool` results are kept together as input history. Foretoken sends these records but does not execute tools. A new tool call can be the final response; if it requires execution before another turn, that conversation stops with an error until a harness can supply the result.
+OpenAI-style rows can provide `tools`, `tool_choice`, and `parallel_tool_calls`. Recorded `assistant.tool_calls` and matching `tool` results are kept together as input history. Foretoken sends these records but does not execute tools. A new tool call can be the final response; if it requires execution before another turn, that conversation stops with an error until a harness can supply the result. Streaming timing follows chunks with non-empty `choices`, including tool-call chunks; usage-only chunks are excluded.
 
 ## Combine multiple datasets
 

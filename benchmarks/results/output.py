@@ -8,10 +8,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, mkdtemp
 from typing import Any, Optional, Protocol
 
 from benchmarks.config.benchmark import BenchmarkConfig
@@ -151,10 +152,13 @@ def result_directory_path(
     benchmark: BenchmarkConfig,
     output_dir: Optional[str] = None,
 ) -> str:
-    """Return the explicit result directory or a new timestamped one under ``--output-dir``."""
+    """Return an explicit child path, or reserve a unique local directory under ``--output-dir``."""
     if output_dir is not None:
         return output_dir
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if benchmark.outputs.includes("local"):
+        os.makedirs(benchmark.outputs.output_dir, exist_ok=True)
+        return mkdtemp(prefix=f"{timestamp}-", dir=benchmark.outputs.output_dir)
     return os.path.join(benchmark.outputs.output_dir, timestamp)
 
 
@@ -235,7 +239,7 @@ class ResultOutputs:
         self.output_dir = output_dir
         self.wandb_group = wandb_group
         self._sinks: list[ResultSink] = []
-        self._temporary_directory: TemporaryDirectory[str] | None = None
+        self._resources = ExitStack()
         self._execution_dir: str | None = None
 
     @property
@@ -261,10 +265,9 @@ class ResultOutputs:
             sinks.append(local)
             self._execution_dir = local.output_dir
         else:
-            self._temporary_directory = TemporaryDirectory(
-                prefix="foretoken-benchmark-"
+            self._execution_dir = self._resources.enter_context(
+                TemporaryDirectory(prefix="foretoken-benchmark-")
             )
-            self._execution_dir = self._temporary_directory.name
         if outputs.includes("wandb"):
             sinks.append(
                 WandbSink(
@@ -277,9 +280,11 @@ class ResultOutputs:
             )
         try:
             for sink in sinks:
+                self._resources.callback(sink.close)
                 sink.open(self.record)
         except BaseException:
-            self._cleanup()
+            self._resources.close()
+            self._execution_dir = None
             raise
         self._sinks = sinks
         return self
@@ -287,23 +292,10 @@ class ResultOutputs:
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> bool:
         """Close every sink once and remove temporary execution files after success or failure."""
         try:
-            for sink in self._sinks:
-                try:
-                    sink.close()
-                except Exception:
-                    if exc_type is None:
-                        raise
-                    logger.exception("Failed to close %s", type(sink).__name__)
+            return self._resources.__exit__(exc_type, exc_value, traceback)
         finally:
             self._sinks = []
-            self._cleanup()
-        return False
-
-    def _cleanup(self) -> None:
-        self._execution_dir = None
-        if self._temporary_directory is not None:
-            self._temporary_directory.cleanup()
-            self._temporary_directory = None
+            self._execution_dir = None
 
     def publish(self, run: BenchmarkRun) -> None:
         """Publish the finished run to every open sink before the owner closes resources."""

@@ -194,7 +194,7 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         default=_default(ChatCompletionsGeneration, "stream"),
         help=(
             "Stream responses (default). --no-stream sends non-streaming "
-            "requests and reports latency only (no TTFT/TPOT)"
+            "requests without token-level timing (no TTFT/TPOT)"
         ),
     )
 

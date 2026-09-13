@@ -145,12 +145,6 @@ class MultiDatasetBenchmark:
                 {"dataset": dataset_selector, "metrics": child.metrics}
             )
 
-        if not dataset_results:
-            raise ValueError(
-                f"No requests dispatched for datasets={dataset_selectors} "
-                f"with total number={total_requests}"
-            )
-
         metrics = summarize_measurements(
             measurements,
             total_time=total_time,

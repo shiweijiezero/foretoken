@@ -9,10 +9,12 @@ import time
 from typing import Any, Optional
 
 import httpx
-from openai import APIError, AsyncOpenAI
+from openai import APIError, AsyncOpenAI, AsyncStream
+from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
+from benchmarks.integrations.streaming import ChatStreamTiming
 from benchmarks.results.metrics import compute_tpot
 from benchmarks.datasets.conversations import Task
 
@@ -45,6 +47,7 @@ class ChatCompletionsLoadClient:
             ),
         )
         self._model = service.model
+        self._request_url = service.chat_completions_url
 
     async def __aenter__(self) -> ChatCompletionsLoadClient:
         return self
@@ -62,13 +65,10 @@ class ChatCompletionsLoadClient:
             "max_tokens": target_length if target_length is not None else self._generation.sample_max_tokens(),
             "stream": stream,
         }
-        if self._request_overrides:
-            request_fields["extra_body"] = self._request_overrides
+        request_fields.update(self._request_overrides)
         if target_length is not None:
             request_fields["max_tokens"] = target_length
-            request_fields["extra_body"] = {
-                **self._request_overrides, "min_tokens": target_length, "ignore_eos": True
-            }
+            request_fields.update(min_tokens=target_length, ignore_eos=True)
         if stream:
             request_fields["stream_options"] = {"include_usage": True}
         for key in ("tools", "tool_choice", "parallel_tool_calls"):
@@ -76,24 +76,27 @@ class ChatCompletionsLoadClient:
                 request_fields[key] = task.metadata[key]
 
         started_at = time.perf_counter()
-        ttft: Optional[float] = None
+        timing = ChatStreamTiming()
         input_tokens = output_tokens = 0
         status_code: Optional[int] = None
         error_message: Optional[str] = None
         success = True
         try:
-            response = await self._client.chat.completions.create(**request_fields)
+            response = await self._client.post(
+                self._request_url,
+                body=request_fields,
+                cast_to=ChatCompletion,
+                stream=stream,
+                stream_cls=AsyncStream[ChatCompletionChunk],
+            )
             status_code = httpx.codes.OK
             if stream:
                 async for chunk in response:
+                    received_at = time.perf_counter()
+                    timing.observe(chunk.model_dump(exclude_none=True), received_at)
                     if chunk.usage is not None:
                         input_tokens = int(chunk.usage.prompt_tokens)
                         output_tokens = int(chunk.usage.completion_tokens)
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta
-                    if (delta.content or delta.tool_calls) and ttft is None:
-                        ttft = time.perf_counter() - started_at
             elif response.usage is not None:
                 input_tokens = int(response.usage.prompt_tokens)
                 output_tokens = int(response.usage.completion_tokens)
@@ -108,10 +111,16 @@ class ChatCompletionsLoadClient:
                 f"Output length mismatch: requested {target_length} tokens, service reported {output_tokens}; "
                 "verify min_tokens and ignore_eos support"
             )
-        latency = time.perf_counter() - started_at
-        # TTFT and TPOT are defined only for streamed token arrivals.
-        if not stream:
-            ttft = None
+        completed_at = (
+            timing.last_output_at
+            if stream and success and timing.last_output_at is not None
+            else time.perf_counter()
+        )
+        latency = completed_at - started_at
+        ttft = (
+            timing.first_output_at - started_at
+            if stream and timing.first_output_at is not None else None
+        )
         return {
             "success": success,
             "status_code": status_code,
@@ -119,6 +128,7 @@ class ChatCompletionsLoadClient:
             "latency": latency,
             "ttft": ttft,
             "tpot": compute_tpot(latency, ttft, output_tokens),
+            "inter_token_latencies": timing.intervals if stream else [],
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "error": error_message,

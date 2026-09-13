@@ -121,7 +121,7 @@ def _request_measurement(record: dict[str, Any]) -> RequestMeasurement:
         ttft=record["ttft"],
         latency=float(record["latency"]),
         tpot=record["tpot"],
-        itl_samples=(),
+        itl_samples=tuple(record["inter_token_latencies"]),
         input_tokens=int(record["input_tokens"]),
         output_tokens=int(record["output_tokens"]),
         succeeded=bool(record["success"]),

@@ -138,7 +138,7 @@ foretoken bench \
 
 ## 携带工具数据
 
-OpenAI 格式的数据行可以设置 `tools`、`tool_choice` 和 `parallel_tool_calls`。已有的 `assistant.tool_calls` 与对应 `tool` 结果会作为完整历史传入，Foretoken 不重新执行工具。模型新生成的工具调用可以作为最后一轮输出；如果后续轮次需要先执行工具，该对话会停止并报告原因，等待 harness 接入后提供执行能力。
+OpenAI 格式的数据行可以设置 `tools`、`tool_choice` 和 `parallel_tool_calls`。已有的 `assistant.tool_calls` 与对应 `tool` 结果会作为完整历史传入，Foretoken 不重新执行工具。模型新生成的工具调用可以作为最后一轮输出；如果后续轮次需要先执行工具，该对话会停止并报告原因，等待 harness 接入后提供执行能力。流式计时统计 `choices` 非空的分片，包含工具调用分片，不包含仅有用量统计的分片。
 
 ## 汇总多个数据集
 

@@ -134,7 +134,7 @@ def _extract_row_content(
     )
 
 
-def _message_turns(
+def parse_message_turns(
     messages: Any,
     dataset_path: Path,
     line_number: int,
@@ -178,7 +178,7 @@ def _request_task(
     if prompt is not None:
         turns: tuple[Turn, ...] = (Turn(role="user", content=prompt),)
     else:
-        turns = _message_turns(messages, dataset_path, line_number)
+        turns = parse_message_turns(messages, dataset_path, line_number)
     return Task(id=f"{dataset_path}:{row_index}", turns=turns, metadata=metadata)
 
 
@@ -229,7 +229,7 @@ def _conversation_task(
     if prompt is not None:
         messages = [{"role": "user", "content": prompt}]
 
-    turns = _message_turns(messages, dataset_path, line_number)
+    turns = parse_message_turns(messages, dataset_path, line_number)
     if not any(turn.role == "user" for turn in turns):
         raise ValueError(f"Conversation has no user message at {dataset_path}:{line_number}")
     fields = {"tools": tools} if tools else {}
@@ -238,7 +238,6 @@ def _conversation_task(
             if key in row:
                 fields[key] = row[key]
     task = Task(id=f"{dataset_path}:{row_index}", turns=turns, metadata=fields)
-    split_chat_conversation(task.messages())
     return task
 
 

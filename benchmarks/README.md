@@ -87,7 +87,7 @@ Use `--rate 5 --parallel -1` to send at the chosen rate without a concurrency ca
 
 ## Find and read results
 
-When local output is enabled, the command prints the result directory after the run. Results are stored under `results/<timestamp>/` by default. Use `--output-dir PATH` to choose another parent directory.
+Local results are saved in a separate directory under `results/`, printed when the run finishes. Use `--output-dir PATH` to choose another parent directory.
 
 Start with these values in the console summary or `metrics.json`:
 
@@ -95,6 +95,7 @@ Start with these values in the console summary or `metrics.json`:
 - **Latency**: end-to-end request time; use p95 or p99 to understand tail behavior.
 - **TTFT**: time to first token for streamed responses.
 - **TPOT**: time per output token after the first token for streamed responses.
+- **ITL**: intervals between received output chunks, including tool-call output. A chunk may contain multiple tokens.
 - **Generation tokens/s**: total output throughput.
 - **Generation tokens/s/user**: output throughput divided by the configured concurrency, `--parallel`. With `--parallel -1`, this equals total output throughput.
 - **Requests/s**: successfully completed requests per second.

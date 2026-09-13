@@ -156,11 +156,6 @@ def _discover_model_service(
         deployment.models.values(),
         source.api_key,
     )
-    if model not in models:
-        raise DeploymentError(
-            f"model {model!r} is not advertised by the frontend; "
-            f"available models: {', '.join(models)}"
-        )
     return ModelService(
         chat_completions_url=chat_completions_url,
         model=model,

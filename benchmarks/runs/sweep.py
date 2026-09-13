@@ -198,7 +198,7 @@ def load_sweep_points(path: str) -> list[SweepPoint]:
         raise ValueError("Parameter sweep requires --sweep PATH")
 
     points: list[SweepPoint] = []
-    explicit_names: list[str] = []
+    directory_names: list[str] = []
     for _, line_no, _, record in iter_jsonl_rows(path, allow_comments=True):
         if not isinstance(record, dict):
             raise TypeError(
@@ -207,18 +207,16 @@ def load_sweep_points(path: str) -> list[SweepPoint]:
             )
         expanded = expand_load_points(record)
         points.extend(expanded)
-        explicit_names.extend(
-            str(point[_BENCHMARK_NAME])
-            for point in expanded
-            if _BENCHMARK_NAME in point
+        directory_names.extend(
+            sweep_directory_name(sweep_point_name(point)) for point in expanded
         )
 
     duplicates = {
-        name for name, count in Counter(explicit_names).items() if count > 1
+        name for name, count in Counter(directory_names).items() if count > 1
     }
     if duplicates:
         names = ", ".join(sorted(duplicates))
-        raise ValueError(f"Duplicate benchmark names: {names}")
+        raise ValueError(f"Duplicate sweep output directories: {names}")
     return points
 
 
@@ -302,7 +300,16 @@ class ParameterSweepBenchmark:
             "base": self.benchmark.to_dict(),
         }
         if local_enabled:
-            os.makedirs(experiment_dir, exist_ok=True)
+            # Unnamed directories are already reserved. Named experiments cannot
+            # replace a previous plan before the engine checks its database.
+            if experiment_name:
+                try:
+                    os.makedirs(experiment_dir)
+                except FileExistsError as error:
+                    raise ValueError(
+                        f"Experiment directory already exists: {experiment_dir}; "
+                        "choose a new --experiment-name"
+                    ) from error
             write_json(experiment_dir, "config.json", plan)
 
         all_points: list[dict[str, Any]] = []
