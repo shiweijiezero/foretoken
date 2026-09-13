@@ -13,8 +13,9 @@ import random
 import sqlite3
 import time
 from contextlib import asynccontextmanager
+from functools import cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
     from evalscope.perf.utils.perf_models import BenchmarkSummary, PercentileResult
@@ -35,11 +36,12 @@ from benchmarks.datasets.conversations import (
 from benchmarks.datasets.huggingface import resolve_tokenizer_path
 
 
-EVALSCOPE_API = "foretoken_openai"
-_EVALSCOPE_DATASET = "foretoken_conversations"
-_REQUEST_METADATA = "_foretoken_request"
-_FINAL_TURN = "_foretoken_last_turn"
-_EVALSCOPE_ARGUMENTS_TYPE: type | None = None
+# Registry identities and private message fields shared by this adapter's
+# dataset producer, API consumer, and argument mapping.
+_EVALSCOPE_API: Final = "foretoken_openai"
+_EVALSCOPE_DATASET: Final = "foretoken_conversations"
+_REQUEST_METADATA: Final = "_foretoken_request"
+_FINAL_TURN: Final = "_foretoken_last_turn"
 
 
 class _TimedStreamResponse:
@@ -87,11 +89,9 @@ class _TimedClientSession:
                 yield response
 
 
-def _evalscope_arguments_type() -> tuple[str, type]:
-    """Load and register the Foretoken EvalScope adapter once when a load runs."""
-    global _EVALSCOPE_ARGUMENTS_TYPE
-    if _EVALSCOPE_ARGUMENTS_TYPE is not None:
-        return EVALSCOPE_API, _EVALSCOPE_ARGUMENTS_TYPE
+@cache
+def _evalscope_arguments_type() -> type:
+    """Register the adapter lazily and reuse its argument type across sequential loads."""
     try:
         from pydantic import Field
         from evalscope.perf.arguments import Arguments
@@ -135,7 +135,7 @@ def _evalscope_arguments_type() -> tuple[str, type]:
                     )
                 yield turns if self.query_parameters.multi_turn else turns[0].messages
 
-    @register_api(EVALSCOPE_API)
+    @register_api(_EVALSCOPE_API)
     class ForetokenOpenaiPlugin(OpenaiPlugin):
         """Adapt EvalScope requests to Foretoken's Chat Completions semantics."""
 
@@ -241,8 +241,7 @@ def _evalscope_arguments_type() -> tuple[str, type]:
                 file.write(json.dumps(diagnostic, ensure_ascii=False) + "\n")
             return result
 
-    _EVALSCOPE_ARGUMENTS_TYPE = ForetokenEvalScopeArguments
-    return EVALSCOPE_API, ForetokenEvalScopeArguments
+    return ForetokenEvalScopeArguments
 
 
 def _materialize_evalscope_request_dataset(
@@ -272,7 +271,7 @@ def _evalscope_arguments(
     output_dir: str,
 ) -> Any:
     """Map one Foretoken generated workload to EvalScope point arguments."""
-    EVALSCOPE_API, ForetokenEvalScopeArguments = _evalscope_arguments_type()
+    ForetokenEvalScopeArguments = _evalscope_arguments_type()
 
     schedule = benchmark.load
     generation = benchmark.generation
@@ -285,7 +284,7 @@ def _evalscope_arguments(
     argument_values: dict[str, Any] = {
         "model": service.model,
         "url": service.chat_completions_url,
-        "api": EVALSCOPE_API,
+        "api": _EVALSCOPE_API,
         "api_key": service.api_key,
         "headers": service.request_headers,
         "max_retries": benchmark.service.max_retries,
