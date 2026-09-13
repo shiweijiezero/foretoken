@@ -41,7 +41,6 @@ flowchart LR
     class storage artifact
 ```
 
-
 CLI 创建并观察运行，Ctrl-C 请求取消。现有控制面管理器选定服务实例，通过 model-server 已有的内部监听接口发送采集意图，并发布观察到的状态。Runtime supervisor 负责原生启动、自动停止、导出和失败处置。平台负责独立产物 PVC 及其保留周期。
 
 命令不产生请求、不修改服务配置、不部署 benchmark Job、不开放公开 profiling 端口，也不从 Pod 拷贝文件。推理 token 不等于 Kubernetes 采集权限。ProfileRun 使用 Kubernetes RBAC；内部 HTTP 沿用已有平台网络信任边界，不提供 Pod 之间的逐用户授权。
@@ -50,7 +49,7 @@ CLI 创建并观察运行，Ctrl-C 请求取消。现有控制面管理器选定
 
 平台通过 `profiling.artifactClaims` 将诊断命名空间绑定到已有 PVC。ModelGroup 控制器在正常 Pod 模板中添加挂载和运行身份。这会改变部署，因此应在部署诊断服务前完成；ProfileRun 本身不拥有或修改工作负载与 PVC。
 
-Runtime 启动时生成新的进程身份，配置已安装引擎的 Torch profiler，将未压缩 trace 写入独占 staging 目录。Model-server 镜像应用 [vLLM Python 修复补丁](../../data-plane/patches/vllm-python-profiling.patch)，使启停错误能够返回调用方，并支持互相独立的后续采集。Rust 源码子模块不是镜像里实际运行的 Python 引擎；后者必须能应用该补丁，或已包含完全匹配的实现。
+Model-server 镜像内建 PyTorch 采集支持，[vLLM 补丁](../../data-plane/patches/vllm-python-profiling.patch)在原生控制入口返回启停错误，并在后续采集前重新创建已完成的 Torch 状态。Runtime 启动时准备进程身份及独占 staging 目录，收到采集请求后才启动 profiler。
 
 ## 采集身份与恢复
 
@@ -84,7 +83,7 @@ API 在创建后固定目标、采集工具和时长。动作从 `Capture` 推�
 
 调用者显式指定采集时长；原生启动成功后，runtime 才开始计时。原生启动和停止/flush 分别使用 30 秒、120 秒预算。提前 `Finish` 可以结束较短窗口。CLI 默认等待 10 分钟，这个观察期限不会改变 runtime 的时限。
 
-原生 utility 失败或超时后，profiler 状态可能不确定。诊断 runtime 先关闭新请求准入，再沿已有引擎进程组关闭流程确认退出，之后释放 utility 任务。这可能中断该诊断服务的推理请求。不能确认终止时报告问题，不声称采集成功；部分输出保留供存储管理者排查。
+没有活动采集时，runtime 保持正常的请求排空和退出顺序。原生 utility 失败或超时后，profiler 状态可能不确定。诊断 runtime 先关闭新请求准入，再沿已有引擎进程组关闭流程确认退出，之后释放 utility 任务。这可能中断该诊断服务的推理请求。不能确认终止时报告问题，不声称采集成功；部分输出保留供存储管理者排查。
 
 ## 先封存，再发布结果
 
@@ -107,13 +106,16 @@ Manifest 的 `startedAtUnixMs` 在原生启动后记录，`recordingEndedAtUnixM
 
 ```bash
 # 部署就绪后延迟采集
-foretoken deploy examples/quickstart --profile   --profile-delay 30s --profile-duration 15s --profile-engine pytorch
+foretoken deploy examples/quickstart --profile \
+  --profile-delay 30s --profile-duration 15s --profile-engine pytorch
 
 # 压测期间采集
-foretoken bench examples/quickstart --dataset random --profile   --profile-duration 15s --profile-engine pytorch
+foretoken bench examples/quickstart --dataset random --profile \
+  --profile-duration 15s --profile-engine pytorch
 
 # 真实流量下抽样记录请求链路
-foretoken profile examples/quickstart --profile-duration 30s   --profile-request-sampling 0.01 --profile-request-limit 100
+foretoken profile examples/quickstart --profile-duration 30s \
+  --profile-request-sampling 0.01 --profile-request-limit 100
 
 # NVIDIA Nsight Systems
 foretoken profile examples/quickstart --profile-duration 5s --profile-engine nsight
@@ -134,7 +136,7 @@ foretoken profile examples/quickstart --profile-duration 5s --profile-engine mct
 6. NVIDIA Nsight Systems：增加 `--profile-engine nsight`，验证服务持续运行时完成报告导出。
 7. 沐曦 mcTracer：增加 `--profile-engine mctracer`，根据实际工具验证非交互启停和导出。
 
-所有入口使用同名的 `--profile-*` 参数。本次实现不接受尚无执行路径的延迟、采样和其他工具参数；引擎 step、重复窗口及间隔参数暂缓。工具准备仍由部署负责，不能在采集时悄悄补装或重启目标。
+所有入口使用同名的 `--profile-*` 参数，随对应能力交付。引擎 step、重复窗口及间隔参数暂缓。匹配的模型镜像提供采集工具，部署负责挂载产物存储，采集请求负责选择记录窗口。
 
 验收需使用真实引擎产物，覆盖多次独立采集、空闲窗口、取消、CLI 退出、控制器恢复、原生失败和产物发布失败。多 worker 覆盖和开销必须有各自的硬件证据，单 worker 成功不代表这些验证已经完成。
 

@@ -41,7 +41,6 @@ flowchart LR
     class storage artifact
 ```
 
-
 The CLI creates and observes the run; Ctrl-C requests cancellation. The existing control-plane manager selects the serving cohort, sends intent through model-server's existing internal listener, and publishes observed status. The runtime supervisor owns native start, automatic stop, export and failure handling. The platform owns the dedicated artifact PVC and retention.
 
 The command does not generate traffic, change serving configuration, deploy a benchmark Job, open a public profiling port, or copy files out of Pods. An inference token permits requests, not Kubernetes profiling control. ProfileRun operations use Kubernetes RBAC; internal HTTP follows the existing platform network trust boundary, not per-user authorization between Pods.
@@ -50,7 +49,7 @@ The command does not generate traffic, change serving configuration, deploy a be
 
 The platform's `profiling.artifactClaims` maps a diagnostic namespace to an existing PVC. The ModelGroup controller projects the mount and runtime identity into its normal Pod template. This changes workloads at deployment time, so configure it before deploying diagnostic services. ProfileRun does not own or mutate workloads or PVCs.
 
-At startup, the runtime creates a fresh process identity and configures the installed engine's Torch profiler to write uncompressed traces into private staging. The model-server image applies the [vLLM Python backport](../../data-plane/patches/vllm-python-profiling.patch) for error propagation and independent subsequent captures. The Rust source submodule is not the installed Python engine. An image must accept the backport or already contain that exact implementation.
+The model-server image includes PyTorch capture support. The [vLLM backport](../../data-plane/patches/vllm-python-profiling.patch) reports start/stop failures at the native control boundary and recreates completed Torch state before subsequent captures. Runtime startup prepares process identity and private staging; profiling begins when a capture is requested.
 
 ## Identity and recovery
 
@@ -84,7 +83,7 @@ State updates hold a short lock. Native utilities run in tasks owned by the supe
 
 The caller specifies the duration; the runtime starts that timer after native start succeeds. Native start and stop/flush have separate 30-second and 120-second budgets. Early `Finish` stops a shorter window. The CLI's default 10-minute observation timeout changes none of these deadlines.
 
-A failed or timed-out utility leaves native profiler state uncertain. The diagnostic runtime closes admission and follows its existing engine process-group shutdown path before releasing the utility task. This can interrupt inference on that service. Failure to confirm termination is reported rather than represented as success. Partial output remains for storage-owner diagnosis.
+Without an active capture, the runtime retains its normal request-drain and shutdown order. A failed or timed-out utility leaves native profiler state uncertain. The diagnostic runtime closes admission and follows its existing engine process-group shutdown path before releasing the utility task. This can interrupt inference on that service. Failure to confirm termination is reported rather than represented as success. Partial output remains for storage-owner diagnosis.
 
 ## Seal before publication
 
@@ -107,13 +106,16 @@ These recipes map to the delivery steps below. See the [operator guide](../../ob
 
 ```bash
 # Capture after deployment readiness and an initial delay
-foretoken deploy examples/quickstart --profile   --profile-delay 30s --profile-duration 15s --profile-engine pytorch
+foretoken deploy examples/quickstart --profile \
+  --profile-delay 30s --profile-duration 15s --profile-engine pytorch
 
 # Capture during a benchmark
-foretoken bench examples/quickstart --dataset random --profile   --profile-duration 15s --profile-engine pytorch
+foretoken bench examples/quickstart --dataset random --profile \
+  --profile-duration 15s --profile-engine pytorch
 
 # Sample request paths under existing traffic
-foretoken profile examples/quickstart --profile-duration 30s   --profile-request-sampling 0.01 --profile-request-limit 100
+foretoken profile examples/quickstart --profile-duration 30s \
+  --profile-request-sampling 0.01 --profile-request-limit 100
 
 # NVIDIA Nsight Systems
 foretoken profile examples/quickstart --profile-duration 5s --profile-engine nsight
@@ -134,7 +136,7 @@ Each step is a separately usable and validated PR, not a horizontal split betwee
 6. NVIDIA Nsight Systems via `--profile-engine nsight`, with report finalization while serving remains running.
 7. MetaX mcTracer via `--profile-engine mctracer`, validated against its actual noninteractive control and export capabilities.
 
-All entrypoints keep the same `--profile-*` names. Delay, sampling and additional engines are not accepted as inactive placeholders in this implementation. Engine-step, repeated-window and gap options are deferred. Tool preparation remains deployment-owned; selecting a tool cannot retrofit missing instrumentation or restart the target implicitly.
+All entrypoints share the same `--profile-*` names as their capabilities ship. Engine-step, repeated-window and gap options are deferred. Matching model images provide the capture tools, deployment mounts artifact storage, and each capture selects its recording window.
 
 Acceptance must use actual engine traces and verify repeated independent runs, idle capture, cancellation, CLI loss, controller recovery, native failure and artifact publication failures. Multi-worker coverage and overhead need their own hardware evidence; a successful single-worker run does not establish them.
 

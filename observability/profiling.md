@@ -30,20 +30,23 @@ The runtime stops recording after the requested duration, then exports the files
 | `--model MODEL_ID` | Select one model from a multi-model directory |
 | `--timeout 10m` | How long the CLI observes the run, not how long the runtime records |
 
-Ctrl-C requests cancellation and retains available output. A lost terminal or an observation timeout does not cancel an accepted run: the runtime still stops automatically. Do not submit another capture just because the first command stopped waiting. Use its printed inspection command to check the original run.
+Ctrl-C requests cancellation and retains available output. After a lost terminal or observation timeout, capture still ends at its original deadline. Use the printed ProfileRun name to inspect progress.
 
 ## Common commands
 
 Select one model from a multi-model deployment:
 
 ```bash
-foretoken profile examples/multi-model-quickstart   --model Qwen/Qwen3-0.6B   --profile-engine pytorch --profile-duration 15s
+foretoken profile examples/multi-model-quickstart \
+  --model Qwen/Qwen3-0.6B \
+  --profile-engine pytorch --profile-duration 15s
 ```
 
 Allow more time to observe a slow export without extending capture:
 
 ```bash
-foretoken profile examples/quickstart   --profile-engine pytorch --profile-duration 15s --timeout 20m
+foretoken profile examples/quickstart \
+  --profile-engine pytorch --profile-duration 15s --timeout 20m
 ```
 
 After the command prints the run name, inspect it from another terminal. Replace `<run-name>` with that name and use the deployment namespace:
@@ -66,8 +69,8 @@ The binding prepares all model-server Pods in that namespace and changes their d
 
 Each run retains native `.pt.trace.json` files and a manifest on the artifact PVC. Access the files through your platform's storage access and inspect them with a local Perfetto viewer or another compatible trace viewer. The manifest separates the recording stop request from completed export; neither includes client-side file transfer.
 
-A valid capture with no GPU kernel activity is reported as idle, not as evidence of a healthy or busy GPU. Missing worker files or malformed traces fail publication. Cancellation may retain incomplete output. Multiple captures have separate result directories.
+Results report whether GPU kernel activity was recorded. Missing worker files or malformed traces fail publication. Cancellation may retain incomplete output. Multiple captures have separate result directories.
 
 Profiling adds CPU/GPU overhead and can produce large files even in a short window. This command captures the selected service's prepared serving runtimes, not a request-count sample. Use a small diagnostic deployment and short duration; it does not cap GPU events or artifact bytes. A native profiler failure may terminate the diagnostic runtime, so use a service where interruption is acceptable. Deleting its namespace or artifact PVC may delete the retained results.
 
-Deployment-triggered capture, benchmark integration, delay, request sampling, Nsight Systems and MetaX tools are not part of this single-capture interface. See the [maintainer design and delivery plan](../docs/development/profiling.md) for their boundaries.
+Planned deployment, benchmark and additional-profiler workflows are described in the [maintainer design](../docs/development/profiling.md#planned-command-recipes).

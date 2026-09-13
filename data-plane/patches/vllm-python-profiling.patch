@@ -1,31 +1,27 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 #
-# Propagate native profiler failures and recreate Torch state between captures.
-# Applies to the Python sources shipped by vLLM 0.24.0 and 0.26.0.
+# Propagate Torch profiler failures and recreate completed state before capture.
+# Shared by the supported vLLM Python engines; native export and scheduling stay upstream.
 # Installed by model-server's Dockerfile, independently of the Rust source submodule.
 
 diff --git a/vllm/profiler/wrapper.py b/vllm/profiler/wrapper.py
 --- a/vllm/profiler/wrapper.py
 +++ b/vllm/profiler/wrapper.py
-@@ -40,6 +40,7 @@
-         # Track when the profiler is actually running
-         self._profiling_for_iters = 0
-         self._running = False
+@@ -37,4 +37,5 @@
+         self._active_iteration_count = 0
+         self._active = False
 +        self._error: Exception | None = None
  
-     @abstractmethod
-     def _start(self) -> None:
-@@ -57,19 +58,31 @@
-             self._start()
+         # Track when the profiler is actually running
+@@ -58,4 +59,6 @@
              self._running = True  # Only mark as running if start succeeds
          except Exception as e:
 +            self._error = e
 +            self._active = False
              logger.warning("Failed to start profiler: %s", e)
  
-     def _call_stop(self) -> None:
-         """Call _stop with error handling but no safeguards."""
+@@ -64,8 +67,17 @@
          try:
              self._stop()
 +            self._running = False
@@ -37,48 +33,21 @@ diff --git a/vllm/profiler/wrapper.py b/vllm/profiler/wrapper.py
 -        self._running = False  # Always mark as not running, assume stop worked
 +
 +    def _raise_if_failed(self) -> None:
-+        """Surface native errors to control callers without raising from worker steps."""
++        """Report retained native errors at the worker control boundary."""
 +        if self._error is not None:
 +            raise RuntimeError(
 +                f"Profiling failed: {self._error}; restart the worker before another capture"
 +            ) from self._error
  
      def start(self) -> None:
-         """Attempt to start the profiler, accounting for delayed starts."""
-+        self._raise_if_failed()
-         if self._active:
-             logger.debug(
-                 "start_profile received when profiler is already active. "
-@@ -79,11 +92,12 @@
-         self._active = True
-         if self._delay_iters == 0:
-             self._call_start()
-+            self._raise_if_failed()
- 
-     def step(self) -> None:
+@@ -84,5 +96,5 @@
          """Update the profiler state at each worker step,
          to handle delayed starts and max iteration limits."""
 -        if not self._active:
 +        if not self._active or self._error is not None:
              return
  
-         self._active_iteration_count += 1
-@@ -126,6 +140,7 @@
-     def stop(self) -> None:
-         """Attempt to stop the profiler, accounting for overlapped calls."""
-         if not self._active:
-+            self._raise_if_failed()
-             logger.debug(
-                 "stop_profile received when profiler is not active. Ignoring request."
-             )
-@@ -136,12 +151,14 @@
- 
-         if self._running:
-             self._call_stop()
-+        self._raise_if_failed()
- 
-     def shutdown(self) -> None:
-         """Ensure profiler is stopped when shutting down."""
+@@ -142,5 +154,6 @@
          logger.info_once("Shutting down profiler")
          if self._running:
 -            self.stop()
@@ -86,34 +55,21 @@ diff --git a/vllm/profiler/wrapper.py b/vllm/profiler/wrapper.py
 +        self._active = False
  
      def annotate_context_manager(self, name: str):
-         """Return a context manager to annotate profiler traces."""
 diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
 --- a/vllm/v1/worker/gpu_worker.py
 +++ b/vllm/v1/worker/gpu_worker.py
-@@ -1199,7 +1199,7 @@
-             else:
-                 trace_name = rank_suffix
+@@ -1189,2 +1189,8 @@
  
--            # Create the profiler wrapper only on the first start call
-+            # Each successful Torch stop releases the wrapper for a fresh capture.
-             if self.profiler is None:
-                 profiler_type = self.profiler_config.profiler
-                 if profiler_type == "torch":
-@@ -1221,14 +1221,15 @@
-                         f"Invalid profiler value of {self.profiler_config.profiler}"
-                     )
- 
--            # If profiler already initialized, restart profiling but keep
--            # the original trace name from the first initialization.
-             self.profiler.start()
-         else:
-             if self.profiler is None:
-                 logger.warning("Profiler was not started, nothing to stop.")
-                 return
-             self.profiler.stop()
-+            if self.profiler_config.profiler == "torch":
-+                # Do not discard failed state: stop must succeed before another capture.
++        if self.profiler is not None and self.profiler_config.profiler == "torch":
++            # Preserve failures and active captures; only completed Torch state is replaceable.
++            self.profiler._raise_if_failed()
++            if is_start and not self.profiler._active and not self.profiler._running:
 +                self.profiler = None
++
+         if is_start:
+@@ -1232,2 +1238,5 @@
  
++        if self.profiler is not None and self.profiler_config.profiler == "torch":
++            self.profiler._raise_if_failed()
++
      def execute_dummy_batch(self) -> None:
-         num_tokens = getattr(self.model_runner, "uniform_decode_query_len", 1)

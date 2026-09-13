@@ -259,6 +259,23 @@ impl Supervisor {
         self.handle.clone()
     }
 
+    /// Reports whether shutdown must resolve native profiling before draining the engine client.
+    /// Completed export only leaves artifact publication, which can finish after ordinary drain.
+    pub fn has_native_capture(&self) -> bool {
+        if self.native.is_some() {
+            return true;
+        }
+        let state = self
+            .handle
+            .state
+            .lock()
+            .expect("capture state lock poisoned");
+        state
+            .active
+            .as_ref()
+            .is_some_and(|uid| state.entries[uid].record.exported_at_unix_ms.is_none())
+    }
+
     /// Runs serialized captures until shutdown or an uncertain native operation needs escalation.
     pub async fn run(&mut self) -> Result<(), String> {
         while let Some((uid, action)) = self.receiver.recv().await {

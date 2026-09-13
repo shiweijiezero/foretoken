@@ -252,9 +252,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     shutdown.notify_waiters();
     cache_shutdown.notify_waiters();
     let deadline = Instant::now() + config.launch.drain_timeout();
-    // Diagnostic shutdown must not wait on an engine utility holding the backend read lock.
-    // Confirm process exit first, then release owned utility tasks and drain the ordinary client.
-    if let Some(profiler) = &mut profiler {
+    // Only an active native capture can hold the backend lock or require forced profiler stop.
+    // Merely preparing profiling must not bypass normal request draining on SIGTERM.
+    if let Some(profiler) = &mut profiler
+        && profiler.has_native_capture()
+    {
         engine.shutdown(config.launch.drain_timeout()).await?;
         engine.wait_for_exit().await;
         profiler
@@ -284,6 +286,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         warn!(%error, "could not shut down managed EngineCore cleanly");
     }
     health.set_process_alive(false);
+    if let Some(profiler) = &mut profiler {
+        profiler.engine_stopped("runtime terminated").await;
+    }
 
     match stop {
         Stop::Signal => Ok(()),
