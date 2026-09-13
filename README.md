@@ -60,8 +60,6 @@ The platform runs in the `foretoken-platform` namespace and exposes model servic
 
 ### 3. Deploy the Quick Start
 
-Prepare the [model storage](docs/model-storage.md) in `examples/quickstart/cache.yaml`, then deploy:
-
 ```bash
 foretoken deploy examples/quickstart --timeout 20m
 ```

@@ -60,8 +60,6 @@ foretoken install
 
 ### 3. 部署快速开始示例
 
-准备好 `examples/quickstart/cache.yaml` 中的[模型存储](docs/model-storage_zh.md)，再部署：
-
 ```bash
 foretoken deploy examples/quickstart --timeout 20m
 ```
