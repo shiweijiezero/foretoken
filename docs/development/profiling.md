@@ -13,36 +13,6 @@ The experimental implementation captures one time-bounded Torch window on an exi
 
 A capture must stop and retain results even when its initiating command disconnects. Its identity and lifetime belong to a namespaced `ProfileRun`, not to the command process or `ModelService.spec`.
 
-```mermaid
-flowchart LR
-    subgraph traffic["Inference traffic"]
-        client["Workload"] --> frontend["Frontend"]
-    end
-    subgraph control["Capture control"]
-        cli["foretoken profile"] -->|"Submit / inspect"| run["Kubernetes API<br/>ProfileRun"]
-        run -->|"Observe intent"| controller["ProfileRun controller"]
-        controller -.->|"Publish status"| run
-    end
-    subgraph runtime["Model runtime · model-server"]
-        serving["Inference API"] --> engine["vLLM · PyTorch Profiler"]
-        supervisor["Runtime supervisor"] -->|"Start / stop"| engine
-    end
-    storage[("Persistent artifacts<br/>PVC")]
-    frontend --> serving
-    controller -->|"Internal HTTP"| supervisor
-    supervisor -.->|"Publish status"| controller
-    engine -->|"Export traces"| storage
-    supervisor -->|"Seal / publish manifest"| storage
-    classDef request fill:#eff6ff,stroke:#2563eb,color:#172554
-    classDef capture fill:#f0fdfa,stroke:#0f766e,color:#134e4a
-    classDef artifact fill:#faf5ff,stroke:#7e22ce,color:#3b0764
-    class client,frontend,serving,engine request
-    class cli,run,controller,supervisor capture
-    class storage artifact
-```
-
-The CLI creates and observes the run; Ctrl-C requests cancellation. The existing control-plane manager selects the serving cohort, sends intent through model-server's existing internal listener, and publishes observed status. The runtime supervisor owns native start, automatic stop, export and failure handling. The platform owns the dedicated artifact PVC and retention.
-
 The command does not generate traffic, change serving configuration, deploy a benchmark Job, open a public profiling port, or copy files out of Pods. An inference token permits requests, not Kubernetes profiling control. ProfileRun operations use Kubernetes RBAC; internal HTTP follows the existing platform network trust boundary, not per-user authorization between Pods.
 
 ## Prepare before capture

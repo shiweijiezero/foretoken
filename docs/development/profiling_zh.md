@@ -13,36 +13,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 发起命令断线后，采集仍须停止并保留结果。因此，一次采集的身份和生命周期属于命名空间内的 `ProfileRun`，不属于命令进程，也不放进长期服务配置 `ModelService.spec`。
 
-```mermaid
-flowchart LR
-    subgraph traffic["推理请求"]
-        client["业务流量"] --> frontend["Frontend"]
-    end
-    subgraph control["采集控制"]
-        cli["foretoken profile"] -->|"提交 / 查询"| run["Kubernetes API<br/>ProfileRun"]
-        run -->|"观察意图"| controller["ProfileRun controller"]
-        controller -.->|"发布状态"| run
-    end
-    subgraph runtime["模型运行时 · model-server"]
-        serving["Inference API"] --> engine["vLLM · PyTorch Profiler"]
-        supervisor["Runtime supervisor"] -->|"启动 / 停止"| engine
-    end
-    storage[("持久产物<br/>PVC")]
-    frontend --> serving
-    controller -->|"内部 HTTP"| supervisor
-    supervisor -.->|"发布状态"| controller
-    engine -->|"导出 trace"| storage
-    supervisor -->|"封存 / 发布 manifest"| storage
-    classDef request fill:#eff6ff,stroke:#2563eb,color:#172554
-    classDef capture fill:#f0fdfa,stroke:#0f766e,color:#134e4a
-    classDef artifact fill:#faf5ff,stroke:#7e22ce,color:#3b0764
-    class client,frontend,serving,engine request
-    class cli,run,controller,supervisor capture
-    class storage artifact
-```
-
-CLI 创建并观察运行，Ctrl-C 请求取消。现有控制面管理器选定服务实例，通过 model-server 已有的内部监听接口发送采集意图，并发布观察到的状态。Runtime supervisor 负责原生启动、自动停止、导出和失败处置。平台负责独立产物 PVC 及其保留周期。
-
 命令不产生请求、不修改服务配置、不部署 benchmark Job、不开放公开 profiling 端口，也不从 Pod 拷贝文件。推理 token 不等于 Kubernetes 采集权限。ProfileRun 使用 Kubernetes RBAC；内部 HTTP 沿用已有平台网络信任边界，不提供 Pod 之间的逐用户授权。
 
 ## 在采集前准备运行环境
