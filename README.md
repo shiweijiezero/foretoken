@@ -64,7 +64,7 @@ See the [source deployment guide](docs/custom-deployment.md) for build tools and
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica. Models and runtime caches are kept in the directory configured by `cache.yaml`. The workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. See the [single-model example](examples/quickstart/README.md) for its resource configuration and [`examples/`](examples/) for more deployments.
+This example deploys one frontend service and one `Qwen/Qwen3-0.6B` model replica, requesting one GPU, 8 CPU, and 52 GiB memory. More deployments are available in [`examples/`](examples/).
 
 ### 4. Send a test request
 

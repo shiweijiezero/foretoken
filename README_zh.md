@@ -64,7 +64,7 @@ foretoken install
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。模型文件和运行时缓存保存在 `cache.yaml` 配置的目录中。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。资源配置见[单模型示例](examples/quickstart/README_zh.md)，更多部署配置见 [`examples/`](examples/) 目录。
+该示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本，请求 1 张 GPU、8 个 CPU 和 52 GiB 内存。更多部署配置见 [`examples/`](examples/)。
 
 ### 4. 发送测试请求
 
