@@ -160,4 +160,4 @@ uv pip check --python "$VLLM_ENV/.venv/bin/python"
 
 这是镜像构建使用的同一安装器，不继承系统 Python 包，也不跳过依赖求解。源码保留在安装目录的 `third_party` 中。失败目录保留供排查；解决原因后，用新的安装目录重试。激活脚本同时设置 MACA 编译器和库路径，运行时应先加载它。
 
-当前独立安装验证组合是 vLLM/vLLM-metax 0.24.0、MetaX PyTorch 2.10 和 mcoplib 0.4.9。安装器回移[上游 XGrammar 依赖修正](https://github.com/MetaX-MACA/vLLM-metax/commit/1331d8ad37da9a69fe1140b7759633d509b722a9)，以 `+foretoken.1` 标识插件，并使用 Transformers 5.5.3、XGrammar 0.2.1 和 TVM FFI 0.1.9 的兼容组合。已验证文本与 JSON 约束输出；torchaudio 与 PyTorch 存在二进制兼容问题，不用于音频推理。Foretoken 的协议适配范围为 vLLM 0.20–0.28，这不等于每个版本都已完成独立安装或 GPU 验证。
+使用版本矩阵中相互匹配的 vLLM 与 MetaX SDK。
