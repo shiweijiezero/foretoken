@@ -66,7 +66,7 @@ func TestFrontendRoutingSnapshotAndReadinessContract(t *testing.T) {
 	for _, item := range deployment.Spec.Template.Spec.Containers[0].Env {
 		frontendEnv[item.Name] = item.Value
 	}
-	if frontendEnv["FORETOKEN_REQUEST_TIMEOUT_SECONDS"] != "600" || frontendEnv["HF_ENDPOINT"] != "https://hub.example.com" || frontendEnv["MODELSCOPE_CACHE"] != "/var/cache/foretoken/models/modelscope" {
+	if frontendEnv["FORETOKEN_REQUEST_TIMEOUT_SECONDS"] != "600" || frontendEnv["HF_ENDPOINT"] != "https://hub.example.com" {
 		t.Fatalf("frontend runtime environment = %#v", frontendEnv)
 	}
 	var huggingFaceToken *corev1.EnvVarSource

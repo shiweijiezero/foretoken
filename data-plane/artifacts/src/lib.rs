@@ -18,8 +18,36 @@ pub enum ModelSource {
     ModelScope,
 }
 
-/// Controller-projected model root, distinct from the complete runtime-cache mount.
+/// Environment contracts shared by workload projection and first-party source adapters.
 pub const MODEL_ROOT_ENV: &str = "FORETOKEN_MODEL_ROOT";
+// Must match the controller runtimeconfig producer.
+pub const TEMPORARY_MODEL_ROOT_ENV: &str = "FORETOKEN_TEMPORARY_MODEL_ROOT";
+pub const HF_TOKEN_ENV: &str = "HF_TOKEN";
+pub const HF_HUB_OFFLINE_ENV: &str = "HF_HUB_OFFLINE";
+pub const MODELSCOPE_CACHE_ENV: &str = "MODELSCOPE_CACHE";
+pub const MODELSCOPE_DOMAIN_ENV: &str = "MODELSCOPE_DOMAIN";
+pub const DEFAULT_MODELSCOPE_DOMAIN: &str = "www.modelscope.cn";
+
+/// Returns the controller-projected persistent model root.
+pub fn model_root() -> Option<PathBuf> {
+    env_path(MODEL_ROOT_ENV)
+}
+
+/// Returns the Pod-scoped model root used when persistent frontend storage is unavailable.
+pub fn temporary_model_root() -> Option<PathBuf> {
+    env_path(TEMPORARY_MODEL_ROOT_ENV)
+}
+
+/// Returns the ModelScope SDK cache below one model root.
+pub fn modelscope_cache_root(model_root: &Path) -> PathBuf {
+    model_root.join("modelscope")
+}
+
+fn env_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name)
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+}
 
 /// Resolve a directory for frontend or model-server, relative to an optional model root.
 ///

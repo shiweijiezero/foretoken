@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+use std::path::Path;
+
 use foretoken_artifacts::ModelSource;
 use foretoken_model_server::launch::LaunchPlanV1;
 
@@ -66,6 +68,13 @@ fn renders_supported_owned_arguments() {
             .iter()
             .any(|arg| arg.starts_with("--revision=") || arg.starts_with("--tokenizer-revision="))
     );
+
+    let mut modelscope = plan();
+    modelscope.artifacts.source = ModelSource::ModelScope;
+    let environment = modelscope.source_environment(Path::new("/models"));
+    assert!(environment.contains(&("VLLM_USE_MODELSCOPE".into(), "true".into())));
+    assert!(environment.contains(&("MODELSCOPE_CACHE".into(), "/models/modelscope".into())));
+    assert!(environment.contains(&("MODELSCOPE_DOMAIN".into(), "www.modelscope.cn".into())));
 }
 
 // Protects role-specific EC launch configuration for encoder and prefill.

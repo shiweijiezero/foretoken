@@ -29,6 +29,7 @@ use vllm_managed_engine::{ManagedEngineHandle, allocate_handshake_port};
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
 const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
+const TEMPORARY_MODEL_SOURCE_ROOT: &str = "/tmp/foretoken-model-source";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -329,7 +330,7 @@ async fn start_engine_attempt(
     startup_deadline: Instant,
     cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
 ) -> Result<(ManagedEngineHandle, EngineCoreClient), EngineStartupFailure> {
-    let environment = if let Some(cache) = cache {
+    let mut environment = if let Some(cache) = cache {
         cache.set_mode(mode);
         cache
             .prepare(mode)
@@ -338,6 +339,11 @@ async fn start_engine_attempt(
     } else {
         Vec::new()
     };
+    let model_root = cache
+        .map(|cache| cache.model_root(mode))
+        .or_else(foretoken_artifacts::model_root)
+        .unwrap_or_else(|| PathBuf::from(TEMPORARY_MODEL_SOURCE_ROOT));
+    environment.extend(config.launch.source_environment(&model_root));
     let handshake_port = allocate_handshake_port(LOOPBACK_HOST)
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
     let mut managed_engine = config
@@ -422,7 +428,7 @@ async fn start_engine_attempt(
 }
 
 fn local_artifact_path(identifier: &str) -> io::Result<String> {
-    let root = std::env::var_os(foretoken_artifacts::MODEL_ROOT_ENV).map(PathBuf::from);
+    let root = foretoken_artifacts::model_root();
     let path =
         foretoken_artifacts::resolve_directory(root.as_deref(), identifier)?.ok_or_else(|| {
             io::Error::new(

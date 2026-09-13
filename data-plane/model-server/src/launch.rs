@@ -3,6 +3,7 @@
 
 //! Private versioned launch contract and the sole vLLM argv renderer.
 
+use std::path::Path;
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -15,6 +16,7 @@ use foretoken_model_protocol::RuntimeEcTransferMetadata;
 use crate::runtime_transport::{KV_EVENT_ENDPOINT, KV_EVENT_TOPIC, LOOPBACK_HOST};
 
 const VLLM_PYTHON_ENV: &str = "FORETOKEN_VLLM_PYTHON";
+const VLLM_USE_MODELSCOPE_ENV: &str = "VLLM_USE_MODELSCOPE";
 const DEFAULT_VLLM_PYTHON: &str = "python";
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -340,6 +342,27 @@ impl LaunchPlanV1 {
     /// The duration is derived from the retained controller-owned lifecycle plan.
     pub fn drain_timeout(&self) -> Duration {
         Duration::from_secs(self.lifecycle.drain_seconds)
+    }
+
+    /// Returns provider environment for the managed vLLM child process.
+    pub fn source_environment(&self, model_root: &Path) -> Vec<(String, String)> {
+        let use_modelscope = self.artifacts.source == ModelSource::ModelScope;
+        let mut environment = vec![(VLLM_USE_MODELSCOPE_ENV.into(), use_modelscope.to_string())];
+        if use_modelscope {
+            environment.extend([
+                (
+                    foretoken_artifacts::MODELSCOPE_CACHE_ENV.into(),
+                    foretoken_artifacts::modelscope_cache_root(model_root)
+                        .display()
+                        .to_string(),
+                ),
+                (
+                    foretoken_artifacts::MODELSCOPE_DOMAIN_ENV.into(),
+                    foretoken_artifacts::DEFAULT_MODELSCOPE_DOMAIN.into(),
+                ),
+            ]);
+        }
+        environment
     }
 
     /// Builds the owned managed-engine configuration consumed by model-server startup.

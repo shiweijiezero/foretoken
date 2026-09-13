@@ -6,8 +6,12 @@ package runtimeconfig
 
 import "path"
 
-// ModelRootEnv identifies the internal model root consumed by both data-plane processes.
-const ModelRootEnv = "FORETOKEN_MODEL_ROOT"
+const (
+	// ModelRootEnv identifies the persistent model root consumed by both data-plane processes.
+	ModelRootEnv = "FORETOKEN_MODEL_ROOT"
+	// TemporaryModelRootEnv is consumed by foretoken-artifacts in the frontend process.
+	TemporaryModelRootEnv = "FORETOKEN_TEMPORARY_MODEL_ROOT"
+)
 
 // ModelDirectory returns the stable model area of a workload's persistent data root.
 // Model providers keep their own cache layouts beneath this directory.

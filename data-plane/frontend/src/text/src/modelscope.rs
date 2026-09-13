@@ -9,10 +9,6 @@ use std::path::{Component, Path, PathBuf};
 use serde::Deserialize;
 use thiserror::Error;
 
-const MODELSCOPE_ENDPOINT: &str = "https://www.modelscope.cn";
-const MODELSCOPE_CACHE_ENV: &str = "MODELSCOPE_CACHE";
-const TEMPORARY_MODELSCOPE_CACHE_DIR_ENV: &str = "FORETOKEN_TEMPORARY_MODELSCOPE_CACHE_DIR";
-
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct ApiResponse<T> {
@@ -46,13 +42,12 @@ pub async fn resolve_snapshot(
     if snapshot_has_frontend_artifact(&persistent_snapshot, accepted_files) {
         return Ok(persistent_snapshot);
     }
-    if std::env::var("HF_HUB_OFFLINE").is_ok_and(|value| value == "1") {
+    if std::env::var(foretoken_artifacts::HF_HUB_OFFLINE_ENV).is_ok_and(|value| value == "1") {
         return Err(ModelScopeError::OfflineCacheMiss);
     }
 
-    let download_root = std::env::var_os(TEMPORARY_MODELSCOPE_CACHE_DIR_ENV)
-        .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
+    let download_root = foretoken_artifacts::temporary_model_root()
+        .map(|root| foretoken_artifacts::modelscope_cache_root(&root))
         .unwrap_or(persistent);
     let snapshot = model_directory(&download_root, model_id)?;
     let client = reqwest::Client::builder()
@@ -85,8 +80,8 @@ fn snapshot_has_frontend_artifact(snapshot: &Path, accepted_files: &[&str]) -> b
 }
 
 fn model_cache_root() -> Result<PathBuf, ModelScopeError> {
-    std::env::var_os(MODELSCOPE_CACHE_ENV)
-        .map(PathBuf::from)
+    foretoken_artifacts::model_root()
+        .map(|root| foretoken_artifacts::modelscope_cache_root(&root))
         .ok_or(ModelScopeError::MissingCacheRoot)
 }
 
@@ -173,8 +168,11 @@ async fn download_file(
 }
 
 fn model_url(model_id: &str, suffix: &str) -> Result<reqwest::Url, ModelScopeError> {
-    let mut url = reqwest::Url::parse(MODELSCOPE_ENDPOINT)
-        .map_err(|error| ModelScopeError::Api(error.to_string()))?;
+    let mut url = reqwest::Url::parse(&format!(
+        "https://{}",
+        foretoken_artifacts::DEFAULT_MODELSCOPE_DOMAIN
+    ))
+    .map_err(|error| ModelScopeError::Api(error.to_string()))?;
     let mut segments = url
         .path_segments_mut()
         .map_err(|_| ModelScopeError::InvalidModelId)?;
@@ -192,7 +190,7 @@ fn model_url(model_id: &str, suffix: &str) -> Result<reqwest::Url, ModelScopeErr
 
 #[derive(Debug, Error)]
 pub enum ModelScopeError {
-    #[error("MODELSCOPE_CACHE must be set for ModelScope loading")]
+    #[error("ModelScope cache root is not configured")]
     MissingCacheRoot,
     #[error("ModelScope model identifier must be a relative repository path")]
     InvalidModelId,

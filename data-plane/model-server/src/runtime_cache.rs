@@ -22,9 +22,8 @@ use tracing::warn;
 const OBSERVATION_VERSION: u8 = 1;
 const WRITE_PROBE_INTERVAL: Duration = Duration::from_secs(2);
 const TEMPORARY_CACHE_ROOT: &str = "/tmp/foretoken-runtime-cache";
-const CACHE_ENV: [&str; 5] = [
+const CACHE_ENV: [&str; 4] = [
     "HF_HOME",
-    "MODELSCOPE_CACHE",
     "VLLM_CACHE_ROOT",
     "TORCHINDUCTOR_CACHE_DIR",
     "TRITON_CACHE_DIR",
@@ -113,6 +112,11 @@ impl Config {
             observation_port,
             temporary: Arc::new(AtomicBool::new(false)),
         }))
+    }
+
+    /// Returns the model root for the selected persistent or temporary cache mode.
+    pub fn model_root(&self, mode: Mode) -> PathBuf {
+        self.root(mode).join("models")
     }
 
     /// Returns the controller-selected private observation port.

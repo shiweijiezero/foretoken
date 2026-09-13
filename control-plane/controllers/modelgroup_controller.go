@@ -215,11 +215,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		{Name: "FORETOKEN_MODEL_GROUP_UID", Value: string(group.UID)},
 	}
 	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache)...)
-	modelRoot := "/tmp/foretoken-model-source"
-	if cache := group.Spec.Artifacts.Cache; cache != nil {
-		modelRoot = runtimeconfig.ModelDirectory(cache.MountPath)
-	}
-	env = append(env, vllmconfig.ModelSourceEnv(group.Spec.Artifacts.Source, group.Spec.Artifacts.HuggingFaceAccess, modelRoot)...)
+	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
 	if group.Spec.PDRuntime != nil {
 		env = append(env,
 			corev1.EnvVar{Name: "VLLM_MOONCAKE_BOOTSTRAP_PORT", Value: strconv.Itoa(int(group.Spec.PDRuntime.BootstrapPort))},

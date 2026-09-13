@@ -7,7 +7,6 @@ package controllers
 
 import (
 	"fmt"
-	"path"
 	"slices"
 	"strconv"
 	"time"
@@ -84,13 +83,11 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_ROUTER_PICKER", Value: string(routerPicker)},
 	}
 	frontendEnv = append(frontendEnv, runtimeconfig.HuggingFaceEnv(profile.HuggingFaceAccess)...)
-	frontendEnv = append(frontendEnv, corev1.EnvVar{Name: "MODELSCOPE_CACHE", Value: path.Join(modelRoot, "modelscope")})
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {
 		frontendEnv = append(frontendEnv,
 			corev1.EnvVar{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cacheMountPath},
-			corev1.EnvVar{Name: "FORETOKEN_TEMPORARY_HF_CACHE_DIR", Value: runtimeconfig.ModelDirectory("/tmp/foretoken-runtime-cache") + "/hub"},
-			corev1.EnvVar{Name: "FORETOKEN_TEMPORARY_MODELSCOPE_CACHE_DIR", Value: runtimeconfig.ModelDirectory("/tmp/foretoken-runtime-cache") + "/modelscope"},
+			corev1.EnvVar{Name: runtimeconfig.TemporaryModelRootEnv, Value: runtimeconfig.ModelDirectory("/tmp/foretoken-runtime-cache")},
 		)
 		cacheVolume.VolumeSource = corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: profile.RuntimeCache.ClaimName}}
 	}

@@ -6,7 +6,7 @@
 mod modelscope;
 
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use foretoken_artifacts::ModelSource;
@@ -30,9 +30,6 @@ pub struct SnapshotRuntime {
     pub supports_multimodal: bool,
 }
 
-const HF_TOKEN_ENV: &str = "HF_TOKEN";
-const HF_HUB_OFFLINE_ENV: &str = "HF_HUB_OFFLINE";
-const TEMPORARY_HF_CACHE_DIR_ENV: &str = "FORETOKEN_TEMPORARY_HF_CACHE_DIR";
 const MODEL_FILES: &[&str] = &[
     "added_tokens.json",
     "chat_template.json",
@@ -64,7 +61,7 @@ pub async fn load_text_backend(
         return Err(TextBackendLoadError::MissingModelOrRevision);
     }
     if source == ModelSource::Local {
-        let model_root = std::env::var_os(foretoken_artifacts::MODEL_ROOT_ENV).map(PathBuf::from);
+        let model_root = foretoken_artifacts::model_root();
         let local = foretoken_artifacts::resolve_directory(model_root.as_deref(), model_id)
             .map_err(TextBackendLoadError::LocalModelPath)?
             .ok_or(TextBackendLoadError::LocalModelNotFound)?;
@@ -92,18 +89,15 @@ pub async fn load_text_backend(
             .await
             .map_err(|_| TextBackendLoadError::CachedModel);
     }
-    if std::env::var(HF_HUB_OFFLINE_ENV).is_ok_and(|value| value == "1") {
+    if std::env::var(foretoken_artifacts::HF_HUB_OFFLINE_ENV).is_ok_and(|value| value == "1") {
         return Err(TextBackendLoadError::OfflineCacheMiss);
     }
 
     let mut builder = ApiBuilder::from_env().with_progress(false);
-    if let Some(cache_dir) = std::env::var(TEMPORARY_HF_CACHE_DIR_ENV)
-        .ok()
-        .filter(|path| !path.is_empty())
-    {
-        builder = builder.with_cache_dir(PathBuf::from(cache_dir));
+    if let Some(root) = foretoken_artifacts::temporary_model_root() {
+        builder = builder.with_cache_dir(root.join("hub"));
     }
-    if let Ok(token) = std::env::var(HF_TOKEN_ENV)
+    if let Ok(token) = std::env::var(foretoken_artifacts::HF_TOKEN_ENV)
         && !token.is_empty()
     {
         builder = builder.with_token(Some(token));
