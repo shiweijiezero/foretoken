@@ -75,7 +75,7 @@ impl Config {
         if !mount_path.is_absolute() || mount_path == Path::new("/") {
             return Err("FORETOKEN_CACHE_MOUNT_PATH must be an absolute non-root path".into());
         }
-        let model_root = std::env::var_os(foretoken_model_paths::MODEL_ROOT_ENV)
+        let model_root = std::env::var_os(foretoken_artifacts::MODEL_ROOT_ENV)
             .map(PathBuf::from)
             .ok_or("FORETOKEN_MODEL_ROOT must be set when a RuntimeCache is mounted")?;
         if !model_root.is_absolute() {
@@ -123,7 +123,7 @@ impl Config {
 
     /// Resolve a mounted model or tokenizer directory for the engine launcher.
     pub fn local_artifact_path(&self, identifier: &str) -> io::Result<Option<String>> {
-        foretoken_model_paths::resolve_directory(Some(&self.model_root), identifier)?
+        foretoken_artifacts::resolve_directory(Some(&self.model_root), identifier)?
             .map(|path| {
                 path.into_os_string().into_string().map_err(|_| {
                     io::Error::new(

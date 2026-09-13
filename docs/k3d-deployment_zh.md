@@ -97,7 +97,7 @@ mkdir -p examples/quickstart/data
 add_k3d_mount "$(realpath examples/quickstart/data)"
 ```
 
-为 frontend 和 model-server 的运行用户配置 `examples/quickstart/data` 写权限；标准 frontend 使用 UID/GID 65532。其他存储方式见[模型存储](model-storage_zh.md)。
+为 frontend 和 model-server 的运行用户配置 `examples/quickstart/data` 写权限；数据目录需要允许工作负载写入。其他存储方式见[模型存储](model-storage_zh.md)。
 
 创建包含单个 server 节点的集群：
 

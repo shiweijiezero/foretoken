@@ -85,8 +85,6 @@ The Deployment should report all desired replicas as Ready. Model workloads appe
 
 The Quick Start workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. With k3d, first configure the GPUs as described in [Deploy Foretoken with k3d](k3d-deployment.md), then confirm that the current Kubernetes context points to the target k3d cluster.
 
-Prepare the [model storage](model-storage.md) declared in `examples/quickstart/cache.yaml`, then deploy from the repository root:
-
 ```bash
 foretoken deploy examples/quickstart --timeout 20m
 ```

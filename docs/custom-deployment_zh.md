@@ -85,8 +85,6 @@ Deployment 应显示所有期望副本均已 Ready。模型工作负载只会在
 
 快速开始工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。使用 k3d 时，先按[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)完成 GPU 配置，并确认当前 Kubernetes 上下文指向目标 k3d 集群。
 
-准备好 `examples/quickstart/cache.yaml` 声明的[模型存储](model-storage_zh.md)，再从仓库根目录部署：
-
 ```bash
 foretoken deploy examples/quickstart --timeout 20m
 ```

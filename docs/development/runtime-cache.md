@@ -27,7 +27,7 @@ With `retentionPolicy: Delete`, the controller deletes the PVC after its workloa
 
 ## Model files and runtime caches
 
-The model-paths library owns local model/tokenizer directory resolution for both data-plane consumers. The platform projects the model root below the data mount, separately from provider and compilation cache locations. The shared resolver keeps relative references inside that model root and rejects individual files rather than replacing them with parent directories. It does not download artifacts or validate model formats; those responsibilities remain with the inference engine and tokenizer loaders. Public model identifiers remain unchanged after resolving local files.
+The artifacts library owns local model/tokenizer directory resolution for both data-plane consumers. The platform projects the model root below the data mount, separately from provider and compilation cache locations. The shared resolver keeps relative references inside that model root and rejects individual files rather than replacing them with parent directories. It does not download artifacts or validate model formats; those responsibilities remain with the inference engine and tokenizer loaders. Public model identifiers remain unchanged after resolving local files.
 
 The runtime cache mount stores model-provider caches and engine compilation caches. Model-server owns its startup write probe and one temporary-cache retry: it stops the failed EngineCore before retrying under the Pod's `/tmp` volume. A frontend with a missing Hub snapshot can use its temporary tokenizer cache. This fallback neither changes a running engine's storage path nor copies prepared local checkpoints.
 

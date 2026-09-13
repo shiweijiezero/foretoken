@@ -97,7 +97,7 @@ mkdir -p examples/quickstart/data
 add_k3d_mount "$(realpath examples/quickstart/data)"
 ```
 
-Give the frontend and model-server users write access to `examples/quickstart/data`; the standard frontend runs as UID/GID 65532. See [Model storage](model-storage.md) for other storage choices.
+The data directory must be writable by the workloads. See [Model storage](model-storage.md) for storage choices.
 
 Create a single-server cluster:
 

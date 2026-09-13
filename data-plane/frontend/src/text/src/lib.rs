@@ -62,8 +62,8 @@ pub async fn load_hf_text_backend(
     if model_id.is_empty() || revision.is_empty() {
         return Err(TextBackendLoadError::MissingModelOrRevision);
     }
-    let model_root = std::env::var_os(foretoken_model_paths::MODEL_ROOT_ENV).map(PathBuf::from);
-    if let Some(local) = foretoken_model_paths::resolve_directory(model_root.as_deref(), model_id)
+    let model_root = std::env::var_os(foretoken_artifacts::MODEL_ROOT_ENV).map(PathBuf::from);
+    if let Some(local) = foretoken_artifacts::resolve_directory(model_root.as_deref(), model_id)
         .map_err(TextBackendLoadError::LocalModelPath)?
     {
         let local = local
@@ -138,8 +138,8 @@ pub async fn load_hf_snapshot_runtime(
 ) -> std::result::Result<HfSnapshotRuntime, TextBackendLoadError> {
     let text_backend = load_hf_text_backend(model_id, revision).await?;
     let tokenizer = text_backend.tokenizer();
-    let chat_backend = HfChatBackend::from_resolved_model_paths(
-        text_backend.resolved_model_paths().clone(),
+    let chat_backend = HfChatBackend::from_resolved_model_files(
+        text_backend.resolved_model_files().clone(),
         model_id.to_owned(),
         LoadModelBackendsOptions {
             language_model_only: false,
