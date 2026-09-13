@@ -160,7 +160,7 @@ See [Contributing to Foretoken](CONTRIBUTING.md) for development principles, col
 Thank you to everyone who has contributed to Foretoken.
 
 <a href="https://github.com/shiweijiezero/foretoken/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=shiweijiezero/foretoken" width="320" alt="Foretoken contributors" />
+  <img src="https://contrib.rocks/image?repo=shiweijiezero/foretoken" width="256" alt="Foretoken contributors" />
 </a>
 
 ## License
