@@ -30,9 +30,11 @@ ARG FORETOKEN_GITHUB_MIRROR
 ARG FORETOKEN_CARGO_REGISTRY
 ARG CARGO_NET_GIT_FETCH_WITH_CLI
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends git \
-    && rm -rf /var/lib/apt/lists/*
+RUN if [ "${CARGO_NET_GIT_FETCH_WITH_CLI}" = true ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends git \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 WORKDIR /workspace
 
@@ -43,7 +45,8 @@ RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/regis
     --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=foretoken-cargo-target-model-server,target=/workspace/data-plane/target,sharing=locked \
     if [ -n "${FORETOKEN_GITHUB_MIRROR}" ]; then \
-      git config --global url."${FORETOKEN_GITHUB_MIRROR%/}/".insteadOf https://github.com/; \
+      printf '[url "%s/"]\n\tinsteadOf = https://github.com/\n' \
+        "${FORETOKEN_GITHUB_MIRROR%/}" > /root/.gitconfig; \
     fi \
     && if [ -n "${FORETOKEN_CARGO_REGISTRY}" ]; then \
       mkdir -p /workspace/.cargo; \
