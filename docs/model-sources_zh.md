@@ -15,19 +15,6 @@ spec:
 
 使用 `source: modelscope` 时，相同模型标识会从 ModelScope 加载。同一个 frontend 后面的不同模型服务可以选择不同来源。
 
-使用 Hugging Face 兼容地址时，在平台 values 中设置访问地址并用该文件安装：
-
-```yaml
-runtime:
-  vllm:
-    modelSource:
-      endpoint: https://hub.example.com
-```
-
-```bash
-foretoken install --values model-source-values.yaml
-```
-
 ## 使用本地模型目录
 
 将完整模型放到统一模型根目录：

@@ -112,8 +112,10 @@ def _select_runtime(
 class PlatformLifecycle:
     """Own platform installation and managed dependency lifecycles."""
 
-    def __init__(self) -> None:
-        self._helm = Helm(default_platform_config())
+    def __init__(self, oci_registry: str | None = None) -> None:
+        config = default_platform_config(oci_registry)
+        self._helm = Helm(config)
+        self._oci_registry = config.image_registry
         self._kubectl = Kubectl()
         self._gateway = GatewayControllerLifecycle(self._helm, self._kubectl)
         self._load_balancer = LoadBalancerLifecycle(self._helm, self._kubectl)
@@ -381,6 +383,7 @@ class PlatformLifecycle:
             prepare_source_images(
                 command.editable,
                 command.registry,
+                self._oci_registry,
                 platform.namespace,
                 command.timeout,
                 source_runtime_image,

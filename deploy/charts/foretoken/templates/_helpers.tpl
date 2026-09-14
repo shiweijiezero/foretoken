@@ -92,11 +92,29 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 
-{{- define "foretoken.image" -}}
-{{- if .Values.image.digest -}}
-{{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
+{{/* Replaces only an image registry host, preserving the repository, tag, and digest. */}}
+{{- define "foretoken.imageWithRegistry" -}}
+{{- $registry := trim .registry -}}
+{{- $image := trim .image -}}
+{{- if eq $registry "" -}}
+{{- $image -}}
 {{- else -}}
-{{- printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) -}}
+{{- $parts := splitList "/" $image -}}
+{{- $first := first $parts -}}
+{{- if or (contains "." $first) (contains ":" $first) (eq $first "localhost") -}}
+{{- printf "%s/%s" $registry (join "/" (rest $parts)) -}}
+{{- else -}}
+{{- printf "%s/%s" $registry $image -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{- define "foretoken.image" -}}
+{{- $repository := include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.image.repository) -}}
+{{- if .Values.image.digest -}}
+{{- printf "%s@%s" $repository .Values.image.digest -}}
+{{- else -}}
+{{- printf "%s:%s" $repository (default .Chart.AppVersion .Values.image.tag) -}}
 {{- end -}}
 {{- end }}
 

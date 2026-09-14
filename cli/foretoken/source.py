@@ -15,6 +15,10 @@ from typing import Any
 
 from foretoken.kubernetes import Kubectl, resource_ref
 from foretoken.manifest import DeploymentError
+from foretoken.network_sources import (
+    SOURCE_SELECTION_POLICY,
+    select_source_build_sources,
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,7 @@ class SourceImages:
 def prepare_source_images(
     source_path: str,
     registry: str | None,
+    oci_registry: str | None,
     namespace: str,
     timeout: str,
     inference_engine_image: str | None = None,
@@ -76,10 +81,17 @@ def prepare_source_images(
                 "DEV_IMAGE_OUTPUT": str(output_path),
                 "FORETOKEN_CLI_SOURCE": "true",
                 "REGISTRY": normalized_registry,
+                "FORETOKEN_OCI_REGISTRY": oci_registry or "",
                 "PLATFORM_NAMESPACE": namespace,
                 "DEV_TIMEOUT": timeout,
             }
         )
+        selected_sources, selections, unavailable_sources = (
+            select_source_build_sources(environment)
+        )
+        environment.update(selected_sources)
+        for selection in selections:
+            print(f"Source mirror selected: {selection}", flush=True)
         if inference_engine_image is not None:
             environment["INFERENCE_ENGINE_IMAGE"] = inference_engine_image
         completed = subprocess.run(
@@ -89,8 +101,16 @@ def prepare_source_images(
             check=False,
         )
         if completed.returncode:
+            unavailable = (
+                "; unavailable within the "
+                f"{SOURCE_SELECTION_POLICY.probe_timeout_seconds:g}s source probe budget: "
+                + ", ".join(unavailable_sources)
+                if unavailable_sources
+                else ""
+            )
             raise DeploymentError(
-                f"source image preparation failed with exit code {completed.returncode}"
+                "source image preparation failed with exit code "
+                f"{completed.returncode}{unavailable}"
             )
         try:
             value = json.loads(output_path.read_text(encoding="utf-8"))

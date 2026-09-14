@@ -39,6 +39,8 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
+Configure the corresponding endpoint or proxy address when a mirror is required.
+
 For a local kind or k3d cluster, build and import the images directly:
 
 ```bash

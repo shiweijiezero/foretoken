@@ -19,6 +19,7 @@ class InstallCommand:
     values: tuple[str, ...]
     editable: str | None
     registry: str | None
+    oci_registry: str | None
     prometheus: str | None
     frontend_mode: str | None
     gateway_name: str
@@ -145,6 +146,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--registry",
         metavar="REGISTRY",
         help="registry used to distribute source images to remote clusters",
+    )
+    install.add_argument(
+        "--oci-registry",
+        metavar="REGISTRY",
+        help=(
+            "explicit registry prefix for release images and Helm charts; defaults "
+            "to FORETOKEN_OCI_REGISTRY (editable builds otherwise select faster "
+            "supported anonymous sources)"
+        ),
     )
     install.add_argument(
         "-f",
@@ -320,6 +330,7 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             tuple(parsed_args.values or ()),
             parsed_args.editable,
             parsed_args.registry,
+            parsed_args.oci_registry,
             parsed_args.prometheus,
             parsed_args.frontend_mode,
             parsed_args.gateway_name,

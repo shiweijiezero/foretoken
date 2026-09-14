@@ -30,8 +30,9 @@ for project in vllm-metax vllm; do
   fi
   source_dir="$prefix/third_party/$project"
   mkdir "$source_dir"
+  github_base=${FORETOKEN_GITHUB_MIRROR:-https://github.com}
   curl --fail --location --output "$prefix/third_party/$project.tar.gz" \
-    "https://github.com/$repository/archive/refs/tags/v$version.tar.gz"
+    "${github_base%/}/$repository/archive/refs/tags/v$version.tar.gz"
   tar --extract --gzip --strip-components=1 \
     --file "$prefix/third_party/$project.tar.gz" --directory "$source_dir"
   rm "$prefix/third_party/$project.tar.gz"

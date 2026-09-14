@@ -42,6 +42,7 @@ class PlatformConfig:
     envoy_gateway_default_controller: str
     envoy_gateway_controller: str
     dcgm_metrics: str
+    image_registry: str | None
 
     @property
     def platform_selector_labels(self) -> tuple[tuple[str, str], ...]:
@@ -52,8 +53,33 @@ class PlatformConfig:
         )
 
 
-def default_platform_config() -> PlatformConfig:
-    """Return the version-aligned configuration owned by the installed CLI."""
+def _oci_registry(value: str | None) -> str | None:
+    """Normalize an explicit OCI mirror prefix without accepting embedded credentials."""
+    registry = (value or "").strip().rstrip("/")
+    if not registry:
+        return None
+    if "://" in registry or "@" in registry or registry.startswith("/"):
+        raise DeploymentError(
+            "OCI registry must be HOST[/PATH] without a URL scheme or credentials"
+        )
+    return registry
+
+
+def _chart_source(
+    registry: str | None,
+    source: str,
+    mirror_path: str | None = None,
+) -> str:
+    """Return the public chart source or its deterministic path in a user mirror."""
+    if registry is None:
+        return source
+    path = mirror_path or source.removeprefix("oci://")
+    return f"oci://{registry}/{path}"
+
+
+def default_platform_config(oci_registry: str | None = None) -> PlatformConfig:
+    """Return version-aligned release identities and optional OCI mirror paths."""
+    registry = _oci_registry(oci_registry)
     return PlatformConfig(
         namespace="foretoken-platform",
         load_balancer_namespace="metallb-system",
@@ -62,29 +88,44 @@ def default_platform_config() -> PlatformConfig:
         install_source_label="foretoken.io/install-source",
         platform=ManagedChart(
             release_name="foretoken",
-            source="oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken",
+            source=_chart_source(
+                registry,
+                "oci://ghcr.io/shiweijiezero/foretoken/charts/foretoken",
+            ),
             version=platform_version(),
         ),
         prometheus=ManagedChart(
             release_name="foretoken-prometheus",
-            source="oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack",
+            source=_chart_source(
+                registry,
+                "oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack",
+            ),
             version="88.5.2",
         ),
         dcgm_exporter=ManagedChart(
             release_name="foretoken-dcgm-exporter",
-            source=(
+            source=_chart_source(
+                registry,
                 "https://nvidia.github.io/dcgm-exporter/helm-charts/"
-                "dcgm-exporter-4.8.3.tgz"
+                "dcgm-exporter-4.8.3.tgz",
+                "nvidia.github.io/dcgm-exporter/helm-charts/dcgm-exporter",
             ),
+            version="4.8.3" if registry else None,
         ),
         envoy_gateway=ManagedChart(
             release_name="foretoken-envoy-gateway",
-            source="oci://docker.io/envoyproxy/gateway-helm",
+            source=_chart_source(
+                registry,
+                "oci://docker.io/envoyproxy/gateway-helm",
+            ),
             version="v1.9.1",
         ),
         metallb=ManagedChart(
             release_name="foretoken-metallb",
-            source="oci://quay.io/metallb/chart/metallb",
+            source=_chart_source(
+                registry,
+                "oci://quay.io/metallb/chart/metallb",
+            ),
             version="0.16.1",
         ),
         envoy_gateway_default_controller=(
@@ -102,6 +143,7 @@ DCGM_FI_DEV_POWER_USAGE, gauge, Power draw (in W).
 DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature (in C).
 DCGM_FI_DEV_XID_ERRORS, gauge, Last XID error code.
 """,
+        image_registry=registry,
     )
 
 
@@ -119,6 +161,11 @@ def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
         if not isinstance(values, dict):
             loaded.append({})
             continue
+        global_values = values.get("global")
+        if isinstance(global_values, dict) and "imageRegistry" in global_values:
+            raise DeploymentError(
+                f"Helm values file {path} sets global.imageRegistry; use --oci-registry"
+            )
         frontend = values.get("frontend")
         if isinstance(frontend, dict):
             reserved = tuple(key for key in ("mode", "gateway") if key in frontend)

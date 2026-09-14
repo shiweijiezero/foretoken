@@ -39,6 +39,8 @@ source .venv/bin/activate
 uv pip install -e .
 ```
 
+需要使用镜像站时，配置对应的 endpoint 或 proxy 地址。
+
 本地 kind 或 k3d 集群可以直接构建并导入镜像：
 
 ```bash

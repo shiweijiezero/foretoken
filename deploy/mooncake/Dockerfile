@@ -1,7 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-FROM ubuntu:24.04 AS build
+ARG BASE_IMAGE_REGISTRY=docker.io
+ARG BUILD_IMAGE=${BASE_IMAGE_REGISTRY}/library/ubuntu:24.04
+ARG RUNTIME_IMAGE=${BASE_IMAGE_REGISTRY}/library/ubuntu:24.04
+
+FROM ${BUILD_IMAGE} AS build
 
 ARG BUILD_JOBS=2
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -40,7 +44,7 @@ RUN install -Dm644 extern/yalantinglibs/LICENSE /out/share/licenses/yalantinglib
     && install -Dm644 /usr/share/doc/libasio-dev/copyright /out/share/licenses/asio/copyright \
     && install -Dm644 /usr/share/doc/libboost1.83-dev/copyright /out/share/licenses/boost/copyright
 
-FROM ubuntu:24.04
+FROM ${RUNTIME_IMAGE}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libcurl4t64 libgflags2.2 libgoogle-glog0v6t64 \

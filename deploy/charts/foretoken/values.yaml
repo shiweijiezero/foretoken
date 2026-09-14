@@ -3,6 +3,10 @@
 
 # Provides default settings for the Foretoken control-plane chart.
 
+global:
+  # Replaces the registry host for release images. Source-image installs set explicit images instead.
+  imageRegistry: ""
+
 image:
   repository: ghcr.io/shiweijiezero/foretoken/control-plane
   tag: "" # Defaults to Chart.appVersion.

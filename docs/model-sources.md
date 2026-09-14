@@ -15,19 +15,6 @@ spec:
 
 Use `source: modelscope` with the same model identifier to load it from ModelScope. Different model services behind one frontend may use different sources.
 
-For a Hugging Face-compatible endpoint, set the platform access configuration and install with that values file:
-
-```yaml
-runtime:
-  vllm:
-    modelSource:
-      endpoint: https://hub.example.com
-```
-
-```bash
-foretoken install --values model-source-values.yaml
-```
-
 ## Use a local model directory
 
 Place a complete model below the configured model root:

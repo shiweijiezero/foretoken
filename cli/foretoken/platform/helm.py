@@ -317,6 +317,13 @@ class Helm(HelmClient):
                     f"runtime.vllm.gpu.resourceName={gpu_resource_name}",
                 ]
             )
+        image_registry = self._config.image_registry if source_images is None else None
+        args.extend(
+            [
+                "--set-string",
+                f"global.imageRegistry={image_registry or ''}",
+            ]
+        )
         if source_images is not None:
             control_plane_image = source_images.control_plane
             frontend_image = source_images.frontend
@@ -384,6 +391,17 @@ class Helm(HelmClient):
                 + json.dumps(config.managed_addresses, separators=(",", ":")),
             ]
         )
+        if self._config.image_registry is not None:
+            args.extend(
+                [
+                    "--set-string",
+                    "controller.image.repository="
+                    f"{self._config.image_registry}/metallb/controller",
+                    "--set-string",
+                    "speaker.image.repository="
+                    f"{self._config.image_registry}/metallb/speaker",
+                ]
+            )
         self._finish_upgrade(args, timeout)
         self.run(args)
 
@@ -406,6 +424,13 @@ class Helm(HelmClient):
                 + self._config.envoy_gateway_controller,
             ]
         )
+        if self._config.image_registry is not None:
+            args.extend(
+                [
+                    "--set-string",
+                    f"global.imageRegistry={self._config.image_registry}",
+                ]
+            )
         self.run(args)
 
     def install_prometheus(
@@ -446,6 +471,13 @@ class Helm(HelmClient):
             self._config.prometheus.version,
             timeout,
         )
+        if self._config.image_registry is not None:
+            args.extend(
+                [
+                    "--set-string",
+                    f"global.imageRegistry={self._config.image_registry}",
+                ]
+            )
         args.extend(
             [
                 "--set",
@@ -479,7 +511,7 @@ class Helm(HelmClient):
         args = self._managed_chart_args(
             release,
             self._config.dcgm_exporter.source,
-            None,
+            self._config.dcgm_exporter.version,
             timeout,
         )
         if reuse_values:
@@ -498,6 +530,14 @@ class Helm(HelmClient):
                 "securityContext.capabilities.add=[]",
             ]
         )
+        if self._config.image_registry is not None:
+            args.extend(
+                [
+                    "--set-string",
+                    "image.repository="
+                    f"{self._config.image_registry}/nvidia/k8s/dcgm-exporter",
+                ]
+            )
         if observability_labels:
             args.extend(
                 [

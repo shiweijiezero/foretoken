@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from collections.abc import Sequence
@@ -161,7 +162,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     command = parse_arguments(sys.argv[1:] if argv is None else argv)
     try:
         if isinstance(command, InstallCommand):
-            PlatformLifecycle().install(command)
+            oci_registry = command.oci_registry or os.environ.get(
+                "FORETOKEN_OCI_REGISTRY"
+            )
+            PlatformLifecycle(oci_registry).install(command)
         elif isinstance(command, UninstallCommand):
             PlatformLifecycle().uninstall(command)
         elif isinstance(command, DeployCommand):

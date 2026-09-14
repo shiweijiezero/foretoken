@@ -2,13 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.9.10
+ARG UV_IMAGE_REGISTRY=ghcr.io
+ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.9.10
 ARG METAX_SDK_IMAGE
 FROM ${UV_IMAGE} AS uv
 FROM ${METAX_SDK_IMAGE}
 
 ARG VLLM_VERSION
 ARG MACA_PATH=/opt/maca
+ARG FORETOKEN_GITHUB_MIRROR
+ARG UV_DEFAULT_INDEX
+ARG UV_EXTRA_INDEX_URL
 
 # The SDK image supplies MACA tools and shared libraries; the installer resolves Python packages.
 RUN apt-get update \
