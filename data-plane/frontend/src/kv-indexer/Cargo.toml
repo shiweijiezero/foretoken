@@ -8,6 +8,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 base64 = "0.22.1"
 futures.workspace = true
 blake3 = "1.8.2"

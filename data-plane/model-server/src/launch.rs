@@ -3,17 +3,20 @@
 
 //! Private versioned launch contract and the sole vLLM argv renderer.
 
+use std::path::Path;
 use std::time::Duration;
 
 use serde::Deserialize;
 use serde_json::json;
 use vllm_managed_engine::ManagedEngineConfig;
 
+use foretoken_artifacts::ModelSource;
 use foretoken_model_protocol::RuntimeEcTransferMetadata;
 
 use crate::runtime_transport::{KV_EVENT_ENDPOINT, KV_EVENT_TOPIC, LOOPBACK_HOST};
 
 const VLLM_PYTHON_ENV: &str = "FORETOKEN_VLLM_PYTHON";
+const VLLM_USE_MODELSCOPE_ENV: &str = "VLLM_USE_MODELSCOPE";
 const DEFAULT_VLLM_PYTHON: &str = "python";
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -39,6 +42,7 @@ pub struct LaunchPlanV1 {
 #[serde(deny_unknown_fields)]
 pub struct Artifacts {
     pub model: String,
+    pub source: ModelSource,
     pub revision: String,
     pub tokenizer: String,
     #[serde(rename = "tokenizerRevision")]
@@ -340,6 +344,27 @@ impl LaunchPlanV1 {
         Duration::from_secs(self.lifecycle.drain_seconds)
     }
 
+    /// Returns provider environment for the managed vLLM child process.
+    pub fn source_environment(&self, model_root: &Path) -> Vec<(String, String)> {
+        let use_modelscope = self.artifacts.source == ModelSource::ModelScope;
+        let mut environment = vec![(VLLM_USE_MODELSCOPE_ENV.into(), use_modelscope.to_string())];
+        if use_modelscope {
+            environment.extend([
+                (
+                    foretoken_artifacts::MODELSCOPE_CACHE_ENV.into(),
+                    foretoken_artifacts::modelscope_cache_root(model_root)
+                        .display()
+                        .to_string(),
+                ),
+                (
+                    foretoken_artifacts::MODELSCOPE_DOMAIN_ENV.into(),
+                    foretoken_artifacts::DEFAULT_MODELSCOPE_DOMAIN.into(),
+                ),
+            ]);
+        }
+        environment
+    }
+
     /// Builds the owned managed-engine configuration consumed by model-server startup.
     ///
     /// The model-server image selects Python through `FORETOKEN_VLLM_PYTHON`; the process handle
@@ -364,15 +389,23 @@ impl LaunchPlanV1 {
     pub fn render_vllm_args(&self) -> Result<Vec<String>, String> {
         self.validate()?;
         let p = &self.parallelism;
-        let mut args = vec![
-            format!("--revision={}", self.artifacts.revision),
-            format!("--tokenizer={}", self.artifacts.tokenizer),
-            format!("--tokenizer-revision={}", self.artifacts.tokenizer_revision),
+        let mut args = Vec::new();
+        if self.artifacts.source != ModelSource::Local {
+            args.push(format!("--revision={}", self.artifacts.revision));
+        }
+        args.push(format!("--tokenizer={}", self.artifacts.tokenizer));
+        if self.artifacts.source != ModelSource::Local {
+            args.push(format!(
+                "--tokenizer-revision={}",
+                self.artifacts.tokenizer_revision
+            ));
+        }
+        args.extend([
             format!("--tensor-parallel-size={}", p.tp),
             format!("--pipeline-parallel-size={}", p.pp),
             format!("--prefill-context-parallel-size={}", p.pcp),
             format!("--decode-context-parallel-size={}", p.dcp),
-        ];
+        ]);
         if let Some(ep) = &p.ep {
             args.push("--enable-expert-parallel".into());
             if !ep.backend.is_empty() {
@@ -400,6 +433,14 @@ impl LaunchPlanV1 {
 }
 
 impl KvPlan {
+    /// Reports whether the active prompt-side Store connector can answer shared-prefix queries.
+    pub fn shared_prefix_lookup(&self) -> bool {
+        matches!(
+            self,
+            Self::MooncakeStore { events: true, .. } | Self::MultiConnector { events: true, .. }
+        )
+    }
+
     fn events(&self) -> bool {
         match self {
             Self::None { events }
@@ -414,6 +455,13 @@ impl KvPlan {
     // by argv construction, keeping controller plan fields separate from backend-specific JSON.
     fn transfer_config(&self) -> Option<serde_json::Value> {
         let pd = |role: KvRole, protocol: MooncakeProtocol, device_name: &str| json!({"kv_connector":"MooncakeConnector","kv_role":role.as_str(),"kv_connector_extra_config":{"mooncake_protocol":protocol.as_str(),"device_name":device_name}});
+        let store = |role: KvRole| {
+            let mut config = json!({"kv_connector":"MooncakeStoreConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute"});
+            if self.shared_prefix_lookup() {
+                config["kv_connector_module_path"] = json!(crate::shared_kv::CONNECTOR_MODULE);
+            }
+            config
+        };
         match self {
             Self::None { .. } => None,
             Self::Pd {
@@ -432,9 +480,7 @@ impl KvPlan {
             } => Some(
                 json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"spec_name":"TieringOffloadingSpec","secondary_tiers":[{"type":"fs","root_dir":storage_path,"enable_kv_events":events}]}}),
             ),
-            Self::MooncakeStore { role, .. } => Some(
-                json!({"kv_connector":"MooncakeStoreConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute"}),
-            ),
+            Self::MooncakeStore { role, .. } => Some(store(*role)),
             Self::MultiConnector {
                 role,
                 protocol,
@@ -447,7 +493,7 @@ impl KvPlan {
                     KvRole::KvBoth
                 };
                 Some(
-                    json!({"kv_connector":"MultiConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute","kv_connector_extra_config":{"connectors":[pd(*role, *protocol, device_name), {"kv_connector":"MooncakeStoreConnector","kv_role":store_role.as_str()}]}}),
+                    json!({"kv_connector":"MultiConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute","kv_connector_extra_config":{"connectors":[pd(*role, *protocol, device_name), store(store_role)]}}),
                 )
             }
         }

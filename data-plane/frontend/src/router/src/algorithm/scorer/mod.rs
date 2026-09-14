@@ -59,6 +59,11 @@ pub(super) fn inverse_normalized_scores(counts: impl IntoIterator<Item = u64>) -
 ///
 /// Returns one score for every input candidate. A length mismatch is reported as a routing error.
 pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
+    /// Requests live shared-prefix observations before the synchronous routing round.
+    fn needs_kv_prefix(&self) -> bool {
+        false
+    }
+
     fn score(
         &self,
         request: &RouterRequest,

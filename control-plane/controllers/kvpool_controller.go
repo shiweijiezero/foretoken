@@ -188,10 +188,10 @@ func desiredKVGroupSpec(pool *inferencev1alpha1.KVPool, service *inferencev1alph
 		Resources:           client.Resources,
 		RDMAResourceName:    client.RDMAResourceName,
 		RDMAResourceCount:   client.RDMAResourceCount,
-		MemoryCapacityBytes: client.MemoryCapacity,
+		MemoryCapacityBytes: inferencev1alpha1.ByteQuantity(client.MemoryCapacity),
 		Disk: inferencev1alpha1.KVGroupDisk{
 			StorageClassName: disk.StorageClassName,
-			Size:             disk.Size,
+			Size:             inferencev1alpha1.ByteQuantity(disk.Size),
 			RetentionPolicy:  retention,
 		},
 		NodeSelector:        pool.Spec.Template.NodeSelector,

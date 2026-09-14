@@ -18,6 +18,7 @@ import (
 // EffectiveConfig contains typed vLLM values and approved backend arguments.
 type EffectiveConfig struct {
 	Model             string
+	Source            inferencev1alpha1.ModelSource
 	Revision          string
 	Tokenizer         string
 	TokenizerRevision string
@@ -40,10 +41,11 @@ type LaunchPlanV1 struct {
 }
 
 type LaunchArtifacts struct {
-	Model             string `json:"model"`
-	Revision          string `json:"revision"`
-	Tokenizer         string `json:"tokenizer"`
-	TokenizerRevision string `json:"tokenizerRevision"`
+	Model             string                        `json:"model"`
+	Source            inferencev1alpha1.ModelSource `json:"source"`
+	Revision          string                        `json:"revision"`
+	Tokenizer         string                        `json:"tokenizer"`
+	TokenizerRevision string                        `json:"tokenizerRevision"`
 }
 
 type LaunchParallelism struct {
@@ -104,7 +106,7 @@ const (
 // truth artifacts or topology from the normalized template.
 func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig, error) {
 	effective := EffectiveConfig{
-		Model: template.Model, Revision: template.ModelRevision,
+		Model: template.Model, Source: template.Source, Revision: template.ModelRevision,
 		Tokenizer: template.Tokenizer, TokenizerRevision: template.TokenizerRevision,
 		Parallelism: copyParallelism(template.Parallelism),
 	}
@@ -142,7 +144,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if err != nil {
 		return LaunchPlanV1{}, err
 	}
-	if group.Artifacts.Model == "" || group.Artifacts.ModelRevision == "" || group.Artifacts.Tokenizer == "" || group.Artifacts.TokenizerRevision == "" {
+	if group.Artifacts.Model == "" || group.Artifacts.Source == "" || group.Artifacts.ModelRevision == "" || group.Artifacts.Tokenizer == "" || group.Artifacts.TokenizerRevision == "" {
 		return LaunchPlanV1{}, fmt.Errorf("vLLM artifacts must be nonempty")
 	}
 	if err := validateParallelism(group.Parallelism); err != nil {
@@ -170,7 +172,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	for i := range group.Runtime.Args {
 		extra[i] = string(group.Runtime.Args[i])
 	}
-	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, ExtraArgs: extra}, nil
+	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, ExtraArgs: extra}, nil
 }
 
 // JSON returns deterministic output because LaunchPlanV1 uses only ordered structs and slices.

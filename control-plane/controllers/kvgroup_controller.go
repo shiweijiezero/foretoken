@@ -227,7 +227,8 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNames
 		servicePorts = append(servicePorts, corev1.ServicePort{Name: "management", Port: registrationPort, TargetPort: intstr.FromString("management")})
 	}
 	container := corev1.Container{
-		Name: "client", Image: group.Spec.Client.Image, Command: []string{"mooncake_client"}, Args: args,
+		Name: "client", Image: group.Spec.Client.Image, ImagePullPolicy: corev1.PullIfNotPresent,
+		Command: []string{"mooncake_client"}, Args: args,
 		Ports: containerPorts,
 		Env: []corev1.EnvVar{
 			{Name: "POD_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},

@@ -6,6 +6,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+from typing import Any
+
+import yaml
 
 from foretoken.manifest import DeploymentError
 from foretoken.platform.config import load_balancer_config_from_values
@@ -91,6 +95,44 @@ class Helm(HelmClient):
             namespace=str(gateway.get("namespace") or ""),
             section_name=str(gateway.get("sectionName") or ""),
         )
+
+    def platform_runtime_image(
+        self, source_root: Path, gpu_resource_name: str
+    ) -> str:
+        """Render the source chart's official runtime image for one GPU resource."""
+        chart = str(source_root / "deploy" / "charts" / "foretoken")
+        rendered = self.run(
+            [
+                "template",
+                "foretoken-runtime-image",
+                chart,
+                "--set",
+                "observability.mode=disabled",
+                "--set-string",
+                f"runtime.vllm.gpu.resourceName={gpu_resource_name}",
+            ]
+        ).stdout
+        try:
+            documents: Any = yaml.safe_load_all(rendered)
+            for document in documents:
+                if not isinstance(document, dict) or document.get("kind") != "Deployment":
+                    continue
+                pod_spec = ((document.get("spec") or {}).get("template") or {}).get(
+                    "spec"
+                ) or {}
+                for container in pod_spec.get("containers") or []:
+                    if not isinstance(container, dict) or container.get("name") != "manager":
+                        continue
+                    for argument in container.get("args") or []:
+                        if isinstance(argument, str) and argument.startswith(
+                            "--inference-engine-image="
+                        ):
+                            return argument.removeprefix("--inference-engine-image=")
+        except yaml.YAMLError as exc:
+            raise DeploymentError(
+                "platform chart rendered invalid runtime configuration"
+            ) from exc
+        raise DeploymentError("platform chart rendered no vLLM runtime image")
 
     def platform_image_references(
         self, release: ReleaseRef
@@ -233,6 +275,7 @@ class Helm(HelmClient):
         gateway_section_name: str,
         gateway_controller_name: str,
         observability_labels: tuple[tuple[str, str], ...],
+        gpu_resource_name: str | None,
         reuse_values: bool,
         timeout: str,
     ) -> None:
@@ -256,7 +299,7 @@ class Helm(HelmClient):
             ),
         )
         if reuse_values:
-            args.append("--reuse-values")
+            args.append("--reset-then-reuse-values")
         self._add_platform_values(
             args,
             values,
@@ -267,6 +310,13 @@ class Helm(HelmClient):
             gateway_controller_name,
             observability_labels,
         )
+        if gpu_resource_name is not None:
+            args.extend(
+                [
+                    "--set-string",
+                    f"runtime.vllm.gpu.resourceName={gpu_resource_name}",
+                ]
+            )
         if source_images is not None:
             control_plane_image = source_images.control_plane
             frontend_image = source_images.frontend
@@ -470,7 +520,9 @@ class Helm(HelmClient):
 
 
 def _image_repository_tag(reference: str) -> tuple[str, str]:
-    """Split one tagged image reference produced by the source workflow."""
+    """Split a source image reference, using Docker's implicit latest tag when omitted."""
+    if ":" not in reference.rsplit("/", 1)[-1]:
+        return reference, "latest"
     repository, separator, tag = reference.rpartition(":")
     if not separator or not repository or not tag:
         raise DeploymentError(f"source image must include a tag: {reference}")

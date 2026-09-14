@@ -71,7 +71,17 @@ pub enum KvPrefixUnavailableReason {
     UnsupportedRequest,
     RankMismatch,
 }
+#[async_trait::async_trait]
 pub trait KvPrefixIndexer: Send + Sync {
+    /// Prepares request-local observations when lookup requires an external backend.
+    /// Event-only implementations need no preparation and retain their existing reader.
+    async fn prepare(
+        &self,
+        _lookups: &[KvPrefixLookup<'_>],
+    ) -> Option<std::sync::Arc<dyn KvPrefixIndexer>> {
+        None
+    }
+
     /// Looks up confirmed prefix-locality facts for one route target and data-parallel rank.
     ///
     /// Router filters and scorers consume the derived result; implementations retain ownership of their index state.

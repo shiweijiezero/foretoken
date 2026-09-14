@@ -6,7 +6,6 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$ROOT/deploy/dev-deploy-lib.sh"
 cd "$ROOT"
 
-TAG=${TAG:-latest}
 CLUSTER=${CLUSTER:-}
 KIND_CLUSTER=${KIND_CLUSTER:-}
 KIND_CONFIG=${KIND_CONFIG:-}
@@ -162,9 +161,9 @@ else
   IMAGE_MODE=import
 fi
 
-CONTROL_PLANE_IMAGE="$LOCAL_IMAGE_PREFIX-control-plane:$TAG"
-FRONTEND_IMAGE="$LOCAL_IMAGE_PREFIX-frontend:$TAG"
-MODEL_SERVER_IMAGE="$LOCAL_IMAGE_PREFIX-model-server:$TAG"
+CONTROL_PLANE_IMAGE="$LOCAL_IMAGE_PREFIX-control-plane"
+FRONTEND_IMAGE="$LOCAL_IMAGE_PREFIX-frontend"
+MODEL_SERVER_IMAGE="$LOCAL_IMAGE_PREFIX-model-server"
 
 CONTROL_PLANE_BEFORE=$(image_id "$CONTROL_PLANE_IMAGE")
 FRONTEND_BEFORE=$(image_id "$FRONTEND_IMAGE")
@@ -200,12 +199,12 @@ if [[ "$RELEASE_EXISTS" == true ]]; then
   CURRENT_FRONTEND_IMAGE=$(deployment_image "$WORKLOAD_NAMESPACE" "inference.foretoken.io/frontend-service")
   CURRENT_MODEL_SERVER_IMAGE=$(deployment_image "$WORKLOAD_NAMESPACE" "inference.foretoken.io/model-group")
   if [[ "$IMAGE_MODE" == import ]]; then
-    [[ "$CURRENT_CONTROL_PLANE_IMAGE" != "$CONTROL_PLANE_IMAGE" ]] && CONTROL_PLANE_CHANGED=true
+    [[ "${CURRENT_CONTROL_PLANE_IMAGE%:latest}" != "$CONTROL_PLANE_IMAGE" ]] && CONTROL_PLANE_CHANGED=true
     if [[ -n "$CURRENT_FRONTEND_IMAGE" ]]; then
-      [[ "$CURRENT_FRONTEND_IMAGE" != "$FRONTEND_IMAGE" ]] && FRONTEND_CHANGED=true
+      [[ "${CURRENT_FRONTEND_IMAGE%:latest}" != "$FRONTEND_IMAGE" ]] && FRONTEND_CHANGED=true
     fi
     if [[ -n "$CURRENT_MODEL_SERVER_IMAGE" ]]; then
-      [[ "$CURRENT_MODEL_SERVER_IMAGE" != "$MODEL_SERVER_IMAGE" ]] && MODEL_SERVER_CHANGED=true
+      [[ "${CURRENT_MODEL_SERVER_IMAGE%:latest}" != "$MODEL_SERVER_IMAGE" ]] && MODEL_SERVER_CHANGED=true
     fi
   else
     [[ "$CURRENT_CONTROL_PLANE_IMAGE" != "$REGISTRY/control-plane:"* ]] && CONTROL_PLANE_CHANGED=true
@@ -287,8 +286,8 @@ fi
 
 if [[ "$IMAGE_MODE" == import ]]; then
   helm_args+=(
-    --set "image.repository=${CONTROL_PLANE_DEPLOY_IMAGE%:*}"
-    --set "image.tag=$TAG"
+    --set "image.repository=$CONTROL_PLANE_DEPLOY_IMAGE"
+    --set image.tag=latest
     --set image.pullPolicy=Never
     --set "frontend.image=$FRONTEND_DEPLOY_IMAGE"
     --set "runtime.vllm.image=$MODEL_SERVER_DEPLOY_IMAGE"

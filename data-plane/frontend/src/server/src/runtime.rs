@@ -507,7 +507,7 @@ impl RuntimeGeneration {
             })?;
         let generate_request = prepared.generate_request;
         let context = RouterRequest::new(request.model.clone(), Arc::new(generate_request.clone()));
-        let mut session = slot.state.router.start(context);
+        let mut session = slot.state.router.start(context).await;
         let initial = session
             .select_initial()
             .map_err(|_| GenerationError::Unavailable)?;

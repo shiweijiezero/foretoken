@@ -128,6 +128,7 @@ pub struct AppState {
     kv_events: Option<Arc<KvEventAdapter>>,
     runtime_cache: Option<runtime_cache::Config>,
     profiling: Option<crate::profiling::Handle>,
+    shared_kv: Option<crate::shared_kv::SharedKvLookup>,
 }
 impl AppState {
     /// Builds state consumed by internal HTTP handlers; the server owns the supplied backend state.
@@ -143,6 +144,7 @@ impl AppState {
             kv_events: None,
             runtime_cache: None,
             profiling: None,
+            shared_kv: None,
         }
     }
     /// Attaches the shared KV delta source used by the index endpoint and returns updated state.
@@ -150,6 +152,12 @@ impl AppState {
     /// The router owns this state while its handlers retain cloned adapter references.
     pub fn with_kv_events(mut self, adapter: Arc<KvEventAdapter>) -> Self {
         self.kv_events = Some(adapter);
+        self
+    }
+
+    /// Enables read-only shared-prefix observations through the running connector.
+    pub fn with_shared_kv(mut self, lookup: crate::shared_kv::SharedKvLookup) -> Self {
+        self.shared_kv = Some(lookup);
         self
     }
 
@@ -184,6 +192,10 @@ pub fn router(state: AppState, internal_generate_request_body_limit_bytes: usize
         .route("/v1/internal/generate", post(generate))
         .route("/v1/internal/abort", post(abort))
         .route(KV_INDEX_DELTA_PATH, get(kv_index_delta))
+        .route(
+            foretoken_model_protocol::KV_SHARED_PREFIX_PATH,
+            post(shared_kv_prefix),
+        )
         .layer(DefaultBodyLimit::max(
             internal_generate_request_body_limit_bytes,
         ))
@@ -220,6 +232,29 @@ async fn profile_control(
         Err(error) => (StatusCode::CONFLICT, error).into_response(),
     }
 }
+
+// Shared lookups are observations only: admission and engine health must still permit reads.
+async fn shared_kv_prefix(
+    State(state): State<AppState>,
+    Json(request): Json<foretoken_model_protocol::KvSharedPrefixRequest>,
+) -> Response {
+    if !state.health.ready() || !state.health.accepting() {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    let Some(lookup) = state.shared_kv else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match tokio::time::timeout(
+        foretoken_model_protocol::KV_OBSERVATION_TIMEOUT,
+        lookup.lookup(&request),
+    )
+    .await
+    {
+        Ok(Some(response)) => Json(response).into_response(),
+        _ => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
 async fn healthz(State(state): State<AppState>) -> StatusCode {
     status(state.health.healthy())
 }

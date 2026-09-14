@@ -26,29 +26,6 @@ func runtimeCacheObservationPort(runtimePort int32) int32 {
 	return runtimePort - 1
 }
 
-// RuntimeSourceProfile configures optional source access for the runtime adapter.
-type RuntimeSourceProfile struct {
-	Endpoint        string
-	TokenSecretName string
-	TokenSecretKey  string
-}
-
-// RuntimeSource returns the immutable source contract copied into a ModelPool generation.
-func (profile RuntimeSourceProfile) RuntimeSource() *inferencev1alpha1.RuntimeSourceAccess {
-	if profile.Endpoint == "" && profile.TokenSecretName == "" {
-		return nil
-	}
-	return &inferencev1alpha1.RuntimeSourceAccess{Endpoint: profile.Endpoint, TokenSecretName: profile.TokenSecretName, TokenSecretKey: profile.TokenSecretKey}
-}
-
-// Validate rejects incomplete source credential settings.
-func (profile RuntimeSourceProfile) Validate() error {
-	if (profile.TokenSecretName == "") != (profile.TokenSecretKey == "") {
-		return fmt.Errorf("runtime source Secret name and key must be configured together")
-	}
-	return nil
-}
-
 // RuntimeCacheProfile configures the cache mount path and an optional existing-claim override.
 type RuntimeCacheProfile struct {
 	ClaimName string

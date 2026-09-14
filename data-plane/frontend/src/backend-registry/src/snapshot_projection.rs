@@ -31,6 +31,7 @@ pub(crate) fn project_kv_runtime(
                          endpoint: &str,
                          model_revision: &str,
                          scope_id: &str,
+                         store_id: Option<&str>,
                          data_parallel_size: u32| {
         let mut rank_sources = BTreeMap::new();
         for dp_rank in 0..data_parallel_size {
@@ -61,7 +62,8 @@ pub(crate) fn project_kv_runtime(
                 }]
                 .into_iter()
                 .collect(),
-                can_restore_or_transfer: false,
+                can_restore_or_transfer: store_id.is_some(),
+                shared_lookup_scope: store_id.map(str::to_owned),
             },
         );
     };
@@ -71,6 +73,7 @@ pub(crate) fn project_kv_runtime(
             &group.endpoint,
             &group.revision,
             &group.kv_scope_id,
+            group.kv_lookup_scope.as_deref(),
             group.data_parallel_size,
         );
     }
@@ -81,6 +84,7 @@ pub(crate) fn project_kv_runtime(
                 &component.endpoint,
                 &component.revision,
                 &component.kv_scope_id,
+                component.kv_lookup_scope.as_deref(),
                 component.data_parallel_size,
             );
         }
@@ -92,6 +96,7 @@ pub(crate) fn project_kv_runtime(
                 &component.endpoint,
                 &component.revision,
                 &component.kv_scope_id,
+                component.kv_lookup_scope.as_deref(),
                 component.data_parallel_size,
             );
         }

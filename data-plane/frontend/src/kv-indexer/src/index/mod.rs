@@ -50,14 +50,8 @@ pub struct KvPrefixQuery<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct KvPrefixMatch {
-    pub event_source_id: String,
-    pub model_group_id: String,
-    pub epoch: String,
-    pub dp_rank: u32,
     pub placement: KvPlacement,
-    pub matched_complete_blocks: u64,
     pub matched_tokens: usize,
-    pub last_matched_hash: Option<KvBlockHash>,
 }
 
 pub trait KvLocalityIndex: Send {

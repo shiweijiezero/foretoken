@@ -36,7 +36,7 @@ func TestFrontendRoutingSnapshotAndReadinessContract(t *testing.T) {
 		},
 	}
 	c := controllerClient(t, frontend)
-	r := &controllers.FrontendServiceReconciler{Client: c, RuntimeProfile: controllers.FrontendRuntimeProfile{Image: "frontend:test", Port: 8080, ImagePullSecrets: []corev1.LocalObjectReference{{Name: "registry-auth"}}, Gateway: &controllers.GatewayParent{Name: "public", Namespace: "gateway-system", SectionName: "https"}}}
+	r := &controllers.FrontendServiceReconciler{Client: c, RuntimeProfile: controllers.FrontendRuntimeProfile{Image: "frontend:test", Port: 8080, ImagePullSecrets: []corev1.LocalObjectReference{{Name: "registry-auth"}}, HuggingFaceAccess: &inferencev1alpha1.HuggingFaceAccess{Endpoint: "https://hub.example.com", TokenSecretName: "model-source", TokenSecretKey: "token"}, Gateway: &controllers.GatewayParent{Name: "public", Namespace: "gateway-system", SectionName: "https"}}}
 	request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(frontend)}
 	for range 2 {
 		if _, err := r.Reconcile(ctx, request); err != nil {
@@ -66,8 +66,17 @@ func TestFrontendRoutingSnapshotAndReadinessContract(t *testing.T) {
 	for _, item := range deployment.Spec.Template.Spec.Containers[0].Env {
 		frontendEnv[item.Name] = item.Value
 	}
-	if frontendEnv["FORETOKEN_REQUEST_TIMEOUT_SECONDS"] != "600" {
-		t.Fatalf("frontend request timeout env = %#v", frontendEnv)
+	if frontendEnv["FORETOKEN_REQUEST_TIMEOUT_SECONDS"] != "600" || frontendEnv["HF_ENDPOINT"] != "https://hub.example.com" {
+		t.Fatalf("frontend runtime environment = %#v", frontendEnv)
+	}
+	var huggingFaceToken *corev1.EnvVarSource
+	for _, item := range deployment.Spec.Template.Spec.Containers[0].Env {
+		if item.Name == "HF_TOKEN" {
+			huggingFaceToken = item.ValueFrom
+		}
+	}
+	if huggingFaceToken == nil {
+		t.Fatalf("frontend Hugging Face credential = %#v", deployment.Spec.Template.Spec.Containers[0].Env)
 	}
 	deployment.Status.ObservedGeneration = deployment.Generation
 	deployment.Status.AvailableReplicas = 1

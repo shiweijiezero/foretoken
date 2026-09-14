@@ -1,65 +1,117 @@
-# 评测
+# 模型服务性能评测
 
 [English](README.md) | 简体中文
 
-使用 `foretoken bench` 测量 Foretoken 部署或现有 OpenAI 兼容端点的延迟和吞吐量。
+使用 `foretoken bench` 评测模型服务性能。
 
-## 开始前
+## 开始使用
 
-从仓库根目录使用 Python 3.11 或更高版本运行评测命令：
+需要 Python 3.11 或更高版本：
 
 ```bash
 pip install 'foretoken[bench]'
 
 # 如果使用源码安装：
-# pip install -e .
 # pip install -e '.[bench]'
+
+wandb login
 ```
 
-评测 Foretoken 部署时，先安装平台，再评测 Kustomize 配置：
+以下命令在仓库根目录执行。集群准备见[快速开始](../README_zh.md#快速开始)，已有平台可跳过安装：
 
 ```bash
 foretoken install
-foretoken bench examples/quickstart
+foretoken bench examples/quickstart --number 10 --output local,wandb
 ```
 
-快速开始服务已运行时，命令会直接复用；否则会部署渲染后的资源，并在评测结束后只删除本次创建的资源。
+默认发送 `Hello`。已部署的服务直接复用；临时部署的资源会在评测后清理。单模型部署自动选择模型，多模型时添加 `--model`。
 
-评测现有端点时，不需要 Foretoken 或 Kubernetes 平台：
+## 常用命令
+
+### 并发评测
 
 ```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --prompt "你好" \
-  --parallel 2 \
-  --number 20
+foretoken bench examples/quickstart \
+  --prompt "用一句话解释什么是 token。" \
+  --parallel 8 --number 100 \
+  --max-tokens 128 \
+  --output local,wandb
 ```
 
-## 结果与输出
+`--parallel` 控制并发数，`--rate` 控制每秒请求到达率，各自设为 `-1` 表示不限。默认不限速、并发为 1。例如按平均每秒 5 个请求发送且不限并发：
 
-不指定 `--output` 时，评测会打印汇总、在 `results/` 下保存本地产物，并尝试上传 W&B。W&B 不可用时，本地结果仍会保留。
+```bash
+foretoken bench examples/quickstart \
+  --rate 5 --parallel -1 --number 100 \
+  --output local,wandb
+```
 
-`--output` 会替换默认输出选项：
+### 随机负载
 
-| 目标 | `--output` 值 |
-| --- | --- |
-| 默认控制台、本地产物和 W&B | 不传 `--output` |
-| 仅保存本地产物 | `local` |
-| 保存本地产物但不输出控制台 | `local,quiet` |
-| 保存本地产物并上传 W&B，但不输出控制台 | `local,wandb,quiet` |
-| 仅上传 W&B | `wandb` |
+```bash
+foretoken bench examples/quickstart \
+  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
+  --min-prompt-length 128 --max-prompt-length 512 \
+  --min-output-length 64 --max-output-length 256 \
+  --parallel 8 --number 100 \
+  --output local,wandb
+```
 
-如需关闭控制台输出但保留结果，请将 `quiet` 与 `local`、`wandb` 或两者组合。使用 `--output-dir PATH` 修改本地产物目录。
+输出长度控制需要服务支持 `min_tokens` 和 `ignore_eos`，未达到抽样长度的请求记为失败。不传输出上下界时，使用普通的 `--max-tokens` 上限，默认 4096。
 
-## 指标
+### 数据集与多轮对话
 
-汇总结果包括请求延迟、首个 token 时延（TTFT）、每输出 token 时延（TPOT）、失败率、输入/输出 token 数和输出吞吐量。
+```bash
+foretoken bench examples/quickstart \
+  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
+  --parallel 4 --number 20 \
+  --output local,wandb
+```
 
-参数扫描中的 `token/s/user` 表示输出吞吐量除以配置的 closed-loop `--parallel` 值，不表示真实用户数或活跃会话数。open-loop（`--rate`）的分母固定为一，因此它等于总输出吞吐量。`token/s/GPU` 表示输出吞吐量除以该负载点配置的 GPU 数。
+`--dataset` 也接受本地 JSONL 文件。每行是一段对话，默认运行全部轮次，并使用模型的真实回答继续；`--max-turns 1` 只运行首轮。多轮目前要求 `--rate -1`。
 
-扫描会保存每个有效负载点；只有至少有两个有效负载点时，才会生成 `pareto/PARETO.png`。
+### 轨迹回放
 
-## 下一步
+```bash
+foretoken bench examples/quickstart \
+  --trace KrisQ/StudyChat --dataset KrisQ/StudyChat \
+  --trace-start 600 --trace-duration 30 \
+  --trace-max-concurrency 16 \
+  --output local,wandb
+```
 
-数据集、随机提示词、轨迹回放、前缀复用、多数据集和参数扫描的配方见[评测示例](docs/examples_zh.md)。命令参数和结果格式可通过 `foretoken bench --help` 及本地产物查看。
+轨迹记录决定请求数量和到达时间，每条记录独立回放。
+
+### 参数扫描
+
+```bash
+foretoken bench examples/quickstart \
+  --sweep benchmarks/examples/sweep.jsonl \
+  --output local,wandb
+```
+
+参数扫描使用 Kustomize 部署，在同一模型服务上比较不同配置。
+
+### 使用已有服务地址
+
+对于默认模式下已部署的快速开始示例，先获取地址：
+
+```bash
+MODEL_SERVICE_URL="$(foretoken endpoint examples/quickstart)/v1/chat/completions"
+foretoken bench \
+  --url "$MODEL_SERVICE_URL" --model Qwen/Qwen3-0.6B \
+  --prompt "你好" --number 20 \
+  --output local,wandb
+```
+
+其他服务使用其实际 Chat Completions URL 和模型名称。Gateway 模式使用上面的 Kustomize 写法，由 CLI 配置路由请求头。
+
+## 查看结果
+
+本地结果保存在 `results/` 下的独立目录，结束后会打印位置。`metrics.json` 是汇总，`raw_output.json` 是逐请求记录。
+
+先看成功率、端到端耗时 E2EL 和输出 token 吞吐量。流式评测还报告首分片耗时 TTFT、平均输出 token 耗时 TPOT 和分片间隔 ITL；`--no-stream` 只关闭这些流式指标。
+
+示例同时保存本地结果并上传 W&B。仅需本地结果用 `--output local`，修改结果父目录用 `--output-dir`。
+
+各类用法见[常用命令](docs/examples_zh.md)，指标定义见[结果指标](metrics_zh.md)。全部参数见 `foretoken bench --help`。

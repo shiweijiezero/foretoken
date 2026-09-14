@@ -92,11 +92,12 @@ spec:
               template:
                 description: |-
                   NormalizedKVPoolTemplate is the immutable client configuration compiled from
-                  a KVService storagePools entry. Pool identity and desiredGroups stay outside it.
+                  a KVService storagePools entry. Capacities are decimal byte strings; Pool identity
+                  and desiredGroups stay outside it.
                 properties:
                   client:
                     description: |-
-                      KVClientTemplate is immutable normalized intent for homogeneous future clients.
+                      KVClientTemplate configures homogeneous Store clients.
                       This standalone Store profile enables SSD offload, so disk is required. The
                       user-provided gap between capacity and memory resources reserves runtime overhead;
                       Foretoken deliberately does not guess a fixed overhead amount.
@@ -117,12 +118,18 @@ spec:
                             - Retain
                             type: string
                           size:
-                            description: |-
-                              ByteQuantity is a positive, exact integer number of bytes. It deliberately
-                              does not accept Kubernetes unit suffixes so cache capacities are unambiguous.
-                            maxLength: 19
-                            pattern: ^[1-9][0-9]*$
+                            description: Size is a positive whole-byte quantity, such
+                              as 1Gi or 1G.
+                            maxLength: 64
+                            minLength: 1
                             type: string
+                            x-kubernetes-validations:
+                            - message: size must be positive
+                              rule: quantity(self).compareTo(quantity('0')) > 0
+                            - message: must be a valid non-negative Kubernetes resource
+                                quantity
+                              rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                                >= 0
                           storageClassName:
                             type: string
                         required:
@@ -138,12 +145,18 @@ spec:
                         minLength: 1
                         type: string
                       memoryCapacity:
-                        description: |-
-                          ByteQuantity is a positive, exact integer number of bytes. It deliberately
-                          does not accept Kubernetes unit suffixes so cache capacities are unambiguous.
-                        maxLength: 19
-                        pattern: ^[1-9][0-9]*$
+                        description: MemoryCapacity is a positive whole-byte quantity
+                          contributed to the shared Store.
+                        maxLength: 64
+                        minLength: 1
                         type: string
+                        x-kubernetes-validations:
+                        - message: memoryCapacity must be positive
+                          rule: quantity(self).compareTo(quantity('0')) > 0
+                        - message: must be a valid non-negative Kubernetes resource
+                            quantity
+                          rule: isQuantity(self) && quantity(self).compareTo(quantity('0'))
+                            >= 0
                       port:
                         default: 50052
                         format: int32

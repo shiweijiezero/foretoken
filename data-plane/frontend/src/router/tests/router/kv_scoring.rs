@@ -56,14 +56,8 @@ impl KvPrefixIndexer for PrefixFacts {
 
 fn prefix(tokens: usize, tier: KvStorageTier, locality: KvCacheLocality) -> KvPrefixMatch {
     KvPrefixMatch {
-        event_source_id: "source".into(),
-        model_group_id: "owner".into(),
-        epoch: "epoch".into(),
-        dp_rank: 0,
         placement: KvPlacement { tier, locality },
-        matched_complete_blocks: 1,
         matched_tokens: tokens,
-        last_matched_hash: None,
     }
 }
 
@@ -265,14 +259,14 @@ impl KvPrefixIndexer for RankFacts {
 }
 
 // Protects data-parallel routing from collapsing rank-specific KV locality.
-#[test]
-fn data_parallel_kv_rank_winner_is_selected_from_an_exact_rank_query() {
+#[tokio::test]
+async fn data_parallel_kv_rank_winner_is_selected_from_an_exact_rank_query() {
     let mut aggregate = route("dp-two", ModelServerRole::Aggregate);
     aggregate.data_parallel_size = 2;
     let router = PipelineRouter::new(inventory(vec![aggregate]))
         .with_kv_prefix_indexer(std::sync::Arc::new(RankFacts));
 
-    let selected = router.start(request()).select_initial().unwrap();
+    let selected = router.start(request()).await.select_initial().unwrap();
 
     assert_eq!(selected.route_target_id, RouteTargetId::new("dp-two"));
     assert_eq!(selected.data_parallel_rank, 1);

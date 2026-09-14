@@ -13,3 +13,4 @@ pub mod profiling;
 pub mod runtime_cache;
 #[doc(hidden)]
 pub mod runtime_transport;
+pub mod shared_kv;

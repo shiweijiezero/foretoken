@@ -9,7 +9,7 @@
 # current vLLM adapter uses vllm.entrypoints.cli.main.
 
 ARG RUST_BUILDER_IMAGE=docker.io/library/rust:1.97.1-slim-bullseye
-ARG INFERENCE_ENGINE_IMAGE
+ARG INFERENCE_ENGINE_IMAGE=ghcr.io/shiweijiezero/foretoken/model-server
 ARG FORETOKEN_VLLM_PYTHON
 ARG UV_IMAGE=ghcr.io/astral-sh/uv:0.9.10
 
@@ -69,6 +69,7 @@ FROM engine-runtime AS runtime
 
 LABEL org.opencontainers.image.source="https://github.com/shiweijiezero/foretoken"
 COPY --from=builder /out/foretoken-model-server /usr/local/bin/foretoken-model-server
+COPY data-plane/model-server/python/ /opt/foretoken/python/
 
 # Preserve the inference engine image's runtime user and environment. The workload owns its
 # security context, cache environment, and writable volume mounts.

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -105,10 +106,11 @@ func desiredKVMasterResources(service *inferencev1alpha1.KVService) (*corev1.Con
 	if service.Spec.Master.Snapshot == nil {
 		return config, requesterConfig, deployment, kubeService, nil, nil
 	}
-	size, err := resource.ParseQuantity(string(service.Spec.Master.Snapshot.Size))
+	snapshotBytes, err := resourcevalidation.ParsePositiveBytes("master.snapshot.size", string(service.Spec.Master.Snapshot.Size))
 	if err != nil {
-		return nil, nil, nil, nil, nil, fmt.Errorf("parse snapshot PVC size: %w", err)
+		return nil, nil, nil, nil, nil, err
 	}
+	size := *resource.NewQuantity(snapshotBytes, resource.DecimalSI)
 	retention := service.Spec.Master.Snapshot.RetentionPolicy
 	if retention == "" {
 		retention = inferencev1alpha1.RetentionPolicyDelete
@@ -203,9 +205,9 @@ func tcpProbe(port string, periodSeconds int32) *corev1.Probe {
 
 // desiredKVRequesterConfig builds the per-KVService vLLM Mooncake Store configuration.
 func desiredKVRequesterConfig(service *inferencev1alpha1.KVService, masterService string, rpcPort int32) (*corev1.ConfigMap, error) {
-	bytes, err := exactPositiveBytes(service.Spec.Requester.LocalBufferSize)
+	bytes, err := resourcevalidation.ParsePositiveBytes("requester.localBufferSize", string(service.Spec.Requester.LocalBufferSize))
 	if err != nil {
-		return nil, fmt.Errorf("parse requester.localBufferSize: %w", err)
+		return nil, err
 	}
 	// The API requires one or more pools with a shared protocol; requesters use it directly.
 	protocol := service.Spec.StoragePools[0].Client.Protocol
@@ -218,6 +220,7 @@ func desiredKVRequesterConfig(service *inferencev1alpha1.KVService, masterServic
 	return &corev1.ConfigMap{TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "ConfigMap"}, ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: service.Namespace, Labels: map[string]string{kvServiceLabel: kvLabelValue(service.Name), "inference.foretoken.io/component": "mooncake-requester"}}, Data: map[string]string{requesterConfigKey: string(payload)}}, nil
 }
 
+// exactPositiveBytes reads an already normalized count from controller-owned state.
 func exactPositiveBytes(value inferencev1alpha1.ByteQuantity) (int64, error) {
 	bytes, err := strconv.ParseInt(string(value), 10, 64)
 	if err != nil || bytes < 1 {

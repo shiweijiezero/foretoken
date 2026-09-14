@@ -17,6 +17,9 @@ from foretoken.kubernetes import resource_ref
 from foretoken.manifest import DeploymentError, ResourceRef
 
 
+NVIDIA_GPU_RESOURCE = "nvidia.com/gpu"
+
+
 @dataclass(frozen=True)
 class NvidiaMetrics:
     """The selected exporter or safe placement for a managed release."""
@@ -93,7 +96,7 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
     def has_capacity(self, node: dict[str, Any]) -> bool:
         """Return whether Kubernetes advertises an allocatable NVIDIA GPU."""
         value = ((node.get("status") or {}).get("allocatable") or {}).get(
-            "nvidia.com/gpu"
+            NVIDIA_GPU_RESOURCE
         )
         try:
             return int(str(value)) > 0

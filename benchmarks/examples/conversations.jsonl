@@ -1,0 +1,2 @@
+{"messages":[{"role":"user","content":"Name a primary color."}]}
+{"messages":[{"role":"system","content":"Answer briefly."},{"role":"user","content":"Name a planet."},{"role":"assistant","content":"Mars."},{"role":"user","content":"Name another one."}]}

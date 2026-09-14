@@ -15,6 +15,8 @@ use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest};
 pub struct KvLeastLoadedScorer;
 
 impl RouteScorer for KvLeastLoadedScorer {
+    fn needs_kv_prefix(&self) -> bool { true }
+
     /// Returns prefix-locality and load preferences in candidate order for Router selection.
     #[allow(unused_variables)]
     fn score(

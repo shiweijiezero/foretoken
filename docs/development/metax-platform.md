@@ -9,7 +9,7 @@ English | [简体中文](metax-platform_zh.md)
 
 This guide is for the platform administrator who prepares MetaX images and the Foretoken platform. After this one-time setup, model users can follow [Deploy and call a model](../metax-deployment.md) without installing or understanding the inference engine.
 
-Foretoken uses three images: the controller manages Kubernetes model services, the frontend receives requests, and model-server executes models on MetaX GPUs. Build all three from the same checkout and install the matching Helm chart so its APIs and CRDs match the examples.
+Release installations share the controller and frontend images with other GPU platforms and use a MetaX model-server image. Custom builds use the same source checkout and matching Helm chart.
 
 ## What the administrator provides
 
@@ -20,9 +20,19 @@ Foretoken uses three images: the controller manages Kubernetes model services, t
 
 The build host needs the Foretoken checkout, Docker with BuildKit, and Make. Platform installation also needs kubectl, Helm, and cluster permissions. Source installation downloads from GitHub, PyPI, the MetaX package index, and the selected container registries.
 
+## Install release images
+
+After preparing the cluster drivers, device plugin, and mxExporter, use the normal CLI installation:
+
+```bash
+foretoken install
+```
+
+The CLI detects MetaX GPU resources and selects the matching release image. It reuses or installs Prometheus and handles platform dependencies. Add `--frontend-mode gateway` for Gateway access. For a mixed-GPU cluster, specify `runtime.vllm.gpu.resourceName` or `runtime.vllm.gpu.nodeSelector` through `--values`; a custom `runtime.vllm.image` overrides automatic image selection.
+
 ## Build the images
 
-Run these commands from the Foretoken repository root.
+Use the following steps when a custom SDK or inference runtime is needed. Run commands from the Foretoken repository root.
 
 ### 1. Build the MetaX model-server image
 

@@ -144,6 +144,21 @@ spec:
                       tools:
                         type: boolean
                     type: object
+                  huggingFaceAccess:
+                    description: HuggingFaceAccess is set by the ModelService controller
+                      for Hugging Face models.
+                    properties:
+                      endpoint:
+                        description: Endpoint is an optional Hugging Face-compatible
+                          Hub endpoint.
+                        type: string
+                      tokenSecretKey:
+                        type: string
+                      tokenSecretName:
+                        description: TokenSecretName and TokenSecretKey identify an
+                          optional namespace-local credential.
+                        type: string
+                    type: object
                   internalGenerateRequestBodyLimitBytes:
                     description: |-
                       InternalGenerateRequestBodyLimitBytes is the resolved group-local generate
@@ -421,21 +436,14 @@ spec:
                     - claimName
                     - mountPath
                     type: object
-                  sourceAccess:
-                    description: SourceAccess is set by the ModelService controller
-                      from the selected runtime profile.
-                    properties:
-                      endpoint:
-                        description: Endpoint is interpreted by the selected runtime
-                          adapter.
-                        type: string
-                      tokenSecretKey:
-                        type: string
-                      tokenSecretName:
-                        description: TokenSecretName and TokenSecretKey identify an
-                          optional namespace-local credential.
-                        type: string
-                    type: object
+                  source:
+                    description: ModelSource selects how model and tokenizer identifiers
+                      are resolved.
+                    enum:
+                    - local
+                    - hf
+                    - modelscope
+                    type: string
                   timeouts:
                     description: ModelTimeouts defines ModelService lifecycle budgets.
                     properties:
@@ -477,6 +485,7 @@ spec:
                 - parallelism
                 - resources
                 - role
+                - source
                 - timeouts
                 type: object
                 x-kubernetes-validations:

@@ -63,13 +63,38 @@ func ensureKVIndexerSecret(ctx context.Context, c client.Client, namespace strin
 func kvScopeID(group *inferencev1alpha1.ModelGroup) string {
 	payload := struct {
 		Model, Revision, Tokenizer, TokenizerRevision string
+		Source                                        inferencev1alpha1.ModelSource
 		Parallelism                                   inferencev1alpha1.CompiledParallelism
 		RuntimeArgs                                   []inferencev1alpha1.BackendArg
 		KVRuntime                                     *inferencev1alpha1.ModelGroupKVRuntimeConfig
-	}{group.Spec.Artifacts.Model, group.Spec.Artifacts.ModelRevision, group.Spec.Artifacts.Tokenizer, group.Spec.Artifacts.TokenizerRevision, group.Spec.Parallelism, group.Spec.Runtime.Args, group.Spec.KVRuntime}
+	}{
+		Model:             group.Spec.Artifacts.Model,
+		Revision:          group.Spec.Artifacts.ModelRevision,
+		Tokenizer:         group.Spec.Artifacts.Tokenizer,
+		TokenizerRevision: group.Spec.Artifacts.TokenizerRevision,
+		Source:            group.Spec.Artifacts.Source,
+		Parallelism:       group.Spec.Parallelism,
+		RuntimeArgs:       group.Spec.Runtime.Args,
+		KVRuntime:         group.Spec.KVRuntime,
+	}
 	encoded, _ := json.Marshal(payload)
 	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])
+}
+
+// sharedKVLookupScope bounds query reuse by a known Store owner or one external-profile consumer.
+// The existing KV scope independently checks model and layout compatibility.
+func sharedKVLookupScope(group *inferencev1alpha1.ModelGroup) string {
+	if group.Spec.Parallelism.DP != 1 || group.Spec.KVRuntime == nil || group.Spec.KVRuntime.MooncakeStore == nil {
+		return ""
+	}
+	if group.Spec.Role != inferencev1alpha1.ModelRoleAggregate && group.Spec.Role != inferencev1alpha1.ModelRolePrefill {
+		return ""
+	}
+	if uid := group.Spec.KVRuntime.MooncakeStore.KVServiceUID; uid != "" {
+		return "kvservice:" + uid
+	}
+	return "modelgroup:" + string(group.UID)
 }
 
 // pdPipelineScopeID scopes dynamic Mooncake side-channel ingress to compatible P/D Groups.

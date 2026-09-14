@@ -291,6 +291,16 @@ type ModelAutoscalingConfig struct {
 	Adjustment *ModelAutoscalingAdjustmentConfig `json:"adjustment,omitempty"`
 }
 
+// ModelSource selects how model and tokenizer identifiers are resolved.
+// +kubebuilder:validation:Enum=local;hf;modelscope
+type ModelSource string
+
+const (
+	ModelSourceLocal      ModelSource = "local"
+	ModelSourceHF         ModelSource = "hf"
+	ModelSourceModelScope ModelSource = "modelscope"
+)
+
 // ModelServiceSpec defines the desired state of a model service.
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !(has(self.replicas) || has(self.nodes) || has(self.resources) || has(self.parallelism) || has(self.maxInputTokens) || has(self.kvCache) || has(self.features))",message="spec.modelPools is mutually exclusive with top-level replicas, nodes, resources, parallelism, maxInputTokens, kvCache, and features"
 // +kubebuilder:validation:XValidation:rule="has(self.modelPools) || (has(self.resources) && has(self.parallelism))",message="top-level resources and parallelism are required when spec.modelPools is omitted"
@@ -305,7 +315,12 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Model string `json:"model"`
 
-	// Tokenizer defaults to model when omitted.
+	// Source defaults to Hugging Face Hub when omitted.
+	// +optional
+	// +kubebuilder:default=hf
+	Source ModelSource `json:"source,omitempty"`
+
+	// Tokenizer defaults to model when omitted and uses the same source.
 	// +optional
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024

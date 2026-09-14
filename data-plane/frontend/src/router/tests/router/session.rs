@@ -32,10 +32,10 @@ fn target_stats(running_requests: u64) -> RouteTargetStats {
 }
 
 // Protects aggregate routing identity, explicit rank zero, and stage ordering.
-#[test]
-fn single_rank_route_returns_an_explicit_rank_zero_decision() {
+#[tokio::test]
+async fn single_rank_route_returns_an_explicit_rank_zero_decision() {
     let router = PipelineRouter::new(inventory(vec![route("a", ModelServerRole::Aggregate)]));
-    let mut session = router.start(request());
+    let mut session = router.start(request()).await;
 
     let decision = session.select_initial().unwrap();
     assert_eq!(decision.route_target_id, RouteTargetId::new("a"));
@@ -48,10 +48,10 @@ fn single_rank_route_returns_an_explicit_rank_zero_decision() {
 }
 
 // Protects P/D routing from starting work without a serviceable Decode stage.
-#[test]
-fn prefill_is_not_selected_without_an_available_decode() {
+#[tokio::test]
+async fn prefill_is_not_selected_without_an_available_decode() {
     let router = PipelineRouter::new(inventory(vec![route("p", ModelServerRole::Prefill)]));
-    let mut session = router.start(request());
+    let mut session = router.start(request()).await;
 
     assert!(matches!(
         session.select_initial(),
@@ -60,14 +60,14 @@ fn prefill_is_not_selected_without_an_available_decode() {
 }
 
 // Protects E/P/D stage selection from crossing pipeline scopes or skipping the encoder.
-#[test]
-fn encoder_prefill_decode_stays_in_its_pipeline_scope_and_never_falls_back_without_encoder() {
+#[tokio::test]
+async fn encoder_prefill_decode_stays_in_its_pipeline_scope_and_never_falls_back_without_encoder() {
     let router = PipelineRouter::new(inventory(vec![
         route("e", ModelServerRole::Encoder),
         route("p", ModelServerRole::Prefill),
         route("d", ModelServerRole::Decode),
     ]));
-    let mut session = router.start(request());
+    let mut session = router.start(request()).await;
     assert_eq!(
         session.select_initial().unwrap().route_target_id.as_str(),
         "e"
@@ -92,14 +92,15 @@ fn encoder_prefill_decode_stays_in_its_pipeline_scope_and_never_falls_back_witho
     assert!(matches!(
         PipelineRouter::new(inventory)
             .start(request())
+            .await
             .select_initial(),
         Err(RouteError::NoMatchingRouteTarget { .. })
     ));
 }
 
 // Protects Decode selection from stale observations or premature binding.
-#[test]
-fn decode_uses_fresh_candidate_stats_and_is_not_bound_during_prefill_selection() {
+#[tokio::test]
+async fn decode_uses_fresh_candidate_stats_and_is_not_bound_during_prefill_selection() {
     let stat_values = stats();
     let router = PipelineRouter::with_pipeline(
         inventory(vec![
@@ -114,7 +115,7 @@ fn decode_uses_fresh_candidate_stats_and_is_not_bound_during_prefill_selection()
         ),
     )
     .with_route_target_stats_reader(Arc::new(TestStatsReader::new(stat_values.clone())));
-    let mut session = router.start(request());
+    let mut session = router.start(request()).await;
     assert_eq!(
         session.select_initial().unwrap().route_target_id.as_str(),
         "p"

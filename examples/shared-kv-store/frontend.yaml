@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: FrontendService
+metadata:
+  name: shared-kv-frontend
+spec:
+  replicas: 1
+  resources:
+    requests:
+      cpu: "2"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  timeouts:
+    request: 5m
+    streamIdle: 2m
+  routerPipeline:
+    filter: allow_all
+    scorer: kv_least_loaded
+    picker: round_robin

@@ -47,9 +47,10 @@ pub trait RouteSession: Send {
 }
 
 /// Creates isolated request-local routing state for tokenized generation requests.
+#[async_trait::async_trait]
 pub trait Router: Send + Sync {
-    /// Starts routing state for one generation request.
-    fn start(&self, request: RouterRequest) -> Box<dyn RouteSession>;
+    /// Prepares required observations and starts isolated routing state for one generation request.
+    async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession>;
 }
 
 /// Failure returned while selecting one model-server routing stage.

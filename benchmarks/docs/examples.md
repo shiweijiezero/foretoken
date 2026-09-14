@@ -1,117 +1,35 @@
-# Benchmark Examples
+# Common benchmark commands
 
 English | [简体中文](examples_zh.md)
 
-## Dataset selectors
+## Setup
 
-`--dataset` accepts local JSONL, Hugging Face datasets, and files in dataset repositories:
+Install the benchmark client as described in [Model Service Benchmarks](../README.md). Run commands from the repository root, using the cluster prepared by the [Quick Start](../../README.md#quick-start). Run `wandb login` before first using W&B.
 
-```text
-/path/to/conversation.jsonl
-org/dataset:train
-hf://datasets/org/dataset@main/path/to/conversation.jsonl
-```
-
-Multiple sources may be comma-separated. A Hub file URI must include the `datasets` repository type.
-
-## Random prompts
-
-Random prompts require a tokenizer:
+The command guides use `examples/quickstart`. For another existing service, replace that path with `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"`. For the Quick Start already deployed in the default mode, obtain those values with:
 
 ```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --dataset random \
-  --tokenizer-path Qwen/Qwen3-0.6B \
-  --random-seed 0 \
-  --min-prompt-length 128 --max-prompt-length 512 \
-  --parallel 4 --number 20 --max-tokens 64 \
-  --rate 5
+MODEL_SERVICE_BASE_URL="$(foretoken endpoint examples/quickstart)"
+export MODEL_SERVICE_URL="${MODEL_SERVICE_BASE_URL%/}/v1/chat/completions"
+export MODEL_ID=Qwen/Qwen3-0.6B
 ```
 
-## Hugging Face and local datasets
+Use the actual Chat Completions URL and model ID for other services. In Gateway mode, use the Kustomize path so Foretoken supplies routing headers. Parameter sweeps require the Kustomize form.
 
-```bash
-# Hugging Face dataset
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
-  --parallel 4 \
-  --number 20
+## Commands
 
-# Local JSONL dataset
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --dataset /path/to/conversation.jsonl \
-  --parallel 4 \
-  --number 20
-```
+- [Fixed prompts](coomon_commands/fixed-prompt.md)
+- [Non-streaming requests](coomon_commands/non-streaming.md)
+- [Random workloads](coomon_commands/random.md)
+- [Local conversations](coomon_commands/conversations.md)
+- [Hugging Face datasets](coomon_commands/huggingface.md)
+- [ShareGPT conversations](coomon_commands/sharegpt.md)
+- [Tool data](coomon_commands/tools.md)
+- [Multiple datasets](coomon_commands/multi-dataset.md)
+- [Arrival rate and concurrency](coomon_commands/arrival-rate.md)
+- [StudyChat replay](coomon_commands/studychat.md)
+- [Mooncake prefix reuse](coomon_commands/mooncake.md)
+- [Parameter sweeps](coomon_commands/sweep.md)
+- [W&B output](coomon_commands/wandb.md)
 
-## Trace replay
-
-`--trace` supplies arrival timestamps and `--dataset` supplies request content. The benchmark detects StudyChat and Mooncake trace formats. `--trace-start` and `--trace-duration` select `[first + start, first + start + duration)`; waiting for `--trace-max-concurrency` counts toward replay delay.
-
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --trace KrisQ/StudyChat \
-  --dataset KrisQ/StudyChat \
-  --trace-start 600 \
-  --trace-duration 300 \
-  --trace-max-concurrency 32
-```
-
-Replay a Mooncake trace with random payloads and shared synthetic prefixes:
-
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --trace valeriol29/mooncake-traces \
-  --trace-start 2620 \
-  --trace-duration 30 \
-  --dataset random \
-  --tokenizer-path Qwen/Qwen3-0.6B \
-  --random-seed 0 \
-  --trace-synthetic-prefix-reuse \
-  --trace-max-concurrency 16 \
-  --max-tokens 64
-```
-
-## Multiple datasets
-
-Sources run in order and their results are merged. `--number` is shared across the sources and divided in source order; earlier sources receive one extra request when division is uneven.
-
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train,ianncity/GLM-5.2-Conversation:train \
-  --parallel 4 \
-  --number 20
-```
-
-## Parameter sweep
-
-`--bench-params` accepts a JSONL file. Each line overrides request execution fields; list-valued `parallel`, `number`, and `rate` expand into separate points. A `rate` of `-1` sends requests as fast as possible.
-
-`benchmarks/examples/bench_params.jsonl` contains a maintained example:
-
-```jsonl
-{"_benchmark_name": "n10", "parallel": [1, 2, 4, 8], "number": 10, "max_tokens": 64}
-{"_benchmark_name": "n20", "parallel": [1, 2], "number": 20, "max_tokens": 128}
-```
-
-```bash
-foretoken bench examples/quickstart \
-  --dataset random \
-  --tokenizer-path Qwen/Qwen3-0.6B \
-  --min-prompt-length 128 --max-prompt-length 512 \
-  --bench-params benchmarks/examples/bench_params.jsonl
-```
-
-Every valid point is saved. A sweep with at least two valid points also writes `pareto/PARETO.png`.
+Metric definitions are in [Result metrics](../metrics.md). All options are listed by `foretoken bench --help`.

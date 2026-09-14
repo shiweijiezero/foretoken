@@ -36,8 +36,9 @@ def prepare_source_images(
     registry: str | None,
     namespace: str,
     timeout: str,
+    inference_engine_image: str | None = None,
 ) -> SourceImages:
-    """Build and distribute source images for the platform installation."""
+    """Build and distribute source images on the selected inference runtime base."""
     source_root = Path(source_path).expanduser().resolve()
     script = source_root / "deploy" / "dev-deploy"
     chart = source_root / "deploy" / "charts" / "foretoken" / "Chart.yaml"
@@ -66,7 +67,6 @@ def prepare_source_images(
             "FORETOKEN_VLLM_PYTHON",
             "LOCAL_IMAGE_PREFIX",
             "K3D_CONFIG",
-            "TAG",
             "DEPLOY_TAG",
             "DEV_IMAGE_OUTPUT",
         ):
@@ -80,6 +80,8 @@ def prepare_source_images(
                 "DEV_TIMEOUT": timeout,
             }
         )
+        if inference_engine_image is not None:
+            environment["INFERENCE_ENGINE_IMAGE"] = inference_engine_image
         completed = subprocess.run(
             [str(script)],
             cwd=source_root,

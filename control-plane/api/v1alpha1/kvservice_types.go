@@ -10,10 +10,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// ByteQuantity is a positive, exact integer number of bytes. It deliberately
-// does not accept Kubernetes unit suffixes so cache capacities are unambiguous.
+// ByteQuantity is a resolved positive int64 byte count used by client workloads and status.
 // +kubebuilder:validation:Pattern="^[1-9][0-9]*$"
 // +kubebuilder:validation:MaxLength=19
+// +kubebuilder:validation:XValidation:rule="int(self) > 0",message="must be a positive int64 byte count"
 type ByteQuantity string
 
 // KVResources defines CPU and memory for a Mooncake component.
@@ -41,8 +41,10 @@ const (
 // snapshot retention is not a Foretoken cache TTL or eviction policy.
 type SnapshotStorage struct {
 	// +optional
-	StorageClassName string       `json:"storageClassName,omitempty"`
-	Size             ByteQuantity `json:"size"`
+	StorageClassName string `json:"storageClassName,omitempty"`
+	// Size is a positive whole-byte quantity, such as 1Gi or 1G.
+	// +kubebuilder:validation:XValidation:rule="quantity(self).compareTo(quantity('0')) > 0",message="size must be positive"
+	Size ResourceQuantity `json:"size"`
 	// +optional
 	// +kubebuilder:default=Delete
 	RetentionPolicy RetentionPolicy `json:"retentionPolicy,omitempty"`
@@ -90,8 +92,10 @@ type KVMasterSpec struct {
 // PVC request, not a claim about usable filesystem capacity.
 type KVDisk struct {
 	// +optional
-	StorageClassName string       `json:"storageClassName,omitempty"`
-	Size             ByteQuantity `json:"size"`
+	StorageClassName string `json:"storageClassName,omitempty"`
+	// Size is a positive whole-byte quantity, such as 1Gi or 1G.
+	// +kubebuilder:validation:XValidation:rule="quantity(self).compareTo(quantity('0')) > 0",message="size must be positive"
+	Size ResourceQuantity `json:"size"`
 	// +optional
 	// +kubebuilder:default=Delete
 	RetentionPolicy RetentionPolicy `json:"retentionPolicy,omitempty"`
@@ -113,7 +117,7 @@ type StorageRegistration struct {
 	Port int32 `json:"port,omitempty"`
 }
 
-// KVClientTemplate is immutable normalized intent for homogeneous future clients.
+// KVClientTemplate configures homogeneous Store clients.
 // This standalone Store profile enables SSD offload, so disk is required. The
 // user-provided gap between capacity and memory resources reserves runtime overhead;
 // Foretoken deliberately does not guess a fixed overhead amount.
@@ -143,8 +147,10 @@ type KVClientTemplate struct {
 	// RDMAResourceCount defaults to one during RDMA client normalization and is unused for TCP.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
-	RDMAResourceCount int32        `json:"rdmaResourceCount,omitempty"`
-	MemoryCapacity    ByteQuantity `json:"memoryCapacity"`
+	RDMAResourceCount int32 `json:"rdmaResourceCount,omitempty"`
+	// MemoryCapacity is a positive whole-byte quantity contributed to the shared Store.
+	// +kubebuilder:validation:XValidation:rule="quantity(self).compareTo(quantity('0')) > 0",message="memoryCapacity must be positive"
+	MemoryCapacity ResourceQuantity `json:"memoryCapacity"`
 	// +optional
 	Disk *KVDisk `json:"disk,omitempty"`
 	// +optional
@@ -175,8 +181,9 @@ type KVTimeouts struct {
 
 // KVRequesterSpec configures ModelGroup Store requester configuration.
 type KVRequesterSpec struct {
-	// LocalBufferSize is an exact positive integer number of bytes.
-	LocalBufferSize ByteQuantity `json:"localBufferSize"`
+	// LocalBufferSize is a positive whole-byte quantity reserved by each model requester.
+	// +kubebuilder:validation:XValidation:rule="quantity(self).compareTo(quantity('0')) > 0",message="localBufferSize must be positive"
+	LocalBufferSize ResourceQuantity `json:"localBufferSize"`
 }
 
 // KVServiceBinding is the immutable current requester configuration consumed by ModelPools.
@@ -233,7 +240,8 @@ const (
 )
 
 // NormalizedKVPoolTemplate is the immutable client configuration compiled from
-// a KVService storagePools entry. Pool identity and desiredGroups stay outside it.
+// a KVService storagePools entry. Capacities are decimal byte strings; Pool identity
+// and desiredGroups stay outside it.
 // +kubebuilder:validation:XValidation:rule="self.client.protocol != 'rdma' || has(self.client.rdmaResourceCount)",message="normalized RDMA clients require rdmaResourceCount"
 type NormalizedKVPoolTemplate struct {
 	Client KVClientTemplate `json:"client"`

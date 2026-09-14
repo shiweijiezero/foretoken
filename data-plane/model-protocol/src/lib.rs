@@ -184,6 +184,29 @@ pub struct TelemetryResponse {
 /// Group-local route used by the frontend KV indexer to consume normalized deltas.
 pub const KV_INDEX_DELTA_PATH: &str = "/v1/internal/kv-index/delta";
 
+/// Read-only shared-cache observations for a tokenized routing request.
+pub const KV_SHARED_PREFIX_PATH: &str = "/v1/internal/kv-index/shared-prefix";
+
+/// Existing KV observation deadline shared by HTTP callers and Pod-local connector queries.
+pub const KV_OBSERVATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KvSharedPrefixRequest {
+    pub prompt_token_ids: Vec<u32>,
+    pub dp_rank: u32,
+}
+
+/// A live connector observation, not an event-index entry or a cache lease.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KvSharedPrefixResponse {
+    pub model_group_id: String,
+    pub scope_id: String,
+    pub matched_tokens: usize,
+    pub block_size: usize,
+}
+
 /// Cursor parameters for one source-local, zero-based delta stream. `None` means no event
 /// has been consumed; an empty page never advances `after`.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

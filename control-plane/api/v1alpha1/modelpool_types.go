@@ -69,9 +69,9 @@ type RuntimeCacheBinding struct {
 	MountPath string `json:"mountPath"`
 }
 
-// RuntimeSourceAccess contains optional source settings consumed by the runtime adapter.
-type RuntimeSourceAccess struct {
-	// Endpoint is interpreted by the selected runtime adapter.
+// HuggingFaceAccess contains platform-provided access settings for Hugging Face repositories.
+type HuggingFaceAccess struct {
+	// Endpoint is an optional Hugging Face-compatible Hub endpoint.
 	// +optional
 	Endpoint string `json:"endpoint,omitempty"`
 
@@ -90,6 +90,8 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=1024
 	Model string `json:"model"`
+
+	Source ModelSource `json:"source"`
 
 	// +optional
 	// +kubebuilder:validation:MinLength=1
@@ -110,9 +112,9 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	RuntimeCache *RuntimeCacheBinding `json:"runtimeCache,omitempty"`
 
-	// SourceAccess is set by the ModelService controller from the selected runtime profile.
+	// HuggingFaceAccess is set by the ModelService controller for Hugging Face models.
 	// +optional
-	SourceAccess *RuntimeSourceAccess `json:"sourceAccess,omitempty"`
+	HuggingFaceAccess *HuggingFaceAccess `json:"huggingFaceAccess,omitempty"`
 
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`

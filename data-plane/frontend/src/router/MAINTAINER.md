@@ -23,7 +23,7 @@ compatible and healthy candidates
 - `RouteScorer` returns one `RouteScore` for every retained candidate in the same order.
 - `RoutePicker` returns an index into the scored candidates.
 
-The Router owns candidate identity and validates duplicate or out-of-range indexes and score-count mismatches. Algorithms must not maintain a second route catalog or query model servers on the request path; they receive an immutable round-local observation snapshot.
+The Router owns candidate identity and validates duplicate or out-of-range indexes and score-count mismatches. Algorithms must not maintain a second route catalog or query model servers on the request path; they receive an immutable round-local observation snapshot. Filters and scorers that consume shared KV matches return `true` from `needs_kv_prefix`; `Router::start` then prepares those observations asynchronously through the KV indexer before running the synchronous pipeline.
 
 ## Adding an algorithm
 

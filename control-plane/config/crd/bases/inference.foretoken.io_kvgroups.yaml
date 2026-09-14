@@ -78,12 +78,14 @@ spec:
                         - Retain
                         type: string
                       size:
-                        description: |-
-                          ByteQuantity is a positive, exact integer number of bytes. It deliberately
-                          does not accept Kubernetes unit suffixes so cache capacities are unambiguous.
+                        description: ByteQuantity is a resolved positive int64 byte
+                          count used by client workloads and status.
                         maxLength: 19
                         pattern: ^[1-9][0-9]*$
                         type: string
+                        x-kubernetes-validations:
+                        - message: must be a positive int64 byte count
+                          rule: int(self) > 0
                       storageClassName:
                         type: string
                     required:
@@ -99,12 +101,14 @@ spec:
                   image:
                     type: string
                   memoryCapacityBytes:
-                    description: |-
-                      ByteQuantity is a positive, exact integer number of bytes. It deliberately
-                      does not accept Kubernetes unit suffixes so cache capacities are unambiguous.
+                    description: ByteQuantity is a resolved positive int64 byte count
+                      used by client workloads and status.
                     maxLength: 19
                     pattern: ^[1-9][0-9]*$
                     type: string
+                    x-kubernetes-validations:
+                    - message: must be a positive int64 byte count
+                      rule: int(self) > 0
                   nodeSelector:
                     additionalProperties:
                       type: string
@@ -372,19 +376,23 @@ spec:
                 - Terminating
                 type: string
               requestedDiskCapacityBytes:
-                description: |-
-                  ByteQuantity is a positive, exact integer number of bytes. It deliberately
-                  does not accept Kubernetes unit suffixes so cache capacities are unambiguous.
+                description: ByteQuantity is a resolved positive int64 byte count
+                  used by client workloads and status.
                 maxLength: 19
                 pattern: ^[1-9][0-9]*$
                 type: string
+                x-kubernetes-validations:
+                - message: must be a positive int64 byte count
+                  rule: int(self) > 0
               requestedMemoryCapacityBytes:
-                description: |-
-                  ByteQuantity is a positive, exact integer number of bytes. It deliberately
-                  does not accept Kubernetes unit suffixes so cache capacities are unambiguous.
+                description: ByteQuantity is a resolved positive int64 byte count
+                  used by client workloads and status.
                 maxLength: 19
                 pattern: ^[1-9][0-9]*$
                 type: string
+                x-kubernetes-validations:
+                - message: must be a positive int64 byte count
+                  rule: int(self) > 0
             type: object
         required:
         - spec

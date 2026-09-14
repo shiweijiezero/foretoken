@@ -38,8 +38,9 @@ impl RuntimeControl for StaticRuntimeControl {
 
 struct UnusedRouter;
 
+#[async_trait]
 impl RouteRouter for UnusedRouter {
-    fn start(&self, _: RouterRequest) -> Box<dyn RouteSession> {
+    async fn start(&self, _: RouterRequest) -> Box<dyn RouteSession> {
         unreachable!("runtime publication does not dispatch requests")
     }
 }

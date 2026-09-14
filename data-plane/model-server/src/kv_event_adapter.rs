@@ -30,7 +30,7 @@ struct StoredBlock {
 
 struct RankState {
     ring: VecDeque<KvDelta>,
-    raw_blocks: HashMap<(Option<u32>, Vec<u8>), StoredBlock>,
+    raw_blocks: HashMap<(KvPlacement, Option<u32>, Vec<u8>), StoredBlock>,
 }
 
 impl RankState {
@@ -321,21 +321,20 @@ impl KvEventAdapter {
             let Some(raw_hash) = raw_hash(value) else {
                 return false;
             };
-            let stored = match event_group_idx {
-                Some(group_idx) => rank.raw_blocks.remove(&(Some(group_idx), raw_hash)),
-                None => {
-                    let keys = rank
-                        .raw_blocks
-                        .keys()
-                        .filter(|(_, candidate)| candidate == &raw_hash)
-                        .cloned()
-                        .collect::<Vec<_>>();
-                    if keys.len() != 1 {
-                        continue;
-                    }
-                    rank.raw_blocks.remove(&keys[0])
-                }
-            };
+            let keys = rank
+                .raw_blocks
+                .keys()
+                .filter(|(placement, group, candidate)| {
+                    candidate == &raw_hash
+                        && event_placement.is_none_or(|expected| expected == *placement)
+                        && event_group_idx.is_none_or(|expected| *group == Some(expected))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if keys.len() != 1 {
+                continue;
+            }
+            let stored = rank.raw_blocks.remove(&keys[0]);
             let Some(stored) = stored else {
                 continue;
             };
@@ -409,7 +408,7 @@ impl KvEventAdapter {
         let mut inner = self.inner.lock().unwrap();
         let rank = inner.ranks.get_mut(&dp_rank).unwrap();
         let (mut parent_hash, first_block_index) = match parent_raw_hash {
-            Some(raw_hash) => match rank.raw_blocks.get(&(group_idx, raw_hash)) {
+            Some(raw_hash) => match rank.raw_blocks.get(&(placement, group_idx, raw_hash)) {
                 Some(parent) => (
                     parent.block_hash.clone(),
                     parent.block_index.saturating_add(1),
@@ -436,7 +435,7 @@ impl KvEventAdapter {
                 block_hash: block_hash.clone(),
             };
             rank.raw_blocks.insert(
-                (group_idx, raw_hash),
+                (placement, group_idx, raw_hash),
                 StoredBlock {
                     partition: partition.clone(),
                     block_index,

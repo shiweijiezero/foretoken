@@ -42,7 +42,7 @@ kind create cluster \
   --config deploy/kind/multi-node.yaml
 ```
 
-After creating the cluster, build and import the local images. Choose an engine image compatible with the EngineCore protocol and the [profiling adapter](profiling.md#prepare-before-capture).
+After creating the cluster, build and import the local images. The vLLM adapter supports the EngineCore protocols shipped by vLLM 0.20 through 0.28; the selected engine image must also meet the [profiling adapter](profiling.md#prepare-before-capture) requirements.
 
 The inference-engine image normally provides its Python executable as `python`. If it requires a specific executable, set both build inputs:
 

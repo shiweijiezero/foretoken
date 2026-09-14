@@ -38,3 +38,12 @@ class LoadBalancerConfig:
     """Effective address pool requested for CLI-managed MetalLB."""
 
     managed_addresses: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class RuntimeOverrides:
+    """Runtime choices explicitly supplied through Helm values."""
+
+    image: str | None = None
+    gpu_resource_name: str | None = None
+    gpu_node_selector: tuple[str, str] | None = None

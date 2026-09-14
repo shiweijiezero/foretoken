@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use axum::{Json, Router, http::StatusCode, routing::get};
 use foretoken_backend_registry::{
-    BackendRegistry, BackendRegistryBuild, ServingSnapshot, SnapshotEpdComponent,
+    BackendRegistry, BackendRegistryBuild, ModelSource, ServingSnapshot, SnapshotEpdComponent,
     SnapshotEpdPipelineScope, SnapshotError, SnapshotGroup, SnapshotModel, SnapshotPdComponent,
     SnapshotPdPipelineScope,
 };
@@ -36,6 +36,7 @@ fn pd_component(id: &str, role: ModelServerRole) -> SnapshotPdComponent {
         role,
         pipeline_scope_id: "service-a".into(),
         model: "model".into(),
+        source: ModelSource::Hf,
         revision: "r1".into(),
         tokenizer: "tokenizer".into(),
         tokenizer_revision: "r1".into(),
@@ -49,6 +50,7 @@ fn pd_component(id: &str, role: ModelServerRole) -> SnapshotPdComponent {
         prefill_bootstrap_endpoint: (role == ModelServerRole::Prefill)
             .then(|| "http://127.0.0.1:29001".into()),
         kv_scope_id: "scope".into(),
+        kv_lookup_scope: None,
         data_parallel_size: 1,
     }
 }
@@ -73,6 +75,7 @@ fn pd_snapshot() -> ServingSnapshot {
         models: vec![SnapshotModel {
             service_uid: "service".into(),
             model: "model".into(),
+            source: ModelSource::Hf,
             revision: "r1".into(),
             tokenizer: "tokenizer".into(),
             tokenizer_revision: "r1".into(),
@@ -102,6 +105,7 @@ fn epd_component(id: &str, role: ModelServerRole) -> SnapshotEpdComponent {
         route_target_id: RouteTargetId::new(id),
         role,
         model: "model".into(),
+        source: ModelSource::Hf,
         revision: "r1".into(),
         tokenizer: "tokenizer".into(),
         tokenizer_revision: "r1".into(),
@@ -111,6 +115,7 @@ fn epd_component(id: &str, role: ModelServerRole) -> SnapshotEpdComponent {
         prefill_bootstrap_endpoint: (role == ModelServerRole::Prefill)
             .then(|| "http://127.0.0.1:29001".into()),
         kv_scope_id: "scope".into(),
+        kv_lookup_scope: None,
         data_parallel_size: 1,
     }
 }
@@ -121,6 +126,7 @@ fn epd_snapshot() -> ServingSnapshot {
         models: vec![SnapshotModel {
             service_uid: "service".into(),
             model: "model".into(),
+            source: ModelSource::Hf,
             revision: "r1".into(),
             tokenizer: "tokenizer".into(),
             tokenizer_revision: "r1".into(),
@@ -257,6 +263,7 @@ fn aggregate_snapshot(endpoint: String) -> ServingSnapshot {
         models: vec![SnapshotModel {
             service_uid: "service".into(),
             model: "model".into(),
+            source: ModelSource::Hf,
             revision: "r1".into(),
             tokenizer: "tokenizer".into(),
             tokenizer_revision: "r1".into(),
@@ -274,6 +281,7 @@ fn aggregate_snapshot(endpoint: String) -> ServingSnapshot {
             pool_name: "pool".into(),
             route_target_id: RouteTargetId::new("a"),
             model: "model".into(),
+            source: ModelSource::Hf,
             revision: "r1".into(),
             tokenizer: "tokenizer".into(),
             tokenizer_revision: "r1".into(),
@@ -281,6 +289,7 @@ fn aggregate_snapshot(endpoint: String) -> ServingSnapshot {
             max_input_tokens: None,
             endpoint,
             kv_scope_id: "scope".into(),
+            kv_lookup_scope: None,
             data_parallel_size: 1,
         }],
         pd_components: vec![],

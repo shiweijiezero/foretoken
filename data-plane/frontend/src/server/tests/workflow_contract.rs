@@ -62,8 +62,9 @@ struct WorkflowRouter {
     decode: RouteDecision,
 }
 
+#[async_trait]
 impl RouteRouter for WorkflowRouter {
-    fn start(&self, _: RouterRequest) -> Box<dyn RouteSession> {
+    async fn start(&self, _: RouterRequest) -> Box<dyn RouteSession> {
         Box::new(WorkflowSession {
             encoder: self.encoder.clone(),
             prefill: self.prefill.clone(),

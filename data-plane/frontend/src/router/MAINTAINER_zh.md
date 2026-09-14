@@ -23,7 +23,7 @@ Router 算法编译在 Frontend 二进制中，不是运行时插件，也不是
 - `RouteScorer` 按相同顺序为每个保留候选项返回一个 `RouteScore`。
 - `RoutePicker` 返回 scored candidates 中的一个下标。
 
-Router 负责候选项身份，并校验重复或越界的下标以及分数数量不一致。算法不能维护第二份路由目录，也不能在请求路径查询 model-server；算法接收的是当前选择轮次中不可变的观测快照。
+Router 负责候选项身份，并校验重复或越界的下标以及分数数量不一致。算法不能维护第二份路由目录，也不能在请求路径查询 model-server；算法接收的是当前选择轮次中不可变的观测快照。需要共享 KV 命中的 Filter 或 Scorer 应让 `needs_kv_prefix` 返回 `true`，由 `Router::start` 先通过 KV indexer 异步准备观测，再执行同步 pipeline。
 
 ## 添加算法
 

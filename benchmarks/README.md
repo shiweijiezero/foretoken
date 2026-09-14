@@ -1,65 +1,117 @@
-# Benchmarks
+# Model Service Benchmarks
 
 English | [简体中文](README_zh.md)
 
-Use `foretoken bench` to measure latency and throughput against a Foretoken deployment or an existing OpenAI-compatible endpoint.
+Use `foretoken bench` to measure model-service performance.
 
-## Before you start
+## Get started
 
-Run benchmark commands from the repository root with Python 3.11 or later:
+Python 3.11 or later is required:
 
 ```bash
 pip install 'foretoken[bench]'
 
-# For source installation from the repository:
-# pip install -e .
+# From a source checkout:
 # pip install -e '.[bench]'
+
+wandb login
 ```
 
-For a Foretoken deployment, install the platform before benchmarking a Kustomize configuration:
+Run the following commands from the repository root. Follow the [Quick Start](../README.md#quick-start) to prepare the cluster; skip installation if the platform is already installed:
 
 ```bash
 foretoken install
-foretoken bench examples/quickstart
+foretoken bench examples/quickstart --number 10 --output local,wandb
 ```
 
-The command reuses the Quick Start when it is already running. Otherwise it deploys the rendered resources and removes only the resources it created after the benchmark.
+The default prompt is `Hello`. Existing services are reused; resources deployed temporarily for the benchmark are removed afterwards. A single-model deployment supplies the model name automatically. Add `--model` for a multi-model deployment.
 
-To benchmark an existing endpoint, Foretoken and its Kubernetes platform are not required:
+## Common commands
+
+### Concurrent requests
 
 ```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --prompt "Hello" \
-  --parallel 2 \
-  --number 20
+foretoken bench examples/quickstart \
+  --prompt "Explain what a token is in one sentence." \
+  --parallel 8 --number 100 \
+  --max-tokens 128 \
+  --output local,wandb
 ```
 
-## Results and output
+`--parallel` controls concurrency and `--rate` controls arrivals per second. Each accepts `-1` for no limit. The defaults are no rate limit and one concurrent request. To send at an average of five requests per second without a concurrency cap:
 
-Without `--output`, the benchmark prints a summary, writes local artifacts under `results/`, and attempts a W&B upload. If W&B is unavailable, local results remain available.
+```bash
+foretoken bench examples/quickstart \
+  --rate 5 --parallel -1 --number 100 \
+  --output local,wandb
+```
 
-`--output` replaces the default output choices:
+### Random workloads
 
-| Goal | `--output` value |
-| --- | --- |
-| Default console, local artifacts, and W&B | omit `--output` |
-| Local artifacts only | `local` |
-| Local artifacts without console output | `local,quiet` |
-| Local artifacts and W&B without console output | `local,wandb,quiet` |
-| W&B only | `wandb` |
+```bash
+foretoken bench examples/quickstart \
+  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
+  --min-prompt-length 128 --max-prompt-length 512 \
+  --min-output-length 64 --max-output-length 256 \
+  --parallel 8 --number 100 \
+  --output local,wandb
+```
 
-To suppress console output while retaining results, combine `quiet` with `local`, `wandb`, or both. Use `--output-dir PATH` to change the local artifact directory.
+Output-length control requires service support for `min_tokens` and `ignore_eos`. Requests that miss the sampled length count as failures. Without these output bounds, generation uses the ordinary `--max-tokens` limit, which defaults to 4096.
 
-## Metrics
+### Datasets and conversations
 
-The summary includes request latency, time to first token (TTFT), time per output token (TPOT), failure rate, input/output token counts, and output throughput.
+```bash
+foretoken bench examples/quickstart \
+  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
+  --parallel 4 --number 20 \
+  --output local,wandb
+```
 
-For parameter sweeps, `token/s/user` means output throughput divided by the configured closed-loop `--parallel` value. It is not a count of real users or active sessions. In open-loop runs (`--rate`), its denominator is one, so it equals total output throughput. `token/s/GPU` divides output throughput by the configured GPU count for that point.
+`--dataset` also accepts a local JSONL file. Each row is a conversation, and all turns run by default using the model's actual answers. Use `--max-turns 1` for the first turn only. Multi-turn conversations currently require `--rate -1`.
 
-A sweep always writes every valid point. It creates `pareto/PARETO.png` only when the sweep has at least two valid points.
+### Trace replay
 
-## Next steps
+```bash
+foretoken bench examples/quickstart \
+  --trace KrisQ/StudyChat --dataset KrisQ/StudyChat \
+  --trace-start 600 --trace-duration 30 \
+  --trace-max-concurrency 16 \
+  --output local,wandb
+```
 
-Scenario recipes for datasets, random prompts, trace replay, prefix reuse, multiple datasets, and parameter sweeps are in [Benchmark examples](docs/examples.md). The command reference and result formats are exposed through `foretoken bench --help` and the generated local artifacts.
+The trace determines request count and arrival times. Each record is replayed independently.
+
+### Parameter sweeps
+
+```bash
+foretoken bench examples/quickstart \
+  --sweep benchmarks/examples/sweep.jsonl \
+  --output local,wandb
+```
+
+Sweeps use a Kustomize deployment to compare configurations against the same model service.
+
+### An existing service URL
+
+For the Quick Start already deployed in the default mode, resolve its address first:
+
+```bash
+MODEL_SERVICE_URL="$(foretoken endpoint examples/quickstart)/v1/chat/completions"
+foretoken bench \
+  --url "$MODEL_SERVICE_URL" --model Qwen/Qwen3-0.6B \
+  --prompt "Hello" --number 20 \
+  --output local,wandb
+```
+
+For another service, use its actual Chat Completions URL and model name. In Gateway mode, use the Kustomize form above so the CLI supplies routing headers.
+
+## Read results
+
+Local results are saved in a separate directory under `results/`, printed when the run finishes. `metrics.json` contains the summary and `raw_output.json` contains per-request records.
+
+Start with success rate, end-to-end latency (E2EL), and output token throughput. Streamed runs also report time to the first chunk (TTFT), average time per output token (TPOT), and inter-chunk intervals (ITL). `--no-stream` disables only these streaming metrics.
+
+The examples save results locally and upload them to W&B. Use `--output local` for local results only, and `--output-dir` to change the parent directory.
+
+See [Common commands](docs/examples.md) for individual guides and examples, or [Result metrics](metrics.md) for metric definitions. Run `foretoken bench --help` for all options.

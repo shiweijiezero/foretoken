@@ -1,117 +1,35 @@
-# 评测示例
+# 常用评测命令
 
 [English](examples.md) | 简体中文
 
-## 数据集选择器
+## 准备
 
-`--dataset` 支持本地 JSONL、Hugging Face 数据集，以及数据集仓库中的文件：
+按[模型服务性能评测](../README_zh.md)安装评测客户端，并按[快速开始](../../README_zh.md#快速开始)准备集群。以下命令在仓库根目录执行。首次使用 W&B 请先运行 `wandb login`。
 
-```text
-/path/to/conversation.jsonl
-org/dataset:train
-hf://datasets/org/dataset@main/path/to/conversation.jsonl
-```
-
-多个来源可用逗号分隔。Hub 文件 URI 必须包含 `datasets` 仓库类型。
-
-## 随机提示词
-
-随机提示词需要 tokenizer：
+各命令使用 `examples/quickstart`。评测其他已有服务时，将该路径换成 `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"`。默认模式下已部署的快速开始示例可以这样获取地址：
 
 ```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --dataset random \
-  --tokenizer-path Qwen/Qwen3-0.6B \
-  --random-seed 0 \
-  --min-prompt-length 128 --max-prompt-length 512 \
-  --parallel 4 --number 20 --max-tokens 64 \
-  --rate 5
+MODEL_SERVICE_BASE_URL="$(foretoken endpoint examples/quickstart)"
+export MODEL_SERVICE_URL="${MODEL_SERVICE_BASE_URL%/}/v1/chat/completions"
+export MODEL_ID=Qwen/Qwen3-0.6B
 ```
 
-## Hugging Face 与本地数据集
+其他服务使用其实际 Chat Completions URL 和模型 ID。Gateway 模式使用 Kustomize 路径，由 Foretoken 配置路由请求头。参数扫描也要求使用 Kustomize 写法。
 
-```bash
-# Hugging Face 数据集
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
-  --parallel 4 \
-  --number 20
+## 命令分类
 
-# 本地 JSONL 数据集
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --dataset /path/to/conversation.jsonl \
-  --parallel 4 \
-  --number 20
-```
+- [固定提示词](coomon_commands/fixed-prompt_zh.md)
+- [非流式请求](coomon_commands/non-streaming_zh.md)
+- [随机负载](coomon_commands/random_zh.md)
+- [本地对话数据](coomon_commands/conversations_zh.md)
+- [Hugging Face 数据集](coomon_commands/huggingface_zh.md)
+- [ShareGPT 对话](coomon_commands/sharegpt_zh.md)
+- [工具数据](coomon_commands/tools_zh.md)
+- [多数据集](coomon_commands/multi-dataset_zh.md)
+- [请求速率与并发](coomon_commands/arrival-rate_zh.md)
+- [StudyChat 轨迹回放](coomon_commands/studychat_zh.md)
+- [Mooncake 前缀复用](coomon_commands/mooncake_zh.md)
+- [参数扫描](coomon_commands/sweep_zh.md)
+- [W&B 输出](coomon_commands/wandb_zh.md)
 
-## 轨迹回放
-
-`--trace` 提供到达时间，`--dataset` 提供请求内容。评测会识别 StudyChat 和 Mooncake 轨迹格式。`--trace-start` 与 `--trace-duration` 选择 `[first + start, first + start + duration)`；等待 `--trace-max-concurrency` 的时间计入回放延迟。
-
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --trace KrisQ/StudyChat \
-  --dataset KrisQ/StudyChat \
-  --trace-start 600 \
-  --trace-duration 300 \
-  --trace-max-concurrency 32
-```
-
-使用随机请求内容和合成共享前缀回放 Mooncake 轨迹：
-
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --trace valeriol29/mooncake-traces \
-  --trace-start 2620 \
-  --trace-duration 30 \
-  --dataset random \
-  --tokenizer-path Qwen/Qwen3-0.6B \
-  --random-seed 0 \
-  --trace-synthetic-prefix-reuse \
-  --trace-max-concurrency 16 \
-  --max-tokens 64
-```
-
-## 多数据集
-
-数据源按顺序运行，随后合并结果。`--number` 由全部数据源共享并按顺序分配；不能整除时，前面的数据源各多一个请求。
-
-```bash
-foretoken bench \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train,ianncity/GLM-5.2-Conversation:train \
-  --parallel 4 \
-  --number 20
-```
-
-## 参数扫描
-
-`--bench-params` 接收 JSONL 文件。每行覆盖请求执行字段；`parallel`、`number` 和 `rate` 的列表值会展开为独立负载点。`rate: -1` 表示按最快速度发送请求。
-
-`benchmarks/examples/bench_params.jsonl` 提供维护中的示例：
-
-```jsonl
-{"_benchmark_name": "n10", "parallel": [1, 2, 4, 8], "number": 10, "max_tokens": 64}
-{"_benchmark_name": "n20", "parallel": [1, 2], "number": 20, "max_tokens": 128}
-```
-
-```bash
-foretoken bench examples/quickstart \
-  --dataset random \
-  --tokenizer-path Qwen/Qwen3-0.6B \
-  --min-prompt-length 128 --max-prompt-length 512 \
-  --bench-params benchmarks/examples/bench_params.jsonl
-```
-
-评测会保存每个有效负载点。至少有两个有效负载点时，还会写入 `pareto/PARETO.png`。
+指标定义见[结果指标](../metrics_zh.md)。全部参数见 `foretoken bench --help`。

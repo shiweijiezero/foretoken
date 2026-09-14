@@ -13,7 +13,7 @@ import yaml
 
 from foretoken import platform_version
 from foretoken.manifest import DeploymentError
-from foretoken.platform.types import LoadBalancerConfig
+from foretoken.platform.types import LoadBalancerConfig, RuntimeOverrides
 
 
 @dataclass(frozen=True)
@@ -130,6 +130,66 @@ def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
                 )
         loaded.append(values)
     return tuple(loaded)
+
+
+def runtime_overrides_from_values(
+    values: tuple[dict[str, Any], ...],
+) -> RuntimeOverrides:
+    """Return runtime fields explicitly set by an ordered Helm values stack."""
+    image: str | None = None
+    resource_name: str | None = None
+    selector_key: str | None = None
+    selector_value: str | None = None
+    for item in values:
+        runtime = item.get("runtime")
+        if not isinstance(runtime, dict):
+            continue
+        vllm = runtime.get("vllm")
+        if not isinstance(vllm, dict):
+            continue
+        if "image" in vllm:
+            value = vllm["image"]
+            if not isinstance(value, str):
+                raise DeploymentError("runtime.vllm.image must be a string")
+            image = value
+        gpu = vllm.get("gpu")
+        if not isinstance(gpu, dict):
+            continue
+        if "resourceName" in gpu:
+            value = gpu["resourceName"]
+            if not isinstance(value, str):
+                raise DeploymentError(
+                    "runtime.vllm.gpu.resourceName must be a string"
+                )
+            resource_name = value
+        selector = gpu.get("nodeSelector")
+        if not isinstance(selector, dict):
+            continue
+        if "key" in selector:
+            value = selector["key"]
+            if not isinstance(value, str):
+                raise DeploymentError(
+                    "runtime.vllm.gpu.nodeSelector.key must be a string"
+                )
+            selector_key = value
+        if "value" in selector:
+            value = selector["value"]
+            if not isinstance(value, str):
+                raise DeploymentError(
+                    "runtime.vllm.gpu.nodeSelector.value must be a string"
+                )
+            selector_value = value
+
+    if bool(selector_key) != bool(selector_value):
+        raise DeploymentError(
+            "runtime.vllm.gpu.nodeSelector.key and value must be set together"
+        )
+    selector = (
+        (selector_key, selector_value)
+        if selector_key is not None and selector_value is not None
+        else None
+    )
+    return RuntimeOverrides(image, resource_name, selector)
 
 
 def load_balancer_config_from_values(

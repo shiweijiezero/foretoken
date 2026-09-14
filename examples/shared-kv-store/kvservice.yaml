@@ -1,0 +1,54 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: KVService
+metadata:
+  name: shared-kv
+spec:
+  backend: mooncakeStandaloneStore
+  master:
+    image: foretoken-mooncake
+    fsGroup: 65532
+    resources:
+      requests:
+        cpu: "1"
+        memory: 1Gi
+    snapshot:
+      size: 1Gi
+  storagePools:
+    - name: compact
+      replicas: 1
+      client:
+        image: foretoken-mooncake
+        fsGroup: 65532
+        protocol: tcp
+        resources:
+          requests:
+            cpu: "1"
+            memory: 3Gi
+        memoryCapacity: 1Gi
+        disk:
+          size: 4Gi
+        storageRegistration:
+          enabled: true
+    - name: large
+      replicas: 1
+      client:
+        image: foretoken-mooncake
+        fsGroup: 65532
+        protocol: tcp
+        resources:
+          requests:
+            cpu: "2"
+            memory: 6Gi
+        memoryCapacity: 4Gi
+        disk:
+          size: 16Gi
+        storageRegistration:
+          enabled: true
+  requester:
+    localBufferSize: 64Mi
+  timeouts:
+    startup: 5m
+    drain: 30s

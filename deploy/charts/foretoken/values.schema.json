@@ -312,8 +312,7 @@
           ],
           "properties": {
             "image": {
-              "type": "string",
-              "minLength": 1
+              "type": "string"
             },
             "profileRevision": {
               "type": "string",

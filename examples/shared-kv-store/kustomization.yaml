@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Two model services share one heterogeneous Mooncake Store.
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: foretoken-shared-kv
+resources:
+  - namespace.yaml
+  - cache.yaml
+  - frontend.yaml
+  - kvservice.yaml
+  - models.yaml

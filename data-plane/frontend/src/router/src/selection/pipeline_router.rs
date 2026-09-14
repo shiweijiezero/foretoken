@@ -402,12 +402,40 @@ impl<C: Send + 'static> RouteSession for Session<C> {
         Ok(decode.decision())
     }
 }
+#[async_trait::async_trait]
 impl<C: Send + 'static> Router for PipelineRouter<C> {
-    fn start(&self, request: RouterRequest) -> Box<dyn RouteSession> {
+    async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession> {
+        let kv_prefix_indexer =
+            if self.pipeline.filter.needs_kv_prefix() || self.pipeline.scorer.needs_kv_prefix() {
+                let candidates = self.candidates(&request);
+                let lookups = candidates
+                    .iter()
+                    .filter(|candidate| {
+                        matches!(
+                            candidate.role,
+                            ModelServerRole::Aggregate | ModelServerRole::Prefill
+                        )
+                    })
+                    .filter_map(|candidate| {
+                        request
+                            .kv_prefix_lookup(
+                                candidate.route_target_id.as_str(),
+                                candidate.data_parallel_rank,
+                            )
+                            .ok()
+                    })
+                    .collect::<Vec<_>>();
+                self.kv_prefix_indexer
+                    .prepare(&lookups)
+                    .await
+                    .unwrap_or_else(|| self.kv_prefix_indexer.clone())
+            } else {
+                self.kv_prefix_indexer.clone()
+            };
         Box::new(Session {
             router: Self {
                 inventory: self.inventory.clone(),
-                kv_prefix_indexer: self.kv_prefix_indexer.clone(),
+                kv_prefix_indexer,
                 route_target_stats_reader: self.route_target_stats_reader.clone(),
                 pipeline: self.pipeline.clone(),
             },

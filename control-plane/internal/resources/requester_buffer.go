@@ -9,7 +9,6 @@ import (
 	"fmt"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
-	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // ValidateRequesterBufferBudget ensures a per-rank Mooncake requester buffer is
@@ -18,7 +17,7 @@ func ValidateRequesterBufferBudget(resources inferencev1alpha1.ModelResources, r
 	if requesterBufferBytes < 1 {
 		return fmt.Errorf("requester buffer must be a positive exact integer byte quantity")
 	}
-	requestBytes, err := parsePositiveExactBytes("resources.requests.memory", string(resources.Requests.Memory))
+	requestBytes, err := ParsePositiveBytes("resources.requests.memory", string(resources.Requests.Memory))
 	if err != nil {
 		return err
 	}
@@ -26,7 +25,7 @@ func ValidateRequesterBufferBudget(resources inferencev1alpha1.ModelResources, r
 		return fmt.Errorf("requester buffer must be strictly less than resources.requests.memory")
 	}
 	if resources.Limits != nil && resources.Limits.Memory != nil {
-		limitBytes, err := parsePositiveExactBytes("resources.limits.memory", string(*resources.Limits.Memory))
+		limitBytes, err := ParsePositiveBytes("resources.limits.memory", string(*resources.Limits.Memory))
 		if err != nil {
 			return err
 		}
@@ -35,16 +34,4 @@ func ValidateRequesterBufferBudget(resources inferencev1alpha1.ModelResources, r
 		}
 	}
 	return nil
-}
-
-func parsePositiveExactBytes(field, value string) (int64, error) {
-	quantity, err := resource.ParseQuantity(value)
-	if err != nil {
-		return 0, fmt.Errorf("parse %s: %w", field, err)
-	}
-	bytes, exact := quantity.AsInt64()
-	if !exact || bytes < 1 {
-		return 0, fmt.Errorf("%s must be a positive exact integer byte quantity", field)
-	}
-	return bytes, nil
 }

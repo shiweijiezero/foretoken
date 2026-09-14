@@ -90,7 +90,6 @@ impl PositionalHashIndex {
     }
 
     fn matching(
-        source: &KvEventSourceId,
         entries: &[Entry],
         query: &KvPrefixQuery<'_>,
         key: &[u8; 32],
@@ -109,7 +108,6 @@ impl PositionalHashIndex {
             for partition in &partitions {
                 let mut parent = KvBlockHash(String::new());
                 let mut matched_complete_blocks = 0;
-                let mut last_matched_hash = None;
                 for (block_index, tokens) in query
                     .tokens
                     .chunks_exact(partition.hash_block_size as usize)
@@ -126,21 +124,14 @@ impl PositionalHashIndex {
                     if !found {
                         break;
                     }
-                    parent = hash.clone();
-                    last_matched_hash = Some(hash);
+                    parent = hash;
                     matched_complete_blocks += 1;
                 }
                 if matched_complete_blocks > 0 {
                     matches.push(KvPrefixMatch {
-                        event_source_id: source.event_source_id.clone(),
-                        model_group_id: source.model_group_id.clone(),
-                        epoch: source.epoch.clone(),
-                        dp_rank: source.dp_rank,
                         placement,
-                        matched_complete_blocks,
                         matched_tokens: matched_complete_blocks as usize
                             * partition.hash_block_size as usize,
-                        last_matched_hash,
                     });
                 }
             }
@@ -236,7 +227,7 @@ impl KvLocalityIndex for PositionalHashIndex {
         self.prune(now);
         self.entries_by_source
             .get(source)
-            .map(|entries| Self::matching(source, entries, query, key))
+            .map(|entries| Self::matching(entries, query, key))
             .unwrap_or_default()
     }
 }

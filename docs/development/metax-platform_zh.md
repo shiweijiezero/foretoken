@@ -9,7 +9,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 本指南供集群管理员一次性准备沐曦镜像和 Foretoken 平台。完成后，模型用户只需按[部署与调用指南](../metax-deployment_zh.md)操作，无需理解底层推理引擎的安装过程。
 
-Foretoken 使用三个镜像：controller 管理 Kubernetes 中的模型服务，frontend 接收请求，model-server 在沐曦 GPU 上执行模型。下面从同一份源码构建三个镜像，并安装配套的 Helm Chart，保证接口和 CRD（Kubernetes 自定义资源定义）与示例一致。
+发布版与其他 GPU 平台共用 controller、frontend 镜像，model-server 使用沐曦运行时镜像。自行构建时，镜像与 Helm Chart 使用同一份源码。
 
 ## 环境要求
 
@@ -23,9 +23,19 @@ Foretoken 使用三个镜像：controller 管理 Kubernetes 中的模型服务�
 
 使用监控时，先准备 Prometheus、Prometheus Operator、`ServiceMonitor`/`PrometheusRule` CRD 和覆盖沐曦节点的 mxExporter。Prometheus 需要选择平台及工作负载 namespace 中的监控资源；额外标签通过 `observability.additionalLabels` 配置。源码 Chart 不安装这些共享依赖，具体接入方式见[可观测性指南](../../observability/README_zh.md)。
 
+## 安装发布版
+
+集群驱动、device plugin 和 mxExporter 准备好后，使用统一安装命令：
+
+```bash
+foretoken install
+```
+
+CLI 根据沐曦 GPU 资源自动选择对应版本的镜像，复用或安装 Prometheus，并处理平台依赖。需要 Gateway 时添加 `--frontend-mode gateway`。混合 GPU 集群通过 `--values` 中的 `runtime.vllm.gpu.resourceName` 或 `runtime.vllm.gpu.nodeSelector` 明确范围；自定义 `runtime.vllm.image` 优先于自动镜像选择。
+
 ## 构建镜像
 
-所有命令从 Foretoken 仓库根目录执行。
+需要自定义 SDK 或推理运行时时，按以下步骤构建。所有命令从 Foretoken 仓库根目录执行。
 
 ### 1. 构建沐曦 model-server
 

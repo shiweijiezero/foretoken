@@ -46,6 +46,8 @@ uv pip install foretoken
 foretoken install
 ```
 
+安装会根据集群的 GPU 资源自动选择 NVIDIA 或沐曦运行时，`--values` 中显式指定的运行时配置优先。混合 GPU 集群通过 `runtime.vllm.gpu.resourceName` 选择资源，或通过 `runtime.vllm.gpu.nodeSelector` 限定节点范围。
+
 安装同时会配置监控；集群里已有 Prometheus 和 GPU 指标 exporter 时直接复用。详见[可观测性](../observability/README_zh.md)。
 
 ### 网关模式
@@ -139,31 +141,9 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 直接访问时，`--host` 返回主机名或 IP，以及 URL 中包含的端口；HTTP Gateway 模式下返回配置的路由域名。`foretoken endpoint` 等待 LoadBalancer 或 Gateway 分配地址；要等待服务就绪，请使用 `foretoken deploy`。
 
-## 运行评测
+## 评测模型服务
 
-使用 pip 安装可选的评测依赖：
-
-```bash
-pip install 'foretoken[bench]'
-
-# 如果使用源码安装：
-# pip install -e .
-# pip install -e '.[bench]'
-```
-
-或在已经激活的 uv 虚拟环境中安装评测依赖：
-
-```bash
-uv pip install 'foretoken[bench]'
-```
-
-然后运行评测：
-
-```bash
-foretoken bench examples/multi-model-quickstart --model Qwen/Qwen3-0.6B
-```
-
-命令行工具使用当前 `kubectl` context，并遵循 `KUBECONFIG` 等标准 Kubernetes 配置。
+使用 `foretoken bench` 评测模型服务性能，命令和示例见[模型服务性能评测](../benchmarks/README_zh.md)。
 
 ## 采集诊断 Profile
 
@@ -177,16 +157,11 @@ foretoken profile examples/quickstart --profile-engine pytorch --profile-duratio
 
 ## 清理
 
-删除同一配置渲染出的资源：
+先删除部署的服务，再卸载平台：
 
 ```bash
 foretoken delete examples/multi-model-quickstart
-```
-
-该命令会等待删除完成，并忽略已经不存在的资源。删除全部 Foretoken 服务后，可以移除平台发布实例：
-
-```bash
 foretoken uninstall
 ```
 
-仍有模型服务时该命令会拒绝执行。它删除 `foretoken install` 安装的内容，复用的集群组件和 Foretoken CRD 保持不变。
+卸载保留 Foretoken CRD 和复用的集群组件。如果其他服务仍依赖托管的 MetalLB，也会保留它。

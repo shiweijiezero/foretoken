@@ -3,7 +3,7 @@
 
 # Provides build and verification entrypoints for the Rust data plane.
 
-MOONCAKE_IMAGE ?= foretoken-mooncake:dev
+MOONCAKE_IMAGE ?= foretoken-mooncake
 
 VLLM_METAX_VERSION ?= 0.24.0
 VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)

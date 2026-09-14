@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -74,6 +76,16 @@ func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ct
 		}
 		return ctrl.Result{Requeue: true}, nil
 	}
+	desiredPools, err := normalizedKVPoolSpecs(service)
+	if err != nil {
+		condition := kvServiceCondition{reason: "InvalidConfiguration", message: err.Error()}
+		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, service, kvServiceStatus{
+			phase:          inferencev1alpha1.KVServicePhaseDegraded,
+			infrastructure: condition,
+			pools:          condition,
+			ready:          condition,
+		}))
+	}
 	binding, err := reconciler.reconcileInfrastructure(ctx, service)
 	if err != nil {
 		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, service, kvServiceStatus{
@@ -90,7 +102,7 @@ func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ct
 	pools, err := reconciler.ownedPools(ctx, service)
 	poolsConverged, capacityAvailable := false, false
 	if err == nil {
-		poolsConverged, capacityAvailable, err = kvPoolState(service, pools)
+		poolsConverged, capacityAvailable, err = kvPoolState(pools, desiredPools)
 	}
 	if err != nil {
 		return ctrl.Result{}, errors.Join(err, reconciler.updateStatus(ctx, service, kvServiceStatus{
@@ -102,7 +114,7 @@ func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ct
 	}
 	// Use one complete observation for availability and writes so a Pool
 	// create or delete failure does not revoke other compatible capacity.
-	applyErr := reconciler.reconcilePools(ctx, service, pools)
+	applyErr := reconciler.reconcilePools(ctx, service, pools, desiredPools)
 	ready := infrastructureReady && capacityAvailable
 	phase := inferencev1alpha1.KVServicePhaseProgressing
 	if ready && poolsConverged {
@@ -293,28 +305,32 @@ func (reconciler *KVServiceReconciler) applyOwned(ctx context.Context, owner *in
 }
 
 // reconcilePools converges the KVService storage-pool intent into owned KVPools.
-func (reconciler *KVServiceReconciler) reconcilePools(ctx context.Context, service *inferencev1alpha1.KVService, owned []inferencev1alpha1.KVPool) error {
+func (reconciler *KVServiceReconciler) reconcilePools(ctx context.Context, service *inferencev1alpha1.KVService, owned []inferencev1alpha1.KVPool, desired []inferencev1alpha1.KVPoolSpec) error {
 	byName := map[string]*inferencev1alpha1.KVPool{}
 	for index := range owned {
 		pool := &owned[index]
 		byName[pool.Spec.PoolName] = pool
 	}
 	desiredNames := map[string]struct{}{}
-	for _, template := range service.Spec.StoragePools {
-		desiredNames[template.Name] = struct{}{}
-		pool := byName[template.Name]
+	for _, desiredSpec := range desired {
+		desiredNames[desiredSpec.PoolName] = struct{}{}
+		pool := byName[desiredSpec.PoolName]
 		if pool == nil {
-			pool = &inferencev1alpha1.KVPool{ObjectMeta: metav1.ObjectMeta{Namespace: service.Namespace, Name: poolObjectName(service, template.Name)}}
+			pool = &inferencev1alpha1.KVPool{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: service.Namespace,
+					Name:      poolObjectName(service, desiredSpec.PoolName),
+				},
+				Spec: desiredSpec,
+			}
 			if err := controllerutil.SetControllerReference(service, pool, reconciler.Scheme()); err != nil {
 				return err
 			}
-			pool.Spec = normalizedKVPoolSpec(service, template)
 			if err := reconciler.Create(ctx, pool); err != nil {
-				return fmt.Errorf("create KVPool %q: %w", template.Name, err)
+				return fmt.Errorf("create KVPool %q: %w", desiredSpec.PoolName, err)
 			}
 			continue
 		}
-		desiredSpec := normalizedKVPoolSpec(service, template)
 		if reflect.DeepEqual(pool.Spec, desiredSpec) {
 			continue
 		}
@@ -347,8 +363,37 @@ func (reconciler *KVServiceReconciler) reconcilePools(ctx context.Context, servi
 	return nil
 }
 
+// normalizedKVPoolSpecs resolves each Pool once for both observation and writes.
+func normalizedKVPoolSpecs(service *inferencev1alpha1.KVService) ([]inferencev1alpha1.KVPoolSpec, error) {
+	pools := make([]inferencev1alpha1.KVPoolSpec, 0, len(service.Spec.StoragePools))
+	for _, template := range service.Spec.StoragePools {
+		pool, err := normalizedKVPoolSpec(service, template)
+		if err != nil {
+			return nil, fmt.Errorf("storage pool %q: %w", template.Name, err)
+		}
+		pools = append(pools, pool)
+	}
+	return pools, nil
+}
+
 // normalizedKVPoolSpec freezes client configuration and the resolved admin port for a KVPool.
-func normalizedKVPoolSpec(service *inferencev1alpha1.KVService, template inferencev1alpha1.KVStoragePoolTemplate) inferencev1alpha1.KVPoolSpec {
+// Capacity spellings resolve to byte counts before revision calculation.
+func normalizedKVPoolSpec(service *inferencev1alpha1.KVService, template inferencev1alpha1.KVStoragePoolTemplate) (inferencev1alpha1.KVPoolSpec, error) {
+	memoryBytes, err := resourcevalidation.ParsePositiveBytes("client.memoryCapacity", string(template.Client.MemoryCapacity))
+	if err != nil {
+		return inferencev1alpha1.KVPoolSpec{}, err
+	}
+	if template.Client.Disk == nil {
+		return inferencev1alpha1.KVPoolSpec{}, fmt.Errorf("client.disk is required for standalone Store offload")
+	}
+	diskBytes, err := resourcevalidation.ParsePositiveBytes("client.disk.size", string(template.Client.Disk.Size))
+	if err != nil {
+		return inferencev1alpha1.KVPoolSpec{}, err
+	}
+	template.Client.MemoryCapacity = inferencev1alpha1.ResourceQuantity(strconv.FormatInt(memoryBytes, 10))
+	disk := *template.Client.Disk
+	disk.Size = inferencev1alpha1.ResourceQuantity(strconv.FormatInt(diskBytes, 10))
+	template.Client.Disk = &disk
 	if template.Client.Port == 0 {
 		template.Client.Port = 50052
 	}
@@ -369,7 +414,14 @@ func normalizedKVPoolSpec(service *inferencev1alpha1.KVService, template inferen
 	if template.Client.StorageRegistration != nil && template.Client.StorageRegistration.Enabled {
 		_, _, adminPort = masterPorts(service.Spec.Master)
 	}
-	return inferencev1alpha1.KVPoolSpec{KVServiceRef: inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)}, PoolName: template.Name, Revision: kvPoolRevision(normalized, masterService, rpcPort), MasterAdminPort: adminPort, DesiredGroups: template.Replicas, Template: normalized}
+	return inferencev1alpha1.KVPoolSpec{
+		KVServiceRef:    inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)},
+		PoolName:        template.Name,
+		Revision:        kvPoolRevision(normalized, masterService, rpcPort),
+		MasterAdminPort: adminPort,
+		DesiredGroups:   template.Replicas,
+		Template:        normalized,
+	}, nil
 }
 
 func poolObjectName(service *inferencev1alpha1.KVService, poolName string) string {
@@ -414,7 +466,7 @@ func (reconciler *KVServiceReconciler) infrastructureReady(ctx context.Context, 
 
 // kvPoolState validates the complete Pool observation before writes and reports
 // convergence separately from compatible client Kubernetes availability.
-func kvPoolState(service *inferencev1alpha1.KVService, pools []inferencev1alpha1.KVPool) (bool, bool, error) {
+func kvPoolState(pools []inferencev1alpha1.KVPool, desiredPools []inferencev1alpha1.KVPoolSpec) (bool, bool, error) {
 	byName := make(map[string]*inferencev1alpha1.KVPool, len(pools))
 	for index := range pools {
 		pool := &pools[index]
@@ -423,10 +475,9 @@ func kvPoolState(service *inferencev1alpha1.KVService, pools []inferencev1alpha1
 		}
 		byName[pool.Spec.PoolName] = pool
 	}
-	converged, available := len(pools) == len(service.Spec.StoragePools), false
-	for _, template := range service.Spec.StoragePools {
-		pool := byName[template.Name]
-		desired := normalizedKVPoolSpec(service, template)
+	converged, available := len(pools) == len(desiredPools), false
+	for _, desired := range desiredPools {
+		pool := byName[desired.PoolName]
 		if pool == nil || !pool.DeletionTimestamp.IsZero() || pool.Spec.KVServiceRef != desired.KVServiceRef || pool.Spec.Revision != desired.Revision || pool.Spec.MasterAdminPort != desired.MasterAdminPort || !reflect.DeepEqual(pool.Spec.Template, desired.Template) {
 			converged = false
 			continue
@@ -436,11 +487,11 @@ func kvPoolState(service *inferencev1alpha1.KVService, pools []inferencev1alpha1
 		// Pools with changed templates or transports were excluded above, and a
 		// zero-target Pool provides no capacity.
 		condition := meta.FindStatusCondition(pool.Status.Conditions, conditionReady)
-		if template.Replicas > 0 && condition != nil && condition.Status == metav1.ConditionTrue {
+		if desired.DesiredGroups > 0 && condition != nil && condition.Status == metav1.ConditionTrue {
 			available = true
 		}
 		materialized := meta.FindStatusCondition(pool.Status.Conditions, conditionGroupsMaterialized)
-		settled := pool.Status.Phase == inferencev1alpha1.KVPoolPhaseReady || (template.Replicas == 0 && pool.Status.Phase == inferencev1alpha1.KVPoolPhasePending)
+		settled := pool.Status.Phase == inferencev1alpha1.KVPoolPhaseReady || (desired.DesiredGroups == 0 && pool.Status.Phase == inferencev1alpha1.KVPoolPhasePending)
 		if pool.Spec.DesiredGroups != desired.DesiredGroups || pool.Status.ObservedGeneration != pool.Generation || materialized == nil || materialized.Status != metav1.ConditionTrue || materialized.ObservedGeneration != pool.Generation || !settled {
 			converged = false
 		}

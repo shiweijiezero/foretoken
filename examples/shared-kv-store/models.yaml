@@ -1,0 +1,68 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: qwen3
+spec:
+  model: Qwen/Qwen3-0.6B
+  backend: vllm
+  replicas: 1
+  nodes: 1
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      gpu:
+        count: 1
+    limits:
+      cpu: "8"
+      memory: 24Gi
+  timeouts:
+    startup: 10m
+    drain: 2m
+  parallelism:
+    tp: 1
+    pp: 1
+    pcp: 1
+    dcp: 1
+  kvCache:
+    mooncakeStore:
+      kvServiceRef:
+        name: shared-kv
+  extraArgs:
+    - --max-model-len=8192
+---
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: qwen2-5
+spec:
+  model: Qwen/Qwen2.5-0.5B-Instruct
+  backend: vllm
+  replicas: 1
+  nodes: 1
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      gpu:
+        count: 1
+    limits:
+      cpu: "8"
+      memory: 24Gi
+  timeouts:
+    startup: 10m
+    drain: 2m
+  parallelism:
+    tp: 1
+    pp: 1
+    pcp: 1
+    dcp: 1
+  kvCache:
+    mooncakeStore:
+      kvServiceRef:
+        name: shared-kv
+  extraArgs:
+    - --max-model-len=8192

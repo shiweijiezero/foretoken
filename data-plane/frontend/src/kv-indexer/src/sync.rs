@@ -13,6 +13,9 @@ use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
+
+const OBSERVATION_CONCURRENCY: usize = 16;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KvEventSourceConfig {
@@ -36,6 +39,9 @@ pub struct KvRouteBinding {
     pub readable_placements: BTreeSet<KvPlacement>,
     #[serde(default)]
     pub can_restore_or_transfer: bool,
+    /// Controller-owned query-sharing scope; layout compatibility is checked separately.
+    #[serde(default)]
+    pub shared_lookup_scope: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -379,7 +385,7 @@ impl KvIndexer {
                 )
             }
         }))
-        .buffer_unordered(16)
+        .buffer_unordered(OBSERVATION_CONCURRENCY)
         .collect::<Vec<_>>()
         .await;
         for (source, result) in updates {
@@ -413,7 +419,7 @@ impl KvIndexer {
 fn kv_http_client() -> reqwest::Client {
     // Bound connection, response, and body reads so a hung source cannot retain a refresh round.
     reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
+        .timeout(foretoken_model_protocol::KV_OBSERVATION_TIMEOUT)
         .build()
         .expect("static KV index HTTP client configuration is valid")
 }
@@ -450,10 +456,155 @@ async fn fetch_delta(
     }
 }
 
+// A prepared reader belongs to one routing request; external observations never enter the event index.
+struct PreparedPrefixes(BTreeMap<(String, u32), KvPrefixQueryResult>);
+impl KvPrefixIndexer for PreparedPrefixes {
+    fn prefix_matches(&self, lookup: KvPrefixLookup<'_>) -> KvPrefixQueryResult {
+        self.0
+            .get(&(lookup.route_target_id.to_owned(), lookup.data_parallel_rank))
+            .cloned()
+            .unwrap_or(KvPrefixQueryResult::Unavailable(
+                KvPrefixUnavailableReason::MissingBinding,
+            ))
+    }
+}
+
+#[async_trait::async_trait]
 impl KvPrefixIndexer for KvIndexer {
+    async fn prepare(
+        &self,
+        lookups: &[KvPrefixLookup<'_>],
+    ) -> Option<std::sync::Arc<dyn KvPrefixIndexer>> {
+        self.state.as_ref()?;
+        // Query once per actual Store and compatible layout, not once per candidate replica.
+        let mut shared = BTreeMap::new();
+        let mut targets = BTreeMap::new();
+        for lookup in lookups {
+            let Some(binding) = self.config.route_bindings.get(lookup.route_target_id) else {
+                continue;
+            };
+            let Some(store_id) = binding.shared_lookup_scope.as_deref() else {
+                continue;
+            };
+            if !binding.can_restore_or_transfer {
+                continue;
+            }
+            let Some(source_id) = binding
+                .data_parallel_rank_event_source_ids
+                .get(&lookup.data_parallel_rank)
+            else {
+                continue;
+            };
+            let Some(source) = self.source(source_id) else {
+                continue;
+            };
+            let key = (store_id.to_owned(), source.scope_id.clone());
+            shared
+                .entry(key.clone())
+                .or_insert_with(|| (source.clone(), lookup.prompt_token_ids.to_vec()));
+            targets.insert(
+                (lookup.route_target_id.to_owned(), lookup.data_parallel_rank),
+                key,
+            );
+        }
+        if shared.is_empty() {
+            return None;
+        }
+        let queries = stream::iter(
+            shared
+                .into_iter()
+                .map(|(key, (source, tokens))| async move {
+                    let response = fetch_shared_prefix(&self.client, &source, &tokens).await;
+                    (key, response)
+                }),
+        )
+        .buffer_unordered(OBSERVATION_CONCURRENCY);
+        tokio::pin!(queries);
+        let deadline = tokio::time::sleep(foretoken_model_protocol::KV_OBSERVATION_TIMEOUT);
+        tokio::pin!(deadline);
+        let mut observations = BTreeMap::new();
+        loop {
+            tokio::select! {
+                _ = &mut deadline => break,
+                observation = queries.next() => match observation {
+                    Some((key, response)) => { observations.insert(key, response); }
+                    None => break,
+                },
+            }
+        }
+        let mut prepared = BTreeMap::new();
+        for lookup in lookups {
+            let id = (lookup.route_target_id.to_owned(), lookup.data_parallel_rank);
+            let local = self.query(*lookup);
+            let Some(key) = targets.get(&id) else {
+                prepared.insert(id, local);
+                continue;
+            };
+            let observation = observations.get(key).and_then(Option::as_ref);
+            let mut matches = match &local {
+                KvPrefixQueryResult::Matches(matches) => {
+                    matches.clone().into_iter().collect::<Vec<_>>()
+                }
+                KvPrefixQueryResult::Unavailable(_) => Vec::new(),
+            };
+            if let Some(response) = observation.filter(|response| response.matched_tokens > 0) {
+                matches.push(KvPrefixMatch {
+                    placement: KvPlacement {
+                        tier: KvStorageTier::External,
+                        locality: KvCacheLocality::Remote,
+                    },
+                    matched_tokens: response.matched_tokens,
+                });
+            }
+            let result = if !matches.is_empty()
+                || (observation.is_some() && matches!(local, KvPrefixQueryResult::Matches(_)))
+            {
+                KvPrefixQueryResult::Matches(KvPrefixMatches::new(matches))
+            } else {
+                KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::SourceUnhealthy)
+            };
+            prepared.insert(id, result);
+        }
+        Some(std::sync::Arc::new(PreparedPrefixes(prepared)))
+    }
+
     fn prefix_matches(&self, lookup: KvPrefixLookup<'_>) -> KvPrefixQueryResult {
         self.query(lookup)
     }
+}
+
+async fn fetch_shared_prefix(
+    client: &reqwest::Client,
+    source: &KvEventSourceConfig,
+    tokens: &[u32],
+) -> Option<foretoken_model_protocol::KvSharedPrefixResponse> {
+    let url = format!(
+        "{}{}",
+        source.endpoint.trim_end_matches('/'),
+        foretoken_model_protocol::KV_SHARED_PREFIX_PATH
+    );
+    let response = client
+        .post(url)
+        .json(&foretoken_model_protocol::KvSharedPrefixRequest {
+            prompt_token_ids: tokens.to_vec(),
+            dp_rank: source.dp_rank,
+        })
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let response: foretoken_model_protocol::KvSharedPrefixResponse = response.json().await.ok()?;
+    if response.model_group_id != source.model_group_id
+        || response.scope_id != source.scope_id
+        || response.block_size == 0
+        || response.matched_tokens > tokens.len()
+        || !response.matched_tokens.is_multiple_of(response.block_size)
+    {
+        return None;
+    }
+    Some(response)
 }
 // Validates source identity and cursor continuity, applies the delta, then advances the
 // source-owned cursor; invalid input clears only that source's cached locality facts.

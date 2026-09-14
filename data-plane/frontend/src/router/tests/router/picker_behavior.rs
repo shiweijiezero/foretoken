@@ -95,8 +95,8 @@ impl RouteScorer for InvalidScorer {
 }
 
 // Protects extension algorithms from corrupting routing with invalid indexes or score counts.
-#[test]
-fn malformed_algorithm_outputs_are_explicit_errors() {
+#[tokio::test]
+async fn malformed_algorithm_outputs_are_explicit_errors() {
     let make_router = |filter: Arc<dyn RouteFilter>, scorer: Arc<dyn RouteScorer>, picker| {
         let inventory = inventory(vec![route("a", ModelServerRole::Aggregate)]);
         PipelineRouter::with_pipeline(inventory, RouterPipeline::new(filter, scorer, picker))
@@ -109,6 +109,7 @@ fn malformed_algorithm_outputs_are_explicit_errors() {
             Arc::new(InvalidPicker),
         )
         .start(request())
+        .await
         .select_initial(),
         Err(RouteError::InvalidFilterIndex { index: 1 })
     );
@@ -119,6 +120,7 @@ fn malformed_algorithm_outputs_are_explicit_errors() {
             Arc::new(InvalidPicker),
         )
         .start(request())
+        .await
         .select_initial(),
         Err(RouteError::DuplicateFilterIndex { index: 0 })
     );
@@ -129,6 +131,7 @@ fn malformed_algorithm_outputs_are_explicit_errors() {
             Arc::new(InvalidPicker),
         )
         .start(request())
+        .await
         .select_initial(),
         Err(RouteError::InvalidScorerResult {
             expected: 1,
@@ -142,6 +145,7 @@ fn malformed_algorithm_outputs_are_explicit_errors() {
             Arc::new(EmptyPicker),
         )
         .start(request())
+        .await
         .select_initial(),
         Err(RouteError::EmptyPickerResult)
     );
@@ -152,6 +156,7 @@ fn malformed_algorithm_outputs_are_explicit_errors() {
             Arc::new(InvalidPicker),
         )
         .start(request())
+        .await
         .select_initial(),
         Err(RouteError::InvalidPickerIndex { index: 1 })
     );

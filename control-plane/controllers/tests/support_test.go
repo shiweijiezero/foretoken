@@ -82,7 +82,7 @@ func modelPool(service *inferencev1alpha1.ModelService, name string, desired int
 			ModelServiceRef: inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)},
 			PoolName:        "default", DesiredGroups: desired,
 			Template: inferencev1alpha1.NormalizedPoolTemplate{
-				Model: service.Spec.Model, ModelRevision: "main", Tokenizer: service.Spec.Model, TokenizerRevision: "main", Backend: "vllm",
+				Model: service.Spec.Model, Source: inferencev1alpha1.ModelSourceHF, ModelRevision: "main", Tokenizer: service.Spec.Model, TokenizerRevision: "main", Backend: "vllm",
 				Role: inferencev1alpha1.ModelRoleAggregate, NodeCount: 1, MemberCount: 1,
 				Resources:                             *service.Spec.Resources,
 				Parallelism:                           inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1},
@@ -102,7 +102,7 @@ func modelGroup(pool *inferencev1alpha1.ModelPool, name string, ordinal int32) *
 		Spec: inferencev1alpha1.ModelGroupSpec{
 			ModelPoolRef: inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
 			Revision:     "r1", Ordinal: ordinal, Role: pool.Spec.Template.Role,
-			Artifacts: inferencev1alpha1.ModelGroupArtifacts{Model: pool.Spec.Template.Model, ModelRevision: pool.Spec.Template.ModelRevision, Tokenizer: pool.Spec.Template.Tokenizer, TokenizerRevision: pool.Spec.Template.TokenizerRevision, Cache: pool.Spec.Template.RuntimeCache.DeepCopy(), SourceAccess: pool.Spec.Template.SourceAccess.DeepCopy()},
+			Artifacts: inferencev1alpha1.ModelGroupArtifacts{Model: pool.Spec.Template.Model, Source: pool.Spec.Template.Source, ModelRevision: pool.Spec.Template.ModelRevision, Tokenizer: pool.Spec.Template.Tokenizer, TokenizerRevision: pool.Spec.Template.TokenizerRevision, Cache: pool.Spec.Template.RuntimeCache.DeepCopy(), HuggingFaceAccess: pool.Spec.Template.HuggingFaceAccess.DeepCopy()},
 			Runtime: inferencev1alpha1.ModelGroupRuntime{
 				Backend:                               "vllm",
 				Image:                                 "vllm:test",

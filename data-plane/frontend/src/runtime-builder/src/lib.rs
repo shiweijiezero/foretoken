@@ -17,7 +17,7 @@ use foretoken_server::{
     KvIndexDiagnostics, ModelRuntime, RuntimeBundle, RuntimeControl, RuntimeGeneration,
     RuntimeState,
 };
-use foretoken_text::{HfSnapshotRuntime, load_hf_snapshot_runtime};
+use foretoken_text::{SnapshotRuntime, load_snapshot_runtime};
 use thiserror::Error;
 
 #[derive(Debug, Clone, Copy)]
@@ -228,12 +228,13 @@ async fn model_runtimes(
         let model_dtype = registry
             .effective_model_dtype(&model)
             .map_err(RuntimeBuildError::ModelRuntime)?;
-        let HfSnapshotRuntime {
+        let SnapshotRuntime {
             text_processor,
             tokenizer,
             chat_processor,
             supports_multimodal,
-        } = load_hf_snapshot_runtime(
+        } = load_snapshot_runtime(
+            identity.source,
             &identity.tokenizer,
             &identity.tokenizer_revision,
             max_model_len,

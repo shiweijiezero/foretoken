@@ -5,9 +5,11 @@
 
 use std::future::IntoFuture;
 use std::io;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
+use foretoken_artifacts::ModelSource;
 use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity};
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
@@ -16,6 +18,7 @@ use foretoken_model_server::kv_event_adapter::KvEventAdapter;
 use foretoken_model_server::profiling;
 use foretoken_model_server::runtime_cache;
 use foretoken_model_server::runtime_transport::LOOPBACK_HOST;
+use foretoken_model_server::shared_kv;
 use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tracing::{error, info, warn};
@@ -28,6 +31,7 @@ use vllm_managed_engine::{ManagedEngineHandle, allocate_handshake_port};
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
 const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
+const TEMPORARY_MODEL_SOURCE_ROOT: &str = "/tmp/foretoken-model-source";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -206,6 +210,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(kv_events) = kv_events {
         app_state = app_state.with_kv_events(kv_events);
     }
+    if config.launch.kv.shared_prefix_lookup() {
+        app_state = app_state.with_shared_kv(shared_kv::SharedKvLookup::new(
+            required_env(MODEL_GROUP_UID_ENV)?,
+            required_env(KV_SCOPE_ENV)?,
+        ));
+    }
     if let Some(cache_config) = cache_config {
         app_state = app_state.with_runtime_cache(cache_config);
     }
@@ -382,7 +392,7 @@ async fn start_engine_attempt(
     startup_deadline: Instant,
     cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
 ) -> Result<(ManagedEngineHandle, EngineCoreClient), EngineStartupFailure> {
-    let environment = if let Some(cache) = cache {
+    let mut environment = if let Some(cache) = cache {
         cache.set_mode(mode);
         cache
             .prepare(mode)
@@ -398,29 +408,43 @@ async fn start_engine_attempt(
             cache_mode_failure(mode, "profiling storage preparation failed", error)
         })?;
     }
+    if config.launch.kv.shared_prefix_lookup() {
+        let mut python_paths = vec![std::path::PathBuf::from(shared_kv::PYTHON_MODULE_PATH)];
+        if let Some(existing) = std::env::var_os("PYTHONPATH") {
+            python_paths.extend(std::env::split_paths(&existing));
+        }
+        let python_path = std::env::join_paths(python_paths)
+            .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
+        environment.push((
+            "PYTHONPATH".into(),
+            python_path.to_string_lossy().into_owned(),
+        ));
+        environment.push((
+            shared_kv::LOOKUP_ENDPOINT_ENV.into(),
+            shared_kv::LOOKUP_ENDPOINT.into(),
+        ));
+    }
+    let model_root = cache
+        .map(|cache| cache.model_root(mode))
+        .or_else(foretoken_artifacts::model_root)
+        .unwrap_or_else(|| PathBuf::from(TEMPORARY_MODEL_SOURCE_ROOT));
+    environment.extend(config.launch.source_environment(&model_root));
     let handshake_port = allocate_handshake_port(LOOPBACK_HOST)
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
     let mut managed_engine = config
         .launch
         .managed_engine(handshake_port)
         .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;
-    // Resolve mounted local artifacts without changing the public model identity or
-    // overriding an independently configured tokenizer. Hub cache paths stay upstream-owned.
-    if let Some(cache) = cache {
-        if let Some(model) = cache
-            .local_artifact_path(&config.launch.artifacts.model)
-            .map_err(EngineStartupFailure::Other)?
-        {
-            managed_engine.model = model;
-        }
-        if let Some(tokenizer) = cache
-            .local_artifact_path(&config.launch.artifacts.tokenizer)
-            .map_err(EngineStartupFailure::Other)?
-        {
-            for argument in &mut managed_engine.python_args {
-                if argument.starts_with("--tokenizer=") {
-                    *argument = format!("--tokenizer={tokenizer}");
-                }
+    // Local source is strict: both identifiers must resolve before any engine process starts.
+    if config.launch.artifacts.source == ModelSource::Local {
+        let model = local_artifact_path(&config.launch.artifacts.model)
+            .map_err(EngineStartupFailure::Other)?;
+        let tokenizer = local_artifact_path(&config.launch.artifacts.tokenizer)
+            .map_err(EngineStartupFailure::Other)?;
+        managed_engine.model = model;
+        for argument in &mut managed_engine.python_args {
+            if argument.starts_with("--tokenizer=") {
+                *argument = format!("--tokenizer={tokenizer}");
             }
         }
     }
@@ -493,6 +517,23 @@ async fn start_engine_attempt(
     }
 }
 
+fn local_artifact_path(identifier: &str) -> io::Result<String> {
+    let root = foretoken_artifacts::model_root();
+    let path =
+        foretoken_artifacts::resolve_directory(root.as_deref(), identifier)?.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("local artifact {identifier:?} was not found"),
+            )
+        })?;
+    path.into_os_string().into_string().map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "local artifact path is not UTF-8",
+        )
+    })
+}
+
 async fn wait_cache_server(server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>) -> String {
     let Some(server) = server else {
         return std::future::pending().await;
@@ -504,14 +545,17 @@ async fn wait_cache_server(server: &mut Option<tokio::task::JoinHandle<io::Resul
     }
 }
 
-/// Select request and output layouts using the same cache environment as the managed engine.
+/// Select protocol layouts from installed package metadata without loading engine plugins.
 async fn detect_engine_protocol(
     python: &str,
     environment: &[(String, String)],
 ) -> Result<EngineCoreProtocol, Box<dyn std::error::Error>> {
     let output = tokio::process::Command::new(python)
         .envs(environment.iter().cloned())
-        .args(["-c", "import vllm; print(vllm.__version__)"])
+        .args([
+            "-c",
+            "from importlib.metadata import version; print(version('vllm'))",
+        ])
         .output()
         .await?;
     if !output.status.success() {

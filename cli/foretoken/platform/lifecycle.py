@@ -5,9 +5,13 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
 from foretoken.accelerators.discovery import ExporterDiscovery
-from foretoken.accelerators.metax import MetaXMetricsDiscovery
-from foretoken.accelerators.nvidia import NvidiaMetricsDiscovery
+from foretoken.accelerators.metax import METAX_GPU_RESOURCES, MetaXMetricsDiscovery
+from foretoken.accelerators.nvidia import NVIDIA_GPU_RESOURCE, NvidiaMetricsDiscovery
 from foretoken.arguments import InstallCommand, UninstallCommand
 from foretoken.kubernetes import (
     Kubectl,
@@ -21,12 +25,14 @@ from foretoken.manifest import DeploymentError
 from foretoken.observability import PrometheusRef, select_prometheus
 from foretoken.platform.config import (
     default_platform_config,
-    resolve_load_balancer_config,
     load_platform_values,
+    resolve_load_balancer_config,
+    runtime_overrides_from_values,
 )
 from foretoken.platform.gateway import GatewayControllerLifecycle
 from foretoken.platform.helm import Helm
 from foretoken.platform.load_balancer import LoadBalancerLifecycle
+from foretoken.platform.types import RuntimeOverrides
 from foretoken.source import (
     prepare_source_images,
     restart_changed_source_deployments,
@@ -36,6 +42,71 @@ from foretoken.source import (
 def _print_plan(responsibility: str, action: str, detail: str) -> None:
     """Print one stable installation lifecycle decision."""
     print(f"{responsibility:<28} {action:<20} {detail}")
+
+
+@dataclass(frozen=True)
+class _RuntimeSelection:
+    """One accelerator backend and Kubernetes resource selected for the platform."""
+
+    backend: str
+    resource_name: str
+
+
+def _resource_capacity(node: dict[str, Any], resource_name: str) -> int:
+    """Return one node's allocatable extended-resource capacity."""
+    value = ((node.get("status") or {}).get("allocatable") or {}).get(
+        resource_name
+    )
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _select_runtime(
+    nodes: tuple[dict[str, Any], ...], overrides: RuntimeOverrides
+) -> _RuntimeSelection | None:
+    """Select the single supported accelerator resource within the configured scope."""
+    selected_nodes = nodes
+    if overrides.gpu_node_selector is not None:
+        key, value = overrides.gpu_node_selector
+        if key:
+            selected_nodes = tuple(
+                node
+                for node in nodes
+                if ((node.get("metadata") or {}).get("labels") or {}).get(key)
+                == value
+            )
+
+    resource_backends = {
+        NVIDIA_GPU_RESOURCE: "nvidia",
+        **{resource: "metax" for resource in METAX_GPU_RESOURCES},
+    }
+    if overrides.gpu_resource_name is not None:
+        resource_name = overrides.gpu_resource_name
+        if not resource_name:
+            return None
+        return _RuntimeSelection(
+            resource_backends.get(resource_name, "custom"), resource_name
+        )
+
+    resources = tuple(
+        resource
+        for resource in resource_backends
+        if any(_resource_capacity(node, resource) > 0 for node in selected_nodes)
+    )
+    if not resources:
+        return None
+    if len(resources) > 1:
+        raise DeploymentError(
+            "multiple accelerator resources are allocatable in the selected "
+            "cluster scope: "
+            + ", ".join(resources)
+            + "; set runtime.vllm.gpu.resourceName or runtime.vllm.gpu.nodeSelector "
+            "in --values"
+        )
+    resource_name = resources[0]
+    return _RuntimeSelection(resource_backends[resource_name], resource_name)
 
 
 class PlatformLifecycle:
@@ -76,6 +147,28 @@ class PlatformLifecycle:
                     f"run {command_hint}"
                 )
         values = load_platform_values(command.values)
+        current_runtime = runtime_overrides_from_values(values)
+        stored_runtime = (
+            runtime_overrides_from_values((helm.release_user_values(platform),))
+            if platform_exists
+            else RuntimeOverrides()
+        )
+        runtime_scope = RuntimeOverrides(
+            gpu_resource_name=(
+                current_runtime.gpu_resource_name
+                if current_runtime.gpu_resource_name is not None
+                else (
+                    None
+                    if current_runtime.gpu_node_selector is not None
+                    else stored_runtime.gpu_resource_name
+                )
+            ),
+            gpu_node_selector=(
+                current_runtime.gpu_node_selector
+                if current_runtime.gpu_node_selector is not None
+                else stored_runtime.gpu_node_selector
+            ),
+        )
         load_balancer_config = resolve_load_balancer_config(values)
 
         deployments = control_plane_deployments(kubectl)
@@ -120,6 +213,51 @@ class PlatformLifecycle:
                 "use its existing Helm lifecycle"
             )
         exporter_discovery = ExporterDiscovery(kubectl)
+        runtime_selection = _select_runtime(exporter_discovery.nodes, runtime_scope)
+
+        source_runtime_image: str | None = None
+        configured_runtime_image = (
+            current_runtime.image
+            if current_runtime.image is not None
+            else stored_runtime.image
+        )
+        if command.editable is not None:
+            if current_runtime.image not in {None, "auto"}:
+                source_runtime_image = current_runtime.image or None
+            elif runtime_selection is not None and runtime_selection.backend == "metax":
+                source_runtime_image = helm.platform_runtime_image(
+                    Path(command.editable).expanduser().resolve(),
+                    runtime_selection.resource_name,
+                )
+            elif (
+                runtime_selection is not None
+                and runtime_selection.backend == "custom"
+            ):
+                raise DeploymentError(
+                    "runtime.vllm.image must be set in --values for source builds on "
+                    f"GPU resource {runtime_selection.resource_name}"
+                )
+        elif (
+            runtime_selection is not None
+            and runtime_selection.backend == "custom"
+            and configured_runtime_image in {None, "auto"}
+        ):
+            raise DeploymentError(
+                "runtime.vllm.image must be set in --values for GPU resource "
+                f"{runtime_selection.resource_name}"
+            )
+
+        gpu_resource_name = (
+            runtime_selection.resource_name
+            if runtime_selection is not None
+            and current_runtime.gpu_resource_name is None
+            and (
+                stored_runtime.gpu_resource_name is None
+                or current_runtime.gpu_node_selector is not None
+            )
+            else None
+        )
+
         nvidia_metrics = NvidiaMetricsDiscovery(exporter_discovery).resolve(
             managed_dcgm if managed_dcgm_exists else None
         )
@@ -221,6 +359,22 @@ class PlatformLifecycle:
         _print_plan("Prometheus", prometheus_action, prometheus_detail)
         _print_plan("NVIDIA DCGM Exporter", nvidia_action, nvidia_detail)
         _print_plan("MetaX mxExporter", metax_action, metax_detail)
+        if runtime_selection is None:
+            runtime_action = "Default"
+            runtime_detail = "chart runtime (no allocatable supported GPU detected)"
+        else:
+            runtime_action = (
+                "Configured"
+                if current_runtime.gpu_resource_name is not None
+                or current_runtime.gpu_node_selector is not None
+                or stored_runtime.gpu_resource_name is not None
+                or stored_runtime.gpu_node_selector is not None
+                else "Auto-select"
+            )
+            runtime_detail = (
+                f"{runtime_selection.backend} via {runtime_selection.resource_name}"
+            )
+        _print_plan("Inference runtime", runtime_action, runtime_detail)
         _print_plan("Foretoken platform", platform_action, platform.display_name)
 
         source_images = (
@@ -229,6 +383,7 @@ class PlatformLifecycle:
                 command.registry,
                 platform.namespace,
                 command.timeout,
+                source_runtime_image,
             )
             if command.editable is not None
             else None
@@ -259,6 +414,7 @@ class PlatformLifecycle:
             gateway_section_name=command.gateway_section_name,
             gateway_controller_name=gateway_plan.controller_name,
             observability_labels=observability_labels,
+            gpu_resource_name=gpu_resource_name,
             reuse_values=platform_exists,
             timeout=command.timeout,
         )

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -213,7 +214,8 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		{Name: "FORETOKEN_KV_SCOPE_ID", Value: kvScopeID(group)},
 		{Name: "FORETOKEN_MODEL_GROUP_UID", Value: string(group.UID)},
 	}
-	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Spec.Artifacts.SourceAccess)...)
+	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache)...)
+	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
 	if group.Spec.PDRuntime != nil {
 		env = append(env,
 			corev1.EnvVar{Name: "VLLM_MOONCAKE_BOOTSTRAP_PORT", Value: strconv.Itoa(int(group.Spec.PDRuntime.BootstrapPort))},

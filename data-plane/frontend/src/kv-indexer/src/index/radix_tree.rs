@@ -215,7 +215,6 @@ impl RadixTreeIndex {
     }
 
     fn matching(
-        source: &KvEventSourceId,
         source_tree: &SourceTree,
         query: &KvPrefixQuery<'_>,
         key: &[u8; 32],
@@ -247,20 +246,14 @@ impl RadixTreeIndex {
                         best = Some((end, entry));
                     }
                 }
-                let Some((length, entry)) = best else {
+                let Some((length, _)) = best else {
                     continue;
                 };
                 let matched_complete_blocks = (length / HASH_BYTES) as u64;
                 matches.push(KvPrefixMatch {
-                    event_source_id: source.event_source_id.clone(),
-                    model_group_id: source.model_group_id.clone(),
-                    epoch: source.epoch.clone(),
-                    dp_rank: source.dp_rank,
                     placement: *placement,
-                    matched_complete_blocks,
                     matched_tokens: matched_complete_blocks as usize
                         * partition.hash_block_size as usize,
-                    last_matched_hash: Some(entry.block.block_hash.clone()),
                 });
             }
         }
@@ -353,7 +346,7 @@ impl KvLocalityIndex for RadixTreeIndex {
         self.prune(now);
         self.trees_by_source
             .get(source)
-            .map(|source_tree| Self::matching(source, source_tree, query, key))
+            .map(|source_tree| Self::matching(source_tree, query, key))
             .unwrap_or_default()
     }
 }

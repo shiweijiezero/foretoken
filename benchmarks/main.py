@@ -1,70 +1,63 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-
-"""Foretoken benchmark CLI entry point."""
+"""``foretoken bench`` HTTP benchmark entry point."""
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Sequence
-from contextlib import nullcontext
-from dataclasses import replace
 
-from benchmarks.arguments import parse_arguments
-from benchmarks.deployment import benchmark_deployment
-from benchmarks.logger.cli import configure_logging, print_endpoint
-from benchmarks.runner.select_runner import select_runner
+from benchmarks.config.benchmark import BenchmarkConfig
+from benchmarks.config.cli import parse_benchmark_arguments
+from benchmarks.runs.http import GeneratedLoadBenchmark, run_http_dataset
+from benchmarks.runs.trace import TraceReplayBenchmark
+from benchmarks.model_service import ModelService, resolve_model_service
+from benchmarks.datasets.multi_dataset import MultiDatasetBenchmark
+from benchmarks.results.console import (
+    configure_logging,
+    format_benchmark_config,
+    print_model_service,
+)
+from benchmarks.runs.sweep import ParameterSweepBenchmark
 from foretoken.manifest import DeploymentError
 
 logger = logging.getLogger(__name__)
 
 
-def main(argv: Sequence[str] | None = None) -> None:
-    """Run a benchmark against a deployment or existing endpoint."""
-    try:
-        command = parse_arguments(argv)
-        config = command.config
-        if (
-            command.kustomize_path
-            and not config.dataset.prompt
-            and not config.dataset.dataset
-        ):
-            config.dataset = replace(config.dataset, prompt="Hello")
-        config.validate()
-        if config.param_sweep.bench_params and not command.kustomize_path:
-            raise ValueError(
-                "--bench-params requires a Foretoken Kustomize deployment"
-            )
-        configure_logging(not config.output.includes("quiet"))
-        if command.kustomize_path:
-            service_context = benchmark_deployment(
-                command.kustomize_path,
-                command.wait_timeout,
-                requested_model=config.endpoint.model,
-                api_key=config.endpoint.api_key,
-            )
-        else:
-            service_context = nullcontext(None)
-        with service_context as endpoint:
-            if endpoint is not None:
-                config.endpoint = replace(
-                    config.endpoint,
-                    url=endpoint.url,
-                    model=endpoint.model,
-                    headers=endpoint.headers,
-                )
-                config.output = replace(
-                    config.output,
-                    gpu_count=endpoint.gpu_count,
-                )
-                if not config.output.includes("quiet"):
-                    print_endpoint(endpoint.url, endpoint.models, endpoint.hostname)
+def select_benchmark(
+    benchmark: BenchmarkConfig,
+    service: ModelService,
+) -> (
+    TraceReplayBenchmark
+    | ParameterSweepBenchmark
+    | MultiDatasetBenchmark
+    | GeneratedLoadBenchmark
+):
+    """Choose the benchmark that owns the configured workload; its ``run()`` returns a ``BenchmarkRun``."""
+    if benchmark.trace.trace_selector:
+        return TraceReplayBenchmark(benchmark, service)
+    if benchmark.sweep.path:
+        return ParameterSweepBenchmark(benchmark, service)
+    if benchmark.resolved_workload.has_multiple_datasets:
+        return MultiDatasetBenchmark(benchmark, service, run_http_dataset)
+    return GeneratedLoadBenchmark(benchmark, service)
 
-            logger.info("%s", config.summary())
-            result = asyncio.run(select_runner(config).run())
-            if result["metrics"]["success_num"] == 0:
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """Parse and run one benchmark command for lazy import by the top-level CLI."""
+    try:
+        benchmark = parse_benchmark_arguments(argv)
+        benchmark.validate()
+        quiet = benchmark.outputs.includes("quiet")
+        configure_logging(not quiet)
+        with resolve_model_service(benchmark.service) as service:
+            if benchmark.service.kustomize_path and not quiet:
+                print_model_service(service)
+
+            logger.info("%s", format_benchmark_config(benchmark, service))
+            run = select_benchmark(benchmark, service).run()
+            if run.metrics["success_num"] == 0:
                 raise SystemExit(1)
     except (DeploymentError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc

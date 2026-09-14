@@ -19,7 +19,7 @@ Then deploy as usual:
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-Foretoken creates the directory-backed volume for this configuration. The directory is retained when the service is deleted, so later deployments can reuse its contents.
+Foretoken creates the directory-backed volume for this configuration. The directory is retained when the service is deleted, so later deployments can reuse its contents. See [Model sources](model-sources.md) to select ModelScope or a Hugging Face-compatible endpoint.
 
 ## Choose where the directory lives
 
@@ -44,6 +44,7 @@ Set the public model identifier in `model.yaml`:
 ```yaml
 spec:
   model: checkpointA/A3
+  source: local
 ```
 
 The model server and frontend resolve this identifier below `data/models`. A tokenizer-only directory may be placed in `data/models/tokenizers`; model format validation remains with the inference engine.

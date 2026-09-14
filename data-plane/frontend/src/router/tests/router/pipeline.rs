@@ -120,8 +120,8 @@ impl RoutePicker<RoutingContext> for ContextPicker {
 }
 
 // Protects request-local algorithm state and explicit stage context across E/P/D routing.
-#[test]
-fn algorithms_share_request_state_and_observe_each_epd_selection_stage() {
+#[tokio::test]
+async fn algorithms_share_request_state_and_observe_each_epd_selection_stage() {
     let inventory = inventory(vec![
         route("e", ModelServerRole::Encoder),
         route("p", ModelServerRole::Prefill),
@@ -143,7 +143,7 @@ fn algorithms_share_request_state_and_observe_each_epd_selection_stage() {
         },
     );
     let router = PipelineRouter::with_pipeline(inventory, pipeline);
-    let mut session = router.start(request());
+    let mut session = router.start(request()).await;
 
     assert_eq!(
         session.select_initial().unwrap().role,

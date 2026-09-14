@@ -100,6 +100,19 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end -}}
 {{- end }}
 
+{{- define "foretoken.runtimeVllmImage" -}}
+{{- $image := trim .Values.runtime.vllm.image -}}
+{{- if eq $image "auto" -}}
+{{- $tag := .Chart.AppVersion -}}
+{{- if or (eq .Values.runtime.vllm.gpu.resourceName "metax-tech.com/gpu") (eq .Values.runtime.vllm.gpu.resourceName "metax-tech.com/sgpu") -}}
+{{- $tag = printf "%s-metax" $tag -}}
+{{- end -}}
+{{- printf "ghcr.io/shiweijiezero/foretoken/model-server:%s" $tag -}}
+{{- else -}}
+{{- $image -}}
+{{- end -}}
+{{- end }}
+
 {{- define "foretoken.validateValues" -}}
 {{- if eq (trim .Values.image.repository) "" -}}
 {{- fail "image.repository must reference a control-plane image" -}}
@@ -129,10 +142,10 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- if and (ne (trim .Values.runtime.vllm.modelSource.tokenSecret.name) "") (eq (trim .Values.runtime.vllm.modelSource.tokenSecret.key) "") -}}
 {{- fail "runtime.vllm.modelSource.tokenSecret.key is required when name is set" -}}
 {{- end -}}
-{{- if and (eq (trim .Values.workload.cache.claimName) "") (or (ne (trim .Values.runtime.vllm.modelSource.endpoint) "") (ne (trim .Values.runtime.vllm.modelSource.tokenSecret.name) "")) -}}
-{{- fail "workload.cache.claimName is required when runtime.vllm.modelSource is configured" -}}
+{{- if and (eq (trim .Values.runtime.vllm.image) "auto") (not (or (eq .Values.runtime.vllm.gpu.resourceName "nvidia.com/gpu") (eq .Values.runtime.vllm.gpu.resourceName "metax-tech.com/gpu") (eq .Values.runtime.vllm.gpu.resourceName "metax-tech.com/sgpu"))) -}}
+{{- fail "runtime.vllm.image must be set for an unsupported GPU resource" -}}
 {{- end -}}
-{{- if ne (trim .Values.runtime.vllm.image) "" -}}
+{{- if ne (trim (include "foretoken.runtimeVllmImage" .)) "" -}}
 {{- if eq (trim .Values.runtime.vllm.gpu.resourceName) "" -}}
 {{- fail "runtime.vllm.gpu.resourceName is required when runtime.vllm.image is set" -}}
 {{- end -}}
