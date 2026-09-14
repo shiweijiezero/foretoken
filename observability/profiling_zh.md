@@ -59,10 +59,6 @@ foretoken profile examples/quickstart \
 profiles/runs/<run-uid>/<runtime-id>/
 ```
 
-通过 RuntimeCache PVC 对应的存储系统取得文件，再用 Perfetto 或其他兼容工具查看。manifest 分别记录停止采集请求和完成导出的时间。结果会说明是否记录到 GPU kernel 活动；缺少 worker 文件或 trace 格式错误时，产物发布失败。取消后的结果可能不完整，后续采集会使用独立的运行目录。
+通过 RuntimeCache PVC 对应的存储系统取得文件，再用 Perfetto 或其他兼容工具查看。取消后的结果可能不完整，后续采集会使用独立的运行目录。
 
-Profile 与 RuntimeCache 中的其他数据使用相同的保留生命周期。采集结束后，模型文件、来源缓存和编译缓存仍可继续使用。
-
-Profiling 会增加 CPU/GPU 开销，短窗口在高负载下仍可能产生很大文件。命令采集所选服务的运行实例，不按请求数量抽样，也不限制 GPU 事件数或结果字节数。应使用规模较小的诊断部署和短窗口。原生 profiler 失败可能终止对应 runtime，因此服务需要允许这类中断。
-
-部署、压测和其他 profiler 的规划入口见[维护者设计](../docs/development/profiling_zh.md#常用命令规划)。
+Profiling 会增加 CPU/GPU 开销，短窗口在高负载下仍可能产生很大文件。应使用规模较小的诊断部署和短窗口。原生 profiler 失败可能终止对应 runtime，因此服务需要允许这类中断。

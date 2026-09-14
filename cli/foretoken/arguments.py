@@ -115,7 +115,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="foretoken",
         description=(
             "Install the Kubernetes control plane, deploy model services, "
-            "and run benchmarks"
+            "capture profiles, and run benchmarks"
         ),
     )
     parser.add_argument(
@@ -254,11 +254,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     profile = subparsers.add_parser(
         "profile",
-        help="Capture one experimental Torch window on an existing diagnostic ModelService",
+        help="Capture a PyTorch profile from an existing ModelService",
         description=(
-            "Request runtime-owned Torch capture for a service using persistent "
-            "RuntimeCache storage. This command does not generate requests or download "
-            "traces; results remain under the cache's profiles directory."
+            "Capture a PyTorch profile from a service using persistent RuntimeCache "
+            "storage. Results remain under the cache's profiles directory."
         ),
     )
     profile.add_argument(

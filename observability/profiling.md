@@ -59,10 +59,6 @@ Each runtime stores one manifest and its native `.pt.trace.json` files below:
 profiles/runs/<run-uid>/<runtime-id>/
 ```
 
-Access the files through the storage system backing the RuntimeCache PVC, then inspect traces with Perfetto or another compatible viewer. The manifest distinguishes the recording stop request from completed export. Results report whether GPU kernel activity was recorded; missing worker files or malformed traces fail publication. Cancellation may retain incomplete output, and later captures use separate run directories.
+Access the files through the storage system backing the RuntimeCache PVC, then inspect traces with Perfetto or another compatible viewer. Cancellation may retain incomplete output, and later captures use separate run directories.
 
-Profiles have the same retention lifecycle as the other RuntimeCache data. Model files and provider or compilation caches remain available after capture.
-
-Profiling adds CPU/GPU overhead and can produce large files even in a short window. The command captures the selected service's serving runtimes, not a request-count sample, and does not cap GPU events or result bytes. Use a small diagnostic deployment and a short duration. A native profiler failure may terminate that runtime, so use a service where interruption is acceptable.
-
-Planned deployment, benchmark and additional-profiler workflows are described in the [maintainer design](../docs/development/profiling.md#planned-command-recipes).
+Profiling adds CPU/GPU overhead and can produce large files even in a short window. Use a small diagnostic deployment and a short duration. A native profiler failure may terminate that runtime, so use a service where interruption is acceptable.
