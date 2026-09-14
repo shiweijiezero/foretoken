@@ -124,6 +124,44 @@ func TestQueueThresholdUsesAbsoluteBacklogBoundaries(t *testing.T) {
 	}
 }
 
+// TestAIMDAddsUnderQueuePressureAndMultipliesWhenIdle protects both capacity transitions of AIMD.
+func TestAIMDAddsUnderQueuePressureAndMultipliesWhenIdle(t *testing.T) {
+	planner, err := autoscaling.New(autoscaling.Configuration{
+		DecisionAlgorithm:   autoscaling.DecisionAlgorithmAIMD,
+		TriggerAlgorithm:    autoscaling.TriggerAlgorithmPeriodic,
+		AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmDirect,
+		Decision: core.DecisionConfig{
+			AdditiveIncrease:              2,
+			MultiplicativeDecreasePercent: 50,
+			ScaleUpQueuedRequests:         0,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := scalingSnapshot()
+	snapshot.Replicas.RequestedReplicas = 4
+	snapshot.Metrics.WaitingRequests = 1
+	results, err := planner.Plan([]core.ScalingSnapshot{snapshot})
+	if err != nil || results[0].Recommendation.Replicas != 6 || results[0].AppliedReplicas != 6 {
+		t.Fatalf("AIMD additive increase = %#v err=%v", results, err)
+	}
+
+	snapshot.Replicas.RequestedReplicas = 6
+	snapshot.Metrics.WaitingRequests = 0
+	snapshot.Metrics.ActiveRequests = 0
+	results, err = planner.Plan([]core.ScalingSnapshot{snapshot})
+	if err != nil || results[0].Recommendation.Replicas != 3 || results[0].AppliedReplicas != 3 {
+		t.Fatalf("AIMD multiplicative decrease = %#v err=%v", results, err)
+	}
+
+	snapshot.Metrics.ActiveRequests = 1
+	results, err = planner.Plan([]core.ScalingSnapshot{snapshot})
+	if err != nil || results[0].Recommendation.Replicas != 6 || results[0].AppliedReplicas != 6 {
+		t.Fatalf("AIMD active hold = %#v err=%v", results, err)
+	}
+}
+
 // TestScaleDownStabilizationRetainsRecentHigherRecommendation protects burst gaps from immediately removing warm replicas.
 func TestScaleDownStabilizationRetainsRecentHigherRecommendation(t *testing.T) {
 	history := core.NewRecommendationHistory()

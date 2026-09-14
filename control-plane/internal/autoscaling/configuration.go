@@ -10,6 +10,7 @@ type AdjustmentAlgorithmName string
 
 const (
 	DecisionAlgorithmManual         DecisionAlgorithmName   = "manual"
+	DecisionAlgorithmAIMD           DecisionAlgorithmName   = "aimd"
 	DecisionAlgorithmQueue          DecisionAlgorithmName   = "queue"
 	DecisionAlgorithmQueueThreshold DecisionAlgorithmName   = "queue_threshold"
 	TriggerAlgorithmPeriodic        TriggerAlgorithmName    = "periodic"

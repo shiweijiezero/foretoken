@@ -36,7 +36,9 @@ type DecisionAlgorithm interface {
 }
 
 type DecisionConfig struct {
-	TargetAverageQueuedRequests int64
-	ScaleUpQueuedRequests       int64
-	ScaleDownQueuedRequests     int64
+	TargetAverageQueuedRequests   int64
+	ScaleUpQueuedRequests         int64
+	ScaleDownQueuedRequests       int64
+	AdditiveIncrease              int32
+	MultiplicativeDecreasePercent int32
 }

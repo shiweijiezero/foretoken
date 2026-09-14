@@ -89,6 +89,11 @@ func triggerInterval(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) in
 
 func decisionConfig(config inferencev1alpha1.ModelAutoscalingDecisionConfig) core.DecisionConfig {
 	decision := core.DecisionConfig{}
+	if config.AIMD != nil {
+		decision.AdditiveIncrease = int32OrDefault(config.AIMD.AdditiveIncrease, 1)
+		decision.MultiplicativeDecreasePercent = int32OrDefault(config.AIMD.MultiplicativeDecreasePercent, 50)
+		decision.ScaleUpQueuedRequests = int64OrDefault(config.AIMD.ScaleUpQueuedRequests, 0)
+	}
 	if config.Queue != nil {
 		decision.TargetAverageQueuedRequests = int64OrDefault(config.Queue.TargetAverageQueuedRequests, 1)
 	}
