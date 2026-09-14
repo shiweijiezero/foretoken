@@ -147,7 +147,7 @@ Use `foretoken bench` to measure model-service performance. Commands and example
 
 ## Capture a diagnostic profile
 
-The experimental source-only command captures one PyTorch profile from an existing ModelService that uses persistent RuntimeCache storage:
+The experimental command requires a source-installed platform and captures one PyTorch profile from an existing ModelService that uses persistent RuntimeCache storage:
 
 ```bash
 foretoken profile examples/quickstart --profile-engine pytorch --profile-duration 15s

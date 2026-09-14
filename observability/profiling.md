@@ -19,11 +19,11 @@ foretoken profile examples/quickstart \
   --profile-duration 15s
 ```
 
-The command reads the directory without applying it. If it contains several models, select one with `--model MODEL_ID`. It does not generate traffic; send requests through the normal frontend while capture is running.
+The command reads the directory to identify the deployed service without applying it. If it contains several models, select one with `--model MODEL_ID`. It does not generate traffic; send requests through the normal frontend while capture is running.
 
 The selected ModelService must use persistent RuntimeCache storage. The maintained Quick Start already declares it in `cache.yaml`; other deployments can follow [Model storage](../docs/model-storage.md). Profiling writes to the `profiles/` directory on the same RuntimeCache PVC. A service without persistent RuntimeCache storage must be redeployed with one before capture.
 
-The runtime stops recording after the requested duration and then exports the files. Export may take longer than recording. Normal completion leaves the model serving. The command prints a ProfileRun name for later inspection and the RuntimeCache PVC and path containing the results; it does not download them.
+The runtime starts the recording after profiler startup, stops after the requested duration, and then exports the files. Export may take longer than recording. Normal completion leaves the model serving. The command prints the ProfileRun name and, on completion, the RuntimeCache PVC and path containing the results.
 
 | Option | Meaning |
 |---|---|
@@ -34,23 +34,6 @@ The runtime stops recording after the requested duration and then exports the fi
 
 Ctrl-C requests cancellation and retains available output. After a lost terminal or observation timeout, capture still ends at its original deadline. Use the printed inspection command to check progress.
 
-## Common commands
-
-Select one model from a multi-model deployment:
-
-```bash
-foretoken profile examples/multi-model-quickstart \
-  --model Qwen/Qwen3-0.6B \
-  --profile-engine pytorch --profile-duration 15s
-```
-
-Allow more time to observe a slow export without extending capture:
-
-```bash
-foretoken profile examples/quickstart \
-  --profile-engine pytorch --profile-duration 15s --timeout 20m
-```
-
 ## Inspect results
 
 Each runtime stores one manifest and its native `.pt.trace.json` files below:
@@ -59,6 +42,6 @@ Each runtime stores one manifest and its native `.pt.trace.json` files below:
 profiles/runs/<run-uid>/<runtime-id>/
 ```
 
-Access the files through the storage system backing the RuntimeCache PVC, then inspect traces with Perfetto or another compatible viewer. Cancellation may retain incomplete output, and later captures use separate run directories.
+For the default directory-backed Quick Start, `./data` is relative to the Kustomize directory, so an accessible checkout contains the results under `examples/quickstart/data/profiles/runs/`. For other deployments, use the PVC and relative path printed by the command; the data directory may be on the cluster rather than on the workstation.
 
 Profiling adds CPU/GPU overhead and can produce large files even in a short window. Use a small diagnostic deployment and a short duration. A native profiler failure may terminate that runtime, so use a service where interruption is acceptable.

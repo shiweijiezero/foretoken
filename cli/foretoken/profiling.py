@@ -129,5 +129,5 @@ def capture(command: ProfileCommand) -> None:
         raise
     raise DeploymentError(
         f"stopped waiting after {command.timeout}; ProfileRun {namespace}/{name} "
-        "remains controller-owned. Inspect its status with the command above."
+        "continues independently. Inspect its status with the command above."
     )
