@@ -15,6 +15,7 @@ use crate::{RouteCandidate, RouteScore, RouterRequest, RoutingProgress};
 // `kv_least_loaded_scorer.rs`, the `KvLeastLoadedScorer` type, and the user-facing name.
 declare_router_algorithms! {
     descriptor = ScorerDescriptor;
+    token_load_scorer => TokenLoadScorer = "token_load",
     kv_cache_utilization_scorer => KvCacheUtilizationScorer = "kv_cache_utilization",
     kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded",
     least_loaded_scorer => LeastLoadedScorer = "least_loaded",
@@ -64,6 +65,18 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
         false
     }
 
+    /// Applies algorithm-owned parameters once while building the configured pipeline.
+    fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
+        if parameters
+            .as_object()
+            .is_some_and(|parameters| parameters.is_empty())
+        {
+            Ok(())
+        } else {
+            Err("this scorer accepts no parameters".into())
+        }
+    }
+
     fn score(
         &self,
         request: &RouterRequest,
@@ -74,20 +87,21 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
     ) -> Vec<RouteScore>;
 }
 
-/// Returns the best available view of a candidate's current engine request load.
+/// Returns the best available view of a candidate's current request load for built-in load scorers.
 ///
-/// Model-server admission and vLLM scheduler gauges overlap, so the load is their maximum rather
-/// than their sum. Built-in load scorers consume this derived value; the candidate retains its
-/// telemetry snapshot.
+/// Model-server admission, scheduler gauges, and frontend-local reservations overlap, so use their
+/// maximum rather than their sum. Local reservations cover dispatches not yet visible in telemetry;
+/// endpoint telemetry remains shared across DP ranks, while reservations belong to the exact rank.
 pub(crate) fn load(candidate: &RouteCandidate) -> i64 {
-    candidate.route_target_stats.as_ref().map_or(0, |stats| {
+    let observed = candidate.route_target_stats.as_ref().map_or(0, |stats| {
         let scheduler_requests = stats
             .scheduler_running_requests
             .unwrap_or(0)
             .saturating_add(stats.scheduler_waiting_requests.unwrap_or(0));
         let requests = stats.running_requests.max(scheduler_requests);
         i64::try_from(requests).unwrap_or(i64::MAX)
-    })
+    });
+    observed.max(candidate.inflight.requests)
 }
 
 /// Returns the least model-server route load among Decode eligible route options in each E/P/D route set.
