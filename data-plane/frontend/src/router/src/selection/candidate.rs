@@ -79,6 +79,16 @@ pub struct RouteScore {
     pub load: i64,
 }
 
+impl RouteScore {
+    /// Constructs a higher-is-better scalar preference for native scoring algorithms.
+    pub(crate) fn new(preference: f64) -> Self {
+        Self {
+            preference,
+            ..Self::default()
+        }
+    }
+}
+
 impl PartialEq for RouteScore {
     fn eq(&self, other: &Self) -> bool {
         self.cmp(other).is_eq()

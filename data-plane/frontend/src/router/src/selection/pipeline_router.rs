@@ -413,7 +413,9 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
                     .filter(|candidate| {
                         matches!(
                             candidate.role,
-                            ModelServerRole::Aggregate | ModelServerRole::Prefill
+                            ModelServerRole::Aggregate
+                                | ModelServerRole::Prefill
+                                | ModelServerRole::Decode
                         )
                     })
                     .filter_map(|candidate| {

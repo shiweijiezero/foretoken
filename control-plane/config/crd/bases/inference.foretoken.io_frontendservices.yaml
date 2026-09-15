@@ -155,6 +155,11 @@ spec:
                     description: RouterScorerAlgorithm names a Scorer validated by
                       the selected Frontend image.
                     type: string
+                  scorerParameters:
+                    description: ScorerParameters is validated and consumed by the
+                      selected Frontend scorer.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
                 type: object
               timeouts:
                 description: FrontendTimeouts defines client-facing request budgets.

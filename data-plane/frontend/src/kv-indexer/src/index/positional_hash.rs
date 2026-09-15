@@ -148,6 +148,15 @@ impl PositionalHashIndex {
 }
 
 impl KvLocalityIndex for PositionalHashIndex {
+    fn block_size(&self, source: &KvEventSourceId, query: &KvPrefixQuery<'_>) -> Option<u32> {
+        let entries = self.entries_by_source.get(source)?;
+        let sizes = Self::matching_partitions(entries, query)
+            .into_iter()
+            .map(|partition| partition.hash_block_size)
+            .collect::<BTreeSet<_>>();
+        (sizes.len() == 1).then(|| *sizes.first().unwrap())
+    }
+
     fn apply(&mut self, source: KvEventSourceId, event: KvIndexEvent, now: Instant) {
         match event {
             KvIndexEvent::BlockStored { blocks, placement } => {

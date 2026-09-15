@@ -263,6 +263,18 @@ impl RadixTreeIndex {
 }
 
 impl KvLocalityIndex for RadixTreeIndex {
+    fn block_size(&self, source: &KvEventSourceId, query: &KvPrefixQuery<'_>) -> Option<u32> {
+        let source = self.trees_by_source.get(source)?;
+        let sizes = source
+            .trees_by_placement
+            .values()
+            .filter_map(|placement| placement.trees_by_group.get(&query.group_idx))
+            .flat_map(|tree| Self::matching_partitions(tree, query))
+            .map(|partition| partition.hash_block_size)
+            .collect::<BTreeSet<_>>();
+        (sizes.len() == 1).then(|| *sizes.first().unwrap())
+    }
+
     fn apply(&mut self, source: KvEventSourceId, event: KvIndexEvent, now: Instant) {
         match event {
             KvIndexEvent::BlockStored { blocks, placement } => {
