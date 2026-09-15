@@ -92,7 +92,10 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
 
 FROM engine-runtime AS runtime
 
-LABEL org.opencontainers.image.source="https://github.com/shiweijiezero/foretoken"
+ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
+ARG OCI_REVISION
+LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
+      org.opencontainers.image.revision="${OCI_REVISION}"
 COPY --from=builder /out/foretoken-model-server /usr/local/bin/foretoken-model-server
 COPY data-plane/model-server/python/ /opt/foretoken/python/
 

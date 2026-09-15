@@ -3,6 +3,8 @@
 
 # 发布版本规则
 
+[English](release.md) | 简体中文
+
 Foretoken 会发布 Python distribution、OCI 镜像和 Helm Chart。Python package 遵循 PEP 440，OCI 镜像与 Helm Chart 使用 SemVer。两种格式的具体写法不同，但同一次发布的阶段和序号必须一致。
 
 ## 版本阶段
@@ -69,11 +71,39 @@ v0.0.1.post1
 
 已经发布的版本不可覆盖。不得重新构建并覆盖 PyPI 或 OCI registry 中已经存在的版本；应根据实际情况递增 Development、预发布、post-release 或 patch 序号。
 
+## 构建与推送发布产物
+
+在待发布的源码目录执行。准备 Python 3.11+、已安装的 Foretoken 包（`pip install -e .`）、Git、Rust/Cargo、Make、支持 BuildKit 的 Docker 和 Helm，以及兼容的 NVIDIA、沐曦推理运行时镜像。沐曦基础镜像可按[镜像构建指南](metax-platform_zh.md#构建镜像)准备。将下面的仓库前缀和基础镜像替换为实际值：
+
+```bash
+export REGISTRY=ghcr.io/your-org/foretoken
+export INFERENCE_ENGINE_IMAGE=your-nvidia-runtime:version
+export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
+
+deploy/release-artifacts build --registry "$REGISTRY"
+```
+
+该命令构建共用的 `control-plane`、`frontend`，以及 NVIDIA 的 `model-server:<version>` 和沐曦的 `model-server:<version>-metax`，并将 Chart 打包到 `/tmp/foretoken-release`。版本取自 `pyproject.toml` 和 `Chart.yaml`，无需另传 tag。CPU 架构兼容时，同一台机器可构建两个变体，不必同时安装两种 GPU；运行验证仍分别在对应硬件上进行。
+
+基础镜像需要特定 Python 解释器时，NVIDIA 设置 `FORETOKEN_VLLM_PYTHON`，沐曦设置 `METAX_VLLM_PYTHON`。已有的构建镜像源和软件包索引变量继续生效。
+
+完成产物验证后，登录仓库并推送：
+
+```bash
+docker login ghcr.io
+helm registry login ghcr.io
+deploy/release-artifacts push --registry "$REGISTRY"
+```
+
+已有远端 tag 保持不变，中途失败后可用相同命令继续。此入口不更新 `latest`，不创建 GitHub Release，也不发布 Python 包。首次发布时配置 package 可见性，公开发布需验证匿名访问。
+
+`--components model-server,model-server-metax` 可选择产物；修改 Chart 目录时，在构建和推送命令中使用相同的 `--output-dir`。`--dry-run` 仅打印命令，完整选项见 `deploy/release-artifacts --help`。
+
 ## 发布顺序
 
 1. 确定发布阶段，并按上表更新 `pyproject.toml` 和 `Chart.yaml`。
 2. 构建并验证 Python distribution、Helm Chart 和受影响的 OCI 镜像。
 3. 推送对应的 OCI 镜像和 Helm Chart tag。
-4. 创建对应的 GitHub tag 并发布 GitHub Release。
+4. 在实际构建并验证产物的提交上打 tag，发布 GitHub Release，简述重要改动，并具名感谢贡献者及其提供的支持。
 5. 由发布 workflow 将 Python distribution 上传到 PyPI。
 6. 验证已发布的 package、镜像、Chart 和全新安装路径。

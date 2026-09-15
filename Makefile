@@ -1,11 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Provides build and verification entrypoints for the Rust data plane.
+# Provides repository build, image, and verification entrypoints.
 
+CONTROL_PLANE_IMAGE ?= foretoken-control-plane:dev
+FRONTEND_IMAGE ?= foretoken-frontend:dev
+MODEL_SERVER_IMAGE ?= foretoken-model-server:dev
 MOONCAKE_IMAGE ?= foretoken-mooncake
 
 OCI_REGISTRY := $(patsubst %/,%,$(strip $(FORETOKEN_OCI_REGISTRY)))
+OCI_SOURCE ?= https://github.com/shiweijiezero/foretoken
+OCI_REVISION ?= $(shell git rev-parse HEAD)
 
 VLLM_METAX_VERSION ?= 0.24.0
 VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)
@@ -13,8 +18,8 @@ VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)
 GIT = git $(if $(FORETOKEN_GITHUB_MIRROR),-c url.$(patsubst %/,%,$(FORETOKEN_GITHUB_MIRROR))/.insteadOf=https://github.com/,)
 
 .PHONY: vllm-source build-data-plane format verify-data-plane dev-build dev-deploy \
-	image-frontend image-vllm-metax image-model-server image-model-server-metax \
-	image-benchmark dashboard
+	image-control-plane image-frontend image-vllm-metax image-model-server \
+	image-model-server-metax image-benchmark dashboard
 
 # Regenerates the Grafana dashboard shipped by the chart; needs the `dev` extra installed.
 dashboard:
@@ -40,13 +45,25 @@ dev-build:
 dev-deploy:
 	./deploy/dev-deploy
 
+image-control-plane:
+	docker build \
+		$(if $(OCI_REGISTRY),--build-arg GO_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \
+		$(if $(OCI_REGISTRY),--build-arg DISTROLESS_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \
+		--build-arg GOPROXY \
+		--build-arg GOSUMDB \
+		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
+		--build-arg OCI_REVISION="$(OCI_REVISION)" \
+		-f control-plane/Dockerfile -t "$(CONTROL_PLANE_IMAGE)" .
+
 image-frontend: vllm-source
 	docker build \
 		$(if $(OCI_REGISTRY),--build-arg BASE_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \
 		--build-arg FORETOKEN_GITHUB_MIRROR \
 		--build-arg FORETOKEN_CARGO_REGISTRY \
 		--build-arg CARGO_NET_GIT_FETCH_WITH_CLI \
-		-f data-plane/frontend/Dockerfile -t foretoken-frontend:dev .
+		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
+		--build-arg OCI_REVISION="$(OCI_REVISION)" \
+		-f data-plane/frontend/Dockerfile -t "$(FRONTEND_IMAGE)" .
 
 image-vllm-metax:
 	@test -n "$(METAX_SDK_IMAGE)" || \
@@ -74,7 +91,9 @@ image-model-server: vllm-source
 		--build-arg FORETOKEN_CARGO_REGISTRY \
 		--build-arg CARGO_NET_GIT_FETCH_WITH_CLI \
 		--build-arg UV_DEFAULT_INDEX \
-		-f data-plane/model-server/Dockerfile -t foretoken-model-server:dev .
+		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
+		--build-arg OCI_REVISION="$(OCI_REVISION)" \
+		-f data-plane/model-server/Dockerfile -t "$(MODEL_SERVER_IMAGE)" .
 
 image-model-server-metax: image-vllm-metax
 	$(MAKE) image-model-server \
