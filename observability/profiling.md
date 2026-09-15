@@ -34,6 +34,22 @@ The runtime starts the recording after profiler startup, stops after the request
 
 Ctrl-C requests cancellation and retains available output. After a lost terminal or observation timeout, capture still ends at its original deadline. Use the printed inspection command to check progress.
 
+## Capture a benchmark workload
+
+To generate requests and capture them in the same command, install the benchmark dependencies from source (`pip install -e '.[bench]'`) and use an already deployed diagnostic service:
+
+```bash
+foretoken bench examples/quickstart \
+  --profile --profile-engine pytorch --profile-duration 15s \
+  --number 2 --max-tokens 128 --output local
+```
+
+The command prepares the workload, waits until all selected runtimes report `Capturing`, then releases requests through the normal frontend. It fails without sending requests if capture ends before that readiness is observed. When requests finish, it requests `Finish` and waits for export. A window that ends first does not truncate the benchmark. Use one generated workload with `--rate -1`; URL-only services, trace replay, sweeps and multiple datasets are not supported in this mode.
+
+`--wait-timeout` bounds each capture startup/completion wait. Ctrl-C or a workload failure requests cancellation; an unsuccessful capture makes the command fail. Existing services and RuntimeCache output are retained. No port forwarding or profiling-specific service YAML is needed.
+
+With local output, `profile.json` records the ProfileRun identity, last observed status, capture-readiness observation and request timestamps. These are client observations, not exact GPU event boundaries: inspect the native trace and manifest to determine what was recorded. Use a separate benchmark without profiling for latency and throughput comparisons.
+
 ## Inspect results
 
 Each runtime stores one manifest and its native `.pt.trace.json` files below:

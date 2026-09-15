@@ -153,7 +153,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 foretoken profile examples/quickstart --profile-engine pytorch --profile-duration 15s
 ```
 
-命令不会生成流量。采集和查看结果见[性能剖析指南](../observability/profiling_zh.md)。
+该命令不会生成流量。需要同时发送请求时，使用 `foretoken bench PATH --profile --profile-engine pytorch --profile-duration 15s`。前提条件和查看结果见[性能剖析指南](../observability/profiling_zh.md)。
 
 ## 清理
 

@@ -70,6 +70,20 @@ foretoken bench examples/quickstart \
 
 `--dataset` also accepts a local JSONL file. Each row is a conversation, and all turns run by default using the model's actual answers. Use `--max-turns 1` for the first turn only. Multi-turn conversations currently require `--rate -1`.
 
+### Capture while benchmarking
+
+On an already deployed diagnostic service, add a short PyTorch capture:
+
+```bash
+foretoken bench examples/quickstart \
+  --profile --profile-engine pytorch --profile-duration 15s \
+  --number 2 --max-tokens 128 --output local
+```
+
+The source-installed platform must support [profiling](../observability/profiling.md) and the service must have persistent RuntimeCache storage. Requests wait until capture is active. After the workload finishes, the command ends capture and waits for export. If the recording window ends first, the workload still completes its requested count. Profiling adds overhead; use a separate run without `--profile` for performance measurements.
+
+This mode accepts one generated workload with the default `--rate -1`, not `--url`, trace replay, sweeps or multiple datasets. `--wait-timeout` bounds each startup/completion wait. Local `profile.json` links the run to its retained PVC output; trace files remain in RuntimeCache. See [Profiling](../observability/profiling.md) for cancellation and result inspection.
+
 ### Trace replay
 
 ```bash

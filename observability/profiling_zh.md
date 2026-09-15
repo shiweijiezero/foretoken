@@ -34,6 +34,22 @@ runtime 在 profiler 启动后开始记录，到达指定时长后停止并导�
 
 Ctrl-C 会请求取消并保留已有结果。终端断线或等待超时后，采集仍按原时限结束；可使用命令输出的查询指令查看进度。
 
+## 同时运行 benchmark 和采集
+
+从源码安装 benchmark 依赖（`pip install -e '.[bench]'`）后，可对已部署的诊断服务用一条命令发请求并采集：
+
+```bash
+foretoken bench examples/quickstart \
+  --profile --profile-engine pytorch --profile-duration 15s \
+  --number 2 --max-tokens 128 --output local
+```
+
+命令准备好负载，等待全部选中 runtime 报告 `Capturing`，再通过正常的 Frontend 发送请求。如果观察到就绪前窗口已结束，会报错且不发送请求。请求完成后，命令请求 `Finish` 并等待导出；采集窗口先结束不会截断 benchmark。此模式使用一个生成式负载和 `--rate -1`，不支持仅提供 URL 的服务、轨迹回放、参数扫描或多个数据集。
+
+`--wait-timeout` 分别限制采集启动与完成阶段的等待时间。Ctrl-C 或负载执行失败会请求取消；采集未成功时命令也会报错。已有服务和 RuntimeCache 结果会保留，无需转发端口或添加 profiling 专用的服务 YAML。
+
+启用本地输出时，`profile.json` 记录 ProfileRun 身份、最后观察到的状态、采集就绪观察时间和请求时间。这些是客户端观察，不是精确的 GPU 事件边界；实际录到了什么，要查看原生 trace 和 manifest。比较延迟、吞吐量时，应另跑一次不启用 profiling 的 benchmark。
+
 ## 查看结果
 
 每个 runtime 在以下目录中保存一份 manifest 和原生 `.pt.trace.json` 文件：
