@@ -46,6 +46,8 @@ class ModelService:
     hostname: str
     gpu_count: int
     routing_host: str
+    # Capture must use the same rendered target that supplied the HTTP endpoint.
+    deployment: ForetokenDeployment | None = None
 
     @property
     def api_root(self) -> str:
@@ -165,6 +167,7 @@ def _discover_model_service(
         hostname=deployment.hostname,
         gpu_count=gpu_count,
         routing_host=endpoint.routing_host,
+        deployment=deployment,
     )
 
 
@@ -226,13 +229,16 @@ def _created_deployment(
 
 
 @contextmanager
-def resolve_model_service(source: ModelServiceSource) -> Iterator[ModelService]:
+def resolve_model_service(
+    source: ModelServiceSource, *, require_existing: bool = False
+) -> Iterator[ModelService]:
     """Yield the model service selected by the benchmark user.
 
     A URL source is used as given without touching Kubernetes. A Kustomize source
     reuses a complete deployment unchanged, or creates only the missing objects
     and deletes them again after the benchmark; a partially present deployment is
-    rejected.
+    rejected. Profiling requires an existing deployment so cleanup cannot delete
+    its retained RuntimeCache artifacts.
     """
     if source.url:
         yield ModelService(
@@ -249,6 +255,8 @@ def resolve_model_service(source: ModelServiceSource) -> Iterator[ModelService]:
     kubectl = Kubectl()
     deployment = load_deployment(source.kustomize_path, kubectl)
     presence = _service_presence(deployment, kubectl)
+    if require_existing and not all(presence):
+        raise DeploymentError("--profile requires an already deployed service; run foretoken deploy PATH first")
     if any(presence) and not all(presence):
         raise DeploymentError(
             "The Foretoken deployment is only partially present. "

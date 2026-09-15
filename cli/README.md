@@ -153,7 +153,7 @@ The experimental command requires a source-installed platform and captures one P
 foretoken profile examples/quickstart --profile-engine pytorch --profile-duration 15s
 ```
 
-The command does not generate traffic. See [Profiling](../observability/profiling.md) for capture and result access.
+The command does not generate traffic. To send requests with capture, use `foretoken bench PATH --profile --profile-engine pytorch --profile-duration 15s`. See [Profiling](../observability/profiling.md) for prerequisites and result access.
 
 ## Clean up
 

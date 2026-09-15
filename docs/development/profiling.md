@@ -56,6 +56,14 @@ After stop/flush, the supervisor writes the manifest and atomically renames the 
 
 The manifest's `startedAtUnixMs` follows native start, `recordingEndedAtUnixMs` marks the stop request, and `exportedAtUnixMs` follows stop/flush. Native workers may stop at slightly different times; these control timestamps do not claim exact GPU event boundaries. ProfileRun `finishedAt` is controller-observed completion.
 
+## Benchmark coordination
+
+`benchmarks/profiling` coordinates one generated workload with the same `foretoken.profiling.ProfileRun` client used by `foretoken profile`. It does not start native profilers or own serving resources. Only existing deployments are accepted, so benchmark cleanup cannot remove RuntimeCache artifacts.
+
+The EvalScope adapter gates prepared HTTP requests on one shared capture-start task, before request latency timing. All selected participants must report `Capturing`; an already-ended window aborts dispatch. EvalScope retains ownership of request scheduling, cancellation and event-loop shutdown. Its executor drains before the benchmark context submits cancellation, including when create was in flight during Ctrl-C.
+
+Normal workload completion submits `Finish` and observes export; exceptional exit submits `Cancel`. Runtime deadlines still apply independently. Local `profile.json` retains identity and client observation times alongside the HTTP results; the native manifest and trace remain the evidence of actual recording coverage.
+
 ## Upstream references
 
 - [vLLM profiling](https://docs.vllm.ai/en/stable/contributing/profiling/): engine setup, output and diagnostic overhead.

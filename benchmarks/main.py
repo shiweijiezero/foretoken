@@ -51,7 +51,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         benchmark.validate()
         quiet = benchmark.outputs.includes("quiet")
         configure_logging(not quiet)
-        with resolve_model_service(benchmark.service) as service:
+        with resolve_model_service(
+            benchmark.service, require_existing=benchmark.profile is not None
+        ) as service:
             if benchmark.service.kustomize_path and not quiet:
                 print_model_service(service)
 

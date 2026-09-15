@@ -56,6 +56,14 @@ API 在创建后固定目标、采集工具和时长。动作从 `Capture` 推�
 
 Manifest 的 `startedAtUnixMs` 在原生启动后记录，`recordingEndedAtUnixMs` 表示发起停止，`exportedAtUnixMs` 表示停止/flush 返回。不同 worker 的实际停止时间可能略有差异，这些控制时间戳不代表精确的 GPU 事件边界。ProfileRun 的 `finishedAt` 是控制器观察到完成的时间。
 
+## Benchmark 协调
+
+`benchmarks/profiling` 通过 `foretoken profile` 共用的 `foretoken.profiling.ProfileRun` 客户端协调一次生成式负载。它不启动原生 profiler，也不拥有服务资源。此模式只接受已有部署，避免 benchmark 清理时删除 RuntimeCache 产物。
+
+EvalScope 适配层让准备好的 HTTP 请求等待同一个采集启动任务，此等待发生在请求延迟计时之前。只有全部参与者报告 `Capturing` 才放行；已经结束的窗口会终止请求发送。请求调度、取消和事件循环关闭仍由 EvalScope 负责。benchmark 上下文提交取消前，EvalScope 会等待线程池退出，因此 Ctrl-C 发生在创建请求途中时也能按返回的 UID 取消。
+
+负载正常结束时提交 `Finish` 并等待导出，异常退出时提交 `Cancel`。Runtime 时限仍独立生效。本地 `profile.json` 与 HTTP 结果一起保留运行身份和客户端观察时间；实际录制覆盖范围仍以原生 manifest 和 trace 为准。
+
 ## 上游参考
 
 - [vLLM profiling](https://docs.vllm.ai/en/stable/contributing/profiling/)：引擎配置、输出和诊断开销。
