@@ -37,6 +37,12 @@ Algorithms score the complete compatible and healthy candidate snapshot. Before 
 
 ## Scorer contracts
 
+`least_loaded` and `kv_least_loaded` share the maximum of Model Server active requests, scheduler
+running plus waiting requests, and frontend-local active requests for the candidate's exact DP rank.
+These counts overlap and must not be summed. Missing telemetry leaves the local count usable;
+endpoint telemetry is shared across ranks and does not provide per-rank engine load.
+Prefill's downstream Decode comparison uses the same calculation within its pipeline scope.
+
 Scorers use the following observations and formulas:
 
 | Scorer | Input | Score |
@@ -44,8 +50,9 @@ Scorers use the following observations and formulas:
 | `queue_depth` | `scheduler_waiting_requests` | `(max - waiting) / (max - min)` |
 | `running_request` | `scheduler_running_requests` | `(max - running) / (max - min)` |
 | `kv_cache_utilization` | `kv_cache_usage` | `1 - usage` |
+| `active_request` | Local active requests `count` and candidate maximum `maxCount` | `1` if `count <= idleThreshold`; otherwise `(maxCount - count) / maxCount * maxBusyScore` |
 
-Counts normalize over all candidates supplied to `score`; equal counts receive `1`,
+`queue_depth` and `running_request` counts normalize over all candidates supplied to `score`; equal counts receive `1`,
 and an empty candidate slice produces an empty score vector. Count subtraction precedes
 conversion to `f64`, preserving differences between large adjacent counts.
 `RouteScore.preference` preserves the numeric output, with the
@@ -60,5 +67,15 @@ Rates and windowed latencies remain unavailable until their counter window is co
 Foretoken handles telemetry transport, health checks, DP expansion, and E/P/D eligibility.
 Its Model Server endpoint reports sums of scheduler counts and mean KV utilization across its
 engines.
-Every rank of that endpoint receives the same metric score. These scorers ignore
+Every rank of that endpoint receives the same metric score. These three metric scorers ignore
 `RoutingProgress`; Router still supplies it and owns the subsequent stage selection.
+
+`active_request` takes `maxCount` over all candidates supplied to `score`. `idleThreshold` defaults to `0`;
+negative values become zero. `maxBusyScore` defaults to `1` with range `[0, 1]`; missing, null, or out-of-range values use `1`.
+Each selected stage remains counted until completion or session drop.
+
+`active_request` uses frontend-local reservations per target and DP rank, without engine scheduler gauges
+or other frontend replicas' requests. Selection and reservation share one lock; routing sessions own
+cleanup, and RuntimeBuilder retains the state across serving-snapshot replacements.
+
+Set optional parameters in `FrontendService.spec.routerPipeline.scorerParameters`; the selected scorer reads them at frontend startup.

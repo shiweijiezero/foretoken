@@ -13,6 +13,7 @@ use foretoken_router::{
 fn every_compiled_builtin_name_parses_and_builds() {
     for (filter, scorer, picker) in [
         ("allow_all", "uniform", "max"),
+        ("allow_all", "active_request", "round_robin"),
         ("allow_all", "least_loaded", "round_robin"),
         ("allow_all", "kv_least_loaded", "round_robin"),
         ("allow_all", "running_request", "round_robin"),
@@ -20,6 +21,7 @@ fn every_compiled_builtin_name_parses_and_builds() {
         ("allow_all", "queue_depth", "round_robin"),
     ] {
         let config = RouterPipelineConfig {
+            scorer_parameters: Default::default(),
             filter: filter.parse().unwrap(),
             scorer: scorer.parse().unwrap(),
             picker: picker.parse().unwrap(),
@@ -37,6 +39,7 @@ fn empty_and_unknown_names_are_explicit_errors() {
     );
     assert!("community-scorer".parse::<ScorerAlgorithm>().is_ok());
     let unknown = RouterPipelineConfig {
+        scorer_parameters: Default::default(),
         filter: "allow_all".parse().unwrap(),
         scorer: "community-scorer".parse().unwrap(),
         picker: PickerAlgorithm::default(),

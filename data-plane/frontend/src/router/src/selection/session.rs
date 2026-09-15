@@ -36,6 +36,9 @@ pub struct RoutingProgress<'a> {
 /// Holds request-local routing state for one generation request. Aggregate completes directly;
 /// P/D executes P→a fresh D choice, and E/P/D executes E→P→a fresh D choice within one E/P/D route set.
 pub trait RouteSession: Send {
+    /// Releases the completed stage's load; dropping the session also releases outstanding stages.
+    fn stage_complete(&mut self) {}
+
     /// Selects one Aggregate, ordinary Prefill, or E/P/D Encoder from the current snapshot.
     fn select_initial(&mut self) -> Result<RouteDecision, RouteError>;
 

@@ -38,6 +38,8 @@ pub struct RouteCandidate {
     /// Latest route-target gauges and available windowed statistics for this routing round.
     /// It is aggregate telemetry shared by every DP rank of this target.
     pub route_target_stats: Option<Arc<RouteTargetStats>>,
+    /// Current frontend-owned load for the exact target and DP rank.
+    pub inflight: crate::InFlightLoad,
 }
 
 impl RouteCandidate {
@@ -77,6 +79,16 @@ pub struct RouteScore {
     pub locality_preference: i8,
     /// Final tie breaker; the provided load scorers negate load so lower values rank higher.
     pub load: i64,
+}
+
+impl RouteScore {
+    /// Constructs a higher-is-better scalar preference for native scoring algorithms.
+    pub(crate) fn new(preference: f64) -> Self {
+        Self {
+            preference,
+            ..Self::default()
+        }
+    }
 }
 
 impl PartialEq for RouteScore {
