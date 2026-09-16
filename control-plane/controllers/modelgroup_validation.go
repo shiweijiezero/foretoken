@@ -23,8 +23,19 @@ func validateGroupProfile(group *inferencev1alpha1.ModelGroup) error {
 }
 
 func validateGroupRuntime(group *inferencev1alpha1.ModelGroup) error {
-	if group.Spec.NodeCount != 1 || group.Spec.MemberCount != 1 || group.Spec.Runtime.Backend != "vllm" {
-		return fmt.Errorf("only single-member vLLM Groups are currently supported")
+	if group.Spec.NodeCount != 1 || group.Spec.MemberCount != 1 {
+		return fmt.Errorf("only single-member Groups are currently supported")
+	}
+	switch group.Spec.Runtime.Backend {
+	case "vllm":
+		// Mooncake bootstrap-port validation below applies to vLLM prefill groups.
+	case "sglang":
+		if group.Spec.Role != inferencev1alpha1.ModelRoleAggregate {
+			return fmt.Errorf("SGLang Groups currently require aggregate role")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported inference backend %q", group.Spec.Runtime.Backend)
 	}
 	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill && group.Spec.PDRuntime != nil {
 		if group.Spec.PDRuntime.BootstrapPort == group.Spec.Runtime.Port {

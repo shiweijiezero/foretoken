@@ -114,7 +114,7 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	SourceAccess *RuntimeSourceAccess `json:"sourceAccess,omitempty"`
 
-	// +kubebuilder:validation:Enum=vllm
+	// +kubebuilder:validation:Enum=vllm;sglang
 	Backend string `json:"backend"`
 
 	Role ModelRole `json:"role"`
