@@ -54,3 +54,6 @@ packages = [
     "benchmarks.results",
 ]
 package-dir = { foretoken = "cli/foretoken", benchmarks = "benchmarks" }
+
+[tool.setuptools.package-data]
+"foretoken.accelerators" = ["mx-exporter.yaml"]

@@ -115,6 +115,33 @@ class Kubectl:
             input_text=rendered,
         )
 
+    def delete_resource(self, resource: ResourceRef, timeout: str) -> None:
+        """Delete one namespaced resource after ownership was verified."""
+        args = [
+            "delete",
+            resource.kind.lower(),
+            resource.name,
+            "--ignore-not-found",
+            "--wait=true",
+            f"--timeout={timeout}",
+        ]
+        if resource.namespace:
+            args.extend(["--namespace", resource.namespace])
+        self.run(args)
+
+    def rollout_status(self, resource: ResourceRef, timeout: str) -> None:
+        """Wait for one namespaced workload to become ready."""
+        self.run(
+            [
+                "rollout",
+                "status",
+                f"{resource.kind.lower()}/{resource.name}",
+                "--namespace",
+                resource.namespace,
+                f"--timeout={timeout}",
+            ]
+        )
+
     def wait_for_crds(self, names: tuple[str, ...], timeout: str) -> None:
         """Wait for installed CRDs before applying their custom resources."""
         self.run(

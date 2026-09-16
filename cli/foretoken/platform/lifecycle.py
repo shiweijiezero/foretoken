@@ -26,7 +26,7 @@ from foretoken.kubernetes import (
     timeout_seconds,
     unmark_managed_metrics_scraper_namespace,
 )
-from foretoken.manifest import DeploymentError
+from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.observability import PrometheusRef, select_prometheus
 from foretoken.platform.config import (
     default_platform_config,
@@ -66,6 +66,45 @@ def _resource_capacity(node: dict[str, Any], resource_name: str) -> int:
         return int(str(value))
     except (TypeError, ValueError):
         return 0
+
+
+_METAX_EXPORTER_NAMESPACE = "metax-monitor"
+_METAX_EXPORTER_RESOURCES = (
+    ResourceRef("ConfigMap", "mx-exporter-metrics", _METAX_EXPORTER_NAMESPACE),
+    ResourceRef("DaemonSet", "mx-exporter", _METAX_EXPORTER_NAMESPACE),
+    ResourceRef("Service", "mx-exporter", _METAX_EXPORTER_NAMESPACE),
+    ResourceRef("ServiceMonitor", "mx-exporter", _METAX_EXPORTER_NAMESPACE),
+)
+
+
+def _metax_resource_owned(kubectl: Kubectl, resource: ResourceRef) -> bool:
+    """Return whether one exact exporter resource carries CLI ownership."""
+    value = kubectl.get_if_exists(
+        resource.kind.lower(), resource.name, resource.namespace
+    )
+    metadata = (value or {}).get("metadata") or {}
+    labels = metadata.get("labels") if isinstance(metadata, dict) else None
+    return isinstance(labels, dict) and labels.get("foretoken.io/managed-by") == "foretoken"
+
+
+def _ensure_metax_name_available(kubectl: Kubectl) -> None:
+    """Reject collisions with same-named resources outside the exporter lifecycle."""
+    for resource in _METAX_EXPORTER_RESOURCES:
+        if (
+            kubectl.exists(resource.kind.lower(), resource.name, resource.namespace)
+            and not _metax_resource_owned(kubectl, resource)
+        ):
+            raise DeploymentError(
+                f"cannot install MetaX mxExporter: {resource.kind}/{resource.name} "
+                "already exists outside the Foretoken lifecycle"
+            )
+
+
+def _remove_metax_exporter(kubectl: Kubectl, timeout: str) -> None:
+    """Remove only the exact MetaX exporter resources owned by the CLI."""
+    for resource in reversed(_METAX_EXPORTER_RESOURCES):
+        if _metax_resource_owned(kubectl, resource):
+            kubectl.delete_resource(resource, timeout)
 
 
 def _select_runtime(
@@ -265,6 +304,11 @@ class PlatformLifecycle:
             managed_dcgm if managed_dcgm_exists else None
         )
         metax_metrics = MetaXMetricsDiscovery(exporter_discovery).resolve()
+        install_managed_metax = (
+            metax_metrics is not None and metax_metrics.exporter is None
+        )
+        if install_managed_metax:
+            _ensure_metax_name_available(kubectl)
 
         managed_prometheus = helm.prometheus_release()
         managed_prometheus_exists = helm.release_exists(managed_prometheus)
@@ -300,7 +344,10 @@ class PlatformLifecycle:
                     "DCGM",
                     nvidia_metrics.exporter if nvidia_metrics is not None else None,
                 ),
-                ("mxExporter", metax_metrics),
+                (
+                    "mxExporter",
+                    metax_metrics.exporter if metax_metrics is not None else None,
+                ),
             )
             if exporter is not None
         )
@@ -335,11 +382,14 @@ class PlatformLifecycle:
         if metax_metrics is None:
             metax_action = "Skip"
             metax_detail = f"no allocatable {' or '.join(METAX_GPU_RESOURCES)} resource"
+        elif install_managed_metax:
+            metax_action = "Install"
+            metax_detail = f"{_METAX_EXPORTER_NAMESPACE}/mx-exporter"
         else:
             metax_action = "Reuse"
             metax_detail = (
-                f"{metax_metrics.daemonset.namespace}/"
-                f"{metax_metrics.daemonset.display_name}"
+                f"{metax_metrics.exporter.daemonset.namespace}/"
+                f"{metax_metrics.exporter.daemonset.display_name}"
             )
 
         observability_labels = (
@@ -348,6 +398,7 @@ class PlatformLifecycle:
         monitor_namespaces = {
             platform.namespace,
             *(exporter.service_monitor.namespace for _, exporter in exporters),
+            *({_METAX_EXPORTER_NAMESPACE} if install_managed_metax else set()),
         }
 
         platform_action = "Upgrade" if platform_exists else "Install"
@@ -411,6 +462,28 @@ class PlatformLifecycle:
                 managed_dcgm_exists,
                 command.timeout,
             )
+        if install_managed_metax:
+            assert metax_metrics is not None
+            kubectl.apply(
+                MetaXMetricsDiscovery.manifest(
+                    metax_metrics.node_names,
+                    _METAX_EXPORTER_NAMESPACE,
+                    helm.metax_exporter_image,
+                    observability_labels,
+                )
+            )
+            kubectl.rollout_status(
+                ResourceRef("DaemonSet", "mx-exporter", _METAX_EXPORTER_NAMESPACE),
+                command.timeout,
+            )
+            exporter_discovery = ExporterDiscovery(kubectl)
+            metax_metrics = MetaXMetricsDiscovery(exporter_discovery).resolve()
+            if metax_metrics is None or metax_metrics.exporter is None:
+                raise DeploymentError("installed MetaX mxExporter is not ready")
+            if selected_prometheus is not None:
+                exporter_discovery.require_prometheus_selection(
+                    selected_prometheus, (("mxExporter", metax_metrics.exporter),)
+                )
         helm.install_platform(
             release=platform,
             source_images=source_images,
@@ -481,6 +554,10 @@ class PlatformLifecycle:
         prometheus_managed = (
             prometheus_exists and helm.is_cleanup_managed(managed_prometheus)
         )
+        metax_managed = any(
+            _metax_resource_owned(kubectl, resource)
+            for resource in _METAX_EXPORTER_RESOURCES
+        )
         gateway_plan = gateway.resolve_uninstall(
             platform, platform_exists=platform_exists
         )
@@ -488,6 +565,7 @@ class PlatformLifecycle:
             platform_exists
             or dcgm_managed
             or prometheus_managed
+            or metax_managed
             or gateway_plan.managed
         ):
             resources = platform_service_resources(kubectl)
@@ -517,6 +595,14 @@ class PlatformLifecycle:
             _print_plan("Prometheus", "Preserve", managed_prometheus.display_name)
         else:
             _print_plan("Prometheus", "Skip", "no managed release")
+        if metax_managed:
+            _print_plan(
+                "MetaX mxExporter",
+                "Remove",
+                f"{_METAX_EXPORTER_NAMESPACE}/mx-exporter",
+            )
+        else:
+            _print_plan("MetaX mxExporter", "Preserve", "not CLI-managed")
         _print_plan(
             "Gateway Controller", gateway_plan.action, gateway_plan.detail
         )
@@ -532,6 +618,13 @@ class PlatformLifecycle:
                 kubectl, managed_prometheus.namespace
             )
             _print_plan("Prometheus", "Removed", managed_prometheus.display_name)
+        if metax_managed:
+            _remove_metax_exporter(kubectl, command.timeout)
+            _print_plan(
+                "MetaX mxExporter",
+                "Removed",
+                f"{_METAX_EXPORTER_NAMESPACE}/mx-exporter",
+            )
         gateway_result = gateway.finish_uninstall(
             gateway_plan, command.timeout
         )

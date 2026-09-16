@@ -54,7 +54,7 @@ The CLI reuses what the cluster already provides and installs only what is missi
 | --- | --- | --- | --- | --- |
 | Prometheus | Install a CLI-managed kube-prometheus-stack | Reuse it | Stop and ask for an explicit choice | Remove only the CLI-managed release |
 | NVIDIA DCGM Exporter | Install a CLI-managed exporter on clusters with NVIDIA GPUs | Reuse it | Stop | Remove only the CLI-managed release |
-| MetaX mxExporter | Stop; the cluster must provide it | Reuse it | Stop | Keep it |
+| MetaX mxExporter | Install a CLI-managed exporter | Reuse it | Stop | Remove only CLI-managed resources |
 
 An exporter is usable when it covers every GPU node and the selected Prometheus scrapes it. The CLI does not install GPU drivers, device plugins, or vendor operators.
 
@@ -164,4 +164,4 @@ For a short CPU/GPU capture on an existing diagnostic service, see [Profiling](p
 
 ## Remove collection
 
-After all Foretoken services are deleted, `foretoken uninstall` removes the CLI-managed Prometheus and DCGM Exporter releases. Reused Prometheus, DCGM Exporter, and mxExporter installations are left unchanged.
+After all Foretoken services are deleted, `foretoken uninstall` removes CLI-managed Prometheus, DCGM Exporter, and MetaX mxExporter resources. Reused installations are left unchanged.

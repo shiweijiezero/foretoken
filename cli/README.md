@@ -48,7 +48,7 @@ foretoken install
 
 Installation selects the NVIDIA or MetaX runtime from the cluster's GPU resources. Explicit runtime settings in `--values` take precedence; in a mixed-GPU cluster, select a resource with `runtime.vllm.gpu.resourceName` or restrict the nodes with `runtime.vllm.gpu.nodeSelector`.
 
-Installation also sets up monitoring, reusing a Prometheus and GPU metrics exporter already in the cluster when they exist. See [Observability](../observability/README.md).
+Installation also sets up monitoring, reusing compatible Prometheus and GPU metrics exporters when they exist. On MetaX GPU clusters, it installs the MetaX exporter when no compatible exporter is available. See [Observability](../observability/README.md).
 
 ### Gateway mode
 

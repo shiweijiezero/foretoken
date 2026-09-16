@@ -54,7 +54,7 @@ CLI 优先复用集群已有的组件，只安装缺少的部分：
 | --- | --- | --- | --- | --- |
 | Prometheus | 安装 CLI 管理的 kube-prometheus-stack | 复用 | 停止并要求显式指定 | 只删除 CLI 管理的 release |
 | NVIDIA DCGM Exporter | 有 NVIDIA GPU 时安装 CLI 管理的 exporter | 复用 | 停止 | 只删除 CLI 管理的 release |
-| 沐曦 mxExporter | 停止，需要集群自行提供 | 复用 | 停止 | 保留 |
+| 沐曦 mxExporter | 安装 CLI 管理的 exporter | 复用 | 停止 | 只删除 CLI 管理的资源 |
 
 exporter 可用的条件是覆盖全部 GPU 节点并被选中的 Prometheus 抓取。CLI 不安装 GPU 驱动、device plugin 或厂商 Operator。
 
@@ -164,4 +164,4 @@ foretoken deploy examples/observability --timeout 20m
 
 ## 停止采集
 
-删除全部 Foretoken 服务后，`foretoken uninstall` 会删除由 CLI 管理的 Prometheus 和 DCGM Exporter release。复用的 Prometheus、DCGM Exporter 和 mxExporter 保持不变。
+删除全部 Foretoken 服务后，`foretoken uninstall` 会删除由 CLI 管理的 Prometheus、DCGM Exporter 和沐曦 mxExporter 资源。复用的安装保持不变。

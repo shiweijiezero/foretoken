@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ class PlatformConfig:
     envoy_gateway_default_controller: str
     envoy_gateway_controller: str
     dcgm_metrics: str
+    metax_exporter_image: str
     image_registry: str | None
 
     @property
@@ -143,6 +145,10 @@ DCGM_FI_DEV_POWER_USAGE, gauge, Power draw (in W).
 DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature (in C).
 DCGM_FI_DEV_XID_ERRORS, gauge, Last XID error code.
 """,
+        metax_exporter_image=os.environ.get(
+            "FORETOKEN_METAX_EXPORTER_IMAGE",
+            "cr.infini-ai.com/infini/mx-exporter:0.8.1",
+        ),
         image_registry=registry,
     )
 

@@ -77,6 +77,11 @@ class Helm(HelmClient):
         return self._config.platform_selector_labels
 
     @property
+    def metax_exporter_image(self) -> str:
+        """Return the configurable vendor image used for CLI-managed mxExporter."""
+        return self._config.metax_exporter_image
+
+    @property
     def management_label(self) -> tuple[str, str]:
         """Return the label used on CLI-owned Kubernetes resources."""
         return self._config.management_label
