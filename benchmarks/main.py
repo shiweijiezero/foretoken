@@ -20,6 +20,7 @@ from benchmarks.results.console import (
     print_model_service,
 )
 from benchmarks.runs.sweep import ParameterSweepBenchmark
+from benchmarks.runs.sla import SlaAutoTuneBenchmark
 from foretoken.manifest import DeploymentError
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,7 @@ def select_benchmark(
     TraceReplayBenchmark
     | ParameterSweepBenchmark
     | MultiDatasetBenchmark
+    | SlaAutoTuneBenchmark
     | GeneratedLoadBenchmark
 ):
     """Choose the benchmark that owns the configured workload; its ``run()`` returns a ``BenchmarkRun``."""
@@ -39,6 +41,8 @@ def select_benchmark(
         return TraceReplayBenchmark(benchmark, service)
     if benchmark.sweep.path:
         return ParameterSweepBenchmark(benchmark, service)
+    if benchmark.sla.params:
+        return SlaAutoTuneBenchmark(benchmark, service)
     if benchmark.resolved_workload.has_multiple_datasets:
         return MultiDatasetBenchmark(benchmark, service, run_http_dataset)
     return GeneratedLoadBenchmark(benchmark, service)

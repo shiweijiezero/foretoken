@@ -276,6 +276,40 @@ class ParameterSweepConfig:
 
 
 @dataclass
+class SlaTuneConfig:
+    """Store SLA concurrency-search settings."""
+
+    params: list[dict[str, str]] | None = None
+    num_runs: int = 1
+    upper_bound: int = 65536
+    lower_bound: int = 1
+    number_multiplier: float | None = None
+
+    def validate(self) -> None:
+        """Reject incomplete or inconsistent SLA search settings."""
+        if self.params is None:
+            return
+        if not self.params:
+            raise ValueError("--sla-params must contain at least one criterion group")
+        if self.num_runs < 1:
+            raise ValueError("--num-runs must be >= 1")
+        if self.lower_bound < 1:
+            raise ValueError("--sla-lower-bound must be >= 1")
+        if self.upper_bound < self.lower_bound:
+            raise ValueError(
+                "--sla-upper-bound must be >= --sla-lower-bound"
+            )
+        if (
+            self.number_multiplier is not None
+            and (
+                not math.isfinite(self.number_multiplier)
+                or self.number_multiplier <= 0
+            )
+        ):
+            raise ValueError("--sla-number-multiplier must be > 0")
+
+
+@dataclass
 class BenchmarkConfig:
     """Store the service, workload, load, and output configuration for one benchmark command."""
 
@@ -289,6 +323,7 @@ class BenchmarkConfig:
     outputs: BenchmarkOutputConfig = field(default_factory=BenchmarkOutputConfig)
     wandb: WandbRunConfig = field(default_factory=WandbRunConfig)
     sweep: ParameterSweepConfig = field(default_factory=ParameterSweepConfig)
+    sla: SlaTuneConfig = field(default_factory=SlaTuneConfig)
 
     @property
     def resolved_workload(self) -> ChatRequestDataset:
@@ -320,6 +355,25 @@ class BenchmarkConfig:
         if self.generation.min_output_length is not None and workload.dataset_selectors != ["random"]:
             raise ValueError("output length control requires --dataset random")
         self.trace.validate()
+        self.sla.validate()
+
+        if self.sla.params:
+            if self.sweep.path:
+                raise ValueError("--sla-params cannot be combined with --sweep")
+            if workload.has_multiple_datasets:
+                raise ValueError(
+                    "--sla-params cannot be combined with multiple --dataset sources"
+                )
+            if self.load.max_concurrency == -1:
+                raise ValueError(
+                    "--sla-params requires a finite --parallel start value; "
+                    "got -1"
+                )
+            if self.load.arrival_rate != -1:
+                raise ValueError(
+                    "--sla-params searches closed-loop concurrency; omit --rate "
+                    "or set --rate -1"
+                )
 
         trace = self.trace
         has_trace = bool(trace.trace_selector)
@@ -353,6 +407,8 @@ class BenchmarkConfig:
 
             if self.sweep.path:
                 raise ValueError("--trace cannot be combined with --sweep")
+            if self.sla.params:
+                raise ValueError("--trace cannot be combined with --sla-params")
             if workload.fixed_prompt:
                 raise ValueError(
                     "--trace requires --dataset; fixed --prompt payloads are "
@@ -450,5 +506,12 @@ class BenchmarkConfig:
                 "path": self.sweep.path,
                 "num_runs": self.sweep.num_runs,
                 "experiment_name": self.sweep.experiment_name,
+            },
+            "sla": {
+                "params": self.sla.params,
+                "num_runs": self.sla.num_runs,
+                "upper_bound": self.sla.upper_bound,
+                "lower_bound": self.sla.lower_bound,
+                "number_multiplier": self.sla.number_multiplier,
             },
         }

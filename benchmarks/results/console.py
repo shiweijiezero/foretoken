@@ -108,6 +108,17 @@ def format_benchmark_config(
         if benchmark.is_multi_turn
         else ""
     )
+    sla = benchmark.sla
+    if sla.params:
+        params_label = str(sla.params)
+        sla_lines = (
+            f"  SLA params : {params_label}\n"
+            f"  SLA concurrency bounds="
+            f"[{sla.lower_bound}, {sla.upper_bound}], "
+            f"num_runs={sla.num_runs}\n"
+        )
+    else:
+        sla_lines = ""
     return (
         "\n===== Foretoken Benchmark Configuration ====\n"
         f"  URL        : {service.chat_completions_url}\n"
@@ -119,6 +130,7 @@ def format_benchmark_config(
         f"  Dataset    : {dataset_label}\n"
         f"{max_turns_line}"
         f"{trace_lines}"
+        f"{sla_lines}"
         "============================================\n"
     )
 
@@ -277,6 +289,24 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
             f"  Output token throughput per {denominator} (tokens/s): "
             f"{_format_metric(throughput['generation_tokens_per_second_per_user'])}",
         )
+    logger.info("\n%s", "\n".join(lines))
+
+
+def log_sla_results(sla: dict[str, Any]) -> None:
+    """Print the SLA search summary and maximum satisfied concurrency."""
+    max_satisfied = sla.get("max_satisfied")
+    lines = [
+        "========== SLA Auto-tune Results ==========",
+        f"  Max concurrency: "
+        f"{max_satisfied if max_satisfied is not None else 'None'}",
+        f"  Probed         : {sla.get('probed_values', [])}",
+    ]
+    for row in sla.get("summary") or []:
+        lines.append(
+            f"  {row.get('Criteria')} -> "
+            f"Max Satisfied={row.get('Max Satisfied')} ({row.get('Note')})"
+        )
+    lines.append("============================================")
     logger.info("\n%s", "\n".join(lines))
 
 

@@ -13,6 +13,7 @@ import random
 import sqlite3
 import time
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -680,3 +681,235 @@ def run_evalscope_standard_load(
             conversation["first_turn_ttft"] = dict(metrics["ttft"])
             conversation["time_to_final_answer_token"] = dict(metrics["ttft"])
     return metrics, measurements, time_origin
+
+
+_SLA_METRIC_ALIASES: Final[dict[str, str]] = {
+    "latency.mean": "avg_latency",
+    "ttft.mean": "avg_ttft",
+    "tpot.mean": "avg_tpot",
+    "latency.p50": "p50_latency",
+    "latency.p95": "p95_latency",
+    "latency.p99": "p99_latency",
+    "ttft.p50": "p50_ttft",
+    "ttft.p95": "p95_ttft",
+    "ttft.p99": "p99_ttft",
+    "tpot.p50": "p50_tpot",
+    "tpot.p95": "p95_tpot",
+    "tpot.p99": "p99_tpot",
+    "throughput.requests_per_second": "rps",
+    "throughput.generation_tokens_per_second": "tps",
+    "mean_latency": "avg_latency",
+    "mean_ttft": "avg_ttft",
+    "mean_tpot": "avg_tpot",
+}
+
+_SLA_PERCENTILE_EXTENSIONS: Final[tuple[tuple[str, str, str], ...]] = (
+    ("p50_latency", "50%", "latency"),
+    ("p95_latency", "95%", "latency"),
+    ("p50_ttft", "50%", "ttft"),
+    ("p95_ttft", "95%", "ttft"),
+    ("p50_tpot", "50%", "tpot"),
+    ("p95_tpot", "95%", "tpot"),
+)
+
+# EvalScope stores TTFT/TPOT in milliseconds; Foretoken SLA thresholds use seconds.
+_SLA_MS_METRIC_KEYS: Final[frozenset[str]] = frozenset({
+    "avg_ttft",
+    "avg_tpot",
+    "p50_ttft",
+    "p90_ttft",
+    "p95_ttft",
+    "p99_ttft",
+    "p50_tpot",
+    "p90_tpot",
+    "p95_tpot",
+    "p99_tpot",
+})
+
+
+def _normalize_sla_params(
+    params: list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Rewrite nested metric names to flat SLA keys."""
+    normalized: list[dict[str, str]] = []
+    for group in params:
+        mapped: dict[str, str] = {}
+        for metric, criterion in group.items():
+            mapped[_SLA_METRIC_ALIASES.get(metric, metric)] = criterion
+        normalized.append(mapped)
+    return normalized
+
+
+def _extend_sla_metric_values() -> None:
+    """Extend SLA keys and convert TTFT/TPOT values from milliseconds to seconds."""
+    from evalscope.perf.sla import sla_run
+    from evalscope.perf.utils.perf_models import PercentileResult
+
+    current = sla_run.get_metric_values
+    if getattr(current, "_foretoken_extended", False):
+        return
+
+    def get_metric_values(results: dict[str, Any]) -> dict[str, float]:
+        values = current(results)
+        raw_perc = results.get("percentiles", {})
+        if isinstance(raw_perc, PercentileResult):
+            percentiles = raw_perc
+        elif isinstance(raw_perc, dict) and raw_perc:
+            percentiles = PercentileResult.from_transposed(raw_perc)
+        else:
+            percentiles = None
+        if percentiles is not None:
+            for key, label, field in _SLA_PERCENTILE_EXTENSIONS:
+                if key not in values:
+                    values[key] = percentiles.get_p(label, field)
+        for key in _SLA_MS_METRIC_KEYS:
+            if key in values:
+                values[key] = values[key] * 0.001
+        return values
+
+    get_metric_values._foretoken_extended = True  # type: ignore[attr-defined]
+    sla_run.get_metric_values = get_metric_values
+
+
+def _sla_max_satisfied(summary_rows: list[dict[str, Any]]) -> int | None:
+    """Return the first finite Max Satisfied concurrency from SLA summary rows."""
+    for row in summary_rows:
+        value = row.get("Max Satisfied")
+        if value in (None, "None"):
+            continue
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def run_evalscope_sla_auto_tune(
+    benchmark: BenchmarkConfig,
+    service: ModelService,
+    output_dir: str,
+) -> tuple[dict[str, Any], list[RequestMeasurement], dict[str, Any], float | None]:
+    """Search maximum concurrency under SLA constraints and return the winning probe."""
+    try:
+        from evalscope.perf.main import run_one_benchmark
+        from evalscope.perf.sla.sla_run import SLAAutoTuner
+        from evalscope.perf.utils.perf_models import BenchmarkSummary, PercentileResult
+        from evalscope.utils.logger import configure_logging
+        from evalscope.utils.model_utils import seed_everything
+    except ModuleNotFoundError as error:
+        raise ValueError(
+            "SLA concurrency search requires EvalScope; install benchmark "
+            "dependencies with: pip install 'foretoken[bench]'"
+        ) from error
+    try:
+        from evalscope.perf.utils.handler import PerfBenchmarkInterrupted
+    except ImportError as error:
+        raise ValueError(
+            "EvalScope 1.11.1+ is required for SLA concurrency search; "
+            "install with: pip install 'foretoken[bench]'"
+        ) from error
+
+    sla = benchmark.sla
+    if not sla.params:
+        raise ValueError("--sla-params is required for SLA concurrency search")
+    normalized_params = _normalize_sla_params(sla.params)
+    _extend_sla_metric_values()
+
+    os.makedirs(output_dir, exist_ok=True)
+    configure_logging(
+        False,
+        os.path.join(output_dir, "benchmark.log"),
+    )
+    arguments = _evalscope_arguments(benchmark, service, output_dir)
+    arguments.sla_auto_tune = True
+    arguments.sla_variable = "parallel"
+    arguments.sla_params = normalized_params
+    arguments.sla_num_runs = sla.num_runs
+    arguments.sla_upper_bound = sla.upper_bound
+    arguments.sla_lower_bound = sla.lower_bound
+    arguments.sla_number_multiplier = sla.number_multiplier
+    seed_everything(benchmark.resolved_workload.random_seed)
+    materialized_dataset = (
+        arguments.dataset_path
+        if arguments.dataset == _EVALSCOPE_DATASET
+        else None
+    )
+
+    def runner(run_args: Any, run_output_dir: str | None) -> dict[str, Any]:
+        target_dir = run_output_dir or output_dir
+        os.makedirs(target_dir, exist_ok=True)
+        (Path(target_dir) / "request_diagnostics.jsonl").unlink(missing_ok=True)
+        run_args.outputs_dir = target_dir
+        try:
+            return run_one_benchmark(run_args, target_dir)
+        except PerfBenchmarkInterrupted as error:
+            raise SystemExit(error.exit_code) from None
+
+    tuner = SLAAutoTuner(arguments, runner)
+    try:
+        tuner.tune()
+    finally:
+        if materialized_dataset:
+            Path(materialized_dataset).unlink(missing_ok=True)
+
+    summary_rows = list(tuner.sla_results_table)
+    probed_values = sorted(tuner.results_cache)
+    satisfied_value = _sla_max_satisfied(summary_rows)
+    report_value = (
+        satisfied_value if satisfied_value is not None
+        else (probed_values[0] if probed_values else None)
+    )
+    if report_value is None or report_value not in tuner.results_cache:
+        raise ValueError("SLA concurrency search produced no probe results")
+
+    best_point = tuner.results_cache[report_value]
+    summary = best_point["metrics"]
+    percentiles = best_point["percentiles"]
+    trace_summary = best_point.get("trace_summary")
+    if not isinstance(summary, BenchmarkSummary):
+        summary = BenchmarkSummary.from_dict(summary)
+    if not isinstance(percentiles, PercentileResult):
+        if isinstance(percentiles, dict) and percentiles:
+            percentiles = PercentileResult.from_transposed(percentiles)
+        else:
+            percentiles = PercentileResult()
+
+    multiplier = sla.number_multiplier if sla.number_multiplier is not None else 2.0
+    tuned_load = replace(
+        benchmark.load,
+        max_concurrency=report_value,
+        request_count=max(1, round(report_value * multiplier)),
+        arrival_rate=-1.0,
+    )
+    tuned_benchmark = replace(benchmark, load=tuned_load)
+    metrics = _map_evalscope_metrics(
+        tuned_benchmark,
+        summary,
+        percentiles,
+        trace_summary,
+        single_turn=not arguments.multi_turn,
+    )
+    metrics["sla"] = {
+        "params": normalized_params,
+        "max_satisfied": satisfied_value,
+        "summary": summary_rows,
+        "probed_values": probed_values,
+    }
+
+    best_run_dirs = sorted(
+        Path(output_dir).glob(f"sla_tuning/sla_parallel_{report_value}_run_*")
+    )
+    measurements: list[RequestMeasurement] = []
+    time_origin: float | None = None
+    if best_run_dirs:
+        measurements, time_origin = _read_evalscope_request_measurements(
+            str(best_run_dirs[-1])
+        )
+
+    sla_artifact = {
+        "params": normalized_params,
+        "max_satisfied": satisfied_value,
+        "summary": summary_rows,
+        "probed_values": probed_values,
+    }
+    return metrics, measurements, sla_artifact, time_origin

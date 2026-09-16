@@ -30,6 +30,7 @@ Use the actual Chat Completions URL and model ID for other services. In Gateway 
 - [StudyChat replay](coomon_commands/studychat.md)
 - [Mooncake trace replay](coomon_commands/mooncake-trace.md)
 - [Parameter sweeps](coomon_commands/sweep.md)
+- [SLA auto-tune](coomon_commands/sla.md)
 - [W&B output](coomon_commands/wandb.md)
 
 Metric definitions are in [Result metrics](../metrics.md). All options are listed by `foretoken bench --help`.

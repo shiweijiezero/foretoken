@@ -274,10 +274,19 @@ class ResultOutputs:
         sinks: list[ResultSink] = []
         if not outputs.includes("quiet"):
             sinks.append(ConsoleSink())
-        if outputs.includes("local"):
+        if self.output_dir is not None:
+            # Callers that already chose a directory keep engine artifacts there.
+            self._execution_dir = result_directory_path(
+                self.benchmark, self.output_dir
+            )
+            if outputs.includes("local"):
+                sinks.append(
+                    LocalDirectorySink(self.benchmark, self._execution_dir)
+                )
+        elif outputs.includes("local"):
             local = LocalDirectorySink(
                 self.benchmark,
-                result_directory_path(self.benchmark, self.output_dir),
+                result_directory_path(self.benchmark),
             )
             sinks.append(local)
             self._execution_dir = local.output_dir

@@ -92,6 +92,19 @@ foretoken bench examples/quickstart \
 
 Sweeps use a Kustomize deployment to compare configurations against the same model service.
 
+### SLA auto-tune
+
+```bash
+foretoken bench examples/quickstart \
+  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
+  --min-prompt-length 128 --max-prompt-length 256 \
+  --parallel 2 \
+  --sla-params '[{"p99_latency":"<=2"}]' \
+  --sla-upper-bound 32 --output local,wandb
+```
+
+Search reuses EvalScope; see [SLA auto-tune](docs/coomon_commands/sla.md) for metric names and limits.
+
 ### An existing service URL
 
 For the Quick Start already deployed in the default mode, resolve its address first:

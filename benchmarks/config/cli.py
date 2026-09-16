@@ -20,6 +20,7 @@ from benchmarks.config.benchmark import (
     HttpLoadSchedule,
     ModelServiceSource,
     ParameterSweepConfig,
+    SlaTuneConfig,
     WandbRunConfig,
 )
 
@@ -354,12 +355,46 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         "--num-runs",
         type=int,
         default=_default(ParameterSweepConfig, "num_runs"),
-        help="Runs per parameter combination",
+        help=(
+            "Runs per sweep parameter combination, or averaged runs at each "
+            "SLA concurrency probe"
+        ),
     )
     parser.add_argument(
         "--experiment-name",
         default=_default(ParameterSweepConfig, "experiment_name"),
         help="Sweep directory name under --output-dir",
+    )
+
+    parser.add_argument(
+        "--sla-params",
+        type=json.loads,
+        default=_default(SlaTuneConfig, "params"),
+        help=(
+            "JSON SLA constraints that enable concurrency search; "
+            "list of groups, AND within a group, independent search per group"
+        ),
+    )
+    parser.add_argument(
+        "--sla-upper-bound",
+        type=int,
+        default=_default(SlaTuneConfig, "upper_bound"),
+        help="Upper bound of the concurrency search range",
+    )
+    parser.add_argument(
+        "--sla-lower-bound",
+        type=int,
+        default=_default(SlaTuneConfig, "lower_bound"),
+        help="Lower bound of the concurrency search range",
+    )
+    parser.add_argument(
+        "--sla-number-multiplier",
+        type=float,
+        default=_default(SlaTuneConfig, "number_multiplier"),
+        help=(
+            "Request count multiplier for each probe: "
+            "number = round(parallel * multiplier); default 2"
+        ),
     )
 
 
@@ -426,6 +461,13 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             path=namespace.sweep,
             num_runs=namespace.num_runs,
             experiment_name=namespace.experiment_name,
+        ),
+        sla=SlaTuneConfig(
+            params=namespace.sla_params,
+            num_runs=namespace.num_runs,
+            upper_bound=namespace.sla_upper_bound,
+            lower_bound=namespace.sla_lower_bound,
+            number_multiplier=namespace.sla_number_multiplier,
         ),
     )
 

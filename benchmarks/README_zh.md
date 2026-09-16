@@ -92,6 +92,19 @@ foretoken bench examples/quickstart \
 
 参数扫描使用 Kustomize 部署，在同一模型服务上比较不同配置。
 
+### SLA 自动调参
+
+```bash
+foretoken bench examples/quickstart \
+  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
+  --min-prompt-length 128 --max-prompt-length 256 \
+  --parallel 2 \
+  --sla-params '[{"p99_latency":"<=2"}]' \
+  --sla-upper-bound 32 --output local,wandb
+```
+
+搜索复用 EvalScope；指标名与限制见 [SLA 自动调参](docs/coomon_commands/sla_zh.md)。
+
 ### 使用已有服务地址
 
 对于默认模式下已部署的快速开始示例，先获取地址：
