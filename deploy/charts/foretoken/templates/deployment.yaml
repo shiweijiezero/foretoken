@@ -88,7 +88,7 @@ spec:
             {{- end }}
             {{- with .Values.runtime.vllm.image }}
             - {{ printf "--inference-engine-profile-revision=%s" $.Values.runtime.vllm.profileRevision | quote }}
-            - {{ printf "--inference-engine-image=%s" . | quote }}
+            - {{ printf "--vllm-engine-image=%s" . | quote }}
             - {{ printf "--model-server-port=%d" (int $.Values.runtime.vllm.modelServerPort) | quote }}
             - {{ printf "--gpu-resource-name=%s" $.Values.runtime.vllm.gpu.resourceName | quote }}
             {{- with $.Values.runtime.vllm.gpu.runtimeClassName }}
