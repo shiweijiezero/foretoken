@@ -12,7 +12,7 @@ ENGINE_FEATURES ?= backend-vllm
 VLLM_METAX_VERSION ?= 0.24.0
 VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)
 SGLANG_ENGINE_VERSION ?= 0.5.18
-SGLANG_ENGINE_IMAGE ?= 
+SGLANG_ENGINE_IMAGE ?=
 
 .PHONY: vllm-source build-data-plane format verify-data-plane dev-build dev-deploy \
 	image-frontend image-vllm-metax image-model-server \
