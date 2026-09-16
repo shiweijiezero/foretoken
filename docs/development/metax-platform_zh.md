@@ -21,8 +21,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 构建机器需要 Foretoken 源码、支持 BuildKit 的 Docker 和 Make；安装平台需要 kubectl、Helm 及对应集群权限。源码构建会访问 GitHub、PyPI、MetaX Python 软件源及容器镜像仓库。
 
-使用监控时，先准备 Prometheus、Prometheus Operator 和 `ServiceMonitor`/`PrometheusRule` CRD。检测到沐曦 GPU 节点且没有合格 exporter 时，`foretoken install` 会安装 mxExporter。Prometheus 需要选择平台及工作负载 namespace 中的监控资源；具体接入方式见[可观测性指南](../../observability/README_zh.md)。
-
 ## 安装发布版
 
 集群驱动和 device plugin 准备好后，使用统一安装命令：
@@ -87,6 +85,8 @@ docker push "$CONTROL_PLANE_IMAGE"
 离线集群由节点管理员[直接导入这三个镜像](source-image-lifecycle_zh.md#直接导入本地镜像)，后续配置使用实际导入的名称和 tag。
 
 ## 安装平台
+
+手动使用 Helm 安装时，需按[可观测性指南](../../observability/README_zh.md)另行准备监控。
 
 创建 `metax-values.yaml`，用实际发布或导入的镜像名称替换示例值：
 
