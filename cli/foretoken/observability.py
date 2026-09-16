@@ -5,8 +5,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 from foretoken.kubernetes import Kubectl
 from foretoken.manifest import DeploymentError
@@ -115,6 +117,47 @@ def select_prometheus(
     return compatible[0]
 
 
+def prometheus_query(
+    kubectl: Kubectl,
+    prometheus: PrometheusRef,
+    expression: str,
+    request_timeout: str,
+) -> tuple[dict[str, Any], ...]:
+    """Execute one instant query through the selected Prometheus Service proxy."""
+    service_name, port = _prometheus_api_service(kubectl, prometheus)
+    path = (
+        f"/api/v1/namespaces/{prometheus.namespace}/services/"
+        f"http:{service_name}:{port}/proxy/api/v1/query?query="
+        f"{quote(expression, safe='')}"
+    )
+    try:
+        payload = json.loads(kubectl.get_raw(path, request_timeout))
+    except json.JSONDecodeError as exc:
+        raise DeploymentError(
+            f"Prometheus {prometheus.namespace}/{prometheus.name} returned invalid JSON"
+        ) from exc
+    data = payload.get("data") if isinstance(payload, dict) else None
+    result = data.get("result") if isinstance(data, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or payload.get("status") != "success"
+        or not isinstance(result, list)
+    ):
+        error = (
+            str(payload.get("error") or "query failed")
+            if isinstance(payload, dict)
+            else "query failed"
+        )
+        raise DeploymentError(
+            f"Prometheus {prometheus.namespace}/{prometheus.name} query failed: {error}"
+        )
+    if not all(isinstance(item, dict) for item in result):
+        raise DeploymentError(
+            f"Prometheus {prometheus.namespace}/{prometheus.name} returned invalid query data"
+        )
+    return tuple(result)
+
+
 def prometheus_selects_service_monitor(
     kubectl: Kubectl,
     prometheus: PrometheusRef,
@@ -141,6 +184,42 @@ def prometheus_selects_service_monitor(
         monitor_namespace,
         namespace_labels,
     )
+
+
+def _prometheus_api_service(
+    kubectl: Kubectl, prometheus: PrometheusRef
+) -> tuple[str, str]:
+    """Return the unique HTTP Service owned by one Prometheus custom resource."""
+    candidates: list[tuple[str, str]] = []
+    for service in kubectl.list_resources(("service",), prometheus.namespace):
+        metadata = service.get("metadata") or {}
+        spec = service.get("spec") or {}
+        selector = spec.get("selector") or {}
+        if not isinstance(selector, dict) or not (
+            selector.get("operator.prometheus.io/name") == prometheus.name
+            or selector.get("prometheus") == prometheus.name
+        ):
+            continue
+        port = next(
+            (
+                item.get("name") or item.get("port")
+                for item in spec.get("ports") or []
+                if isinstance(item, dict)
+                and (item.get("name") == "http-web" or item.get("port") == 9090)
+            ),
+            None,
+        )
+        name = metadata.get("name")
+        if isinstance(name, str) and name and isinstance(port, (str, int)):
+            candidates.append((name, str(port)))
+    preferred = tuple(item for item in candidates if item[0] == prometheus.name)
+    selected = preferred or tuple(candidates)
+    if len(selected) != 1:
+        raise DeploymentError(
+            f"Prometheus {prometheus.namespace}/{prometheus.name} needs exactly one "
+            "HTTP Service for Kubernetes API proxy access"
+        )
+    return selected[0]
 
 
 def _requested_identity(requested: str | None) -> tuple[str, str] | None:

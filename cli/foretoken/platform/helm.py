@@ -77,11 +77,6 @@ class Helm(HelmClient):
         return self._config.platform_selector_labels
 
     @property
-    def metax_exporter_image(self) -> str:
-        """Return the configurable vendor image used for CLI-managed mxExporter."""
-        return self._config.metax_exporter_image
-
-    @property
     def management_label(self) -> tuple[str, str]:
         """Return the label used on CLI-owned Kubernetes resources."""
         return self._config.management_label
@@ -519,7 +514,20 @@ class Helm(HelmClient):
                 "prometheus.prometheusSpec.ruleSelector="
                 + json.dumps(rule_selector, separators=(",", ":")),
                 "--set-json",
-                "prometheus.prometheusSpec.ruleNamespaceSelector={}",
+                "prometheus.prometheusSpec.ruleNamespaceSelector="
+                + json.dumps(namespace_selector, separators=(",", ":")),
+                "--set-string",
+                "grafana.sidecar.datasources.defaultDatasourceScrapeInterval=5s",
+                "--set-json",
+                "kube-state-metrics.metricLabelsAllowlist="
+                + json.dumps(
+                    [
+                        "pods=[inference.foretoken.io/model-group,"
+                        "inference.foretoken.io/model-role,"
+                        "inference.foretoken.io/pd-pipeline-scope]"
+                    ],
+                    separators=(",", ":"),
+                ),
             ]
         )
         self.run(args)
@@ -545,6 +553,10 @@ class Helm(HelmClient):
             [
                 "--set",
                 "serviceMonitor.enabled=true",
+                "--set-string",
+                "serviceMonitor.interval=5s",
+                "--set-string",
+                "serviceMonitor.scrapeTimeout=4s",
                 "--set",
                 "kubernetes.enablePodLabels=true",
                 "--set-json",

@@ -5,9 +5,20 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from foretoken.observability import matches_label_selector
+
+
+@dataclass(frozen=True)
+class ServiceMonitorEndpoint:
+    """One ServiceMonitor endpoint addressable through its selected Service."""
+
+    port: str
+    target_label: str
+    path: str
+    scheme: str
 
 
 def object_name(value: dict[str, Any]) -> str:
@@ -28,10 +39,10 @@ def service_selects_pods(
     )
 
 
-def monitor_selects_service(
+def monitor_service_endpoints(
     monitor: dict[str, Any], service: dict[str, Any], pod_ports: set[str | int]
-) -> bool:
-    """Return whether a ServiceMonitor selects one exporter Service and port."""
+) -> tuple[ServiceMonitorEndpoint, ...]:
+    """Return selected exporter endpoints addressable through one Service."""
     monitor_metadata = monitor.get("metadata") or {}
     monitor_namespace = str(monitor_metadata.get("namespace") or "")
     service_metadata = service.get("metadata") or {}
@@ -46,20 +57,56 @@ def monitor_selects_service(
             spec.get("namespaceSelector"), monitor_namespace, service_namespace
         )
     ):
-        return False
-    service_ports = {
-        str(port.get("name") or "")
+        return ()
+
+    service_ports = tuple(
+        port
         for port in (service.get("spec") or {}).get("ports") or []
-        if isinstance(port, dict) and port.get("name")
-    }
-    return any(
-        isinstance(endpoint, dict)
-        and (
-            endpoint.get("port") in service_ports
-            or endpoint.get("targetPort") in pod_ports
-        )
-        for endpoint in spec.get("endpoints") or []
+        if isinstance(port, dict)
     )
+    selected: list[ServiceMonitorEndpoint] = []
+    for endpoint in spec.get("endpoints") or []:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_port = endpoint.get("port")
+        target_port = endpoint.get("targetPort")
+        service_port = next(
+            (
+                port
+                for port in service_ports
+                if endpoint_port is not None and port.get("name") == endpoint_port
+            ),
+            None,
+        )
+        if service_port is None and target_port in pod_ports:
+            service_port = next(
+                (
+                    port
+                    for port in service_ports
+                    if port.get("targetPort") == target_port
+                    or port.get("port") == target_port
+                ),
+                None,
+            )
+        if service_port is None:
+            continue
+        proxy_port = service_port.get("name") or service_port.get("port")
+        target_label = endpoint_port or target_port
+        path = str(endpoint.get("path") or "/metrics")
+        scheme = str(endpoint.get("scheme") or "http").lower()
+        if (
+            not isinstance(proxy_port, (str, int))
+            or not isinstance(target_label, (str, int))
+            or not path.startswith("/")
+            or scheme not in {"http", "https"}
+        ):
+            continue
+        selected.append(
+            ServiceMonitorEndpoint(
+                str(proxy_port), str(target_label), path, scheme
+            )
+        )
+    return tuple(selected)
 
 
 def monitor_namespace_matches(

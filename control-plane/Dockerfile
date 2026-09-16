@@ -22,7 +22,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/manager
     CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/crd-apply ./cmd/crd-apply
 
 FROM ${RUNTIME_IMAGE}
-LABEL org.opencontainers.image.source="https://github.com/shiweijiezero/foretoken"
+ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
+ARG OCI_REVISION
+LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
+      org.opencontainers.image.revision="${OCI_REVISION}"
 COPY --from=builder /out/manager /manager
 COPY --from=builder /out/crd-apply /crd-apply
 # Ship the generated API definitions with the binaries that consume them.

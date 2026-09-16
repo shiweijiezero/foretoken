@@ -2163,7 +2163,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "按模型角色分组的引擎内最高 KV Cache 使用率；虚线为 KV Cache 压力告警阈值。",
+      "description": "按模型角色分组的引擎内最高 KV Cache 使用率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2173,26 +2173,10 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never",
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
+            "showPoints": "never"
           },
           "max": 1,
           "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#0ca30c",
-                "value": null
-              },
-              {
-                "color": "#d03b3b",
-                "value": "foretoken_alert_threshold_kv_cache_usage_ratio"
-              }
-            ]
-          },
           "unit": "percentunit"
         },
         "overrides": []
@@ -2549,26 +2533,10 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never",
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
+            "showPoints": "never"
           },
           "max": 1,
           "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#0ca30c",
-                "value": null
-              },
-              {
-                "color": "#d03b3b",
-                "value": "foretoken_alert_threshold_accelerator_utilization_ratio"
-              }
-            ]
-          },
           "unit": "percentunit"
         },
         "overrides": []
@@ -2626,26 +2594,10 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never",
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
+            "showPoints": "never"
           },
           "max": 1,
           "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#0ca30c",
-                "value": null
-              },
-              {
-                "color": "#d03b3b",
-                "value": "foretoken_alert_threshold_accelerator_memory_usage_ratio"
-              }
-            ]
-          },
           "unit": "percentunit"
         },
         "overrides": []
@@ -2703,26 +2655,10 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never",
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
+            "showPoints": "never"
           },
           "max": 1,
           "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#0ca30c",
-                "value": null
-              },
-              {
-                "color": "#d03b3b",
-                "value": "foretoken_alert_threshold_accelerator_utilization_ratio"
-              }
-            ]
-          },
           "unit": "percentunit"
         },
         "overrides": []
@@ -2780,26 +2716,10 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never",
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
+            "showPoints": "never"
           },
           "max": 1,
           "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#0ca30c",
-                "value": null
-              },
-              {
-                "color": "#d03b3b",
-                "value": "foretoken_alert_threshold_accelerator_memory_usage_ratio"
-              }
-            ]
-          },
           "unit": "percentunit"
         },
         "overrides": []
@@ -2857,23 +2777,7 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never",
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#0ca30c",
-                "value": null
-              },
-              {
-                "color": "#d03b3b",
-                "value": "foretoken_alert_threshold_nvidia_power_watts"
-              }
-            ]
+            "showPoints": "never"
           },
           "unit": "watt"
         },
@@ -2932,23 +2836,7 @@
             "fillOpacity": 8,
             "lineWidth": 2,
             "pointSize": 8,
-            "showPoints": "never",
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#0ca30c",
-                "value": null
-              },
-              {
-                "color": "#d03b3b",
-                "value": "foretoken_alert_threshold_nvidia_temperature_celsius"
-              }
-            ]
+            "showPoints": "never"
           },
           "unit": "celsius"
         },

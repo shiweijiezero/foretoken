@@ -14,7 +14,7 @@ metadata:
     grafana_dashboard: "1"
 data:
   foretoken-system-overview.json: |-
-{{ include "foretoken.substituteAlertThresholds" (dict "text" (.Files.Get "files/grafana/foretoken-system-overview.json") "thresholds" .Values.observability.alerts.thresholds) | nindent 4 }}
+{{ .Files.Get "files/grafana/foretoken-system-overview.json" | nindent 4 }}
   foretoken-system-overview-zh.json: |-
-{{ include "foretoken.substituteAlertThresholds" (dict "text" (.Files.Get "files/grafana/foretoken-system-overview-zh.json") "thresholds" .Values.observability.alerts.thresholds) | nindent 4 }}
+{{ .Files.Get "files/grafana/foretoken-system-overview-zh.json" | nindent 4 }}
 {{- end }}

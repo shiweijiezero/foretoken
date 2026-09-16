@@ -43,7 +43,7 @@ class PlatformConfig:
     envoy_gateway_default_controller: str
     envoy_gateway_controller: str
     dcgm_metrics: str
-    metax_exporter_image: str
+    metax_exporter_image: str | None
     image_registry: str | None
 
     @property
@@ -145,10 +145,7 @@ DCGM_FI_DEV_POWER_USAGE, gauge, Power draw (in W).
 DCGM_FI_DEV_GPU_TEMP, gauge, GPU temperature (in C).
 DCGM_FI_DEV_XID_ERRORS, gauge, Last XID error code.
 """,
-        metax_exporter_image=os.environ.get(
-            "FORETOKEN_METAX_EXPORTER_IMAGE",
-            "cr.infini-ai.com/infini/mx-exporter:0.8.1",
-        ),
+        metax_exporter_image=os.environ.get("FORETOKEN_METAX_EXPORTER_IMAGE"),
         image_registry=registry,
     )
 

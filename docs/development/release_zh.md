@@ -3,6 +3,8 @@
 
 # 发布版本规则
 
+[English](release.md) | 简体中文
+
 Foretoken 会发布 Python distribution、OCI 镜像和 Helm Chart。Python package 遵循 PEP 440，OCI 镜像与 Helm Chart 使用 SemVer。两种格式的具体写法不同，但同一次发布的阶段和序号必须一致。
 
 ## 版本阶段
@@ -69,11 +71,35 @@ v0.0.1.post1
 
 已经发布的版本不可覆盖。不得重新构建并覆盖 PyPI 或 OCI registry 中已经存在的版本；应根据实际情况递增 Development、预发布、post-release 或 patch 序号。
 
+## 构建与推送发布产物
+
+准备兼容的 NVIDIA 和沐曦推理运行时镜像，然后将下面的仓库前缀和镜像名称替换为实际值：
+
+```bash
+export REGISTRY=ghcr.io/your-org/foretoken
+export INFERENCE_ENGINE_IMAGE=your-nvidia-runtime:version
+export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
+
+deploy/release-artifacts build --registry "$REGISTRY"
+```
+
+control-plane、frontend、model-server 镜像和 Helm Chart 使用同一个版本。沐曦 model-server 镜像带有 `-metax` 后缀。
+
+完成产物验证后，登录仓库并推送：
+
+```bash
+docker login ghcr.io
+helm registry login ghcr.io
+deploy/release-artifacts push --registry "$REGISTRY"
+```
+
+已有 tag 不会被覆盖，发布中途失败后可使用相同命令重试。完整命令参考见 `deploy/release-artifacts --help`。
+
 ## 发布顺序
 
 1. 确定发布阶段，并按上表更新 `pyproject.toml` 和 `Chart.yaml`。
 2. 构建并验证 Python distribution、Helm Chart 和受影响的 OCI 镜像。
 3. 推送对应的 OCI 镜像和 Helm Chart tag。
-4. 创建对应的 GitHub tag 并发布 GitHub Release。
+4. 在实际构建并验证产物的提交上打 tag，发布 GitHub Release，简述重要改动，并具名感谢贡献者及其提供的支持。
 5. 由发布 workflow 将 Python distribution 上传到 PyPI。
 6. 验证已发布的 package、镜像、Chart 和全新安装路径。

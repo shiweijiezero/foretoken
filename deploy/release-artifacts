@@ -1,0 +1,369 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+SOURCE_URL=${FORETOKEN_SOURCE_URL:-https://github.com/shiweijiezero/foretoken}
+OUTPUT_DIR=${FORETOKEN_RELEASE_OUTPUT:-/tmp/foretoken-release}
+COMPONENTS=control-plane,frontend,model-server,model-server-metax,chart
+REGISTRY=
+DRY_RUN=false
+PLAIN_HTTP=false
+PYTHON=${FORETOKEN_PYTHON:-python}
+
+usage() {
+  cat <<'EOF'
+Build or push one version of the Foretoken release artifact set.
+
+Usage:
+  deploy/release-artifacts build --registry REGISTRY [options]
+  deploy/release-artifacts push  --registry REGISTRY [options]
+
+Modes:
+  build  Build the selected images and package the Helm chart locally.
+  push   Push selected local artifacts, skipping tags already in the registry.
+
+Options:
+  --registry REGISTRY       Image prefix, for example ghcr.io/example/foretoken.
+  --components LIST         Comma-separated artifact names. Defaults to all:
+                            control-plane,frontend,model-server,
+                            model-server-metax,chart
+  --output-dir DIRECTORY    Chart package directory (default: /tmp/foretoken-release).
+  --dry-run                 Print commands for supplementary parsing only.
+  --plain-http              Allow a local HTTP registry for artifact publication.
+  -h, --help                Show this help.
+
+Build inputs:
+  INFERENCE_ENGINE_IMAGE        Compatible NVIDIA inference runtime image.
+  METAX_INFERENCE_ENGINE_IMAGE  Compatible MetaX inference runtime image.
+
+Optional inputs such as FORETOKEN_VLLM_PYTHON, METAX_VLLM_PYTHON, registry
+mirrors, and language package indexes are forwarded through the existing
+Makefile image targets. The release version is read from pyproject.toml and
+Chart.yaml; the command stops if their PEP 440 and SemVer forms disagree.
+GPU validation is a separate release qualification step and is not run here.
+EOF
+}
+
+[[ $# -gt 0 ]] || {
+  usage >&2
+  exit 2
+}
+MODE=$1
+shift
+case "$MODE" in
+  build | push) ;;
+  -h | --help)
+    usage
+    exit 0
+    ;;
+  *)
+    printf 'unknown mode: %s\n' "$MODE" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
+
+while (($# > 0)); do
+  case "$1" in
+    --registry)
+      [[ $# -ge 2 ]] || {
+        printf '%s\n' '--registry requires a value' >&2
+        exit 2
+      }
+      REGISTRY=$2
+      shift 2
+      ;;
+    --components)
+      [[ $# -ge 2 ]] || {
+        printf '%s\n' '--components requires a value' >&2
+        exit 2
+      }
+      COMPONENTS=$2
+      shift 2
+      ;;
+    --output-dir)
+      [[ $# -ge 2 ]] || {
+        printf '%s\n' '--output-dir requires a value' >&2
+        exit 2
+      }
+      OUTPUT_DIR=$2
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --plain-http)
+      PLAIN_HTTP=true
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'unknown option: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+[[ -n "$REGISTRY" ]] || {
+  printf '%s\n' '--registry is required' >&2
+  exit 2
+}
+REGISTRY=${REGISTRY%/}
+[[ -n "$REGISTRY" ]] || {
+  printf '%s\n' '--registry must not contain only slashes' >&2
+  exit 2
+}
+[[ -n "$COMPONENTS" ]] || {
+  printf '%s\n' '--components must not be empty' >&2
+  exit 2
+}
+
+command -v "$PYTHON" >/dev/null || {
+  printf 'missing required command: %s\n' "$PYTHON" >&2
+  exit 1
+}
+
+# Translate the package's PEP 440 release spelling to the OCI/Chart SemVer spelling.
+read -r PYTHON_VERSION OCI_VERSION < <(
+  "$PYTHON" - "$ROOT" <<'PY'
+from pathlib import Path
+import sys
+import tomllib
+
+import yaml
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "cli"))
+from foretoken import platform_version_for
+
+with (root / "pyproject.toml").open("rb") as source:
+    python_version = tomllib.load(source)["project"]["version"]
+with (root / "deploy/charts/foretoken/Chart.yaml").open(encoding="utf-8") as source:
+    chart = yaml.safe_load(source)
+
+oci_version = platform_version_for(python_version)
+chart_version = str(chart.get("version", ""))
+app_version = str(chart.get("appVersion", ""))
+if chart_version != oci_version or app_version != oci_version:
+    raise SystemExit(
+        "release versions disagree: "
+        f"pyproject.toml={python_version}, expected Chart version/appVersion={oci_version}, "
+        f"found version={chart_version}, appVersion={app_version}"
+    )
+print(python_version, oci_version)
+PY
+)
+
+IFS=',' read -r -a SELECTED_COMPONENTS <<<"$COMPONENTS"
+for component in "${SELECTED_COMPONENTS[@]}"; do
+  case "$component" in
+    control-plane | frontend | model-server | model-server-metax | chart) ;;
+    *)
+      printf 'unknown component: %s\n' "$component" >&2
+      exit 2
+      ;;
+  esac
+done
+
+selected() {
+  local wanted=$1 component
+  for component in "${SELECTED_COMPONENTS[@]}"; do
+    [[ "$component" != "$wanted" ]] || return 0
+  done
+  return 1
+}
+
+images_selected() {
+  selected control-plane || selected frontend || selected model-server || selected model-server-metax
+}
+
+run() {
+  printf '+'
+  printf ' %q' "$@"
+  printf '\n'
+  [[ "$DRY_RUN" == true ]] || "$@"
+}
+
+require_command() {
+  [[ "$DRY_RUN" == true ]] || command -v "$1" >/dev/null || {
+    printf 'missing required command: %s\n' "$1" >&2
+    exit 1
+  }
+}
+
+# Build one model-server variant without replacing an inference base's Python selection.
+build_model_server() {
+  local image=$1 inference_engine_image=$2 python_path=$3
+  local -a args=(
+    make -C "$ROOT" image-model-server
+    "MODEL_SERVER_IMAGE=$image"
+    "INFERENCE_ENGINE_IMAGE=$inference_engine_image"
+  )
+  [[ -z "$python_path" ]] || args+=("FORETOKEN_VLLM_PYTHON=$python_path")
+  args+=("OCI_SOURCE=$SOURCE_URL" "OCI_REVISION=$OCI_REVISION")
+  run "${args[@]}"
+}
+
+show_remote_chart() {
+  if [[ "$PLAIN_HTTP" == true ]]; then
+    helm show chart "$1" --version "$OCI_VERSION" --plain-http
+  else
+    helm show chart "$1" --version "$OCI_VERSION"
+  fi
+}
+
+push_chart() {
+  if [[ "$PLAIN_HTTP" == true ]]; then
+    run helm push "$CHART_PACKAGE" "$1" --plain-http
+  else
+    run helm push "$CHART_PACKAGE" "$1"
+  fi
+}
+
+inspect_remote_image() {
+  if [[ "$PLAIN_HTTP" == true ]]; then
+    docker manifest inspect --insecure "$1"
+  else
+    docker manifest inspect "$1"
+  fi
+}
+
+CONTROL_PLANE_IMAGE="$REGISTRY/control-plane:$OCI_VERSION"
+FRONTEND_IMAGE="$REGISTRY/frontend:$OCI_VERSION"
+MODEL_SERVER_IMAGE="$REGISTRY/model-server:$OCI_VERSION"
+MODEL_SERVER_METAX_IMAGE="$REGISTRY/model-server:$OCI_VERSION-metax"
+CHART_PACKAGE="$OUTPUT_DIR/foretoken-$OCI_VERSION.tgz"
+OCI_REVISION=
+if [[ "$MODE" == build ]] && images_selected; then
+  OCI_REVISION=$(git -C "$ROOT" rev-parse HEAD)
+fi
+
+printf 'Release: Python %s, OCI/Chart %s\n' "$PYTHON_VERSION" "$OCI_VERSION"
+printf 'Mode: %s\n' "$MODE"
+
+if [[ "$MODE" == build ]]; then
+  images_selected && require_command make
+  selected chart && require_command helm
+
+  if selected control-plane; then
+    run make -C "$ROOT" image-control-plane \
+      "CONTROL_PLANE_IMAGE=$CONTROL_PLANE_IMAGE" \
+      "OCI_SOURCE=$SOURCE_URL" \
+      "OCI_REVISION=$OCI_REVISION"
+  fi
+  if selected frontend; then
+    run make -C "$ROOT" image-frontend \
+      "FRONTEND_IMAGE=$FRONTEND_IMAGE" \
+      "OCI_SOURCE=$SOURCE_URL" \
+      "OCI_REVISION=$OCI_REVISION"
+  fi
+  if selected model-server; then
+    if [[ "$DRY_RUN" == true ]]; then
+      build_model_server \
+        "$MODEL_SERVER_IMAGE" \
+        "${INFERENCE_ENGINE_IMAGE:-INFERENCE_ENGINE_IMAGE}" \
+        "${FORETOKEN_VLLM_PYTHON:-}"
+    else
+      [[ -n "${INFERENCE_ENGINE_IMAGE:-}" ]] || {
+        printf '%s\n' 'INFERENCE_ENGINE_IMAGE is required for model-server' >&2
+        exit 2
+      }
+      build_model_server \
+        "$MODEL_SERVER_IMAGE" \
+        "$INFERENCE_ENGINE_IMAGE" \
+        "${FORETOKEN_VLLM_PYTHON:-}"
+    fi
+  fi
+  if selected model-server-metax; then
+    if [[ "$DRY_RUN" == true ]]; then
+      (
+        unset FORETOKEN_VLLM_PYTHON
+        build_model_server \
+          "$MODEL_SERVER_METAX_IMAGE" \
+          "${METAX_INFERENCE_ENGINE_IMAGE:-METAX_INFERENCE_ENGINE_IMAGE}" \
+          "${METAX_VLLM_PYTHON:-}"
+      )
+    else
+      [[ -n "${METAX_INFERENCE_ENGINE_IMAGE:-}" ]] || {
+        printf '%s\n' 'METAX_INFERENCE_ENGINE_IMAGE is required for model-server-metax' >&2
+        exit 2
+      }
+      (
+        unset FORETOKEN_VLLM_PYTHON
+        build_model_server \
+          "$MODEL_SERVER_METAX_IMAGE" \
+          "$METAX_INFERENCE_ENGINE_IMAGE" \
+          "${METAX_VLLM_PYTHON:-}"
+      )
+    fi
+  fi
+  if selected chart; then
+    run mkdir -p "$OUTPUT_DIR"
+    run helm package "$ROOT/deploy/charts/foretoken" --destination "$OUTPUT_DIR"
+  fi
+else
+  images_selected && require_command docker
+  selected chart && require_command helm
+
+  # Preserve published version tags while allowing a partial release to resume.
+  push_image() {
+    local image=$1 output status
+    if [[ "$DRY_RUN" == true ]]; then
+      run docker push "$image"
+      return
+    fi
+    set +e
+    output=$(inspect_remote_image "$image" 2>&1)
+    status=$?
+    set -e
+    if ((status == 0)); then
+      printf 'Remote tag already exists, leaving unchanged: %s\n' "$image"
+      return
+    fi
+    if [[ "$output" != *"manifest unknown"* && "$output" != *"no such manifest"* ]]; then
+      printf 'cannot determine whether image exists: %s\n%s\n' "$image" "$output" >&2
+      return 1
+    fi
+    run docker push "$image"
+  }
+
+  selected control-plane && push_image "$CONTROL_PLANE_IMAGE"
+  selected frontend && push_image "$FRONTEND_IMAGE"
+  selected model-server && push_image "$MODEL_SERVER_IMAGE"
+  selected model-server-metax && push_image "$MODEL_SERVER_METAX_IMAGE"
+
+  if selected chart; then
+    CHART_REGISTRY="oci://$REGISTRY/charts"
+    CHART_NAME=foretoken
+    if [[ "$DRY_RUN" == true ]]; then
+      push_chart "$CHART_REGISTRY"
+    else
+      set +e
+      chart_output=$(show_remote_chart "$CHART_REGISTRY/$CHART_NAME" 2>&1)
+      chart_status=$?
+      set -e
+      if ((chart_status == 0)); then
+        printf 'Remote tag already exists, leaving unchanged: %s/%s:%s\n' "$CHART_REGISTRY" "$CHART_NAME" "$OCI_VERSION"
+      elif [[ "$chart_output" == *"manifest unknown"* || \
+        "$chart_output" == *"failed to perform"*"FetchReference"*": not found"* ]]; then
+        [[ -f "$CHART_PACKAGE" ]] || {
+          printf 'chart package not found: %s\n' "$CHART_PACKAGE" >&2
+          exit 1
+        }
+        push_chart "$CHART_REGISTRY"
+      else
+        printf 'cannot determine whether chart exists: %s/%s:%s\n%s\n' \
+          "$CHART_REGISTRY" "$CHART_NAME" "$OCI_VERSION" "$chart_output" >&2
+        exit 1
+      fi
+    fi
+  fi
+fi

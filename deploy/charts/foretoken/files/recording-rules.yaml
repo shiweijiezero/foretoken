@@ -768,131 +768,138 @@ groups:
             )
           )
 
-      # With honor_labels=false, exported_* holds workload identity while the
-      # plain labels identify the exporter Pod. Restore workload labels before
-      # aggregation; label_replace leaves non-conflicting labels unchanged. DCGM uses
-      # hostname in current releases and Hostname in older installations.
+  - name: foretoken.accelerator-recording
+    interval: 5s
+    rules:
+      # kube-state-metrics is the source of Foretoken workload identity. Exporters
+      # report only the Pod allocated to each physical device. Aggregate duplicate
+      # KSM replicas by UID and select the most recently observed same-name Pod.
+      - record: foretoken:accelerator_workload_labels
+        expr: |
+          max by (namespace, pod, uid, model_group, model_role, pd_pipeline_scope, node) (
+            label_replace(label_replace(label_replace(
+              max by (
+                namespace,
+                pod,
+                uid,
+                label_inference_foretoken_io_model_group,
+                label_inference_foretoken_io_model_role,
+                label_inference_foretoken_io_pd_pipeline_scope
+              ) (
+                kube_pod_labels{
+                  label_inference_foretoken_io_model_group!="",
+                  label_inference_foretoken_io_model_role!=""
+                }
+              )
+              * on (namespace, pod, uid) group_left(node)
+                (
+                  topk by (namespace, pod) (
+                    1,
+                    max by (namespace, pod, uid, node) (
+                      timestamp(kube_pod_info)
+                    )
+                  ) >= bool 0
+                ),
+              "model_group", "$1", "label_inference_foretoken_io_model_group", "(.+)"
+            ), "model_role", "$1", "label_inference_foretoken_io_model_role", "(.+)"
+            ), "pd_pipeline_scope", "$1", "label_inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      # Prometheus preserves conflicting workload labels as exported_*; with
+      # honorLabels they remain plain. label_replace supports both before the join.
       - record: foretoken:accelerator_gpu_utilization_ratio
         expr: |
           max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
-            label_replace(label_replace(label_replace(label_replace(
-            label_replace(label_replace(label_replace(label_replace(
-              label_replace(label_replace(
-                DCGM_FI_DEV_GPU_UTIL{
-                  inference_foretoken_io_model_group!="",
-                  inference_foretoken_io_model_role!=""
-                } / 100,
-                "vendor", "nvidia", "__name__", ".*"
-              ), "device_id", "$1", "UUID", "(.+)")
+            (
+              label_replace(label_replace(label_replace(label_replace(label_replace(
+                DCGM_FI_DEV_GPU_UTIL / 100,
+                "namespace", "$1", "exported_namespace", "(.+)"
+              ), "pod", "$1", "exported_pod", "(.+)"
+              ), "container", "$1", "exported_container", "(.+)"
+              ), "vendor", "nvidia", "__name__", ".*"
+              ), "device_id", "$1", "UUID", "(.+)"
+              )
               or
-              label_replace(label_replace(
-                mx_gpu_usage{
-                  inference_foretoken_io_model_group!="",
-                  inference_foretoken_io_model_role!=""
-                } / 100,
-                "vendor", "metax", "__name__", ".*"
-              ), "device_id", "$1", "uuid", "(.+)"),
-              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
-            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
-            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
-            ), "node", "$1", "Hostname", "(.+)"
-            ), "node", "$1", "hostname", "(.+)"
-            ), "namespace", "$1", "exported_namespace", "(.+)"
-            ), "pod", "$1", "exported_pod", "(.+)"
-            ), "container", "$1", "exported_container", "(.+)"
+              label_replace(label_replace(label_replace(label_replace(label_replace(
+                mx_gpu_usage / 100,
+                "namespace", "$1", "exported_namespace", "(.+)"
+              ), "pod", "$1", "exported_pod", "(.+)"
+              ), "container", "$1", "exported_container", "(.+)"
+              ), "vendor", "metax", "__name__", ".*"
+              ), "device_id", "$1", "uuid", "(.+)"
+              )
             )
+            * on (namespace, pod)
+              group_left(uid, model_group, model_role, pd_pipeline_scope, node)
+              foretoken:accelerator_workload_labels
           )
 
       - record: foretoken:accelerator_gpu_memory_usage_ratio
         expr: |
           max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
-            label_replace(label_replace(label_replace(label_replace(
-            label_replace(label_replace(label_replace(label_replace(
-              label_replace(label_replace(
+            (
+              label_replace(label_replace(label_replace(label_replace(label_replace(
                 (
-                  DCGM_FI_DEV_FB_USED{
-                    inference_foretoken_io_model_group!="",
-                    inference_foretoken_io_model_role!=""
-                  }
+                  DCGM_FI_DEV_FB_USED
                   /
                   clamp_min(
-                    DCGM_FI_DEV_FB_USED{
-                      inference_foretoken_io_model_group!="",
-                      inference_foretoken_io_model_role!=""
-                    }
+                    DCGM_FI_DEV_FB_USED
                     +
-                    DCGM_FI_DEV_FB_FREE{
-                      inference_foretoken_io_model_group!="",
-                      inference_foretoken_io_model_role!=""
-                    },
+                    DCGM_FI_DEV_FB_FREE,
                     1
                   )
                 ),
-                "vendor", "nvidia", "__name__", ".*"
-              ), "device_id", "$1", "UUID", "(.+)")
+                "namespace", "$1", "exported_namespace", "(.+)"
+              ), "pod", "$1", "exported_pod", "(.+)"
+              ), "container", "$1", "exported_container", "(.+)"
+              ), "vendor", "nvidia", "__name__", ".*"
+              ), "device_id", "$1", "UUID", "(.+)"
+              )
               or
-              label_replace(label_replace(
-                mx_memory_usage{
-                  inference_foretoken_io_model_group!="",
-                  inference_foretoken_io_model_role!=""
-                } / 100,
-                "vendor", "metax", "__name__", ".*"
-              ), "device_id", "$1", "uuid", "(.+)"),
-              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
-            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
-            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
-            ), "node", "$1", "Hostname", "(.+)"
-            ), "node", "$1", "hostname", "(.+)"
-            ), "namespace", "$1", "exported_namespace", "(.+)"
-            ), "pod", "$1", "exported_pod", "(.+)"
-            ), "container", "$1", "exported_container", "(.+)"
+              label_replace(label_replace(label_replace(label_replace(label_replace(
+                mx_memory_usage{type="vram"} / 100,
+                "namespace", "$1", "exported_namespace", "(.+)"
+              ), "pod", "$1", "exported_pod", "(.+)"
+              ), "container", "$1", "exported_container", "(.+)"
+              ), "vendor", "metax", "__name__", ".*"
+              ), "device_id", "$1", "uuid", "(.+)"
+              )
             )
+            * on (namespace, pod)
+              group_left(uid, model_group, model_role, pd_pipeline_scope, node)
+              foretoken:accelerator_workload_labels
           )
 
-      # Power and temperature exist only for NVIDIA devices; the vendor label keeps the
-      # series shape aligned with the utilization and memory rules.
+      # Power and temperature exist only for NVIDIA devices.
       - record: foretoken:accelerator_gpu_power_watts
         expr: |
           max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
-            label_replace(label_replace(label_replace(label_replace(
-            label_replace(label_replace(label_replace(label_replace(
-              label_replace(label_replace(
-                DCGM_FI_DEV_POWER_USAGE{
-                  inference_foretoken_io_model_group!="",
-                  inference_foretoken_io_model_role!=""
-                },
-                "vendor", "nvidia", "__name__", ".*"
-              ), "device_id", "$1", "UUID", "(.+)"),
-              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
-            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
-            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
-            ), "node", "$1", "Hostname", "(.+)"
-            ), "node", "$1", "hostname", "(.+)"
-            ), "namespace", "$1", "exported_namespace", "(.+)"
+            label_replace(label_replace(label_replace(label_replace(label_replace(
+              DCGM_FI_DEV_POWER_USAGE,
+              "namespace", "$1", "exported_namespace", "(.+)"
             ), "pod", "$1", "exported_pod", "(.+)"
             ), "container", "$1", "exported_container", "(.+)"
+            ), "vendor", "nvidia", "__name__", ".*"
+            ), "device_id", "$1", "UUID", "(.+)"
             )
+            * on (namespace, pod)
+              group_left(uid, model_group, model_role, pd_pipeline_scope, node)
+              foretoken:accelerator_workload_labels
           )
 
       - record: foretoken:accelerator_gpu_temperature_celsius
         expr: |
           max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
-            label_replace(label_replace(label_replace(label_replace(
-            label_replace(label_replace(label_replace(label_replace(
-              label_replace(label_replace(
-                DCGM_FI_DEV_GPU_TEMP{
-                  inference_foretoken_io_model_group!="",
-                  inference_foretoken_io_model_role!=""
-                },
-                "vendor", "nvidia", "__name__", ".*"
-              ), "device_id", "$1", "UUID", "(.+)"),
-              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
-            ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
-            ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
-            ), "node", "$1", "Hostname", "(.+)"
-            ), "node", "$1", "hostname", "(.+)"
-            ), "namespace", "$1", "exported_namespace", "(.+)"
+            label_replace(label_replace(label_replace(label_replace(label_replace(
+              DCGM_FI_DEV_GPU_TEMP,
+              "namespace", "$1", "exported_namespace", "(.+)"
             ), "pod", "$1", "exported_pod", "(.+)"
             ), "container", "$1", "exported_container", "(.+)"
+            ), "vendor", "nvidia", "__name__", ".*"
+            ), "device_id", "$1", "UUID", "(.+)"
             )
+            * on (namespace, pod)
+              group_left(uid, model_group, model_role, pd_pipeline_scope, node)
+              foretoken:accelerator_workload_labels
           )

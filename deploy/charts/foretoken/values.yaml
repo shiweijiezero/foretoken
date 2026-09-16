@@ -54,8 +54,8 @@ observability:
   # auto discovers the required APIs during installation; enabled supports offline rendering and GitOps.
   mode: auto
   additionalLabels: {}
-  interval: ""
-  scrapeTimeout: ""
+  interval: 5s
+  scrapeTimeout: 4s
   # Prometheus NAMESPACE/NAME; foretoken install resolves the selected instance.
   prometheus: ""
 

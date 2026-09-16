@@ -3,6 +3,8 @@
 
 # Release Versioning
 
+English | [简体中文](release_zh.md)
+
 Foretoken publishes a Python distribution, OCI images, and a Helm Chart. Python packages follow PEP 440, while OCI images and Helm Charts use SemVer. A release keeps the same stage and sequence number across both formats even though their spelling differs.
 
 ## Version stages
@@ -69,11 +71,35 @@ Each artifact has one authoritative version source:
 
 Published versions are immutable. Never rebuild and overwrite a version already present on PyPI or in an OCI registry. Increment the development, pre-release, post-release, or patch number as appropriate.
 
+## Build and push the release artifacts
+
+Prepare compatible NVIDIA and MetaX inference-runtime images, then replace the registry prefix and runtime image names below with your own:
+
+```bash
+export REGISTRY=ghcr.io/your-org/foretoken
+export INFERENCE_ENGINE_IMAGE=your-nvidia-runtime:version
+export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
+
+deploy/release-artifacts build --registry "$REGISTRY"
+```
+
+The release uses one shared version for the control-plane, frontend, model-server images, and Helm Chart. The MetaX model-server image adds the `-metax` suffix.
+
+After validating the artifacts, log in to the registry and push them:
+
+```bash
+docker login ghcr.io
+helm registry login ghcr.io
+deploy/release-artifacts push --registry "$REGISTRY"
+```
+
+Existing tags are not overwritten, so the same command can retry an incomplete publication. See `deploy/release-artifacts --help` for the complete command reference.
+
 ## Release sequence
 
 1. Choose the release stage and update `pyproject.toml` and `Chart.yaml` using the mapping above.
 2. Build and verify the Python distribution, Helm Chart, and affected OCI images.
 3. Push the matching OCI image and Helm Chart tags.
-4. Create the matching GitHub tag and publish the GitHub Release.
+4. Tag the commit used to build and validate the artifacts, then publish the GitHub Release with concise highlights and named acknowledgements of contributors and their support.
 5. Let the release workflow publish the Python distribution to PyPI.
 6. Verify the published package, images, Chart, and a clean installation path.

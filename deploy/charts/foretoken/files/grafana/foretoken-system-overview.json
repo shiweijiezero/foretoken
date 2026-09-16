@@ -1952,7 +1952,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Requests preempted per second because KV-cache blocks ran out. Sustained preemption indicates KV-cache pressure.",
+      "description": "Requests preempted per second because KV-cache blocks ran out. Sustained preemption precedes the KV-cache pressure alert.",
       "fieldConfig": {
         "defaults": {
           "color": {

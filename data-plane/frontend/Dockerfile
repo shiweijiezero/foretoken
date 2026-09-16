@@ -48,7 +48,10 @@ RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/regis
 
 FROM ${RUNTIME_IMAGE}
 
-LABEL org.opencontainers.image.source="https://github.com/shiweijiezero/foretoken"
+ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
+ARG OCI_REVISION
+LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
+      org.opencontainers.image.revision="${OCI_REVISION}"
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates libssl3 libstdc++6 \

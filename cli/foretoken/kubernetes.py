@@ -91,6 +91,12 @@ class Kubectl:
             raise DeploymentError(f"{' '.join(command)} failed: {detail}")
         return completed
 
+    def get_raw(self, path: str, request_timeout: str) -> str:
+        """Return a bounded Kubernetes API or resource-proxy response as text."""
+        return self.run(
+            ["get", f"--request-timeout={request_timeout}", "--raw", path]
+        ).stdout
+
     def kustomize(self, path: Path) -> str:
         """Render a Kustomize root through the installed kubectl."""
         return self.run(["kustomize", str(path)]).stdout
@@ -114,20 +120,6 @@ class Kubectl:
             ],
             input_text=rendered,
         )
-
-    def delete_resource(self, resource: ResourceRef, timeout: str) -> None:
-        """Delete one namespaced resource after ownership was verified."""
-        args = [
-            "delete",
-            resource.kind.lower(),
-            resource.name,
-            "--ignore-not-found",
-            "--wait=true",
-            f"--timeout={timeout}",
-        ]
-        if resource.namespace:
-            args.extend(["--namespace", resource.namespace])
-        self.run(args)
 
     def rollout_status(self, resource: ResourceRef, timeout: str) -> None:
         """Wait for one namespaced workload to become ready."""
