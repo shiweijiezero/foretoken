@@ -91,6 +91,12 @@ class Kubectl:
             raise DeploymentError(f"{' '.join(command)} failed: {detail}")
         return completed
 
+    def get_raw(self, path: str, request_timeout: str) -> str:
+        """Return a bounded Kubernetes API or resource-proxy response as text."""
+        return self.run(
+            ["get", f"--request-timeout={request_timeout}", "--raw", path]
+        ).stdout
+
     def kustomize(self, path: Path) -> str:
         """Render a Kustomize root through the installed kubectl."""
         return self.run(["kustomize", str(path)]).stdout

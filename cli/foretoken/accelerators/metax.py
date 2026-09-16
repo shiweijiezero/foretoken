@@ -9,7 +9,11 @@ from typing import Any
 
 from foretoken.accelerators._exporter import object_name
 from foretoken.accelerators.config import METAX_GPU_RESOURCES
-from foretoken.accelerators.discovery import AcceleratorMetricsDiscovery, ExporterMonitor
+from foretoken.accelerators.discovery import (
+    AcceleratorMetricsDiscovery,
+    ExporterMonitor,
+    MetricRequirement,
+)
 from foretoken.manifest import DeploymentError
 
 
@@ -18,6 +22,16 @@ class MetaXMetricsDiscovery(AcceleratorMetricsDiscovery):
 
     exporter_name = "mxExporter"
     node_description = "every MetaX GPU node"
+    metric_requirements = (
+        MetricRequirement("mx_gpu_usage", frozenset({"deviceId", "uuid"})),
+        MetricRequirement(
+            "mx_memory_usage", frozenset({"deviceId", "type", "uuid"})
+        ),
+    )
+    metrics_repair_hint = (
+        "configure the official exporter with GPU access, pod-resources and sysfs "
+        "mounts, and the mx_gpu_usage and mx_memory_usage counters"
+    )
 
     def resolve(self) -> ExporterMonitor | None:
         """Return the mxExporter collection path for allocatable MetaX GPUs."""

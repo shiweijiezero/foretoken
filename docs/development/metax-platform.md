@@ -15,20 +15,20 @@ Release installations share the controller and frontend images with other GPU pl
 
 - Kubernetes 1.29 or later, MetaX drivers, and the MetaX device plugin publishing `metax-tech.com/gpu`.
 - A writable model directory on the target nodes, or a StorageClass for model-cache volumes. Configure the example's `cache.yaml` as described in [Model storage](../model-storage.md).
-- A reachable Gateway endpoint. The commands below use Envoy Gateway; an existing platform should remain under its current owner's control.
-- Prometheus, Prometheus Operator, `ServiceMonitor`/`PrometheusRule` CRDs, and mxExporter when monitoring is required. See [Observability](../../observability/README.md).
+- A reachable Gateway endpoint.
+- A Prometheus-compatible monitoring stack and an mxExporter covering the MetaX nodes when monitoring is required.
 
 The build host needs the Foretoken checkout, Docker with BuildKit, and Make. Platform installation also needs kubectl, Helm, and cluster permissions. Source installation downloads from GitHub, PyPI, the MetaX package index, and the selected container registries.
 
 ## Install release images
 
-After preparing the cluster drivers, device plugin, and mxExporter, use the normal CLI installation:
+After preparing the cluster drivers, device plugin, monitoring stack, and mxExporter, install the platform with the CLI:
 
 ```bash
 foretoken install
 ```
 
-The MetaX image is selected automatically. See [CLI installation](../../cli/README.md#install-the-kubernetes-platform) for Gateway and custom configuration.
+The MetaX image is selected automatically and the CLI verifies the discovered exporter metrics and Prometheus targets. See [CLI installation](../../cli/README.md#install-the-kubernetes-platform) for Gateway and custom configuration.
 
 ## Build the images
 

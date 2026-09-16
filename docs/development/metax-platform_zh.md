@@ -17,21 +17,20 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 - Kubernetes 1.29 或更高版本、沐曦驱动和 MetaX device plugin；节点应发布 `metax-tech.com/gpu` 资源。
 - 目标节点上的可写模型目录，或用于模型缓存的 StorageClass。按[模型存储](../model-storage_zh.md)配置示例的 `cache.yaml`。
-- 可供客户端访问的 Gateway 地址；下面使用 Envoy Gateway。已有平台应由原管理员维护，不要安装第二套控制器接管它。
+- 可供客户端访问的 Gateway 地址。
+- 需要监控时，准备兼容 Prometheus 的监控栈和覆盖沐曦节点的 mxExporter。
 
 构建机器需要 Foretoken 源码、支持 BuildKit 的 Docker 和 Make；安装平台需要 kubectl、Helm 及对应集群权限。源码构建会访问 GitHub、PyPI、MetaX Python 软件源及容器镜像仓库。
 
-使用监控时，先准备 Prometheus、Prometheus Operator、`ServiceMonitor`/`PrometheusRule` CRD 和覆盖沐曦节点的 mxExporter。Prometheus 需要选择平台及工作负载 namespace 中的监控资源；额外标签通过 `observability.additionalLabels` 配置。源码 Chart 不安装这些共享依赖，具体接入方式见[可观测性指南](../../observability/README_zh.md)。
-
 ## 安装发布版
 
-集群驱动、device plugin 和 mxExporter 准备好后，使用统一安装命令：
+准备好集群驱动、device plugin、监控栈和 mxExporter 后，使用统一安装命令：
 
 ```bash
 foretoken install
 ```
 
-自动选择沐曦镜像；Gateway 和自定义配置见 [CLI 安装指南](../../cli/README_zh.md#安装-kubernetes-平台)。
+CLI 会自动选择沐曦镜像，并验证发现的 exporter 指标和 Prometheus target。Gateway 和自定义配置见 [CLI 安装指南](../../cli/README_zh.md#安装-kubernetes-平台)。
 
 ## 构建镜像
 

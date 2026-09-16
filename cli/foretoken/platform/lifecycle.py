@@ -27,7 +27,11 @@ from foretoken.kubernetes import (
     unmark_managed_metrics_scraper_namespace,
 )
 from foretoken.manifest import DeploymentError
-from foretoken.observability import PrometheusRef, select_prometheus
+from foretoken.observability import (
+    PrometheusRef,
+    managed_prometheus_ref,
+    select_prometheus,
+)
 from foretoken.platform.config import (
     default_platform_config,
     load_platform_values,
@@ -215,7 +219,7 @@ class PlatformLifecycle:
                 f"Helm release {managed_dcgm.display_name} is not managed by foretoken; "
                 "use its existing Helm lifecycle"
             )
-        exporter_discovery = ExporterDiscovery(kubectl)
+        exporter_discovery = ExporterDiscovery(kubectl, command.timeout)
         runtime_selection = _select_runtime(exporter_discovery.nodes, runtime_scope)
 
         source_runtime_image: str | None = None
@@ -306,6 +310,9 @@ class PlatformLifecycle:
         )
         if selected_prometheus is not None:
             exporter_discovery.require_prometheus_selection(
+                selected_prometheus, exporters
+            )
+            exporter_discovery.require_prometheus_targets(
                 selected_prometheus, exporters
             )
         if nvidia_metrics is None:
@@ -411,6 +418,33 @@ class PlatformLifecycle:
                 managed_dcgm_exists,
                 command.timeout,
             )
+
+        if install_managed_prometheus or install_managed_dcgm:
+            active_prometheus = selected_prometheus or managed_prometheus_ref(
+                kubectl, managed_prometheus.namespace, managed_prometheus.name
+            )
+            verified_discovery = ExporterDiscovery(kubectl, command.timeout)
+            verified_nvidia = NvidiaMetricsDiscovery(verified_discovery).resolve()
+            verified_metax = MetaXMetricsDiscovery(verified_discovery).resolve()
+            verified_exporters = tuple(
+                (name, exporter)
+                for name, exporter in (
+                    (
+                        "DCGM",
+                        verified_nvidia.exporter
+                        if verified_nvidia is not None
+                        else None,
+                    ),
+                    ("mxExporter", verified_metax),
+                )
+                if exporter is not None
+            )
+            verified_discovery.require_prometheus_targets(
+                active_prometheus,
+                verified_exporters,
+                timeout_seconds=timeout_seconds(command.timeout),
+            )
+
         helm.install_platform(
             release=platform,
             source_images=source_images,

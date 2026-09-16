@@ -40,49 +40,15 @@ kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
 ```
 
-在 Prometheus 的 **Targets** 页面确认 Foretoken target 为 `UP`，在 **Rules** 页面确认 `foretoken.recording` 已加载。下面的查询返回 Frontend 请求速率：
+在 Prometheus 的 Targets 页面确认 Foretoken target 为 `UP`，在 Rules 页面确认 `foretoken.recording`、`foretoken.accelerator-recording` 和 `foretoken.alerting` 已加载。下面的查询返回 Frontend 请求速率：
 
 ```promql
 sum(foretoken:frontend_http_response_starts:rate5m)
 ```
 
-## 接入已有监控
+## 安装监控
 
-CLI 优先复用集群已有的组件，只安装缺少的部分：
-
-| 组件 | 不存在 | 存在 | 存在但不可用 | `foretoken uninstall` |
-| --- | --- | --- | --- | --- |
-| Prometheus | 安装 CLI 管理的 kube-prometheus-stack | 复用 | 停止并要求显式指定 | 只删除 CLI 管理的 release |
-| NVIDIA DCGM Exporter | 有 NVIDIA GPU 时安装 CLI 管理的 exporter | 复用 | 停止 | 只删除 CLI 管理的 release |
-| 沐曦 mxExporter | 停止，需要集群自行提供 | 复用 | 停止 | 保留 |
-
-exporter 可用的条件是覆盖全部 GPU 节点并被选中的 Prometheus 抓取。CLI 不安装 GPU 驱动、device plugin 或厂商 Operator。
-
-集群中有多个兼容的 Prometheus 时，显式指定一个：
-
-```bash
-# 允许该 Prometheus 所在命名空间抓取 Foretoken 指标
-kubectl label namespace monitoring \
-  inference.foretoken.io/metrics-scraper=true \
-  --overwrite
-
-# 指定 Prometheus 实例
-foretoken install --prometheus monitoring/prometheus
-```
-
-GPU 面板和告警依靠 Foretoken 模型组和模型角色的 Pod 标签识别设备。CLI 管理的 DCGM Exporter 会输出这些标签；复用已有 exporter 时需要同样的标签，否则这些面板没有数据。
-
-使用服务告警时，复用的 Prometheus 需要通过 `ruleNamespaceSelector` 选择工作负载命名空间中的规则；CLI 管理的监控已配置这一范围。
-
-复用 Prometheus 时，Grafana 仍由原平台管理。能够发现 `grafana_dashboard=1` ConfigMap 的 Grafana sidecar 会从 `foretoken-platform` 命名空间自动加载看板；否则导出 JSON 后在 Grafana 中导入：
-
-```bash
-kubectl get configmap \
-  --namespace foretoken-platform \
-  foretoken-control-plane-system-dashboard \
-  --output jsonpath='{.data.foretoken-system-overview\.json}' \
-  > /tmp/foretoken-system-overview.json
-```
+运行 `foretoken install`，CLI 会检测集群中的监控栈并配置 Foretoken 所需的指标采集。检测到沐曦 GPU 资源时，CLI 会验证兼容的 mxExporter 及其指标采集。安装完成后，在 Prometheus 的 Targets 页面确认 Foretoken target 为 `UP`；CLI 管理的 Grafana 会加载 Foretoken System Overview 看板。
 
 ## 告警
 

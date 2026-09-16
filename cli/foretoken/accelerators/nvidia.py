@@ -13,6 +13,7 @@ from foretoken.accelerators.config import NVIDIA_GPU_RESOURCE
 from foretoken.accelerators.discovery import (
     AcceleratorMetricsDiscovery,
     ExporterMonitor,
+    MetricRequirement,
 )
 from foretoken.kubernetes import resource_ref
 from foretoken.manifest import DeploymentError, ResourceRef
@@ -31,6 +32,14 @@ class NvidiaMetricsDiscovery(AcceleratorMetricsDiscovery):
 
     exporter_name = "DCGM Exporter"
     node_description = "every NVIDIA GPU node"
+    metric_requirements = (
+        MetricRequirement("DCGM_FI_DEV_GPU_UTIL", frozenset({"UUID"})),
+        MetricRequirement("DCGM_FI_DEV_FB_USED", frozenset({"UUID"})),
+        MetricRequirement("DCGM_FI_DEV_FB_FREE", frozenset({"UUID"})),
+    )
+    metrics_repair_hint = (
+        "enable device access and the Foretoken DCGM metric set on the exporter"
+    )
 
     def resolve(
         self, managed_daemonset: ResourceRef | None = None
