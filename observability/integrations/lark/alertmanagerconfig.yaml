@@ -49,7 +49,6 @@ spec:
             {{- with .Labels.pod }}{{ $lines = append $lines (dict "zh" (printf "Pod: %s" .) "en" (printf "Pod: %s" .)) }}{{ end -}}
             {{- with .Labels.instance }}{{ $lines = append $lines (dict "zh" (printf "实例：%s" .) "en" (printf "Instance: %s" .)) }}{{ end -}}
             {{- with .Labels.endpoint }}{{ $lines = append $lines (dict "zh" (printf "端点：%s" .) "en" (printf "Endpoint: %s" .)) }}{{ end -}}
-            {{- /* Scrape failures fire before recording rules normalize the ServiceMonitor labels. */ -}}
             {{- with or .Labels.frontend_service .Labels.inference_foretoken_io_frontend_service }}{{ $lines = append $lines (dict "zh" (printf "前端：%s" .) "en" (printf "Frontend: %s" .)) }}{{ end -}}
             {{- with .Labels.model_service }}{{ $lines = append $lines (dict "zh" (printf "模型服务：%s" .) "en" (printf "Model service: %s" .)) }}{{ end -}}
             {{- with or .Labels.model_group .Labels.inference_foretoken_io_model_group }}{{ $lines = append $lines (dict "zh" (printf "模型组：%s" .) "en" (printf "Model group: %s" .)) }}{{ end -}}
@@ -64,9 +63,6 @@ spec:
             {{- $lines = append $lines (dict "zh" (printf "摘要：%s" .Annotations.summary_zh) "en" (printf "Summary: %s" .Annotations.summary)) -}}
             {{- $lines = append $lines (dict "zh" (printf "详情：%s" .Annotations.description_zh) "en" (printf "Details: %s" .Annotations.description)) -}}
             {{- with .Annotations.runbook_url }}{{ $lines = append $lines (dict "zh" (printf "排障手册：%s" .) "en" (printf "Runbook: %s" .)) }}{{ end -}}
-            {{- if and (eq .Status "resolved") (eq .Labels.alertname "ForetokenMetricsTargetDown") -}}
-            {{- $lines = append $lines (dict "zh" "说明：抓取失败告警已解除；可能是抓取恢复，也可能是旧目标被移除，不代表原 Pod 或节点已恢复。" "en" "Note: a resolved scrape failure may mean that scraping recovered or that the old target disappeared; it does not prove that the original Pod or node recovered.") -}}
-            {{- end -}}
             {{- end -}}
             {{- $text := "" -}}
             {{- range $index, $line := $lines -}}

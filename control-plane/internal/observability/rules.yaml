@@ -21,10 +21,10 @@ groups:
           severity: warning
         annotations:
           alertname_zh: 'Foretoken 指标目标不可用'
-          summary: 'Foretoken metrics target {{ $labels.endpoint }} cannot be scraped'
-          summary_zh: 'Foretoken 指标目标 {{ $labels.endpoint }} 无法抓取'
-          description: 'Prometheus has failed to scrape {{ $labels.endpoint }} at {{ $labels.instance }} in namespace {{ $labels.namespace }} for 1 minute. This checks metrics reachability, not request readiness or a confirmed user outage.'
-          description_zh: 'Prometheus 已连续 1 分钟无法抓取命名空间 {{ $labels.namespace }} 中 {{ $labels.instance }} 的 {{ $labels.endpoint }} 指标。这只检查指标可达性，不代表请求未就绪或已经发生用户故障。'
+          summary: 'Foretoken metrics target {{ $labels.endpoint }} is unavailable'
+          summary_zh: 'Foretoken 指标目标 {{ $labels.endpoint }} 不可用'
+          description: 'Prometheus has been unable to scrape {{ $labels.endpoint }} at {{ $labels.instance }} in namespace {{ $labels.namespace }} for 1 minute.'
+          description_zh: 'Prometheus 已连续 1 分钟无法抓取命名空间 {{ $labels.namespace }} 中 {{ $labels.instance }} 的 {{ $labels.endpoint }} 指标。'
           runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenmetricstargetdown'
 
       - alert: ForetokenFrontendHTTPResponseStart5xxRatioHigh
@@ -44,10 +44,10 @@ groups:
           severity: warning
         annotations:
           alertname_zh: 'Foretoken 前端响应开始阶段 5xx 比例过高'
-          summary: 'Frontend {{ $labels.frontend_service }} has elevated response-start 5xx errors'
-          summary_zh: '前端 {{ $labels.frontend_service }} 的响应开始 5xx 错误偏高'
-          description: 'More than 5% of HTTP response starts for Frontend {{ $labels.frontend_service }} have been 5xx for 2 minutes with at least 0.1 response starts per second. Errors after a stream starts are not counted, so this is not an inference failure SLO.'
-          description_zh: '前端 {{ $labels.frontend_service }} 的 HTTP 响应开始事件中，5xx 比例在至少每秒 0.1 个响应开始事件的流量下连续 2 分钟超过 5%。流式响应开始后的错误不计入此指标，因此它不是推理失败服务级目标（SLO）。'
+          summary: 'Frontend {{ $labels.frontend_service }} response-start 5xx ratio is high'
+          summary_zh: '前端 {{ $labels.frontend_service }} 响应开始 5xx 比例过高'
+          description: 'More than 5% of HTTP response starts for Frontend {{ $labels.frontend_service }} have been 5xx for 2 minutes with at least 0.1 response starts per second.'
+          description_zh: '前端 {{ $labels.frontend_service }} 的 HTTP 响应开始事件中，5xx 比例在每秒至少 0.1 个响应开始事件的流量下连续 2 分钟超过 5%。'
           runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenfrontendhttpresponsestart5xxratiohigh'
 
       - alert: ForetokenNVIDIAGPUTemperatureHigh
@@ -58,10 +58,10 @@ groups:
           severity: warning
         annotations:
           alertname_zh: 'Foretoken NVIDIA GPU 温度过高'
-          summary: 'NVIDIA GPU temperature is high on {{ $labels.device_id }}'
-          summary_zh: 'NVIDIA GPU {{ $labels.device_id }} 温度偏高'
-          description: 'GPU temperature: {{ $value | printf "%.1f" }}°C; threshold: foretoken_alert_threshold_nvidia_temperature_celsius°C for 2 minutes. Check the device, node airflow, and workload before changing capacity.'
-          description_zh: 'GPU 温度：{{ $value | printf "%.1f" }}°C；阈值：foretoken_alert_threshold_nvidia_temperature_celsius°C，持续 2 分钟。调整容量前先检查设备、节点散热和工作负载。'
+          summary: 'NVIDIA GPU {{ $labels.device_id }} temperature is high'
+          summary_zh: 'NVIDIA GPU {{ $labels.device_id }} 温度过高'
+          description: 'NVIDIA GPU {{ $labels.device_id }} temperature is {{ $value | printf "%.1f" }}°C, at or above threshold foretoken_alert_threshold_nvidia_temperature_celsius°C for 2 minutes.'
+          description_zh: 'NVIDIA GPU {{ $labels.device_id }} 温度为 {{ $value | printf "%.1f" }}°C，已达到或超过阈值 foretoken_alert_threshold_nvidia_temperature_celsius°C，持续 2 分钟。'
           runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokennvidiagputemperaturehigh'
 
       - alert: ForetokenNVIDIAGPUPowerUsageHigh
@@ -72,8 +72,8 @@ groups:
           severity: warning
         annotations:
           alertname_zh: 'Foretoken NVIDIA GPU 功耗过高'
-          summary: 'NVIDIA GPU power usage is high on {{ $labels.device_id }}'
-          summary_zh: 'NVIDIA GPU {{ $labels.device_id }} 功耗偏高'
-          description: 'GPU power: {{ $value | printf "%.1f" }} W; threshold: foretoken_alert_threshold_nvidia_power_watts W for 5 minutes. Compare the reading with the device power limit and workload before taking action.'
-          description_zh: 'GPU 功耗：{{ $value | printf "%.1f" }} W；阈值：foretoken_alert_threshold_nvidia_power_watts W，持续 5 分钟。采取措施前先将读数与设备功耗上限和 workload 对比。'
+          summary: 'NVIDIA GPU {{ $labels.device_id }} power usage is high'
+          summary_zh: 'NVIDIA GPU {{ $labels.device_id }} 功耗过高'
+          description: 'NVIDIA GPU {{ $labels.device_id }} power usage is {{ $value | printf "%.1f" }} W, at or above threshold foretoken_alert_threshold_nvidia_power_watts W for 5 minutes.'
+          description_zh: 'NVIDIA GPU {{ $labels.device_id }} 功耗为 {{ $value | printf "%.1f" }} W，已达到或超过阈值 foretoken_alert_threshold_nvidia_power_watts W，持续 5 分钟。'
           runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokennvidiagpupowerusagehigh'
