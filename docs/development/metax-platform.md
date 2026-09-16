@@ -7,21 +7,17 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](metax-platform_zh.md)
 
-This guide is for the platform administrator who prepares MetaX images and the Foretoken platform. After this one-time setup, model users can follow [Deploy and call a model](../metax-deployment.md) without installing or understanding the inference engine.
-
-Release installations share the controller and frontend images with other GPU platforms and use a MetaX model-server image. Custom builds use the same source checkout and matching Helm chart.
+Install Foretoken on a MetaX GPU cluster or build custom runtime images. For model deployment, see [Deploy and call a model](../metax-deployment.md).
 
 ## What the administrator provides
 
 - Kubernetes 1.29 or later, MetaX drivers, and the MetaX device plugin publishing `metax-tech.com/gpu`.
 - A writable model directory on the target nodes, or a StorageClass for model-cache volumes. Configure the example's `cache.yaml` as described in [Model storage](../model-storage.md).
-- A reachable Gateway endpoint. The commands below use Envoy Gateway; an existing platform should remain under its current owner's control.
+- A reachable LoadBalancer or Gateway address.
 
 The build host needs the Foretoken checkout, Docker with BuildKit, and Make. Platform installation also needs kubectl, Helm, and cluster permissions. Source installation downloads from GitHub, PyPI, the MetaX package index, and the selected container registries.
 
 ## Install release images
-
-After preparing the cluster drivers and device plugin, use the normal CLI installation:
 
 ```bash
 foretoken install
@@ -43,7 +39,7 @@ VLLM_METAX_VERSION=0.24.0 \
 make image-model-server-metax
 ```
 
-The build creates an isolated uv environment, installs matching public source tags, and produces `foretoken-vllm-metax:0.24.0` and `foretoken-model-server:dev`. The Pod uses the Python environment inside the image. Select the SDK and driver from the [MetaX release matrix](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html).
+This produces `foretoken-vllm-metax:0.24.0` and `foretoken-model-server:dev`. Select matching SDK and driver versions from the [MetaX release matrix](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html).
 
 If a compatible MetaX vLLM image is already available, use it instead of the source build:
 
@@ -129,16 +125,20 @@ kubectl get pods --namespace foretoken-platform
 kubectl get gateway --namespace foretoken-platform
 ```
 
-The controller initializes the matching CRDs before starting. The chart creates the Gateway used by model services; it should report `Programmed=True` and have a reachable address. Give model users their cluster access, namespace, model configuration, and assigned hostname, then direct them to [Deploy and call a model](../metax-deployment.md).
+The Gateway should have a reachable address and report `Programmed=True`. Continue with [Deploy and call a model](../metax-deployment.md).
 
 If Gateway is not needed, set `frontend.mode: local` and `frontend.gateway.create: false`, and ensure that the cluster provides a reachable LoadBalancer address.
 
 ## Uninstall
 
-Users should delete their model deployments first. Then the platform owner can run:
+Delete model deployments first, then use the command matching the installation method:
 
 ```bash
+# CLI installation
+foretoken uninstall
+
+# Manual Helm installation
 helm uninstall foretoken --namespace foretoken-platform
 ```
 
-CRDs remain installed. RuntimeCache retention controls cache PVC cleanup. Envoy Gateway, monitoring, and images remain with their respective owners.
+CRDs remain installed. Resources reused from the cluster are preserved.

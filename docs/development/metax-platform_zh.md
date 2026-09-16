@@ -7,9 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](metax-platform.md) | 简体中文
 
-本指南供集群管理员一次性准备沐曦镜像和 Foretoken 平台。完成后，模型用户只需按[部署与调用指南](../metax-deployment_zh.md)操作，无需理解底层推理引擎的安装过程。
-
-发布版与其他 GPU 平台共用 controller、frontend 镜像，model-server 使用沐曦运行时镜像。自行构建时，镜像与 Helm Chart 使用同一份源码。
+在沐曦 GPU 集群上安装 Foretoken，或构建自定义运行时镜像。模型部署见[部署与调用指南](../metax-deployment_zh.md)。
 
 ## 环境要求
 
@@ -17,13 +15,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 - Kubernetes 1.29 或更高版本、沐曦驱动和 MetaX device plugin；节点应发布 `metax-tech.com/gpu` 资源。
 - 目标节点上的可写模型目录，或用于模型缓存的 StorageClass。按[模型存储](../model-storage_zh.md)配置示例的 `cache.yaml`。
-- 可供客户端访问的 Gateway 地址；下面使用 Envoy Gateway。已有平台应由原管理员维护，不要安装第二套控制器接管它。
+- 可供客户端访问的 LoadBalancer 或 Gateway 地址。
 
 构建机器需要 Foretoken 源码、支持 BuildKit 的 Docker 和 Make；安装平台需要 kubectl、Helm 及对应集群权限。源码构建会访问 GitHub、PyPI、MetaX Python 软件源及容器镜像仓库。
 
 ## 安装发布版
-
-集群驱动和 device plugin 准备好后，使用统一安装命令：
 
 ```bash
 foretoken install
@@ -45,7 +41,7 @@ VLLM_METAX_VERSION=0.24.0 \
 make image-model-server-metax
 ```
 
-该命令在镜像内创建独立 uv 环境，安装公开源码及依赖，生成 `foretoken-vllm-metax:0.24.0` 和 `foretoken-model-server:dev`。Pod 使用镜像内的 Python，不读取宿主机虚拟环境。SDK 和驱动按[沐曦官方版本矩阵](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html)匹配；0.24 发布线对应 MACA 3.8.2.x。
+生成 `foretoken-vllm-metax:0.24.0` 和 `foretoken-model-server:dev`。SDK 和驱动按[沐曦官方版本矩阵](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html)匹配。
 
 已有兼容 MetaX vLLM 镜像时，可用以下命令替代上面的构建。将镜像名称和 Python 路径替换为实际值：
 
@@ -54,8 +50,6 @@ INFERENCE_ENGINE_IMAGE=<metax-vllm-image> \
 FORETOKEN_VLLM_PYTHON=/opt/conda/bin/python \
 make image-model-server
 ```
-
-两种方式都生成 `foretoken-model-server:dev`；接下来执行相同的平台镜像构建与安装步骤。
 
 ### 2. 构建 controller 和 frontend
 
@@ -133,24 +127,23 @@ kubectl get pods --namespace foretoken-platform
 kubectl get gateway --namespace foretoken-platform
 ```
 
-控制面启动前会初始化配套 CRD；Chart 创建供模型服务共用的 Gateway。Gateway 应获得客户端可达的地址并报告 `Programmed=True`。然后为用户提供集群访问配置、可用 namespace、服务域名和匹配的示例源码，转到[模型部署与调用](../metax-deployment_zh.md#1-部署示例模型)。
+Gateway 应有可访问的地址，并报告 `Programmed=True`。然后按[模型部署与调用](../metax-deployment_zh.md#1-部署示例模型)部署模型。
 
-此路径通过 Helm 管理平台，不使用 `foretoken install -e` 重新构建或选择镜像。若不需要 Gateway，可改用 `frontend.mode: local` 和 `frontend.gateway.create: false`，并确保集群可为前端分配可访问的 LoadBalancer 地址。
+若不需要 Gateway，可改用 `frontend.mode: local` 和 `frontend.gateway.create: false`，并确保集群可为前端分配可访问的 LoadBalancer 地址。
 
-## 卸载与排障
+## 卸载
 
-先由用户删除自己的模型部署，再由平台负责人执行：
+删除模型部署后，按安装方式卸载：
 
 ```bash
+# CLI 安装
+foretoken uninstall
+
+# 手动 Helm 安装
 helm uninstall foretoken --namespace foretoken-platform
 ```
 
-CRD 会保留；缓存 PVC 按 RuntimeCache 保留策略清理。Envoy Gateway、监控和镜像由各自负责人管理。
-
-- **镜像构建失败：** 查看下载、编译或依赖求解的原始错误，核对 SDK 版本和软件源可达性。
-- **Pod 无法导入 Python 包：** 确认其实际镜像及 `FORETOKEN_VLLM_PYTHON`，不要将宿主机路径用于 Pod。
-- **模型或缓存未就绪：** 查看 Pod 事件和 RuntimeCache 状态，检查 GPU 配额、存储绑定及在线扩容支持。
-- **监控无数据：** 检查 Prometheus 选择器、namespace 范围、标签和 mxExporter 覆盖，见可观测性指南。
+CRD 和复用的集群资源会保留。
 
 ## 可选：在主机上开发推理引擎
 
@@ -168,6 +161,4 @@ source "$VLLM_ENV/activate"
 uv pip check --python "$VLLM_ENV/.venv/bin/python"
 ```
 
-这是镜像构建使用的同一安装器，不继承系统 Python 包，也不跳过依赖求解。源码保留在安装目录的 `third_party` 中。失败目录保留供排查；解决原因后，用新的安装目录重试。激活脚本同时设置 MACA 编译器和库路径，运行时应先加载它。
-
-使用版本矩阵中相互匹配的 vLLM 与 MetaX SDK。
+运行推理引擎前加载 `activate`，以设置 Python、MACA 编译器和库路径。
