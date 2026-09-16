@@ -35,7 +35,7 @@ def normalize_output_token_limit(value: int | list[int]) -> OutputTokenLimit:
 
 @dataclass
 class ModelServiceSource:
-    """Store the model service chosen by the user: a Kustomize deployment or an existing URL."""
+    """Select a deployment, an existing URL, or a deployment with an explicit request URL."""
 
     kustomize_path: str = ""
     url: str = ""
@@ -46,13 +46,13 @@ class ModelServiceSource:
     wait_timeout: str = "15m"
 
     def validate(self) -> None:
-        """Require exactly one service source and an explicit model for a URL."""
-        if bool(self.kustomize_path) == bool(self.url):
-            raise ValueError("provide either PATH or --url")
+        """Require a service source and an explicit model when no deployment supplies it."""
+        if not self.kustomize_path and not self.url:
+            raise ValueError("provide PATH or --url")
         if self.max_retries < 0:
             raise ValueError("--max-retries must be >= 0")
-        if self.url and not self.model:
-            raise ValueError("--model is required with --url")
+        if not self.kustomize_path and not self.model:
+            raise ValueError("--model is required with --url when PATH is omitted")
 
 
 @dataclass

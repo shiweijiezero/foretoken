@@ -46,6 +46,8 @@ foretoken bench examples/quickstart \
 
 命令准备好负载，等待全部选中 runtime 报告 `Capturing`，再通过正常的 Frontend 发送请求。如果观察到就绪前窗口已结束，会报错且不发送请求。请求完成后，命令请求 `Finish` 并等待导出；采集窗口先结束不会截断 benchmark。此模式使用一个生成式负载和 `--rate -1`，不支持仅提供 URL 的服务、轨迹回放、参数扫描或多个数据集。
 
+使用已有 NodePort、代理或端口转发入口时，保留 Kustomize 路径，并用 `--url` 指定完整的 Chat Completions 地址。地址必须指向同一部署，采集目标仍由路径确定，详见[为部署指定请求入口](../benchmarks/README_zh.md#为部署指定请求入口)。
+
 `--wait-timeout` 分别限制采集启动与完成阶段的等待时间。Ctrl-C 或负载执行失败会请求取消；采集未成功时命令也会报错。已有服务和 RuntimeCache 结果会保留，无需转发端口或添加 profiling 专用的服务 YAML。
 
 启用本地输出时，`profile.json` 记录 ProfileRun 身份、最后观察到的状态、采集就绪观察时间和请求时间。这些是客户端观察，不是精确的 GPU 事件边界；实际录到了什么，要查看原生 trace 和 manifest。比较延迟、吞吐量时，应另跑一次不启用 profiling 的 benchmark。

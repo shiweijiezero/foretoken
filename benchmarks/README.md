@@ -82,7 +82,7 @@ foretoken bench examples/quickstart \
 
 The source-installed platform must support [profiling](../observability/profiling.md) and the service must have persistent RuntimeCache storage. Requests wait until capture is active. After the workload finishes, the command ends capture and waits for export. If the recording window ends first, the workload still completes its requested count. Profiling adds overhead; use a separate run without `--profile` for performance measurements.
 
-This mode accepts one generated workload with the default `--rate -1`, not `--url`, trace replay, sweeps or multiple datasets. `--wait-timeout` bounds each startup/completion wait. Local `profile.json` links the run to its retained PVC output; trace files remain in RuntimeCache. See [Profiling](../observability/profiling.md) for cancellation and result inspection.
+This mode accepts one generated workload with the default `--rate -1`, not URL-only sources, trace replay, sweeps or multiple datasets. To use an existing network entry point, keep the Kustomize path and [add `--url`](#an-explicit-endpoint-for-a-deployment). `--wait-timeout` bounds each startup/completion wait. Local `profile.json` links the run to its retained PVC output; trace files remain in RuntimeCache. See [Profiling](../observability/profiling.md) for cancellation and result inspection.
 
 ### Trace replay
 
@@ -118,7 +118,27 @@ foretoken bench \
   --output local,wandb
 ```
 
-For another service, use its actual Chat Completions URL and model name. In Gateway mode, use the Kustomize form above so the CLI supplies routing headers.
+For another service, use its actual Chat Completions URL and model name. Without a Kustomize path, the command does not access Kubernetes and requires `--model`.
+
+### An explicit endpoint for a deployment
+
+Keep the Kustomize path and add `--url` when the frontend is reachable through an existing NodePort, proxy, or port forward. The URL must route to that same deployment. This skips LoadBalancer/Gateway address discovery while retaining deployment readiness, model selection, replica observations, and resource cleanup.
+
+For example, forward an already deployed Quick Start frontend in one terminal:
+
+```bash
+kubectl port-forward --namespace foretoken-demo service/quickstart-frontend 8080:8080
+```
+
+Then run in another terminal:
+
+```bash
+foretoken bench examples/quickstart \
+  --url http://127.0.0.1:8080/v1/chat/completions \
+  --number 2 --max-tokens 128 --output local
+```
+
+Use the full Chat Completions URL. A single-model deployment still supplies the model name; multi-model deployments require `--model`. For HTTP URLs, the CLI uses `FrontendService.spec.hostname` as the routing `Host` header when present. For HTTPS, the supplied URL must contain the correct hostname. Add the [profiling options](#capture-while-benchmarking) to capture this same deployed service; `--profile` still requires the Kustomize path and an existing deployment.
 
 ## Read results
 

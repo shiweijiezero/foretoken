@@ -46,6 +46,8 @@ foretoken bench examples/quickstart \
 
 The command prepares the workload, waits until all selected runtimes report `Capturing`, then releases requests through the normal frontend. It fails without sending requests if capture ends before that readiness is observed. When requests finish, it requests `Finish` and waits for export. A window that ends first does not truncate the benchmark. Use one generated workload with `--rate -1`; URL-only services, trace replay, sweeps and multiple datasets are not supported in this mode.
 
+For an existing NodePort, proxy, or port-forwarded frontend, keep the Kustomize path and add `--url` with its full Chat Completions URL. The URL must serve that same deployment; the path still selects the capture target. See [explicit benchmark endpoints](../benchmarks/README.md#an-explicit-endpoint-for-a-deployment).
+
 `--wait-timeout` bounds each capture startup/completion wait. Ctrl-C or a workload failure requests cancellation; an unsuccessful capture makes the command fail. Existing services and RuntimeCache output are retained. No port forwarding or profiling-specific service YAML is needed.
 
 With local output, `profile.json` records the ProfileRun identity, last observed status, capture-readiness observation and request timestamps. These are client observations, not exact GPU event boundaries: inspect the native trace and manifest to determine what was recorded. Use a separate benchmark without profiling for latency and throughput comparisons.

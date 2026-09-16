@@ -11,6 +11,7 @@ from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import yaml
@@ -35,9 +36,10 @@ class ModelService:
 
     ``chat_completions_url`` preserves the public endpoint selected by the user or
     deployment. ``routing_host`` is the HTTP ``Host`` header a Gateway HTTP listener
-    needs to route by hostname; it is empty for LoadBalancer, HTTPS, and user-supplied
-    URLs. ``model_service_refs`` contains the Kubernetes status sources that serve
-    the selected model and is empty for a user-supplied URL. Every client derives
+    needs to route by hostname, including explicit HTTP URLs for that deployment;
+    it is empty for discovered LoadBalancers, HTTPS, and URL-only sources.
+    ``model_service_refs`` contains the Kubernetes status sources that serve
+    the selected model and is empty for a URL-only source. Every client derives
     its ``Authorization`` header from ``api_key``.
     """
 
@@ -49,7 +51,7 @@ class ModelService:
     gpu_count: int
     routing_host: str
     model_service_refs: tuple[ResourceRef, ...]
-    # Capture must use the same rendered target that supplied the HTTP endpoint.
+    # Capture retains the rendered target even when the request URL is explicit.
     deployment: ForetokenDeployment | None = None
 
     @property
@@ -162,28 +164,32 @@ def _discover_model_service(
     model = _select_model(deployment.models.values(), source.model)
     gpu_count = _model_gpu_count(deployment, model)
     wait_for_resources(deployment.service_refs(), kubectl, source.wait_timeout)
-    endpoint = resolve_frontend_endpoint(deployment, kubectl, source.wait_timeout)
-    chat_completions_url = f"{endpoint.url}/v1/chat/completions"
-    api_root = f"{endpoint.url}/v1"
-    headers = {"Host": endpoint.routing_host} if endpoint.routing_host else {}
-    models = _wait_for_models(
-        api_root,
-        headers,
-        wait_seconds,
-        deployment.models.values(),
-        source.api_key,
-    )
-    return ModelService(
+    if source.url:
+        chat_completions_url = source.url
+        routing_host = deployment.hostname if urlsplit(source.url).scheme == "http" else ""
+    else:
+        endpoint = resolve_frontend_endpoint(deployment, kubectl, source.wait_timeout)
+        chat_completions_url = f"{endpoint.url}/v1/chat/completions"
+        routing_host = endpoint.routing_host
+    service = ModelService(
         chat_completions_url=chat_completions_url,
         model=model,
         api_key=source.api_key,
-        models=models,
+        models=tuple(sorted(set(deployment.models.values()))),
         hostname=deployment.hostname,
         gpu_count=gpu_count,
-        routing_host=endpoint.routing_host,
+        routing_host=routing_host,
         model_service_refs=_model_service_refs(deployment, model),
         deployment=deployment,
     )
+    models = _wait_for_models(
+        service.api_root,
+        service.request_headers,
+        wait_seconds,
+        service.models,
+        source.api_key,
+    )
+    return replace(service, models=models)
 
 
 def _object_identity(document: dict[str, Any]) -> tuple[str, str, str]:
@@ -249,13 +255,14 @@ def resolve_model_service(
 ) -> Iterator[ModelService]:
     """Yield the model service selected by the benchmark user.
 
-    A URL source is used as given without touching Kubernetes. A Kustomize source
+    A URL-only source is used as given without touching Kubernetes. A Kustomize source
     reuses a complete deployment unchanged, or creates only the missing objects
     and deletes them again after the benchmark; a partially present deployment is
     rejected. Profiling requires an existing deployment so cleanup cannot delete
-    its retained RuntimeCache artifacts.
+    its retained RuntimeCache artifacts. An explicit URL with Kustomize replaces
+    only endpoint discovery, preserving resource observation and cleanup ownership.
     """
-    if source.url:
+    if not source.kustomize_path:
         yield ModelService(
             chat_completions_url=source.url,
             model=source.model,

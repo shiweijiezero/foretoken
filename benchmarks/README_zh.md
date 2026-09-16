@@ -82,7 +82,7 @@ foretoken bench examples/quickstart \
 
 源码安装的平台需要支持[性能剖析](../observability/profiling_zh.md)，服务需要持久 RuntimeCache 存储。命令等待采集开始后才发送请求；负载完成后结束采集并等待导出。如果采集窗口先结束，负载仍跑完指定的请求数量。Profiling 会增加开销，正式性能测量应另跑一次不带 `--profile` 的评测。
 
-此模式支持一个生成式负载，使用默认的 `--rate -1`；不支持 `--url`、轨迹回放、参数扫描或多个数据集。`--wait-timeout` 分别限制启动与完成阶段的等待时长。本地 `profile.json` 记录这次运行及其 PVC 结果位置，trace 文件仍保存在 RuntimeCache。取消和查看结果见[性能剖析](../observability/profiling_zh.md)。
+此模式支持一个生成式负载，使用默认的 `--rate -1`；不支持仅提供 URL、轨迹回放、参数扫描或多个数据集。需要使用已有网络入口时，保留 Kustomize 路径并[添加 `--url`](#为部署指定请求入口)。`--wait-timeout` 分别限制启动与完成阶段的等待时长。本地 `profile.json` 记录这次运行及其 PVC 结果位置，trace 文件仍保存在 RuntimeCache。取消和查看结果见[性能剖析](../observability/profiling_zh.md)。
 
 ### 轨迹回放
 
@@ -118,7 +118,27 @@ foretoken bench \
   --output local,wandb
 ```
 
-其他服务使用其实际 Chat Completions URL 和模型名称。Gateway 模式使用上面的 Kustomize 写法，由 CLI 配置路由请求头。
+其他服务使用其实际 Chat Completions URL 和模型名称。不提供 Kustomize 路径时，命令不会访问 Kubernetes，且必须指定 `--model`。
+
+### 为部署指定请求入口
+
+如果前端已有可访问的 NodePort、代理或端口转发地址，可以保留 Kustomize 路径并添加 `--url`。地址必须指向同一部署。命令会跳过 LoadBalancer/Gateway 地址发现，继续检查部署就绪、选择模型、观察副本数，并保持原有资源清理方式。
+
+例如，在一个终端中转发已部署的 Quick Start 前端：
+
+```bash
+kubectl port-forward --namespace foretoken-demo service/quickstart-frontend 8080:8080
+```
+
+然后在另一个终端运行：
+
+```bash
+foretoken bench examples/quickstart \
+  --url http://127.0.0.1:8080/v1/chat/completions \
+  --number 2 --max-tokens 128 --output local
+```
+
+`--url` 使用完整的 Chat Completions 地址。单模型部署仍自动选择模型，多模型需要 `--model`。使用 HTTP 地址且部署声明了 `FrontendService.spec.hostname` 时，CLI 会将该域名用作路由的 `Host` 请求头；HTTPS 地址需包含正确域名。添加[采集参数](#在评测时采集-profile)即可对同一已部署服务进行 profiling；`--profile` 仍要求 Kustomize 路径和已有部署。
 
 ## 查看结果
 

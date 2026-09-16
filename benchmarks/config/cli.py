@@ -61,7 +61,7 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--url",
         default=_default(ModelServiceSource, "url"),
-        help="Model service URL, including /v1/chat/completions",
+        help="Chat Completions URL including /v1/chat/completions; with PATH, overrides endpoint discovery",
     )
     parser.add_argument(
         "--model",
