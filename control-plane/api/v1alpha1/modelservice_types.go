@@ -301,6 +301,13 @@ const (
 	ModelSourceModelScope ModelSource = "modelscope"
 )
 
+// ProfilingConfig selects instrumentation prepared when model processes start.
+// Captures are still requested separately through ProfileRun.
+type ProfilingConfig struct {
+	// +kubebuilder:validation:Enum=pytorch;nsight
+	Engine string `json:"engine"`
+}
+
 // ModelServiceSpec defines the desired state of a model service.
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !(has(self.replicas) || has(self.nodes) || has(self.resources) || has(self.parallelism) || has(self.maxInputTokens) || has(self.kvCache) || has(self.features))",message="spec.modelPools is mutually exclusive with top-level replicas, nodes, resources, parallelism, maxInputTokens, kvCache, and features"
 // +kubebuilder:validation:XValidation:rule="has(self.modelPools) || (has(self.resources) && has(self.parallelism))",message="top-level resources and parallelism are required when spec.modelPools is omitted"
@@ -353,6 +360,11 @@ type ModelServiceSpec struct {
 	Resources *ModelResources `json:"resources,omitempty"`
 
 	Timeouts ModelTimeouts `json:"timeouts"`
+
+	// Profiling prepares a profiler for every model Pool; omission preserves PyTorch support.
+	// Changing it rolls out new model processes but does not start a capture.
+	// +optional
+	Profiling *ProfilingConfig `json:"profiling,omitempty"`
 
 	// Observability selects model-scoped alerts independently of serving and autoscaling.
 	// +optional

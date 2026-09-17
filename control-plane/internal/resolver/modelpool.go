@@ -50,6 +50,7 @@ type ECProfile struct {
 type RuntimeProfile struct {
 	Revision           string
 	Image              string
+	NsightImage        string
 	ModelServerPort    int32
 	DeviceResourceName string
 	RuntimeClassName   string
@@ -136,6 +137,19 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if pdRuntime != nil && kvRuntime != nil && kvRuntime.Offload != nil {
 		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D does not support local KV offload")
 	}
+	image := profile.Image
+	if template.Profiling != nil && template.Profiling.Engine == "nsight" {
+		if profile.NsightImage == "" {
+			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems image is not configured; set runtime.vllm.nsightImage")
+		}
+		image = profile.NsightImage
+		if profile.DeviceResourceName != "nvidia.com/gpu" {
+			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires NVIDIA GPUs")
+		}
+		if template.RuntimeCache == nil {
+			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires a persistent RuntimeCache")
+		}
+	}
 	resources := *template.Resources.DeepCopy()
 
 	nodeSelector := map[string]string(nil)
@@ -156,9 +170,10 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		},
 		Runtime: inferencev1alpha1.ModelGroupRuntime{
 			Backend:                               template.Backend,
-			Image:                                 profile.Image,
+			Image:                                 image,
 			Port:                                  profile.ModelServerPort,
 			Args:                                  append([]inferencev1alpha1.BackendArg(nil), effective.ExtraArgs...),
+			Profiling:                             template.Profiling.DeepCopy(),
 			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,
 		},
 		PDRuntime:      pdRuntime,

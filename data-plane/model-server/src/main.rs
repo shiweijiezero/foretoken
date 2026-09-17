@@ -50,6 +50,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cache,
             required_env(MODEL_GROUP_UID_ENV)?,
             workers,
+            config.launch.profiling.engine,
+            config.launch.python_executable(),
         ))
     } else {
         None
@@ -470,7 +472,14 @@ async fn start_engine_attempt(
         ))
     })?
     .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
-    let engine = ManagedEngineHandle::spawn_with_env(managed_engine, environment)
+    let mut command = managed_engine.to_command();
+    command.envs(environment);
+    if mode == runtime_cache::Mode::Persistent
+        && let Some(profile) = profiling
+    {
+        command = profile.launch_command(command);
+    }
+    let engine = ManagedEngineHandle::spawn_command(command)
         .await
         .map_err(|error| {
             classify_engine_startup_failure(

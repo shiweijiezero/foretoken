@@ -32,6 +32,8 @@ pub struct LaunchPlanV1 {
     #[serde(default)]
     pub ec: EcTransferPlan,
     pub lifecycle: Lifecycle,
+    #[serde(default)]
+    pub profiling: crate::profiling::Preparation,
     #[serde(rename = "internalGenerateRequestBodyLimitBytes")]
     pub internal_generate_request_body_limit_bytes: usize,
     #[serde(rename = "extraArgs")]
@@ -330,6 +332,14 @@ impl LaunchPlanV1 {
         self.ec.validate()
     }
 
+    /// Resolves the image's Python interpreter for engine launch and native report inspection.
+    pub fn python_executable(&self) -> String {
+        std::env::var(VLLM_PYTHON_ENV)
+            .ok()
+            .filter(|python| !python.is_empty())
+            .unwrap_or_else(|| DEFAULT_VLLM_PYTHON.into())
+    }
+
     /// Returns the EngineCore connection deadline consumed during model-server startup.
     ///
     /// The duration is derived from the retained controller-owned lifecycle plan.
@@ -371,10 +381,7 @@ impl LaunchPlanV1 {
     /// takes the resulting configuration, while the plan contributes validated vLLM flags.
     pub fn managed_engine(&self, handshake_port: u16) -> Result<ManagedEngineConfig, String> {
         Ok(ManagedEngineConfig {
-            python: std::env::var(VLLM_PYTHON_ENV)
-                .ok()
-                .filter(|python| !python.is_empty())
-                .unwrap_or_else(|| DEFAULT_VLLM_PYTHON.into()),
+            python: self.python_executable(),
             model: self.artifacts.model.clone(),
             handshake_host: LOOPBACK_HOST.into(),
             handshake_port,

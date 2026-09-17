@@ -743,6 +743,19 @@ spec:
                     parallelism.pcp
                   rule: 'self.pcp == 1 ? self.tp % self.dcp == 0 : self.dcp == 1 ||
                     self.dcp == self.pcp || self.dcp == self.tp * self.pcp'
+              profiling:
+                description: |-
+                  Profiling prepares a profiler for every model Pool; omission preserves PyTorch support.
+                  Changing it rolls out new model processes but does not start a capture.
+                properties:
+                  engine:
+                    enum:
+                    - pytorch
+                    - nsight
+                    type: string
+                required:
+                - engine
+                type: object
               replicas:
                 description: |-
                   Replicas is the baseline service replica count; the compiler defaults it to 1.

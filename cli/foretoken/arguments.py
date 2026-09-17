@@ -264,9 +264,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     profile = subparsers.add_parser(
         "profile",
-        help="Capture a PyTorch profile from an existing ModelService",
+        help="Capture a profile from an existing ModelService",
         description=(
-            "Capture a PyTorch profile from a service using persistent RuntimeCache "
+            "Capture a profile from a service using persistent RuntimeCache "
             "storage. Results remain under the cache's profiles directory."
         ),
     )
@@ -283,9 +283,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     profile.add_argument(
         "--profile-engine",
-        choices=("pytorch",),
+        choices=("pytorch", "nsight"),
         required=True,
-        help="engine profiler to use; currently only pytorch is supported",
+        help="profiler prepared by the service: PyTorch or NVIDIA Nsight Systems",
     )
     _add_wait_timeout_argument(profile, "capture completion")
 

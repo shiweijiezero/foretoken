@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Runtime-owned, bounded Torch capture and durable artifact publication.
+//! Runtime-owned, bounded native capture and durable artifact publication.
+
+mod nsight;
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -18,6 +20,22 @@ use uuid::Uuid;
 use crate::api::RuntimeHealth;
 use crate::backend::VllmBackend;
 
+/// Profiler instrumentation selected before the engine process starts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Engine {
+    #[default]
+    Pytorch,
+    Nsight,
+}
+
+/// Optional launch configuration; an omitted choice preserves existing PyTorch capture.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Preparation {
+    pub engine: Engine,
+}
+
 const PROFILE_DIRECTORY: &str = "profiles";
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 const STOP_TIMEOUT: Duration = Duration::from_secs(120);
@@ -31,6 +49,8 @@ pub struct Config {
     group_uid: String,
     runtime_id: String,
     workers: usize,
+    engine: Engine,
+    python: String,
 }
 
 impl Config {
@@ -39,6 +59,8 @@ impl Config {
         cache: &crate::runtime_cache::Config,
         group_uid: String,
         workers: usize,
+        engine: Engine,
+        python: String,
     ) -> Self {
         Self {
             runtime_cache_claim: cache.claim_name.clone(),
@@ -47,6 +69,8 @@ impl Config {
             group_uid,
             runtime_id: Uuid::new_v4().to_string(),
             workers,
+            engine,
+            python,
         }
     }
 
@@ -68,8 +92,20 @@ impl Config {
         File::open(profile_root)?.sync_all()
     }
 
-    /// Renders the native Torch configuration; iteration schedules remain disabled for this path.
+    /// Wraps only explicitly selected Nsight engines, retaining the managed process owner.
+    pub fn launch_command(&self, command: std::process::Command) -> std::process::Command {
+        match self.engine {
+            Engine::Pytorch => command,
+            Engine::Nsight => nsight::launch(command, &self.runtime_id),
+        }
+    }
+
+    /// Renders native configuration without enabling recording at process startup.
     pub fn engine_argument(&self) -> String {
+        if self.engine == Engine::Nsight {
+            // Nsight controls process-tree collection; no competing CUPTI profiler is installed.
+            return "--profiler-config={}".into();
+        }
         format!(
             "--profiler-config={}",
             serde_json::json!({
@@ -101,12 +137,15 @@ pub struct Request {
     pub group_uid: String,
     pub action: Action,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub engine: Engine,
 }
 
 /// Observed capture state returned to the reconciler and stored with sealed artifacts.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Record {
+    pub engine: Engine,
     pub run_uid: String,
     pub phase: String,
     pub duration_ms: u64,
@@ -128,6 +167,7 @@ impl Record {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Observation {
+    engine: Engine,
     runtime_id: String,
     pod_uid: String,
     group_uid: String,
@@ -159,6 +199,7 @@ impl Handle {
     pub fn observe(&self, uid: Option<&str>) -> Observation {
         let state = self.state.lock().expect("capture state lock poisoned");
         Observation {
+            engine: self.config.engine,
             runtime_id: self.config.runtime_id.clone(),
             pod_uid: self.config.pod_uid.clone(),
             group_uid: self.config.group_uid.clone(),
@@ -174,6 +215,9 @@ impl Handle {
             || request.group_uid != self.config.group_uid
         {
             return Err("runtime identity changed".into());
+        }
+        if request.engine != self.config.engine {
+            return Err("requested profiler differs from the prepared runtime".into());
         }
         if request.duration_ms == 0 {
             return Err("duration must be positive".into());
@@ -202,6 +246,7 @@ impl Handle {
             uid.clone(),
             Entry {
                 record: Record {
+                    engine: self.config.engine,
                     run_uid: uid.clone(),
                     phase: if capture { "Starting" } else { "Cancelled" }.into(),
                     duration_ms: request.duration_ms,
@@ -303,9 +348,13 @@ impl Supervisor {
 
     async fn native_operation(&mut self, start: bool) -> Result<(), String> {
         let backend = self.backend.clone();
-        self.native = Some(tokio::spawn(
-            async move { backend.set_profiling(start).await },
-        ));
+        let config = self.handle.config.clone();
+        self.native = Some(tokio::spawn(async move {
+            match config.engine {
+                Engine::Pytorch => backend.set_profiling(start).await,
+                Engine::Nsight => nsight::set_recording(&config, start).await,
+            }
+        }));
         let budget = if start { START_TIMEOUT } else { STOP_TIMEOUT };
         let result = tokio::time::timeout(
             budget,
@@ -440,33 +489,14 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-// The supported adapter emits one uncompressed Chrome trace per worker. Validate its contents
-// after every native worker has flushed, then rename the entire directory, including nested output.
+// Validate native output after stop/export, then publish the entire capture directory atomically.
 fn seal(config: &Config, mut record: Record, cancelled: bool) -> io::Result<Record> {
     let staging = config.staging();
     if !cancelled {
-        let mut traces = 0;
-        let mut gpu_activity = false;
-        for entry in fs::read_dir(&staging)? {
-            let path = entry?.path();
-            if path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with(".pt.trace.json"))
-            {
-                let file = File::open(path)?;
-                let trace: TorchTrace = serde_json::from_reader(BufReader::new(&file))?;
-                gpu_activity |= trace.events.0;
-                file.sync_all()?;
-                traces += 1;
-            }
-        }
-        if traces != config.workers {
-            return Err(io::Error::other(format!(
-                "expected {} worker traces, received {traces}",
-                config.workers
-            )));
-        }
+        let gpu_activity = match config.engine {
+            Engine::Pytorch => validate_torch(config)?,
+            Engine::Nsight => nsight::validate_report(config)?,
+        };
         record.gpu_activity = Some(gpu_activity);
         if !gpu_activity {
             record.message = "No GPU kernel activity was recorded in this window".into();
@@ -489,6 +519,34 @@ fn seal(config: &Config, mut record: Record, cancelled: bool) -> io::Result<Reco
     File::open(destination.parent().expect("run directory has parent"))?.sync_all()?;
     File::open(runs)?.sync_all()?;
     Ok(record)
+}
+
+// Validate one native Chrome trace per expected worker before publishing a successful capture.
+fn validate_torch(config: &Config) -> io::Result<bool> {
+    let staging = config.staging();
+    let mut traces = 0;
+    let mut gpu_activity = false;
+    for entry in fs::read_dir(&staging)? {
+        let path = entry?.path();
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(".pt.trace.json"))
+        {
+            let file = File::open(path)?;
+            let trace: TorchTrace = serde_json::from_reader(BufReader::new(&file))?;
+            gpu_activity |= trace.events.0;
+            file.sync_all()?;
+            traces += 1;
+        }
+    }
+    if traces != config.workers {
+        return Err(io::Error::other(format!(
+            "expected {} worker traces, received {traces}",
+            config.workers
+        )));
+    }
+    Ok(gpu_activity)
 }
 
 #[derive(Deserialize)]

@@ -29,15 +29,16 @@ type EffectiveConfig struct {
 // LaunchPlanV1 is the versioned, private Go-to-Rust launch contract. Rust is
 // the only component that renders this contract into vLLM command-line flags.
 type LaunchPlanV1 struct {
-	Version                               int               `json:"version"`
-	NodeCount                             int32             `json:"nodeCount"`
-	Artifacts                             LaunchArtifacts   `json:"artifacts"`
-	Parallelism                           LaunchParallelism `json:"parallelism"`
-	KV                                    LaunchKVPlan      `json:"kv"`
-	EC                                    *LaunchECPlan     `json:"ec,omitempty"`
-	Lifecycle                             LaunchLifecycle   `json:"lifecycle"`
-	InternalGenerateRequestBodyLimitBytes int64             `json:"internalGenerateRequestBodyLimitBytes"`
-	ExtraArgs                             []string          `json:"extraArgs"`
+	Profiling                             *inferencev1alpha1.ProfilingConfig `json:"profiling,omitempty"`
+	Version                               int                                `json:"version"`
+	NodeCount                             int32                              `json:"nodeCount"`
+	Artifacts                             LaunchArtifacts                    `json:"artifacts"`
+	Parallelism                           LaunchParallelism                  `json:"parallelism"`
+	KV                                    LaunchKVPlan                       `json:"kv"`
+	EC                                    *LaunchECPlan                      `json:"ec,omitempty"`
+	Lifecycle                             LaunchLifecycle                    `json:"lifecycle"`
+	InternalGenerateRequestBodyLimitBytes int64                              `json:"internalGenerateRequestBodyLimitBytes"`
+	ExtraArgs                             []string                           `json:"extraArgs"`
 }
 
 type LaunchArtifacts struct {
@@ -172,7 +173,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	for i := range group.Runtime.Args {
 		extra[i] = string(group.Runtime.Args[i])
 	}
-	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, ExtraArgs: extra}, nil
+	return LaunchPlanV1{Profiling: group.Runtime.Profiling.DeepCopy(), Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, ExtraArgs: extra}, nil
 }
 
 // JSON returns deterministic output because LaunchPlanV1 uses only ordered structs and slices.

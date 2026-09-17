@@ -588,6 +588,18 @@ spec:
                     maximum: 65535
                     minimum: 1
                     type: integer
+                  profiling:
+                    description: Profiling fixes the instrumentation prepared at runtime
+                      startup.
+                    properties:
+                      engine:
+                        enum:
+                        - pytorch
+                        - nsight
+                        type: string
+                    required:
+                    - engine
+                    type: object
                 required:
                 - backend
                 - image

@@ -193,6 +193,7 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			KVCache:                               normalizedKVCache,
 			Features:                              normalizedFeatures,
 			ExtraArgs:                             append([]inferencev1alpha1.BackendArg(nil), spec.ExtraArgs...),
+			Profiling:                             spec.Profiling.DeepCopy(),
 		},
 	}, nil
 }

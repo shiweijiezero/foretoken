@@ -147,7 +147,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 ## 采集诊断 Profile
 
-该实验性命令要求平台通过源码安装，并可对使用持久 RuntimeCache 的已有 ModelService 采集一次 PyTorch profile：
+该实验性命令要求平台通过源码安装，并可对使用持久 RuntimeCache 的已有 ModelService 采集一次 PyTorch 或 Nsight Systems profile：
 
 ```bash
 foretoken profile examples/quickstart --profile-engine pytorch --profile-duration 15s

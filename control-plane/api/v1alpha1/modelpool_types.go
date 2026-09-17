@@ -168,6 +168,10 @@ type NormalizedPoolTemplate struct {
 	// +listType=atomic
 	// +kubebuilder:validation:MaxItems=256
 	ExtraArgs []BackendArg `json:"extraArgs,omitempty"`
+
+	// Profiling is the service-selected instrumentation for this Pool's processes.
+	// +optional
+	Profiling *ProfilingConfig `json:"profiling,omitempty"`
 }
 
 // ModelPoolSpec is the controller-owned desired state compiled from ModelService.
