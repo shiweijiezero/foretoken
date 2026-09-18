@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
@@ -22,6 +24,8 @@ from benchmarks.results.output import (
     build_benchmark_run_record,
     resolved_load_record,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class GeneratedLoadBenchmark:
@@ -56,6 +60,35 @@ class GeneratedLoadBenchmark:
             output_dir=self.output_dir,
             wandb_group=self.wandb_group,
         ) as outputs:
+            # Drain a separate run before opening a capture or measuring traffic.
+            # EvalScope's built-in warmup can overlap measured requests to keep
+            # the server busy; capture requires a completed warmup phase instead.
+            # Reuse the same executor and result lifecycle, with warmup disabled
+            # in the child so its records cannot mix with the measured run.
+            warmup_count = self.benchmark.load.warmup_requests
+            if warmup_count:
+                logger.info("Warming up with %s conversations", warmup_count)
+                warmup = replace(
+                    self.benchmark,
+                    load=replace(
+                        self.benchmark.load,
+                        request_count=warmup_count,
+                        warmup_requests=0,
+                    ),
+                    profile=None,
+                    outputs=replace(
+                        self.benchmark.outputs,
+                        destinations=("local", "quiet")
+                        if self.benchmark.outputs.includes("local") else ("quiet",),
+                    ),
+                )
+                warmed = GeneratedLoadBenchmark(
+                    warmup,
+                    self.service,
+                    output_dir=str(Path(outputs.execution_dir) / "warmup"),
+                ).run()
+                if warmed.metrics["failed_num"] or not warmed.metrics["success_num"]:
+                    raise ValueError("Warmup requests failed; measurement was not started")
             profile_options = self.benchmark.profile
             profile = None
             if profile_options is not None:

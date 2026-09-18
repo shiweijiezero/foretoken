@@ -4,6 +4,20 @@ English | [简体中文](metrics_zh.md) · [Common commands](docs/examples.md)
 
 `metrics.json` contains aggregate results; `raw_output.json` contains per-request records. Standard workloads also retain `benchmark_data.db` and `benchmark.log`.
 
+## Experiment records
+
+With local output, `environment.json` records the client Python/package versions and, for a source checkout, its commit and dirty state. Kustomize runs additionally record ModelService intent, owned ModelGroup model/tokenizer revisions and runtime settings, pod image IDs, placement and node software before and after execution. These are observations of deployment state, not per-request routing attribution. Read errors are recorded as incomplete snapshots.
+
+A URL does not expose authoritative hardware or deployment information. URL runs therefore record client information without a server environment snapshot. Save the server's actual GPU model/count, driver and inference-engine versions, weight/tokenizer revisions and engine settings beside the results. Even for Kustomize, a revision such as `main` is mutable; preserve resolved model/tokenizer commits or local artifact versions separately. Preserve local code changes when the client source is dirty. Snapshots do not reset caches, prevent rollouts or identify every transient change during a run.
+
+`--warmup-requests N` completes N conversations before each generated run, including each sweep repetition and each dataset child. All warmup requests must succeed; local warmup results are saved under `warmup/` and are excluded from measured metrics and profiling. The default is zero. Warmup reuses the workload's starting rows/seed and can populate prefix caches; it does not reserve disjoint data or guarantee steady state. Use separate warmup commands with different rows if the experiment requires disjoint data. Trace replay requires separate warmup.
+
+The model service keeps running between warmup and measurement. Warmup drains all outstanding requests, and measurement uses a new HTTP client, so it starts without in-flight warmup traffic and may include connection setup. This warms the server but does not preserve continuous load across the two phases.
+
+For sweeps, `sweep_points.json` retains every repetition. `sweep_summary.json` and `sweep_summary.csv` group by parameter point and report mean, median, sample standard deviation, minimum and maximum across runs. `runs` is the number of repetitions; `samples` counts available values for that metric. Missing timings are omitted from that metric's samples, while failure counts and zero throughput remain in the summaries. Standard deviation is unavailable for fewer than two samples. A mean or median of run p95 values is **not** a pooled p95. Timing summary columns ending in `_seconds` use seconds.
+
+## Request metrics
+
 | Metric | Meaning |
 | --- | --- |
 | Success rate | Successful requests divided by attempted requests |

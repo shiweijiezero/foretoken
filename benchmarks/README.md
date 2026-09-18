@@ -38,6 +38,8 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
+Add `--warmup-requests 16` to finish a separate warmup before each measured run. Warmup uses the same workload settings, is excluded from metrics, and must succeed before measurement begins. Its local results are kept under `warmup/`. Choose the warmup budget and prefix-cache policy consistently across comparisons.
+
 `--parallel` controls concurrency and `--rate` controls arrivals per second. Each accepts `-1` for no limit. The defaults are no rate limit and one concurrent request. To send at an average of five requests per second without a concurrency cap:
 
 ```bash
@@ -96,11 +98,14 @@ The trace determines request count and arrival times. Each record is replayed in
 
 ```bash
 foretoken bench examples/quickstart \
+  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
+  --min-prompt-length 128 --max-prompt-length 256 --random-seed 0 \
   --sweep benchmarks/examples/sweep.jsonl \
+  --warmup-requests 16 --num-runs 3 \
   --output local,wandb
 ```
 
-Sweeps use a Kustomize deployment to compare configurations against the same model service.
+Sweeps vary the workload against one Kustomize deployment and cannot be combined with `--url`. To compare precision, quantization or speculative decoding, reuse the same sweep for each deployment configuration; see [Parameter sweeps](docs/coomon_commands/sweep.md).
 
 ### An existing service URL
 
@@ -119,6 +124,10 @@ For another service, use its actual Chat Completions URL and model name. In Gate
 ## Read results
 
 Local results are saved in a separate directory under `results/`, printed when the run finishes. `metrics.json` contains the summary and `raw_output.json` contains per-request records.
+
+Each measured run also writes `environment.json`: client package versions and source commit, plus before/after serving snapshots for Kustomize sources. URL sources record client information only. Record server hardware, driver and engine versions separately when they are unavailable; see [Result metrics](metrics.md#experiment-records).
+
+Sweeps retain all repetitions in `sweep_points.json` and write per-point statistics to `sweep_summary.json` and `sweep_summary.csv`. Use these summaries to compare repetitions rather than selecting the fastest run.
 
 Start with success rate, end-to-end latency (E2EL), and output token throughput. Streamed runs also report time to the first chunk (TTFT), average time per output token (TPOT), and inter-chunk intervals (ITL). `--no-stream` disables only these streaming metrics.
 
