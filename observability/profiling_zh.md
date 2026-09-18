@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](profiling.md) | 简体中文
 
-使用 PyTorch Profiler 查看模型推理的 CPU/GPU 执行时间线。目前支持 NVIDIA GPU 上的 vLLM，需使用[源码安装](../docs/custom-deployment_zh.md)的 CLI 和平台。采集结果使用持久 RuntimeCache 保存，快速开始示例已配置好该存储。
+使用 PyTorch Profiler 查看模型推理的 CPU/GPU 执行时间线。支持 NVIDIA 和[沐曦 GPU](../docs/metax-deployment_zh.md) 上的 vLLM，需使用[源码安装](../docs/custom-deployment_zh.md)的 CLI 和平台。采集结果使用持久 RuntimeCache 保存，快速开始示例已配置好该存储。
 
 ## 同时运行 benchmark 和采集
 
