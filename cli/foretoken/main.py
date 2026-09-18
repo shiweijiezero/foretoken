@@ -18,11 +18,11 @@ from foretoken.arguments import (
     EndpointCommand,
     InstallCommand,
     ProfileCommand,
+    ProfileViewCommand,
     StatusCommand,
     UninstallCommand,
     parse_arguments,
 )
-from foretoken.storage import DirectoryVolumes
 from foretoken.kubernetes import (
     Kubectl,
     ResourceProgress,
@@ -35,6 +35,7 @@ from foretoken.kubernetes import (
 )
 from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.platform import PlatformLifecycle
+from foretoken.storage import DirectoryVolumes
 
 
 def _deployment_resources(
@@ -69,11 +70,19 @@ def _print_status(progress: tuple[ResourceProgress, ...]) -> None:
         )
 
 
-def _deploy(kustomize_path: str, timeout: str) -> None:
-    """Apply one Kustomize deployment and wait for current-generation readiness."""
+def _deploy(
+    kustomize_path: str, timeout: str, profile: ProfileCommand | None = None
+) -> None:
+    """Apply and wait for serving readiness, then optionally capture external traffic."""
     kubectl = Kubectl()
     deployment = load_deployment(kustomize_path, kubectl)
     timeout_seconds(timeout)
+    capture = None
+    if profile is not None:
+        from foretoken.profiling import ProfileRun
+
+        # Resolve the selected model before changing the deployment.
+        capture = ProfileRun(profile, deployment=deployment)
     namespace = deployment.namespace or "<current>"
     print(f"Applying {deployment.path} to namespace {namespace}")
     DirectoryVolumes(kubectl).apply(deployment, timeout)
@@ -86,6 +95,13 @@ def _deploy(kustomize_path: str, timeout: str) -> None:
         report=_report_progress,
     )
     print(f"Foretoken deployment is ready in {time.monotonic() - started:.1f}s")
+    if capture is not None:
+        try:
+            capture.start()
+            capture.wait()
+        except KeyboardInterrupt:
+            capture.cancel()
+            raise
 
 
 def _delete(kustomize_path: str, timeout: str) -> None:
@@ -169,7 +185,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         elif isinstance(command, UninstallCommand):
             PlatformLifecycle().uninstall(command)
         elif isinstance(command, DeployCommand):
-            _deploy(command.kustomize_path, command.timeout)
+            _deploy(command.kustomize_path, command.timeout, command.profile)
         elif isinstance(command, DeleteCommand):
             _delete(command.kustomize_path, command.timeout)
         elif isinstance(command, StatusCommand):
@@ -182,10 +198,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
         elif isinstance(command, BenchCommand):
             _bench(command.arguments)
-        elif isinstance(command, ProfileCommand):
-            from foretoken.profiling import capture
+        elif isinstance(command, ProfileViewCommand):
+            from foretoken.profiling.viewer import view
 
-            capture(command)
+            view(command)
     except DeploymentError as exc:
         raise SystemExit(str(exc)) from exc
     except KeyboardInterrupt:

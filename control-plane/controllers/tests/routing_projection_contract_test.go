@@ -78,11 +78,10 @@ func TestInvalidPDRouteWithdrawsOnlyItsService(t *testing.T) {
 	// A new split-role spec must not reinterpret the previously committed aggregate cohort.
 	currentAggregate := get(t, ctx, c, client.ObjectKeyFromObject(aggregate), new(inferencev1alpha1.ModelService))
 	currentAggregate.Spec.ModelPools = []inferencev1alpha1.ModelPoolTemplate{
-		{Name: "prefill", Role: inferencev1alpha1.ModelRolePrefill, Resources: aggregatePool.Spec.Template.Resources, Parallelism: inferencev1alpha1.Parallelism{}},
-		{Name: "decode", Role: inferencev1alpha1.ModelRoleDecode, Resources: aggregatePool.Spec.Template.Resources, Parallelism: inferencev1alpha1.Parallelism{}},
+		{Name: "prefill", Role: inferencev1alpha1.ModelRolePrefill, Resources: aggregatePool.Spec.Template.Resources},
+		{Name: "decode", Role: inferencev1alpha1.ModelRoleDecode, Resources: aggregatePool.Spec.Template.Resources},
 	}
 	currentAggregate.Spec.Resources = nil
-	currentAggregate.Spec.Parallelism = nil
 	currentAggregate.Generation++
 	if err := c.Update(ctx, currentAggregate); err != nil {
 		t.Fatal(err)

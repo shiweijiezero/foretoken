@@ -116,7 +116,19 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end -}}
 {{- end }}
 
+{{/* Keep the managed allocation identity shared by plugin configuration and P/D workloads. */}}
+{{- define "foretoken.rdmaResourceName" -}}
+{{- if .Values.rdma.managed -}}
+{{- printf "rdma/%s_rdma" (.Release.Name | replace "-" "_") -}}
+{{- else -}}
+{{- .Values.runtime.vllm.pd.rdmaResourceName -}}
+{{- end -}}
+{{- end }}
+
 {{- define "foretoken.validateValues" -}}
+{{- if and .Values.rdma.managed .Values.runtime.vllm.pd.rdmaResourceName -}}
+{{- fail "rdma.managed and an external runtime.vllm.pd.rdmaResourceName are mutually exclusive" -}}
+{{- end -}}
 {{- if eq (trim .Values.image.repository) "" -}}
 {{- fail "image.repository must reference a control-plane image" -}}
 {{- end -}}

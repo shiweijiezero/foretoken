@@ -425,9 +425,9 @@ spec:
                     - rdma
                     type: string
                   rdmaDeviceName:
-                    description: RDMADeviceName selects the platform-verified HCA
-                      shared by both P/D roles.
-                    minLength: 1
+                    description: |-
+                      RDMADeviceName optionally limits Mooncake to a comma-separated HCA list.
+                      When omitted, Mooncake selects from the devices allocated to the Pod.
                     type: string
                   rdmaResourceCount:
                     format: int32
@@ -446,7 +446,6 @@ spec:
                 - profileName
                 - profileRevision
                 - protocol
-                - rdmaDeviceName
                 - rdmaResourceCount
                 - rdmaResourceName
                 type: object
@@ -549,26 +548,16 @@ spec:
                 description: ModelGroupRuntime defines the resolved inference-engine
                   runtime.
                 properties:
-                  args:
-                    description: Args contains inference-engine flags not represented
-                      by the typed Group specification.
-                    items:
-                      description: |-
-                        BackendArg is one long-form CLI argument passed to the inference engine.
-                        The vLLM adapter accepts max-model-len, dtype, quantization, gpu-memory-utilization,
-                        max-num-seqs, max-num-batched-tokens, limit-mm-per-prompt, enforce-eager, and
-                        disable-log-stats. This schema rejects spaces, aliases, and positional arguments.
-                      maxLength: 4096
-                      minLength: 3
-                      pattern: ^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$
-                      type: string
-                    maxItems: 256
-                    type: array
-                    x-kubernetes-list-type: atomic
                   backend:
                     enum:
                     - vllm
                     type: string
+                  engineArgs:
+                    additionalProperties:
+                      x-kubernetes-preserve-unknown-fields: true
+                    description: EngineArgs is the effective backend configuration
+                      after applying common fields.
+                    type: object
                   image:
                     maxLength: 2048
                     minLength: 1

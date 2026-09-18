@@ -15,6 +15,7 @@ use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
 use foretoken_model_server::config::RuntimeConfig;
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
+use foretoken_model_server::managed_engine::ManagedEngine;
 use foretoken_model_server::profiling;
 use foretoken_model_server::runtime_cache;
 use foretoken_model_server::runtime_transport::LOOPBACK_HOST;
@@ -26,7 +27,7 @@ use vllm_engine_core_client::{
     EngineCoreClient, EngineCoreClientConfig, EngineCoreProtocol, TransportMode,
 };
 use vllm_llm::Llm;
-use vllm_managed_engine::{ManagedEngineHandle, allocate_handshake_port};
+use vllm_managed_engine::allocate_handshake_port;
 
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
@@ -309,9 +310,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         warn!(%error, "could not shut down EngineCore client cleanly");
     }
     let remaining = deadline.saturating_duration_since(Instant::now());
-    if let Err(error) = engine.shutdown(remaining).await {
-        warn!(%error, "could not shut down managed EngineCore cleanly");
-    }
+    engine.shutdown(remaining).await.map_err(io::Error::other)?;
     health.set_process_alive(false);
     if let Some(profiler) = &mut profiler {
         profiler.engine_stopped("runtime terminated").await;
@@ -393,7 +392,7 @@ async fn start_engine_attempt(
     mode: runtime_cache::Mode,
     startup_deadline: Instant,
     cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
-) -> Result<(ManagedEngineHandle, EngineCoreClient), EngineStartupFailure> {
+) -> Result<(ManagedEngine, EngineCoreClient), EngineStartupFailure> {
     let mut environment = if let Some(cache) = cache {
         cache.set_mode(mode);
         cache
@@ -474,12 +473,8 @@ async fn start_engine_attempt(
     .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
     let mut command = managed_engine.to_command();
     command.envs(environment);
-    if mode == runtime_cache::Mode::Persistent
-        && let Some(profile) = profiling
-    {
-        command = profile.launch_command(command);
-    }
-    let engine = ManagedEngineHandle::spawn_command(command)
+    let instrumentation = profiling.filter(|_| mode == runtime_cache::Mode::Persistent);
+    let engine = ManagedEngine::spawn(command, instrumentation)
         .await
         .map_err(|error| {
             classify_engine_startup_failure(
@@ -520,7 +515,11 @@ async fn start_engine_attempt(
     match client {
         Ok(client) => Ok((engine, client)),
         Err(error) => {
-            let _ = engine.shutdown(config.launch.drain_timeout()).await;
+            // 清理失败必须结束本次 runtime，不能让临时缓存重试与旧引擎并存。
+            engine
+                .shutdown(config.launch.drain_timeout())
+                .await
+                .map_err(|reason| EngineStartupFailure::Other(io::Error::other(reason)))?;
             Err(error)
         }
     }

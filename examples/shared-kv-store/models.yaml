@@ -22,17 +22,13 @@ spec:
   timeouts:
     startup: 10m
     drain: 2m
-  parallelism:
-    tp: 1
-    pp: 1
-    pcp: 1
-    dcp: 1
   kvCache:
     mooncakeStore:
       kvServiceRef:
         name: shared-kv
-  extraArgs:
-    - --max-model-len=8192
+  engineArgs:
+    max-model-len: 8192
+    tensor-parallel-size: 1
 ---
 apiVersion: inference.foretoken.io/v1alpha1
 kind: ModelService
@@ -55,14 +51,10 @@ spec:
   timeouts:
     startup: 10m
     drain: 2m
-  parallelism:
-    tp: 1
-    pp: 1
-    pcp: 1
-    dcp: 1
   kvCache:
     mooncakeStore:
       kvServiceRef:
         name: shared-kv
-  extraArgs:
-    - --max-model-len=8192
+  engineArgs:
+    max-model-len: 8192
+    tensor-parallel-size: 1

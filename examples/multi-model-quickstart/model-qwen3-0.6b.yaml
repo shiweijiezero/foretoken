@@ -41,10 +41,6 @@ spec:
   timeouts:
     startup: 5m
     drain: 2m
-  parallelism:
-    tp: 1
-    pp: 1
-    pcp: 1
-    dcp: 1
-  extraArgs:
-    - --max-model-len=32768
+  engineArgs:
+    max-model-len: 32768
+    tensor-parallel-size: 1

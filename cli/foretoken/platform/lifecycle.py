@@ -37,6 +37,7 @@ from foretoken.platform.config import (
 from foretoken.platform.gateway import GatewayControllerLifecycle
 from foretoken.platform.helm import Helm
 from foretoken.platform.load_balancer import LoadBalancerLifecycle
+from foretoken.platform.rdma import require_unused_managed_rdma, select_rdma
 from foretoken.platform.types import RuntimeOverrides
 from foretoken.source import (
     prepare_source_images,
@@ -55,6 +56,7 @@ class _RuntimeSelection:
 
     backend: str
     resource_name: str
+    nodes: tuple[dict[str, Any], ...]
 
 
 def _resource_capacity(node: dict[str, Any], resource_name: str) -> int:
@@ -87,27 +89,31 @@ def _select_runtime(
         resource_name = overrides.gpu_resource_name
         if not resource_name:
             return None
-        return _RuntimeSelection(
-            GPU_RESOURCE_BACKENDS.get(resource_name, "custom"), resource_name
+    else:
+        resources = tuple(
+            resource
+            for resource in GPU_RESOURCE_BACKENDS
+            if any(_resource_capacity(node, resource) > 0 for node in selected_nodes)
         )
-
-    resources = tuple(
-        resource
-        for resource in GPU_RESOURCE_BACKENDS
-        if any(_resource_capacity(node, resource) > 0 for node in selected_nodes)
+        if not resources:
+            return None
+        if len(resources) > 1:
+            raise DeploymentError(
+                "multiple accelerator resources are allocatable in the selected "
+                "cluster scope: "
+                + ", ".join(resources)
+                + "; set runtime.vllm.gpu.resourceName or runtime.vllm.gpu.nodeSelector "
+                "in --values"
+            )
+        resource_name = resources[0]
+    return _RuntimeSelection(
+        GPU_RESOURCE_BACKENDS.get(resource_name, "custom"),
+        resource_name,
+        tuple(
+            node for node in selected_nodes
+            if _resource_capacity(node, resource_name) > 0
+        ),
     )
-    if not resources:
-        return None
-    if len(resources) > 1:
-        raise DeploymentError(
-            "multiple accelerator resources are allocatable in the selected "
-            "cluster scope: "
-            + ", ".join(resources)
-            + "; set runtime.vllm.gpu.resourceName or runtime.vllm.gpu.nodeSelector "
-            "in --values"
-        )
-    resource_name = resources[0]
-    return _RuntimeSelection(GPU_RESOURCE_BACKENDS[resource_name], resource_name)
 
 
 class PlatformLifecycle:
@@ -155,11 +161,8 @@ class PlatformLifecycle:
                 )
         values = load_platform_values(command.values)
         current_runtime = runtime_overrides_from_values(values)
-        stored_runtime = (
-            runtime_overrides_from_values((helm.release_user_values(platform),))
-            if platform_exists
-            else RuntimeOverrides()
-        )
+        stored_values = (helm.release_user_values(platform),) if platform_exists else ()
+        stored_runtime = runtime_overrides_from_values(stored_values)
         runtime_scope = RuntimeOverrides(
             gpu_resource_name=(
                 current_runtime.gpu_resource_name
@@ -221,6 +224,23 @@ class PlatformLifecycle:
             )
         exporter_discovery = ExporterDiscovery(kubectl, command.timeout)
         runtime_selection = _select_runtime(exporter_discovery.nodes, runtime_scope)
+        rdma = select_rdma(
+            kubectl,
+            runtime_selection.nodes if runtime_selection is not None else (),
+            exporter_discovery.daemonsets,
+            (*stored_values, *values),
+            (platform.name, platform.namespace),
+        )
+
+        if platform_exists and (
+            not rdma.managed
+            or runtime_scope.gpu_node_selector != stored_runtime.gpu_node_selector
+            or bool(
+                set(stored_values[0].get("rdma", {}).get("nodeNames", []))
+                - set(rdma.node_names)
+            )
+        ):
+            require_unused_managed_rdma(kubectl, (platform.name, platform.namespace))
 
         source_runtime_image: str | None = None
         configured_runtime_image = (
@@ -400,6 +420,7 @@ class PlatformLifecycle:
                 f"{runtime_selection.backend} via {runtime_selection.resource_name}"
             )
         _print_plan("Inference runtime", runtime_action, runtime_detail)
+        _print_plan("RDMA", rdma.action, rdma.detail)
         _print_plan("Foretoken platform", platform_action, platform.display_name)
 
         source_images = (
@@ -481,9 +502,30 @@ class PlatformLifecycle:
             observability_labels=observability_labels,
             observability_prometheus=f"{selected_prometheus.namespace}/{selected_prometheus.name}",
             gpu_resource_name=gpu_resource_name,
+            rdma_resource_name=rdma.resource_name,
+            rdma_managed=rdma.managed,
+            rdma_node_names=rdma.node_names,
             reuse_values=platform_exists,
             timeout=command.timeout,
         )
+        if rdma.managed:
+            live_discovery = ExporterDiscovery(kubectl, command.timeout)
+            live_runtime = _select_runtime(live_discovery.nodes, runtime_scope)
+            allocation = select_rdma(
+                kubectl,
+                live_runtime.nodes if live_runtime is not None else (),
+                live_discovery.daemonsets,
+                (),
+                (platform.name, platform.namespace),
+            )
+            _print_plan(
+                "RDMA",
+                "Available" if allocation.available else "Not available",
+                allocation.detail if allocation.available else (
+                    "device plugin has no allocatable RDMA pool on the GPU nodes; "
+                    "check node drivers and network interfaces"
+                ),
+            )
         if source_images is not None:
             restart_changed_source_deployments(
                 kubectl,
@@ -563,6 +605,7 @@ class PlatformLifecycle:
                 )
 
         if platform_exists:
+            require_unused_managed_rdma(kubectl, (platform.name, platform.namespace))
             _print_plan("Foretoken platform", "Remove", platform.display_name)
         else:
             _print_plan("Foretoken platform", "Skip", "not installed")

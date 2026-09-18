@@ -276,6 +276,14 @@ class ParameterSweepConfig:
 
 
 @dataclass
+class BenchmarkProfileConfig:
+    """Select one runtime-owned capture accompanying a generated workload."""
+
+    engine: str
+    duration: str
+
+
+@dataclass
 class BenchmarkConfig:
     """Store the service, workload, load, and output configuration for one benchmark command."""
 
@@ -289,6 +297,7 @@ class BenchmarkConfig:
     outputs: BenchmarkOutputConfig = field(default_factory=BenchmarkOutputConfig)
     wandb: WandbRunConfig = field(default_factory=WandbRunConfig)
     sweep: ParameterSweepConfig = field(default_factory=ParameterSweepConfig)
+    profile: BenchmarkProfileConfig | None = None
 
     @property
     def resolved_workload(self) -> ChatRequestDataset:
@@ -310,6 +319,21 @@ class BenchmarkConfig:
     def validate(self) -> None:
         """Validate each section, then the rules that span sections, before acquiring resources."""
         self.service.validate()
+        if self.profile is not None:
+            if not self.service.kustomize_path:
+                raise ValueError("--profile requires a Foretoken Kustomize deployment")
+            if (
+                self.trace.trace_selector or self.sweep.path
+                or self.resolved_workload.has_multiple_datasets
+            ):
+                raise ValueError(
+                    "--profile supports one generated workload, not trace replay, "
+                    "sweeps or multiple datasets"
+                )
+            if self.load.arrival_rate != -1:
+                raise ValueError(
+                    "--profile requires --rate -1 so profiler startup does not distort request pacing"
+                )
         if self.sweep.path and not self.service.kustomize_path:
             raise ValueError("--sweep requires a Foretoken Kustomize deployment")
         self.load.validate()
@@ -451,4 +475,8 @@ class BenchmarkConfig:
                 "num_runs": self.sweep.num_runs,
                 "experiment_name": self.sweep.experiment_name,
             },
+            "profile": (
+                {"engine": self.profile.engine, "duration": self.profile.duration}
+                if self.profile is not None else None
+            ),
         }

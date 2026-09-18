@@ -172,7 +172,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			Backend:                               template.Backend,
 			Image:                                 image,
 			Port:                                  profile.ModelServerPort,
-			Args:                                  append([]inferencev1alpha1.BackendArg(nil), effective.ExtraArgs...),
+			EngineArgs:                            effective.EngineArgs,
 			Profiling:                             template.Profiling.DeepCopy(),
 			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,
 		},
@@ -276,7 +276,7 @@ func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, paralle
 	if template.NodeCount != 1 || template.MemberCount != 1 || parallelism.TP != 1 || parallelism.PP != 1 || parallelism.DP != 1 || parallelism.PCP != 1 || parallelism.DCP != 1 || parallelism.EP != nil {
 		return nil, fmt.Errorf("Mooncake P/D requires a single member/node and TP=PP=DP=PCP=DCP=1 without expert parallelism")
 	}
-	if profile == nil || profile.Name == "" || profile.Revision == "" || profile.Protocol == "" || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 || profile.RDMADeviceName == "" || profile.RDMAResourceName == "" || profile.RDMAResourceCount < 1 {
+	if profile == nil || profile.Name == "" || profile.Revision == "" || profile.Protocol == "" || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 || profile.RDMAResourceName == "" || profile.RDMAResourceCount < 1 {
 		return nil, fmt.Errorf("Mooncake P/D runtime profile is incomplete")
 	}
 	if profile.Protocol != "rdma" {

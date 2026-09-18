@@ -98,22 +98,12 @@ spec:
                     description: ECProfile is the controller-owned platform EC profile
                       selected for encoder and prefill Pools.
                     type: string
-                  extraArgs:
-                    description: ExtraArgs are inference-engine flags that the concrete
-                      adapter must validate before Group creation.
-                    items:
-                      description: |-
-                        BackendArg is one long-form CLI argument passed to the inference engine.
-                        The vLLM adapter accepts max-model-len, dtype, quantization, gpu-memory-utilization,
-                        max-num-seqs, max-num-batched-tokens, limit-mm-per-prompt, enforce-eager, and
-                        disable-log-stats. This schema rejects spaces, aliases, and positional arguments.
-                      maxLength: 4096
-                      minLength: 3
-                      pattern: ^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$
-                      type: string
-                    maxItems: 256
-                    type: array
-                    x-kubernetes-list-type: atomic
+                  engineArgs:
+                    additionalProperties:
+                      x-kubernetes-preserve-unknown-fields: true
+                    description: EngineArgs contains native backend options before
+                      common fields are applied.
+                    type: object
                   features:
                     description: Features is the normalized explicit capabilities
                       for this Pool.
@@ -158,6 +148,62 @@ spec:
                         description: TokenSecretName and TokenSecretKey identify an
                           optional namespace-local credential.
                         type: string
+                    type: object
+                  inference:
+                    description: Inference is the normalized model-execution configuration
+                      compiled from ModelService.
+                    properties:
+                      dtype:
+                        description: DType selects the model weight and activation
+                          data type supported by the engine.
+                        minLength: 1
+                        type: string
+                      enforceEager:
+                        description: EnforceEager disables graph capture when true;
+                          omission preserves the engine default.
+                        type: boolean
+                      gpuMemoryUtilization:
+                        description: GPUMemoryUtilization is the fraction of device
+                          memory available to each engine instance.
+                        exclusiveMinimum: true
+                        maximum: 1
+                        minimum: 0
+                        type: number
+                      kvCacheDType:
+                        description: KVCacheDType selects the data type used for the
+                          engine's KV cache.
+                        minLength: 1
+                        type: string
+                      maxModelLen:
+                        description: MaxModelLen limits the combined prompt and generated
+                          sequence length.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      maxNumBatchedTokens:
+                        description: MaxNumBatchedTokens limits the tokens scheduled
+                          in one engine iteration.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      maxNumSeqs:
+                        description: MaxNumSeqs limits the sequences scheduled in
+                          one engine iteration.
+                        format: int32
+                        minimum: 1
+                        type: integer
+                      quantization:
+                        description: Quantization selects the engine's weight quantization
+                          method.
+                        minLength: 1
+                        type: string
+                      speculativeDecoding:
+                        additionalProperties:
+                          x-kubernetes-preserve-unknown-fields: true
+                        description: |-
+                          SpeculativeDecoding is the complete native speculative configuration for the selected backend.
+                          It replaces the corresponding engineArgs option when present.
+                        type: object
                     type: object
                   internalGenerateRequestBodyLimitBytes:
                     description: |-
@@ -264,71 +310,6 @@ spec:
                     maximum: 1
                     minimum: 1
                     type: integer
-                  parallelism:
-                    description: |-
-                      CompiledParallelism defines an explicit execution topology compiled from user intent.
-                      Unlike user input, DP is always present and may coexist with EP as its derived value.
-                    properties:
-                      dcp:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                      dp:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                      ep:
-                        description: ExpertParallelism defines expert-parallel execution
-                          for one ModelGroup.
-                        properties:
-                          backend:
-                            maxLength: 128
-                            minLength: 1
-                            type: string
-                          eplb:
-                            default: false
-                            type: boolean
-                          size:
-                            format: int32
-                            minimum: 1
-                            type: integer
-                        required:
-                        - size
-                        type: object
-                      pcp:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                      pp:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                      tp:
-                        format: int32
-                        minimum: 1
-                        type: integer
-                    required:
-                    - dcp
-                    - dp
-                    - pcp
-                    - pp
-                    - tp
-                    type: object
-                    x-kubernetes-validations:
-                    - message: parallelism.ep.size must be divisible by parallelism.tp
-                        * parallelism.pcp
-                      rule: '!has(self.ep) || self.ep.size % (self.tp * self.pcp)
-                        == 0'
-                    - message: parallelism.dp must equal the value derived from parallelism.ep.size
-                      rule: '!has(self.ep) || self.dp == self.ep.size / (self.tp *
-                        self.pcp)'
-                    - message: parallelism.pcp greater than 1 is incompatible with
-                        parallelism.dp greater than 1
-                      rule: self.pcp == 1 || self.dp == 1
-                    - message: parallelism.dcp is incompatible with parallelism.tp
-                        and parallelism.pcp
-                      rule: 'self.pcp == 1 ? self.tp % self.dcp == 0 : self.dcp ==
-                        1 || self.dcp == self.pcp || self.dcp == self.tp * self.pcp'
                   profiling:
                     description: Profiling is the service-selected instrumentation
                       for this Pool's processes.
@@ -494,7 +475,6 @@ spec:
                 - memberCount
                 - model
                 - nodeCount
-                - parallelism
                 - resources
                 - role
                 - source
@@ -503,10 +483,6 @@ spec:
                 x-kubernetes-validations:
                 - message: memberCount must equal nodeCount in v1alpha1
                   rule: self.memberCount == self.nodeCount
-                - message: accelerator capacity must equal the compiled worker rank
-                    count
-                  rule: self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp
-                    * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp
             required:
             - desiredGroups
             - modelServiceRef

@@ -65,7 +65,7 @@ func kvScopeID(group *inferencev1alpha1.ModelGroup) string {
 		Model, Revision, Tokenizer, TokenizerRevision string
 		Source                                        inferencev1alpha1.ModelSource
 		Parallelism                                   inferencev1alpha1.CompiledParallelism
-		RuntimeArgs                                   []inferencev1alpha1.BackendArg
+		EngineArgs                                    inferencev1alpha1.EngineArguments
 		KVRuntime                                     *inferencev1alpha1.ModelGroupKVRuntimeConfig
 	}{
 		Model:             group.Spec.Artifacts.Model,
@@ -74,7 +74,7 @@ func kvScopeID(group *inferencev1alpha1.ModelGroup) string {
 		TokenizerRevision: group.Spec.Artifacts.TokenizerRevision,
 		Source:            group.Spec.Artifacts.Source,
 		Parallelism:       group.Spec.Parallelism,
-		RuntimeArgs:       group.Spec.Runtime.Args,
+		EngineArgs:        group.Spec.Runtime.EngineArgs,
 		KVRuntime:         group.Spec.KVRuntime,
 	}
 	encoded, _ := json.Marshal(payload)

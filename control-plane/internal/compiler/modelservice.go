@@ -55,7 +55,6 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	if err := validateAutoscalingConfig(spec.Autoscaling); err != nil {
 		return nil, err
 	}
-
 	internalGenerateRequestBodyLimitBytes := valueOrDefaultInt64(spec.InternalGenerateRequestBodyLimitBytes, inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes)
 	if internalGenerateRequestBodyLimitBytes < inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes || internalGenerateRequestBodyLimitBytes > inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes {
 		return nil, fmt.Errorf("internalGenerateRequestBodyLimitBytes must be between %d and %d", inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes, inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes)
@@ -63,7 +62,7 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	if len(spec.ModelPools) == 0 {
 		replicas := valueOrDefault(spec.Replicas, 1)
 		nodes := valueOrDefault(spec.Nodes, 1)
-		pool, err := compilePool(spec, source, artifactRevision, defaultPoolName, inferencev1alpha1.ModelRoleAggregate, replicas, nodes, "", "", *spec.Resources, *spec.Parallelism, spec.MaxInputTokens, internalGenerateRequestBodyLimitBytes, spec.KVCache, spec.Features, timeouts)
+		pool, err := compilePool(spec, source, artifactRevision, defaultPoolName, inferencev1alpha1.ModelRoleAggregate, replicas, nodes, "", "", *spec.Resources, spec.EngineArgs, spec.MaxInputTokens, internalGenerateRequestBodyLimitBytes, spec.KVCache, spec.Features, timeouts)
 		if err != nil {
 			return nil, err
 		}
@@ -87,7 +86,11 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		}
 		replicas := valueOrDefault(entry.Replicas, 1)
 		nodes := valueOrDefault(entry.Nodes, 1)
-		pool, err := compilePool(spec, source, artifactRevision, entry.Name, role, replicas, nodes, entry.Network, ecProfileForRole(spec.ECProfile, role), entry.Resources, entry.Parallelism, entry.MaxInputTokens, internalGenerateRequestBodyLimitBytes, entry.KVCache, entry.Features, timeouts)
+		engineArgs := spec.EngineArgs
+		if entry.EngineArgs != nil {
+			engineArgs = *entry.EngineArgs
+		}
+		pool, err := compilePool(spec, source, artifactRevision, entry.Name, role, replicas, nodes, entry.Network, ecProfileForRole(spec.ECProfile, role), entry.Resources, engineArgs, entry.MaxInputTokens, internalGenerateRequestBodyLimitBytes, entry.KVCache, entry.Features, timeouts)
 		if err != nil {
 			return nil, fmt.Errorf("modelPools %q: %w", entry.Name, err)
 		}
@@ -140,7 +143,7 @@ func validateModelPoolRoles(pools []inferencev1alpha1.ModelPoolTemplate) error {
 	return nil
 }
 
-func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alpha1.ModelSource, artifactRevision, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, parallelism inferencev1alpha1.Parallelism, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
+func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alpha1.ModelSource, artifactRevision, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, engineArgs inferencev1alpha1.EngineArguments, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
 	if nodes != 1 {
 		return ModelPool{}, fmt.Errorf("only single-node model groups are currently supported")
 	}
@@ -148,20 +151,11 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 	if err != nil {
 		return ModelPool{}, err
 	}
-	compiledParallelism := compileParallelism(parallelism)
-	if role != inferencev1alpha1.ModelRoleAggregate && (compiledParallelism.TP != 1 || compiledParallelism.PP != 1 || compiledParallelism.DP != 1 || compiledParallelism.PCP != 1 || compiledParallelism.DCP != 1 || compiledParallelism.EP != nil) {
-		return ModelPool{}, fmt.Errorf("split serving currently requires TP=PP=DP=PCP=DCP=1 without expert parallelism")
-	}
 	normalizedKVCache, err := normalizeKVCache(kvCache)
 	if err != nil {
 		return ModelPool{}, err
 	}
 
-	capacity := int64(nodes) * int64(normalizedResources.Requests.GPU.Count)
-	ranks := int64(compiledParallelism.PP) * int64(compiledParallelism.TP) * int64(compiledParallelism.PCP) * int64(compiledParallelism.DP)
-	if capacity != ranks {
-		return ModelPool{}, fmt.Errorf("nodes * resources.requests.gpu.count must equal the compiled worker rank count")
-	}
 	normalizedFeatures, err := normalizeModelFeatures(features)
 	if err != nil {
 		return ModelPool{}, err
@@ -169,6 +163,10 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 	tokenizer := spec.Tokenizer
 	if tokenizer == "" {
 		tokenizer = spec.Model
+	}
+	// Match the API's omitted representation after resolving an explicit empty Pool override.
+	if len(engineArgs) == 0 {
+		engineArgs = nil
 	}
 	return ModelPool{
 		Name:          name,
@@ -180,11 +178,11 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			Tokenizer:                             tokenizer,
 			TokenizerRevision:                     artifactRevision,
 			Backend:                               spec.Backend,
+			Inference:                             *spec.InferenceParameters.DeepCopy(),
 			Role:                                  role,
 			NodeCount:                             nodes,
 			MemberCount:                           nodes,
 			Resources:                             normalizedResources,
-			Parallelism:                           compiledParallelism,
 			MaxInputTokens:                        copyInt32(maxInputTokens),
 			InternalGenerateRequestBodyLimitBytes: internalGenerateRequestBodyLimitBytes,
 			Network:                               network,
@@ -192,37 +190,21 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			Timeouts:                              timeouts,
 			KVCache:                               normalizedKVCache,
 			Features:                              normalizedFeatures,
-			ExtraArgs:                             append([]inferencev1alpha1.BackendArg(nil), spec.ExtraArgs...),
-			Profiling:                             spec.Profiling.DeepCopy(),
+			EngineArgs:                            engineArgs.DeepCopy(),
+			Profiling:                             normalizeProfiling(spec.Profiling),
 		},
 	}, nil
 }
 
-// The remaining compiler helpers normalize user shorthand into stable Pool template fields.
-// Runtime-incompatible resources, storage, timeouts, and features fail before reconciliation.
-func compileParallelism(input inferencev1alpha1.Parallelism) inferencev1alpha1.CompiledParallelism {
-	tp := defaultOne(input.TP)
-	pcp := defaultOne(input.PCP)
-	dp := int32(1)
-	var ep *inferencev1alpha1.ExpertParallelism
-	if input.EP != nil {
-		dp = int32(int64(input.EP.Size) / (int64(tp) * int64(pcp)))
-		copied := *input.EP
-		ep = &copied
-	} else if input.DP != nil {
-		dp = *input.DP
+func normalizeProfiling(input *inferencev1alpha1.ProfilingConfig) *inferencev1alpha1.ProfilingConfig {
+	if input == nil || input.Engine == "pytorch" {
+		return nil
 	}
-
-	return inferencev1alpha1.CompiledParallelism{
-		TP:  tp,
-		PP:  defaultOne(input.PP),
-		DP:  dp,
-		PCP: pcp,
-		DCP: defaultOne(input.DCP),
-		EP:  ep,
-	}
+	return input.DeepCopy()
 }
 
+// The remaining compiler helpers normalize user shorthand into stable Pool template fields.
+// Runtime-incompatible resources, storage, timeouts, and features fail before reconciliation.
 func normalizeResources(input inferencev1alpha1.ModelResources) (inferencev1alpha1.ModelResources, error) {
 	cpu, err := normalizeQuantity("resources.requests.cpu", input.Requests.CPU)
 	if err != nil {
@@ -453,13 +435,6 @@ func copyInt32(value *int32) *int32 {
 	}
 	copied := *value
 	return &copied
-}
-
-func defaultOne(value int32) int32 {
-	if value == 0 {
-		return 1
-	}
-	return value
 }
 
 func ecProfileForRole(profile *inferencev1alpha1.ECProfileReference, role inferencev1alpha1.ModelRole) string {

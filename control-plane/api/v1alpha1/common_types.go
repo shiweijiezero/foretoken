@@ -5,6 +5,8 @@
 
 package v1alpha1
 
+import apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+
 // ResourceQuantity is a non-negative Kubernetes resource quantity.
 // +kubebuilder:validation:MinLength=1
 // +kubebuilder:validation:MaxLength=64
@@ -23,14 +25,9 @@ type Duration string
 // +kubebuilder:validation:XValidation:rule="duration(self) >= duration('0s')",message="must be a non-negative duration"
 type NonNegativeDuration string
 
-// BackendArg is one long-form CLI argument passed to the inference engine.
-// The vLLM adapter accepts max-model-len, dtype, quantization, gpu-memory-utilization,
-// max-num-seqs, max-num-batched-tokens, limit-mm-per-prompt, enforce-eager, and
-// disable-log-stats. This schema rejects spaces, aliases, and positional arguments.
-// +kubebuilder:validation:MinLength=3
-// +kubebuilder:validation:MaxLength=4096
-// +kubebuilder:validation:Pattern="^--[a-z][a-z0-9-]*(=[^[:space:]]+)?$"
-type BackendArg string
+// EngineArguments holds native backend options as YAML values without CLI prefixes.
+// +kubebuilder:validation:Type=object
+type EngineArguments map[string]apiextensionsv1.JSON
 
 // StructuredOutputFormat identifies a structured response format supported by a model.
 // +enum

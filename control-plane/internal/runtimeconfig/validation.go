@@ -80,7 +80,7 @@ func validatePD(profile PDProfile) error {
 		}
 		return nil
 	}
-	if profile.Revision == "" || profile.Protocol != pdProtocol || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 || int64(profile.AbortRequestTimeoutSeconds) > maxInt32 || profile.RDMADeviceName == "" || profile.RDMAResourceName == "" || profile.RDMAResourceCount < 1 || int64(profile.RDMAResourceCount) > maxInt32 {
+	if profile.Revision == "" || profile.Protocol != pdProtocol || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 || int64(profile.AbortRequestTimeoutSeconds) > maxInt32 || profile.RDMAResourceName == "" || profile.RDMAResourceCount < 1 || int64(profile.RDMAResourceCount) > maxInt32 {
 		return errors.New("vLLM P/D profile is incomplete or unsupported")
 	}
 	return nil

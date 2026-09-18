@@ -70,6 +70,16 @@ foretoken bench examples/quickstart \
 
 `--dataset` also accepts a local JSONL file. Each row is a conversation, and all turns run by default using the model's actual answers. Use `--max-turns 1` for the first turn only. Multi-turn conversations currently require `--rate -1`.
 
+### Capture while benchmarking
+
+```bash
+foretoken bench examples/quickstart \
+  --profile --profile-engine pytorch --profile-duration 15s \
+  --number 2 --max-tokens 128 --output local
+```
+
+See [Profiling](../observability/profiling.md) for setup and trace viewing.
+
 ### Trace replay
 
 ```bash

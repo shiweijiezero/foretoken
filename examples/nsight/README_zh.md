@@ -7,16 +7,20 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文
 
-本示例基于 Quick Start，在 `foretoken-nsight` 命名空间准备 Qwen3-0.6B 的 CUDA/NVTX 采集环境。需要源码安装的平台、NVIDIA GPU，以及按[性能剖析指南](../../observability/profiling_zh.md#nsight-systems)配置的可选诊断镜像。
+本示例基于 Quick Start，在 `foretoken-nsight` 命名空间采集 Qwen3-0.6B 的 CUDA/NVTX 活动。需要 NVIDIA GPU 和[性能剖析指南](../../observability/profiling_zh.md#nsight-systems)中的诊断镜像。示例沿用快速开始的[模型存储](../../docs/model-storage_zh.md)：本地 k3d 使用仓库的 `data/` 挂载，远端集群配置节点目录或 PVC。
+
+运行一段短负载并采集：
 
 ```bash
-foretoken deploy examples/nsight --timeout 20m
-foretoken profile examples/nsight --profile-engine nsight --profile-duration 15s
+foretoken bench examples/nsight \
+  --profile --profile-engine nsight --profile-duration 15s \
+  --number 2 --max-tokens 128 --output local
+foretoken profile view
 ```
 
-命令显示 `Capturing` 时，通过前端发送推理请求；采集命令本身不产生流量。导出后模型继续服务，可再次采集。命令输出的 RuntimeCache 路径中，每个 runtime 保存 `capture.nsys-rep`、SQLite 导出文件和 `manifest.json`。
+从查看器下载报告后，用 Nsight Systems 打开。临时评测服务清理后，采集文件仍可访问。
 
-保存所需报告后，删除部署：
+不再需要时，删除示例保留的资源：
 
 ```bash
 foretoken delete examples/nsight

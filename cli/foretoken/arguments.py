@@ -41,6 +41,7 @@ class DeployCommand:
 
     kustomize_path: str
     timeout: str
+    profile: ProfileCommand | None = None
 
 
 @dataclass(frozen=True)
@@ -78,13 +79,47 @@ class BenchCommand:
 
 @dataclass(frozen=True)
 class ProfileCommand:
-    """Request one runtime-owned Torch window on an existing diagnostic service."""
+    """Describe one runtime-owned capture requested by deploy or bench."""
 
     kustomize_path: str
     model: str | None
     profile_duration: str
     profile_engine: str
     timeout: str
+
+
+@dataclass(frozen=True)
+class ProfileViewCommand:
+    """Browse capture directories in all or one selected Kubernetes namespace."""
+
+    namespace: str | None
+    timeout: str
+
+
+def add_profile_arguments(parser: argparse.ArgumentParser) -> None:
+    """Add the shared optional capture controls to deploy and bench."""
+    parser.add_argument(
+        "--profile", action="store_true",
+        help="Capture a profile during this operation",
+    )
+    parser.add_argument(
+        "--profile-engine", choices=("pytorch", "nsight"),
+        help="Required with --profile; native profiler",
+    )
+    parser.add_argument(
+        "--profile-duration",
+        help="Required with --profile; maximum recording time, e.g. 15s",
+    )
+
+
+def validate_profile_arguments(
+    parser: argparse.ArgumentParser, arguments: argparse.Namespace
+) -> None:
+    """Require a complete capture selection before executing deploy or bench."""
+    if arguments.profile and not (arguments.profile_engine and arguments.profile_duration):
+        parser.error("--profile requires --profile-engine and --profile-duration")
+    if not arguments.profile and (arguments.profile_engine or arguments.profile_duration):
+        parser.error("--profile-engine and --profile-duration require --profile")
 
 
 ParsedCommand = (
@@ -95,7 +130,7 @@ ParsedCommand = (
     | StatusCommand
     | EndpointCommand
     | BenchCommand
-    | ProfileCommand
+    | ProfileViewCommand
 )
 
 
@@ -211,7 +246,9 @@ def _build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Kustomize root containing one frontend and one or more models",
     )
-    _add_wait_timeout_argument(deploy, "serving readiness")
+    _add_wait_timeout_argument(deploy, "serving readiness or capture completion")
+    add_profile_arguments(deploy)
+    deploy.add_argument("--model", help="model to profile when PATH contains several models")
 
     delete = subparsers.add_parser(
         "delete",
@@ -263,31 +300,21 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     profile = subparsers.add_parser(
-        "profile",
-        help="Capture a profile from an existing ModelService",
+        "profile", help="Browse retained performance captures"
+    )
+    profile_actions = profile.add_subparsers(dest="profile_action", required=True)
+    view = profile_actions.add_parser(
+        "view", help="Print a local URL for current and historical captures",
         description=(
-            "Capture a profile from a service using persistent RuntimeCache "
-            "storage. Results remain under the cache's profiles directory."
+            "Run on the browser's computer using a kubeconfig for the target cluster. "
+            "Ctrl+C closes the viewer."
         ),
     )
-    profile.add_argument(
-        "kustomize_path",
-        metavar="PATH",
-        help="Kustomize root of an existing deployment; not applied",
+    view.add_argument(
+        "-n", "--namespace",
+        help="limit capture directories to one namespace (default: all namespaces)",
     )
-    profile.add_argument("--model", help="model identifier when PATH contains several models")
-    profile.add_argument(
-        "--profile-duration",
-        required=True,
-        help="recording duration, such as 15s; excludes profiler startup and export",
-    )
-    profile.add_argument(
-        "--profile-engine",
-        choices=("pytorch", "nsight"),
-        required=True,
-        help="profiler prepared by the service: PyTorch or NVIDIA Nsight Systems",
-    )
-    _add_wait_timeout_argument(profile, "capture completion")
+    _add_wait_timeout_argument(view, "capture storage readiness")
 
     subparsers.add_parser(
         "bench",
@@ -341,17 +368,22 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
     if parsed_args.command == "uninstall":
         return UninstallCommand(parsed_args.timeout)
     if parsed_args.command == "deploy":
-        return DeployCommand(parsed_args.kustomize_path, parsed_args.timeout)
+        validate_profile_arguments(parser, parsed_args)
+        if parsed_args.model and not parsed_args.profile:
+            parser.error("deploy --model requires --profile")
+        capture = (
+            ProfileCommand(
+                parsed_args.kustomize_path, parsed_args.model,
+                parsed_args.profile_duration, parsed_args.profile_engine,
+                parsed_args.timeout,
+            )
+            if parsed_args.profile else None
+        )
+        return DeployCommand(parsed_args.kustomize_path, parsed_args.timeout, capture)
     if parsed_args.command == "delete":
         return DeleteCommand(parsed_args.kustomize_path, parsed_args.timeout)
     if parsed_args.command == "profile":
-        return ProfileCommand(
-            parsed_args.kustomize_path,
-            parsed_args.model,
-            parsed_args.profile_duration,
-            parsed_args.profile_engine,
-            parsed_args.timeout,
-        )
+        return ProfileViewCommand(parsed_args.namespace, parsed_args.timeout)
     if parsed_args.command == "status":
         if bool(parsed_args.kustomize_path) == bool(parsed_args.namespace):
             parser.error("status requires either PATH or --namespace")

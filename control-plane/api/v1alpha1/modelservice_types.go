@@ -37,41 +37,6 @@ type ExpertParallelism struct {
 	EPLB bool `json:"eplb,omitempty"`
 }
 
-// Parallelism defines the execution topology of one ModelGroup.
-// +kubebuilder:validation:XValidation:rule="!has(self.dp) || !has(self.ep)",message="parallelism.dp and parallelism.ep are mutually exclusive"
-// +kubebuilder:validation:XValidation:rule="!has(self.ep) || self.ep.size % (self.tp * self.pcp) == 0",message="parallelism.ep.size must be divisible by parallelism.tp * parallelism.pcp"
-// +kubebuilder:validation:XValidation:rule="self.pcp == 1 || !has(self.dp) || self.dp == 1",message="parallelism.pcp greater than 1 is incompatible with parallelism.dp greater than 1"
-// +kubebuilder:validation:XValidation:rule="self.pcp == 1 || !has(self.ep) || self.ep.size == self.tp * self.pcp",message="parallelism.ep.size must equal parallelism.tp * parallelism.pcp when parallelism.pcp is greater than 1"
-// +kubebuilder:validation:XValidation:rule="self.pcp == 1 ? self.tp % self.dcp == 0 : self.dcp == 1 || self.dcp == self.pcp || self.dcp == self.tp * self.pcp",message="parallelism.dcp is incompatible with parallelism.tp and parallelism.pcp"
-type Parallelism struct {
-	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=1
-	TP int32 `json:"tp,omitempty"`
-
-	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=1
-	PP int32 `json:"pp,omitempty"`
-
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	DP *int32 `json:"dp,omitempty"`
-
-	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=1
-	PCP int32 `json:"pcp,omitempty"`
-
-	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=1
-	DCP int32 `json:"dcp,omitempty"`
-
-	// +optional
-	EP *ExpertParallelism `json:"ep,omitempty"`
-}
-
 // KVCache defines typed KV-cache placement intent for one execution Pool.
 // +kubebuilder:validation:XValidation:rule="!(has(self.offload) && has(self.mooncakeStore))",message="kvCache.offload and kvCache.mooncakeStore are mutually exclusive"
 type KVCache struct {
@@ -120,7 +85,6 @@ type ECProfileReference struct {
 // ModelPoolTemplate defines one user-owned execution Pool: a homogeneous set
 // of ModelGroups sharing the same role, network, resources, and parallelism.
 // The controller instantiates it as a ModelPool owned by the ModelService.
-// +kubebuilder:validation:XValidation:rule="(has(self.nodes) ? self.nodes : 1) * self.resources.requests.gpu.count == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * (has(self.parallelism.dp) ? self.parallelism.dp : 1))",message="nodes * resources.requests.gpu.count must equal the compiled worker rank count"
 type ModelPoolTemplate struct {
 	// Name is the stable identity of this Pool within one ModelService.
 	// +kubebuilder:validation:MinLength=1
@@ -151,8 +115,11 @@ type ModelPoolTemplate struct {
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$"
 	Network string `json:"network,omitempty"`
 
-	Resources   ModelResources `json:"resources"`
-	Parallelism Parallelism    `json:"parallelism"`
+	Resources ModelResources `json:"resources"`
+
+	// EngineArgs replaces service-level native options for this Pool when supplied.
+	// +optional
+	EngineArgs *EngineArguments `json:"engineArgs,omitempty"`
 
 	// MaxInputTokens is the prompt admission limit for requests routed to this Pool.
 	// +optional
@@ -308,11 +275,59 @@ type ProfilingConfig struct {
 	Engine string `json:"engine"`
 }
 
+// InferenceParameters contains common model-execution choices shared by every Pool.
+type InferenceParameters struct {
+	// MaxModelLen limits the combined prompt and generated sequence length.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxModelLen *int32 `json:"maxModelLen,omitempty"`
+
+	// DType selects the model weight and activation data type supported by the engine.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	DType string `json:"dtype,omitempty"`
+
+	// Quantization selects the engine's weight quantization method.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	Quantization string `json:"quantization,omitempty"`
+
+	// KVCacheDType selects the data type used for the engine's KV cache.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	KVCacheDType string `json:"kvCacheDType,omitempty"`
+
+	// GPUMemoryUtilization is the fraction of device memory available to each engine instance.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:ExclusiveMinimum=true
+	// +kubebuilder:validation:Maximum=1
+	GPUMemoryUtilization *float64 `json:"gpuMemoryUtilization,omitempty"`
+
+	// MaxNumSeqs limits the sequences scheduled in one engine iteration.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxNumSeqs *int32 `json:"maxNumSeqs,omitempty"`
+
+	// MaxNumBatchedTokens limits the tokens scheduled in one engine iteration.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxNumBatchedTokens *int32 `json:"maxNumBatchedTokens,omitempty"`
+
+	// EnforceEager disables graph capture when true; omission preserves the engine default.
+	// +optional
+	EnforceEager *bool `json:"enforceEager,omitempty"`
+
+	// SpeculativeDecoding is the complete native speculative configuration for the selected backend.
+	// It replaces the corresponding engineArgs option when present.
+	// +optional
+	SpeculativeDecoding *EngineArguments `json:"speculativeDecoding,omitempty"`
+}
+
 // ModelServiceSpec defines the desired state of a model service.
-// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !(has(self.replicas) || has(self.nodes) || has(self.resources) || has(self.parallelism) || has(self.maxInputTokens) || has(self.kvCache) || has(self.features))",message="spec.modelPools is mutually exclusive with top-level replicas, nodes, resources, parallelism, maxInputTokens, kvCache, and features"
-// +kubebuilder:validation:XValidation:rule="has(self.modelPools) || (has(self.resources) && has(self.parallelism))",message="top-level resources and parallelism are required when spec.modelPools is omitted"
+// +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !(has(self.replicas) || has(self.nodes) || has(self.resources) || has(self.maxInputTokens) || has(self.kvCache) || has(self.features))",message="spec.modelPools is mutually exclusive with top-level replicas, nodes, resources, maxInputTokens, kvCache, and features"
+// +kubebuilder:validation:XValidation:rule="has(self.modelPools) || has(self.resources)",message="top-level resources are required when spec.modelPools is omitted"
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, pool.name != 'default')",message="modelPools name default is reserved for the Quick Start shorthand"
-// +kubebuilder:validation:XValidation:rule="has(self.modelPools) || (has(self.resources) && has(self.parallelism) && (has(self.nodes) ? self.nodes : 1) * self.resources.requests.gpu.count == (has(self.parallelism.ep) ? self.parallelism.pp * self.parallelism.ep.size : self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * (has(self.parallelism.dp) ? self.parallelism.dp : 1)))",message="nodes * resources.requests.gpu.count must equal the compiled worker rank count"
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || self.modelPools.all(pool, !has(pool.role) || pool.role == 'aggregate') || (self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'prefill' || pool.role == 'decode'))) || (has(self.ecProfile) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'encoder' || pool.role == 'prefill' || pool.role == 'decode')))",message="modelPools must be aggregate-only, complete P/D, or complete E/P/D without aggregate pools"
 // +kubebuilder:validation:XValidation:rule="!has(self.ecProfile) || (has(self.modelPools) && self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'prefill') && self.modelPools.exists(pool, has(pool.role) && pool.role == 'decode') && self.modelPools.all(pool, has(pool.role) && (pool.role == 'encoder' || pool.role == 'prefill' || pool.role == 'decode')))",message="ecProfile requires complete E/P/D modelPools"
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !self.modelPools.exists(pool, has(pool.role) && pool.role == 'encoder') || (size(self.modelPools.filter(pool, has(pool.role) && pool.role == 'encoder')) == 1 && size(self.modelPools.filter(pool, has(pool.role) && pool.role == 'prefill')) == 1 && size(self.modelPools.filter(pool, has(pool.role) && pool.role == 'decode')) == 1)",message="E/P/D modelPools must contain exactly one encoder, prefill, and decode Pool"
@@ -335,6 +350,9 @@ type ModelServiceSpec struct {
 
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`
+
+	// Common execution choices apply to every Pool; explicit values override EngineArgs.
+	InferenceParameters `json:",inline"`
 
 	// InternalGenerateRequestBodyLimitBytes is the maximum body size accepted by
 	// a group-local generate endpoint. It defaults to 64 MiB.
@@ -362,7 +380,7 @@ type ModelServiceSpec struct {
 	Timeouts ModelTimeouts `json:"timeouts"`
 
 	// Profiling prepares a profiler for every model Pool; omission preserves PyTorch support.
-	// Changing it rolls out new model processes but does not start a capture.
+	// Changing the prepared engine rolls out new model processes but does not start a capture.
 	// +optional
 	Profiling *ProfilingConfig `json:"profiling,omitempty"`
 
@@ -374,9 +392,6 @@ type ModelServiceSpec struct {
 	// side-effect-free; lifecycle, bounds, rollout, and drain stay core-owned.
 	// +optional
 	Autoscaling *ModelAutoscalingConfig `json:"autoscaling,omitempty"`
-
-	// +optional
-	Parallelism *Parallelism `json:"parallelism,omitempty"`
 
 	// MaxInputTokens is the prompt admission limit for requests routed to the default Pool.
 	// +optional
@@ -403,11 +418,10 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:MaxItems=32
 	ModelPools []ModelPoolTemplate `json:"modelPools,omitempty"`
 
-	// ExtraArgs are inference-engine CLI flags shared by every compiled Pool.
+	// EngineArgs uses the selected backend's native option names without leading --.
+	// Explicit common fields in spec take precedence over matching engine options.
 	// +optional
-	// +listType=atomic
-	// +kubebuilder:validation:MaxItems=256
-	ExtraArgs []BackendArg `json:"extraArgs,omitempty"`
+	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
 }
 
 // AutoscalingStageStatus describes one named pipeline stage result.

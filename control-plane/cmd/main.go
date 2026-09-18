@@ -132,7 +132,7 @@ func main() {
 	flag.StringVar(&vllmPDProtocol, "vllm-pd-protocol", "", "Mooncake P/D protocol; only rdma is supported.")
 	flag.IntVar(&vllmPDBootstrapPort, "vllm-pd-bootstrap-port", 0, "Mooncake bootstrap port.")
 	flag.IntVar(&vllmPDAbortRequestTimeoutSeconds, "vllm-pd-abort-request-timeout-seconds", 0, "Mooncake abort request timeout in seconds.")
-	flag.StringVar(&vllmPDRDMADeviceName, "vllm-pd-rdma-device-name", "", "Platform-verified Mooncake RDMA HCA name.")
+	flag.StringVar(&vllmPDRDMADeviceName, "vllm-pd-rdma-device-name", "", "Optional comma-separated HCA filter; empty lets Mooncake select allocated devices by topology.")
 	flag.StringVar(&vllmPDRDMAResourceName, "vllm-pd-rdma-resource-name", "", "Kubernetes extended resource that injects Mooncake RDMA devices.")
 	flag.IntVar(&vllmPDRDMAResourceCount, "vllm-pd-rdma-resource-count", 0, "Mooncake RDMA extended resources requested by each P/D Pod.")
 	flag.StringVar(&vllmMooncakeStoreProfileName, "vllm-mooncake-store-profile-name", "", "Opaque platform-owned Mooncake Store profile name; empty disables external Store.")

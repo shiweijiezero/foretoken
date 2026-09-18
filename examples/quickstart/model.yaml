@@ -25,11 +25,6 @@ spec:
   timeouts:
     startup: 5m # Maximum time allowed for model loading and backend initialization.
     drain: 2m # Maximum time allowed for accepted requests to finish during shutdown.
-  parallelism:
-    tp: 1 # Tensor-parallel size per replica.
-    pp: 1 # Pipeline-parallel size per replica.
-    pcp: 1 # Prefill-context-parallel size per replica.
-    dcp: 1 # Decode-context-parallel size per replica.
-  # Additional vLLM options, such as the maximum request length.
-  extraArgs:
-    - --max-model-len=32768 # Maximum number of input and generated tokens in one request.
+  engineArgs:
+    max-model-len: 32768
+    tensor-parallel-size: 1

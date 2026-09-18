@@ -70,6 +70,16 @@ foretoken bench examples/quickstart \
 
 `--dataset` 也接受本地 JSONL 文件。每行是一段对话，默认运行全部轮次，并使用模型的真实回答继续；`--max-turns 1` 只运行首轮。多轮目前要求 `--rate -1`。
 
+### 在评测时采集 Profile
+
+```bash
+foretoken bench examples/quickstart \
+  --profile --profile-engine pytorch --profile-duration 15s \
+  --number 2 --max-tokens 128 --output local
+```
+
+环境配置和结果查看见[性能剖析](../observability/profiling_zh.md)。
+
 ### 轨迹回放
 
 ```bash

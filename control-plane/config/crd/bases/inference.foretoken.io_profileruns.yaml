@@ -146,6 +146,10 @@ spec:
                 description: Plan is fixed once selected; reconciliation never retargets
                   replacement runtimes.
                 properties:
+                  model:
+                    description: Model preserves the captured model identity after
+                      the service is removed.
+                    type: string
                   participants:
                     items:
                       description: |-

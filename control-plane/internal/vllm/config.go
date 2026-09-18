@@ -9,8 +9,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
+
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
@@ -23,13 +27,12 @@ type EffectiveConfig struct {
 	Tokenizer         string
 	TokenizerRevision string
 	Parallelism       inferencev1alpha1.CompiledParallelism
-	ExtraArgs         []inferencev1alpha1.BackendArg
+	EngineArgs        inferencev1alpha1.EngineArguments
 }
 
 // LaunchPlanV1 is the versioned, private Go-to-Rust launch contract. Rust is
 // the only component that renders this contract into vLLM command-line flags.
 type LaunchPlanV1 struct {
-	Profiling                             *inferencev1alpha1.ProfilingConfig `json:"profiling,omitempty"`
 	Version                               int                                `json:"version"`
 	NodeCount                             int32                              `json:"nodeCount"`
 	Artifacts                             LaunchArtifacts                    `json:"artifacts"`
@@ -38,7 +41,8 @@ type LaunchPlanV1 struct {
 	EC                                    *LaunchECPlan                      `json:"ec,omitempty"`
 	Lifecycle                             LaunchLifecycle                    `json:"lifecycle"`
 	InternalGenerateRequestBodyLimitBytes int64                              `json:"internalGenerateRequestBodyLimitBytes"`
-	ExtraArgs                             []string                           `json:"extraArgs"`
+	EngineArgs                            inferencev1alpha1.EngineArguments  `json:"engineArgs,omitempty"`
+	Profiling                             *inferencev1alpha1.ProfilingConfig `json:"profiling,omitempty"`
 }
 
 type LaunchArtifacts struct {
@@ -103,13 +107,11 @@ const (
 	kvMultiConnector    = "multiConnector"
 )
 
-// Compile validates extraArgs without permitting them to override source-of-
-// truth artifacts or topology from the normalized template.
+// Compile resolves native engine options and topology from the normalized template.
 func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig, error) {
 	effective := EffectiveConfig{
 		Model: template.Model, Source: template.Source, Revision: template.ModelRevision,
 		Tokenizer: template.Tokenizer, TokenizerRevision: template.TokenizerRevision,
-		Parallelism: copyParallelism(template.Parallelism),
 	}
 	if effective.Tokenizer == "" {
 		effective.Tokenizer = effective.Model
@@ -117,12 +119,23 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 	if effective.TokenizerRevision == "" {
 		effective.TokenizerRevision = effective.Revision
 	}
-	if err := validateExtraArgs(template.ExtraArgs); err != nil {
+	args, err := compileEngineArgs(template.EngineArgs, template.Inference)
+	if err != nil {
 		return EffectiveConfig{}, err
 	}
-	effective.ExtraArgs = append([]inferencev1alpha1.BackendArg(nil), template.ExtraArgs...)
+	effective.Parallelism, err = extractParallelism(args)
+	if err != nil {
+		return EffectiveConfig{}, err
+	}
+	if len(args) != 0 {
+		effective.EngineArgs = args
+	}
 	if err := validateParallelism(effective.Parallelism); err != nil {
 		return EffectiveConfig{}, err
+	}
+	p := effective.Parallelism
+	if template.Role != inferencev1alpha1.ModelRoleAggregate && (p.TP != 1 || p.PP != 1 || p.DP != 1 || p.PCP != 1 || p.DCP != 1 || p.EP != nil) {
+		return EffectiveConfig{}, fmt.Errorf("split serving currently requires single-rank engine parallelism")
 	}
 	capacity := int64(template.NodeCount) * int64(template.Resources.Requests.GPU.Count)
 	ranks := int64(effective.Parallelism.PP) * int64(effective.Parallelism.TP) * int64(effective.Parallelism.PCP) * int64(effective.Parallelism.DP)
@@ -151,9 +164,6 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if err := validateParallelism(group.Parallelism); err != nil {
 		return LaunchPlanV1{}, err
 	}
-	if err := validateExtraArgs(group.Runtime.Args); err != nil {
-		return LaunchPlanV1{}, err
-	}
 	if group.Runtime.InternalGenerateRequestBodyLimitBytes < inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes || group.Runtime.InternalGenerateRequestBodyLimitBytes > inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes {
 		return LaunchPlanV1{}, fmt.Errorf("vLLM internal generate request body limit must be between %d and %d", inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes, inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes)
 	}
@@ -169,11 +179,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if err != nil {
 		return LaunchPlanV1{}, err
 	}
-	extra := make([]string, len(group.Runtime.Args))
-	for i := range group.Runtime.Args {
-		extra[i] = string(group.Runtime.Args[i])
-	}
-	return LaunchPlanV1{Profiling: group.Runtime.Profiling.DeepCopy(), Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, ExtraArgs: extra}, nil
+	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
 }
 
 // JSON returns deterministic output because LaunchPlanV1 uses only ordered structs and slices.
@@ -260,13 +266,50 @@ func parsePositiveDuration(value inferencev1alpha1.Duration, name string) (int64
 	return seconds, nil
 }
 
-func copyParallelism(input inferencev1alpha1.CompiledParallelism) inferencev1alpha1.CompiledParallelism {
-	output := input
-	if input.EP != nil {
-		copied := *input.EP
-		output.EP = &copied
+// extractParallelism consumes native topology options into the runtime's worker layout.
+// Size defaults match vLLM; EP uses the TP × PCP × DP ranks rather than a separate user size.
+func extractParallelism(args inferencev1alpha1.EngineArguments) (inferencev1alpha1.CompiledParallelism, error) {
+	p := inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1}
+	for name, target := range map[string]*int32{
+		"tensor-parallel-size": &p.TP, "pipeline-parallel-size": &p.PP,
+		"data-parallel-size": &p.DP, "prefill-context-parallel-size": &p.PCP,
+		"decode-context-parallel-size": &p.DCP,
+	} {
+		if value, ok := args[name]; ok {
+			if string(value.Raw) != "null" {
+				if err := json.Unmarshal(value.Raw, target); err != nil || *target < 1 {
+					return p, fmt.Errorf("engineArgs.%s must be a positive integer", name)
+				}
+			}
+			delete(args, name)
+		}
 	}
-	return output
+	var ep, eplb bool
+	for name, target := range map[string]*bool{"enable-expert-parallel": &ep, "enable-eplb": &eplb} {
+		if value, ok := args[name]; ok {
+			if err := json.Unmarshal(value.Raw, target); err != nil {
+				return p, fmt.Errorf("engineArgs.%s must be a boolean", name)
+			}
+			delete(args, name)
+		}
+	}
+	if eplb && !ep {
+		return p, fmt.Errorf("enable-eplb requires enable-expert-parallel")
+	}
+	if ep {
+		size := int64(p.TP) * int64(p.PCP) * int64(p.DP)
+		if size > math.MaxInt32 {
+			return p, fmt.Errorf("expert-parallel rank count exceeds supported resource capacity")
+		}
+		p.EP = &inferencev1alpha1.ExpertParallelism{Size: int32(size), EPLB: eplb}
+		if value, ok := args["all2all-backend"]; ok {
+			if err := json.Unmarshal(value.Raw, &p.EP.Backend); err != nil {
+				return p, fmt.Errorf("engineArgs.all2all-backend must be a string")
+			}
+			delete(args, "all2all-backend")
+		}
+	}
+	return p, nil
 }
 
 func validateParallelism(parallelism inferencev1alpha1.CompiledParallelism) error {
@@ -289,30 +332,94 @@ func validateParallelism(parallelism inferencev1alpha1.CompiledParallelism) erro
 	return nil
 }
 
-var allowedExtraArgs = map[string]bool{"--max-model-len": true, "--dtype": true, "--quantization": true, "--gpu-memory-utilization": true, "--max-num-seqs": true, "--max-num-batched-tokens": true, "--limit-mm-per-prompt": true, "--enforce-eager": true, "--disable-log-stats": true}
+var controllerOwnedArgs = []string{
+	"--api-server-count", "--code-revision", "--config", "--convert",
+	"--data-parallel-address", "--data-parallel-backend", "--data-parallel-external-lb",
+	"--data-parallel-hybrid-lb", "--data-parallel-multi-port-external-lb",
+	"--data-parallel-rank", "--data-parallel-rpc-port",
+	"--data-parallel-size-local", "--data-parallel-start-rank",
+	"--distributed-executor-backend", "--download-dir", "--ec-manager-config", "--ec-transfer-config",
+	"--enable-elastic-ep", "--enable-prefix-caching",
+	"--grpc", "--headless", "--hf-token", "--host", "--kv-events-config", "--kv-transfer-config",
+	"--master-addr", "--master-port", "--model", "--nnodes", "--node-rank",
+	"--port", "--profiler-config", "--revision",
+	"--runner", "--served-model-name", "--tokenizer", "--tokenizer-revision",
+}
 
-// validateExtraArgs accepts only non-overriding vLLM flags supported by the launch contract.
-func validateExtraArgs(args []inferencev1alpha1.BackendArg) error {
-	seen := map[string]bool{}
-	for _, raw := range args {
-		argument := string(raw)
-		if argument == "" || strings.ContainsAny(argument, " \t\r\n") || !strings.HasPrefix(argument, "--") || argument == "--" {
-			return fmt.Errorf("vLLM extraArgs must be one nonempty --long-name token")
+var engineArgName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+
+// compileEngineArgs applies explicit service choices once, before runtime publication.
+// Backend values stay native; the Rust adapter renders the resolved map into argv.
+func compileEngineArgs(input inferencev1alpha1.EngineArguments, inference inferencev1alpha1.InferenceParameters) (inferencev1alpha1.EngineArguments, error) {
+	args := make(inferencev1alpha1.EngineArguments, len(input))
+	names := make([]string, 0, len(input))
+	for name := range input {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		key := strings.ReplaceAll(name, "_", "-")
+		if !engineArgName.MatchString(name) || strings.HasPrefix(key, "no-") {
+			return nil, fmt.Errorf("engineArgs key %q must be a full option name without --; use YAML booleans for switches", name)
 		}
-		name, value, hasValue := strings.Cut(argument, "=")
-		if strings.Count(argument, "=") > 1 || strings.Contains(name, "_") || !allowedExtraArgs[name] || seen[name] {
-			return fmt.Errorf("vLLM extraArgs flag %q is not allowed", name)
-		}
-		seen[name] = true
-		if name == "--enforce-eager" || name == "--disable-log-stats" {
-			if hasValue {
-				return fmt.Errorf("vLLM extraArgs flag %q does not take a value", name)
+		for _, topology := range []string{"tensor-parallel-size", "pipeline-parallel-size", "data-parallel-size", "prefill-context-parallel-size", "decode-context-parallel-size", "enable-expert-parallel", "enable-eplb", "all2all-backend"} {
+			if key != topology && strings.HasPrefix(topology, key) {
+				return nil, fmt.Errorf("engineArgs.%s must use the full option name %s", name, topology)
 			}
+		}
+		for _, owned := range controllerOwnedArgs {
+			if key != "data-parallel-size" && strings.HasPrefix(owned, "--"+key) {
+				return nil, fmt.Errorf("engineArgs option %q is owned by Foretoken", name)
+			}
+		}
+		if _, exists := args[key]; exists {
+			return nil, fmt.Errorf("engineArgs repeats option %q with different spellings", key)
+		}
+		value := input[name]
+		args[key] = *value.DeepCopy()
+	}
+
+	common := map[string]any{
+		"max-model-len":          inference.MaxModelLen,
+		"dtype":                  inference.DType,
+		"quantization":           inference.Quantization,
+		"kv-cache-dtype":         inference.KVCacheDType,
+		"gpu-memory-utilization": inference.GPUMemoryUtilization,
+		"max-num-seqs":           inference.MaxNumSeqs,
+		"max-num-batched-tokens": inference.MaxNumBatchedTokens,
+		"enforce-eager":          inference.EnforceEager,
+	}
+	for name, value := range common {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return nil, fmt.Errorf("encode %s: %w", name, err)
+		}
+		if string(encoded) == "null" || string(encoded) == `""` {
 			continue
 		}
-		if !hasValue || value == "" {
-			return fmt.Errorf("vLLM extraArgs flag %q requires a value", name)
+		// An abbreviated native spelling must not override the explicit field later in argparse.
+		for key := range args {
+			if strings.HasPrefix(name, key) {
+				delete(args, key)
+			}
 		}
+		args[name] = apiextensionsv1.JSON{Raw: encoded}
 	}
-	return nil
+	if speculative := inference.SpeculativeDecoding; speculative != nil {
+		// Remove equivalent CLI spellings so the merged configuration has one owner.
+		for key := range args {
+			if strings.HasPrefix("speculative-config", key) || strings.HasPrefix("spec-method", key) || strings.HasPrefix("spec-model", key) || strings.HasPrefix("spec-tokens", key) {
+				delete(args, key)
+			}
+		}
+		encoded, err := json.Marshal(speculative)
+		if err != nil {
+			return nil, err
+		}
+		args["speculative-config"] = apiextensionsv1.JSON{Raw: encoded}
+	}
+	if len(args) == 0 {
+		return nil, nil
+	}
+	return args, nil
 }

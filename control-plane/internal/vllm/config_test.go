@@ -4,27 +4,45 @@
 package vllm
 
 import (
+	"encoding/json"
 	"testing"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
 
-// TestCompileExtraArgsBoundary protects controller-owned vLLM arguments from user extraArgs overrides.
-func TestCompileExtraArgsBoundary(t *testing.T) {
+// TestCompileEngineArgsBoundary protects launch ownership and explicit service precedence.
+func TestCompileEngineArgsBoundary(t *testing.T) {
 	template := testVLLMTemplate(1)
-	template.ExtraArgs = []inferencev1alpha1.BackendArg{"--max-model-len=32768", "--enforce-eager"}
-	if config, err := Compile(template); err != nil || len(config.ExtraArgs) != 2 {
-		t.Fatalf("valid extraArgs = %#v, err = %v", config.ExtraArgs, err)
+	maxModelLen := int32(32768)
+	eager := false
+	template.Inference = inferencev1alpha1.InferenceParameters{
+		MaxModelLen: &maxModelLen, DType: "bfloat16", EnforceEager: &eager,
+		SpeculativeDecoding: &inferencev1alpha1.EngineArguments{
+			"method":                 {Raw: []byte(`"ngram"`)},
+			"num_speculative_tokens": {Raw: []byte(`2`)},
+			"prompt_lookup_max":      {Raw: []byte(`4`)},
+		},
 	}
-	for _, args := range [][]inferencev1alpha1.BackendArg{
-		{"--model=other"},
-		{"--max-model-len 32768"},
-		{"--unknown=1"},
-		{"--max-model-len=1", "--max-model-len=2"},
-	} {
-		template.ExtraArgs = args
+	if err := json.Unmarshal([]byte(`{"tensor-parallel-size":1,"decode-context-parallel-size":1,"data-parallel-size":1,"dtype":"float16","enforce-eager":true,"max_model_len":1024,"speculative-config":{"method":"ngram","num_speculative_tokens":5,"draft_tensor_parallel_size":1}}`), &template.EngineArgs); err != nil {
+		t.Fatal(err)
+	}
+	config, err := Compile(template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(config.EngineArgs)
+	var got map[string]any
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatal(err)
+	}
+	speculative := got["speculative-config"].(map[string]any)
+	if got["dtype"] != "bfloat16" || got["enforce-eager"] != false || got["max-model-len"] != float64(32768) || speculative["method"] != "ngram" || speculative["num_speculative_tokens"] != float64(2) || speculative["prompt_lookup_max"] != float64(4) || speculative["draft_tensor_parallel_size"] != nil {
+		t.Fatalf("effective arguments = %s", encoded)
+	}
+	for _, name := range []string{"tensor_parallel_s", "--dtype", "kv-transfer-config", "nnodes", "profiler-config"} {
+		template.EngineArgs = inferencev1alpha1.EngineArguments{name: {Raw: []byte(`2`)}}
 		if _, err := Compile(template); err == nil {
-			t.Fatalf("unsafe extraArgs %v were accepted", args)
+			t.Fatalf("platform or malformed option %q accepted", name)
 		}
 	}
 }
@@ -85,7 +103,6 @@ func testVLLMTemplate(gpus int32) inferencev1alpha1.NormalizedPoolTemplate {
 		Model: "model", Source: inferencev1alpha1.ModelSourceHF, ModelRevision: "main", Tokenizer: "model", TokenizerRevision: "main",
 		Backend: "vllm", Role: inferencev1alpha1.ModelRoleAggregate, NodeCount: 1, MemberCount: 1,
 		Resources:                             inferencev1alpha1.ModelResources{Requests: inferencev1alpha1.ModelResourceRequests{GPU: inferencev1alpha1.GPURequest{Count: gpus}}},
-		Parallelism:                           inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1},
 		Timeouts:                              inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"},
 		InternalGenerateRequestBodyLimitBytes: inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes,
 	}

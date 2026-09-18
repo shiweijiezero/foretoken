@@ -7,7 +7,7 @@ use foretoken_artifacts::ModelSource;
 use foretoken_model_server::launch::LaunchPlanV1;
 
 fn plan() -> LaunchPlanV1 {
-    LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"model","revision":"rev","tokenizer":"tokenizer","tokenizerRevision":"tokenizer-rev"},"parallelism":{"tp":2,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":30,"drainSeconds":7},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":["--max-model-len=32768"]}"#).unwrap()
+    LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"model","revision":"rev","tokenizer":"tokenizer","tokenizerRevision":"tokenizer-rev"},"parallelism":{"tp":2,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":30,"drainSeconds":7},"internalGenerateRequestBodyLimitBytes":67108864,"engineArgs":{"max-model-len":32768,"dtype":"bfloat16","quantization":"awq","kv-cache-dtype":"fp8","gpu-memory-utilization":0.8,"max-num-seqs":16,"max-num-batched-tokens":2048,"enforce-eager":false,"speculative-config":{"method":"eagle3","model":"draft/model","num_speculative_tokens":2},"compilation-config":{"mode":3}}}"#).unwrap()
 }
 
 // Protects launch from unsupported node and context-parallel topology combinations.
@@ -41,7 +41,27 @@ fn renders_supported_owned_arguments() {
             "{flag}: {args:?}"
         );
     }
-    assert!(args.iter().any(|arg| arg == "--max-model-len=32768"));
+    for argument in [
+        "--max-model-len=32768",
+        "--dtype=bfloat16",
+        "--quantization=awq",
+        "--kv-cache-dtype=fp8",
+        "--gpu-memory-utilization=0.8",
+        "--max-num-seqs=16",
+        "--max-num-batched-tokens=2048",
+        "--no-enforce-eager",
+        r#"--compilation-config={"mode":3}"#,
+    ] {
+        assert!(args.iter().any(|arg| arg == argument), "{args:?}");
+    }
+    let speculative = args
+        .iter()
+        .find_map(|arg| arg.strip_prefix("--speculative-config="))
+        .expect("speculative config");
+    let speculative: serde_json::Value = serde_json::from_str(speculative).unwrap();
+    assert_eq!(speculative["method"], "eagle3");
+    assert_eq!(speculative["model"], "draft/model");
+    assert_eq!(speculative["num_speculative_tokens"], 2);
     assert!(
         !args
             .iter()
@@ -80,8 +100,8 @@ fn renders_supported_owned_arguments() {
 // Protects role-specific EC launch configuration for encoder and prefill.
 #[test]
 fn ec_plan_renders_one_owned_config_for_each_role() {
-    let producer = LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"producer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
-    let consumer = LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"consumer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#).unwrap();
+    let producer = LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"producer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"engineArgs":{}}"#).unwrap();
+    let consumer = LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"consumer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"engineArgs":{}}"#).unwrap();
 
     let args = producer.render_vllm_args().unwrap();
     let rendered: Vec<_> = args
@@ -110,7 +130,7 @@ fn ec_plan_renders_one_owned_config_for_each_role() {
 // Protects E/P/D launch from incomplete or mismatched EC configuration.
 #[test]
 fn rejects_invalid_ec_pairing() {
-    let invalid = r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"profile","profileRevision":"r1","connector":"arbitrary","role":"producer","sharedStoragePath":"relative"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}"#;
+    let invalid = r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"profile","profileRevision":"r1","connector":"arbitrary","role":"producer","sharedStoragePath":"relative"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"engineArgs":{}}"#;
     assert!(LaunchPlanV1::parse(invalid).is_err());
 }
 
@@ -119,7 +139,7 @@ fn rejects_invalid_ec_pairing() {
 fn kv_variants_render_expected_semantics() {
     let cases = [
         (
-            r#"{"kind":"pd","role":"kv_consumer","protocol":"rdma","deviceName":"mlx5_1","events":true}"#,
+            r#"{"kind":"pd","role":"kv_consumer","protocol":"rdma","events":true}"#,
             "MooncakeConnector",
         ),
         (
@@ -141,7 +161,7 @@ fn kv_variants_render_expected_semantics() {
     ];
     for (kv, want) in cases {
         let source = format!(
-            r#"{{"version":1,"nodeCount":1,"artifacts":{{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"}},"parallelism":{{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1}},"kv":{kv},"lifecycle":{{"startupSeconds":1,"drainSeconds":1}},"internalGenerateRequestBodyLimitBytes":67108864,"extraArgs":[]}}"#
+            r#"{{"version":1,"nodeCount":1,"artifacts":{{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"}},"parallelism":{{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1}},"kv":{kv},"lifecycle":{{"startupSeconds":1,"drainSeconds":1}},"internalGenerateRequestBodyLimitBytes":67108864,"engineArgs":{{}}}}"#
         );
         let rendered = LaunchPlanV1::parse(&source)
             .unwrap()
@@ -152,10 +172,15 @@ fn kv_variants_render_expected_semantics() {
             "{rendered:?}"
         );
         if want == "MooncakeConnector" || want == "MultiConnector" {
+            let device_name = if want == "MooncakeConnector" {
+                ""
+            } else {
+                "mlx5_1"
+            };
             assert!(
                 rendered
                     .iter()
-                    .any(|arg| arg.contains(r#""device_name":"mlx5_1""#)),
+                    .any(|arg| arg.contains(&format!(r#""device_name":"{device_name}""#))),
                 "{rendered:?}"
             );
         }

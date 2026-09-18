@@ -9,7 +9,7 @@
 
 本示例部署一个前端服务和一个 `Qwen/Qwen3-0.6B` 模型副本。工作负载请求 1 张 GPU、8 个 CPU 和 52 GiB 内存；还需为平台预留额外容量。模型文件和运行时缓存与多模型示例共用项目根目录的 `data/`，由 `cache.yaml` 配置。
 
-在 [`model.yaml`](model.yaml) 的 `ModelService` 中配置模型、副本数、资源和并行参数，在 [`cache.yaml`](cache.yaml) 的 `RuntimeCache` 中配置运行时缓存，在 [`frontend.yaml`](frontend.yaml) 的 `FrontendService` 中配置前端。Foretoken 会自动创建所需的 Kubernetes 工作负载。
+在 [`model.yaml`](model.yaml) 的 `ModelService` 中配置模型、副本数、资源、并行方式和[推理参数](../../docs/inference-parameters_zh.md)，在 [`cache.yaml`](cache.yaml) 的 `RuntimeCache` 中配置运行时缓存，在 [`frontend.yaml`](frontend.yaml) 的 `FrontendService` 中配置前端。Foretoken 会自动创建所需的 Kubernetes 工作负载。
 
 ## 部署
 

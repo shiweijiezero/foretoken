@@ -3,7 +3,7 @@
 
 //! Runtime-owned, bounded native capture and durable artifact publication.
 
-mod nsight;
+pub(crate) mod nsight;
 
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -47,9 +47,9 @@ pub struct Config {
     data_root: PathBuf,
     pod_uid: String,
     group_uid: String,
-    runtime_id: String,
+    pub(crate) runtime_id: String,
     workers: usize,
-    engine: Engine,
+    pub(crate) engine: Engine,
     python: String,
 }
 
@@ -90,14 +90,6 @@ impl Config {
         fs::create_dir_all(profile_root.join("runs"))?;
         fs::create_dir_all(self.staging())?;
         File::open(profile_root)?.sync_all()
-    }
-
-    /// Wraps only explicitly selected Nsight engines, retaining the managed process owner.
-    pub fn launch_command(&self, command: std::process::Command) -> std::process::Command {
-        match self.engine {
-            Engine::Pytorch => command,
-            Engine::Nsight => nsight::launch(command, &self.runtime_id),
-        }
     }
 
     /// Renders native configuration without enabling recording at process startup.
@@ -422,6 +414,7 @@ impl Supervisor {
             record.phase = "Stopping".into();
             record.recording_ended_at_unix_ms = Some(now_ms());
         });
+        let export_deadline = tokio::time::Instant::now() + STOP_TIMEOUT;
         self.native_operation(false).await?;
         self.update(uid, |record| record.exported_at_unix_ms = Some(now_ms()));
         let mut record = self
@@ -432,8 +425,23 @@ impl Supervisor {
         let cancelled = *action.borrow() == Action::Cancel;
         record.phase = if cancelled { "Cancelled" } else { "Succeeded" }.into();
         let config = self.handle.config.clone();
-        self.publication = Some(tokio::task::spawn_blocking(move || {
-            seal(&config, record, cancelled)
+        self.publication = Some(tokio::spawn(async move {
+            // 原生记录已经停止；派生导出失败只影响本次产物，不重启仍可服务的引擎。
+            if !cancelled && config.engine == Engine::Nsight {
+                record.gpu_activity = Some(
+                    tokio::time::timeout_at(export_deadline, nsight::validate_report(&config))
+                        .await
+                        .map_err(|_| {
+                            io::Error::new(
+                                io::ErrorKind::TimedOut,
+                                "Nsight report export timed out",
+                            )
+                        })??,
+                );
+            }
+            tokio::task::spawn_blocking(move || seal(&config, record, cancelled))
+                .await
+                .map_err(io::Error::other)?
         }));
         let publication = self.publication.as_mut().expect("publication exists").await;
         self.publication = None;
@@ -492,15 +500,11 @@ fn now_ms() -> u64 {
 // Validate native output after stop/export, then publish the entire capture directory atomically.
 fn seal(config: &Config, mut record: Record, cancelled: bool) -> io::Result<Record> {
     let staging = config.staging();
-    if !cancelled {
-        let gpu_activity = match config.engine {
-            Engine::Pytorch => validate_torch(config)?,
-            Engine::Nsight => nsight::validate_report(config)?,
-        };
-        record.gpu_activity = Some(gpu_activity);
-        if !gpu_activity {
-            record.message = "No GPU kernel activity was recorded in this window".into();
-        }
+    if !cancelled && config.engine == Engine::Pytorch {
+        record.gpu_activity = Some(validate_torch(config)?);
+    }
+    if record.gpu_activity == Some(false) {
+        record.message = "No GPU kernel activity was recorded in this window".into();
     }
     let relative = format!(
         "{PROFILE_DIRECTORY}/runs/{}/{}",

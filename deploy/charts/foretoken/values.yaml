@@ -35,6 +35,14 @@ workload:
 loadBalancer:
   managedAddresses: []
 
+# foretoken install automatically reuses or prepares shared RDMA device allocation.
+# These values also support direct Helm installation.
+rdma:
+  managed: false
+  image: ghcr.io/mellanox/k8s-rdma-shared-dev-plugin:v1.5.4
+  # Selected GPU nodes, populated by foretoken install.
+  nodeNames: []
+
 # Local mode uses a LoadBalancer Service. Gateway mode attaches an HTTPRoute to a Gateway.
 frontend:
   enabled: false
@@ -86,16 +94,14 @@ runtime:
       connector: "ECExampleConnector"
       sharedStorageClaim: ""
       sharedStoragePath: "/var/lib/foretoken/ec"
-    # Set every field to enable the platform-owned Mooncake P/D profile.
+    # foretoken install selects an existing shared RDMA resource when unambiguous.
     pd:
-      profileName: ""
-      profileRevision: ""
-      protocol: ""
-      bootstrapPort: 0
-      abortRequestTimeoutSeconds: 0
-      rdmaDeviceName: ""
       rdmaResourceName: ""
-      rdmaResourceCount: 0
+      rdmaResourceCount: 1
+      # Empty lets Mooncake select from the Pod's allocated devices by topology.
+      rdmaDeviceName: ""
+      bootstrapPort: 8998
+      abortRequestTimeoutSeconds: 600
     # Set every field to enable the platform-owned external Mooncake Store profile.
     mooncakeStore:
       profileName: ""

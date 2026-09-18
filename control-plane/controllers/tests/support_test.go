@@ -65,9 +65,8 @@ func modelService(name string, replicas int32) *inferencev1alpha1.ModelService {
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", UID: types.UID(name + "-uid"), Generation: 1},
 		Spec: inferencev1alpha1.ModelServiceSpec{
 			Model: "Qwen/Qwen3-0.6B", Backend: "vllm", Replicas: &replicas,
-			Resources:   &resources,
-			Parallelism: &inferencev1alpha1.Parallelism{TP: 1, PP: 1, PCP: 1, DCP: 1},
-			Timeouts:    inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"},
+			Resources: &resources,
+			Timeouts:  inferencev1alpha1.ModelTimeouts{Startup: "10m", Drain: "2m"},
 		},
 	}
 }
@@ -85,7 +84,6 @@ func modelPool(service *inferencev1alpha1.ModelService, name string, desired int
 				Model: service.Spec.Model, Source: inferencev1alpha1.ModelSourceHF, ModelRevision: "main", Tokenizer: service.Spec.Model, TokenizerRevision: "main", Backend: "vllm",
 				Role: inferencev1alpha1.ModelRoleAggregate, NodeCount: 1, MemberCount: 1,
 				Resources:                             *service.Spec.Resources,
-				Parallelism:                           inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1},
 				Timeouts:                              service.Spec.Timeouts,
 				InternalGenerateRequestBodyLimitBytes: inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes,
 			},
@@ -110,7 +108,7 @@ func modelGroup(pool *inferencev1alpha1.ModelPool, name string, ordinal int32) *
 				InternalGenerateRequestBodyLimitBytes: inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes,
 			},
 			Resources: pool.Spec.Template.Resources, Timeouts: pool.Spec.Template.Timeouts,
-			NodeCount: 1, MemberCount: 1, Parallelism: pool.Spec.Template.Parallelism,
+			NodeCount: 1, MemberCount: 1, Parallelism: inferencev1alpha1.CompiledParallelism{TP: 1, PP: 1, DP: 1, PCP: 1, DCP: 1},
 			Accelerator: inferencev1alpha1.ModelGroupAccelerator{DeviceResourceName: "nvidia.com/gpu", NodeSelector: map[string]string{"nvidia.com/gpu.product": "NVIDIA-H100-80GB-HBM3"}},
 		},
 	}

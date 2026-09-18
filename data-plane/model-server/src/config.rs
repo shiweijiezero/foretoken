@@ -10,7 +10,7 @@ use crate::launch::LaunchPlanV1;
 const LAUNCH_PLAN_ENV: &str = "FORETOKEN_VLLM_LAUNCH_PLAN";
 const LISTEN_ENV: &str = "FORETOKEN_INTERNAL_LISTEN";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeConfig {
     pub launch: LaunchPlanV1,
     pub listen_address: SocketAddr,

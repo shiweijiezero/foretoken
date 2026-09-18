@@ -1,0 +1,461 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Foretoken captures</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font:
+        15px/1.5 system-ui,
+        sans-serif;
+      --bg: #f7f8fa;
+      --fg: #172231;
+      --panel: #fff;
+      --border: #ccd4df;
+      --muted: #526172;
+      --selected: #e5efff;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #131923;
+        --fg: #ecf0f5;
+        --panel: #1c2532;
+        --border: #435166;
+        --muted: #b3bdcc;
+        --selected: #293f60;
+      }
+    }
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--fg);
+    }
+    header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    h1 {
+      font-size: 20px;
+      margin: 0;
+    }
+    header p {
+      margin: 0;
+      color: var(--muted);
+    }
+    button,
+    select {
+      font: inherit;
+      color: inherit;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 7px 12px;
+    }
+    button {
+      cursor: pointer;
+    }
+    a {
+      color: inherit;
+    }
+    button:disabled {
+      cursor: default;
+      opacity: 0.6;
+    }
+    header button {
+      margin-left: auto;
+    }
+    main {
+      display: grid;
+      grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+      min-height: calc(100vh - 80px);
+    }
+    aside {
+      padding: 16px;
+      border-right: 1px solid var(--border);
+      max-height: calc(100vh - 80px);
+      overflow: auto;
+    }
+    aside label {
+      display: block;
+      margin-bottom: 6px;
+    }
+    #stores {
+      width: 100%;
+      margin-bottom: 16px;
+    }
+    #tree {
+      overflow-wrap: anywhere;
+      font-size: 13px;
+    }
+    details {
+      margin-block: 6px;
+    }
+    summary {
+      cursor: pointer;
+      color: var(--muted);
+    }
+    details > div {
+      padding-left: 12px;
+      border-left: 1px solid var(--border);
+      margin-left: 4px;
+    }
+    .file {
+      display: block;
+      width: 100%;
+      text-align: left;
+      margin-block: 6px;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    .file[aria-pressed="true"] {
+      background: var(--selected);
+      border-color: #5382b8;
+    }
+    .file span {
+      display: block;
+    }
+    .detail {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    section {
+      padding: 16px;
+      min-width: 0;
+    }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    select {
+      max-width: 100%;
+      min-width: 0;
+    }
+    #selection,
+    #status {
+      overflow-wrap: anywhere;
+    }
+    #selection {
+      margin: 0;
+      flex: 1;
+    }
+    #status {
+      color: var(--muted);
+      margin: 12px 0;
+      min-height: 23px;
+    }
+    iframe {
+      width: 100%;
+      height: calc(100vh - 210px);
+      min-height: 400px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+    }
+    [hidden] {
+      display: none !important;
+    }
+    button:focus-visible,
+    select:focus-visible,
+    summary:focus-visible {
+      outline: 2px solid #5382b8;
+      outline-offset: 2px;
+    }
+    @media (max-width: 700px) {
+      header {
+        flex-wrap: wrap;
+        padding: 16px;
+      }
+      header p {
+        width: 100%;
+        order: 3;
+      }
+      main {
+        grid-template-columns: 1fr;
+      }
+      aside {
+        max-height: 320px;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+      iframe {
+        height: 70vh;
+      }
+    }
+  </style>
+  <header>
+    <h1>Foretoken captures</h1>
+    <p>Browse saved trace folders</p>
+    <button id="refresh">Refresh</button>
+  </header>
+  <main>
+    <aside>
+      <label for="stores">Capture storage</label
+      ><select id="stores" disabled></select>
+      <div id="tree" aria-label="Capture folders"></div>
+    </aside>
+    <section>
+      <div class="toolbar">
+        <p id="selection">Select a trace</p>
+        <button id="open" disabled>Open in Perfetto</button
+        ><a id="download" hidden>Download</a>
+        <button id="retry" hidden>Retry</button>
+      </div>
+      <p id="status" role="status">Finding capture directories…</p>
+      <div id="viewer"></div>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id),
+      perfettoOrigin = "https://ui.perfetto.dev";
+    let store = null,
+      files = [],
+      selected = null,
+      selection = 0,
+      frame = null,
+      ping = null,
+      handshakeTimeout = null,
+      listener = null;
+    const message = (text) => {
+      $("status").textContent = text;
+    };
+    const fileTime = (file) =>
+      file.time ? Date.parse(file.time) : file.modified_at * 1000;
+    function clearViewer() {
+      clearInterval(ping);
+      clearTimeout(handshakeTimeout);
+      if (listener) window.removeEventListener("message", listener);
+      listener = null;
+      $("viewer").replaceChildren();
+      frame = null;
+    }
+    async function request(path) {
+      const response = await fetch(path, { cache: "no-store" });
+      if (!response.ok) {
+        const body = await response.json();
+        throw new Error(body.error || `Request failed (${response.status})`);
+      }
+      return response;
+    }
+    function renderTree() {
+      const root = { directories: new Map(), files: [] };
+      for (const file of files) {
+        const parts = file.name.split("/");
+        parts.pop();
+        let node = root;
+        for (const part of parts) {
+          if (!node.directories.has(part))
+            node.directories.set(part, { directories: new Map(), files: [] });
+          node = node.directories.get(part);
+        }
+        node.files.push(file);
+      }
+      function append(node, parent, prefix) {
+        for (const [name, child] of node.directories) {
+          const path = prefix + name + "/";
+          const details = document.createElement("details");
+          details.open = !!selected?.name.startsWith(path);
+          const summary = document.createElement("summary");
+          summary.textContent = name;
+          const children = document.createElement("div");
+          details.append(summary, children);
+          append(child, children, path);
+          parent.append(details);
+        }
+        for (const file of node.files) {
+          const button = document.createElement("button");
+          button.className = "file";
+          button.dataset.file = file.name;
+          button.setAttribute(
+            "aria-pressed",
+            String(selected?.name === file.name),
+          );
+          const name = document.createElement("span");
+          name.textContent = file.name.split("/").pop();
+          const detail = document.createElement("span");
+          detail.className = "detail";
+          detail.textContent = `${new Date(fileTime(file)).toLocaleString()} · ${(file.size / 1048576).toFixed(1)} MiB`;
+          button.append(name, detail);
+          button.onclick = () => selectFile(file);
+          parent.append(button);
+        }
+      }
+      $("tree").replaceChildren();
+      append(root, $("tree"), "");
+    }
+    async function refresh() {
+      $("refresh").disabled = true;
+      try {
+        const data = await (await request("api/stores")).json();
+        const previous = store;
+        const next =
+          data.stores.find((s) => s.id === previous?.id) ||
+          data.stores.find((s) => s.id === data.latest) ||
+          data.stores[0];
+        $("stores").replaceChildren();
+        for (const item of data.stores) {
+          const option = document.createElement("option");
+          option.value = item.id;
+          option.textContent = `${item.namespace} / ${item.name}`;
+          $("stores").append(option);
+        }
+        $("stores").disabled = !data.stores.length;
+        if (next) {
+          $("stores").value = next.id;
+          await selectStore(next.id);
+        } else {
+          selection++;
+          store = null;
+          files = [];
+          selected = null;
+          clearViewer();
+          renderTree();
+          $("selection").textContent = "Select a trace";
+          $("open").disabled = true;
+          $("download").hidden = true;
+          message("No capture storage found.");
+        }
+      } catch (error) {
+        message(`Unable to list capture storage: ${error.message}`);
+      } finally {
+        $("refresh").disabled = false;
+      }
+    }
+    async function selectStore(id) {
+      const ticket = ++selection;
+      const previous = store?.id === id ? selected?.name : null;
+      store = { id };
+      selected = null;
+      files = [];
+      clearViewer();
+      renderTree();
+      $("selection").textContent = "Select a trace";
+      $("open").disabled = true;
+      $("download").hidden = true;
+      $("retry").hidden = true;
+      message("Reading capture directory and subfolders…");
+      try {
+        const entries = await (
+          await request(`api/files?store=${encodeURIComponent(id)}`)
+        ).json();
+        if (ticket !== selection) return;
+        files = entries.sort((a, b) => fileTime(b) - fileTime(a));
+        const next =
+          files.find((f) => f.name === previous) ||
+          files.find((f) => f.status === "Succeeded") ||
+          files[0];
+        if (next) await selectFile(next);
+        else {
+          renderTree();
+          message("No trace files in this capture directory.");
+        }
+      } catch (error) {
+        if (ticket === selection) {
+          message(`Unable to read capture directory: ${error.message}`);
+          $("retry").hidden = false;
+        }
+      }
+    }
+    async function selectFile(file) {
+      selected = file;
+      renderTree();
+      $("open").hidden = file.format !== "perfetto";
+      $("download").hidden = false;
+      $("download").href = `api/trace?store=${encodeURIComponent(store.id)}&file=${encodeURIComponent(file.name)}`;
+      $("download").download = file.name.split("/").pop();
+      $("selection").textContent = [
+        file.model || file.service || "Saved trace",
+        file.status || "No capture record",
+        new Date(fileTime(file)).toLocaleString(),
+      ].join(" · ");
+      if (file.format === "perfetto") await openTrace();
+      else {
+        selection++;
+        clearViewer();
+        message(
+          file.format === "nsight"
+            ? "Download this report and open it in Nsight Systems."
+            : "Download this SQLite database for analysis.",
+        );
+      }
+    }
+    async function openTrace() {
+      if (!store || !selected || selected.format !== "perfetto") return;
+      const ticket = ++selection,
+        file = selected,
+        storeId = store.id;
+      clearViewer();
+      $("open").disabled = true;
+      message("Reading trace from the cluster…");
+      try {
+        const buffer = await (
+          await request(
+            `api/trace?store=${encodeURIComponent(storeId)}&file=${encodeURIComponent(file.name)}`,
+          )
+        ).arrayBuffer();
+        if (ticket !== selection) return;
+        frame = document.createElement("iframe");
+        frame.title = "Perfetto trace viewer";
+        frame.referrerPolicy = "no-referrer";
+        listener = (event) => {
+          if (
+            event.source !== frame?.contentWindow ||
+            event.origin !== perfettoOrigin ||
+            event.data !== "PONG"
+          )
+            return;
+          clearInterval(ping);
+          clearTimeout(handshakeTimeout);
+          window.removeEventListener("message", listener);
+          listener = null;
+          frame.contentWindow.postMessage(
+            {
+              perfetto: {
+                buffer,
+                title: file.model || file.service || file.name.split("/").pop(),
+                fileName: file.name.split("/").pop(),
+              },
+            },
+            perfettoOrigin,
+            [buffer],
+          );
+          message("Trace sent to Perfetto. Choose another file to continue.");
+        };
+        window.addEventListener("message", listener);
+        frame.src = perfettoOrigin;
+        $("viewer").append(frame);
+        ping = setInterval(
+          () => frame?.contentWindow.postMessage("PING", perfettoOrigin),
+          200,
+        );
+        handshakeTimeout = setTimeout(() => {
+          clearViewer();
+          message(
+            "Perfetto did not respond. Check access to ui.perfetto.dev and try again.",
+          );
+        }, 30000);
+        message("Connecting to Perfetto…");
+      } catch (error) {
+        if (ticket === selection)
+          message(`Unable to open trace: ${error.message}`);
+      } finally {
+        if (ticket === selection) $("open").disabled = false;
+      }
+    }
+    $("refresh").onclick = refresh;
+    $("stores").onchange = () => selectStore($("stores").value);
+    $("retry").onclick = () => store && selectStore(store.id);
+    $("open").onclick = openTrace;
+    window.addEventListener("beforeunload", clearViewer);
+    refresh();
+  </script>
+</html>

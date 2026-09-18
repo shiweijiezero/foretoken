@@ -49,6 +49,9 @@ type ProfileParticipant struct {
 
 // ProfileExecutionPlan is controller-owned recovery state, persisted before any start.
 type ProfileExecutionPlan struct {
+	// Model preserves the captured model identity after the service is removed.
+	// +optional
+	Model             string                `json:"model,omitempty"`
 	ServiceUID        string                `json:"serviceUID"`
 	ServingGeneration int64                 `json:"servingGeneration"`
 	Revisions         []ServingPoolRevision `json:"revisions"`

@@ -309,6 +309,8 @@ func (r *ProfileRunReconciler) prepareProfile(ctx context.Context, run *api.Prof
 			if !routingGroupOwnedBy(&group, &pool) || group.Spec.Revision != serviceServingRevision(service, &pool) || !routingGroupReady(&group) {
 				continue
 			}
+			// Desired service intent may already name the next model during a rollout.
+			plan.Model = group.Spec.Artifacts.Model
 			cache := group.Spec.Artifacts.Cache
 			if cache == nil {
 				return plan, fmt.Errorf("ModelService %s has no persistent RuntimeCache; add one to the deployment and redeploy before profiling", service.Name)

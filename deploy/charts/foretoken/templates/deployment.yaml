@@ -114,14 +114,14 @@ spec:
             - {{ printf "--vllm-ec-shared-storage-claim=%s" $.Values.runtime.vllm.ec.sharedStorageClaim | quote }}
             - {{ printf "--vllm-ec-shared-storage-path=%s" $.Values.runtime.vllm.ec.sharedStoragePath | quote }}
             {{- end }}
-            {{- if $.Values.runtime.vllm.pd.profileName }}
-            - {{ printf "--vllm-pd-profile-name=%s" $.Values.runtime.vllm.pd.profileName | quote }}
-            - {{ printf "--vllm-pd-profile-revision=%s" $.Values.runtime.vllm.pd.profileRevision | quote }}
-            - {{ printf "--vllm-pd-protocol=%s" $.Values.runtime.vllm.pd.protocol | quote }}
+            {{- if (include "foretoken.rdmaResourceName" $) }}
+            - --vllm-pd-profile-name=mooncake
+            - {{ printf "--vllm-pd-profile-revision=%s" $.Values.runtime.vllm.profileRevision | quote }}
+            - --vllm-pd-protocol=rdma
             - {{ printf "--vllm-pd-bootstrap-port=%d" (int $.Values.runtime.vllm.pd.bootstrapPort) | quote }}
             - {{ printf "--vllm-pd-abort-request-timeout-seconds=%d" (int $.Values.runtime.vllm.pd.abortRequestTimeoutSeconds) | quote }}
             - {{ printf "--vllm-pd-rdma-device-name=%s" $.Values.runtime.vllm.pd.rdmaDeviceName | quote }}
-            - {{ printf "--vllm-pd-rdma-resource-name=%s" $.Values.runtime.vllm.pd.rdmaResourceName | quote }}
+            - {{ printf "--vllm-pd-rdma-resource-name=%s" (include "foretoken.rdmaResourceName" $) | quote }}
             - {{ printf "--vllm-pd-rdma-resource-count=%d" (int $.Values.runtime.vllm.pd.rdmaResourceCount) | quote }}
             {{- end }}
             {{- if $.Values.runtime.vllm.mooncakeStore.profileName }}
