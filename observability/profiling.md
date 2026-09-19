@@ -58,16 +58,16 @@ Add `--values nsight-values.yaml` to the source installation command used for th
 
 ### Capture
 
-The [Nsight example](../examples/nsight/README.md) selects the tool and uses the Quick Start's persistent storage:
+The [Nsight example](../examples/profile/nsight/README.md) selects the tool and uses the Quick Start's persistent storage:
 
 ```bash
 pip install -e '.[bench]'
-foretoken bench examples/nsight \
+foretoken bench examples/profile/nsight \
   --profile --profile-engine nsight --profile-duration 15s \
   --number 2 --max-tokens 128 --output local
 ```
 
-For external traffic, use `foretoken deploy examples/nsight --profile --profile-engine nsight --profile-duration 15s --timeout 20m` instead. This leaves the service running after capture; repeat the command to capture another window.
+For external traffic, use `foretoken deploy examples/profile/nsight --profile --profile-engine nsight --profile-duration 15s --timeout 20m` instead. This leaves the service running after capture; repeat the command to capture another window.
 
 ## Inspect results
 
@@ -85,4 +85,4 @@ When the deployment and capture records are no longer needed, clean up with:
 foretoken delete examples/quickstart
 ```
 
-Use `examples/nsight` instead when cleaning up the Nsight example. Profiling adds overhead. Use a separate run without `--profile` for latency and throughput comparisons.
+Use `examples/profile/nsight` instead when cleaning up the Nsight example. Profiling adds overhead. Use a separate run without `--profile` for latency and throughput comparisons.
