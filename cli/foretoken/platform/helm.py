@@ -530,6 +530,11 @@ class Helm(HelmClient):
                 "--set-json",
                 "prometheus.prometheusSpec.ruleNamespaceSelector="
                 + json.dumps(namespace_selector, separators=(",", ":")),
+                # Receivers beside the managed Alertmanager route workload alerts;
+                # configurations in other namespaces retain namespace isolation.
+                "--set-string",
+                "alertmanager.alertmanagerSpec.alertmanagerConfigMatcherStrategy.type="
+                "OnNamespaceExceptForAlertmanagerNamespace",
                 "--set-string",
                 "grafana.sidecar.datasources.defaultDatasourceScrapeInterval=5s",
                 "--set-json",

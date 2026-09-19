@@ -1,0 +1,11 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
+{{ range .Alerts }}
+[{{ .Status }}] {{ .Labels.alertname }}
+{{ range .Labels.SortedPairs }}{{ .Name }}: {{ .Value }}
+{{ end }}Started: {{ .StartsAt }}
+{{ if eq .Status "resolved" }}Resolved: {{ .EndsAt }}
+{{ end }}Summary: {{ .Annotations.summary }}
+Details: {{ .Annotations.description }}
+{{ with .Annotations.runbook_url }}Runbook: {{ . }}
+{{ end }}{{ end }}

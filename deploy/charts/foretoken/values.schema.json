@@ -267,6 +267,41 @@
         },
         "prometheus": {
           "type": "string"
+        },
+        "notifications": {
+          "type": "object",
+          "properties": {
+            "namespace": {
+              "type": "string"
+            },
+            "additionalLabels": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "slack": {
+              "type": "object",
+              "properties": {
+                "webhookSecret": {
+                  "type": "object",
+                  "required": ["name", "key"],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "key": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

@@ -66,6 +66,16 @@ observability:
   scrapeTimeout: 4s
   # Prometheus NAMESPACE/NAME; foretoken install resolves the selected instance.
   prometheus: ""
+  notifications:
+    # Alertmanager namespace; empty uses the Foretoken release namespace.
+    namespace: ""
+    # Match the configuration selector of a reused Alertmanager when required.
+    additionalLabels: {}
+    slack:
+      # A non-empty name enables Slack. The Secret must exist in the notification namespace.
+      webhookSecret:
+        name: ""
+        key: url
 
 # The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
 runtime:

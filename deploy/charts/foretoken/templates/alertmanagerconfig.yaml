@@ -1,0 +1,38 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
+
+{{- $notifications := .Values.observability.notifications }}
+{{- if $notifications.slack.webhookSecret.name }}
+{{- if ne (include "foretoken.observabilityEnabled" .) "true" }}
+{{- fail "Slack notifications require observability to be enabled" }}
+{{- end }}
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: {{ include "foretoken.compactName" (printf "%s-slack" (include "foretoken.fullname" .)) }}
+  namespace: {{ default .Release.Namespace $notifications.namespace }}
+  labels:
+    {{- mergeOverwrite (dict) $notifications.additionalLabels (include "foretoken.labels" . | fromYaml) | toYaml | nindent 4 }}
+spec:
+  route:
+    groupBy:
+      - alertname
+      - namespace
+    groupWait: 5s
+    groupInterval: 30s
+    repeatInterval: 1h
+    matchers:
+      - name: service
+        matchType: "="
+        value: foretoken
+    receiver: slack
+  receivers:
+    - name: slack
+      slackConfigs:
+        - apiURL:
+            {{- toYaml $notifications.slack.webhookSecret | nindent 12 }}
+          sendResolved: true
+          title: {{ "Foretoken: {{ .CommonLabels.alertname }} (firing {{ len .Alerts.Firing }}, resolved {{ len .Alerts.Resolved }})" | quote }}
+          text: |-
+            {{- .Files.Get "files/notifications/slack.tmpl" | nindent 12 }}
+{{- end }}
