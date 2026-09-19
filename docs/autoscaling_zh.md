@@ -42,6 +42,9 @@ spec:
 | `queue` | `targetAverageQueuedRequests` | `1` | 正整数 |
 | `queue_threshold` | `scaleUpQueuedRequests` | `1` | 非负整数 |
 | `queue_threshold` | `scaleDownQueuedRequests` | `0` | 非负整数，不超过 `scaleUpQueuedRequests` |
+| `aimd` | `additiveIncrease` | `1` | 1–2147483647 的整数 |
+| `aimd` | `multiplicativeDecreasePercent` | `50` | 1–99 的整数；空闲时保留的容量百分比 |
+| `aimd` | `scaleUpQueuedRequests` | `0` | 非负整数 |
 | `periodic`（trigger） | `interval` | `5s` | 正的时间长度 |
 | `step`（adjustment） | `scaleUpStabilizationWindow` | `0s` | 非负时间长度 |
 | `step`（adjustment） | `scaleDownStabilizationWindow` | `300s` | 非负时间长度 |
@@ -61,6 +64,19 @@ adjustment:
   parameters:
     scaleDownStabilizationWindow: 60s
 ```
+
+## 使用加法扩容与空闲时的乘法缩容
+
+将已有 autoscaling 中的决策块替换为以下配置，即可选择 AIMD：
+
+```yaml
+decision:
+  algorithm: aimd
+```
+
+等待请求总量超过 `scaleUpQueuedRequests` 时，AIMD 在当前已请求容量上增加 `additiveIncrease`。等待请求和活跃请求都为零时，保留当前容量的 `multiplicativeDecreasePercent` 百分比，向下取整；其他情况保持容量。例如，当前 5 个副本完全空闲，按默认的 50% 保留比例，建议容量为 2。
+
+建议仍需经过所选的调整策略和生命周期约束。默认 `step` 每次常规评估最多增减一个副本，并保留缩容稳定窗口；如果希望在最小／最大容量和转换约束内直接采用完整的 AIMD 建议，可选择 `direct`。
 
 ## 查看扩缩容决策
 

@@ -20,6 +20,7 @@ var triggers = map[string]func(json.RawMessage) (core.TriggerAlgorithm, error){
 }
 
 var decisions = map[string]func(json.RawMessage) (core.DecisionAlgorithm, error){
+	"aimd":            decision.NewAIMD,
 	"manual":          decision.NewManual,
 	"queue":           decision.NewQueue,
 	"queue_threshold": decision.NewQueueThreshold,

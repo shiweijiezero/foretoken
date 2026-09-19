@@ -42,6 +42,9 @@ All three stages use `algorithm` and optional `parameters`. Omit parameters to u
 | `queue` | `targetAverageQueuedRequests` | `1` | Positive integer |
 | `queue_threshold` | `scaleUpQueuedRequests` | `1` | Non-negative integer |
 | `queue_threshold` | `scaleDownQueuedRequests` | `0` | Non-negative integer, no greater than `scaleUpQueuedRequests` |
+| `aimd` | `additiveIncrease` | `1` | Integer from 1 to 2147483647 |
+| `aimd` | `multiplicativeDecreasePercent` | `50` | Integer from 1 to 99; percentage retained when idle |
+| `aimd` | `scaleUpQueuedRequests` | `0` | Non-negative integer |
 | `periodic` (trigger) | `interval` | `5s` | Positive duration |
 | `step` (adjustment) | `scaleUpStabilizationWindow` | `0s` | Non-negative duration |
 | `step` (adjustment) | `scaleDownStabilizationWindow` | `300s` | Non-negative duration |
@@ -61,6 +64,19 @@ adjustment:
   parameters:
     scaleDownStabilizationWindow: 60s
 ```
+
+## Use additive growth and multiplicative idle reduction
+
+To select AIMD, replace the existing autoscaling decision block with:
+
+```yaml
+decision:
+  algorithm: aimd
+```
+
+AIMD adds `additiveIncrease` to the requested capacity when total waiting requests exceed `scaleUpQueuedRequests`. When both waiting and active requests are zero, it retains `multiplicativeDecreasePercent` of the current capacity, rounding down. Otherwise it holds capacity. For example, 5 idle replicas with the default 50 percent retention produce a recommendation of 2 replicas.
+
+Recommendations still pass through the selected adjustment and lifecycle limits. The default `step` adjustment limits each ordinary evaluation to one replica and retains its scale-down stabilization window; use `direct` when the full AIMD recommendation should apply immediately within min/max and transition constraints.
 
 ## Observe a decision
 
