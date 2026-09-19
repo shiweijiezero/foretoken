@@ -103,7 +103,7 @@ def add_profile_arguments(parser: argparse.ArgumentParser) -> None:
         help="Capture a profile during this operation",
     )
     parser.add_argument(
-        "--profile-engine", choices=("pytorch",),
+        "--profile-engine", choices=("pytorch", "nsight"),
         help="Required with --profile; native profiler",
     )
     parser.add_argument(

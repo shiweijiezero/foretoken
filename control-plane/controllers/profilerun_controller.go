@@ -49,6 +49,7 @@ type profileRecord struct {
 }
 
 type profileObservation struct {
+	Engine            string         `json:"engine"`
 	RuntimeID         string         `json:"runtimeId"`
 	PodUID            string         `json:"podUid"`
 	GroupUID          string         `json:"groupUid"`
@@ -176,7 +177,12 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 				GroupUID   string `json:"groupUid"`
 				Action     string `json:"action"`
 				DurationMS int64  `json:"durationMs"`
-			}{string(run.UID), participant.RuntimeID, participant.GroupUID, action, duration.Milliseconds()}
+				Engine     string `json:"engine,omitempty"`
+			}{string(run.UID), participant.RuntimeID, participant.GroupUID, action, duration.Milliseconds(), ""}
+			// Existing PyTorch runtimes predate the engine field and reject unknown fields.
+			if run.Spec.Engine != "pytorch" {
+				operation.Engine = run.Spec.Engine
+			}
 			observation, err = r.profileHTTP(ctx, participant.Endpoint, string(run.UID), operation)
 			if err != nil {
 				allDone = false
@@ -332,6 +338,13 @@ func (r *ProfileRunReconciler) prepareProfile(ctx context.Context, run *api.Prof
 				}
 				if observation.GroupUID != string(group.UID) || observation.PodUID != string(pod.UID) || observation.RuntimeID == "" || observation.RuntimeCacheClaim != cache.ClaimName {
 					return plan, fmt.Errorf("runtime returned an incomplete or mismatched RuntimeCache identity")
+				}
+				engine := observation.Engine
+				if engine == "" {
+					engine = "pytorch" // Original runtimes expose only PyTorch capture.
+				}
+				if engine != run.Spec.Engine {
+					return plan, fmt.Errorf("runtime is prepared for %s, requested %s; set ModelService spec.profiling.engine and redeploy", engine, run.Spec.Engine)
 				}
 				plan.Participants = append(plan.Participants, api.ProfileParticipant{GroupName: group.Name, GroupUID: string(group.UID), PodName: pod.Name, PodUID: string(pod.UID), RuntimeID: observation.RuntimeID, Endpoint: endpoint})
 				selected++

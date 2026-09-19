@@ -268,6 +268,13 @@ const (
 	ModelSourceModelScope ModelSource = "modelscope"
 )
 
+// ProfilingConfig selects instrumentation prepared when model processes start.
+// Captures are still requested separately through ProfileRun.
+type ProfilingConfig struct {
+	// +kubebuilder:validation:Enum=pytorch;nsight
+	Engine string `json:"engine"`
+}
+
 // InferenceParameters contains common model-execution choices shared by every Pool.
 type InferenceParameters struct {
 	// MaxModelLen limits the combined prompt and generated sequence length.
@@ -371,6 +378,11 @@ type ModelServiceSpec struct {
 	Resources *ModelResources `json:"resources,omitempty"`
 
 	Timeouts ModelTimeouts `json:"timeouts"`
+
+	// Profiling prepares a profiler for every model Pool; omission preserves PyTorch support.
+	// Changing the prepared engine rolls out new model processes but does not start a capture.
+	// +optional
+	Profiling *ProfilingConfig `json:"profiling,omitempty"`
 
 	// Observability selects model-scoped alerts independently of serving and autoscaling.
 	// +optional

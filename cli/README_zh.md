@@ -46,7 +46,7 @@ uv pip install foretoken
 foretoken install
 ```
 
-安装会根据集群的 GPU 资源自动选择 NVIDIA 或沐曦运行时，`--values` 中显式指定的运行时配置优先。混合 GPU 集群通过 `runtime.vllm.gpu.resourceName` 选择资源，或通过 `runtime.vllm.gpu.nodeSelector` 限定节点范围。
+安装会自动选择 NVIDIA 或沐曦运行时，并复用或准备 RDMA 设备插件。`--values` 中显式指定的运行时配置优先。混合 GPU 集群通过 `runtime.vllm.gpu.resourceName` 选择资源，或通过 `runtime.vllm.gpu.nodeSelector` 限定节点范围。
 
 看板和告警的使用见[可观测性](../observability/README_zh.md)。
 
@@ -88,7 +88,7 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 ### 安装选项
 
-重复使用 `--values` 可提供平台镜像、runtime 和硬件配置。发布镜像和 CLI 管理的 Chart 镜像使用 `--oci-registry`。
+自定义平台镜像、runtime 或硬件设置时使用 `--values`。发布镜像和 CLI 管理的 Chart 镜像使用 `--oci-registry`。
 
 模型服务通过一个集群外可访问的 IP 提供服务。k3d、k3s 和云上集群会自动分配这个 IP；用 kubeadm、RKE2 或 kubespray 搭建的集群默认没有地址分配能力，安装结尾会提示 `LoadBalancer support Not verified`。此时向集群管理员确认一段节点网段内未被占用的 IP 交给 Foretoken，由它分配给服务：
 
@@ -96,10 +96,6 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 loadBalancer:
   managedAddresses:
     - 192.168.1.240-192.168.1.250
-```
-
-```bash
-foretoken install --values platform-values.yaml
 ```
 
 ## 部署和管理模型服务

@@ -106,7 +106,7 @@ foretoken deploy examples/observability --timeout 20m
 
 移除名称或设为 `rules: []`，再次部署即可关闭对应告警，指标和看板仍保留。CLI 会报告告警配置失败，服务自身的就绪状态单独维护；`deploy` 不负责安装监控平台。
 
-选择功耗告警时，还需按显卡型号填写正数 `spec.observability.alerts.thresholds.nvidiaPowerWatts`，单位为瓦。只填写阈值不会启用规则。通知语言、接收目标和时区在接收器上配置，见可选的 [Lark 集成](integrations/lark/README_zh.md)。
+选择功耗告警时，还需按显卡型号填写正数 `spec.observability.alerts.thresholds.nvidiaPowerWatts`，单位为瓦。只填写阈值不会启用规则。通知接入见 [Lark](integrations/lark/README_zh.md) 或 [Slack](integrations/slack/README_zh.md) 集成。
 
 ## 指标参考
 

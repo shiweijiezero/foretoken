@@ -4,6 +4,23 @@
 
 `metrics.json` 保存汇总指标，`raw_output.json` 保存逐请求记录。标准负载还保留 `benchmark_data.db` 和 `benchmark.log`。
 
+## 实验记录
+
+本地结果包括：
+
+| 文件 | 内容 |
+| --- | --- |
+| `environment.json` | 客户端版本与源码状态；Kustomize 模式另有执行前后的服务设置、镜像 ID 和节点信息，读取失败记录在 `error` 中 |
+| `warmup/` | 预热结果，不计入正式指标和 profiling 采集 |
+| `sweep_points.json` | 每次扫描运行的结果 |
+| `sweep_summary.json`、`sweep_summary.csv` | 各参数点在重复运行中的均值、中位数、样本标准差及范围 |
+
+扫描汇总中，`runs` 是重复次数，`samples` 是有效样本数。缺失时延不计入样本，零吞吐和失败数仍保留；少于两个样本时，`stddev` 不可用。以 `_seconds` 结尾的时延指标使用秒。各次 p95 的汇总不等于合并请求后的 p95。
+
+预热复用负载的起始数据行和随机种子，全部成功后才开始测量。轨迹回放需要单独预热。
+
+## 请求指标
+
 | 指标 | 含义 |
 | --- | --- |
 | Success rate | 成功请求数除以尝试请求数 |

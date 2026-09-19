@@ -35,6 +35,14 @@ workload:
 loadBalancer:
   managedAddresses: []
 
+# foretoken install automatically reuses or prepares shared RDMA device allocation.
+# These values also support direct Helm installation.
+rdma:
+  managed: false
+  image: ghcr.io/mellanox/k8s-rdma-shared-dev-plugin:v1.5.4
+  # Selected GPU nodes, populated by foretoken install.
+  nodeNames: []
+
 # Local mode uses a LoadBalancer Service. Gateway mode attaches an HTTPRoute to a Gateway.
 frontend:
   enabled: false
@@ -58,12 +66,24 @@ observability:
   scrapeTimeout: 4s
   # Prometheus NAMESPACE/NAME; foretoken install resolves the selected instance.
   prometheus: ""
+  notifications:
+    # Alertmanager namespace; empty uses the Foretoken release namespace.
+    namespace: ""
+    # Match the configuration selector of a reused Alertmanager when required.
+    additionalLabels: {}
+    slack:
+      # A non-empty name enables Slack. The Secret must exist in the notification namespace.
+      webhookSecret:
+        name: ""
+        key: url
 
 # The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
 runtime:
   vllm:
     image: auto # Selects the release image for the configured GPU resource.
-    profileRevision: default
+    # Optional source-built diagnostic image with Nsight Systems; used only by opted-in models.
+    nsightImage: ""
+    profileRevision: default # Mooncake P/D compatibility revision.
     modelServerPort: 9000
     # Optional Hugging Face-compatible endpoint and credential.
     modelSource:
@@ -84,16 +104,14 @@ runtime:
       connector: "ECExampleConnector"
       sharedStorageClaim: ""
       sharedStoragePath: "/var/lib/foretoken/ec"
-    # Set every field to enable the platform-owned Mooncake P/D profile.
+    # foretoken install selects an existing shared RDMA resource when unambiguous.
     pd:
-      profileName: ""
-      profileRevision: ""
-      protocol: ""
-      bootstrapPort: 0
-      abortRequestTimeoutSeconds: 0
-      rdmaDeviceName: ""
       rdmaResourceName: ""
-      rdmaResourceCount: 0
+      rdmaResourceCount: 1
+      # Empty lets Mooncake select from the Pod's allocated devices by topology.
+      rdmaDeviceName: ""
+      bootstrapPort: 8998
+      abortRequestTimeoutSeconds: 600
     # Set every field to enable the platform-owned external Mooncake Store profile.
     mooncakeStore:
       profileName: ""

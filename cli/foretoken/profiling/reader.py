@@ -20,6 +20,18 @@ CAPTURE_MOUNT_PATH: Final = "/captures"
 # Published output only; files in profiles/.staging may still be written.
 CAPTURE_DIRECTORY: Final = "profiles/runs"
 READER_SECRET_ENV: Final = "FORETOKEN_PROFILE_READER_SECRET"
+CAPTURE_FORMATS: Final = {
+    ".pt.trace.json": "perfetto",
+    ".nsys-rep": "nsight",
+    ".sqlite": "sqlite",
+}
+
+
+def _capture_format(name: str) -> str | None:
+    return next(
+        (file_format for suffix, file_format in CAPTURE_FORMATS.items() if name.endswith(suffix)),
+        None,
+    )
 
 
 def _relative_parts(value: str) -> list[str]:
@@ -63,10 +75,10 @@ def _open_directory(root_fd: int, parts: list[str]) -> int:
         raise
 
 
-def _trace_name(value: str) -> tuple[list[str], str]:
-    """Validate a trace filename relative to its authenticated directory scope."""
+def _capture_name(value: str) -> tuple[list[str], str]:
+    """Validate a capture filename relative to its authenticated directory scope."""
     parts = _relative_parts(value)
-    if not parts[-1].endswith(".pt.trace.json"):
+    if _capture_format(parts[-1]) is None:
         raise ValueError("not a capture file")
     return parts[:-1], parts[-1]
 
@@ -156,10 +168,11 @@ class CaptureHandler(BaseHTTPRequestHandler):
                     relative = [*parts, name]
                     if stat.S_ISDIR(info.st_mode):
                         pending.append(relative)
-                    elif stat.S_ISREG(info.st_mode) and name.endswith(".pt.trace.json"):
+                    elif stat.S_ISREG(info.st_mode) and (file_format := _capture_format(name)):
                         files.append(
                             {
                                 "name": "/".join(relative),
+                                "format": file_format,
                                 "size": info.st_size,
                                 "modified_at": info.st_mtime,
                             }
@@ -170,7 +183,7 @@ class CaptureHandler(BaseHTTPRequestHandler):
 
     def _file(self, root: int, name: str) -> None:
         """Stream a regular trace using descriptors confined to the authenticated directory."""
-        directories, filename = _trace_name(name)
+        directories, filename = _capture_name(name)
         directory = _open_directory(root, directories)
         try:
             descriptor = os.open(
@@ -183,7 +196,7 @@ class CaptureHandler(BaseHTTPRequestHandler):
             if not stat.S_ISREG(info.st_mode):
                 raise ValueError("not a regular capture file")
             self.send_response(200)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", "application/octet-stream")
             self.send_header("Content-Length", str(info.st_size))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()

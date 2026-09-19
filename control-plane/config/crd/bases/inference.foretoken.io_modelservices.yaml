@@ -643,6 +643,19 @@ spec:
                         ''ForetokenNVIDIAGPUPowerUsageHigh'') || (has(self.thresholds)
                         && has(self.thresholds.nvidiaPowerWatts))'
                 type: object
+              profiling:
+                description: |-
+                  Profiling prepares a profiler for every model Pool; omission preserves PyTorch support.
+                  Changing the prepared engine rolls out new model processes but does not start a capture.
+                properties:
+                  engine:
+                    enum:
+                    - pytorch
+                    - nsight
+                    type: string
+                required:
+                - engine
+                type: object
               quantization:
                 description: Quantization selects the engine's weight quantization
                   method.

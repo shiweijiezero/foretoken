@@ -1,0 +1,105 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+{{- if .Values.rdma.managed }}
+{{- $name := printf "%s-rdma" .Release.Name }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+data:
+  config.json: |
+    {
+      "periodicUpdateInterval": 60,
+      "configList": [{
+        "resourcePrefix": "rdma",
+        "resourceName": {{ include "foretoken.rdmaResourceName" . | trimPrefix "rdma/" | quote }},
+        "rdmaHcaMax": 1000,
+        "selectors": {"linkTypes": ["infiniband"]}
+      }]
+    }
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: foretoken-rdma
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: foretoken-rdma
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      automountServiceAccountToken: false
+      hostNetwork: true
+      tolerations:
+        - key: {{ .Values.runtime.vllm.gpu.resourceName | quote }}
+          operator: Exists
+          effect: NoSchedule
+      nodeSelector:
+        kubernetes.io/os: linux
+        {{- with .Values.runtime.vllm.gpu.nodeSelector.key }}
+        {{ . }}: {{ $.Values.runtime.vllm.gpu.nodeSelector.value | quote }}
+        {{- end }}
+      {{- with .Values.rdma.nodeNames }}
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              {{- range . }}
+              - matchFields:
+                  - key: metadata.name
+                    operator: In
+                    values: [{{ . | quote }}]
+              {{- end }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: rdma-device-plugin
+          image: {{ include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.rdma.image) | quote }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: device-plugin
+              mountPath: /var/lib/kubelet/device-plugins
+            - name: plugins-registry
+              mountPath: /var/lib/kubelet/plugins_registry
+            - name: config
+              mountPath: /k8s-rdma-shared-dev-plugin
+              readOnly: true
+            - name: devs
+              mountPath: /dev
+      volumes:
+        - name: device-plugin
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+            type: Directory
+        - name: plugins-registry
+          hostPath:
+            path: /var/lib/kubelet/plugins_registry
+            type: DirectoryOrCreate
+        - name: config
+          configMap:
+            name: {{ $name }}
+            items:
+              - key: config.json
+                path: config.json
+        - name: devs
+          hostPath:
+            path: /dev
+            type: Directory
+{{- end }}

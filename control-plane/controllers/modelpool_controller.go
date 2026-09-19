@@ -16,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -37,11 +38,13 @@ type ModelPoolTemplateResolver interface {
 // ModelPoolReconciler resolves Pool templates and owns ModelGroup specs.
 type ModelPoolReconciler struct {
 	client.Client
+	APIReader        client.Reader
 	TemplateResolver ModelPoolTemplateResolver
 }
 
 // SetupWithManager registers the ModelPool controller and its owned Groups.
 func (reconciler *ModelPoolReconciler) SetupWithManager(manager ctrl.Manager) error {
+	reconciler.APIReader = manager.GetAPIReader()
 	return ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelPool{}).
 		Owns(&inferencev1alpha1.ModelGroup{}).
@@ -123,26 +126,48 @@ func (reconciler *ModelPoolReconciler) validateModelServiceOwnership(ctx context
 	return service, nil
 }
 
-// targetRevision reuses a matching prepared cohort or allocates the next immutable revision.
+// targetRevision reuses a matching cohort or allocates an identity for changed execution settings.
 func (reconciler *ModelPoolReconciler) targetRevision(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate, servingRevision string) (string, error) {
-	// Reuse a prepared or serving cohort when its immutable template still matches. This lets
-	// retries and pure scale changes converge without minting a disruptive new revision.
-	groups, err := reconciler.ownedGroups(ctx, pool)
+	groups, err := ownedModelGroups(ctx, reconciler.Client, pool)
 	if err != nil {
 		return "", err
 	}
+	if revision := matchingRevision(groups, pool, template, servingRevision); revision != "" {
+		return revision, nil
+	}
+
+	// A successful create can precede its informer event. Read current children before
+	// allocating an identity so retries cannot materialize a second matching cohort.
+	groups, err = ownedModelGroups(ctx, reconciler.APIReader, pool)
+	if err != nil {
+		return "", err
+	}
+	if revision := matchingRevision(groups, pool, template, servingRevision); revision != "" {
+		return revision, nil
+	}
+	return string(uuid.NewUUID()), nil
+}
+
+// matchingRevision prefers the selected cohort, then reuses a matching target still starting.
+func matchingRevision(groups []inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate, servingRevision string) string {
 	for _, revision := range []string{pool.Status.PreparedRevision, servingRevision} {
 		if revision == "" {
 			continue
 		}
 		for index := range groups {
 			group := &groups[index]
-			if group.Spec.Revision == revision && groupMatchesTemplate(group, pool, template) {
-				return revision, nil
+			if group.DeletionTimestamp.IsZero() && group.Spec.Revision == revision && groupMatchesTemplate(group, pool, template) {
+				return revision
 			}
 		}
 	}
-	return fmt.Sprintf("revision-%d-%s", pool.Generation, template.Revision), nil
+	for index := range groups {
+		group := &groups[index]
+		if group.DeletionTimestamp.IsZero() && groupMatchesTemplate(group, pool, template) {
+			return group.Spec.Revision
+		}
+	}
+	return ""
 }
 
 func groupMatchesTemplate(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate) bool {
@@ -163,20 +188,19 @@ type groupState struct {
 
 // currentActiveState derives serving readiness while a target revision is being reconciled.
 func (reconciler *ModelPoolReconciler) currentActiveState(ctx context.Context, pool *inferencev1alpha1.ModelPool, servingRevision string) (groupState, error) {
-	groups, err := reconciler.ownedGroups(ctx, pool)
+	groups, err := ownedModelGroups(ctx, reconciler.Client, pool)
 	if err != nil {
-		return groupState{PreparedRevision: pool.Status.PreparedRevision}, err
+		return groupState{}, err
 	}
 	return groupState{
-		Ready:            revisionServingReady(groups, servingRevision),
-		RolloutPending:   pool.Status.PreparedRevision != servingRevision,
-		PreparedRevision: pool.Status.PreparedRevision,
+		Ready:          revisionServingReady(groups, servingRevision),
+		RolloutPending: true,
 	}, nil
 }
 
 // reconcileGroups converges target and serving ModelGroup cohorts for one ModelPool.
 func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool, template resolver.ModelGroupTemplate, servingRevision string) (groupState, error) {
-	groups, err := reconciler.ownedGroups(ctx, pool)
+	groups, err := ownedModelGroups(ctx, reconciler.Client, pool)
 	if err != nil {
 		return groupState{}, err
 	}
@@ -226,14 +250,10 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 	materialized := int32(len(current)) == pool.Spec.DesiredGroups
 	targetReady := materialized && pool.Spec.DesiredGroups > 0 && groupsReady(current, pool.Spec.DesiredGroups)
 	targetInsufficientCapacity := materialized && groupsInsufficientCapacity(current, pool.Spec.DesiredGroups)
-	preparedRevision := pool.Status.PreparedRevision
+	// Only the current target can be prepared; ModelService separately retains the serving revision.
+	preparedRevision := ""
 	if targetReady {
 		preparedRevision = template.Revision
-	} else if preparedRevision == template.Revision {
-		preparedRevision = ""
-	}
-	if pool.Spec.DesiredGroups == 0 {
-		preparedRevision = ""
 	}
 	ready := pool.Spec.DesiredGroups > 0 && revisionServingReady(groups, servingRevision)
 	rolloutPending := preparedRevision != template.Revision || servingRevision != template.Revision || !targetReady
@@ -323,10 +343,10 @@ func setGroupName(group *inferencev1alpha1.ModelGroup, poolName, revision string
 	group.Name = poolName + suffix
 }
 
-// ownedGroups returns ModelGroups whose reference and controller owner both identify the ModelPool.
-func (reconciler *ModelPoolReconciler) ownedGroups(ctx context.Context, pool *inferencev1alpha1.ModelPool) ([]inferencev1alpha1.ModelGroup, error) {
+// ownedModelGroups reads and verifies the Pool's children through the selected consistency boundary.
+func ownedModelGroups(ctx context.Context, reader client.Reader, pool *inferencev1alpha1.ModelPool) ([]inferencev1alpha1.ModelGroup, error) {
 	var list inferencev1alpha1.ModelGroupList
-	if err := reconciler.List(ctx, &list, client.InNamespace(pool.Namespace)); err != nil {
+	if err := reader.List(ctx, &list, client.InNamespace(pool.Namespace)); err != nil {
 		return nil, fmt.Errorf("list ModelGroups: %w", err)
 	}
 	owned := make([]inferencev1alpha1.ModelGroup, 0, len(list.Items))

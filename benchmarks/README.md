@@ -38,6 +38,8 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
+Add `--warmup-requests 16` to complete 16 warmup conversations before each measured run, excluding them from its metrics.
+
 `--parallel` controls concurrency and `--rate` controls arrivals per second. Each accepts `-1` for no limit. The defaults are no rate limit and one concurrent request. To send at an average of five requests per second without a concurrency cap:
 
 ```bash
@@ -96,11 +98,14 @@ The trace determines request count and arrival times. Each record is replayed in
 
 ```bash
 foretoken bench examples/quickstart \
+  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
+  --min-prompt-length 128 --max-prompt-length 256 --random-seed 0 \
   --sweep benchmarks/examples/sweep.jsonl \
+  --warmup-requests 16 --num-runs 3 \
   --output local,wandb
 ```
 
-Sweeps use a Kustomize deployment to compare configurations against the same model service.
+Sweeps require a Kustomize deployment. See [Parameter sweeps](docs/coomon_commands/sweep.md) to customize points and compare configurations.
 
 ### An existing service URL
 

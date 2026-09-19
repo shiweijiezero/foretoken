@@ -63,6 +63,9 @@
     button {
       cursor: pointer;
     }
+    a {
+      color: inherit;
+    }
     button:disabled {
       cursor: default;
       opacity: 0.6;
@@ -204,7 +207,8 @@
       <div class="toolbar">
         <p id="selection">Select a trace</p>
         <button id="open" disabled>Open in Perfetto</button
-        ><button id="retry" hidden>Retry</button>
+        ><a id="download" hidden>Download</a>
+        <button id="retry" hidden>Retry</button>
       </div>
       <p id="status" role="status">Finding capture directories…</p>
       <div id="viewer"></div>
@@ -317,6 +321,7 @@
           renderTree();
           $("selection").textContent = "Select a trace";
           $("open").disabled = true;
+          $("download").hidden = true;
           message("No capture storage found.");
         }
       } catch (error) {
@@ -335,6 +340,7 @@
       renderTree();
       $("selection").textContent = "Select a trace";
       $("open").disabled = true;
+      $("download").hidden = true;
       $("retry").hidden = true;
       message("Reading capture directory and subfolders…");
       try {
@@ -362,15 +368,28 @@
     async function selectFile(file) {
       selected = file;
       renderTree();
+      $("open").hidden = file.format !== "perfetto";
+      $("download").hidden = false;
+      $("download").href = `api/trace?store=${encodeURIComponent(store.id)}&file=${encodeURIComponent(file.name)}`;
+      $("download").download = file.name.split("/").pop();
       $("selection").textContent = [
         file.model || file.service || "Saved trace",
         file.status || "No capture record",
         new Date(fileTime(file)).toLocaleString(),
       ].join(" · ");
-      await openTrace();
+      if (file.format === "perfetto") await openTrace();
+      else {
+        selection++;
+        clearViewer();
+        message(
+          file.format === "nsight"
+            ? "Download this report and open it in Nsight Systems."
+            : "Download this SQLite database for analysis.",
+        );
+      }
     }
     async function openTrace() {
-      if (!store || !selected) return;
+      if (!store || !selected || selected.format !== "perfetto") return;
       const ticket = ++selection,
         file = selected,
         storeId = store.id;

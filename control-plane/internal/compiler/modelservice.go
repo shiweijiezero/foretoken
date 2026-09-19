@@ -191,8 +191,16 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			KVCache:                               normalizedKVCache,
 			Features:                              normalizedFeatures,
 			EngineArgs:                            engineArgs.DeepCopy(),
+			Profiling:                             normalizeProfiling(spec.Profiling),
 		},
 	}, nil
+}
+
+func normalizeProfiling(input *inferencev1alpha1.ProfilingConfig) *inferencev1alpha1.ProfilingConfig {
+	if input == nil || input.Engine == "pytorch" {
+		return nil
+	}
+	return input.DeepCopy()
 }
 
 // The remaining compiler helpers normalize user shorthand into stable Pool template fields.

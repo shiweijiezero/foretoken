@@ -26,6 +26,7 @@ from benchmarks.results.output import (
     write_json,
 )
 from benchmarks.results.pareto import plot_sweep_pareto
+from benchmarks.results.sweep import summarize_sweep, write_sweep_csv
 from benchmarks.results.wandb import wandb_group_name
 from benchmarks.datasets.conversations import iter_jsonl_rows
 
@@ -67,6 +68,7 @@ def _preserve_value(value: Any) -> Any:
 _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "parallel": ("load", "max_concurrency", int),
     "number": ("load", "request_count", int),
+    "warmup_requests": ("load", "warmup_requests", int),
     "rate": ("load", "arrival_rate", float),
     "max_tokens": ("generation", "max_tokens", normalize_output_token_limit),
     "min_output_length": ("generation", "min_output_length", int),
@@ -262,7 +264,7 @@ class ParameterSweepBenchmark:
         self.service = service
 
     def run(self) -> BenchmarkRun:
-        """Run all parameter points and return the highest-throughput point as the result metrics."""
+        """Run every repetition, preserve individual results, and publish per-point summaries."""
         sweep = self.benchmark.sweep
         if sweep.num_runs < 1:
             raise ValueError(f"--num-runs must be >= 1, got {sweep.num_runs}")
@@ -365,13 +367,11 @@ class ParameterSweepBenchmark:
                 log_sweep_results(all_points)
 
         if local_enabled:
-            write_json(experiment_dir, "sweep_points.json", all_points)
-        best = max(
-            all_points,
-            key=lambda item: item["throughput"][
-                "generation_tokens_per_second"
-            ],
-        )
+            artifacts["sweep_points"] = write_json(experiment_dir, "sweep_points.json", all_points)
+            summary = summarize_sweep(all_points)
+            artifacts["sweep_summary"] = write_json(experiment_dir, "sweep_summary.json", summary)
+            artifacts["sweep_summary_csv"] = write_sweep_csv(summary, experiment_dir)
+            logger.info("Repeated-run summaries: %s/sweep_summary.csv", experiment_dir)
         logger.info(
             "Sweep done: %s combinations, %s points, output_dir=%s",
             len(combinations),
@@ -380,7 +380,12 @@ class ParameterSweepBenchmark:
         )
         return BenchmarkRun(
             record=plan,
-            metrics=best,
+            # The caller needs completion counts, not a cherry-picked workload's
+            # latency or throughput presented as a whole-experiment measurement.
+            metrics={
+                name: sum(point[name] for point in all_points)
+                for name in ("request_num", "success_num", "failed_num")
+            },
             measurements=None,
             artifacts=artifacts,
         )

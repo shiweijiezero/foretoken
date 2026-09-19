@@ -139,7 +139,7 @@ fn rejects_invalid_ec_pairing() {
 fn kv_variants_render_expected_semantics() {
     let cases = [
         (
-            r#"{"kind":"pd","role":"kv_consumer","protocol":"rdma","deviceName":"mlx5_1","events":true}"#,
+            r#"{"kind":"pd","role":"kv_consumer","protocol":"rdma","events":true}"#,
             "MooncakeConnector",
         ),
         (
@@ -172,10 +172,15 @@ fn kv_variants_render_expected_semantics() {
             "{rendered:?}"
         );
         if want == "MooncakeConnector" || want == "MultiConnector" {
+            let device_name = if want == "MooncakeConnector" {
+                ""
+            } else {
+                "mlx5_1"
+            };
             assert!(
                 rendered
                     .iter()
-                    .any(|arg| arg.contains(r#""device_name":"mlx5_1""#)),
+                    .any(|arg| arg.contains(&format!(r#""device_name":"{device_name}""#))),
                 "{rendered:?}"
             );
         }

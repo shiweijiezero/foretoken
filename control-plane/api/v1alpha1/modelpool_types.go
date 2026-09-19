@@ -166,6 +166,10 @@ type NormalizedPoolTemplate struct {
 	// EngineArgs contains native backend options before common fields are applied.
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
+
+	// Profiling is the service-selected instrumentation for this Pool's processes.
+	// +optional
+	Profiling *ProfilingConfig `json:"profiling,omitempty"`
 }
 
 // ModelPoolSpec is the controller-owned desired state compiled from ModelService.

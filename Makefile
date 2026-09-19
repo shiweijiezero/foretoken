@@ -66,19 +66,21 @@ image-frontend: vllm-source
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
 		-f data-plane/frontend/Dockerfile -t "$(FRONTEND_IMAGE)" .
 
-image-vllm-metax:
+image-vllm-metax: mooncake-source
 	@test -n "$(METAX_SDK_IMAGE)" || \
 		(printf '%s\n' 'Set METAX_SDK_IMAGE to an Ubuntu/Debian image with the matching MACA SDK.' >&2; exit 1)
 	docker build \
 		--build-arg METAX_SDK_IMAGE="$(METAX_SDK_IMAGE)" \
 		--build-arg MACA_PATH \
+		$(if $(BUILD_JOBS),--build-arg BUILD_JOBS="$(BUILD_JOBS)",) \
 		$(if $(OCI_REGISTRY),--build-arg UV_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \
 		$(if $(UV_IMAGE),--build-arg UV_IMAGE="$(UV_IMAGE)",) \
 		--build-arg FORETOKEN_GITHUB_MIRROR \
 		--build-arg UV_DEFAULT_INDEX \
 		--build-arg UV_EXTRA_INDEX_URL \
 		--build-arg VLLM_VERSION="$(VLLM_METAX_VERSION)" \
-		-t "$(VLLM_METAX_IMAGE)" deploy/inference-engines/vllm-metax
+		-f deploy/inference-engines/vllm-metax/Dockerfile \
+		-t "$(VLLM_METAX_IMAGE)" .
 
 image-model-server: vllm-source
 	@test -n "$(INFERENCE_ENGINE_IMAGE)" || \

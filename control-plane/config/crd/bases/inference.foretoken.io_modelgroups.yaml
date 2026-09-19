@@ -425,9 +425,9 @@ spec:
                     - rdma
                     type: string
                   rdmaDeviceName:
-                    description: RDMADeviceName selects the platform-verified HCA
-                      shared by both P/D roles.
-                    minLength: 1
+                    description: |-
+                      RDMADeviceName optionally limits Mooncake to a comma-separated HCA list.
+                      When omitted, Mooncake selects from the devices allocated to the Pod.
                     type: string
                   rdmaResourceCount:
                     format: int32
@@ -446,7 +446,6 @@ spec:
                 - profileName
                 - profileRevision
                 - protocol
-                - rdmaDeviceName
                 - rdmaResourceCount
                 - rdmaResourceName
                 type: object
@@ -578,6 +577,18 @@ spec:
                     maximum: 65535
                     minimum: 1
                     type: integer
+                  profiling:
+                    description: Profiling fixes the instrumentation prepared at runtime
+                      startup.
+                    properties:
+                      engine:
+                        enum:
+                        - pytorch
+                        - nsight
+                        type: string
+                    required:
+                    - engine
+                    type: object
                 required:
                 - backend
                 - image
