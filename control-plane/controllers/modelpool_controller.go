@@ -165,12 +165,11 @@ type groupState struct {
 func (reconciler *ModelPoolReconciler) currentActiveState(ctx context.Context, pool *inferencev1alpha1.ModelPool, servingRevision string) (groupState, error) {
 	groups, err := reconciler.ownedGroups(ctx, pool)
 	if err != nil {
-		return groupState{PreparedRevision: pool.Status.PreparedRevision}, err
+		return groupState{}, err
 	}
 	return groupState{
-		Ready:            revisionServingReady(groups, servingRevision),
-		RolloutPending:   pool.Status.PreparedRevision != servingRevision,
-		PreparedRevision: pool.Status.PreparedRevision,
+		Ready:          revisionServingReady(groups, servingRevision),
+		RolloutPending: true,
 	}, nil
 }
 
@@ -226,14 +225,10 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 	materialized := int32(len(current)) == pool.Spec.DesiredGroups
 	targetReady := materialized && pool.Spec.DesiredGroups > 0 && groupsReady(current, pool.Spec.DesiredGroups)
 	targetInsufficientCapacity := materialized && groupsInsufficientCapacity(current, pool.Spec.DesiredGroups)
-	preparedRevision := pool.Status.PreparedRevision
+	// PreparedRevision 只描述当前目标；旧一代的服务身份由 ModelService 独立保留。
+	preparedRevision := ""
 	if targetReady {
 		preparedRevision = template.Revision
-	} else if preparedRevision == template.Revision {
-		preparedRevision = ""
-	}
-	if pool.Spec.DesiredGroups == 0 {
-		preparedRevision = ""
 	}
 	ready := pool.Spec.DesiredGroups > 0 && revisionServingReady(groups, servingRevision)
 	rolloutPending := preparedRevision != template.Revision || servingRevision != template.Revision || !targetReady

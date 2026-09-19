@@ -41,7 +41,7 @@ After source installation, build the Linux x86_64 diagnostic image from the loca
 
 ```bash
 docker build -f deploy/inference-engines/nsight/Dockerfile \
-  --build-arg MODEL_SERVER_IMAGE="${LOCAL_IMAGE_PREFIX:-foretoken-dev}-model-server" \
+  --build-arg MODEL_SERVER_IMAGE=foretoken-dev-model-server \
   -t "$NSIGHT_IMAGE" deploy/inference-engines/nsight
 docker push "$NSIGHT_IMAGE"
 ```

@@ -129,8 +129,9 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 		if err := c.Get(ctx, request.NamespacedName, current); err != nil {
 			t.Fatal(err)
 		}
-		if current.Status.PreparedRevision != oldRevision {
-			t.Fatalf("active revision changed before readiness: %#v", current.Status)
+		// 旧 cohort 仍在服务，但不能被当成当前目标已准备完成而提前提交新一代。
+		if current.Status.PreparedRevision != "" {
+			t.Fatalf("unready target published a prepared revision: %#v", current.Status)
 		}
 		for i := range groups.Items {
 			if groups.Items[i].Spec.Revision != oldRevision {
@@ -146,7 +147,7 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 		if err := c.Get(ctx, request.NamespacedName, current); err != nil {
 			t.Fatal(err)
 		}
-		if current.Status.PreparedRevision == oldRevision {
+		if current.Status.PreparedRevision == "" || current.Status.PreparedRevision == oldRevision {
 			t.Fatalf("ready target did not become prepared: %#v", current.Status)
 		}
 		if err := c.List(ctx, &groups, client.InNamespace(pool.Namespace)); err != nil {

@@ -497,6 +497,14 @@ def resource_progress(
 
     condition_status = str(ready_condition.get("status") or "Unknown")
     if condition_status == "True":
+        if (
+            resource.kind == "ModelService"
+            and int(status.get("servingGeneration") or 0) != generation
+        ):
+            return ResourceProgress(
+                resource, "Progressing", "Updating",
+                "Waiting for the current ModelService generation to serve", False,
+            )
         if not alerts_selected and alerts_condition is not None:
             return ResourceProgress(
                 resource, "Progressing", "AlertsRemoving",
