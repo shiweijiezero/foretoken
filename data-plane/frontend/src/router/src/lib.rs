@@ -4,6 +4,9 @@
 //! Composable selection of one routable ModelGroup per routing round.
 
 pub mod algorithm;
+mod routing_load;
+pub use routing_load::{RoutingLoadSnapshot, RoutingLoadState};
+mod cache;
 mod inventory;
 mod metrics;
 mod request;

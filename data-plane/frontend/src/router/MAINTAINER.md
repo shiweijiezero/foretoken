@@ -44,8 +44,9 @@ Scorers use the following observations and formulas:
 | `queue_depth` | `scheduler_waiting_requests` | `(max - waiting) / (max - min)` |
 | `running_request` | `scheduler_running_requests` | `(max - running) / (max - min)` |
 | `kv_cache_utilization` | `kv_cache_usage` | `1 - usage` |
+| `token_load` | In-flight tokens plus incoming uncached prompt tokens, `load` | `1` if `load <= 0`; otherwise `1 - min(load, threshold) / threshold` |
 
-Counts normalize over all candidates supplied to `score`; equal counts receive `1`,
+`queue_depth` and `running_request` counts normalize over all candidates supplied to `score`; equal counts receive `1`,
 and an empty candidate slice produces an empty score vector. Count subtraction precedes
 conversion to `f64`, preserving differences between large adjacent counts.
 `RouteScore.preference` preserves the numeric output, with the
@@ -60,5 +61,17 @@ Rates and windowed latencies remain unavailable until their counter window is co
 Foretoken handles telemetry transport, health checks, DP expansion, and E/P/D eligibility.
 Its Model Server endpoint reports sums of scheduler counts and mean KV utilization across its
 engines.
-Every rank of that endpoint receives the same metric score. These scorers ignore
+Every rank of that endpoint receives the same metric score. These three metric scorers ignore
 `RoutingProgress`; Router still supplies it and owns the subsequent stage selection.
+
+`token_load` adds signed token counts before conversion to `f64`. `threshold` is `queueThresholdTokens`
+(default `4194304`); nonpositive values use the default. Uncached tokens include the partial prompt tail;
+without usable cache observations, the whole prompt counts. Output tokens are not estimated.
+Aggregate, Prefill, and Decode reserve uncached prompt tokens before dispatch and release them on the
+first response, stage completion, or session drop, including failed dispatches.
+
+`token_load` uses frontend-local reservations per target and DP rank, without engine scheduler gauges
+or other frontend replicas' requests. Selection and reservation share one lock; routing sessions own
+cleanup, and RuntimeBuilder retains the state across serving-snapshot replacements.
+
+Set optional parameters in `FrontendService.spec.routerPipeline.scorerParameters`; the selected scorer reads them at frontend startup.

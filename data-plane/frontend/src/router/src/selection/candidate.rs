@@ -38,6 +38,8 @@ pub struct RouteCandidate {
     /// Latest route-target gauges and available windowed statistics for this routing round.
     /// It is aggregate telemetry shared by every DP rank of this target.
     pub route_target_stats: Option<Arc<RouteTargetStats>>,
+    /// Requests and uncached tokens reserved by this frontend for the exact target and DP rank.
+    pub local_load: crate::RoutingLoadSnapshot,
 }
 
 impl RouteCandidate {
