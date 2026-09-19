@@ -26,8 +26,8 @@ spec:
         resources:
           requests:
             cpu: "4"
-            memory: 280Gi
-        memoryCapacity: 256Gi
+            memory: 1088Gi
+        memoryCapacity: 1Ti
         storageRegistration:
           enabled: true
   requester:

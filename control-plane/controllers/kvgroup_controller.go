@@ -179,6 +179,13 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNames
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
+	startup, err := time.ParseDuration(string(group.Spec.Timeouts.Startup))
+	if err != nil || startup <= 0 {
+		return nil, nil, nil, nil, fmt.Errorf("KVGroup startup timeout must be a positive duration")
+	}
+	// Memory registration must finish before liveness checks can restart the client.
+	startupProbe := tcpProbe("management", 10)
+	startupProbe.FailureThreshold = int32(math.Ceil(startup.Seconds() / float64(startupProbe.PeriodSeconds)))
 	drain, err := time.ParseDuration(string(group.Spec.Timeouts.Drain))
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("parse KVGroup drain timeout: %w", err)
@@ -248,6 +255,7 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNames
 		Resources:       corev1.ResourceRequirements{Requests: requests, Limits: limits},
 		VolumeMounts:    mounts,
 		SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, ReadOnlyRootFilesystem: &readOnlyRootFilesystem, Capabilities: capabilities},
+		StartupProbe:    startupProbe,
 		ReadinessProbe:  tcpProbe("management", 10), LivenessProbe: tcpProbe("management", 15),
 	}
 	deployment := &appsv1.Deployment{

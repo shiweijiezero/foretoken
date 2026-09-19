@@ -5,7 +5,7 @@
 
 [English](README.md) | 简体中文
 
-通过 Foretoken 在两台各有 8 张 C500 64 GiB 的节点上运行一个模型执行组：attention TP8×DP2、专家 EP16、1,048,576 token 上下文和原生 MTP（5 个推测 token）。前端采用 KV-aware 路由；两个内存客户端向同一 Mooncake Store 各提供 256 GiB，不使用 SSD offload。
+通过 Foretoken 在两台各有 8 张 C500 64 GiB 的节点上运行一个模型执行组：attention TP8×DP2、专家 EP16、1,048,576 token 上下文和原生 MTP（5 个推测 token）。前端采用 KV-aware 路由；两个内存客户端向同一 Mooncake Store 各提供 1 TiB，不使用 SSD offload。
 
 此配方仍在端到端验证中，尚未完成 GLM 生成验收。需要支持 GLM-5.3-Flash、MTP 和混合注意力缓存的源码 MetaX vLLM 运行时，不能直接使用当前发布版的默认推理镜像。
 
@@ -19,7 +19,7 @@
 - 按[共享 KV 存储示例](../../../shared-kv-store/README_zh.md)构建并向节点提供 Mooncake Store 镜像，将 `kvservice.yaml` 的两处 `image` 设为实际镜像地址。
 - 默认使用平台托管的 `rdma/foretoken_rdma`。若平台复用了其他 RDMA 资源，将 `kvservice.yaml` 的 `rdmaResourceName` 改为该资源。
 
-配置合计请求 16 张 GPU、76 核 CPU 和 1592 GiB 主机内存；每个模型成员请求 8 张卡和 512 GiB 内存。资源值是部署起点，不是吞吐承诺；按实际节点容量调整。
+配置合计请求 16 张 GPU、76 核 CPU 和 3208 GiB 主机内存；每个模型成员请求 8 张卡和 512 GiB 内存。资源值是部署起点，不是吞吐承诺；按实际节点容量调整。
 
 ## 部署与调用
 
