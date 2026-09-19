@@ -43,6 +43,8 @@ make image-model-server-metax
 
 生成 `foretoken-vllm-metax:0.24.0` 和 `foretoken-model-server:dev`。SDK 和驱动按[沐曦官方版本矩阵](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html)匹配。
 
+构建 vLLM 0.26 时，将 `VLLM_METAX_VERSION` 设为 `0.26.0`，并使用包含配套 torchaudio 的 MACA/PyTorch SDK 镜像。构建流程会自动选择 SDK Python，并将音频依赖安装到独立推理环境。
+
 已有兼容 MetaX vLLM 镜像时，可用以下命令替代上面的构建。将镜像名称和 Python 路径替换为实际值：
 
 ```bash

@@ -72,6 +72,7 @@ image-vllm-metax: mooncake-source
 	docker build \
 		--build-arg METAX_SDK_IMAGE="$(METAX_SDK_IMAGE)" \
 		--build-arg MACA_PATH \
+		$(if $(UV_PYTHON),--build-arg UV_PYTHON="$(UV_PYTHON)",) \
 		$(if $(BUILD_JOBS),--build-arg BUILD_JOBS="$(BUILD_JOBS)",) \
 		$(if $(OCI_REGISTRY),--build-arg UV_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \
 		$(if $(UV_IMAGE),--build-arg UV_IMAGE="$(UV_IMAGE)",) \

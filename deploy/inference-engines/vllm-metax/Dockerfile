@@ -62,6 +62,7 @@ FROM ${METAX_SDK_IMAGE}
 
 ARG VLLM_VERSION
 ARG MACA_PATH=/opt/maca
+ARG UV_PYTHON
 ARG FORETOKEN_GITHUB_MIRROR
 ARG UV_DEFAULT_INDEX
 ARG UV_EXTRA_INDEX_URL
@@ -77,10 +78,12 @@ COPY --from=uv /uv /usr/local/bin/uv
 COPY deploy/inference-engines/vllm-metax/install.sh /usr/local/lib/foretoken/install-vllm-metax.sh
 COPY deploy/inference-engines/vllm-metax/xgrammar-0.24.patch \
      deploy/inference-engines/vllm-metax/constraints-0.24.txt \
+     deploy/inference-engines/vllm-metax/dependencies-0.26.patch \
+     deploy/inference-engines/vllm-metax/sdk_audio.py \
      /usr/local/lib/foretoken/
 
 ENV MACA_PATH=${MACA_PATH} \
-    UV_PYTHON=/usr/bin/python3
+    UV_PYTHON=${UV_PYTHON}
 RUN bash /usr/local/lib/foretoken/install-vllm-metax.sh \
     /opt/foretoken-vllm ${VLLM_VERSION}
 

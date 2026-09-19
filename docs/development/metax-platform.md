@@ -41,6 +41,8 @@ make image-model-server-metax
 
 This produces `foretoken-vllm-metax:0.24.0` and `foretoken-model-server:dev`. Select matching SDK and driver versions from the [MetaX release matrix](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html).
 
+For vLLM 0.26, set `VLLM_METAX_VERSION=0.26.0` and use a MACA/PyTorch SDK image containing its matching torchaudio package. The build automatically selects the SDK Python and installs the audio package into the isolated inference environment.
+
 If a compatible MetaX vLLM image is already available, use it instead of the source build:
 
 ```bash
