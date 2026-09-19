@@ -83,7 +83,8 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 		service := modelService("rollout", 1)
 		pool := modelPool(service, "rollout-default", 1)
 		c := controllerClient(t, service, pool)
-		r := &controllers.ModelPoolReconciler{Client: c, TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: resolver.RuntimeProfile{Revision: "default", Image: "vllm:test", ModelServerPort: 9000, DeviceResourceName: "nvidia.com/gpu", NodeSelectorKey: "nvidia.com/gpu.product", NodeSelectorValue: "NVIDIA-H100-80GB-HBM3"}}}
+		profile := resolver.RuntimeProfile{Image: "vllm:test", ModelServerPort: 9000, DeviceResourceName: "nvidia.com/gpu", NodeSelectorKey: "nvidia.com/gpu.product", NodeSelectorValue: "NVIDIA-H100-80GB-HBM3"}
+		r := &controllers.ModelPoolReconciler{Client: c, APIReader: c, TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: profile}}
 		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(pool)}
 		for range 2 {
 			if _, err := r.Reconcile(ctx, request); err != nil {
@@ -112,11 +113,9 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 		if err := c.Status().Update(ctx, currentService); err != nil {
 			t.Fatal(err)
 		}
-		current.Spec.Template.ModelRevision = "next"
-		current.Generation++
-		if err := c.Update(ctx, current); err != nil {
-			t.Fatal(err)
-		}
+		// Platform image updates leave Pool generation unchanged but still require a new cohort.
+		profile.Image = "vllm:next"
+		r.TemplateResolver = resolver.StaticModelPoolResolver{RuntimeProfile: profile}
 		if _, err := r.Reconcile(ctx, request); err != nil {
 			t.Fatal(err)
 		}
@@ -129,7 +128,7 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 		if err := c.Get(ctx, request.NamespacedName, current); err != nil {
 			t.Fatal(err)
 		}
-		// 旧 cohort 仍在服务，但不能被当成当前目标已准备完成而提前提交新一代。
+		// The old cohort still serves, but must not let the service commit an unready target.
 		if current.Status.PreparedRevision != "" {
 			t.Fatalf("unready target published a prepared revision: %#v", current.Status)
 		}

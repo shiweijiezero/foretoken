@@ -76,7 +76,7 @@ def _open_directory(root_fd: int, parts: list[str]) -> int:
 
 
 def _capture_name(value: str) -> tuple[list[str], str]:
-    """校验认证目录内可读取的采集产物名称。"""
+    """Validate a capture filename relative to its authenticated directory scope."""
     parts = _relative_parts(value)
     if _capture_format(parts[-1]) is None:
         raise ValueError("not a capture file")

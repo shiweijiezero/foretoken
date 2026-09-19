@@ -12,6 +12,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 运行一段短负载并采集：
 
 ```bash
+pip install -e '.[bench]'
 foretoken bench examples/nsight \
   --profile --profile-engine nsight --profile-duration 15s \
   --number 2 --max-tokens 128 --output local

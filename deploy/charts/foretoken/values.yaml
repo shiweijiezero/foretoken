@@ -83,7 +83,7 @@ runtime:
     image: auto # Selects the release image for the configured GPU resource.
     # Optional source-built diagnostic image with Nsight Systems; used only by opted-in models.
     nsightImage: ""
-    profileRevision: default
+    profileRevision: default # Mooncake P/D compatibility revision.
     modelServerPort: 9000
     # Optional Hugging Face-compatible endpoint and credential.
     modelSource:

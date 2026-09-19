@@ -515,7 +515,7 @@ async fn start_engine_attempt(
     match client {
         Ok(client) => Ok((engine, client)),
         Err(error) => {
-            // 清理失败必须结束本次 runtime，不能让临时缓存重试与旧引擎并存。
+            // Failed cleanup must end this runtime, not start a temporary-cache retry beside the old engine.
             engine
                 .shutdown(config.launch.drain_timeout())
                 .await

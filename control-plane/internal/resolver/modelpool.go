@@ -9,7 +9,6 @@ import (
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/util/validation"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
@@ -48,7 +47,6 @@ type ECProfile struct {
 
 // RuntimeProfile contains platform-owned values for the initial vLLM runtime profile.
 type RuntimeProfile struct {
-	Revision           string
 	Image              string
 	NsightImage        string
 	ModelServerPort    int32
@@ -99,9 +97,6 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	}
 	if template.NodeCount != 1 || template.MemberCount != 1 {
 		return ModelGroupTemplate{}, fmt.Errorf("only single-member vLLM Groups are currently supported")
-	}
-	if errors := validation.IsDNS1123Label(profile.Revision); len(errors) > 0 || len(profile.Revision) > 16 {
-		return ModelGroupTemplate{}, fmt.Errorf("inference engine profile revision must be a DNS label of at most 16 characters")
 	}
 	if profile.Image == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("inference engine image is not configured")
@@ -157,7 +152,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		nodeSelector = map[string]string{profile.NodeSelectorKey: profile.NodeSelectorValue}
 	}
 
-	resolved := ModelGroupTemplate{
+	return ModelGroupTemplate{
 		Role: template.Role,
 		Artifacts: inferencev1alpha1.ModelGroupArtifacts{
 			Model:             effective.Model,
@@ -192,9 +187,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			NodeSelector:       nodeSelector,
 		},
 		Network: template.Network,
-	}
-	resolved.Revision = profile.Revision
-	return resolved, nil
+	}, nil
 }
 
 // resolveKVRuntime binds the selected cache mode to a validated ModelGroup runtime contract.

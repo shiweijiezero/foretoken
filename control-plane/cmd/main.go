@@ -48,7 +48,6 @@ func main() {
 	var frontendGatewayName string
 	var frontendGatewayNamespace string
 	var frontendGatewaySectionName string
-	var inferenceEngineProfileRevision string
 	var inferenceEngineImage string
 	var nsightImage string
 	var modelServerPort int
@@ -114,7 +113,6 @@ func main() {
 	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional Hugging Face-compatible Hub endpoint.")
 	flag.StringVar(&modelSourceTokenSecretName, "model-source-token-secret-name", "", "Namespace-local Secret containing the Hugging Face credential.")
 	flag.StringVar(&modelSourceTokenSecretKey, "model-source-token-secret-key", "", "Key in the model source credential Secret.")
-	flag.StringVar(&inferenceEngineProfileRevision, "inference-engine-profile-revision", "default", "Opaque revision of the configured inference engine profile.")
 	flag.StringVar(&inferenceEngineImage, "inference-engine-image", "", "Inference engine image containing the Foretoken model-server adapter.")
 	flag.StringVar(&nsightImage, "nsight-image", "", "Optional NVIDIA model-server image prepared for Nsight Systems.")
 	flag.IntVar(&modelServerPort, "model-server-port", 9000, "Internal model-server HTTP port.")
@@ -359,7 +357,6 @@ func main() {
 	if err := (&controllers.ModelPoolReconciler{
 		Client: manager.GetClient(),
 		TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: resolver.RuntimeProfile{
-			Revision:           inferenceEngineProfileRevision,
 			Image:              inferenceEngineImage,
 			NsightImage:        nsightImage,
 			ModelServerPort:    int32(modelServerPort),

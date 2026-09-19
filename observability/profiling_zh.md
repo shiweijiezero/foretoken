@@ -61,6 +61,7 @@ runtime:
 [Nsight 示例](../examples/nsight/README_zh.md)已选择该工具，并沿用快速开始示例的持久存储：
 
 ```bash
+pip install -e '.[bench]'
 foretoken bench examples/nsight \
   --profile --profile-engine nsight --profile-duration 15s \
   --number 2 --max-tokens 128 --output local

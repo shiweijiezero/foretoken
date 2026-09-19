@@ -8,7 +8,7 @@ pub(crate) mod nsight;
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -425,24 +425,11 @@ impl Supervisor {
         let cancelled = *action.borrow() == Action::Cancel;
         record.phase = if cancelled { "Cancelled" } else { "Succeeded" }.into();
         let config = self.handle.config.clone();
-        self.publication = Some(tokio::spawn(async move {
-            // 原生记录已经停止；派生导出失败只影响本次产物，不重启仍可服务的引擎。
-            if !cancelled && config.engine == Engine::Nsight {
-                record.gpu_activity = Some(
-                    tokio::time::timeout_at(export_deadline, nsight::validate_report(&config))
-                        .await
-                        .map_err(|_| {
-                            io::Error::new(
-                                io::ErrorKind::TimedOut,
-                                "Nsight report export timed out",
-                            )
-                        })??,
-                );
-            }
-            tokio::task::spawn_blocking(move || seal(&config, record, cancelled))
-                .await
-                .map_err(io::Error::other)?
-        }));
+        self.publication = Some(tokio::spawn(publish_capture(
+            config,
+            record,
+            export_deadline,
+        )));
         let publication = self.publication.as_mut().expect("publication exists").await;
         self.publication = None;
         match publication {
@@ -497,12 +484,47 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-// Validate native output after stop/export, then publish the entire capture directory atomically.
-fn seal(config: &Config, mut record: Record, cancelled: bool) -> io::Result<Record> {
-    let staging = config.staging();
-    if !cancelled && config.engine == Engine::Pytorch {
-        record.gpu_activity = Some(validate_torch(config)?);
+// Publish stopped captures through one path, retaining inspection failures without blocking later runs.
+async fn publish_capture(
+    config: Config,
+    mut record: Record,
+    export_deadline: tokio::time::Instant,
+) -> io::Result<Record> {
+    if record.phase == "Succeeded" {
+        let inspection = match config.engine {
+            Engine::Pytorch => {
+                let config = config.clone();
+                tokio::task::spawn_blocking(move || validate_torch(&config))
+                    .await
+                    .map_err(io::Error::other)?
+            }
+            Engine::Nsight => {
+                tokio::time::timeout_at(export_deadline, nsight::validate_report(&config))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "Nsight report export timed out",
+                        ))
+                    })
+            }
+        };
+        match inspection {
+            Ok(active) => record.gpu_activity = Some(active),
+            Err(error) => {
+                record.phase = "Failed".into();
+                record.message = error.to_string();
+            }
+        }
     }
+    tokio::task::spawn_blocking(move || seal(&config, record))
+        .await
+        .map_err(io::Error::other)?
+}
+
+// Publish the record and available files atomically; filesystem failures retain staging for diagnosis.
+fn seal(config: &Config, mut record: Record) -> io::Result<Record> {
+    let staging = config.staging();
     if record.gpu_activity == Some(false) {
         record.message = "No GPU kernel activity was recorded in this window".into();
     }
@@ -514,8 +536,7 @@ fn seal(config: &Config, mut record: Record, cancelled: bool) -> io::Result<Reco
     let mut manifest = File::create(staging.join("manifest.json"))?;
     serde_json::to_writer(&mut manifest, &record)?;
     manifest.write_all(b"\n")?;
-    manifest.sync_all()?;
-    File::open(&staging)?.sync_all()?;
+    sync_capture(&staging)?;
     let runs = config.profile_root().join("runs");
     let destination = config.data_root.join(&relative);
     fs::create_dir_all(destination.parent().expect("run directory has parent"))?;
@@ -523,6 +544,20 @@ fn seal(config: &Config, mut record: Record, cancelled: bool) -> io::Result<Reco
     File::open(destination.parent().expect("run directory has parent"))?.sync_all()?;
     File::open(runs)?.sync_all()?;
     Ok(record)
+}
+
+// Flush artifacts at the publication boundary, including partial output from cancelled or failed runs.
+fn sync_capture(directory: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            sync_capture(&entry.path())?;
+        } else if kind.is_file() {
+            File::open(entry.path())?.sync_all()?;
+        }
+    }
+    File::open(directory)?.sync_all()
 }
 
 // Validate one native Chrome trace per expected worker before publishing a successful capture.
@@ -540,7 +575,6 @@ fn validate_torch(config: &Config) -> io::Result<bool> {
             let file = File::open(path)?;
             let trace: TorchTrace = serde_json::from_reader(BufReader::new(&file))?;
             gpu_activity |= trace.events.0;
-            file.sync_all()?;
             traces += 1;
         }
     }

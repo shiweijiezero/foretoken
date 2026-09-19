@@ -61,6 +61,7 @@ Add `--values nsight-values.yaml` to the source installation command used for th
 The [Nsight example](../examples/nsight/README.md) selects the tool and uses the Quick Start's persistent storage:
 
 ```bash
+pip install -e '.[bench]'
 foretoken bench examples/nsight \
   --profile --profile-engine nsight --profile-duration 15s \
   --number 2 --max-tokens 128 --output local

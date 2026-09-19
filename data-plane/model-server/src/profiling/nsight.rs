@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Nsight Systems 的进程树插桩、原生控制和报告导出。
+//! Nsight Systems process-tree instrumentation, native control, and report export.
 
 use std::io;
 use std::process::{Command, Output};
@@ -12,7 +12,7 @@ pub(crate) fn session_name(runtime_id: &str) -> String {
     format!("foretoken-{runtime_id}")
 }
 
-/// 配置 CUDA/NVTX 插桩；记录由 runtime 后续显式开启。
+/// Prepares CUDA/NVTX instrumentation without recording until the runtime requests a capture.
 pub(crate) fn launch(application: Command, session: &str) -> Command {
     let mut command = Command::new("nsys");
     command.args([
@@ -40,7 +40,7 @@ pub(crate) fn launch(application: Command, session: &str) -> Command {
     command
 }
 
-/// 终止 session 中的真实目标进程组，供引擎生命周期 owner 回收 launcher。
+/// Terminates the session's target process group before the engine owner reaps its launcher.
 pub(crate) async fn shutdown(session: &str) -> Result<(), String> {
     run(
         tokio::process::Command::new("nsys").args([
@@ -55,7 +55,7 @@ pub(crate) async fn shutdown(session: &str) -> Result<(), String> {
     .map_err(|error| error.to_string())
 }
 
-/// 控制一次记录；停止返回时原生报告已导出，模型继续运行。
+/// Controls one recording; stop returns after native report export while the model keeps serving.
 pub(super) async fn set_recording(config: &Config, start: bool) -> Result<(), String> {
     let mut command = tokio::process::Command::new("nsys");
     command.arg(if start { "start" } else { "stop" });
@@ -73,7 +73,7 @@ pub(super) async fn set_recording(config: &Config, start: bool) -> Result<(), St
         .map_err(|error| error.to_string())
 }
 
-/// 在 supervisor 的导出预算内生成 SQLite 并读取 GPU 活动，返回发布用结果。
+/// Exports SQLite and inspects GPU activity under the supervisor's publication deadline.
 pub(super) async fn validate_report(config: &Config) -> io::Result<bool> {
     let report = config.staging().join("capture.nsys-rep");
     let database = report.with_extension("sqlite");
@@ -88,14 +88,14 @@ pub(super) async fn validate_report(config: &Config) -> io::Result<bool> {
     let output = run(
         tokio::process::Command::new(&config.python)
             .arg("/opt/foretoken/python/foretoken_nsys.py")
-            .arg(report),
+            .arg(database),
         "report validation",
     )
     .await?;
     serde_json::from_slice(&output.stdout).map_err(io::Error::other)
 }
 
-// 每次调用只持有一个原生工具进程；所属 future 超时或取消时由 Tokio 终止并回收。
+// Each future owns one native tool process; Tokio kills it on cancellation and reaps it.
 async fn run(command: &mut tokio::process::Command, operation: &str) -> io::Result<Output> {
     let output = command.kill_on_drop(true).output().await?;
     if !output.status.success() {
