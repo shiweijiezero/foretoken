@@ -52,6 +52,14 @@ pub(crate) fn router_pipeline_from_env(
         filter: optional_algorithm(&get_env, ROUTER_FILTER_ENV, FilterAlgorithm::default())?,
         scorer: optional_algorithm(&get_env, ROUTER_SCORER_ENV, ScorerAlgorithm::default())?,
         picker: optional_algorithm(&get_env, ROUTER_PICKER_ENV, PickerAlgorithm::default())?,
+        scorer_parameters: match get_env("FORETOKEN_ROUTER_SCORER_PARAMETERS") {
+            Ok(value) => serde_json::from_str(&value)
+                .map_err(|error| format!("invalid scorer parameters: {error}"))?,
+            Err(env::VarError::NotPresent) => Default::default(),
+            Err(env::VarError::NotUnicode(_)) => {
+                return Err("scorer parameters must be valid UTF-8".into());
+            }
+        },
     };
     pipeline.validate().map_err(|error| error.to_string())?;
     Ok(pipeline)

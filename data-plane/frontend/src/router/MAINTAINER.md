@@ -44,8 +44,9 @@ Scorers use the following observations and formulas:
 | `queue_depth` | `scheduler_waiting_requests` | `(max - waiting) / (max - min)` |
 | `running_request` | `scheduler_running_requests` | `(max - running) / (max - min)` |
 | `kv_cache_utilization` | `kv_cache_usage` | `1 - usage` |
+| `prefix` | Matched blocks `m`, complete prompt blocks `t`, block size `b` | `w * min(1, m * b / s)^2 + (1 - w) * m / t` |
 
-Counts normalize over all candidates supplied to `score`; equal counts receive `1`,
+`queue_depth` and `running_request` counts normalize over all candidates supplied to `score`; equal counts receive `1`,
 and an empty candidate slice produces an empty score vector. Count subtraction precedes
 conversion to `f64`, preserving differences between large adjacent counts.
 `RouteScore.preference` preserves the numeric output, with the
@@ -60,5 +61,12 @@ Rates and windowed latencies remain unavailable until their counter window is co
 Foretoken handles telemetry transport, health checks, DP expansion, and E/P/D eligibility.
 Its Model Server endpoint reports sums of scheduler counts and mean KV utilization across its
 engines.
-Every rank of that endpoint receives the same metric score. These scorers ignore
+Every rank of that endpoint receives the same metric score. These three metric scorers ignore
 `RoutingProgress`; Router still supplies it and owns the subsequent stage selection.
+
+`prefix` reads complete block counts and block size from the KV index for the exact target and DP rank.
+Here `w` is `matchLengthWeight` (default `0`, range `[0, 1]`) and `s` is `matchLengthScaleTokens`
+(default `8192`, positive when `w > 0`). With zero weight, only `m / t` is evaluated.
+Missing cache observations or zero complete prompt blocks score `0`; cache-ineligible requests receive no prefix credit.
+
+Set optional parameters in `FrontendService.spec.routerPipeline.scorerParameters`; the selected scorer reads them at frontend startup.

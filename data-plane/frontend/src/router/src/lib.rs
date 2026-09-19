@@ -4,6 +4,7 @@
 //! Composable selection of one routable ModelGroup per routing round.
 
 pub mod algorithm;
+mod cache;
 mod inventory;
 mod metrics;
 mod request;

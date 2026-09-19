@@ -48,6 +48,12 @@ type RouterPipeline struct {
 	// +kubebuilder:default=kv_least_loaded
 	Scorer RouterScorerAlgorithm `json:"scorer,omitempty"`
 
+	// ScorerParameters is validated and consumed by the selected Frontend scorer.
+	// +optional
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	ScorerParameters *runtime.RawExtension `json:"scorerParameters,omitempty"`
+
 	// +optional
 	// +kubebuilder:default=round_robin
 	Picker RouterPickerAlgorithm `json:"picker,omitempty"`
