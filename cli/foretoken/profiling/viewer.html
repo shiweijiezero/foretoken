@@ -384,7 +384,9 @@
         message(
           file.format === "nsight"
             ? "Download this report and open it in Nsight Systems."
-            : "Download this SQLite database for analysis.",
+            : file.format === "mctracer"
+              ? "Download this report and open it in mcTracer-Viewer."
+              : "Download this SQLite database for analysis.",
         );
       }
     }

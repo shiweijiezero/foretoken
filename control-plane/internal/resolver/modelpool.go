@@ -145,6 +145,14 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires a persistent RuntimeCache")
 		}
 	}
+	if template.Profiling != nil && template.Profiling.Engine == "mctracer" {
+		if profile.DeviceResourceName != "metax-tech.com/gpu" {
+			return ModelGroupTemplate{}, fmt.Errorf("mcTracer requires MetaX GPUs")
+		}
+		if template.RuntimeCache == nil {
+			return ModelGroupTemplate{}, fmt.Errorf("mcTracer requires a persistent RuntimeCache")
+		}
+	}
 	resources := *template.Resources.DeepCopy()
 
 	nodeSelector := map[string]string(nil)

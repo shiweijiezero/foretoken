@@ -170,6 +170,29 @@ impl VllmBackend {
         llm.shutdown().await.map_err(BackendError::from_llm)
     }
 
+    /// Runs the MetaX worker capture method on every rank; the supervisor owns its deadline.
+    pub async fn set_mctracer(
+        &self,
+        start: bool,
+        directory: &std::path::Path,
+    ) -> Result<(), String> {
+        let guard = self.llm.read().await;
+        let client = guard
+            .as_ref()
+            .ok_or("engine is unavailable")?
+            .engine_core_client();
+        client
+            .collective_rpc(
+                "foretoken_mctracer",
+                None,
+                (start, directory.to_string_lossy()),
+                std::collections::BTreeMap::<String, String>::new(),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+
     /// Runs one native utility for the capture supervisor; callers own deadlines and escalation.
     pub async fn set_profiling(&self, start: bool) -> Result<(), String> {
         let guard = self.llm.read().await;
