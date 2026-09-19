@@ -24,6 +24,7 @@ CAPTURE_FORMATS: Final = {
     ".pt.trace.json": "perfetto",
     ".nsys-rep": "nsight",
     ".sqlite": "sqlite",
+    ".mctracer.json": "mctracer",
 }
 
 

@@ -343,7 +343,7 @@ var controllerOwnedArgs = []string{
 	"--grpc", "--headless", "--hf-token", "--host", "--kv-events-config", "--kv-transfer-config",
 	"--master-addr", "--master-port", "--model", "--nnodes", "--node-rank",
 	"--port", "--profiler-config", "--revision",
-	"--runner", "--served-model-name", "--tokenizer", "--tokenizer-revision",
+	"--runner", "--served-model-name", "--tokenizer", "--tokenizer-revision", "--worker-cls",
 }
 
 var engineArgName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)

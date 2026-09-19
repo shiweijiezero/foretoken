@@ -22,7 +22,7 @@ type ProfileServiceReference struct {
 type ProfileRunSpec struct {
 	ModelServiceRef ProfileServiceReference `json:"modelServiceRef"`
 	// Engine selects the native profiler prepared by the diagnostic runtime.
-	// +kubebuilder:validation:Enum=pytorch;nsight
+	// +kubebuilder:validation:Enum=pytorch;nsight;mctracer
 	Engine   string   `json:"engine"`
 	Duration Duration `json:"duration"`
 	// +kubebuilder:default=Capture

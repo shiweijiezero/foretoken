@@ -585,6 +585,7 @@ spec:
                         enum:
                         - pytorch
                         - nsight
+                        - mctracer
                         type: string
                     required:
                     - engine

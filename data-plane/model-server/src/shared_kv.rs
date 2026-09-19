@@ -10,7 +10,6 @@ use zeromq::prelude::{Socket, SocketRecv, SocketSend};
 pub const LOOKUP_ENDPOINT: &str = "ipc:///tmp/foretoken-shared-kv.sock";
 pub const LOOKUP_ENDPOINT_ENV: &str = "FORETOKEN_SHARED_KV_LOOKUP_ENDPOINT";
 pub const CONNECTOR_MODULE: &str = "foretoken_mooncake";
-pub const PYTHON_MODULE_PATH: &str = "/opt/foretoken/python";
 
 #[derive(Clone)]
 pub struct SharedKvLookup {

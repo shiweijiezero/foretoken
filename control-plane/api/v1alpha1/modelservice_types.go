@@ -271,7 +271,7 @@ const (
 // ProfilingConfig selects instrumentation prepared when model processes start.
 // Captures are still requested separately through ProfileRun.
 type ProfilingConfig struct {
-	// +kubebuilder:validation:Enum=pytorch;nsight
+	// +kubebuilder:validation:Enum=pytorch;nsight;mctracer
 	Engine string `json:"engine"`
 }
 
