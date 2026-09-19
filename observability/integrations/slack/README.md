@@ -7,13 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Send Foretoken service alerts to a Slack channel through Alertmanager.
-
-## Connect Slack
-
-With the Foretoken platform installed, [create a Slack incoming webhook](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/) for the destination channel.
-
-Store the webhook in Alertmanager's namespace. The CLI-managed stack uses `foretoken-platform`; for an [existing monitoring stack](#use-an-existing-monitoring-stack), change the namespace below. Replace the webhook placeholder with the URL from Slack:
+With Foretoken installed, [create an incoming webhook](https://docs.slack.dev/messaging/sending-messages-using-incoming-webhooks/) for the destination Slack channel. Store it in Alertmanager's namespace (`foretoken-platform` for CLI-managed monitoring):
 
 ```bash
 ALERTMANAGER_NAMESPACE=foretoken-platform
@@ -22,7 +16,7 @@ kubectl create secret generic foretoken-slack-webhook \
   --from-literal=url='<SLACK_INCOMING_WEBHOOK_URL>'
 ```
 
-Add to your platform values file, such as `platform-values.yaml`:
+Add to `platform-values.yaml`:
 
 ```yaml
 observability:
@@ -40,26 +34,18 @@ foretoken install --values platform-values.yaml
 # foretoken install -e . --values platform-values.yaml
 ```
 
-Enable the [service alerts](../../README.md#alerts) you need. When an alert fires or resolves, the channel receives its status, affected resources, English description, and runbook link.
+Enable the [service alerts](../../README.md#alerts) you need. Firing and resolved notifications include affected resources, English descriptions and runbook links.
 
-## Use an existing monitoring stack
+## Existing monitoring stacks
 
-Under the same `observability.notifications` mapping, set `namespace` to the Alertmanager namespace used for the Secret. Add `additionalLabels` if Alertmanager requires labels to select the receiver. For example:
+Set `observability.notifications.namespace` to your Alertmanager namespace, matching the Secret above. Set `additionalLabels` under the same mapping if its `alertmanagerConfigSelector` requires labels.
 
-```yaml
-namespace: monitoring
-additionalLabels:
-  team: inference
-```
+The monitoring administrator selects the receiver and permits workload alerts. With the receiver in Alertmanager's own namespace, use `spec.alertmanagerConfigMatcherStrategy.type: OnNamespaceExceptForAlertmanagerNamespace`; see the [Operator API](https://prometheus-operator.dev/docs/api-reference/api/#monitoring.coreos.com/v1.AlertmanagerConfigMatcherStrategy).
 
-The monitoring administrator must select this receiver through `alertmanagerConfigSelector` and allow alerts from Foretoken workload namespaces. For a receiver in Alertmanager's own namespace, set `spec.alertmanagerConfigMatcherStrategy.type` to `OnNamespaceExceptForAlertmanagerNamespace`. See the [Operator API reference](https://prometheus-operator.dev/docs/api-reference/api/#monitoring.coreos.com/v1.AlertmanagerConfigMatcherStrategy).
+## Disconnect
 
-## Disconnect Slack
-
-Set `observability.notifications.slack.webhookSecret.name` to `""` and repeat the install command. This removes the Slack receiver without affecting other notification channels. Delete the Secret when it is no longer needed:
+Set `observability.notifications.slack.webhookSecret.name` to `""` and repeat the install command to remove the receiver. `foretoken uninstall` also removes it. Both leave the Secret in place; delete it when no longer needed:
 
 ```bash
 kubectl delete secret foretoken-slack-webhook --namespace "$ALERTMANAGER_NAMESPACE"
 ```
-
-`foretoken uninstall` also removes the receiver and leaves the Secret in place.
