@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](profiling_zh.md)
 
-Inspect inference execution with PyTorch Profiler or NVIDIA Nsight Systems. Profiling currently supports vLLM on NVIDIA GPUs and requires a [source-installed](../docs/custom-deployment.md) CLI and platform. Results use persistent RuntimeCache storage, which the Quick Start already configures.
+Inspect vLLM execution with PyTorch Profiler on NVIDIA or [MetaX GPUs](../docs/metax-deployment.md), or with Nsight Systems on NVIDIA GPUs. Profiling requires a [source-installed](../docs/custom-deployment.md) CLI and platform. Results use persistent RuntimeCache storage, which the Quick Start already configures.
 
 ## Capture a benchmark workload
 
