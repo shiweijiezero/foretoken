@@ -4,6 +4,23 @@ English | [简体中文](metrics_zh.md) · [Common commands](docs/examples.md)
 
 `metrics.json` contains aggregate results; `raw_output.json` contains per-request records. Standard workloads also retain `benchmark_data.db` and `benchmark.log`.
 
+## Experiment records
+
+Local output includes:
+
+| File | Content |
+| --- | --- |
+| `environment.json` | Client versions and source state; Kustomize runs also include serving settings, image IDs and nodes before/after execution. Failed reads have an `error` field. |
+| `warmup/` | Warmup results, excluded from measured metrics and profiling |
+| `sweep_points.json` | Every sweep repetition |
+| `sweep_summary.json`, `sweep_summary.csv` | Per-point mean, median, sample standard deviation and range across repetitions |
+
+In sweep summaries, `runs` counts repetitions and `samples` counts available values. Missing timings are omitted; zero throughput and failure counts remain. `stddev` is unavailable for fewer than two samples. Timing metrics ending in `_seconds` use seconds. Summaries of run p95 values are not pooled request percentiles.
+
+Warmup reuses the workload's starting rows and seed and must succeed before measurement begins. Trace replay requires separate warmup.
+
+## Request metrics
+
 | Metric | Meaning |
 | --- | --- |
 | Success rate | Successful requests divided by attempted requests |

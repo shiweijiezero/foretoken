@@ -2,37 +2,35 @@
 
 English | [简体中文](sweep_zh.md) · [Common commands](../examples.md)
 
-After [setup](../examples.md#setup), deploy the service and warm it up before comparing concurrency levels:
-
-```bash
-foretoken deploy examples/quickstart --timeout 20m
-for parallel in 1 2 4; do
-  foretoken bench examples/quickstart \
-    --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
-    --min-prompt-length 128 --max-prompt-length 256 --random-seed 0 \
-    --min-output-length 256 --max-output-length 256 \
-    --parallel "$parallel" --number 16 --output local
-done
-```
-
-Run the [parameter file](../../examples/sweep.jsonl) with the same inputs:
+After [setup](../examples.md#setup), compare concurrency levels with the existing [parameter file](../../examples/sweep.jsonl):
 
 ```bash
 foretoken bench examples/quickstart \
   --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
   --min-prompt-length 128 --max-prompt-length 256 --random-seed 0 \
+  --temperature 0 \
   --sweep benchmarks/examples/sweep.jsonl \
-  --experiment-name quickstart-sweep \
+  --warmup-requests 16 --num-runs 3 \
   --output local,wandb
 ```
 
-Each JSONL row defines a parameter group. Lists of `parallel`, `number`, or `rate` expand into points. Only one of `parallel` and `rate` may be a multi-value list in a row; a multi-value `number` list must match that axis's length.
+This runs 384 requests at concurrency 1, 2 and 4, requesting 256 output tokens each. Every point is repeated three times, with 16 warmup conversations before each repetition. Sweeps require a Kustomize deployment; `--url`, trace replay and multiple datasets are not supported.
 
-Each row may change load, generation, or dataset settings, including output-length bounds. Service identity, credentials, trace source, and output destinations stay fixed. Sweeps cannot be combined with trace replay or multiple datasets. `--num-runs` repeats each point.
+Each JSONL row defines load, generation or dataset settings. Lists of `parallel`, `number` or `rate` expand into points. Only one of `parallel` and `rate` may have multiple values; a multi-value `number` must match that axis's length. Rows may also override `warmup_requests`.
 
-Each point has a result directory. `sweep_points.json` records all results, and `pareto/PARETO.png` compares output token throughput per configured user with throughput per GPU when enough points are available. Choose a fresh `--experiment-name` for another experiment, or omit it to use an automatically created directory.
+## Read results
 
-Delete the service after finishing with `foretoken delete examples/quickstart`.
+Open `sweep_summary.csv` in the printed result directory to compare repetitions. Individual results remain in each run's directory; [Result metrics](../../metrics.md#experiment-records) explains the saved files, statistics and units. Use `--experiment-name` to choose a fresh directory name, or omit it for an automatic name.
+
+## Compare inference configurations
+
+Change the model's [inference parameters](../../../docs/inference-parameters.md) and apply each configuration before repeating the same sweep:
+
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+`bench` reuses existing services without applying YAML changes. Keep the workload, hardware and cache policy consistent; append `--experiment-name baseline --wandb-group comparison` to the benchmark command, changing the experiment name for each variant. When finished, remove the explicitly deployed service with `foretoken delete examples/quickstart`.
 
 ## Example output
 
@@ -40,7 +38,7 @@ Qwen3-0.6B on one A100 80GB PCIe GPU:
 
 ![Recorded sweep output](../imgs/sweep-cli.png)
 
-W&B shows E2EL p95 in one-second completion windows; the Pareto plot compares whole-run throughput.
+W&B shows E2EL p95 in one-second completion windows; the Pareto plot compares whole-run throughput per configured user and per declared GPU.
 
 ![E2EL p95 over elapsed time, in one-second completion windows](../imgs/sweep-wandb.png)
 
