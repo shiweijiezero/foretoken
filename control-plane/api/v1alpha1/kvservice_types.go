@@ -118,10 +118,8 @@ type StorageRegistration struct {
 }
 
 // KVClientTemplate configures homogeneous Store clients.
-// This standalone Store profile enables SSD offload, so disk is required. The
-// user-provided gap between capacity and memory resources reserves runtime overhead;
-// Foretoken deliberately does not guess a fixed overhead amount.
-// +kubebuilder:validation:XValidation:rule="has(self.disk)",message="client.disk is required when standalone Store offload is enabled"
+// Clients contribute memory capacity; optional disk adds an SSD offload tier.
+// The gap between capacity and memory resources reserves runtime overhead.
 // +kubebuilder:validation:XValidation:rule="self.protocol == 'rdma' ? has(self.rdmaResourceName) : !has(self.rdmaResourceName) && !has(self.rdmaResourceCount)",message="RDMA requires rdmaResourceName; TCP must omit RDMA resources"
 // +kubebuilder:validation:XValidation:rule="quantity(self.memoryCapacity).compareTo(quantity(self.resources.requests.memory)) < 0",message="client.memoryCapacity must be less than client.resources.requests.memory to reserve runtime overhead"
 // +kubebuilder:validation:XValidation:rule="!has(self.resources.limits) || !has(self.resources.limits.memory) || quantity(self.memoryCapacity).compareTo(quantity(self.resources.limits.memory)) < 0",message="client.memoryCapacity must be less than client.resources.limits.memory to reserve runtime overhead"

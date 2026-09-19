@@ -45,20 +45,12 @@ Scorers use the following observations and formulas:
 | `running_request` | `scheduler_running_requests` | `(max - running) / (max - min)` |
 | `kv_cache_utilization` | `kv_cache_usage` | `1 - usage` |
 
-Counts normalize over all candidates supplied to `score`; equal counts receive `1`,
+Counts normalize over candidates with measured rank-local gauges; equal measured counts receive `1`,
 and an empty candidate slice produces an empty score vector. Count subtraction precedes
 conversion to `f64`, preserving differences between large adjacent counts.
 `RouteScore.preference` preserves the numeric output, with the
 locality/load fields left at zero. Existing locality policies retain their lexicographic ordering.
 
-The registry owns gauge history: it publishes gauges immediately and uses the last measured value
-on omission only while that raw snapshot remains retained. A non-increasing timestamp or a
-cumulative counter or histogram reset clears history. Omitted gauges in the new history remain
-unobserved until reported. Metric scorers use zero for unobserved gauges.
-Rates and windowed latencies remain unavailable until their counter window is covered.
+The registry retains one telemetry history per model group. Group counters and latency windows remain aggregate; the latest snapshot also carries independent scheduler counts and KV utilization for each global DP rank. Rank gauges are read only from that latest snapshot, so missing ranks or fields remain unknown rather than inheriting another rank's values. Unknown observations rank after measured values, without removing candidates. Non-increasing timestamps or reset counters clear the existing history; rates and windowed latencies remain unavailable until their counter window is covered.
 
-Foretoken handles telemetry transport, health checks, DP expansion, and E/P/D eligibility.
-Its Model Server endpoint reports sums of scheduler counts and mean KV utilization across its
-engines.
-Every rank of that endpoint receives the same metric score. These scorers ignore
-`RoutingProgress`; Router still supplies it and owns the subsequent stage selection.
+Candidate expansion shares the immutable group snapshot; each scorer selects the candidate's exact DP-rank observation. Model Server derives group scheduler totals and mean KV utilization from those same rank measurements. No additional polling or rank-history store is introduced. Router still owns health, DP expansion and E/P/D eligibility.

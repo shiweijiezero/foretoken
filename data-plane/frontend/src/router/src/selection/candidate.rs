@@ -36,11 +36,20 @@ pub struct RouteCandidate {
     /// Exact data-parallel replica selected within the route target.
     pub data_parallel_rank: u32,
     /// Latest route-target gauges and available windowed statistics for this routing round.
-    /// It is aggregate telemetry shared by every DP rank of this target.
+    /// Group totals and rank-local gauges share one observation without duplicate polling.
     pub route_target_stats: Option<Arc<RouteTargetStats>>,
 }
 
 impl RouteCandidate {
+    /// Selects this candidate's latest rank-local observation without substituting group totals.
+    pub fn data_parallel_stats(&self) -> Option<&foretoken_model_protocol::DataParallelTelemetry> {
+        self.route_target_stats
+            .as_ref()?
+            .data_parallel_ranks
+            .iter()
+            .find(|rank| rank.data_parallel_rank == self.data_parallel_rank)
+    }
+
     /// Returns the required execution roles after this candidate for routing algorithms.
     pub fn future_stages(&self) -> &'static [ModelServerRole] {
         match self.role {

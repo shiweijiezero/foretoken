@@ -23,8 +23,14 @@ func validateGroupProfile(group *inferencev1alpha1.ModelGroup) error {
 }
 
 func validateGroupRuntime(group *inferencev1alpha1.ModelGroup) error {
-	if group.Spec.NodeCount != 1 || group.Spec.MemberCount != 1 || group.Spec.Runtime.Backend != "vllm" {
-		return fmt.Errorf("only single-member vLLM Groups are currently supported")
+	if group.Spec.NodeCount < 1 || group.Spec.MemberCount != group.Spec.NodeCount || group.Spec.Runtime.Backend != "vllm" {
+		return fmt.Errorf("vLLM Groups require one member per node")
+	}
+	if rdma := group.Spec.RDMA; rdma != nil && (rdma.ResourceName == "" || rdma.ResourceCount < 1) {
+		return fmt.Errorf("RDMA allocation requires a resource name and positive count")
+	}
+	if group.Spec.PDRuntime != nil && group.Spec.RDMA == nil {
+		return fmt.Errorf("P/D Groups require an RDMA allocation")
 	}
 	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill && group.Spec.PDRuntime != nil {
 		if group.Spec.PDRuntime.BootstrapPort == group.Spec.Runtime.Port {

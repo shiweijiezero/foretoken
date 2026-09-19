@@ -46,6 +46,8 @@ done
 
 修改 `kvservice.yaml` 中对应存储池的 `replicas`，再次执行部署命令即可。这里的副本数指存储实例数量，不是每条缓存数据的复制份数。Mooncake 负责分配和淘汰缓存；移除实例可能丢弃部分 KV，并触发重算。
 
+只使用主机内存时，省略该池的 `client.disk`，通过 `memoryCapacity` 向同一共享 Store 提供内存容量，不创建客户端 PVC，也不开启 SSD offload。纯内存池可以与带盘池共存；Master 的快照存储单独配置。
+
 Kubernetes 根据资源和卷要求选择节点。如果需要将某个池部署到已有标签对应的节点，在该池的 `name`、`replicas`、`client` 同级添加：
 
 ```yaml

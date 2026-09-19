@@ -15,7 +15,7 @@ index d1c20ad58..8a4c9b9df 100644
      /// handshake. In bootstrapped mode it binds the provided frontend
      /// sockets and waits for the expected engine registration frames.
      pub async fn connect(config: EngineCoreClientConfig) -> Result<Self> {
-+        Self::connect_with_protocol(config, EngineCoreProtocol::V0_28).await
++        Self::connect_with_protocol(config, EngineCoreProtocol::V0_28ToV0_30).await
 +    }
 +
 +    /// Connect using an explicitly selected vLLM EngineCore wire layout.
@@ -147,7 +147,7 @@ index 9c539bf18..6eb8db4df 100644
                  engine_id: EngineId::from(b"engine-0"),
                  ready_response: default_ready_response(),
              }],
-+            EngineCoreProtocol::V0_28,
++            EngineCoreProtocol::V0_28ToV0_30,
          )
      }
 
@@ -279,10 +279,9 @@ index a4e1cebde..fea142b73 100644
      /// KV-event publisher configuration, if configured.
      #[serde(default)]
 diff --git a/rust/src/engine-core-client/src/protocol/output.rs b/rust/src/engine-core-client/src/protocol/output.rs
-index a9695bd1c..d7add5448 100644
 --- a/rust/src/engine-core-client/src/protocol/output.rs
 +++ b/rust/src/engine-core-client/src/protocol/output.rs
-@@ -12,6 +12,7 @@ use serde_tuple::{Deserialize_tuple, Serialize_tuple};
+@@ -12,6 +12,7 @@
  use super::utility::UtilityOutput;
  use crate::error::{Error, Result, ext_value_decode};
  use crate::protocol::logprobs::MaybeWireLogprobs;
@@ -290,15 +289,23 @@ index a9695bd1c..d7add5448 100644
  use crate::protocol::stats::{PrefillStats, SchedulerStats};
  use crate::protocol::{OpaqueValue, decode_msgpack};
 
-@@ -364,9 +365,42 @@ pub fn decode_engine_core_outputs<Frame>(frames: &[Frame]) -> Result<EngineCoreO
+@@ -125,6 +126,9 @@
+     pub mm_cache_miss_hashes: Option<Vec<String>>,
+     #[serde(default)]
+     pub new_sampling_mask: Option<OpaqueValue>,
++    /// Native per-request speculative-decoding statistics, appended in vLLM 0.29.
++    #[serde(default)]
++    pub spec_decode_metrics: Option<OpaqueValue>,
+ }
+
+ impl EngineCoreOutput {
+@@ -364,9 +368,42 @@
  where
      Frame: AsRef<[u8]>,
  {
--    let first_frame = frames.first().ok_or_else(|| ext_value_decode!("missing output frame"))?;
-+    decode_engine_core_outputs_for(frames, EngineCoreProtocol::V0_28)
++    decode_engine_core_outputs_for(frames, EngineCoreProtocol::V0_28ToV0_30)
 +}
-
--    let mut outputs: EngineCoreOutputs = decode_msgpack(first_frame.as_ref())?;
++
 +/// Decode a release-specific output layout while keeping tensor auxiliary-frame indices unchanged.
 +pub fn decode_engine_core_outputs_for<Frame>(
 +    frames: &[Frame],
@@ -307,7 +314,9 @@ index a9695bd1c..d7add5448 100644
 +where
 +    Frame: AsRef<[u8]>,
 +{
-+    let first_frame = frames.first().ok_or_else(|| ext_value_decode!("missing output frame"))?;
+     let first_frame = frames.first().ok_or_else(|| ext_value_decode!("missing output frame"))?;
+-
+-    let mut outputs: EngineCoreOutputs = decode_msgpack(first_frame.as_ref())?;
 +    let mut outputs: EngineCoreOutputs = if matches!(
 +        protocol,
 +        EngineCoreProtocol::V0_20 | EngineCoreProtocol::V0_21ToV0_25
@@ -362,8 +371,8 @@ index 8118b770e..cab093d56 100644
 +    V0_21ToV0_25,
 +    /// vLLM 0.26 and 0.27 also add `ec_transfer_params` to outputs.
 +    V0_26ToV0_27,
-+    /// vLLM 0.28 appends `session_id` to the request.
-+    V0_28,
++    /// vLLM 0.28 through 0.30 include `session_id` in the request.
++    V0_28ToV0_30,
 +}
 +
 +/// Encode legacy field layouts without copying request data or using intermediate dynamic values.
@@ -375,7 +384,7 @@ index 8118b770e..cab093d56 100644
 +
 +impl Serialize for VersionedRequest<'_> {
 +    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
-+        if self.protocol == EngineCoreProtocol::V0_28 {
++        if self.protocol == EngineCoreProtocol::V0_28ToV0_30 {
 +            return self.request.serialize(serializer);
 +        }
 +        let request = self.request;
@@ -418,7 +427,7 @@ index 8118b770e..cab093d56 100644
 +        for (field, unsupported) in [
 +            (
 +                "session_id",
-+                protocol != EngineCoreProtocol::V0_28 && self.session_id.is_some(),
++                protocol != EngineCoreProtocol::V0_28ToV0_30 && self.session_id.is_some(),
 +            ),
 +            (
 +                "prompt_is_token_ids",
@@ -451,20 +460,82 @@ index 8118b770e..cab093d56 100644
      pub fn validate(&self) -> Result<()> {
          if self.prompt_embeds.is_some() {
 diff --git a/rust/src/engine-core-client/src/transport.rs b/rust/src/engine-core-client/src/transport.rs
-index 7aac8774c..a27bee516 100644
 --- a/rust/src/engine-core-client/src/transport.rs
 +++ b/rust/src/engine-core-client/src/transport.rs
-@@ -21,7 +21,8 @@ use crate::error::{Error, Result, bail_unexpected_handshake_message};
+@@ -21,8 +21,9 @@
  use crate::protocol::handshake::{
      EngineCoreReadyResponse, HandshakeAddresses, HandshakeInitMessage, ReadyMessage,
  };
 -use crate::protocol::output::{EngineCoreOutputs, decode_engine_core_outputs};
+-use crate::protocol::{decode_msgpack, encode_msgpack};
 +use crate::protocol::output::{EngineCoreOutputs, decode_engine_core_outputs_for};
 +use crate::protocol::request::EngineCoreProtocol;
- use crate::protocol::{decode_msgpack, encode_msgpack};
++use crate::protocol::{OpaqueValue, decode_msgpack, encode_msgpack};
 
  /// Dedicated single-frame sentinel emitted by Python `EngineCoreProc` when the
-@@ -553,6 +554,7 @@ pub async fn send_message(
+ /// engine dies.
+@@ -180,6 +181,35 @@
+     let mut handshake_socket = RouterSocket::new();
+     handshake_socket.bind(handshake_address).await?;
+
++    // Independently launched Python engines pick different DP rendezvous ports.
++    // Match Python's coordinated handshake by distributing one shared allocation.
++    let parallel_config = if coordinator.is_some() && engine_count > 1 {
++        let listeners = (0..5)
++            .map(|_| std::net::TcpListener::bind((local_host, 0)))
++            .collect::<std::io::Result<Vec<_>>>()?;
++        let mut ports = listeners
++            .iter()
++            .map(|listener| listener.local_addr().map(|address| OpaqueValue::from(address.port())))
++            .collect::<std::io::Result<Vec<_>>>()?;
++        let master_port = ports.pop().expect("five rendezvous ports were allocated");
++        BTreeMap::from([
++            (
++                "data_parallel_master_ip".into(),
++                OpaqueValue::from(local_host),
++            ),
++            ("data_parallel_master_port".into(), master_port),
++            (
++                "_data_parallel_master_port_list".into(),
++                OpaqueValue::Array(ports),
++            ),
++            (
++                "data_parallel_size".into(),
++                OpaqueValue::from(engine_count as u64),
++            ),
++        ])
++    } else {
++        BTreeMap::new()
++    };
+     let mut engines = BTreeMap::new();
+
+     // 3. Receive HELLO from every engine and send a matching INIT. When coordinator mode is
+@@ -213,6 +243,7 @@
+                     &input_address,
+                     &output_address,
+                     coordinator.as_ref(),
++                    &parallel_config,
+                 )
+                 .await?;
+                 debug!(handshake_address, ?engine_id, "sent INIT to engine");
+@@ -438,6 +469,7 @@
+     input_address: &str,
+     output_address: &str,
+     coordinator: Option<&CoordinatorBootstrap>,
++    parallel_config: &BTreeMap<String, OpaqueValue>,
+ ) -> Result<()> {
+     let init_message = HandshakeInitMessage {
+         addresses: HandshakeAddresses {
+@@ -447,7 +479,7 @@
+             coordinator_output: coordinator.map(|c| c.output_address.clone()),
+             frontend_stats_publish_address: None,
+         },
+-        parallel_config: Default::default(),
++        parallel_config: parallel_config.clone(),
+     };
+     let payload = encode_msgpack(&init_message)?;
+     let message = ZmqMessage::try_from(vec![engine_id.to_frame(), Bytes::from(payload)])
+@@ -553,6 +585,7 @@
  pub async fn run_output_loop(
      mut output_socket: PullSocket,
      tx: mpsc::Sender<Result<EngineCoreOutputs>>,
@@ -472,7 +543,7 @@ index 7aac8774c..a27bee516 100644
  ) {
      loop {
          let message = match output_socket.recv().await {
-@@ -577,7 +579,7 @@ pub async fn run_output_loop(
+@@ -577,7 +610,7 @@
              let _ = tx.send(Err(Error::EngineCoreDead)).await;
              return;
          }

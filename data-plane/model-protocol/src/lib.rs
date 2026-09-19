@@ -162,12 +162,25 @@ pub struct CumulativeHistogram {
     pub sum_seconds: f64,
     pub buckets: Vec<CumulativeHistogramBucket>,
 }
+/// Current engine scheduler observations for one globally identified data-parallel rank.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DataParallelTelemetry {
+    pub data_parallel_rank: u32,
+    pub scheduler_running_requests: Option<u64>,
+    pub scheduler_waiting_requests: Option<u64>,
+    pub kv_cache_usage: Option<f64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TelemetryResponse {
     pub version: u8,
     pub collected_at_unix_ms: u64,
     pub accepting: bool,
+    /// Rank-local gauges from the same observation as the group totals.
+    #[serde(default)]
+    pub data_parallel_ranks: Vec<DataParallelTelemetry>,
     pub running_requests: u64,
     /// Sum of engine-reported scheduler capacities, or `None` when any capacity is unknown.
     pub max_concurrent_requests: Option<u64>,

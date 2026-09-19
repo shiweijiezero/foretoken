@@ -26,6 +26,7 @@ pub type TokenStream = Pin<Box<dyn Stream<Item = Result<TokenEvent, BackendError
 /// Cumulative backend observations included in a telemetry snapshot.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct BackendTelemetry {
+    pub data_parallel_ranks: Vec<foretoken_model_protocol::DataParallelTelemetry>,
     pub running_requests: u64,
     pub max_concurrent_requests: Option<u64>,
     pub scheduler_running_requests: Option<u64>,
@@ -356,6 +357,7 @@ impl Backend for VllmBackend {
             .snapshot();
 
         BackendTelemetry {
+            data_parallel_ranks: vllm.data_parallel_ranks,
             running_requests: self.running_requests.load(Ordering::Acquire),
             max_concurrent_requests: self.max_concurrent_requests,
             scheduler_running_requests: vllm.scheduler_running_requests,

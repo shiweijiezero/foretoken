@@ -14,7 +14,7 @@ fn plan() -> LaunchPlanV1 {
 #[test]
 fn rejects_invalid_topology() {
     let mut invalid = plan();
-    invalid.node_count = 2;
+    invalid.node_count = 3;
     assert!(invalid.validate().is_err());
 
     let mut invalid = plan();
@@ -26,7 +26,7 @@ fn rejects_invalid_topology() {
 // Protects the supported controller-owned vLLM argument contract.
 #[test]
 fn renders_supported_owned_arguments() {
-    let args = plan().render_vllm_args().unwrap();
+    let args = plan().render_vllm_args(None).unwrap();
     for flag in [
         "--revision=",
         "--tokenizer=",
@@ -74,15 +74,12 @@ fn renders_supported_owned_arguments() {
         .find_map(|arg| arg.strip_prefix("--kv-events-config="))
         .expect("KV event config");
     let event_config: serde_json::Value = serde_json::from_str(event_config).unwrap();
-    assert_eq!(
-        event_config["endpoint"],
-        "ipc:///tmp/foretoken-kv-events.sock"
-    );
+    assert_eq!(event_config["endpoint"], "tcp://127.0.0.1:30100");
     assert_eq!(event_config["topic"], "foretoken-kv-v1");
 
     let mut local = plan();
     local.artifacts.source = ModelSource::Local;
-    let local_args = local.render_vllm_args().unwrap();
+    let local_args = local.render_vllm_args(None).unwrap();
     assert!(
         !local_args
             .iter()
@@ -103,7 +100,7 @@ fn ec_plan_renders_one_owned_config_for_each_role() {
     let producer = LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"producer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"engineArgs":{}}"#).unwrap();
     let consumer = LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"m","revision":"r","tokenizer":"t","tokenizerRevision":"tr"},"parallelism":{"tp":1,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"ec":{"profileName":"verified-ec","profileRevision":"r1","connector":"ECExampleConnector","role":"consumer","sharedStoragePath":"/mnt/foretoken/ec"},"lifecycle":{"startupSeconds":1,"drainSeconds":1},"internalGenerateRequestBodyLimitBytes":67108864,"engineArgs":{}}"#).unwrap();
 
-    let args = producer.render_vllm_args().unwrap();
+    let args = producer.render_vllm_args(None).unwrap();
     let rendered: Vec<_> = args
         .iter()
         .filter(|arg| arg.starts_with("--ec-transfer-config="))
@@ -115,7 +112,7 @@ fn ec_plan_renders_one_owned_config_for_each_role() {
     assert!(args.iter().any(|arg| arg == "--no-enable-prefix-caching"));
     assert!(
         !consumer
-            .render_vllm_args()
+            .render_vllm_args(None)
             .unwrap()
             .iter()
             .any(|arg| arg == "--no-enable-prefix-caching")
@@ -165,7 +162,7 @@ fn kv_variants_render_expected_semantics() {
         );
         let rendered = LaunchPlanV1::parse(&source)
             .unwrap()
-            .render_vllm_args()
+            .render_vllm_args(None)
             .unwrap();
         assert!(
             rendered.iter().any(|arg| arg.contains(want)),

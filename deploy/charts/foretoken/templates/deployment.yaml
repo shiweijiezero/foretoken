@@ -118,8 +118,8 @@ spec:
             - {{ printf "--vllm-pd-bootstrap-port=%d" (int $.Values.runtime.vllm.pd.bootstrapPort) | quote }}
             - {{ printf "--vllm-pd-abort-request-timeout-seconds=%d" (int $.Values.runtime.vllm.pd.abortRequestTimeoutSeconds) | quote }}
             - {{ printf "--vllm-pd-rdma-device-name=%s" $.Values.runtime.vllm.pd.rdmaDeviceName | quote }}
-            - {{ printf "--vllm-pd-rdma-resource-name=%s" (include "foretoken.rdmaResourceName" $) | quote }}
-            - {{ printf "--vllm-pd-rdma-resource-count=%d" (int $.Values.runtime.vllm.pd.rdmaResourceCount) | quote }}
+            - {{ printf "--rdma-resource-name=%s" (include "foretoken.rdmaResourceName" $) | quote }}
+            - {{ printf "--rdma-resource-count=%d" (int $.Values.rdma.resourceCount) | quote }}
             {{- end }}
             {{- if $.Values.runtime.vllm.mooncakeStore.profileName }}
             - {{ printf "--vllm-mooncake-store-profile-name=%s" $.Values.runtime.vllm.mooncakeStore.profileName | quote }}

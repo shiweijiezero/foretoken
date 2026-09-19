@@ -118,17 +118,12 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`
 
-	// Inference is the normalized model-execution configuration compiled from ModelService.
-	Inference InferenceParameters `json:"inference,omitempty"`
-
 	Role ModelRole `json:"role"`
 
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=1
 	NodeCount int32 `json:"nodeCount"`
 
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=1
 	MemberCount int32 `json:"memberCount"`
 
 	Resources ModelResources `json:"resources"`
@@ -163,7 +158,7 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	ECProfile string `json:"ecProfile,omitempty"`
 
-	// EngineArgs contains native backend options before common fields are applied.
+	// EngineArgs contains the native backend options selected for this Pool.
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
 }

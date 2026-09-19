@@ -16,8 +16,10 @@
   "properties": {
     "rdma": {
       "type": "object",
-      "required": ["managed", "image", "nodeNames"],
+      "required": ["managed", "image", "nodeNames", "resourceName", "resourceCount"],
       "properties": {
+        "resourceName": {"type": "string"},
+        "resourceCount": {"type": "integer", "minimum": 1, "maximum": 2147483647},
         "managed": {"type": "boolean"},
         "image": {"type": "string", "minLength": 1},
         "nodeNames": {
@@ -442,9 +444,7 @@
               "required": [
                 "bootstrapPort",
                 "abortRequestTimeoutSeconds",
-                "rdmaDeviceName",
-                "rdmaResourceName",
-                "rdmaResourceCount"
+                "rdmaDeviceName"
               ],
               "properties": {
                 "bootstrapPort": {
@@ -459,14 +459,6 @@
                 },
                 "rdmaDeviceName": {
                   "type": "string"
-                },
-                "rdmaResourceName": {
-                  "type": "string"
-                },
-                "rdmaResourceCount": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 2147483647
                 }
               },
               "additionalProperties": false

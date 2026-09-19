@@ -45,17 +45,11 @@ Router 负责候选项身份，并校验重复或越界的下标以及分数数�
 | `running_request` | `scheduler_running_requests` | `(max - running) / (max - min)` |
 | `kv_cache_utilization` | `kv_cache_usage` | `1 - usage` |
 
-使用传入 `score` 的全部候选项求最小值和最大值；计数全部相等时得 `1`，空候选集返回空分数列表。
+使用传入 `score` 中有逐 rank 实测值的候选项求最小值和最大值；实测计数全部相等时得 `1`，空候选集返回空分数列表。
 计数先相减再转为 `f64`，避免大整数提前转换丢失差值。
 数值通过 `RouteScore.preference` 原样传给 Picker，其余位置和负载字段为零。
 原有位置策略继续使用字典序。
 
-Registry 负责指标历史：立即发布 gauge，并仅在原始观测快照仍处于保留窗口内时为缺失项使用之前的实测值。
-时间戳未递增、累计计数器或直方图发生重置时清空历史。新历史中缺失的 gauge 保持未观测状态，
-直到生产者重新上报；指标打分器将未观测值映射为零。
-速率和窗口延迟统计在计数器窗口足够前保持不可用。
+Registry 为每个模型执行组保留一份遥测历史。组级计数器和延迟窗口仍是汇总值，最新快照同时携带每个全局 DP rank 的独立调度器计数及 KV 使用率。逐 rank gauge 只从最新快照读取，缺失的 rank 或字段保持未知，不继承其他 rank 的值。未知观测排在实测值之后，但不移除候选。时间戳未递增或计数器重置时清空既有历史；速率与窗口延迟在计数器窗口足够前保持不可用。
 
-Foretoken 负责遥测传输、健康检查、DP 展开及 E/P/D 阶段资格判断。
-Model Server 端点报告各引擎 scheduler 计数之和及 KV 使用率均值。
-同一端点的所有 rank 得到相同分数。这些 scorer 不使用 `RoutingProgress`，
-Router 仍传入该参数并负责后续阶段选择。
+候选展开共享不可变的执行组快照，由 scorer 读取候选对应的 DP rank。Model Server 从同一批逐 rank 观测计算组级调度器总数和 KV 使用率均值，不增加另一套轮询或 rank 历史。Router 继续负责健康检查、DP 展开及 E/P/D 阶段资格判断。

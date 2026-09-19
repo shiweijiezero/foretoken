@@ -21,6 +21,8 @@ pub struct RouteTargetLatencyStats {
 /// Latest route target gauges and available statistics calculated over `observed_window`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RouteTargetStats {
+    /// Rank-local scheduler observations carried by the same route-target snapshot.
+    pub data_parallel_ranks: Vec<foretoken_model_protocol::DataParallelTelemetry>,
     /// Collection time of the latest cumulative snapshot.
     pub collected_at_unix_ms: u64,
     /// Actual counter interval, or zero until history covers the requested observation window.

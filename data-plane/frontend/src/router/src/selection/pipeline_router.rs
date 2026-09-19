@@ -55,7 +55,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
     }
 
     // Builds the immutable, rank-expanded candidate snapshot for one selection round. Dynamic
-    // health, capabilities, and aggregate telemetry are captured before algorithms observe it.
+    // health, capabilities, and telemetry are captured before algorithms observe it.
     fn candidates(&self, request: &RouterRequest) -> Vec<RouteCandidate> {
         self.inventory
             .model_routes()
@@ -74,8 +74,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 )
             })
             .flat_map(|route| {
-                // Statistics are route-target aggregate telemetry. Read once with the core-owned
-                // window, then share the same immutable observation across all rank candidates.
+                // Read the group's aggregate and rank-local gauges once, then share the immutable
+                // observation across candidates; scorers select the candidate's exact DP rank.
                 let stats = self
                     .route_target_stats_reader
                     .stats(&route.route_target_id, ROUTE_TARGET_STATS_WINDOW)

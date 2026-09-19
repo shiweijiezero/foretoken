@@ -24,20 +24,26 @@ declare_router_algorithms! {
 }
 
 /// Converts request-count observations into inverse min-max preferences.
-pub(super) fn inverse_normalized_scores(counts: impl IntoIterator<Item = u64>) -> Vec<RouteScore> {
+pub(super) fn inverse_normalized_scores(
+    counts: impl IntoIterator<Item = Option<u64>>,
+) -> Vec<RouteScore> {
     let counts = counts.into_iter().collect::<Vec<_>>();
-    let Some(minimum) = counts.iter().copied().min() else {
-        return Vec::new();
-    };
-    let maximum = counts.iter().copied().max().expect("nonempty counts");
+    let range = counts
+        .iter()
+        .flatten()
+        .copied()
+        .min()
+        .zip(counts.iter().flatten().copied().max());
     counts
         .into_iter()
         .map(|count| RouteScore {
-            preference: if maximum == minimum {
-                1.0
-            } else {
+            preference: match count.zip(range) {
+                None => -1.0,
+                Some((_, (minimum, maximum))) if maximum == minimum => 1.0,
                 // Subtract integer counts before conversion to preserve large adjacent differences.
-                (maximum - count) as f64 / (maximum - minimum) as f64
+                Some((count, (minimum, maximum))) => {
+                    (maximum - count) as f64 / (maximum - minimum) as f64
+                }
             },
             ..RouteScore::default()
         })
@@ -52,7 +58,7 @@ pub(super) fn inverse_normalized_scores(counts: impl IntoIterator<Item = u64>) -
 ///
 /// - `request`: model, prompt tokens, sampling, multimodal, LoRA, and priority.
 /// - `candidates`: Filter output with route metadata, candidate-specific future pipeline stages,
-///   and the Router's immutable current-round aggregate target observation, when available.
+///   and the Router's immutable current-round group and rank observations, when available.
 /// - `kv_prefix_indexer`: query local or offloaded matched prompt tokens for any candidate.
 /// - `routing_progress`: immutable E/P/D selection round and progress supplied by `RouteSession`.
 /// - `customized_context`: user-defined `C`, created per request and shared across E/P/D rounds.
@@ -74,20 +80,20 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
     ) -> Vec<RouteScore>;
 }
 
-/// Returns the best available view of a candidate's current engine request load.
-///
-/// Model-server admission and vLLM scheduler gauges overlap, so the load is their maximum rather
-/// than their sum. Built-in load scorers consume this derived value; the candidate retains its
-/// telemetry snapshot.
+/// Returns this DP rank's scheduler load; unavailable observations rank after measured loads.
+/// Group-level admission counts cannot be assigned to an individual rank.
 pub(crate) fn load(candidate: &RouteCandidate) -> i64 {
-    candidate.route_target_stats.as_ref().map_or(0, |stats| {
-        let scheduler_requests = stats
-            .scheduler_running_requests
-            .unwrap_or(0)
-            .saturating_add(stats.scheduler_waiting_requests.unwrap_or(0));
-        let requests = stats.running_requests.max(scheduler_requests);
-        i64::try_from(requests).unwrap_or(i64::MAX)
-    })
+    candidate
+        .data_parallel_stats()
+        .and_then(|stats| {
+            Some(
+                stats
+                    .scheduler_running_requests?
+                    .saturating_add(stats.scheduler_waiting_requests?),
+            )
+        })
+        .and_then(|requests| i64::try_from(requests).ok())
+        .unwrap_or(i64::MAX)
 }
 
 /// Returns the least model-server route load among Decode eligible route options in each E/P/D route set.

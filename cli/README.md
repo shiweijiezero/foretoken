@@ -46,7 +46,7 @@ The default uses release images and local access through a `LoadBalancer` Servic
 foretoken install
 ```
 
-Installation selects the NVIDIA or MetaX runtime and automatically reuses or installs the shared RDMA device plugin. Explicit runtime settings in `--values` take precedence; in a mixed-GPU cluster, select a resource with `runtime.vllm.gpu.resourceName` or restrict the nodes with `runtime.vllm.gpu.nodeSelector`.
+Installation selects the NVIDIA or MetaX runtime and automatically reuses or installs LeaderWorkerSet and the shared RDMA device plugin. Explicit runtime settings in `--values` take precedence; in a mixed-GPU cluster, select a resource with `runtime.vllm.gpu.resourceName` or restrict the nodes with `runtime.vllm.gpu.nodeSelector`.
 
 See [Observability](../observability/README.md) for dashboards and alerts.
 
@@ -88,7 +88,7 @@ Registry login authorizes the local image push. Private registries also need `im
 
 ### Installation options
 
-Use `--values` only to override platform image, runtime, or hardware settings. Use `--oci-registry` for mirrored release images and CLI-managed charts.
+Use `--values` only to override platform image, runtime, or hardware settings. Without an override, installation compares supported public sources for default platform images and OCI charts. Use `--oci-registry` to select a registry explicitly; image references supplied through values remain unchanged. Source selection runs on the CLI host, so the selected registry must also be reachable from the cluster nodes.
 
 Model services are reached through an IP address outside the cluster. k3d, k3s, and cloud clusters assign one automatically. Clusters built with kubeadm, RKE2, or kubespray have no address assignment by default, so installation there ends with `LoadBalancer support Not verified`. Give Foretoken a range of unused addresses in the nodes' subnet, confirmed with the cluster administrator, and it assigns them to services:
 
@@ -154,4 +154,4 @@ foretoken delete examples/multi-model-quickstart
 foretoken uninstall
 ```
 
-Foretoken CRDs and reused cluster components are retained. Managed MetalLB is also retained while other services depend on it.
+CRDs and reused cluster components are retained. Managed LeaderWorkerSet and MetalLB controllers are also retained while workloads still depend on them.

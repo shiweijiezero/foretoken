@@ -102,11 +102,10 @@ type ModelPoolTemplate struct {
 	// +kubebuilder:validation:Minimum=0
 	Replicas *int32 `json:"replicas,omitempty"`
 
-	// Nodes is the number of physical Kubernetes Nodes used by each ModelGroup.
+	// Nodes is the number of distinct Kubernetes Nodes used by each ModelGroup.
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=1
 	Nodes *int32 `json:"nodes,omitempty"`
 
 	// +optional
@@ -268,55 +267,6 @@ const (
 	ModelSourceModelScope ModelSource = "modelscope"
 )
 
-// InferenceParameters contains common model-execution choices shared by every Pool.
-type InferenceParameters struct {
-	// MaxModelLen limits the combined prompt and generated sequence length.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	MaxModelLen *int32 `json:"maxModelLen,omitempty"`
-
-	// DType selects the model weight and activation data type supported by the engine.
-	// +optional
-	// +kubebuilder:validation:MinLength=1
-	DType string `json:"dtype,omitempty"`
-
-	// Quantization selects the engine's weight quantization method.
-	// +optional
-	// +kubebuilder:validation:MinLength=1
-	Quantization string `json:"quantization,omitempty"`
-
-	// KVCacheDType selects the data type used for the engine's KV cache.
-	// +optional
-	// +kubebuilder:validation:MinLength=1
-	KVCacheDType string `json:"kvCacheDType,omitempty"`
-
-	// GPUMemoryUtilization is the fraction of device memory available to each engine instance.
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	// +kubebuilder:validation:ExclusiveMinimum=true
-	// +kubebuilder:validation:Maximum=1
-	GPUMemoryUtilization *float64 `json:"gpuMemoryUtilization,omitempty"`
-
-	// MaxNumSeqs limits the sequences scheduled in one engine iteration.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	MaxNumSeqs *int32 `json:"maxNumSeqs,omitempty"`
-
-	// MaxNumBatchedTokens limits the tokens scheduled in one engine iteration.
-	// +optional
-	// +kubebuilder:validation:Minimum=1
-	MaxNumBatchedTokens *int32 `json:"maxNumBatchedTokens,omitempty"`
-
-	// EnforceEager disables graph capture when true; omission preserves the engine default.
-	// +optional
-	EnforceEager *bool `json:"enforceEager,omitempty"`
-
-	// SpeculativeDecoding is the complete native speculative configuration for the selected backend.
-	// It replaces the corresponding engineArgs option when present.
-	// +optional
-	SpeculativeDecoding *EngineArguments `json:"speculativeDecoding,omitempty"`
-}
-
 // ModelServiceSpec defines the desired state of a model service.
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !(has(self.replicas) || has(self.nodes) || has(self.resources) || has(self.maxInputTokens) || has(self.kvCache) || has(self.features))",message="spec.modelPools is mutually exclusive with top-level replicas, nodes, resources, maxInputTokens, kvCache, and features"
 // +kubebuilder:validation:XValidation:rule="has(self.modelPools) || has(self.resources)",message="top-level resources are required when spec.modelPools is omitted"
@@ -344,9 +294,6 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:Enum=vllm
 	Backend string `json:"backend"`
 
-	// Common execution choices apply to every Pool; explicit values override EngineArgs.
-	InferenceParameters `json:",inline"`
-
 	// InternalGenerateRequestBodyLimitBytes is the maximum body size accepted by
 	// a group-local generate endpoint. It defaults to 64 MiB.
 	// +optional
@@ -361,10 +308,9 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	Replicas *int32 `json:"replicas,omitempty"`
 
-	// Nodes is the number of physical Kubernetes Nodes used by each ModelGroup; the compiler defaults it to 1.
+	// Nodes is the number of distinct Kubernetes Nodes used by each ModelGroup; the compiler defaults it to 1.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=1
 	Nodes *int32 `json:"nodes,omitempty"`
 
 	// +optional
@@ -407,7 +353,6 @@ type ModelServiceSpec struct {
 	ModelPools []ModelPoolTemplate `json:"modelPools,omitempty"`
 
 	// EngineArgs uses the selected backend's native option names without leading --.
-	// Explicit common fields in spec take precedence over matching engine options.
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
 }

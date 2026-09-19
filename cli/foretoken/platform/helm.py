@@ -6,13 +6,22 @@
 from __future__ import annotations
 
 import json
+import tarfile
+import tempfile
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from foretoken.manifest import DeploymentError, ResourceRef
-from foretoken.platform.config import load_balancer_config_from_values
+from foretoken.network_sources import (
+    platform_image_reference,
+    select_platform_oci_reference,
+)
+from foretoken.platform.config import (
+    load_balancer_config_from_values,
+    load_platform_values,
+)
 from foretoken.platform.helm_client import HelmClient
 from foretoken.platform.types import (
     LoadBalancerConfig,
@@ -24,6 +33,104 @@ from foretoken.source import SourceImages
 
 class Helm(HelmClient):
     """Build and execute Helm operations for platform-owned charts."""
+
+    def _chart_source(self, source: str, version: str | None) -> str:
+        """Resolve a managed OCI chart without overriding an explicit mirror."""
+        if self._config.image_registry is not None or not source.startswith("oci://"):
+            return source
+        reference = f"{source}:{version}" if version is not None else source
+        selected = select_platform_oci_reference(reference)
+        return selected.removesuffix(f":{version}") if version is not None else selected
+
+    def _chart_image_defaults(
+        self, args: list[str], subcharts: tuple[str, ...]
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        """Read native image defaults and app versions, including packaged subcharts."""
+        chart_args = [args[3]]
+        if "--version" in args:
+            chart_args.extend(["--version", args[args.index("--version") + 1]])
+        if not subcharts:
+            values = yaml.safe_load(self.run(["show", "values", *chart_args]).stdout)
+            metadata = yaml.safe_load(self.run(["show", "chart", *chart_args]).stdout)
+            return values, {"": str(metadata["appVersion"])}
+        # Helm show values omits dependency defaults. Read the named packaged
+        # dependencies without extracting files; Helm still owns actual rendering.
+        with tempfile.TemporaryDirectory(prefix="foretoken-chart-images-") as directory:
+            self.run(["pull", *chart_args, "--destination", directory])
+            archive_path, = Path(directory).glob("*.tgz")
+            with tarfile.open(archive_path) as archive:
+                metadata_path = next(
+                    name for name in archive.getnames()
+                    if name.count("/") == 1 and name.endswith("/Chart.yaml")
+                )
+                root = metadata_path.removesuffix("Chart.yaml")
+                metadata = yaml.safe_load(archive.extractfile(metadata_path))
+                values = yaml.safe_load(archive.extractfile(root + "values.yaml"))
+                versions = {"": str(metadata["appVersion"])}
+                for name in subcharts:
+                    prefix = f"{root}charts/{name}/"
+                    child = yaml.safe_load(archive.extractfile(prefix + "values.yaml"))
+                    child_metadata = yaml.safe_load(archive.extractfile(prefix + "Chart.yaml"))
+                    values[name] = _merge_values(child, values.get(name, {}))
+                    versions[name] = str(child_metadata["appVersion"])
+                return values, versions
+
+    def _add_chart_image_sources(
+        self,
+        args: list[str],
+        paths: tuple[str, ...],
+        *,
+        subcharts: tuple[str, ...] = (),
+        version_prefixes: tuple[str, ...] = (),
+    ) -> None:
+        """Override named native image fields without changing tags or digest fields.
+
+        Values are applied before Helm rendering so admission hooks, sidecars and
+        Operator-created workloads receive the same selection as controllers.
+        """
+        values, versions = self._chart_image_defaults(args, subcharts)
+        for path in paths:
+            image = _value_at(values, path)
+            repository = image["repository"]
+            owner = path.split(".", 1)[0]
+            version = versions.get(owner, versions[""])
+            tag = image.get("tag") or (
+                f"v{version}" if path in version_prefixes else version
+            )
+            if path == "prometheus-node-exporter.image" and image.get("distroless"):
+                tag += "-distroless"
+            digest = image.get("digest") or image.get("sha")
+            if digest and ":" not in digest:
+                digest = f"sha256:{digest}"
+            reference = f"{repository}@{digest}" if digest else f"{repository}:{tag}"
+            registry = image.get("registry")
+            if registry:
+                reference = f"{registry}/{reference}"
+            selected = platform_image_reference(reference, self._config.image_registry)
+            if selected != reference:
+                repository = (
+                    selected.rsplit("@", 1)[0]
+                    if digest else _image_repository_tag(selected)[0]
+                )
+                if registry:
+                    registry, repository = repository.split("/", 1)
+                    args.extend(["--set-string", f"{path}.registry={registry}"])
+                args.extend(["--set-string", f"{path}.repository={repository}"])
+
+    def _render_chart(
+        self, args: list[str], *, input_text: str | None = None
+    ) -> tuple[dict[str, Any], ...]:
+        """Resolve image defaults through native templates with the install values."""
+        command = ["template", args[2], args[3]]
+        for index, value in enumerate(args):
+            if value in {
+                "--version", "--namespace", "--values", "--set", "--set-string", "--set-json"
+            }:
+                command.extend([value, args[index + 1]])
+        rendered = self.run(command, input_text=input_text).stdout
+        return tuple(
+            document for document in yaml.safe_load_all(rendered) if document is not None
+        )
 
     def platform_release(self) -> ReleaseRef:
         """Return the single Foretoken platform release managed by the CLI."""
@@ -70,6 +177,26 @@ class Helm(HelmClient):
             self._config.metallb.release_name,
             self._config.load_balancer_namespace,
         )
+
+    def leader_worker_release(self) -> ReleaseRef:
+        """Return the LeaderWorkerSet controller release managed with the platform."""
+        return ReleaseRef(self._config.leader_worker.release_name, self._config.namespace)
+
+    def leader_worker_crds(self) -> str:
+        """Read the CRDs shipped with the selected LeaderWorkerSet chart for upgrades."""
+        chart = self._config.leader_worker
+        args = ["show", "crds", self._chart_source(chart.source, chart.version)]
+        if chart.version is not None:
+            args.extend(["--version", chart.version])
+        return self.run(args).stdout
+
+    def install_leader_worker(self, release: ReleaseRef, timeout: str) -> None:
+        """Install or upgrade the CLI-owned LeaderWorkerSet controller."""
+        chart = self._config.leader_worker
+        args = self._upgrade_install_args(release, chart.source, chart.version)
+        self._add_chart_image_sources(args, ("image.manager",))
+        self._finish_upgrade(args, timeout)
+        self.run(args)
 
     @property
     def platform_selector_labels(self) -> tuple[tuple[str, str], ...]:
@@ -192,7 +319,7 @@ class Helm(HelmClient):
             "upgrade",
             "--install",
             release.name,
-            chart,
+            self._chart_source(chart, chart_version),
             "--namespace",
             release.namespace,
             "--create-namespace",
@@ -282,6 +409,49 @@ class Helm(HelmClient):
                 ]
             )
 
+    def _add_platform_image_sources(
+        self,
+        args: list[str],
+        overrides: dict[str, Any],
+        source_images: SourceImages | None,
+        input_text: str | None,
+    ) -> None:
+        """Resolve native platform defaults while preserving explicit image choices."""
+        images: dict[str, str] = {}
+        for document in self._render_chart(args, input_text=input_text):
+            if document["kind"] not in {"Deployment", "DaemonSet"}:
+                continue
+            for container in document["spec"]["template"]["spec"]["containers"]:
+                if container["name"] == "rdma-device-plugin":
+                    images["rdma.image"] = container["image"]
+                if container["name"] == "manager":
+                    images["image.repository"] = container["image"]
+                    for argument in container.get("args", ()):
+                        for prefix, path in (
+                            ("--frontend-image=", "frontend.image"),
+                            ("--inference-engine-image=", "runtime.vllm.image"),
+                        ):
+                            if argument.startswith(prefix):
+                                images[path] = argument.removeprefix(prefix)
+        for path, reference in images.items():
+            if source_images is not None and path != "rdma.image":
+                continue
+            try:
+                explicit = _value_at(overrides, path)
+            except KeyError:
+                explicit = None
+            if explicit is not None and explicit != "auto":
+                continue
+            selected = platform_image_reference(reference, self._config.image_registry)
+            if selected == reference:
+                continue
+            if path == "image.repository":
+                selected = (
+                    selected.split("@", 1)[0]
+                    if "@" in selected else _image_repository_tag(selected)[0]
+                )
+            args.extend(["--set-string", f"{path}={selected}"])
+
     def install_platform(
         self,
         *,
@@ -299,7 +469,7 @@ class Helm(HelmClient):
         rdma_resource_name: str | None,
         rdma_managed: bool,
         rdma_node_names: tuple[str, ...],
-        reuse_values: bool,
+        stored_values: dict[str, Any] | None,
         timeout: str,
     ) -> None:
         """Install or update the CLI-owned Foretoken platform release."""
@@ -321,8 +491,10 @@ class Helm(HelmClient):
                 ),
             ),
         )
-        if reuse_values:
-            args.append("--reset-then-reuse-values")
+        if stored_values is not None:
+            # Restored user values have already been migrated. Reusing Helm's
+            # original values would resurrect keys removed from the chart schema.
+            args.extend(["--reset-values", "--values", "-"])
         self._add_platform_values(
             args,
             values,
@@ -350,20 +522,16 @@ class Helm(HelmClient):
             )
         if rdma_resource_name is not None:
             args.extend(
-                ["--set-string", f"runtime.vllm.pd.rdmaResourceName={rdma_resource_name}"]
+                ["--set-string", f"rdma.resourceName={rdma_resource_name}"]
             )
-        image_registry = self._config.image_registry if source_images is None else None
-        args.extend(
-            [
-                "--set-string",
-                f"global.imageRegistry={image_registry or ''}",
-            ]
-        )
+        # Individual values retain their own source registry and explicit overrides.
+        # A blanket registry override would also rewrite user and source images.
+        args.extend(["--set-string", "global.imageRegistry="])
         if source_images is not None:
             control_plane_image = source_images.control_plane
             frontend_image = source_images.frontend
             model_server_image = source_images.model_server
-            if reuse_values and not all(
+            if stored_values is not None and not all(
                 (
                     source_images.control_plane_changed,
                     source_images.frontend_changed,
@@ -399,8 +567,13 @@ class Helm(HelmClient):
                     f"runtime.vllm.image={model_server_image}",
                 ]
             )
+        input_text = yaml.safe_dump(stored_values) if stored_values is not None else None
+        overrides = stored_values or {}
+        for value in load_platform_values(values):
+            overrides = _merge_values(overrides, value)
+        self._add_platform_image_sources(args, overrides, source_images, input_text)
         self._finish_upgrade(args, timeout)
-        self.run(args)
+        self.run(args, input_text=input_text)
 
     def install_metallb(
         self,
@@ -426,17 +599,7 @@ class Helm(HelmClient):
                 + json.dumps(config.managed_addresses, separators=(",", ":")),
             ]
         )
-        if self._config.image_registry is not None:
-            args.extend(
-                [
-                    "--set-string",
-                    "controller.image.repository="
-                    f"{self._config.image_registry}/metallb/controller",
-                    "--set-string",
-                    "speaker.image.repository="
-                    f"{self._config.image_registry}/metallb/speaker",
-                ]
-            )
+        self._add_chart_image_sources(args, ("controller.image", "speaker.image"))
         self._finish_upgrade(args, timeout)
         self.run(args)
 
@@ -459,13 +622,30 @@ class Helm(HelmClient):
                 + self._config.envoy_gateway_controller,
             ]
         )
-        if self._config.image_registry is not None:
-            args.extend(
-                [
-                    "--set-string",
-                    f"global.imageRegistry={self._config.image_registry}",
-                ]
-            )
+        # Materialize the proxy default through the upstream chart helper. Its
+        # version is not the Gateway version and must remain owned by the chart.
+        args.extend([
+            "--set-string", "global.images.envoyProxy.image=docker.io/envoyproxy/envoy",
+        ])
+        images: dict[str, str] = {}
+        for document in self._render_chart(args):
+            if document["kind"] == "Deployment":
+                containers = document["spec"]["template"]["spec"]["containers"]
+                images["envoyGateway"] = containers[0]["image"]
+            if (
+                document["kind"] == "ConfigMap"
+                and "envoy-gateway.yaml" in document.get("data", {})
+            ):
+                config = yaml.safe_load(document["data"]["envoy-gateway.yaml"])
+                images["envoyProxy"] = _value_at(
+                    config, "envoyProxy.provider.kubernetes.envoyDeployment.container.image"
+                )
+                images["ratelimit"] = _value_at(
+                    config, "provider.kubernetes.rateLimitDeployment.container.image"
+                )
+        for role in ("envoyGateway", "envoyProxy", "ratelimit"):
+            image = platform_image_reference(images[role], self._config.image_registry)
+            args.extend(["--set-string", f"global.images.{role}.image={image}"])
         self.run(args)
 
     def install_prometheus(
@@ -506,13 +686,28 @@ class Helm(HelmClient):
             self._config.prometheus.version,
             timeout,
         )
-        if self._config.image_registry is not None:
-            args.extend(
-                [
-                    "--set-string",
-                    f"global.imageRegistry={self._config.image_registry}",
-                ]
-            )
+        self._add_chart_image_sources(
+            args,
+            (
+                "prometheusOperator.image",
+                "prometheusOperator.admissionWebhooks.patch.image",
+                "prometheusOperator.admissionWebhooks.deployment.image",
+                "prometheusOperator.prometheusConfigReloader.image",
+                "prometheusOperator.thanosImage",
+                "prometheus.prometheusSpec.image",
+                "alertmanager.alertmanagerSpec.image",
+                "thanosRuler.thanosRulerSpec.image",
+                "grafana.image",
+                "grafana.sidecar.image",
+                "grafana.initChownData.image",
+                "grafana.downloadDashboardsImage",
+                "grafana.testFramework.image",
+                "kube-state-metrics.image",
+                "prometheus-node-exporter.image",
+            ),
+            subcharts=("grafana", "kube-state-metrics", "prometheus-node-exporter"),
+            version_prefixes=("kube-state-metrics.image", "prometheus-node-exporter.image"),
+        )
         args.extend(
             [
                 "--set",
@@ -586,14 +781,8 @@ class Helm(HelmClient):
                 "securityContext.capabilities.add=[]",
             ]
         )
-        if self._config.image_registry is not None:
-            args.extend(
-                [
-                    "--set-string",
-                    "image.repository="
-                    f"{self._config.image_registry}/nvidia/k8s/dcgm-exporter",
-                ]
-            )
+        if not reuse_values:
+            self._add_chart_image_sources(args, ("image",))
         if observability_labels:
             args.extend(
                 [
@@ -613,6 +802,25 @@ class Helm(HelmClient):
             ]
         )
         self.run(args)
+
+
+def _value_at(values: dict[str, Any], path: str) -> Any:
+    """Read a field whose shape is owned by the selected native chart."""
+    value: Any = values
+    for key in path.split("."):
+        value = value[key]
+    return value
+
+
+def _merge_values(defaults: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Overlay chart mappings for image selection; Helm owns rendering and validation."""
+    merged = defaults.copy()
+    for key, value in overrides.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _merge_values(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
 
 
 def _image_repository_tag(reference: str) -> tuple[str, str]:

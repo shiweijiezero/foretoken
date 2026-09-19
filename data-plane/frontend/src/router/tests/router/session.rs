@@ -16,6 +16,12 @@ use foretoken_router::{
 
 fn target_stats(running_requests: u64) -> RouteTargetStats {
     RouteTargetStats {
+        data_parallel_ranks: vec![foretoken_model_protocol::DataParallelTelemetry {
+            data_parallel_rank: 0,
+            scheduler_running_requests: Some(running_requests),
+            scheduler_waiting_requests: Some(0),
+            kv_cache_usage: Some(0.5),
+        }],
         collected_at_unix_ms: 1,
         observed_window: Duration::from_secs(60),
         running_requests,

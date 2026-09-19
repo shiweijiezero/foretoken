@@ -127,7 +127,11 @@ func (reconciler *KVGroupReconciler) Reconcile(ctx context.Context, request ctrl
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, group, inferencev1alpha1.KVGroupPhaseDegraded, false, false, "InvalidIntent", err.Error(), kvGroupCondition{reason: "InvalidIntent", message: err.Error()})
 	}
-	for _, object := range []client.Object{pvc, deployment, service, networkPolicy} {
+	objects := []client.Object{deployment, service, networkPolicy}
+	if pvc != nil {
+		objects = append([]client.Object{pvc}, objects...)
+	}
+	for _, object := range objects {
 		if err := reconciler.applyOwned(ctx, group, object); err != nil {
 			statusErr := reconciler.updateStatus(ctx, group, inferencev1alpha1.KVGroupPhaseDegraded, false, false, "ApplyFailed", err.Error(), kvGroupCondition{reason: "ApplyFailed", message: err.Error()})
 			return ctrl.Result{}, errors.Join(err, statusErr)
@@ -168,8 +172,8 @@ func kvGroupWorkloadName(group *inferencev1alpha1.KVGroup) string {
 	return kvChildName(group.Name, string(group.UID))
 }
 
-// One KVGroup materializes a single Mooncake client together with its offload disk,
-// RPC Service, and namespace-scoped network boundary as one owned resource set.
+// One KVGroup materializes a single Mooncake client together with its optional offload disk,
+// management Service, and namespace-scoped network boundary as one owned resource set.
 func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNamespace string) (*appsv1.Deployment, *corev1.Service, *corev1.PersistentVolumeClaim, *networkingv1.NetworkPolicy, error) {
 	requests, limits, err := kvResources(group.Spec.Client.Resources)
 	if err != nil {
@@ -183,9 +187,6 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNames
 		return nil, nil, nil, nil, fmt.Errorf("KVGroup drain timeout must be positive")
 	}
 	terminationGracePeriodSeconds := int64(math.Ceil(drain.Seconds()))
-	if group.Spec.Client.Disk.Size == "" {
-		return nil, nil, nil, nil, fmt.Errorf("KVGroup disk is required for standalone Store offload")
-	}
 	if group.Spec.Client.Protocol == "rdma" {
 		if group.Spec.Client.RDMAResourceName == "" {
 			return nil, nil, nil, nil, fmt.Errorf("KVGroup RDMA resource is required for RDMA transport")
@@ -199,59 +200,62 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNames
 	pvcName := kvChildName(group.Name+"-offload", string(group.UID))
 	port, replicas := group.Spec.Client.Port, int32(1)
 	registrationEnabled := storageRegistrationEnabled(group)
-	registrationPort := int32(0)
-	if registrationEnabled {
-		registrationPort = storageManagementPort(group)
-	}
+	// Disk RPC uses a provider-selected port; the HTTP listener works for both storage tiers.
+	registrationPort := storageManagementPort(group)
 	automountToken, allowPrivilegeEscalation, readOnlyRootFilesystem := false, false, true
 	args := []string{
 		fmt.Sprintf("--master_server_address=%s:%d", group.Spec.MasterServiceDNS, group.Spec.MasterRPCPort),
 		"--host=$(POD_IP)", fmt.Sprintf("--port=%d", port), "--protocol=" + group.Spec.Client.Protocol,
-		fmt.Sprintf("--global_segment_size=%s", group.Spec.Client.MemoryCapacityBytes), "--enable_offload=true", "--metadata_server=P2PHANDSHAKE",
+		fmt.Sprintf("--global_segment_size=%s", group.Spec.Client.MemoryCapacityBytes), fmt.Sprintf("--enable_offload=%t", group.Spec.Client.Disk != nil), "--metadata_server=P2PHANDSHAKE",
 	}
-	if registrationEnabled {
-		args = append(args, "--enable_http_server=true", fmt.Sprintf("--http_port=%d", registrationPort))
+	args = append(args, "--enable_http_server=true", fmt.Sprintf("--http_port=%d", registrationPort))
+	var pvc *corev1.PersistentVolumeClaim
+	volumes := []corev1.Volume{{Name: "shm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}}}
+	mounts := []corev1.VolumeMount{{Name: "shm", MountPath: "/dev/shm"}}
+	env := []corev1.EnvVar{{Name: "POD_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}}}
+	if disk := group.Spec.Client.Disk; disk != nil {
+		pvc = &corev1.PersistentVolumeClaim{
+			TypeMeta:   metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "PersistentVolumeClaim"},
+			ObjectMeta: metav1.ObjectMeta{Name: pvcName, Namespace: group.Namespace, Labels: labels, Annotations: map[string]string{kvGroupDiskRetentionAnnotation: string(disk.RetentionPolicy)}},
+			Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(string(disk.Size))}}},
+		}
+		if disk.StorageClassName != "" {
+			pvc.Spec.StorageClassName = &disk.StorageClassName
+		}
+		volumes = append(volumes, corev1.Volume{Name: "offload-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: "offload-storage", MountPath: "/data/mooncake-offload"})
+		env = append(env,
+			corev1.EnvVar{Name: "MOONCAKE_OFFLOAD_FILE_STORAGE_PATH", Value: "/data/mooncake-offload"},
+			corev1.EnvVar{Name: "MOONCAKE_OFFLOAD_STORAGE_BACKEND_DESCRIPTOR", Value: "bucket_storage_backend"},
+			// Capacity reporting and bucket storage use the same disk budget.
+			corev1.EnvVar{Name: "MOONCAKE_OFFLOAD_TOTAL_SIZE_LIMIT_BYTES", Value: string(disk.Size)},
+			corev1.EnvVar{Name: "MOONCAKE_OFFLOAD_BUCKET_MAX_TOTAL_SIZE", Value: string(disk.Size)},
+		)
 	}
-	pvc := &corev1.PersistentVolumeClaim{
-		TypeMeta:   metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "PersistentVolumeClaim"},
-		ObjectMeta: metav1.ObjectMeta{Name: pvcName, Namespace: group.Namespace, Labels: labels, Annotations: map[string]string{kvGroupDiskRetentionAnnotation: string(group.Spec.Client.Disk.RetentionPolicy)}},
-		Spec:       corev1.PersistentVolumeClaimSpec{AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce}, Resources: corev1.VolumeResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse(string(group.Spec.Client.Disk.Size))}}},
-	}
-	if group.Spec.Client.Disk.StorageClassName != "" {
-		pvc.Spec.StorageClassName = &group.Spec.Client.Disk.StorageClassName
-	}
-	containerPorts := []corev1.ContainerPort{{Name: "rpc", ContainerPort: port, Protocol: corev1.ProtocolTCP}}
-	servicePorts := []corev1.ServicePort{{Name: "rpc", Port: port, TargetPort: intstr.FromString("rpc")}}
-	if registrationEnabled {
-		containerPorts = append(containerPorts, corev1.ContainerPort{Name: "management", ContainerPort: registrationPort, Protocol: corev1.ProtocolTCP})
-		servicePorts = append(servicePorts, corev1.ServicePort{Name: "management", Port: registrationPort, TargetPort: intstr.FromString("management")})
+	containerPorts := []corev1.ContainerPort{{Name: "management", ContainerPort: registrationPort, Protocol: corev1.ProtocolTCP}}
+	servicePorts := []corev1.ServicePort{{Name: "management", Port: registrationPort, TargetPort: intstr.FromString("management")}}
+	capabilities := &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}
+	if group.Spec.Client.Protocol == "rdma" {
+		// RDMA registers pinned host memory and must not silently fall back to TCP.
+		capabilities.Add = []corev1.Capability{"IPC_LOCK"}
+		env = append(env, corev1.EnvVar{Name: "MC_FORCE_HCA", Value: "1"})
 	}
 	container := corev1.Container{
 		Name: "client", Image: group.Spec.Client.Image, ImagePullPolicy: corev1.PullIfNotPresent,
 		Command: []string{"mooncake_client"}, Args: args,
-		Ports: containerPorts,
-		Env: []corev1.EnvVar{
-			{Name: "POD_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
-			{Name: "MOONCAKE_OFFLOAD_FILE_STORAGE_PATH", Value: "/data/mooncake-offload"},
-			{Name: "MOONCAKE_OFFLOAD_STORAGE_BACKEND_DESCRIPTOR", Value: "bucket_storage_backend"},
-			// Capacity reporting and bucket storage use the same disk budget.
-			{Name: "MOONCAKE_OFFLOAD_TOTAL_SIZE_LIMIT_BYTES", Value: string(group.Spec.Client.Disk.Size)},
-			{Name: "MOONCAKE_OFFLOAD_BUCKET_MAX_TOTAL_SIZE", Value: string(group.Spec.Client.Disk.Size)},
-		},
+		Ports:           containerPorts,
+		Env:             env,
 		Resources:       corev1.ResourceRequirements{Requests: requests, Limits: limits},
-		VolumeMounts:    []corev1.VolumeMount{{Name: "offload-storage", MountPath: "/data/mooncake-offload"}, {Name: "shm", MountPath: "/dev/shm"}},
-		SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, ReadOnlyRootFilesystem: &readOnlyRootFilesystem, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}},
-		ReadinessProbe:  tcpProbe("rpc", 10), LivenessProbe: tcpProbe("rpc", 15),
+		VolumeMounts:    mounts,
+		SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: &allowPrivilegeEscalation, ReadOnlyRootFilesystem: &readOnlyRootFilesystem, Capabilities: capabilities},
+		ReadinessProbe:  tcpProbe("management", 10), LivenessProbe: tcpProbe("management", 15),
 	}
 	deployment := &appsv1.Deployment{
 		TypeMeta:   metav1.TypeMeta{APIVersion: appsv1.SchemeGroupVersion.String(), Kind: "Deployment"},
 		ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: group.Namespace, Labels: labels},
 		Spec: appsv1.DeploymentSpec{Replicas: &replicas, Strategy: appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType}, Selector: &metav1.LabelSelector{MatchLabels: labels}, Template: corev1.PodTemplateSpec{
 			ObjectMeta: metav1.ObjectMeta{Labels: labels},
-			Spec: corev1.PodSpec{AutomountServiceAccountToken: &automountToken, TerminationGracePeriodSeconds: &terminationGracePeriodSeconds, NodeSelector: group.Spec.Client.NodeSelector, Volumes: []corev1.Volume{
-				{Name: "offload-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: pvcName}}},
-				{Name: "shm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}},
-			}, SecurityContext: &corev1.PodSecurityContext{FSGroup: group.Spec.Client.FSGroup, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{container}},
+			Spec:       corev1.PodSpec{AutomountServiceAccountToken: &automountToken, TerminationGracePeriodSeconds: &terminationGracePeriodSeconds, NodeSelector: group.Spec.Client.NodeSelector, Volumes: volumes, SecurityContext: &corev1.PodSecurityContext{FSGroup: group.Spec.Client.FSGroup, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{container}},
 		}},
 	}
 	service := &corev1.Service{TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "Service"}, ObjectMeta: metav1.ObjectMeta{Name: workloadName, Namespace: group.Namespace, Labels: labels}, Spec: corev1.ServiceSpec{Type: corev1.ServiceTypeClusterIP, Selector: labels, Ports: servicePorts}}
@@ -357,21 +361,23 @@ func (reconciler *KVGroupReconciler) reconcileDelete(ctx context.Context, group 
 		}
 		pending = pending || present
 	}
-	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: kvChildName(group.Name+"-offload", string(group.UID)), Namespace: group.Namespace}}
-	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(pvc), pvc); err == nil {
-		if pvc.Annotations[kvGroupDiskRetentionAnnotation] == string(inferencev1alpha1.RetentionPolicyRetain) {
-			if err := reconciler.releaseDiskPVC(ctx, group, pvc); err != nil {
-				return ctrl.Result{}, err
+	if group.Spec.Client.Disk != nil {
+		pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: kvChildName(group.Name+"-offload", string(group.UID)), Namespace: group.Namespace}}
+		if err := reconciler.Get(ctx, client.ObjectKeyFromObject(pvc), pvc); err == nil {
+			if pvc.Annotations[kvGroupDiskRetentionAnnotation] == string(inferencev1alpha1.RetentionPolicyRetain) {
+				if err := reconciler.releaseDiskPVC(ctx, group, pvc); err != nil {
+					return ctrl.Result{}, err
+				}
+			} else {
+				present, err := reconciler.deleteIfPresent(ctx, pvc)
+				if err != nil {
+					return ctrl.Result{}, err
+				}
+				pending = pending || present
 			}
-		} else {
-			present, err := reconciler.deleteIfPresent(ctx, pvc)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-			pending = pending || present
+		} else if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
 		}
-	} else if !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, err
 	}
 	if pending {
 		return ctrl.Result{Requeue: true}, nil
@@ -428,8 +434,8 @@ func storageRegistrationEnabled(group *inferencev1alpha1.KVGroup) bool {
 
 // storageManagementPort resolves the client HTTP port used by registration checks.
 func storageManagementPort(group *inferencev1alpha1.KVGroup) int32 {
-	if port := group.Spec.Client.StorageRegistration.Port; port != 0 {
-		return port
+	if registration := group.Spec.Client.StorageRegistration; registration != nil && registration.Port != 0 {
+		return registration.Port
 	}
 	return inferencev1alpha1.DefaultStorageRegistrationPort
 }
@@ -462,7 +468,7 @@ func mooncakeID(value string) (string, bool) {
 	return fmt.Sprintf("%d-%d", values[0], values[1]), true
 }
 
-// checkStorageRegistration verifies the client identity and SSD capacity against Master.
+// checkStorageRegistration verifies client identity, memory segments and any disk capacity against Master.
 func (reconciler *KVGroupReconciler) checkStorageRegistration(ctx context.Context, group *inferencev1alpha1.KVGroup) (bool, kvGroupCondition) {
 	if !storageRegistrationEnabled(group) {
 		return true, kvGroupCondition{}
@@ -490,15 +496,19 @@ func (reconciler *KVGroupReconciler) checkStorageRegistration(ctx context.Contex
 		}
 		seenSegments[segment] = struct{}{}
 	}
-	if !clientResponse.SSDEnabled {
-		return false, kvGroupCondition{reason: "Unsupported", message: "Storage registration does not report SSD offload enabled"}
+	if clientResponse.SSDEnabled != (group.Spec.Client.Disk != nil) {
+		return false, kvGroupCondition{reason: "Unsupported", message: "Storage registration does not match the configured disk tier"}
 	}
 	if group.Spec.MasterAdminPort == 0 {
 		return false, kvGroupCondition{reason: "Unsupported", message: "Master admin port is not resolved for storage registration"}
 	}
-	diskCapacity, err := exactPositiveBytes(group.Spec.Client.Disk.Size)
-	if err != nil {
-		return false, kvGroupCondition{reason: "Unsupported", message: "KVGroup disk capacity is not a valid byte quantity"}
+	var diskCapacity int64
+	if disk := group.Spec.Client.Disk; disk != nil {
+		var err error
+		diskCapacity, err = exactPositiveBytes(disk.Size)
+		if err != nil {
+			return false, kvGroupCondition{reason: "Unsupported", message: "KVGroup disk capacity is not a valid byte quantity"}
+		}
 	}
 	masterURL := fmt.Sprintf("http://%s:%d%s?client_id=%s", group.Spec.MasterServiceDNS, group.Spec.MasterAdminPort, masterRegistrationPath, url.QueryEscape(clientID))
 	var masterResponse kvMasterRegistrationResponse
@@ -506,7 +516,7 @@ func (reconciler *KVGroupReconciler) checkStorageRegistration(ctx context.Contex
 		return false, storageRegistrationCondition(err)
 	}
 	masterID, valid := mooncakeID(masterResponse.ClientID)
-	if !valid || masterID != clientID || !masterResponse.SSDRegistered || masterResponse.SSDReportedCapacityBytes != diskCapacity {
+	if !valid || masterID != clientID || masterResponse.SSDRegistered != (group.Spec.Client.Disk != nil) || masterResponse.SSDReportedCapacityBytes != diskCapacity {
 		return false, kvGroupCondition{reason: "Unsupported", message: "Master registration does not match client identity or SSD capacity"}
 	}
 	segmentsURL := fmt.Sprintf("http://%s:%d/get_segments_detail", group.Spec.MasterServiceDNS, group.Spec.MasterAdminPort)
@@ -569,7 +579,10 @@ func (reconciler *KVGroupReconciler) updateStatus(ctx context.Context, group *in
 	group.Status.ObservedGeneration = group.Generation
 	group.Status.Phase = phase
 	group.Status.RequestedMemoryCapacityBytes = group.Spec.Client.MemoryCapacityBytes
-	group.Status.RequestedDiskCapacityBytes = group.Spec.Client.Disk.Size
+	group.Status.RequestedDiskCapacityBytes = ""
+	if group.Spec.Client.Disk != nil {
+		group.Status.RequestedDiskCapacityBytes = group.Spec.Client.Disk.Size
+	}
 	meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionClientPodReady, Status: conditionStatus(podReady), Reason: clientPodReason(podReady), Message: clientPodMessage(podReady), ObservedGeneration: group.Generation})
 	if storageRegistrationEnabled(group) {
 		meta.SetStatusCondition(&group.Status.Conditions, metav1.Condition{Type: conditionStorageRegistered, Status: conditionStatus(storage.ready), Reason: storage.reason, Message: storage.message, ObservedGeneration: group.Generation})

@@ -42,7 +42,7 @@ kind create cluster \
   --config deploy/kind/multi-node.yaml
 ```
 
-After creating the cluster, build and import the local images. The vLLM adapter supports the EngineCore protocols shipped by vLLM 0.20 through 0.28. The inference-engine image normally provides its Python executable as `python`. If it requires a specific executable, set both build inputs:
+After creating the cluster, build and import the local images. The vLLM adapter supports EngineCore layouts from vLLM 0.20–0.29 and the current 0.30 development version. Engine/model compatibility must also match the target accelerator. The inference-engine image normally provides its Python executable as `python`. If it requires a specific executable, set both build inputs:
 
 ```bash
 INFERENCE_ENGINE_IMAGE=<compatible-inference-engine-image> \

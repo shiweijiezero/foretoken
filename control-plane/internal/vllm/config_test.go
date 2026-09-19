@@ -10,20 +10,10 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
 
-// TestCompileEngineArgsBoundary protects launch ownership and explicit service precedence.
+// TestCompileEngineArgsBoundary protects launch ownership and preserves native value types.
 func TestCompileEngineArgsBoundary(t *testing.T) {
 	template := testVLLMTemplate(1)
-	maxModelLen := int32(32768)
-	eager := false
-	template.Inference = inferencev1alpha1.InferenceParameters{
-		MaxModelLen: &maxModelLen, DType: "bfloat16", EnforceEager: &eager,
-		SpeculativeDecoding: &inferencev1alpha1.EngineArguments{
-			"method":                 {Raw: []byte(`"ngram"`)},
-			"num_speculative_tokens": {Raw: []byte(`2`)},
-			"prompt_lookup_max":      {Raw: []byte(`4`)},
-		},
-	}
-	if err := json.Unmarshal([]byte(`{"tensor-parallel-size":1,"decode-context-parallel-size":1,"data-parallel-size":1,"dtype":"float16","enforce-eager":true,"max_model_len":1024,"speculative-config":{"method":"ngram","num_speculative_tokens":5,"draft_tensor_parallel_size":1}}`), &template.EngineArgs); err != nil {
+	if err := json.Unmarshal([]byte(`{"tensor-parallel-size":1,"decode-context-parallel-size":1,"data-parallel-size":1,"dtype":"bfloat16","enforce-eager":false,"max_model_len":32768,"speculative-config":{"method":"ngram","num_speculative_tokens":2,"prompt_lookup_max":4}}`), &template.EngineArgs); err != nil {
 		t.Fatal(err)
 	}
 	config, err := Compile(template)
@@ -36,7 +26,7 @@ func TestCompileEngineArgsBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	speculative := got["speculative-config"].(map[string]any)
-	if got["dtype"] != "bfloat16" || got["enforce-eager"] != false || got["max-model-len"] != float64(32768) || speculative["method"] != "ngram" || speculative["num_speculative_tokens"] != float64(2) || speculative["prompt_lookup_max"] != float64(4) || speculative["draft_tensor_parallel_size"] != nil {
+	if got["dtype"] != "bfloat16" || got["enforce-eager"] != false || got["max-model-len"] != float64(32768) || speculative["method"] != "ngram" || speculative["num_speculative_tokens"] != float64(2) || speculative["prompt_lookup_max"] != float64(4) {
 		t.Fatalf("effective arguments = %s", encoded)
 	}
 	for _, name := range []string{"tensor_parallel_s", "--dtype", "kv-transfer-config", "nnodes", "profiler-config"} {

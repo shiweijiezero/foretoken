@@ -194,6 +194,12 @@ fn telemetry(at_ms: u64, tokens: u64, histogram: CumulativeHistogram) -> Telemet
         version: 2,
         collected_at_unix_ms: at_ms,
         accepting: true,
+        data_parallel_ranks: vec![foretoken_model_protocol::DataParallelTelemetry {
+            data_parallel_rank: 0,
+            scheduler_running_requests: Some(0),
+            scheduler_waiting_requests: Some(0),
+            kv_cache_usage: Some(0.0),
+        }],
         running_requests: 0,
         max_concurrent_requests: Some(1),
         scheduler_running_requests: Some(0),
@@ -346,10 +352,23 @@ async fn telemetry_history_derives_windows_and_resets_counter_history() {
 
     registry.refresh_backend_readiness().await;
     *telemetry_state.lock().unwrap() = telemetry(151_000, 400, histogram(4, 0.8, 2));
+    telemetry_state.lock().unwrap().data_parallel_ranks.push(
+        foretoken_model_protocol::DataParallelTelemetry {
+            data_parallel_rank: 1,
+            scheduler_running_requests: Some(2),
+            scheduler_waiting_requests: Some(7),
+            kv_cache_usage: Some(0.75),
+        },
+    );
     registry.refresh_backend_readiness().await;
 
     let stats = registry.stats(&target, Duration::from_secs(150)).unwrap();
     assert_eq!(stats.observed_window, Duration::from_secs(150));
+    assert_eq!(stats.data_parallel_ranks[1].data_parallel_rank, 1);
+    assert_eq!(
+        stats.data_parallel_ranks[1].scheduler_waiting_requests,
+        Some(7)
+    );
     assert_eq!(stats.prompt_tokens_per_second, Some(2.0));
     assert_eq!(stats.generation_tokens_per_second, Some(1.0));
     assert_eq!(stats.ttft.unwrap().p95_ms, Some(500.0));
@@ -358,6 +377,7 @@ async fn telemetry_history_derives_windows_and_resets_counter_history() {
     registry.refresh_backend_readiness().await;
     let stats = registry.stats(&target, Duration::from_secs(150)).unwrap();
     assert_eq!(stats.observed_window, Duration::ZERO);
+    assert_eq!(stats.data_parallel_ranks.len(), 1);
     assert_eq!(stats.scheduler_running_requests, Some(0));
     assert_eq!(stats.prompt_tokens_per_second, None);
     assert_eq!(stats.ttft, None);

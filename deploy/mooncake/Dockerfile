@@ -47,7 +47,7 @@ RUN install -Dm644 extern/yalantinglibs/LICENSE /out/share/licenses/yalantinglib
 FROM ${RUNTIME_IMAGE}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libcurl4t64 libgflags2.2 libgoogle-glog0v6t64 \
+    ca-certificates ibverbs-providers libcurl4t64 libgflags2.2 libgoogle-glog0v6t64 \
     libibverbs1 libjsoncpp25 libnuma1 libstdc++6 liburing2 \
     libxxhash0 libyaml-cpp0.8 libzstd1 tini \
     && rm -rf /var/lib/apt/lists/* \

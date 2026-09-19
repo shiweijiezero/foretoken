@@ -3,7 +3,9 @@
 
 //! Typed reads of vLLM metrics and cumulative model-server latency observations.
 
-use foretoken_model_protocol::{CumulativeHistogram, CumulativeHistogramBucket};
+use foretoken_model_protocol::{
+    CumulativeHistogram, CumulativeHistogramBucket, DataParallelTelemetry,
+};
 use vllm_metrics::{EngineLabels, METRICS};
 
 // The selected vLLM crate does not expose its request histogram boundaries. Keep the compatible
@@ -114,6 +116,7 @@ impl BoundaryLatencyMetrics {
 }
 
 pub(crate) struct VllmMetricsSnapshot {
+    pub(crate) data_parallel_ranks: Vec<DataParallelTelemetry>,
     pub(crate) scheduler_running_requests: Option<u64>,
     pub(crate) scheduler_waiting_requests: Option<u64>,
     pub(crate) kv_cache_usage: Option<f64>,
@@ -123,38 +126,55 @@ pub(crate) struct VllmMetricsSnapshot {
 
 /// Reads the selected EngineCore metrics for `VllmBackend::telemetry` without retaining labels.
 ///
-/// Returns one owned aggregate snapshot for the internal telemetry endpoint.
+/// Returns rank-local scheduler gauges and their group aggregate in one owned snapshot.
 pub(crate) fn read_vllm_metrics(engine_labels: &[EngineLabels]) -> VllmMetricsSnapshot {
-    VllmMetricsSnapshot {
-        scheduler_running_requests: sum_engine_metric(engine_labels, |labels| {
-            METRICS
+    let data_parallel_ranks = engine_labels
+        .iter()
+        .map(|labels| DataParallelTelemetry {
+            data_parallel_rank: labels.engine,
+            scheduler_running_requests: METRICS
                 .scheduler
                 .scheduler_running
                 .get(labels)
-                .map(|metric| metric.get())
-        }),
-        scheduler_waiting_requests: sum_engine_metric(engine_labels, |labels| {
-            METRICS
+                .map(|metric| metric.get()),
+            scheduler_waiting_requests: METRICS
                 .scheduler
                 .scheduler_waiting
                 .get(labels)
-                .map(|metric| metric.get())
-        }),
-        kv_cache_usage: average_engine_metric(engine_labels, |labels| {
-            METRICS
+                .map(|metric| metric.get()),
+            kv_cache_usage: METRICS
                 .scheduler
                 .kv_cache_usage
                 .get(labels)
-                .map(|metric| metric.get())
-        }),
-        prompt_tokens_total: sum_engine_metric(engine_labels, |labels| {
+                .map(|metric| metric.get()),
+        })
+        .collect::<Vec<_>>();
+    // Aggregate exactly the same rank observations used by the router; missing ranks stay unknown.
+    let scheduler_running_requests =
+        sum_metric(&data_parallel_ranks, |rank| rank.scheduler_running_requests);
+    let scheduler_waiting_requests =
+        sum_metric(&data_parallel_ranks, |rank| rank.scheduler_waiting_requests);
+    let kv_cache_usage = if data_parallel_ranks.is_empty() {
+        None
+    } else {
+        data_parallel_ranks
+            .iter()
+            .try_fold(0.0, |total, rank| Some(total + rank.kv_cache_usage?))
+            .map(|total| total / data_parallel_ranks.len() as f64)
+    };
+    VllmMetricsSnapshot {
+        data_parallel_ranks,
+        scheduler_running_requests,
+        scheduler_waiting_requests,
+        kv_cache_usage,
+        prompt_tokens_total: sum_metric(engine_labels, |labels| {
             METRICS
                 .request
                 .prompt_tokens
                 .get(labels)
                 .map(|metric| metric.get())
         }),
-        generation_tokens_total: sum_engine_metric(engine_labels, |labels| {
+        generation_tokens_total: sum_metric(engine_labels, |labels| {
             METRICS
                 .request
                 .generation_tokens
@@ -164,29 +184,12 @@ pub(crate) fn read_vllm_metrics(engine_labels: &[EngineLabels]) -> VllmMetricsSn
     }
 }
 
-fn sum_engine_metric(
-    engine_labels: &[EngineLabels],
-    read: impl Fn(&EngineLabels) -> Option<u64>,
-) -> Option<u64> {
-    if engine_labels.is_empty() {
+fn sum_metric<T>(observations: &[T], read: impl Fn(&T) -> Option<u64>) -> Option<u64> {
+    if observations.is_empty() {
         return None;
     }
-    engine_labels
+    observations
         .iter()
         .map(read)
         .try_fold(0_u64, |total, value| total.checked_add(value?))
-}
-
-fn average_engine_metric(
-    engine_labels: &[EngineLabels],
-    read: impl Fn(&EngineLabels) -> Option<f64>,
-) -> Option<f64> {
-    if engine_labels.is_empty() {
-        return None;
-    }
-    let total = engine_labels
-        .iter()
-        .map(read)
-        .try_fold(0.0, |total, value| Some(total + value?))?;
-    Some(total / engine_labels.len() as f64)
 }

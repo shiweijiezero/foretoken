@@ -92,7 +92,7 @@ func desiredKVMasterResources(service *inferencev1alpha1.KVService) (*corev1.Con
 			ObjectMeta: metav1.ObjectMeta{Labels: labels},
 			Spec: corev1.PodSpec{AutomountServiceAccountToken: &automountToken, Volumes: volumes, SecurityContext: &corev1.PodSecurityContext{FSGroup: service.Spec.Master.FSGroup, SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}, Containers: []corev1.Container{{
 				Name: "master", Image: service.Spec.Master.Image, ImagePullPolicy: corev1.PullIfNotPresent,
-				Command: []string{"mooncake_master"}, Args: []string{"--config_path=/etc/mooncake/master.yaml", "--enable_offload"},
+				Command: []string{"mooncake_master"}, Args: []string{"--config_path=/etc/mooncake/master.yaml", fmt.Sprintf("--enable_offload=%t", kvDiskOffloadEnabled(service))},
 				Env:             []corev1.EnvVar{{Name: "MOONCAKE_SNAPSHOT_LOCAL_PATH", Value: "/data/snapshots"}},
 				Ports:           []corev1.ContainerPort{{Name: "rpc", ContainerPort: rpcPort}, {Name: "metadata", ContainerPort: metadataPort}, {Name: "metrics", ContainerPort: metricsPort}},
 				VolumeMounts:    []corev1.VolumeMount{{Name: "config", MountPath: "/etc/mooncake", ReadOnly: true}, {Name: "snapshots", MountPath: "/data/snapshots"}, {Name: "tmp", MountPath: "/tmp"}},
@@ -203,6 +203,16 @@ func tcpProbe(port string, periodSeconds int32) *corev1.Probe {
 	return &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString(port)}}, PeriodSeconds: periodSeconds, TimeoutSeconds: 1, FailureThreshold: 3}
 }
 
+// kvDiskOffloadEnabled shares the configured tier choice between Master and requesters.
+func kvDiskOffloadEnabled(service *inferencev1alpha1.KVService) bool {
+	for _, pool := range service.Spec.StoragePools {
+		if pool.Client.Disk != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // desiredKVRequesterConfig builds the per-KVService vLLM Mooncake Store configuration.
 func desiredKVRequesterConfig(service *inferencev1alpha1.KVService, masterService string, rpcPort int32) (*corev1.ConfigMap, error) {
 	bytes, err := resourcevalidation.ParsePositiveBytes("requester.localBufferSize", string(service.Spec.Requester.LocalBufferSize))
@@ -213,7 +223,7 @@ func desiredKVRequesterConfig(service *inferencev1alpha1.KVService, masterServic
 	protocol := service.Spec.StoragePools[0].Client.Protocol
 	name := kvChildName(service.Name+"-requester-config", string(service.UID)+":"+strconv.FormatInt(service.Generation, 10))
 	endpoint := fmt.Sprintf("%s.%s.svc:%d", masterService, service.Namespace, rpcPort)
-	payload, err := json.Marshal(map[string]any{"mode": "standalone-store", "metadata_server": "P2PHANDSHAKE", "master_server_address": endpoint, "global_segment_size": 0, "local_buffer_size": strconv.FormatInt(bytes, 10) + "B", "protocol": protocol, "device_name": "", "enable_offload": true})
+	payload, err := json.Marshal(map[string]any{"mode": "standalone-store", "metadata_server": "P2PHANDSHAKE", "master_server_address": endpoint, "global_segment_size": 0, "local_buffer_size": strconv.FormatInt(bytes, 10) + "B", "protocol": protocol, "device_name": "", "enable_offload": kvDiskOffloadEnabled(service)})
 	if err != nil {
 		return nil, err
 	}

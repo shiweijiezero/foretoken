@@ -60,13 +60,11 @@ spec:
               from a KVPool.
             properties:
               client:
-                description: |-
-                  KVGroupClientConfig is the resolved immutable Mooncake client workload input.
-                  Disk is mandatory: this first standalone Store profile enables SSD offload.
+                description: KVGroupClientConfig is the resolved immutable Mooncake
+                  client workload input.
                 properties:
                   disk:
-                    description: KVGroupDisk is the resolved SSD offload claim for
-                      one client Group.
+                    description: Disk is absent for memory-only Store clients.
                     properties:
                       retentionPolicy:
                         description: |-
@@ -216,7 +214,6 @@ spec:
                         type: integer
                     type: object
                 required:
-                - disk
                 - image
                 - memoryCapacityBytes
                 - port

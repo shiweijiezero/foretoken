@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-// Reconciles single-member ModelGroups into isolated model-server workloads.
+// Reconciles ModelGroups into isolated single-node or distributed model-server workloads.
 
 package controllers
 
@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 )
 
 const (
@@ -57,21 +58,29 @@ type ModelGroupReconciler struct {
 	Now                   func() time.Time
 	ControlPlaneNamespace string
 	ImagePullSecrets      []corev1.LocalObjectReference
+	LeaderWorkerSets      bool
 }
 
 // SetupWithManager registers the ModelGroup controller and its owned resources.
 func (reconciler *ModelGroupReconciler) SetupWithManager(manager ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(manager).
+	builder := ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelGroup{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.NetworkPolicy{}).
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelGroupsForPod)).
-		Complete(reconciler)
+		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(reconciler.modelGroupsForPod))
+	_, err := manager.GetRESTMapper().RESTMapping(lwsv1.GroupVersion.WithKind("LeaderWorkerSet").GroupKind(), lwsv1.GroupVersion.Version)
+	if err == nil {
+		reconciler.LeaderWorkerSets = true
+		builder = builder.Owns(&lwsv1.LeaderWorkerSet{})
+	} else if !meta.IsNoMatchError(err) {
+		return fmt.Errorf("discover LeaderWorkerSet: %w", err)
+	}
+	return builder.Complete(reconciler)
 }
 
-// modelGroupsForPod requeues the Group selected by a Deployment Pod when its
-// scheduler condition changes. Pods are owned by ReplicaSets, not ModelGroups.
+// modelGroupsForPod requeues the execution Group when a member Pod changes.
+// Workload controllers, rather than ModelGroups, directly own the Pods.
 func (reconciler *ModelGroupReconciler) modelGroupsForPod(_ context.Context, object client.Object) []reconcile.Request {
 	groupName := object.GetLabels()[modelGroupLabel]
 	if groupName == "" {
@@ -95,6 +104,9 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if err := validateGroupProfile(group); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupFailureState(err))
 	}
+	if group.Spec.NodeCount > 1 && !reconciler.LeaderWorkerSets {
+		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupFailureState(fmt.Errorf("multi-node Groups require LeaderWorkerSet; run foretoken install to prepare the controller")))
+	}
 	if err := ensureKVIndexerSecret(ctx, reconciler.Client, group.Namespace); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -107,7 +119,7 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	deployment, err := reconciler.reconcileDeployment(ctx, group)
+	available, err := reconciler.reconcileWorkload(ctx, group)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -121,7 +133,7 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := reconciler.updateStatus(ctx, group, modelGroupMaterializedState(modelGroupDeploymentAvailable(deployment), scheduling)); err != nil {
+	if err := reconciler.updateStatus(ctx, group, modelGroupMaterializedState(available, scheduling)); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
@@ -198,7 +210,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	enableServiceLinks := true
 	allowPrivilegeEscalation := false
 	capabilities := &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}
-	if group.Spec.PDRuntime != nil {
+	if group.Spec.RDMA != nil {
 		// RDMA completion queues pin userspace memory. IPC_LOCK permits that
 		// without making the model container privileged.
 		capabilities.Add = []corev1.Capability{"IPC_LOCK"}
@@ -245,9 +257,9 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	deviceCount := *resource.NewQuantity(int64(group.Spec.Resources.Requests.GPU.Count), resource.DecimalSI)
 	requests[deviceResource] = deviceCount
 	limits[deviceResource] = deviceCount
-	if pd := group.Spec.PDRuntime; pd != nil {
-		rdmaResource := corev1.ResourceName(pd.RDMAResourceName)
-		rdmaCount := *resource.NewQuantity(int64(pd.RDMAResourceCount), resource.DecimalSI)
+	if rdma := group.Spec.RDMA; rdma != nil {
+		rdmaResource := corev1.ResourceName(rdma.ResourceName)
+		rdmaCount := *resource.NewQuantity(int64(rdma.ResourceCount), resource.DecimalSI)
 		requests[rdmaResource] = rdmaCount
 		limits[rdmaResource] = rdmaCount
 	}
@@ -371,12 +383,16 @@ func modelGroupServiceName(group *inferencev1alpha1.ModelGroup) string {
 // reconcileService applies the stable Service owned by the ModelGroup.
 func (reconciler *ModelGroupReconciler) reconcileService(ctx context.Context, group *inferencev1alpha1.ModelGroup) error {
 	labels := modelGroupLabels(group)
+	selector := maps.Clone(labels)
+	if group.Spec.NodeCount > 1 {
+		selector[lwsv1.WorkerIndexLabelKey] = "0"
+	}
 	desired := &corev1.Service{
 		TypeMeta:   metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "Service"},
 		ObjectMeta: metav1.ObjectMeta{Name: modelGroupServiceName(group), Namespace: group.Namespace, Labels: labels},
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeClusterIP,
-			Selector: labels,
+			Selector: selector,
 			Ports: []corev1.ServicePort{{
 				Name:       "model-server",
 				Port:       group.Spec.Runtime.Port,
@@ -452,6 +468,12 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 			}},
 			Ports: []networkingv1.NetworkPolicyPort{{Protocol: &protocol, Port: &cacheObservationPort}},
 		})
+	}
+	if group.Spec.NodeCount > 1 {
+		// EngineCore and collectives allocate additional ports during the group handshake.
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{{
+			PodSelector: &metav1.LabelSelector{MatchLabels: labels},
+		}}})
 	}
 	ingress[0].From = append(ingress[0].From, networkingv1.NetworkPolicyPeer{
 		NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{
@@ -552,7 +574,7 @@ func (reconciler *ModelGroupReconciler) schedulingCapacity(ctx context.Context, 
 	if err := reconciler.List(ctx, &pods, client.InNamespace(group.Namespace), client.MatchingLabels(modelGroupLabels(group))); err != nil {
 		return schedulingCapacityState{}, fmt.Errorf("list Group Pods: %w", err)
 	}
-	scheduled := false
+	scheduled := int32(0)
 	for index := range pods.Items {
 		for _, condition := range pods.Items[index].Status.Conditions {
 			if condition.Type != corev1.PodScheduled {
@@ -562,11 +584,11 @@ func (reconciler *ModelGroupReconciler) schedulingCapacity(ctx context.Context, 
 				return schedulingCapacityState{status: metav1.ConditionFalse, reason: "InsufficientCapacity", message: "The Kubernetes scheduler reported the Group Pod as Unschedulable"}, nil
 			}
 			if condition.Status == corev1.ConditionTrue {
-				scheduled = true
+				scheduled++
 			}
 		}
 	}
-	if scheduled {
+	if scheduled == group.Spec.MemberCount {
 		return schedulingCapacityState{status: metav1.ConditionTrue, reason: "Scheduled", message: "The Group Pod was scheduled"}, nil
 	}
 	return schedulingCapacityState{status: metav1.ConditionUnknown, reason: "WaitingForScheduling", message: "The Group Pod has not reported a scheduling result"}, nil

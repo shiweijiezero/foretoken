@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Bounded anonymous source selection for source-image builds."""
+"""Bounded anonymous source selection for builds and platform OCI artifacts."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import urllib.parse
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import cache
 
 
 @dataclass(frozen=True)
@@ -138,8 +139,21 @@ def _measure_oci_manifest(host: str, repository: str, reference: str) -> float |
         "User-Agent": "foretoken-source-probe",
     }
     try:
-        status, response_headers, _ = _https_get(url, deadline, headers)
-        if status == 401:
+        for _ in range(4):
+            status, response_headers, _ = _https_get(url, deadline, headers)
+            if status == 200:
+                return time.monotonic() - started
+            if status in {301, 302, 303, 307, 308}:
+                location = response_headers.get("location")
+                if not location:
+                    return None
+                target = urllib.parse.urljoin(url, location)
+                if urllib.parse.urlsplit(target).netloc != urllib.parse.urlsplit(url).netloc:
+                    headers.pop("Authorization", None)
+                url = target
+                continue
+            if status != 401 or "Authorization" in headers:
+                return None
             parameters = _bearer_parameters(
                 response_headers.get("www-authenticate", "")
             )
@@ -147,18 +161,17 @@ def _measure_oci_manifest(host: str, repository: str, reference: str) -> float |
             if not realm:
                 return None
             token_url = f"{realm}?{urllib.parse.urlencode(parameters)}"
-            _, _, token_body = _https_get(token_url, deadline)
+            token_status, _, token_body = _https_get(token_url, deadline)
+            if token_status != 200:
+                return None
             token = json.loads(token_body)
             access_token = token.get("token") or token.get("access_token")
             if not isinstance(access_token, str) or not access_token:
                 return None
             headers["Authorization"] = f"Bearer {access_token}"
-            status, _, _ = _https_get(url, deadline, headers)
-        if status != 200:
-            return None
     except (OSError, TimeoutError, http.client.HTTPException, ssl.SSLError, ValueError):
         return None
-    return time.monotonic() - started
+    return None
 
 
 def _prefer_mirror(official: float | None, mirror: float | None) -> bool:
@@ -170,6 +183,58 @@ def _prefer_mirror(official: float | None, mirror: float | None) -> bool:
     return (
         mirror <= official * SOURCE_SELECTION_POLICY.faster_ratio
         and official - mirror >= SOURCE_SELECTION_POLICY.faster_margin_seconds
+    )
+
+
+def platform_image_reference(reference: str, registry: str | None = None) -> str:
+    """Resolve a platform-owned image default, preserving its tag or digest.
+
+    An explicit registry replaces the original host. Automatic public proxies
+    retain that host as a path segment. Callers omit user-selected images.
+    """
+    first, separator, path = reference.partition("/")
+    if registry is not None:
+        qualified = separator and ("." in first or ":" in first or first == "localhost")
+        repository = path if qualified else reference
+        return f"{registry}/{repository}"
+    return select_platform_oci_reference(reference)
+
+
+@cache
+def select_platform_oci_reference(reference: str) -> str:
+    """Select an anonymous source for a CLI-owned public image or OCI chart default.
+
+    Callers retain explicit user overrides. Preserve the original registry path,
+    tag or digest when selecting the public proxy, and reuse the decision within
+    this CLI invocation.
+    """
+    scheme = "oci://" if reference.startswith("oci://") else ""
+    value = reference.removeprefix(scheme) if scheme else reference
+    host, separator, path = value.partition("/")
+    if not separator or host not in {
+        "docker.io", "ghcr.io", "gcr.io", "registry.k8s.io", "quay.io", "nvcr.io",
+        "cr.infini-ai.com",
+    }:
+        return reference
+    if "@" in path:
+        repository, revision = path.rsplit("@", 1)
+    elif ":" in path.rsplit("/", 1)[-1]:
+        repository, revision = path.rsplit(":", 1)
+    else:
+        repository, revision = path, "latest"
+    official_host = "registry-1.docker.io" if host == "docker.io" else host
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        official = executor.submit(
+            _measure_oci_manifest, official_host, repository, revision
+        )
+        mirror = executor.submit(
+            _measure_oci_manifest, "m.daocloud.io", f"{host}/{repository}", revision
+        )
+        official_time, mirror_time = official.result(), mirror.result()
+    return (
+        f"{scheme}m.daocloud.io/{value}"
+        if _prefer_mirror(official_time, mirror_time)
+        else reference
     )
 
 

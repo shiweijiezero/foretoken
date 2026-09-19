@@ -204,11 +204,6 @@ spec:
                 enum:
                 - vllm
                 type: string
-              dtype:
-                description: DType selects the model weight and activation data type
-                  supported by the engine.
-                minLength: 1
-                type: string
               ecProfile:
                 description: ECProfile selects the platform-maintained EC runtime
                   for a complete E/P/D topology.
@@ -220,16 +215,11 @@ spec:
                 required:
                 - profile
                 type: object
-              enforceEager:
-                description: EnforceEager disables graph capture when true; omission
-                  preserves the engine default.
-                type: boolean
               engineArgs:
                 additionalProperties:
                   x-kubernetes-preserve-unknown-fields: true
-                description: |-
-                  EngineArgs uses the selected backend's native option names without leading --.
-                  Explicit common fields in spec take precedence over matching engine options.
+                description: EngineArgs uses the selected backend's native option
+                  names without leading --.
                 type: object
               features:
                 description: Features declares explicit opt-in capabilities for the
@@ -261,13 +251,6 @@ spec:
                   tools:
                     type: boolean
                 type: object
-              gpuMemoryUtilization:
-                description: GPUMemoryUtilization is the fraction of device memory
-                  available to each engine instance.
-                exclusiveMinimum: true
-                maximum: 1
-                minimum: 0
-                type: number
               internalGenerateRequestBodyLimitBytes:
                 default: 67108864
                 description: |-
@@ -330,32 +313,9 @@ spec:
                 - message: kvCache.offload and kvCache.mooncakeStore are mutually
                     exclusive
                   rule: '!(has(self.offload) && has(self.mooncakeStore))'
-              kvCacheDType:
-                description: KVCacheDType selects the data type used for the engine's
-                  KV cache.
-                minLength: 1
-                type: string
               maxInputTokens:
                 description: MaxInputTokens is the prompt admission limit for requests
                   routed to the default Pool.
-                format: int32
-                minimum: 1
-                type: integer
-              maxModelLen:
-                description: MaxModelLen limits the combined prompt and generated
-                  sequence length.
-                format: int32
-                minimum: 1
-                type: integer
-              maxNumBatchedTokens:
-                description: MaxNumBatchedTokens limits the tokens scheduled in one
-                  engine iteration.
-                format: int32
-                minimum: 1
-                type: integer
-              maxNumSeqs:
-                description: MaxNumSeqs limits the sequences scheduled in one engine
-                  iteration.
                 format: int32
                 minimum: 1
                 type: integer
@@ -481,10 +441,9 @@ spec:
                       type: string
                     nodes:
                       default: 1
-                      description: Nodes is the number of physical Kubernetes Nodes
+                      description: Nodes is the number of distinct Kubernetes Nodes
                         used by each ModelGroup.
                       format: int32
-                      maximum: 1
                       minimum: 1
                       type: integer
                     replicas:
@@ -597,10 +556,9 @@ spec:
                 - name
                 x-kubernetes-list-type: map
               nodes:
-                description: Nodes is the number of physical Kubernetes Nodes used
+                description: Nodes is the number of distinct Kubernetes Nodes used
                   by each ModelGroup; the compiler defaults it to 1.
                 format: int32
-                maximum: 1
                 minimum: 1
                 type: integer
               observability:
@@ -643,11 +601,6 @@ spec:
                         ''ForetokenNVIDIAGPUPowerUsageHigh'') || (has(self.thresholds)
                         && has(self.thresholds.nvidiaPowerWatts))'
                 type: object
-              quantization:
-                description: Quantization selects the engine's weight quantization
-                  method.
-                minLength: 1
-                type: string
               replicas:
                 description: |-
                   Replicas is the baseline service replica count; the compiler defaults it to 1.
@@ -743,13 +696,6 @@ spec:
                 - hf
                 - modelscope
                 type: string
-              speculativeDecoding:
-                additionalProperties:
-                  x-kubernetes-preserve-unknown-fields: true
-                description: |-
-                  SpeculativeDecoding is the complete native speculative configuration for the selected backend.
-                  It replaces the corresponding engineArgs option when present.
-                type: object
               timeouts:
                 description: ModelTimeouts defines ModelService lifecycle budgets.
                 properties:

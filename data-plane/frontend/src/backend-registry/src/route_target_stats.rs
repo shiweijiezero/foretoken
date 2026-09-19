@@ -71,6 +71,7 @@ impl RouteTargetStatsHistory {
         let observed_seconds = observed_ms.map(|milliseconds| milliseconds as f64 / 1_000.0);
 
         Some(RouteTargetStats {
+            data_parallel_ranks: current.data_parallel_ranks.clone(),
             collected_at_unix_ms: current.collected_at_unix_ms,
             observed_window: Duration::from_millis(observed_ms.unwrap_or(0)),
             running_requests: current.running_requests,

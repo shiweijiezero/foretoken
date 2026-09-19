@@ -85,7 +85,7 @@ func kvScopeID(group *inferencev1alpha1.ModelGroup) string {
 // sharedKVLookupScope bounds query reuse by a known Store owner or one external-profile consumer.
 // The existing KV scope independently checks model and layout compatibility.
 func sharedKVLookupScope(group *inferencev1alpha1.ModelGroup) string {
-	if group.Spec.Parallelism.DP != 1 || group.Spec.KVRuntime == nil || group.Spec.KVRuntime.MooncakeStore == nil {
+	if group.Spec.KVRuntime == nil || group.Spec.KVRuntime.MooncakeStore == nil {
 		return ""
 	}
 	if group.Spec.Role != inferencev1alpha1.ModelRoleAggregate && group.Spec.Role != inferencev1alpha1.ModelRolePrefill {

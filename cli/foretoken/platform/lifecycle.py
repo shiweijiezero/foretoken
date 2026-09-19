@@ -36,8 +36,13 @@ from foretoken.platform.config import (
 )
 from foretoken.platform.gateway import GatewayControllerLifecycle
 from foretoken.platform.helm import Helm
+from foretoken.platform.leader_worker import LeaderWorkerLifecycle
 from foretoken.platform.load_balancer import LoadBalancerLifecycle
-from foretoken.platform.rdma import require_unused_managed_rdma, select_rdma
+from foretoken.platform.rdma import (
+    migrate_stored_rdma_values,
+    require_unused_managed_rdma,
+    select_rdma,
+)
 from foretoken.platform.types import RuntimeOverrides
 from foretoken.source import (
     prepare_source_images,
@@ -125,9 +130,11 @@ class PlatformLifecycle:
         self._oci_registry = config.image_registry
         self._kubectl = Kubectl()
         self._metax_exporter = MetaXExporterLifecycle(
-            self._kubectl, config.management_label, config.metax_exporter_image
+            self._kubectl, config.management_label, config.metax_exporter_image,
+            config.image_registry,
         )
         self._gateway = GatewayControllerLifecycle(self._helm, self._kubectl)
+        self._leader_worker = LeaderWorkerLifecycle(self._helm, self._kubectl)
         self._load_balancer = LoadBalancerLifecycle(self._helm, self._kubectl)
 
     def install(self, command: InstallCommand) -> None:
@@ -161,7 +168,10 @@ class PlatformLifecycle:
                 )
         values = load_platform_values(command.values)
         current_runtime = runtime_overrides_from_values(values)
-        stored_values = (helm.release_user_values(platform),) if platform_exists else ()
+        stored_values = (
+            (migrate_stored_rdma_values(helm.release_user_values(platform)),)
+            if platform_exists else ()
+        )
         stored_runtime = runtime_overrides_from_values(stored_values)
         runtime_scope = RuntimeOverrides(
             gpu_resource_name=(
@@ -214,6 +224,7 @@ class PlatformLifecycle:
         gateway_config, gateway_plan = gateway.resolve_install(
             command, platform, platform_exists
         )
+        leader_worker_plan = self._leader_worker.resolve_install()
 
         managed_dcgm = helm.dcgm_release()
         managed_dcgm_exists = helm.release_exists(managed_dcgm)
@@ -421,6 +432,7 @@ class PlatformLifecycle:
             )
         _print_plan("Inference runtime", runtime_action, runtime_detail)
         _print_plan("RDMA", rdma.action, rdma.detail)
+        _print_plan("LeaderWorkerSet", leader_worker_plan.action, leader_worker_plan.detail)
         _print_plan("Foretoken platform", platform_action, platform.display_name)
 
         source_images = (
@@ -437,6 +449,8 @@ class PlatformLifecycle:
         )
         load_balancer.apply(load_balancer_plan, command.timeout)
         gateway.apply_before_platform(gateway_plan, command.timeout)
+        self._leader_worker.apply(leader_worker_plan, command.timeout)
+        _print_plan("LeaderWorkerSet", "Ready", leader_worker_plan.detail)
         if install_managed_prometheus:
             helm.install_prometheus(
                 managed_prometheus,
@@ -505,7 +519,7 @@ class PlatformLifecycle:
             rdma_resource_name=rdma.resource_name,
             rdma_managed=rdma.managed,
             rdma_node_names=rdma.node_names,
-            reuse_values=platform_exists,
+            stored_values=stored_values[0] if platform_exists else None,
             timeout=command.timeout,
         )
         if rdma.managed:
@@ -656,6 +670,7 @@ class PlatformLifecycle:
         )
         if gateway_result is not None:
             _print_plan("Gateway Controller", *gateway_result)
+        _print_plan("LeaderWorkerSet", *self._leader_worker.finish_uninstall(command.timeout))
         load_balancer_result = load_balancer.finish_uninstall(command.timeout)
         if load_balancer_result is not None:
             _print_plan("LoadBalancer", *load_balancer_result)

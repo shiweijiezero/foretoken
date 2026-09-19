@@ -29,8 +29,6 @@ type PDProfile struct {
 	BootstrapPort              int
 	AbortRequestTimeoutSeconds int
 	RDMADeviceName             string
-	RDMAResourceName           string
-	RDMAResourceCount          int
 }
 
 // MooncakeStoreProfile contains the platform-owned external Store settings.
@@ -42,15 +40,28 @@ type MooncakeStoreProfile struct {
 	PythonHashSeed string
 }
 
+// RDMAProfile selects the device allocation shared by engine collectives and connectors.
+type RDMAProfile struct {
+	ResourceName  string
+	ResourceCount int
+}
+
 // Profiles contains the startup values for optional vLLM runtime profiles.
 type Profiles struct {
 	EC            ECProfile
 	PD            PDProfile
+	RDMA          RDMAProfile
 	MooncakeStore MooncakeStoreProfile
 }
 
 // Validate rejects incomplete enabled profiles and stray disabled settings.
 func (profiles Profiles) Validate() error {
+	if profiles.RDMA.ResourceName != "" && (profiles.RDMA.ResourceCount < 1 || int64(profiles.RDMA.ResourceCount) > maxInt32) {
+		return errors.New("RDMA resource count must be a positive int32")
+	}
+	if profiles.PD.Name != "" && profiles.RDMA.ResourceName == "" {
+		return errors.New("vLLM P/D requires an RDMA allocation")
+	}
 	if err := validateEC(profiles.EC); err != nil {
 		return err
 	}
@@ -75,12 +86,12 @@ func validateEC(profile ECProfile) error {
 
 func validatePD(profile PDProfile) error {
 	if profile.Name == "" {
-		if profile.Revision != "" || profile.Protocol != "" || profile.BootstrapPort != 0 || profile.AbortRequestTimeoutSeconds != 0 || profile.RDMADeviceName != "" || profile.RDMAResourceName != "" || profile.RDMAResourceCount != 0 {
+		if profile.Revision != "" || profile.Protocol != "" || profile.BootstrapPort != 0 || profile.AbortRequestTimeoutSeconds != 0 || profile.RDMADeviceName != "" {
 			return errors.New("vLLM P/D settings require vllm-pd-profile-name")
 		}
 		return nil
 	}
-	if profile.Revision == "" || profile.Protocol != pdProtocol || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 || int64(profile.AbortRequestTimeoutSeconds) > maxInt32 || profile.RDMAResourceName == "" || profile.RDMAResourceCount < 1 || int64(profile.RDMAResourceCount) > maxInt32 {
+	if profile.Revision == "" || profile.Protocol != pdProtocol || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 || int64(profile.AbortRequestTimeoutSeconds) > maxInt32 {
 		return errors.New("vLLM P/D profile is incomplete or unsupported")
 	}
 	return nil

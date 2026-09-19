@@ -17,7 +17,7 @@ Executable configuration is authoritative for mechanical formatting and generate
 
 ## Design and ownership
 
-Use the smallest maintainable implementation that completely expresses the required behavior and failure semantics.
+Design the complete configuration, execution, observation, decision, and cleanup path before changing one stage. Keep shared identities, state scopes, and lifecycle ownership consistent across producers and consumers. When extending to more replicas, shards, or nodes, update those relationships together rather than accumulating case-specific branches. Then choose the smallest maintainable implementation that preserves the required behavior and failure semantics.
 
 - Every type, helper, configuration field, validation, fallback, and test must have a current responsibility. Remove it when its consumer is removed.
 - Prefer deleting duplicate paths, reusing an existing owner, or calling a mature upstream API before adding another abstraction.

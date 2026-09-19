@@ -186,9 +186,9 @@ def _build_parser() -> argparse.ArgumentParser:
         "--oci-registry",
         metavar="REGISTRY",
         help=(
-            "explicit registry prefix for release images and Helm charts; defaults "
-            "to FORETOKEN_OCI_REGISTRY (editable builds otherwise select faster "
-            "supported anonymous sources)"
+            "explicit registry prefix for default platform images and Helm charts; "
+            "defaults to FORETOKEN_OCI_REGISTRY (otherwise compares supported "
+            "public sources automatically; explicit image choices are preserved)"
         ),
     )
     install.add_argument(

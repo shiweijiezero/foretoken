@@ -55,10 +55,12 @@ impl Config {
     }
 
     fn staging(&self) -> PathBuf {
-        self.profile_root().join(".staging").join(&self.runtime_id)
+        // One group-local supervisor starts and seals captures across every engine.
+        // All members mount the same cache and write into this group-owned staging directory.
+        self.profile_root().join(".staging").join(&self.group_uid)
     }
 
-    /// Prepares this process's isolated staging directory before the inference engine starts.
+    /// Prepares the group-owned staging directory before any member starts its engine.
     pub fn prepare(&self) -> io::Result<()> {
         // The persistent mount must already exist; never substitute Pod-local storage.
         fs::metadata(&self.data_root)?;

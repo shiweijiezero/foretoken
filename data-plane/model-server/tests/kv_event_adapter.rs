@@ -39,11 +39,11 @@ fn lifecycle_is_rank_local_replayable_and_privacy_preserving() {
         "token_ids": [1, 2, 3, 4],
         "block_size": 2,
         "medium": "GPU",
-        "extra_keys": null,
+        "extra_keys": [null, null],
         "group_idx": 0,
         "kv_cache_spec_kind": "full_attention"
     });
-    adapter.ingest_msgpack(&batch(stored, 1));
+    adapter.ingest_msgpack(1, &batch(stored, 1));
 
     let epoch = epoch(&adapter, 1);
     let page = adapter.delta(1, Some(&epoch), None, 2).unwrap();
@@ -71,7 +71,10 @@ fn lifecycle_is_rank_local_replayable_and_privacy_preserving() {
             .is_empty()
     );
 
-    adapter.ingest_msgpack(&batch(json!({"type":"BlockRemoved","block_hashes":[1]}), 1));
+    adapter.ingest_msgpack(
+        1,
+        &batch(json!({"type":"BlockRemoved","block_hashes":[1]}), 1),
+    );
     let removed = adapter.delta(1, Some(&epoch), Some(0), 2).unwrap();
     assert_eq!(removed.deltas[0].sequence, 1);
     assert!(matches!(
@@ -84,19 +87,22 @@ fn lifecycle_is_rank_local_replayable_and_privacy_preserving() {
 #[test]
 fn placement_and_clear_follow_vllm_lifecycle() {
     let adapter = adapter(1);
-    adapter.ingest_msgpack(&batch(
-        json!({
-            "type": "BlockStored",
-            "block_hashes": [1],
-            "token_ids": [1, 2],
-            "block_size": 2,
-            "medium": "CPU_PINNED",
-            "locality": "LOCAL",
-            "extra_keys": null,
-            "kv_cache_spec_kind": "full_attention"
-        }),
+    adapter.ingest_msgpack(
         0,
-    ));
+        &batch(
+            json!({
+                "type": "BlockStored",
+                "block_hashes": [1],
+                "token_ids": [1, 2],
+                "block_size": 2,
+                "medium": "CPU_PINNED",
+                "locality": "LOCAL",
+                "extra_keys": null,
+                "kv_cache_spec_kind": "full_attention"
+            }),
+            0,
+        ),
+    );
     let epoch = epoch(&adapter, 0);
     let page = adapter.delta(0, Some(&epoch), None, 2).unwrap();
     assert!(matches!(
@@ -110,7 +116,7 @@ fn placement_and_clear_follow_vllm_lifecycle() {
         }
     ));
 
-    adapter.ingest_msgpack(&batch(json!({"type":"AllBlocksCleared"}), 0));
+    adapter.ingest_msgpack(0, &batch(json!({"type":"AllBlocksCleared"}), 0));
     let clear = adapter.delta(0, Some(&epoch), Some(0), 2).unwrap();
     assert!(matches!(
         clear.deltas[0].event,
@@ -118,19 +124,25 @@ fn placement_and_clear_follow_vllm_lifecycle() {
     ));
 }
 
-// Protects fail-closed KV availability and recovery after a valid event batch.
+// A corrupt publisher must invalidate only its own rank, including when it claims another rank.
 #[test]
 fn protocol_failure_is_unavailable_and_a_valid_batch_recovers() {
-    let adapter = adapter(1);
+    let adapter = adapter(2);
     let epoch = epoch(&adapter, 0);
-    adapter.ingest_msgpack(b"not-msgpack");
+    adapter.ingest_msgpack(0, b"not-msgpack");
     assert!(matches!(
         adapter.delta(0, Some(&epoch), None, 2),
         Err(KvDeltaError::Unavailable)
     ));
 
-    adapter.ingest_msgpack(&batch(json!({"type":"AllBlocksCleared"}), 0));
+    adapter.ingest_msgpack(0, &batch(json!({"type":"AllBlocksCleared"}), 0));
     assert!(adapter.delta(0, Some(&epoch), None, 2).is_ok());
+    adapter.ingest_msgpack(0, &batch(json!({"type":"AllBlocksCleared"}), 1));
+    assert!(matches!(
+        adapter.delta(0, Some(&epoch), None, 2),
+        Err(KvDeltaError::Unavailable)
+    ));
+    assert!(adapter.delta(1, Some(&epoch), None, 2).is_ok());
 }
 
 // Protects cursor reset responses with the exact source and rank identity.

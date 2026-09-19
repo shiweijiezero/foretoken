@@ -10,6 +10,7 @@ import zmq
 from vllm.distributed.kv_transfer.kv_connector.v1.mooncake.store.connector import (
     MooncakeStoreConnector as UpstreamMooncakeStoreConnector,
 )
+from vllm.distributed.kv_events import ZmqEventPublisher
 from vllm.sampling_params import SamplingParams
 from vllm.utils.hashing import get_hash_fn_by_name
 from vllm.v1.core.kv_cache_utils import get_request_block_hasher, init_none_hash
@@ -54,7 +55,10 @@ class _PrefixServer:
         self.block_hasher = get_request_block_hasher(worker.hash_block_size, hash_fn)
         self.stopping = threading.Event()
         self.context = zmq.Context()
-        self.endpoint = os.environ["FORETOKEN_SHARED_KV_LOOKUP_ENDPOINT"]
+        self.dp_rank = config.parallel_config.data_parallel_index
+        self.endpoint = ZmqEventPublisher.offset_endpoint_port(
+            os.environ["FORETOKEN_SHARED_KV_LOOKUP_ENDPOINT"], self.dp_rank
+        )
         self.thread = threading.Thread(target=self._serve, daemon=True)
         self.thread.start()
 
@@ -65,7 +69,14 @@ class _PrefixServer:
             while not self.stopping.is_set():
                 if not socket.poll(100):
                     continue
-                tokens = socket.recv_json()["promptTokenIds"]
+                query = socket.recv_json()
+                if query["dpRank"] != self.dp_rank:
+                    socket.send_json({
+                        "matchedTokens": None,
+                        "blockSize": self.worker.coord.lcm_block_size,
+                    })
+                    continue
+                tokens = query["promptTokenIds"]
                 request = Request(
                     request_id="prefix-observation",
                     prompt_token_ids=tokens,
@@ -90,7 +101,7 @@ class _PrefixServer:
 
 
 class MooncakeStoreConnector(UpstreamMooncakeStoreConnector):
-    """Extend the native connector with a Pod-local, read-only prefix observation socket."""
+    """Expose read-only prefix observations from each DP rank's native connector."""
 
     def __init__(self, vllm_config, role, kv_cache_config=None):
         self._prefix_server = None

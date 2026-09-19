@@ -16,7 +16,7 @@ use uuid::Uuid;
 use zeromq::SubSocket;
 use zeromq::prelude::{Socket, SocketRecv};
 
-use crate::runtime_transport::{KV_EVENT_ENDPOINT, KV_EVENT_TOPIC};
+use crate::runtime_transport::{KV_EVENT_TOPIC, kv_event_endpoint};
 
 const CAPACITY: usize = 4096;
 
@@ -31,6 +31,8 @@ struct StoredBlock {
 struct RankState {
     ring: VecDeque<KvDelta>,
     raw_blocks: HashMap<(KvPlacement, Option<u32>, Vec<u8>), StoredBlock>,
+    last_publisher_sequence: Option<u64>,
+    available: bool,
 }
 
 impl RankState {
@@ -38,6 +40,8 @@ impl RankState {
         Self {
             ring: VecDeque::new(),
             raw_blocks: HashMap::new(),
+            last_publisher_sequence: None,
+            available: true,
         }
     }
 
@@ -65,8 +69,6 @@ impl RankState {
 struct Inner {
     epoch: String,
     ranks: BTreeMap<u32, RankState>,
-    last_publisher_sequence: Option<u64>,
-    available: bool,
 }
 
 #[derive(Debug)]
@@ -99,8 +101,6 @@ impl KvEventAdapter {
                 ranks: (0..data_parallel_size)
                     .map(|rank| (rank, RankState::new()))
                     .collect(),
-                last_publisher_sequence: None,
-                available: true,
             }),
             key,
             scope_id,
@@ -108,14 +108,6 @@ impl KvEventAdapter {
             model_revision,
             data_parallel_size,
         })
-    }
-
-    fn mark_unavailable(&self, reason: &'static str) {
-        let mut inner = self.inner.lock().unwrap();
-        if inner.available {
-            tracing::warn!(reason, "KV event adapter degraded");
-        }
-        inner.available = false;
     }
 
     /// Returns bounded rank-local deltas for the internal KV index endpoint.
@@ -129,10 +121,7 @@ impl KvEventAdapter {
         limit: usize,
     ) -> Result<KvDeltaResponse, KvDeltaError> {
         let inner = self.inner.lock().unwrap();
-        if !inner.available {
-            return Err(KvDeltaError::Unavailable);
-        }
-        let Some(rank) = inner.ranks.get(&dp_rank) else {
+        let Some(rank) = inner.ranks.get(&dp_rank).filter(|rank| rank.available) else {
             return Err(KvDeltaError::Unavailable);
         };
         let reset = self.response(&inner, dp_rank, 0, Vec::new());
@@ -179,21 +168,16 @@ impl KvEventAdapter {
         }
     }
 
-    fn clear_all_ranks(&self) {
+    fn fail_stream(&self, dp_rank: u32, reason: &'static str) {
         let mut inner = self.inner.lock().unwrap();
-        for rank in inner.ranks.values_mut() {
+        if let Some(rank) = inner.ranks.get_mut(&dp_rank) {
             rank.clear();
+            if rank.available {
+                tracing::warn!(dp_rank, reason, "KV event adapter degraded");
+            }
+            rank.last_publisher_sequence = None;
+            rank.available = false;
         }
-    }
-
-    fn fail_stream(&self, reason: &'static str) {
-        self.clear_all_ranks();
-        let mut inner = self.inner.lock().unwrap();
-        if inner.available {
-            tracing::warn!(reason, "KV event adapter degraded");
-        }
-        inner.last_publisher_sequence = None;
-        inner.available = false;
     }
 
     fn normalized_hash(
@@ -217,69 +201,68 @@ impl KvEventAdapter {
     }
 
     /// Establish the first observed sequence as a safe empty-state baseline, then require contiguity.
-    fn ingest_frames(&self, frames: Vec<Vec<u8>>) -> bool {
+    fn ingest_frames(&self, dp_rank: u32, frames: Vec<Vec<u8>>) -> bool {
         if frames.len() != 3 || frames[0] != KV_EVENT_TOPIC.as_bytes() || frames[1].len() != 8 {
-            self.fail_stream("event_protocol_violation");
+            self.fail_stream(dp_rank, "event_protocol_violation");
             return false;
         }
         let sequence = u64::from_be_bytes(frames[1].as_slice().try_into().unwrap());
-        let previous = self.inner.lock().unwrap().last_publisher_sequence;
+        let previous = self.inner.lock().unwrap().ranks[&dp_rank].last_publisher_sequence;
         if previous.is_some_and(|current| current.checked_add(1) != Some(sequence)) {
-            self.fail_stream("event_sequence_gap");
+            self.fail_stream(dp_rank, "event_sequence_gap");
             return false;
         }
-        self.ingest_msgpack(&frames[2]);
+        self.ingest_msgpack(dp_rank, &frames[2]);
         let mut inner = self.inner.lock().unwrap();
-        if !inner.available {
+        let rank = inner.ranks.get_mut(&dp_rank).unwrap();
+        if !rank.available {
             return false;
         }
-        inner.last_publisher_sequence = Some(sequence);
+        rank.last_publisher_sequence = Some(sequence);
         true
     }
 
     /// Ingests one vLLM msgspec event payload from the subscriber task into adapter-owned state.
     ///
     /// It publishes normalized deltas to later HTTP readers and retains no borrowed payload bytes.
-    pub fn ingest_msgpack(&self, bytes: &[u8]) {
+    pub fn ingest_msgpack(&self, dp_rank: u32, bytes: &[u8]) {
+        if dp_rank >= self.data_parallel_size {
+            return;
+        }
         let Ok(Value::Array(batch)) = rmp_serde::from_slice::<Value>(bytes) else {
-            self.fail_stream("event_protocol_violation");
+            self.fail_stream(dp_rank, "event_protocol_violation");
             return;
         };
         let Some(events) = batch.get(1).and_then(Value::as_array) else {
-            self.fail_stream("event_protocol_violation");
+            self.fail_stream(dp_rank, "event_protocol_violation");
             return;
         };
         if !(batch.len() == 2 || batch.len() == 3)
             || !matches!(batch[0], Value::Integer(_) | Value::F32(_) | Value::F64(_))
         {
-            self.fail_stream("event_protocol_violation");
+            self.fail_stream(dp_rank, "event_protocol_violation");
             return;
         }
-        let dp_rank = match batch.get(2) {
-            Some(value) => match value.as_u64().and_then(|rank| u32::try_from(rank).ok()) {
-                Some(rank) if rank < self.data_parallel_size => rank,
-                _ => {
-                    self.fail_stream("event_protocol_violation");
-                    return;
-                }
-            },
-            None if self.data_parallel_size == 1 => 0,
-            None => {
-                self.fail_stream("event_protocol_violation");
-                return;
-            }
+        let matching_rank = match batch.get(2) {
+            Some(value) => value.as_u64() == Some(u64::from(dp_rank)),
+            None => self.data_parallel_size == 1 && dp_rank == 0,
         };
+        if !matching_rank {
+            self.fail_stream(dp_rank, "event_rank_mismatch");
+            return;
+        }
         for event in events.iter().cloned() {
             if !self.ingest_event(dp_rank, event) {
-                self.fail_stream("event_protocol_violation");
+                self.fail_stream(dp_rank, "event_protocol_violation");
                 return;
             }
         }
         let mut inner = self.inner.lock().unwrap();
-        if !inner.available {
+        let rank = inner.ranks.get_mut(&dp_rank).unwrap();
+        if !rank.available {
             tracing::info!(dp_rank, "KV event adapter recovered");
         }
-        inner.available = true;
+        rank.available = true;
     }
 
     // Decode one raw vLLM event into the rank's normalized cache view. Invalid input returns false
@@ -361,8 +344,17 @@ impl KvEventAdapter {
         let Some(placement) = placement(field(fields, "medium"), field(fields, "locality")) else {
             return true;
         };
+        // Plain-text events may carry one null extra-key entry per cached block.
+        // Actual salt, multimodal or LoRA identity is outside this token-only index.
         let extra_keys = field(fields, "extra_keys");
-        if extra_keys.is_some_and(|value| !value.is_nil()) {
+        if extra_keys.is_some_and(|value| {
+            !value.is_nil()
+                && !value
+                    .as_array()
+                    .is_some_and(|keys| keys.iter().all(Value::is_nil))
+        }) || field(fields, "lora_id").is_some_and(|value| !value.is_nil())
+            || field(fields, "lora_name").is_some_and(|value| !value.is_nil())
+        {
             return true;
         }
         let group_idx = optional_u32(field(fields, "group_idx"));
@@ -455,34 +447,51 @@ impl KvEventAdapter {
     /// Runs the owned ZMQ subscriber task started by model-server bootstrap.
     ///
     /// `ready` publishes connection status once; this task retains its adapter until stream failure.
-    pub async fn serve(self: Arc<Self>, ready: tokio::sync::oneshot::Sender<bool>) {
-        let mut socket = SubSocket::new();
-        if socket.connect(KV_EVENT_ENDPOINT).await.is_err()
-            || socket.subscribe(KV_EVENT_TOPIC).await.is_err()
-        {
-            self.mark_unavailable("event_stream_interrupted");
-            let _ = ready.send(false);
-            return;
-        }
-        let _ = ready.send(true);
-        loop {
-            match socket.recv().await {
-                Ok(message) => {
-                    let frames = message
-                        .into_vec()
-                        .into_iter()
-                        .map(|frame| frame.to_vec())
-                        .collect();
-                    if !self.ingest_frames(frames) {
-                        return;
+    pub async fn serve(self: Arc<Self>, host: String, ready: tokio::sync::oneshot::Sender<bool>) {
+        use futures::StreamExt;
+        let mut streams = futures::stream::FuturesUnordered::new();
+        for dp_rank in 0..self.data_parallel_size {
+            let mut socket = SubSocket::new();
+            let mut monitor = socket.monitor();
+            if socket
+                .bind(&kv_event_endpoint(&host, dp_rank))
+                .await
+                .is_err()
+                || socket.subscribe(KV_EVENT_TOPIC).await.is_err()
+            {
+                self.fail_stream(dp_rank, "event_stream_interrupted");
+                continue;
+            }
+            let adapter = self.clone();
+            streams.push(async move {
+                loop {
+                    let message = tokio::select! {
+                        message = socket.recv() => message,
+                        event = monitor.next() => {
+                            if matches!(event, None | Some(zeromq::SocketEvent::Disconnected(_) | zeromq::SocketEvent::Closed)) {
+                                adapter.fail_stream(dp_rank, "event_stream_interrupted");
+                                return;
+                            }
+                            continue;
+                        }
+                    };
+                    match message {
+                        Ok(message) => {
+                            let frames = message.into_vec().into_iter().map(|frame| frame.to_vec()).collect();
+                            if !adapter.ingest_frames(dp_rank, frames) {
+                                return;
+                            }
+                        }
+                        Err(_) => {
+                            adapter.fail_stream(dp_rank, "event_stream_interrupted");
+                            return;
+                        }
                     }
                 }
-                Err(_) => {
-                    self.fail_stream("event_stream_interrupted");
-                    return;
-                }
-            }
+            });
         }
+        let _ = ready.send(!streams.is_empty());
+        while streams.next().await.is_some() {}
     }
 }
 

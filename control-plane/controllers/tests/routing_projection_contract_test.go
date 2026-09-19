@@ -122,7 +122,7 @@ func markPoolRoutingReady(pool *inferencev1alpha1.ModelPool, revision string) {
 func pdRuntime() *inferencev1alpha1.ModelGroupPDRuntimeConfig {
 	return &inferencev1alpha1.ModelGroupPDRuntimeConfig{
 		ProfileName: "pd", ProfileRevision: "r1", Connector: "MooncakeConnector", Protocol: "rdma",
-		BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30, RDMADeviceName: "mlx5_1", RDMAResourceName: "rdma/ib", RDMAResourceCount: 1,
+		BootstrapPort: 29001, AbortRequestTimeoutSeconds: 30, RDMADeviceName: "mlx5_1",
 	}
 }
 

@@ -342,6 +342,12 @@ async fn metadata_and_telemetry_expose_typed_runtime_snapshots() {
     };
     let backend = Arc::new(RecordingBackend {
         telemetry: BackendTelemetry {
+            data_parallel_ranks: vec![foretoken_model_protocol::DataParallelTelemetry {
+                data_parallel_rank: 0,
+                scheduler_running_requests: Some(2),
+                scheduler_waiting_requests: Some(1),
+                kv_cache_usage: Some(0.75),
+            }],
             running_requests: 3,
             max_concurrent_requests: Some(7),
             scheduler_running_requests: Some(2),
@@ -387,6 +393,11 @@ async fn metadata_and_telemetry_expose_typed_runtime_snapshots() {
     assert!(telemetry["collected_at_unix_ms"].as_u64().is_some());
     assert_eq!(telemetry["accepting"], false);
     assert_eq!(telemetry["running_requests"], 3);
+    assert_eq!(telemetry["data_parallel_ranks"][0]["data_parallel_rank"], 0);
+    assert_eq!(
+        telemetry["data_parallel_ranks"][0]["scheduler_waiting_requests"],
+        1
+    );
     assert_eq!(telemetry["scheduler_running_requests"], 2);
     assert_eq!(telemetry["scheduler_waiting_requests"], 1);
     assert_eq!(telemetry["kv_cache_usage"], 0.75);

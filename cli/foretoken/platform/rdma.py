@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import re
+from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -29,6 +30,24 @@ class RDMASelection:
     managed: bool = False
     node_names: tuple[str, ...] = ()
     available: bool = False
+
+
+def migrate_stored_rdma_values(values: dict[str, Any]) -> dict[str, Any]:
+    """Move legacy allocation keys in installed Helm values to their platform owner.
+
+    Current values files use the new schema; this only translates a previous release.
+    Existing platform-level values take precedence over legacy P/D values.
+    """
+    migrated = deepcopy(values)
+    pd = migrated.get("runtime", {}).get("vllm", {}).get("pd", {})
+    for old, new in (
+        ("rdmaResourceName", "resourceName"),
+        ("rdmaResourceCount", "resourceCount"),
+    ):
+        if old in pd:
+            value = pd.pop(old)
+            migrated.setdefault("rdma", {}).setdefault(new, value)
+    return migrated
 
 
 def shared_rdma_resources(
@@ -97,7 +116,7 @@ def select_rdma(
     values: tuple[dict[str, Any], ...],
     managed_release: tuple[str, str],
 ) -> RDMASelection:
-    """Resolve a P/D allocation from explicit values or one advertised shared pool.
+    """Resolve a runtime allocation from explicit values or one advertised shared pool.
 
     Kubernetes allocatable values confirm availability; the plugin ConfigMap
     supplies resource identity. Neither NIC names nor capacity units are inferred.
@@ -112,25 +131,22 @@ def select_rdma(
             managed = rdma["managed"]
             if not isinstance(managed, bool):
                 raise DeploymentError("rdma.managed must be a boolean")
-        pd = document
-        for key in ("runtime", "vllm", "pd"):
-            pd = pd.get(key, {})
-            if not isinstance(pd, dict):
-                raise DeploymentError(f"runtime.vllm.pd requires mappings; {key} is invalid")
-        if "rdmaResourceName" in pd:
-            resource = pd["rdmaResourceName"]
+        if "resourceName" in rdma:
+            resource = rdma["resourceName"]
             if not isinstance(resource, str):
-                raise DeploymentError("runtime.vllm.pd.rdmaResourceName must be a string")
+                raise DeploymentError("rdma.resourceName must be a string")
 
     if managed and resource:
         raise DeploymentError(
-            "rdma.managed and an external runtime.vllm.pd.rdmaResourceName are mutually exclusive"
+            "rdma.managed and an external rdma.resourceName are mutually exclusive"
         )
     if not managed and resource is not None:
         return RDMASelection(
-            None, "Configured" if resource else "Disabled", resource or "P/D RDMA disabled"
+            None, "Configured" if resource else "Disabled", resource or "runtime RDMA disabled"
         )
-    if not managed and not nodes:
+    if not nodes:
+        if managed:
+            raise DeploymentError("managed RDMA requires selected GPU nodes; check GPU resources and the node selector")
         return RDMASelection(None, "Skip", "no selected GPU nodes")
 
     available: set[str] = set()
@@ -188,7 +204,7 @@ def select_rdma(
     if available:
         return RDMASelection(
             None, "Selection needed",
-            "set runtime.vllm.pd.rdmaResourceName to one of: " + ", ".join(sorted(available)),
+            "set rdma.resourceName to one of: " + ", ".join(sorted(available)),
         )
     if external_plugins:
         return RDMASelection(

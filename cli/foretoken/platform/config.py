@@ -40,6 +40,7 @@ class PlatformConfig:
     dcgm_exporter: ManagedChart
     envoy_gateway: ManagedChart
     metallb: ManagedChart
+    leader_worker: ManagedChart
     envoy_gateway_default_controller: str
     envoy_gateway_controller: str
     dcgm_metrics: str
@@ -129,6 +130,11 @@ def default_platform_config(oci_registry: str | None = None) -> PlatformConfig:
                 "oci://quay.io/metallb/chart/metallb",
             ),
             version="0.16.1",
+        ),
+        leader_worker=ManagedChart(
+            release_name="foretoken-lws",
+            source=_chart_source(registry, "oci://registry.k8s.io/lws/charts/lws"),
+            version="0.10.0",
         ),
         envoy_gateway_default_controller=(
             "gateway.envoyproxy.io/gatewayclass-controller"

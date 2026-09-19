@@ -21,6 +21,7 @@ from foretoken.accelerators.discovery import (
 )
 from foretoken.kubernetes import Kubectl, resource_ref
 from foretoken.manifest import DeploymentError, ResourceRef
+from foretoken.network_sources import platform_image_reference
 
 
 @dataclass(frozen=True)
@@ -108,10 +109,12 @@ class MetaXExporterLifecycle:
         kubectl: Kubectl,
         management_label: tuple[str, str],
         image: str | None = None,
+        image_registry: str | None = None,
     ) -> None:
         self._kubectl = kubectl
         self._management_label = management_label
         self._image = image
+        self._image_registry = image_registry
         source = resources.files("foretoken.accelerators").joinpath("mx-exporter.yaml")
         documents = tuple(yaml.safe_load_all(source.read_text()))
         self._namespace = next(doc for doc in documents if doc["kind"] == "Namespace")
@@ -194,8 +197,11 @@ class MetaXExporterLifecycle:
                         }
                     }
                 }
-                if self._image is not None:
-                    pod_spec["containers"][0]["image"] = self._image
+                container = pod_spec["containers"][0]
+                container["image"] = (
+                    self._image if self._image is not None
+                    else platform_image_reference(container["image"], self._image_registry)
+                )
         self._kubectl.apply(yaml.safe_dump_all(documents, sort_keys=False))
         self._kubectl.rollout_status(self.daemonset, timeout)
 

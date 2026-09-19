@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 )
 
@@ -67,7 +65,7 @@ type LaunchExpertPlan struct {
 }
 
 // LaunchKVPlan uses a closed kind discriminator rather than an untyped vLLM
-// config map. KV Events are the fixed controller configuration for single-DP groups.
+// config map. KV events are collected independently for every DP rank.
 type LaunchKVPlan struct {
 	Kind        string `json:"kind"`
 	Role        string `json:"role,omitempty"`
@@ -118,7 +116,7 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 	if effective.TokenizerRevision == "" {
 		effective.TokenizerRevision = effective.Revision
 	}
-	args, err := compileEngineArgs(template.EngineArgs, template.Inference)
+	args, err := compileEngineArgs(template.EngineArgs)
 	if err != nil {
 		return EffectiveConfig{}, err
 	}
@@ -146,8 +144,11 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 
 // BuildLaunchPlan projects a verified ModelGroupSpec into the private launch wire contract.
 func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, error) {
-	if group.NodeCount != 1 {
-		return LaunchPlanV1{}, fmt.Errorf("model-server launch plan currently supports exactly one node")
+	if group.NodeCount < 1 {
+		return LaunchPlanV1{}, fmt.Errorf("model-server launch plan requires a positive node count")
+	}
+	if group.NodeCount > 1 && group.Parallelism.PCP != 1 {
+		return LaunchPlanV1{}, fmt.Errorf("multi-node vLLM multiprocessing requires prefill context parallelism 1")
 	}
 	startup, err := parsePositiveDuration(group.Timeouts.Startup, "startup")
 	if err != nil {
@@ -195,7 +196,7 @@ func buildKVPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchKVPlan, error) {
 	} else if group.Role == inferencev1alpha1.ModelRoleDecode {
 		role = "kv_consumer"
 	}
-	plan := LaunchKVPlan{Kind: kvNone, Events: group.Parallelism.DP == 1}
+	plan := LaunchKVPlan{Kind: kvNone, Events: true}
 	if group.PDRuntime != nil && group.KVRuntime == nil {
 		return LaunchKVPlan{Kind: kvPD, Role: role, Protocol: group.PDRuntime.Protocol, DeviceName: group.PDRuntime.RDMADeviceName, Events: plan.Events}, nil
 	}
@@ -347,9 +348,9 @@ var controllerOwnedArgs = []string{
 
 var engineArgName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 
-// compileEngineArgs applies explicit service choices once, before runtime publication.
+// compileEngineArgs normalizes native option names and protects platform-owned startup options.
 // Backend values stay native; the Rust adapter renders the resolved map into argv.
-func compileEngineArgs(input inferencev1alpha1.EngineArguments, inference inferencev1alpha1.InferenceParameters) (inferencev1alpha1.EngineArguments, error) {
+func compileEngineArgs(input inferencev1alpha1.EngineArguments) (inferencev1alpha1.EngineArguments, error) {
 	args := make(inferencev1alpha1.EngineArguments, len(input))
 	names := make([]string, 0, len(input))
 	for name := range input {
@@ -378,45 +379,6 @@ func compileEngineArgs(input inferencev1alpha1.EngineArguments, inference infere
 		args[key] = *value.DeepCopy()
 	}
 
-	common := map[string]any{
-		"max-model-len":          inference.MaxModelLen,
-		"dtype":                  inference.DType,
-		"quantization":           inference.Quantization,
-		"kv-cache-dtype":         inference.KVCacheDType,
-		"gpu-memory-utilization": inference.GPUMemoryUtilization,
-		"max-num-seqs":           inference.MaxNumSeqs,
-		"max-num-batched-tokens": inference.MaxNumBatchedTokens,
-		"enforce-eager":          inference.EnforceEager,
-	}
-	for name, value := range common {
-		encoded, err := json.Marshal(value)
-		if err != nil {
-			return nil, fmt.Errorf("encode %s: %w", name, err)
-		}
-		if string(encoded) == "null" || string(encoded) == `""` {
-			continue
-		}
-		// An abbreviated native spelling must not override the explicit field later in argparse.
-		for key := range args {
-			if strings.HasPrefix(name, key) {
-				delete(args, key)
-			}
-		}
-		args[name] = apiextensionsv1.JSON{Raw: encoded}
-	}
-	if speculative := inference.SpeculativeDecoding; speculative != nil {
-		// Remove equivalent CLI spellings so the merged configuration has one owner.
-		for key := range args {
-			if strings.HasPrefix("speculative-config", key) || strings.HasPrefix("spec-method", key) || strings.HasPrefix("spec-model", key) || strings.HasPrefix("spec-tokens", key) {
-				delete(args, key)
-			}
-		}
-		encoded, err := json.Marshal(speculative)
-		if err != nil {
-			return nil, err
-		}
-		args["speculative-config"] = apiextensionsv1.JSON{Raw: encoded}
-	}
 	if len(args) == 0 {
 		return nil, nil
 	}

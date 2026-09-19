@@ -33,8 +33,6 @@ type MooncakePDProfile struct {
 	BootstrapPort              int32
 	AbortRequestTimeoutSeconds int32
 	RDMADeviceName             string
-	RDMAResourceName           string
-	RDMAResourceCount          int32
 }
 
 // ECProfile contains the fixed platform-owned vLLM encoder/prefill connector contract.
@@ -56,6 +54,7 @@ type RuntimeProfile struct {
 	NodeSelectorKey    string
 	NodeSelectorValue  string
 	MooncakePD         *MooncakePDProfile
+	RDMA               *inferencev1alpha1.RDMAAllocation
 	EC                 *ECProfile
 	MooncakeStore      *MooncakeStoreProfile
 }
@@ -78,6 +77,7 @@ type ModelGroupTemplate struct {
 	Artifacts      inferencev1alpha1.ModelGroupArtifacts
 	Runtime        inferencev1alpha1.ModelGroupRuntime
 	PDRuntime      *inferencev1alpha1.ModelGroupPDRuntimeConfig
+	RDMA           *inferencev1alpha1.RDMAAllocation
 	ECRuntime      *inferencev1alpha1.ModelGroupECRuntimeConfig
 	KVRuntime      *inferencev1alpha1.ModelGroupKVRuntimeConfig
 	Resources      inferencev1alpha1.ModelResources
@@ -96,8 +96,8 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if template.Role != inferencev1alpha1.ModelRoleAggregate && template.Role != inferencev1alpha1.ModelRoleEncoder && template.Role != inferencev1alpha1.ModelRolePrefill && template.Role != inferencev1alpha1.ModelRoleDecode {
 		return ModelGroupTemplate{}, fmt.Errorf("ModelPool role %q is not supported", template.Role)
 	}
-	if template.NodeCount != 1 || template.MemberCount != 1 {
-		return ModelGroupTemplate{}, fmt.Errorf("only single-member vLLM Groups are currently supported")
+	if template.NodeCount < 1 || template.MemberCount != template.NodeCount {
+		return ModelGroupTemplate{}, fmt.Errorf("vLLM Groups require one member per node")
 	}
 	if errors := validation.IsDNS1123Label(profile.Revision); len(errors) > 0 || len(profile.Revision) > 16 {
 		return ModelGroupTemplate{}, fmt.Errorf("inference engine profile revision must be a DNS label of at most 16 characters")
@@ -136,6 +136,16 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if pdRuntime != nil && kvRuntime != nil && kvRuntime.Offload != nil {
 		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D does not support local KV offload")
 	}
+	var rdma *inferencev1alpha1.RDMAAllocation
+	if template.NodeCount > 1 || effective.Parallelism.EP != nil || pdRuntime != nil {
+		rdma = profile.RDMA.DeepCopy()
+	}
+	if pdRuntime != nil && rdma == nil {
+		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D requires a platform RDMA allocation")
+	}
+	if rdma != nil && (rdma.ResourceName == "" || rdma.ResourceCount < 1) {
+		return ModelGroupTemplate{}, fmt.Errorf("platform RDMA allocation is incomplete")
+	}
 	resources := *template.Resources.DeepCopy()
 
 	nodeSelector := map[string]string(nil)
@@ -162,6 +172,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,
 		},
 		PDRuntime:      pdRuntime,
+		RDMA:           rdma,
 		ECRuntime:      ecRuntime,
 		KVRuntime:      kvRuntime,
 		Resources:      resources,
@@ -261,7 +272,7 @@ func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, paralle
 	if template.NodeCount != 1 || template.MemberCount != 1 || parallelism.TP != 1 || parallelism.PP != 1 || parallelism.DP != 1 || parallelism.PCP != 1 || parallelism.DCP != 1 || parallelism.EP != nil {
 		return nil, fmt.Errorf("Mooncake P/D requires a single member/node and TP=PP=DP=PCP=DCP=1 without expert parallelism")
 	}
-	if profile == nil || profile.Name == "" || profile.Revision == "" || profile.Protocol == "" || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 || profile.RDMAResourceName == "" || profile.RDMAResourceCount < 1 {
+	if profile == nil || profile.Name == "" || profile.Revision == "" || profile.Protocol == "" || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 {
 		return nil, fmt.Errorf("Mooncake P/D runtime profile is incomplete")
 	}
 	if profile.Protocol != "rdma" {
@@ -275,8 +286,6 @@ func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, paralle
 		BootstrapPort:              profile.BootstrapPort,
 		AbortRequestTimeoutSeconds: profile.AbortRequestTimeoutSeconds,
 		RDMADeviceName:             profile.RDMADeviceName,
-		RDMAResourceName:           profile.RDMAResourceName,
-		RDMAResourceCount:          profile.RDMAResourceCount,
 	}, nil
 }
 
@@ -290,6 +299,7 @@ func (template ModelGroupTemplate) Spec(pool *inferencev1alpha1.ModelPool, ordin
 		Artifacts:      template.Artifacts,
 		Runtime:        template.Runtime,
 		PDRuntime:      template.PDRuntime,
+		RDMA:           template.RDMA,
 		ECRuntime:      template.ECRuntime,
 		KVRuntime:      template.KVRuntime,
 		Resources:      template.Resources,

@@ -42,7 +42,7 @@ kind create cluster \
   --config deploy/kind/multi-node.yaml
 ```
 
-创建集群后，构建并导入本地镜像。vLLM adapter 支持 vLLM 0.20 至 0.28 提供的 EngineCore 协议。inference-engine image 通常通过 `python` 提供 Python 解释器；如果必须使用特定解释器路径，同时设置两个构建输入：
+创建集群后，构建并导入本地镜像。vLLM adapter 支持 vLLM 0.20–0.29 及当前 0.30 开发版的 EngineCore 协议布局；引擎与模型本身还需匹配目标加速器。inference-engine image 通常通过 `python` 提供 Python 解释器；如果必须使用特定解释器路径，同时设置两个构建输入：
 
 ```bash
 INFERENCE_ENGINE_IMAGE=<compatible-inference-engine-image> \

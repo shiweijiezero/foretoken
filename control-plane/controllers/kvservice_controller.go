@@ -383,17 +383,16 @@ func normalizedKVPoolSpec(service *inferencev1alpha1.KVService, template inferen
 	if err != nil {
 		return inferencev1alpha1.KVPoolSpec{}, err
 	}
-	if template.Client.Disk == nil {
-		return inferencev1alpha1.KVPoolSpec{}, fmt.Errorf("client.disk is required for standalone Store offload")
-	}
-	diskBytes, err := resourcevalidation.ParsePositiveBytes("client.disk.size", string(template.Client.Disk.Size))
-	if err != nil {
-		return inferencev1alpha1.KVPoolSpec{}, err
-	}
 	template.Client.MemoryCapacity = inferencev1alpha1.ResourceQuantity(strconv.FormatInt(memoryBytes, 10))
-	disk := *template.Client.Disk
-	disk.Size = inferencev1alpha1.ResourceQuantity(strconv.FormatInt(diskBytes, 10))
-	template.Client.Disk = &disk
+	if template.Client.Disk != nil {
+		diskBytes, err := resourcevalidation.ParsePositiveBytes("client.disk.size", string(template.Client.Disk.Size))
+		if err != nil {
+			return inferencev1alpha1.KVPoolSpec{}, err
+		}
+		disk := *template.Client.Disk
+		disk.Size = inferencev1alpha1.ResourceQuantity(strconv.FormatInt(diskBytes, 10))
+		template.Client.Disk = &disk
+	}
 	if template.Client.Port == 0 {
 		template.Client.Port = 50052
 	}

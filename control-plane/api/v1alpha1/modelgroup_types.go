@@ -58,6 +58,14 @@ type ModelGroupArtifacts struct {
 	HuggingFaceAccess *HuggingFaceAccess `json:"huggingFaceAccess,omitempty"`
 }
 
+// RDMAAllocation identifies the platform device-plugin allocation used by runtime transports.
+type RDMAAllocation struct {
+	// +kubebuilder:validation:MinLength=1
+	ResourceName string `json:"resourceName"`
+	// +kubebuilder:validation:Minimum=1
+	ResourceCount int32 `json:"resourceCount"`
+}
+
 // ModelGroupPDRuntimeConfig defines the resolved P/D transport runtime.
 type ModelGroupPDRuntimeConfig struct {
 	// ProfileName and ProfileRevision are opaque platform-owned identifiers.
@@ -86,14 +94,6 @@ type ModelGroupPDRuntimeConfig struct {
 	// When omitted, Mooncake selects from the devices allocated to the Pod.
 	// +optional
 	RDMADeviceName string `json:"rdmaDeviceName,omitempty"`
-
-	// RDMAResourceName is the platform-owned Kubernetes extended resource
-	// whose device plugin injects the P/D transport devices.
-	// +kubebuilder:validation:MinLength=1
-	RDMAResourceName string `json:"rdmaResourceName"`
-
-	// +kubebuilder:validation:Minimum=1
-	RDMAResourceCount int32 `json:"rdmaResourceCount"`
 }
 
 // ECTransferRole is the fixed role assigned to a controller-owned EC runtime.
@@ -187,7 +187,7 @@ type ModelGroupRuntime struct {
 	// +kubebuilder:validation:Maximum=65535
 	Port int32 `json:"port"`
 
-	// EngineArgs is the effective backend configuration after applying common fields.
+	// EngineArgs contains resolved native options; worker topology is stored in Parallelism.
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
 
@@ -225,6 +225,10 @@ type ModelGroupSpec struct {
 	// +optional
 	PDRuntime *ModelGroupPDRuntimeConfig `json:"pdRuntime,omitempty"`
 
+	// RDMA is shared by engine collectives and transfer connectors.
+	// +optional
+	RDMA *RDMAAllocation `json:"rdma,omitempty"`
+
 	// ECRuntime is the controller-owned resolved encoder/prefill transfer configuration.
 	// +optional
 	ECRuntime *ModelGroupECRuntimeConfig `json:"ecRuntime,omitempty"`
@@ -236,14 +240,12 @@ type ModelGroupSpec struct {
 	Resources ModelResources `json:"resources"`
 	Timeouts  ModelTimeouts  `json:"timeouts"`
 
-	// NodeCount is the number of physical Kubernetes Nodes used by this Group.
+	// NodeCount is the number of distinct Kubernetes Nodes used by this Group.
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=1
 	NodeCount int32 `json:"nodeCount"`
 
 	// MemberCount is the number of runtime member Pods in this Group.
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=1
 	MemberCount int32 `json:"memberCount"`
 
 	Parallelism CompiledParallelism `json:"parallelism"`

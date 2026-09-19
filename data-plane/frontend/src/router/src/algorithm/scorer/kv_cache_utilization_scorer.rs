@@ -8,7 +8,7 @@ use foretoken_kv_indexer::KvPrefixIndexer;
 use crate::{RouteCandidate, RouteScore, RouteScorer, RouterRequest, RoutingProgress};
 
 /// Returns `1 - utilization` for each candidate without clamping or adding other signals.
-/// An unobserved gauge contributes zero utilization.
+/// An unobserved gauge ranks after measured utilization.
 #[derive(Default)]
 pub struct KvCacheUtilizationScorer;
 
@@ -26,12 +26,9 @@ impl RouteScorer for KvCacheUtilizationScorer {
         candidates
             .iter()
             .map(|candidate| RouteScore {
-                preference: 1.0
-                    - candidate
-                        .route_target_stats
-                        .as_ref()
-                        .and_then(|stats| stats.kv_cache_usage)
-                        .unwrap_or(0.0),
+                preference: candidate.data_parallel_stats()
+                    .and_then(|stats| stats.kv_cache_usage)
+                    .map_or(f64::NEG_INFINITY, |usage| 1.0 - usage),
                 ..RouteScore::default()
             })
             .collect()

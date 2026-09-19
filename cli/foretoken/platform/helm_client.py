@@ -26,19 +26,24 @@ class HelmClient:
             raise DeploymentError("helm is required to install the Foretoken platform")
         self._config = config
 
-    def run(self, args: Iterable[str]) -> subprocess.CompletedProcess[str]:
-        """Execute Helm and preserve its diagnostic output on failure."""
+    def run(
+        self, args: Iterable[str], *, input_text: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
+        """Execute Helm with optional stdin and preserve its diagnostic output on failure."""
         command = ["helm", *args]
-        completed = self._execute(command)
+        completed = self._execute(command, input_text=input_text)
         if completed.returncode:
             self._raise_command_error(command, completed)
         return completed
 
     @staticmethod
-    def _execute(command: list[str]) -> subprocess.CompletedProcess[str]:
+    def _execute(
+        command: list[str], *, input_text: str | None = None
+    ) -> subprocess.CompletedProcess[str]:
         """Execute one fully assembled Helm command without interpreting failure."""
         return subprocess.run(
             command,
+            input=input_text,
             text=True,
             capture_output=True,
             check=False,

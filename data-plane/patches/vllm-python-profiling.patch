@@ -47,14 +47,12 @@ diff --git a/vllm/profiler/wrapper.py b/vllm/profiler/wrapper.py
 +        if not self._active or self._error is not None:
              return
  
-@@ -142,5 +154,6 @@
-         logger.info_once("Shutting down profiler")
+@@ -143,3 +155,4 @@
          if self._running:
 -            self.stop()
 +            self._call_stop()
 +        self._active = False
- 
-     def annotate_context_manager(self, name: str):
+
 diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
 --- a/vllm/v1/worker/gpu_worker.py
 +++ b/vllm/v1/worker/gpu_worker.py

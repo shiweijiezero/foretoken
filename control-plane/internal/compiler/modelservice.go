@@ -144,8 +144,8 @@ func validateModelPoolRoles(pools []inferencev1alpha1.ModelPoolTemplate) error {
 }
 
 func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alpha1.ModelSource, artifactRevision, name string, role inferencev1alpha1.ModelRole, replicas, nodes int32, network, ecProfile string, resources inferencev1alpha1.ModelResources, engineArgs inferencev1alpha1.EngineArguments, maxInputTokens *int32, internalGenerateRequestBodyLimitBytes int64, kvCache *inferencev1alpha1.KVCache, features *inferencev1alpha1.ModelFeatures, timeouts inferencev1alpha1.ModelTimeouts) (ModelPool, error) {
-	if nodes != 1 {
-		return ModelPool{}, fmt.Errorf("only single-node model groups are currently supported")
+	if nodes < 1 {
+		return ModelPool{}, fmt.Errorf("nodes must be positive")
 	}
 	normalizedResources, err := normalizeResources(resources)
 	if err != nil {
@@ -178,7 +178,6 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			Tokenizer:                             tokenizer,
 			TokenizerRevision:                     artifactRevision,
 			Backend:                               spec.Backend,
-			Inference:                             *spec.InferenceParameters.DeepCopy(),
 			Role:                                  role,
 			NodeCount:                             nodes,
 			MemberCount:                           nodes,

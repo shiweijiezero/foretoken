@@ -134,9 +134,8 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 			BootstrapPort:              29001,
 			AbortRequestTimeoutSeconds: 30,
 			RDMADeviceName:             "mlx5_1",
-			RDMAResourceName:           "rdma/ib",
-			RDMAResourceCount:          1,
 		}
+		group.Spec.RDMA = &inferencev1alpha1.RDMAAllocation{ResourceName: "rdma/ib", ResourceCount: 1}
 		group.Spec.Network = "rdma-net"
 		c := controllerClient(t, service, pool, group)
 		r := &controllers.ModelGroupReconciler{Client: c, ControlPlaneNamespace: "foretoken-system", ImagePullSecrets: []corev1.LocalObjectReference{{Name: "registry-auth"}}}

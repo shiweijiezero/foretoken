@@ -15,7 +15,7 @@ pub struct QueueDepthScorer;
 
 impl RouteScorer for QueueDepthScorer {
     /// Returns queue-depth preferences in candidate order for Router selection.
-    /// Unobserved gauges count as zero; equal counts receive one.
+    /// Unknown gauges rank after measured values; equal measured counts receive one.
     #[allow(unused_variables)]
     fn score(
         &self,
@@ -27,10 +27,8 @@ impl RouteScorer for QueueDepthScorer {
     ) -> Vec<RouteScore> {
         inverse_normalized_scores(candidates.iter().map(|candidate| {
             candidate
-                .route_target_stats
-                .as_deref()
+                .data_parallel_stats()
                 .and_then(|stats| stats.scheduler_waiting_requests)
-                .unwrap_or(0)
         }))
     }
 }

@@ -311,6 +311,7 @@ fn telemetry_response(state: &AppState) -> TelemetryResponse {
             .try_into()
             .unwrap_or(u64::MAX),
         accepting: state.health.accepting(),
+        data_parallel_ranks: telemetry.data_parallel_ranks,
         running_requests: state
             .health
             .running_requests()

@@ -19,7 +19,6 @@ type KVGroupDisk struct {
 }
 
 // KVGroupClientConfig is the resolved immutable Mooncake client workload input.
-// Disk is mandatory: this first standalone Store profile enables SSD offload.
 // +kubebuilder:validation:XValidation:rule="self.protocol == 'rdma' ? has(self.rdmaResourceName) && has(self.rdmaResourceCount) : !has(self.rdmaResourceName) && !has(self.rdmaResourceCount)",message="resolved RDMA clients require resource name and count; TCP must omit RDMA resources"
 type KVGroupClientConfig struct {
 	Image string `json:"image"`
@@ -40,7 +39,9 @@ type KVGroupClientConfig struct {
 	// +kubebuilder:validation:Minimum=1
 	RDMAResourceCount   int32        `json:"rdmaResourceCount,omitempty"`
 	MemoryCapacityBytes ByteQuantity `json:"memoryCapacityBytes"`
-	Disk                KVGroupDisk  `json:"disk"`
+	// Disk is absent for memory-only Store clients.
+	// +optional
+	Disk *KVGroupDisk `json:"disk,omitempty"`
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// +optional

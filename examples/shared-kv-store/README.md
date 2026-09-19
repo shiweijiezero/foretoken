@@ -46,6 +46,8 @@ Both models reference `shared-kv` in the same namespace. They share storage capa
 
 Edit each pool's `replicas` in `kvservice.yaml` and run the same deploy command. Replicas count storage instances, not copies of each cached value. Mooncake manages placement and eviction; removing an instance can discard cached KV and cause recomputation.
 
+For a memory-only pool, omit `client.disk`. Its `memoryCapacity` contributes host memory to the same shared Store without a client PVC or SSD offload. Memory-only and disk-backed pools can coexist; Master snapshot storage is configured separately.
+
 Kubernetes chooses nodes from resource and volume requirements. To restrict a pool to an existing node label, add `nodeSelector` beside its `name`, `replicas`, and `client` fields:
 
 ```yaml
