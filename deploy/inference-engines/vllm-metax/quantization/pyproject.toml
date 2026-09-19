@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "foretoken-vllm-metax-quantization"
+version = "0.0.1"
+description = "MetaX execution adapter for native vLLM TorchAO INT8 weights"
+requires-python = ">=3.11"
+dependencies = ["torchao==0.15.0"]
+
+[project.entry-points."vllm.general_plugins"]
+foretoken_metax_quantization = "foretoken_metax_quantization:register"
+
+[tool.setuptools]
+py-modules = ["foretoken_metax_quantization"]

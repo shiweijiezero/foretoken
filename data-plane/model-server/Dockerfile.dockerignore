@@ -5,5 +5,10 @@
 **
 !data-plane/
 !data-plane/**
+!deploy/
+!deploy/inference-engines/
+!deploy/inference-engines/vllm-metax/
+!deploy/inference-engines/vllm-metax/quantization/
+!deploy/inference-engines/vllm-metax/quantization/**
 data-plane/target/
 data-plane/**/target/

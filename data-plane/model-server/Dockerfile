@@ -86,9 +86,18 @@ RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
 
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 # Engine images may provide a Python virtual environment without pip.
+# MACA also exposes torch.version.cuda, so select dependencies from the engine build.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
-    uv pip install --no-cache --python "${FORETOKEN_VLLM_PYTHON:-python}" \
-      --default-index "${UV_DEFAULT_INDEX}" modelscope==1.35.3
+    --mount=type=bind,source=deploy/inference-engines/vllm-metax/quantization,target=/tmp/metax-quantization,rw \
+    backend="$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
+      'import torch; print("maca" if getattr(torch.version, "maca", None) else "cuda" if torch.version.cuda else "other")')" \
+    && set -- modelscope==1.35.3 \
+    && case "$backend" in \
+         cuda) set -- "$@" bitsandbytes==0.49.2 ;; \
+         maca) set -- "$@" /tmp/metax-quantization ;; \
+       esac \
+    && uv pip install --no-cache --python "${FORETOKEN_VLLM_PYTHON:-python}" \
+      --default-index "${UV_DEFAULT_INDEX}" "$@"
 
 FROM engine-runtime AS runtime
 
