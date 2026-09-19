@@ -38,7 +38,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-Add `--warmup-requests 16` to finish a separate warmup before each measured run. Warmup and measurement have separate headings and progress bars counting completed conversations. Warmup must succeed before measurement begins; its results are saved under `warmup/` and excluded from measured metrics.
+Add `--warmup-requests 16` to complete 16 warmup conversations before each measured run, excluding them from its metrics.
 
 `--parallel` controls concurrency and `--rate` controls arrivals per second. Each accepts `-1` for no limit. The defaults are no rate limit and one concurrent request. To send at an average of five requests per second without a concurrency cap:
 
@@ -105,7 +105,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-Sweeps vary the workload against one Kustomize deployment and cannot be combined with `--url`. To compare precision, quantization or speculative decoding, reuse the same sweep for each deployment configuration; see [Parameter sweeps](docs/coomon_commands/sweep.md).
+Sweeps require a Kustomize deployment. See [Parameter sweeps](docs/coomon_commands/sweep.md) to customize points and compare configurations.
 
 ### An existing service URL
 
@@ -124,10 +124,6 @@ For another service, use its actual Chat Completions URL and model name. In Gate
 ## Read results
 
 Local results are saved in a separate directory under `results/`, printed when the run finishes. `metrics.json` contains the summary and `raw_output.json` contains per-request records.
-
-`environment.json` records client software information and, for Kustomize deployments, serving settings before and after the run. See [Experiment records](metrics.md#experiment-records) for details.
-
-Sweeps retain all repetitions in `sweep_points.json` and write per-point statistics to `sweep_summary.json` and `sweep_summary.csv`. Use these summaries to compare repetitions rather than selecting the fastest run.
 
 Start with success rate, end-to-end latency (E2EL), and output token throughput. Streamed runs also report time to the first chunk (TTFT), average time per output token (TPOT), and inter-chunk intervals (ITL). `--no-stream` disables only these streaming metrics.
 

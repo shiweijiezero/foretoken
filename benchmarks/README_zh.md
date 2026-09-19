@@ -38,7 +38,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-添加 `--warmup-requests 16` 可在每次正式运行前完成独立预热。预热和测量分段显示，各自提供按已完成对话计数的进度条。预热全部成功后才开始测量；预热结果保存在 `warmup/` 下，不计入正式指标。
+添加 `--warmup-requests 16` 可在每次测量前完成 16 段预热对话，不计入正式指标。
 
 `--parallel` 控制并发数，`--rate` 控制每秒请求到达率，各自设为 `-1` 表示不限。默认不限速、并发为 1。例如按平均每秒 5 个请求发送且不限并发：
 
@@ -105,7 +105,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-参数扫描在同一 Kustomize 部署上改变负载，不与 `--url` 组合。比较精度、量化或推测解码时，对每种部署配置复用相同的扫描文件，步骤见[参数扫描](docs/coomon_commands/sweep_zh.md)。
+参数扫描要求使用 Kustomize 部署。自定义负载点与配置对比见[参数扫描](docs/coomon_commands/sweep_zh.md)。
 
 ### 使用已有服务地址
 
@@ -124,10 +124,6 @@ foretoken bench \
 ## 查看结果
 
 本地结果保存在 `results/` 下的独立目录，结束后会打印位置。`metrics.json` 是汇总，`raw_output.json` 是逐请求记录。
-
-`environment.json` 记录客户端软件信息；Kustomize 模式还记录运行前后的服务设置。具体内容见[实验记录](metrics_zh.md#实验记录)。
-
-扫描将全部重复运行保存在 `sweep_points.json`，并将各参数点的统计结果写入 `sweep_summary.json` 和 `sweep_summary.csv`。使用这些汇总比较重复结果，避免只挑最快的一次。
 
 先看成功率、端到端耗时 E2EL 和输出 token 吞吐量。流式评测还报告首分片耗时 TTFT、平均输出 token 耗时 TPOT 和分片间隔 ITL；`--no-stream` 只关闭这些流式指标。
 

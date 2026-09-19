@@ -6,20 +6,18 @@ English | [简体中文](metrics_zh.md) · [Common commands](docs/examples.md)
 
 ## Experiment records
 
-With local output, `environment.json` records the client Python/package versions and the source checkout's commit and dirty state when available. For Kustomize deployments it also records model-service settings, model/tokenizer revisions, runtime configuration, pod image IDs and node information before and after execution. A snapshot's `error` field identifies a failed read. URL runs contain client information only. For reproducible configuration comparisons, see [Parameter sweeps](docs/coomon_commands/sweep.md#compare-inference-configurations).
+Local output includes:
 
-`--warmup-requests N` completes N conversations before each generated run, including each sweep repetition and dataset child. Its results are saved under `warmup/`, separate from measured metrics and profiling. Warmup reuses the starting rows and seed; measurement begins after all warmup requests succeed and opens a new HTTP client. The default is zero. Trace replay requires separate warmup.
-
-For sweeps, `sweep_points.json` retains every repetition. `sweep_summary.json` and `sweep_summary.csv` group results by parameter point:
-
-| Summary field | Meaning |
+| File | Content |
 | --- | --- |
-| `runs` | Total repetitions, including failed runs |
-| `samples` | Available values for this metric; missing timings are omitted, while zero throughput and failure counts are retained |
-| `mean`, `median`, `min`, `max` | Statistics across the available run-level values |
-| `stddev` | Sample standard deviation; unavailable for fewer than two samples |
+| `environment.json` | Client versions and source state; Kustomize runs also include serving settings, image IDs and nodes before/after execution. Failed reads have an `error` field. |
+| `warmup/` | Warmup results, excluded from measured metrics and profiling |
+| `sweep_points.json` | Every sweep repetition |
+| `sweep_summary.json`, `sweep_summary.csv` | Per-point mean, median, sample standard deviation and range across repetitions |
 
-Timing metric names ending in `_seconds` use seconds. Statistics of per-run p95 values describe variation between runs, not a percentile calculated from pooled requests.
+In sweep summaries, `runs` counts repetitions and `samples` counts available values. Missing timings are omitted; zero throughput and failure counts remain. `stddev` is unavailable for fewer than two samples. Timing metrics ending in `_seconds` use seconds. Summaries of run p95 values are not pooled request percentiles.
+
+Warmup reuses the workload's starting rows and seed and must succeed before measurement begins. Trace replay requires separate warmup.
 
 ## Request metrics
 
