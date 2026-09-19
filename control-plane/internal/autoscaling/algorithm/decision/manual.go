@@ -3,7 +3,8 @@
 package decision
 
 import (
-	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm"
+	"encoding/json"
+
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 )
 
@@ -17,8 +18,10 @@ func (Manual) RecommendReplicas(snapshot core.ScalingSnapshot) (core.ReplicaReco
 	return core.ReplicaRecommendation{State: core.RecommendationAvailable, Replicas: snapshot.Replicas.BaselineReplicas, Reason: core.RecommendationReasonManualIntent, Message: "capacity follows ModelService replicas"}, nil
 }
 
-func init() {
-	if err := algorithm.RegisterDecisionAlgorithm("manual", func(core.DecisionConfig) (core.DecisionAlgorithm, error) { return Manual{}, nil }); err != nil {
-		panic(err)
+// NewManual constructs fixed-capacity control for the registry and rejects unused parameters.
+func NewManual(parameters json.RawMessage) (core.DecisionAlgorithm, error) {
+	if err := core.DecodeParameters(parameters, nil); err != nil {
+		return nil, err
 	}
+	return Manual{}, nil
 }

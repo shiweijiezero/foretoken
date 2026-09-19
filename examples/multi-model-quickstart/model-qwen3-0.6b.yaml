@@ -15,19 +15,8 @@ spec:
   autoscaling:
     minReplicas: 1
     maxReplicas: 3
-    trigger:
-      algorithm: periodic
-      interval: 5s
     decision:
       algorithm: queue
-      queue:
-        targetAverageQueuedRequests: 1
-    adjustment:
-      algorithm: step
-      scaleUp:
-        stabilizationWindow: 0s
-      scaleDown:
-        stabilizationWindow: 300s
   nodes: 1
   resources:
     requests:

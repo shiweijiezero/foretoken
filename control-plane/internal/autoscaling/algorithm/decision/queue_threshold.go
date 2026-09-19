@@ -3,10 +3,10 @@
 package decision
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 
-	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 )
 
@@ -38,13 +38,17 @@ func (threshold QueueThreshold) RecommendReplicas(snapshot core.ScalingSnapshot)
 	return recommendation(current, core.RecommendationAvailable, core.RecommendationReasonStable, "queue depth remains between scaling thresholds"), nil
 }
 
-func init() {
-	if err := algorithm.RegisterDecisionAlgorithm("queue_threshold", func(config core.DecisionConfig) (core.DecisionAlgorithm, error) {
-		if config.ScaleUpQueuedRequests < 0 || config.ScaleDownQueuedRequests < 0 || config.ScaleDownQueuedRequests > config.ScaleUpQueuedRequests {
-			return nil, fmt.Errorf("autoscaling queue thresholds are invalid")
-		}
-		return QueueThreshold{ScaleUpQueuedRequests: config.ScaleUpQueuedRequests, ScaleDownQueuedRequests: config.ScaleDownQueuedRequests}, nil
+// NewQueueThreshold constructs the backlog policy for the built-in registry and validates its boundaries.
+func NewQueueThreshold(parameters json.RawMessage) (core.DecisionAlgorithm, error) {
+	scaleUp, scaleDown := int64(1), int64(0)
+	if err := core.DecodeParameters(parameters, map[string]any{
+		"scaleUpQueuedRequests":   &scaleUp,
+		"scaleDownQueuedRequests": &scaleDown,
 	}); err != nil {
-		panic(err)
+		return nil, err
 	}
+	if scaleUp < 0 || scaleDown < 0 || scaleDown > scaleUp {
+		return nil, fmt.Errorf("autoscaling queue thresholds are invalid")
+	}
+	return QueueThreshold{ScaleUpQueuedRequests: scaleUp, ScaleDownQueuedRequests: scaleDown}, nil
 }

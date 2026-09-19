@@ -23,19 +23,8 @@ spec:
   autoscaling:
     minReplicas: 1
     maxReplicas: 8
-    trigger:
-      algorithm: periodic
-      interval: 5s
     decision:
       algorithm: queue
-      queue:
-        targetAverageQueuedRequests: 1
-    adjustment:
-      algorithm: step
-      scaleUp:
-        stabilizationWindow: 0s
-      scaleDown:
-        stabilizationWindow: 300s
 ```
 
 `periodic` evaluates queue demand at the configured interval. Missing, stale, or incomplete observations keep the current capacity. Automatic scaling maintains at least one replica.
@@ -43,6 +32,35 @@ spec:
 `queue` calculates capacity from the average queued requests per replica. `queue_threshold` instead changes capacity by one replica at configured total-backlog boundaries. `direct` applies a recommendation after min/max bounds; `step` applies at most one replica per evaluation and supports independent stabilization windows.
 
 The scale-down window uses recent recommendations held by the current controller process. A controller restart or leadership change does not preserve that history, so it can shorten a pending scale-down delay.
+
+## Algorithm parameters
+
+All three stages use `algorithm` and optional `parameters`. Omit parameters to use the selected algorithm's defaults. Omit the trigger or adjustment stage entirely to use `periodic` or `step`. Algorithm constructors reject unknown fields, wrong types, and invalid values before capacity is written. New algorithms are compiled into the controller; users select them in the service manifest without editing CRDs.
+
+| Algorithm | Parameter | Default | Constraint |
+| --- | --- | --- | --- |
+| `queue` | `targetAverageQueuedRequests` | `1` | Positive integer |
+| `queue_threshold` | `scaleUpQueuedRequests` | `1` | Non-negative integer |
+| `queue_threshold` | `scaleDownQueuedRequests` | `0` | Non-negative integer, no greater than `scaleUpQueuedRequests` |
+| `periodic` (trigger) | `interval` | `5s` | Positive duration |
+| `step` (adjustment) | `scaleUpStabilizationWindow` | `0s` | Non-negative duration |
+| `step` (adjustment) | `scaleDownStabilizationWindow` | `300s` | Non-negative duration |
+| `direct` (adjustment) | None | — | No parameters accepted |
+
+The controller must contain the named algorithm. Unknown algorithm names or invalid parameters produce a `ScalingFailed` condition on the ModelService; Kubernetes validates the parameters object shape, while the selected algorithm validates its contents.
+
+For example, override the polling interval and scale-down window in the existing `autoscaling` block:
+
+```yaml
+trigger:
+  algorithm: periodic
+  parameters:
+    interval: 10s
+adjustment:
+  algorithm: step
+  parameters:
+    scaleDownStabilizationWindow: 60s
+```
 
 ## Observe a decision
 
@@ -71,6 +89,19 @@ For aggregate services, `kind` is `Pool`. For E/P/D services, `kind` is `EPDPipe
 ## Try the maintained example
 
 The [multi-model example](../examples/multi-model-quickstart/README.md) deploys one queue-autoscaled Qwen service and one fixed-capacity Llama service. It includes a bounded concurrent workload and status commands for observing capacity changes.
+
+## Migrate the previous configuration
+
+Before upgrading, save the existing service manifests and move algorithm-specific values into their stage's `parameters` object:
+
+| Previous field | New field |
+| --- | --- |
+| `decision.queue.*` / `decision.queueThreshold.*` | `decision.parameters.*` |
+| `trigger.interval` | `trigger.parameters.interval` |
+| `adjustment.scaleUp.stabilizationWindow` | `adjustment.parameters.scaleUpStabilizationWindow` |
+| `adjustment.scaleDown.stabilizationWindow` | `adjustment.parameters.scaleDownStabilizationWindow` |
+
+Remove the old fields. Unchanged default-valued parameters can be omitted. Upgrade the controller and CRDs together, and apply the migrated manifests before allowing the new controller to reconcile existing services. The new schema does not retain the old fields, so unmigrated settings can be lost and replaced by algorithm defaults. Rollback requires the previous controller, CRDs, and saved service manifests together.
 
 ## Maintainer architecture
 

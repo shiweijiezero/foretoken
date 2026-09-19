@@ -2,6 +2,8 @@
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 package core
 
+import "time"
+
 type TriggerDisposition string
 
 const (
@@ -26,6 +28,7 @@ type TriggerDecision struct {
 
 type TriggerAlgorithm interface {
 	Name() string
+	PollingInterval() time.Duration
 	Decide(ScalingSnapshot) TriggerDecision
 }
 

@@ -12,7 +12,6 @@ import (
 	"reflect"
 	"slices"
 	"sync"
-	"time"
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -36,7 +35,6 @@ const (
 	conditionPoolsMaterialized = "PoolsMaterialized"
 	conditionReady             = "Ready"
 	maxDesiredReplicas         = int32(1<<31 - 1)
-	defaultScalingPollInterval = 5 * time.Second
 )
 
 // ScalingMetricsProvider supplies one read-only, target-attributed metrics snapshot.
@@ -121,7 +119,11 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 			ready:    conditionState{metav1.ConditionFalse, "KVServiceNotReady", "Referenced KVService is not ready"},
 		})
 	}
-	compiledPools, autoscalingStatus, err := reconciler.applyScaling(ctx, service, compiledPools)
+	scaling, err := reconciler.scalingConfig(service)
+	var autoscalingStatus []inferencev1alpha1.AutoscalingTargetStatus
+	if err == nil {
+		compiledPools, autoscalingStatus, err = reconciler.applyScaling(ctx, service, compiledPools, scaling)
+	}
 	if err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, service, modelServiceState{
 			compiled: conditionState{metav1.ConditionFalse, "ScalingFailed", err.Error()},
@@ -180,10 +182,6 @@ func (reconciler *ModelServiceReconciler) reconcileService(ctx context.Context, 
 		ready:       conditionState{conditionStatus(ready), readyReason, readyMessage},
 		autoscaling: &autoscalingStatus,
 	}); err != nil {
-		return ctrl.Result{}, err
-	}
-	scaling, err := reconciler.scalingConfig(service)
-	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if scaling.Autoscaler.Automatic() {

@@ -3,11 +3,18 @@
 package adjustment
 
 import (
-	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm"
+	"encoding/json"
+	"fmt"
+	"time"
+
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 )
 
-type Step struct{ config core.AdjustmentConfig }
+type Step struct {
+	scaleUpWindow   time.Duration
+	scaleDownWindow time.Duration
+	history         *core.RecommendationHistory
+}
 
 // Name identifies the stabilized fixed-step adjustment algorithm for registry consumers.
 func (Step) Name() string { return "step" }
@@ -22,13 +29,13 @@ func (step Step) Adjust(input core.AdjustmentInput) (core.ReplicaAdjustment, err
 	}
 
 	raw := clip(input.RecommendedReplicas, input.Limits.MinReplicas, input.Limits.MaxReplicas)
-	desired := step.config.History.Stabilize(
+	desired := step.history.Stabilize(
 		input.Target,
 		input.EvaluatedAt,
 		input.CurrentReplicas,
 		raw,
-		step.config.ScaleUpStabilizationWindow,
-		step.config.ScaleDownStabilizationWindow,
+		step.scaleUpWindow,
+		step.scaleDownWindow,
 	)
 	reason := core.AdjustmentReasonHold
 	message := "replica recommendation keeps current replicas"
@@ -66,10 +73,22 @@ func clip(value, minimum, maximum int32) int32 {
 	return value
 }
 
-func init() {
-	if err := algorithm.RegisterAdjustmentAlgorithm("step", func(config core.AdjustmentConfig) (core.AdjustmentAlgorithm, error) {
-		return Step{config: config}, nil
+// NewStep decodes stabilization windows and binds the controller-owned history for the registry.
+func NewStep(parameters json.RawMessage, history *core.RecommendationHistory) (core.AdjustmentAlgorithm, error) {
+	up, down := "0s", "300s"
+	if err := core.DecodeParameters(parameters, map[string]any{
+		"scaleUpStabilizationWindow":   &up,
+		"scaleDownStabilizationWindow": &down,
 	}); err != nil {
-		panic(err)
+		return nil, err
 	}
+	upWindow, err := time.ParseDuration(up)
+	if err != nil || upWindow < 0 {
+		return nil, fmt.Errorf("autoscaling step scaleUpStabilizationWindow must be a non-negative duration")
+	}
+	downWindow, err := time.ParseDuration(down)
+	if err != nil || downWindow < 0 {
+		return nil, fmt.Errorf("autoscaling step scaleDownStabilizationWindow must be a non-negative duration")
+	}
+	return Step{scaleUpWindow: upWindow, scaleDownWindow: downWindow, history: history}, nil
 }

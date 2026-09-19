@@ -6,11 +6,9 @@ package autoscaling
 
 import (
 	"errors"
+	"time"
 
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm"
-	_ "github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm/adjustment"
-	_ "github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm/decision"
-	_ "github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm/trigger"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 )
 
@@ -20,23 +18,23 @@ type Autoscaler struct{ pipeline core.Pipeline }
 
 // New assembles the configured decision, trigger, and adjustment algorithms into an Autoscaler.
 func New(configuration Configuration) (*Autoscaler, error) {
-	decisionName := string(configuration.DecisionAlgorithm)
+	decisionName := configuration.Decision.Algorithm
 	if decisionName == "" {
-		decisionName = string(DecisionAlgorithmManual)
+		decisionName = "manual"
 	}
-	decision, err := algorithm.BuildDecision(decisionName, configuration.Decision)
+	decision, err := algorithm.BuildDecision(decisionName, configuration.Decision.Parameters)
 	if err != nil {
 		return nil, err
 	}
-	adjustmentName := string(configuration.AdjustmentAlgorithm)
+	adjustmentName := configuration.Adjustment.Algorithm
 	if adjustmentName == "" {
-		adjustmentName = string(AdjustmentAlgorithmStep)
+		adjustmentName = "step"
 	}
-	automatic := decisionName != string(DecisionAlgorithmManual)
+	automatic := decisionName != "manual"
 	if !automatic {
-		adjustmentName = string(AdjustmentAlgorithmDirect)
+		adjustmentName = "direct"
 	}
-	adjustment, err := algorithm.BuildAdjustment(adjustmentName, configuration.Adjustment)
+	adjustment, err := algorithm.BuildAdjustment(adjustmentName, configuration.Adjustment.Parameters, configuration.History)
 	if err != nil {
 		return nil, err
 	}
@@ -44,11 +42,11 @@ func New(configuration Configuration) (*Autoscaler, error) {
 	if !automatic {
 		pipeline.Resolver.AllowDuringTransition = true
 	} else {
-		triggerName := string(configuration.TriggerAlgorithm)
+		triggerName := configuration.Trigger.Algorithm
 		if triggerName == "" {
-			triggerName = string(TriggerAlgorithmPeriodic)
+			triggerName = "periodic"
 		}
-		trigger, err := algorithm.BuildTrigger(triggerName)
+		trigger, err := algorithm.BuildTrigger(triggerName, configuration.Trigger.Parameters)
 		if err != nil {
 			return nil, err
 		}
@@ -59,7 +57,7 @@ func New(configuration Configuration) (*Autoscaler, error) {
 
 // Manual returns an Autoscaler that applies the ModelService baseline capacity.
 func Manual() *Autoscaler {
-	autoscaler, err := New(Configuration{DecisionAlgorithm: DecisionAlgorithmManual})
+	autoscaler, err := New(Configuration{Decision: AlgorithmConfiguration{Algorithm: "manual"}})
 	if err != nil {
 		panic(err)
 	}
@@ -85,4 +83,12 @@ func (autoscaler *Autoscaler) Plan(snapshots []core.ScalingSnapshot) ([]core.Sca
 		return nil, ErrAutoscalerRequired
 	}
 	return autoscaler.pipeline.Plan(snapshots)
+}
+
+// PollingInterval returns the selected trigger's cadence for controller scheduling; manual control has no polling.
+func (autoscaler *Autoscaler) PollingInterval() time.Duration {
+	if !autoscaler.Automatic() {
+		return 0
+	}
+	return autoscaler.pipeline.TriggerAlgorithm.PollingInterval()
 }
