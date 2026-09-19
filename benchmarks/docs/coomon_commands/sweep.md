@@ -14,7 +14,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-This runs 384 requests at concurrency 1, 2 and 4, requesting 256 output tokens each. Every point is repeated three times, with 16 warmup conversations before each repetition. Sweeps require a Kustomize deployment; `--url`, trace replay and multiple datasets are not supported.
+This runs 384 requests at concurrency 1, 2 and 4, requesting 256 output tokens each. Every point is repeated three times, with 16 warmup conversations before each repetition. Pass a deployment configuration directory such as `examples/quickstart`; sweeps do not support `--url`, trace replay or multiple datasets.
 
 Each JSONL row defines load, generation or dataset settings. Lists of `parallel`, `number` or `rate` expand into points. Only one of `parallel` and `rate` may have multiple values; a multi-value `number` must match that axis's length. Rows may also override `warmup_requests`.
 

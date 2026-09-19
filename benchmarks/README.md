@@ -105,7 +105,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-Sweeps require a Kustomize deployment. See [Parameter sweeps](docs/coomon_commands/sweep.md) to customize points and compare configurations.
+For parameter sweeps, pass a deployment configuration directory such as `examples/quickstart`; `--url` is currently unsupported. See [Parameter sweeps](docs/coomon_commands/sweep.md) to customize points and compare configurations.
 
 ### An existing service URL
 
@@ -119,7 +119,7 @@ foretoken bench \
   --output local,wandb
 ```
 
-For another service, use its actual Chat Completions URL and model name. In Gateway mode, use the Kustomize form above so the CLI supplies routing headers.
+For another service, use its actual Chat Completions URL and model name. In Gateway mode, pass the deployment configuration directory shown above so the CLI supplies routing headers.
 
 ## Read results
 
