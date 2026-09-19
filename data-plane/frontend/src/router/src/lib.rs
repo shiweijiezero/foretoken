@@ -8,6 +8,8 @@ mod inventory;
 mod metrics;
 mod request;
 mod route_target_stats;
+mod routing_load;
+pub use routing_load::{RoutingLoadSnapshot, RoutingLoadState};
 mod selection;
 
 pub use algorithm::{KvLeastLoadedScorer, RouteFilter, RoutePicker, RouteScorer};
