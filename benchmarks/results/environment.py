@@ -60,7 +60,7 @@ def serving_environment(service: ModelService) -> dict[str, Any]:
     snapshot["namespace"] = service.model_service_refs[0].namespace
     kubectl = Kubectl()
     try:
-        snapshot["context"] = kubectl.run(["config", "current-context"]).stdout.strip()
+        snapshot["context"] = kubectl.current_context()
         kubectl = Kubectl(context=snapshot["context"])
         resources = kubectl.list_resources(
             ("modelservices", "modelpools", "modelgroups", "deployments", "replicasets", "pods"),

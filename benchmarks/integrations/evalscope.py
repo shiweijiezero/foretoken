@@ -12,7 +12,8 @@ import os
 import random
 import sqlite3
 import time
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
+from contextlib import asynccontextmanager, contextmanager
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -623,11 +624,32 @@ def _read_evalscope_request_measurements(
     return measurements, first_start
 
 
+@contextmanager
+def _evalscope_progress(label: str) -> Iterator[None]:
+    """Label one synchronous load while retaining EvalScope's progress lifecycle."""
+    from evalscope.perf.core import metrics_consumer
+
+    upstream_progress = metrics_consumer.tqdm
+
+    def progress(*args: Any, **kwargs: Any) -> Any:
+        kwargs["desc"] = label
+        return upstream_progress(*args, **kwargs)
+
+    # EvalScope hard-codes the consumer's description. Scope this adapter to one
+    # sequential run; upstream still counts completed conversations and closes it.
+    metrics_consumer.tqdm = progress
+    try:
+        yield
+    finally:
+        metrics_consumer.tqdm = upstream_progress
+
+
 def run_evalscope_standard_load(
     benchmark: BenchmarkConfig,
     service: ModelService,
     output_dir: str,
     *,
+    progress_label: str,
     profile: BenchmarkProfile | None = None,
 ) -> tuple[dict[str, Any], list[RequestMeasurement], float | None]:
     """Run through EvalScope and return metrics, measurements, and their monotonic origin."""
@@ -659,7 +681,8 @@ def run_evalscope_standard_load(
     )
     try:
         # EvalScope owns its event loop and signal cancellation on the main thread.
-        result = run_one_benchmark(arguments, output_dir)
+        with _evalscope_progress(progress_label):
+            result = run_one_benchmark(arguments, output_dir)
     except PerfBenchmarkInterrupted as error:
         raise SystemExit(error.exit_code) from None
     except asyncio.CancelledError:

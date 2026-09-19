@@ -46,8 +46,8 @@ class GeneratedLoadBenchmark:
         self.output_dir = output_dir
         self.wandb_group = wandb_group
 
-    def run(self) -> BenchmarkRun:
-        """Run the load point and return its published result."""
+    def run(self, *, progress_label: str = "Measurement") -> BenchmarkRun:
+        """Run the labeled workload phase and return its published result."""
         load_record = resolved_load_record(self.benchmark)
         record = build_benchmark_run_record(
             self.benchmark, self.service, "standard_load", load_record
@@ -86,7 +86,7 @@ class GeneratedLoadBenchmark:
                     warmup,
                     self.service,
                     output_dir=str(Path(outputs.execution_dir) / "warmup"),
-                ).run()
+                ).run(progress_label="Warmup")
                 if warmed.metrics["failed_num"] or not warmed.metrics["success_num"]:
                     raise ValueError("Warmup requests failed; measurement was not started")
             profile_options = self.benchmark.profile
@@ -108,6 +108,7 @@ class GeneratedLoadBenchmark:
                     self.benchmark,
                     self.service,
                     outputs.execution_dir,
+                    progress_label=progress_label,
                     profile=profile,
                 )
             run = BenchmarkRun(

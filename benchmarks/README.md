@@ -38,7 +38,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-Add `--warmup-requests 16` to finish a separate warmup before each measured run. Warmup uses the same workload settings, is excluded from metrics, and must succeed before measurement begins. Its local results are kept under `warmup/`. Choose the warmup budget and prefix-cache policy consistently across comparisons.
+Add `--warmup-requests 16` to finish a separate warmup before each measured run. The `Warmup` and `Measurement` progress bars show each phase's completed conversations. Warmup uses the same workload settings, is excluded from metrics, and must succeed before measurement begins. Its local results are kept under `warmup/`. Choose the warmup budget and prefix-cache policy consistently across comparisons.
 
 `--parallel` controls concurrency and `--rate` controls arrivals per second. Each accepts `-1` for no limit. The defaults are no rate limit and one concurrent request. To send at an average of five requests per second without a concurrency cap:
 
