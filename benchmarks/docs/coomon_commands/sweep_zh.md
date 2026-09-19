@@ -14,7 +14,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-该示例在 1、2、4 并发下各发送 384 个请求，每个请求要求输出 256 个 token。每个参数点重复三次，每次重复前预热 16 段对话。参数扫描要求使用 Kustomize 部署，不与 `--url`、轨迹回放或多数据集组合。
+该示例在 1、2、4 并发下各发送 384 个请求，每个请求要求输出 256 个 token。每个参数点重复三次，每次重复前预热 16 段对话。参数扫描需传入部署配置目录，例如 `examples/quickstart`，目前不支持 `--url`，也不能与轨迹回放或多数据集组合。
 
 每行 JSONL 定义负载、生成或数据集设置，`parallel`、`number` 或 `rate` 的列表会展开成负载点。同一行只能将 `parallel` 或 `rate` 中的一个设为多值列表；`number` 也是多值列表时，长度需与该轴一致。扫描行也可覆盖 `warmup_requests`。
 

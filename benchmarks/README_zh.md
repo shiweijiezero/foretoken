@@ -105,7 +105,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-参数扫描要求使用 Kustomize 部署。自定义负载点与配置对比见[参数扫描](docs/coomon_commands/sweep_zh.md)。
+参数扫描需传入部署配置目录，例如 `examples/quickstart`，目前不支持 `--url`。自定义负载点与配置对比见[参数扫描](docs/coomon_commands/sweep_zh.md)。
 
 ### 使用已有服务地址
 
@@ -119,7 +119,7 @@ foretoken bench \
   --output local,wandb
 ```
 
-其他服务使用其实际 Chat Completions URL 和模型名称。Gateway 模式使用上面的 Kustomize 写法，由 CLI 配置路由请求头。
+其他服务使用其实际 Chat Completions URL 和模型名称。Gateway 模式传入上面的部署配置目录，由 CLI 配置路由请求头。
 
 ## 查看结果
 
