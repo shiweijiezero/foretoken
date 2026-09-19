@@ -38,7 +38,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-Add `--warmup-requests 16` to finish a separate warmup before each measured run. The `Warmup` and `Measurement` progress bars show each phase's completed conversations. Warmup uses the same workload settings, is excluded from metrics, and must succeed before measurement begins. Its local results are kept under `warmup/`. Choose the warmup budget and prefix-cache policy consistently across comparisons.
+Add `--warmup-requests 16` to finish a separate warmup before each measured run. Warmup and measurement have separate headings and progress bars counting completed conversations. Warmup must succeed before measurement begins; its results are saved under `warmup/` and excluded from measured metrics.
 
 `--parallel` controls concurrency and `--rate` controls arrivals per second. Each accepts `-1` for no limit. The defaults are no rate limit and one concurrent request. To send at an average of five requests per second without a concurrency cap:
 
@@ -125,7 +125,7 @@ For another service, use its actual Chat Completions URL and model name. In Gate
 
 Local results are saved in a separate directory under `results/`, printed when the run finishes. `metrics.json` contains the summary and `raw_output.json` contains per-request records.
 
-Each measured run also writes `environment.json`: client package versions and source commit, plus before/after serving snapshots for Kustomize sources. URL sources record client information only. Record server hardware, driver and engine versions separately when they are unavailable; see [Result metrics](metrics.md#experiment-records).
+`environment.json` records client software information and, for Kustomize deployments, serving settings before and after the run. See [Experiment records](metrics.md#experiment-records) for details.
 
 Sweeps retain all repetitions in `sweep_points.json` and write per-point statistics to `sweep_summary.json` and `sweep_summary.csv`. Use these summaries to compare repetitions rather than selecting the fastest run.
 

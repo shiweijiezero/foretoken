@@ -38,7 +38,7 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-添加 `--warmup-requests 16` 可在每次正式运行前完成独立预热。预热和测量分别显示 `Warmup`、`Measurement` 进度条，按已完成的对话计数。预热使用相同负载设置，不计入正式指标，全部成功后才开始测量；本地预热结果保存在 `warmup/` 下。对比时统一预热预算和前缀缓存策略。
+添加 `--warmup-requests 16` 可在每次正式运行前完成独立预热。预热和测量分段显示，各自提供按已完成对话计数的进度条。预热全部成功后才开始测量；预热结果保存在 `warmup/` 下，不计入正式指标。
 
 `--parallel` 控制并发数，`--rate` 控制每秒请求到达率，各自设为 `-1` 表示不限。默认不限速、并发为 1。例如按平均每秒 5 个请求发送且不限并发：
 
@@ -125,7 +125,7 @@ foretoken bench \
 
 本地结果保存在 `results/` 下的独立目录，结束后会打印位置。`metrics.json` 是汇总，`raw_output.json` 是逐请求记录。
 
-每次测量还会保存 `environment.json`，记录客户端软件版本与源码提交；Kustomize 模式额外保存运行前后的服务环境快照。URL 模式只能记录客户端信息。无法自动获取的服务器硬件、驱动和推理引擎版本需要另行保存，详见[实验记录](metrics_zh.md#实验记录)。
+`environment.json` 记录客户端软件信息；Kustomize 模式还记录运行前后的服务设置。具体内容见[实验记录](metrics_zh.md#实验记录)。
 
 扫描将全部重复运行保存在 `sweep_points.json`，并将各参数点的统计结果写入 `sweep_summary.json` 和 `sweep_summary.csv`。使用这些汇总比较重复结果，避免只挑最快的一次。
 

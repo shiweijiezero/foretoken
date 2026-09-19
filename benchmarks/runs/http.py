@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import logging
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
@@ -24,8 +23,6 @@ from benchmarks.results.output import (
     build_benchmark_run_record,
     resolved_load_record,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class GeneratedLoadBenchmark:
@@ -46,7 +43,7 @@ class GeneratedLoadBenchmark:
         self.output_dir = output_dir
         self.wandb_group = wandb_group
 
-    def run(self, *, progress_label: str = "Measurement") -> BenchmarkRun:
+    def run(self, *, phase_label: str = "Measurement") -> BenchmarkRun:
         """Run the labeled workload phase and return its published result."""
         load_record = resolved_load_record(self.benchmark)
         record = build_benchmark_run_record(
@@ -67,7 +64,6 @@ class GeneratedLoadBenchmark:
             # in the child so its records cannot mix with the measured run.
             warmup_count = self.benchmark.load.warmup_requests
             if warmup_count:
-                logger.info("Warming up with %s conversations", warmup_count)
                 warmup = replace(
                     self.benchmark,
                     load=replace(
@@ -86,7 +82,7 @@ class GeneratedLoadBenchmark:
                     warmup,
                     self.service,
                     output_dir=str(Path(outputs.execution_dir) / "warmup"),
-                ).run(progress_label="Warmup")
+                ).run(phase_label="Warmup")
                 if warmed.metrics["failed_num"] or not warmed.metrics["success_num"]:
                     raise ValueError("Warmup requests failed; measurement was not started")
             profile_options = self.benchmark.profile
@@ -108,7 +104,7 @@ class GeneratedLoadBenchmark:
                     self.benchmark,
                     self.service,
                     outputs.execution_dir,
-                    progress_label=progress_label,
+                    phase_label=phase_label,
                     profile=profile,
                 )
             run = BenchmarkRun(

@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import os
 import random
 import sqlite3
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -625,23 +627,24 @@ def _read_evalscope_request_measurements(
 
 
 @contextmanager
-def _evalscope_progress(label: str) -> Iterator[None]:
-    """Label one synchronous load while retaining EvalScope's progress lifecycle."""
-    from evalscope.perf.core import metrics_consumer
+def _evalscope_phase(label: str, conversations: int) -> Iterator[None]:
+    """Announce a workload phase and scope its EvalScope log filtering to this call."""
+    from evalscope.utils.logger import get_logger
 
-    upstream_progress = metrics_consumer.tqdm
+    logger = get_logger()
+    thread_id = threading.get_ident()
 
-    def progress(*args: Any, **kwargs: Any) -> Any:
-        kwargs["desc"] = label
-        return upstream_progress(*args, **kwargs)
+    def include_record(record: logging.LogRecord) -> bool:
+        # The native handoff warning describes overlapping built-in warmup;
+        # Foretoken finishes its separate warmup before starting measurement.
+        return record.thread != thread_id or record.funcName != "_log_warmup_handoff"
 
-    # EvalScope hard-codes the consumer's description. Scope this adapter to one
-    # sequential run; upstream still counts completed conversations and closes it.
-    metrics_consumer.tqdm = progress
+    logger.addFilter(include_record)
     try:
+        logger.info("%s: %d conversations", label, conversations)
         yield
     finally:
-        metrics_consumer.tqdm = upstream_progress
+        logger.removeFilter(include_record)
 
 
 def run_evalscope_standard_load(
@@ -649,7 +652,7 @@ def run_evalscope_standard_load(
     service: ModelService,
     output_dir: str,
     *,
-    progress_label: str,
+    phase_label: str,
     profile: BenchmarkProfile | None = None,
 ) -> tuple[dict[str, Any], list[RequestMeasurement], float | None]:
     """Run through EvalScope and return metrics, measurements, and their monotonic origin."""
@@ -681,7 +684,7 @@ def run_evalscope_standard_load(
     )
     try:
         # EvalScope owns its event loop and signal cancellation on the main thread.
-        with _evalscope_progress(progress_label):
+        with _evalscope_phase(phase_label, benchmark.load.request_count):
             result = run_one_benchmark(arguments, output_dir)
     except PerfBenchmarkInterrupted as error:
         raise SystemExit(error.exit_code) from None
