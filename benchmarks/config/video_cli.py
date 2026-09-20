@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from benchmarks.config.benchmark import BenchmarkOutputConfig, WandbRunConfig
-from benchmarks.config.cli import add_common_benchmark_arguments
+from benchmarks.config.benchmark import HttpLoadSchedule, ModelServiceSource
 from benchmarks.config.video import (
     VideoBenchmarkConfig,
     VideoDatasetDefaults,
@@ -31,6 +31,11 @@ class VideoBenchCommand:
     dry_run: bool = False
 
 
+def _output_destinations(value: str) -> tuple[str, ...]:
+    """Parse the video command's comma-separated result destinations."""
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 def parse_video_arguments(
     argv: Sequence[str], *, command_name: str = "video"
 ) -> VideoBenchCommand:
@@ -40,17 +45,43 @@ def parse_video_arguments(
         description="Benchmark an existing synchronous video-generation endpoint",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    add_common_benchmark_arguments(
-        parser,
-        require_url=True,
-        timeout_type=float,
-        timeout_default=3600.0,
-        number_default=0,
-        parallel_default=1,
-        output_default=("local",),
-        output_dir_default="results/video",
-        include_wandb_group=False,
+    parser.add_argument(
+        "--url",
+        required=True,
+        help="Existing video-generation endpoint URL",
     )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=3600.0,
+        help="Request timeout seconds",
+    )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="Maximum concurrent video requests",
+    )
+    parser.add_argument(
+        "--number",
+        type=int,
+        default=0,
+        help="Number of video requests; zero uses all selected rows",
+    )
+    parser.add_argument(
+        "--output",
+        type=_output_destinations,
+        default=("local",),
+        help="Comma-separated outputs: local, wandb, and quiet",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default="results/video",
+        help="Directory for video benchmark artifacts",
+    )
+    parser.add_argument("--wandb-project", default="foretoken-bench")
+    parser.add_argument("--wandb-entity", default="")
+    parser.add_argument("--wandb-run-name", default="")
     parser.add_argument(
         "--health-url",
         default="",
