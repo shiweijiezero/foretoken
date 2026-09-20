@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](profiling_zh.md)
 
-Inspect vLLM execution with PyTorch Profiler, NVIDIA Nsight Systems, or MetaX mcTracer. Profiling supports NVIDIA and MetaX GPUs and requires a [source-installed](../docs/custom-deployment.md) CLI and platform. Results use persistent RuntimeCache storage, which the Quick Start already configures.
+Inspect vLLM execution with PyTorch Profiler on NVIDIA or MetaX GPUs, Nsight Systems on NVIDIA GPUs, or mcTracer on MetaX GPUs. Profiling requires a [source-installed](../docs/custom-deployment.md) CLI and platform. Results use persistent RuntimeCache storage, which the Quick Start already configures.
 
 ## Capture a benchmark workload
 
@@ -44,7 +44,7 @@ profiling:
 
 Then use either deploy or benchmark command above with `--profile-engine mctracer`. YAML selects the profiler prepared by the model processes; the CLI flag selects the capture engine and must match it. Omitting the YAML field prepares PyTorch. After changing it, use deploy to update the model processes. Benchmark can create an absent deployment and reuses an existing service unchanged.
 
-Foretoken prepares the workers at model startup and exports a native JSON report for each worker. Stopping capture leaves inference running, and subsequent captures reuse the same model processes. CUDA Graph does not need to be disabled.
+CUDA Graph can remain enabled. Stopping capture leaves inference running; repeat the command to capture another window.
 
 ## Nsight Systems
 

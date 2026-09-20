@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](profiling.md) | 简体中文
 
-使用 PyTorch Profiler、NVIDIA Nsight Systems 或沐曦 mcTracer 查看模型推理的执行时间线。目前支持 NVIDIA 和沐曦 GPU 上的 vLLM，需使用[源码安装](../docs/custom-deployment_zh.md)的 CLI 和平台。采集结果使用持久 RuntimeCache 保存，快速开始示例已配置好该存储。
+使用 PyTorch Profiler 查看 NVIDIA 或沐曦 GPU 上 vLLM 的执行时间线；NVIDIA GPU 也可使用 Nsight Systems，沐曦 GPU 也可使用 mcTracer。需使用[源码安装](../docs/custom-deployment_zh.md)的 CLI 和平台。采集结果使用持久 RuntimeCache 保存，快速开始示例已配置好该存储。
 
 ## 同时运行 benchmark 和采集
 
@@ -44,7 +44,7 @@ profiling:
 
 然后使用上面的 deploy 或 benchmark 命令，并将参数改为 `--profile-engine mctracer`。YAML 决定模型进程准备哪种采集器，命令行参数选择本次采集器，两者必须一致。省略 YAML 字段时准备 PyTorch；更改该字段后通过 deploy 更新模型进程。Benchmark 可以创建尚未部署的服务，已有服务保持原配置。
 
-Foretoken 在模型启动时准备 worker，每个 worker 导出一份原生 JSON 报告。停止采集后推理继续运行，后续采集复用同一批模型进程。无需关闭 CUDA Graph。
+无需关闭 CUDA Graph。停止采集后推理继续运行，再次执行命令即可采集下一段。
 
 ## Nsight Systems
 
