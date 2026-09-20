@@ -31,4 +31,6 @@ CLI 默认保留目录 PV。Namespace 重建后，旧 claim 已不存在时，�
 
 运行时缓存挂载保存模型来源服务的缓存以及引擎编译缓存。model-server 拥有启动写入检查和一次临时缓存重试：先停止失败的 EngineCore，再在 Pod 的 `/tmp` 下重试。Frontend 缺少 Hub 缓存时可使用临时 tokenizer 缓存。该回退不会切换已运行引擎的存储路径，也不会复制预先准备的本地 checkpoint。
 
-持久数据根目录包含 `models`、`vllm`、`torch`、`triton` 和 `profiles`。自备模型从 `models` 解析；Hub 仓库保留上游的 `models/hub` 布局和 revision 缓存查找。诊断采集发布到 `profiles/runs`，临时缓存重试期间不可用。自备模型仍从原持久模型根目录解析。持久模型路径不额外拼接 namespace 或 Pod 身份。
+Triton JIT 产物使用 Pod 本地 `/tmp` 卷，因为并发发布缓存需要本地文件系统支持原子重命名，包括替换已加载的 launcher。该缓存随 Pod 回收。
+
+持久数据根目录包含 `models`、`vllm`、`torch` 和 `profiles`。自备模型从 `models` 解析；Hub 仓库保留上游的 `models/hub` 布局和 revision 缓存查找。诊断采集发布到 `profiles/runs`，临时缓存重试期间不可用。自备模型仍从原持久模型根目录解析。持久模型路径不额外拼接 namespace 或 Pod 身份。
