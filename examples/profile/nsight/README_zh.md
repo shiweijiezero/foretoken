@@ -19,7 +19,7 @@ foretoken bench examples/profile/nsight \
 foretoken profile view
 ```
 
-从查看器下载报告后，用 Nsight Systems 打开。临时评测服务清理后，采集文件仍可访问。
+选择 Nsight 时间线，点击“Open in NVIDIA Nsight Systems”即可在浏览器中使用 NVIDIA 官方查看器。临时评测服务清理后，采集文件仍可访问。
 
 不再需要时，删除示例保留的资源：
 

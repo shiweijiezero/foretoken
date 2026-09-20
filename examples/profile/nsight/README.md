@@ -19,7 +19,7 @@ foretoken bench examples/profile/nsight \
 foretoken profile view
 ```
 
-Download the report from the viewer and open it in Nsight Systems. Capture files remain available after temporary benchmark workloads are removed.
+Select the Nsight timeline and click “Open in NVIDIA Nsight Systems” to inspect it in the official browser viewer. Capture files remain available after temporary benchmark workloads are removed.
 
 Delete the retained example resources when no longer needed:
 

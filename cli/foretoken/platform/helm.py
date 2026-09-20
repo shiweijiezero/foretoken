@@ -419,6 +419,18 @@ class Helm(HelmClient):
         """Resolve native platform defaults while preserving explicit image choices."""
         images: dict[str, str] = {}
         for document in self._render_chart(args, input_text=input_text):
+            if (
+                document["kind"] == "ConfigMap"
+                and document["metadata"].get("labels", {}).get("foretoken.io/profile-viewer")
+                == "configuration"
+                and document["data"]["nsightImage"]
+            ):
+                for key, path in (
+                    ("nsightImage", "profiling.nsightViewerImage"),
+                    ("proxyImage", "profiling.viewerProxyImage"),
+                ):
+                    if reference := document["data"][key]:
+                        images[path] = reference
             if document["kind"] not in {"Deployment", "DaemonSet"}:
                 continue
             for container in document["spec"]["template"]["spec"]["containers"]:
@@ -434,7 +446,9 @@ class Helm(HelmClient):
                             if argument.startswith(prefix):
                                 images[path] = argument.removeprefix(prefix)
         for path, reference in images.items():
-            if source_images is not None and path != "rdma.image":
+            if source_images is not None and path in {
+                "image.repository", "frontend.image", "runtime.vllm.image"
+            }:
                 continue
             try:
                 explicit = _value_at(overrides, path)

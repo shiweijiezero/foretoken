@@ -92,7 +92,11 @@ Run on your local computer with a kubeconfig for the target cluster:
 foretoken profile view
 ```
 
-Open the printed URL to browse capture directories and their subfolders. PyTorch traces open in Perfetto; the browser needs access to `ui.perfetto.dev`. For Nsight, download the `.nsys-rep` report and open it in Nsight Systems, or download the SQLite export for analysis. For mcTracer, download the native JSON and open it in [mcTracer-Viewer](https://developer.metax-tech.com/api/client/document/preview/1190/index.html). Press Ctrl+C to close the viewer; files are preserved.
+Open the printed URL to browse captures. PyTorch traces open in Perfetto; the browser needs access to `ui.perfetto.dev`. Select an Nsight timeline and click “Open in NVIDIA Nsight Systems” to open the official viewer in a new tab. For mcTracer, download the native JSON and open it in [mcTracer-Viewer](https://developer.metax-tech.com/api/client/document/preview/1190/index.html).
+
+The Nsight viewer starts on demand in the cluster, reads only the selected report, and does not allocate a GPU. The browser must be able to reach its LoadBalancer address and the assigned HTTP and TURN TCP ports. Session access is automatic; no NVIDIA account or manual report upload is needed. Press Ctrl+C to remove the temporary viewers and their access credentials; capture files remain unchanged.
+
+Update an older source-installed platform through its usual `foretoken install -e .` command to enable the viewer. Its images can be overridden through `profiling.nsightViewerImage` and `profiling.viewerProxyImage` in Helm values. Set `profiling.nsightViewerImage` to an empty string for download-only access. Reports and SQLite exports can always be downloaded.
 
 When the deployment and capture records are no longer needed, clean up with:
 

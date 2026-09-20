@@ -219,6 +219,7 @@
       perfettoOrigin = "https://ui.perfetto.dev";
     let store = null,
       files = [],
+      nsight = false,
       selected = null,
       selection = 0,
       frame = null,
@@ -238,8 +239,8 @@
       $("viewer").replaceChildren();
       frame = null;
     }
-    async function request(path) {
-      const response = await fetch(path, { cache: "no-store" });
+    async function request(path, method = "GET") {
+      const response = await fetch(path, { cache: "no-store", method });
       if (!response.ok) {
         const body = await response.json();
         throw new Error(body.error || `Request failed (${response.status})`);
@@ -280,7 +281,12 @@
             String(selected?.name === file.name),
           );
           const name = document.createElement("span");
-          name.textContent = file.name.split("/").pop();
+          name.textContent =
+            file.format === "nsight"
+              ? "Nsight Systems timeline"
+              : file.format === "sqlite"
+                ? "Nsight analysis database"
+                : file.name.split("/").pop();
           const detail = document.createElement("span");
           detail.className = "detail";
           detail.textContent = `${new Date(fileTime(file)).toLocaleString()} · ${(file.size / 1048576).toFixed(1)} MiB`;
@@ -296,6 +302,7 @@
       $("refresh").disabled = true;
       try {
         const data = await (await request("api/stores")).json();
+        nsight = data.nsight;
         const previous = store;
         const next =
           data.stores.find((s) => s.id === previous?.id) ||
@@ -368,9 +375,16 @@
     async function selectFile(file) {
       selected = file;
       renderTree();
-      $("open").hidden = file.format !== "perfetto";
+      $("open").hidden =
+        file.format !== "perfetto" && !(file.format === "nsight" && nsight);
+      $("open").disabled = false;
+      $("open").textContent =
+        file.format === "nsight"
+          ? "Open in NVIDIA Nsight Systems"
+          : "Open in Perfetto";
       $("download").hidden = false;
-      $("download").href = `api/trace?store=${encodeURIComponent(store.id)}&file=${encodeURIComponent(file.name)}`;
+      $("download").href =
+        `api/trace?store=${encodeURIComponent(store.id)}&file=${encodeURIComponent(file.name)}`;
       $("download").download = file.name.split("/").pop();
       $("selection").textContent = [
         file.model || file.service || "Saved trace",
@@ -383,7 +397,9 @@
         clearViewer();
         message(
           file.format === "nsight"
-            ? "Download this report and open it in Nsight Systems."
+            ? nsight
+              ? "Open this report in the official NVIDIA viewer. Its temporary session closes when this command stops."
+              : "Download this report and open it in Nsight Systems."
             : file.format === "mctracer"
               ? "Download this report and open it in mcTracer-Viewer."
               : "Download this SQLite database for analysis.",
@@ -456,7 +472,38 @@
     $("refresh").onclick = refresh;
     $("stores").onchange = () => selectStore($("stores").value);
     $("retry").onclick = () => store && selectStore(store.id);
-    $("open").onclick = openTrace;
+    $("open").onclick = async () => {
+      if (selected?.format !== "nsight") return openTrace();
+      const ticket = selection;
+      const popup = window.open("about:blank", "_blank");
+      if (!popup) {
+        message("Allow a new tab to open the NVIDIA viewer, then try again.");
+        return;
+      }
+      popup.opener = null;
+      popup.document.title = "Preparing NVIDIA Nsight Systems";
+      popup.document.body.textContent =
+        "Starting the official NVIDIA viewer. The first start may need to download its image…";
+      $("open").disabled = true;
+      message("Starting NVIDIA Nsight Systems in the cluster…");
+      try {
+        const data = await (
+          await request(
+            `api/nsight?store=${encodeURIComponent(store.id)}&file=${encodeURIComponent(selected.name)}`,
+            "POST",
+          )
+        ).json();
+        popup.location.replace(data.url);
+        if (ticket === selection)
+          message("Report opened in NVIDIA Nsight Systems.");
+      } catch (error) {
+        popup.close();
+        if (ticket === selection)
+          message(`Unable to open NVIDIA Nsight Systems: ${error.message}`);
+      } finally {
+        if (ticket === selection) $("open").disabled = false;
+      }
+    };
     window.addEventListener("beforeunload", clearViewer);
     refresh();
   </script>
