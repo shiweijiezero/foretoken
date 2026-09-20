@@ -61,31 +61,41 @@ jobs:
               if action == "closed":
                   action = "merged" if pull_request["merged"] else "closed"
               action_label = {
-                  "opened": "已创建（opened）",
-                  "reopened": "已重新打开（reopened）",
-                  "synchronize": "代码已更新（synchronize）",
-                  "ready_for_review": "已就绪待审（ready for review）",
-                  "closed": "已关闭（closed）",
-                  "merged": "已合并（merged）",
+                  "opened": "已创建",
+                  "reopened": "已重新打开",
+                  "synchronize": "代码已更新",
+                  "ready_for_review": "已就绪待审",
+                  "closed": "已关闭",
+                  "merged": "已合并",
               }[action]
               operator = (
-                  f"合并者（merged by）：{pull_request['merged_by']['login']}"
+                  pull_request["merged_by"]["login"]
                   if action == "merged"
-                  else f"操作者（action by）：{event['sender']['login']}"
+                  else event["sender"]["login"]
+              )
+              operator_zh, operator_en = (
+                  ("合并者", "Merged by") if action == "merged" else ("操作者", "Action by")
               )
               text = (
                   f"GitHub PR {action_label}：{repository}#{pull_request['number']}\n"
                   f"{pull_request['title']}\n"
-                  f"PR 作者（author）：{pull_request['user']['login']}\n"
-                  f"{operator}\n"
+                  f"PR 作者：{pull_request['user']['login']}\n"
+                  f"{operator_zh}：{operator}\n\n"
+                  f"GitHub PR {action}: {repository}#{pull_request['number']}\n"
+                  f"{pull_request['title']}\n"
+                  f"PR author: {pull_request['user']['login']}\n"
+                  f"{operator_en}: {operator}\n"
                   f"{pull_request['html_url']}"
               )
           elif event_name == "push":
               head_commit = event.get("head_commit") or {}
               message = head_commit.get("message", "").splitlines()[0]
               text = (
-                  f"GitHub main 已更新（updated）：{repository}\n"
-                  f"推送者（pushed by）：{event['pusher']['name']}\n"
+                  f"GitHub main 已更新：{repository}\n"
+                  f"推送者：{event['pusher']['name']}\n"
+                  f"{message}\n\n"
+                  f"GitHub main updated: {repository}\n"
+                  f"Pushed by: {event['pusher']['name']}\n"
                   f"{message}\n"
                   f"{event['compare']}"
               )
@@ -103,9 +113,12 @@ jobs:
                   "startup_failure": "启动失败",
               }.get(conclusion, "运行结果")
               text = (
-                  f"GitHub CI {conclusion_label}（{conclusion}）：{repository}\n"
-                  f"工作流（workflow）：{workflow_run['name']}\n"
-                  f"分支（branch）：{workflow_run['head_branch']}\n"
+                  f"GitHub CI {conclusion_label}：{repository}\n"
+                  f"工作流：{workflow_run['name']}\n"
+                  f"分支：{workflow_run['head_branch']}\n\n"
+                  f"GitHub CI {conclusion}: {repository}\n"
+                  f"Workflow: {workflow_run['name']}\n"
+                  f"Branch: {workflow_run['head_branch']}\n"
                   f"{workflow_run['html_url']}"
               )
           else:
