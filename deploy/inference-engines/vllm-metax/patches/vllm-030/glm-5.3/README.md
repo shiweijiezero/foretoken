@@ -22,3 +22,6 @@ The patches target the exact source pair recorded by the corresponding source-bu
 ## Validation boundary
 
 The first patch bundle has passed C500 layout, HMA stride, BF16 prefill and six-token decode checks. The remaining patches have passed source-level and packaged import checks. Full two-node GLM weight loading, MTP initialization, KV transfer, and OpenAI-compatible generation remain the runtime acceptance boundary.
+
+5. `metax030-glm-mtp-kv-group.patch`
+   Keeps MTP layers on the shared target sparse-MQA top-k path instead of creating MTP-local indexer and tail KV groups.
