@@ -1,0 +1,20 @@
+{
+  "core": {
+    "repository": "vllm-project/vllm",
+    "revision": "71fc70d3ae1df53300a23ec69f6d97b7207a109f",
+    "version": "0.30.0.dev0"
+  },
+  "metax": {
+    "repository": "MetaX-MACA/vLLM-metax",
+    "revision": "7e7ebd37d9ce8731a1636c5c9bc057255ce6b9c7",
+    "version": "0.29.0.dev0"
+  },
+  "model": "zai-org/GLM-5.3-Flash-BF16",
+  "patches": [
+    "metax-glm53-typed-kv-layout.patch",
+    "metax-glm53-mla-prefill-fallback.patch",
+    "metax-vllm030-fused-moe-all2all-api.patch",
+    "metax030-glm-image-token-mtp.patch"
+  ],
+  "status": "source-pair-bundle; full GLM acceptance pending"
+}

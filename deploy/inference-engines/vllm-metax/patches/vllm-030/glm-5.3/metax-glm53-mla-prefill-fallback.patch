@@ -1,0 +1,15 @@
+diff --git a/vllm_metax/platform.py b/vllm_metax/platform.py
+--- a/vllm_metax/platform.py	2026-09-19 04:33:08.000000000 +0800
++++ b/vllm_metax/platform.py	2026-09-20 11:33:26.000000000 +0800
+@@ -350,11 +350,6 @@
+             vllm_config.model_config.disable_cascade_attn = True
+ 
+         # -------------------------------------------------------
+-        # Force MLAPrefill to FLASH_ATTN
+-        if attention_config := vllm_config.attention_config:
+-            attention_config.mla_prefill_backend = MLAPrefillBackendEnum.FLASH_ATTN
+-
+-        # -------------------------------------------------------
+         # Append H=hidden_size at runtime (once model config is available)
+         # Base configs dir (no H here; H is appended at runtime once model is known)
+         _fused_moe_mod = importlib.import_module(

@@ -1,0 +1,11 @@
+diff --git a/vllm/v1/spec_decode/llm_base_proposer.py b/vllm/v1/spec_decode/llm_base_proposer.py
+--- a/vllm/v1/spec_decode/llm_base_proposer.py	2026-09-19 00:57:44.000000000 +0800
++++ b/vllm/v1/spec_decode/llm_base_proposer.py	2026-09-20 17:52:40.000000000 +0800
+@@ -1370,6 +1370,7 @@
+                 "Qwen3VLMoeForConditionalGeneration",
+                 "Gemma4ForConditionalGeneration",
+                 "Gemma4UnifiedForConditionalGeneration",
++                "Glm5NextForConditionalGeneration",
+                 "Step3p7ForConditionalGeneration",
+             ]:
+                 self.model.config.image_token_index = target_model.config.image_token_id
