@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](profiling.md) | 简体中文
 
-使用 PyTorch Profiler 查看 NVIDIA 或沐曦 GPU 上 vLLM 的执行时间线；NVIDIA GPU 也可使用 Nsight Systems，沐曦 GPU 也可使用 mcTracer。需使用[源码安装](../docs/custom-deployment_zh.md)的 CLI 和平台。采集结果使用持久 RuntimeCache 保存，快速开始示例已配置好该存储。
+使用 PyTorch Profiler 查看 NVIDIA 或[沐曦 GPU](../docs/metax-deployment_zh.md) 上 vLLM 的执行时间线；NVIDIA GPU 也可使用 Nsight Systems，沐曦 GPU 也可使用 mcTracer。需使用[源码安装](../docs/custom-deployment_zh.md)的 CLI 和平台。采集结果使用持久 RuntimeCache 保存，快速开始示例已配置好该存储。
 
 ## 同时运行 benchmark 和采集
 
