@@ -10,7 +10,10 @@ mod request;
 mod route_target_stats;
 mod selection;
 
-pub use algorithm::{KvLeastLoadedScorer, RouteFilter, RoutePicker, RouteScorer};
+pub use algorithm::{
+    KvLeastLoadedScorer, PowerOfTwoChoicesPicker, RouteFilter, RoutePicker, RouteScorer,
+    WeightedRandomPicker,
+};
 pub use inventory::{
     ModelRouteTable, RouteDecision, RouteInventory, RouteTarget, RouteTargetId, RouteTargetSet,
     ScalingTarget, ScalingTargetKind,

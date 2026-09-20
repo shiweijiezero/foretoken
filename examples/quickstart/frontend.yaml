@@ -22,4 +22,4 @@ spec:
   routerPipeline:
     filter: allow_all
     scorer: least_loaded
-    picker: round_robin
+    picker: weighted_random

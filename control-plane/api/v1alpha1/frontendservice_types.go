@@ -35,7 +35,7 @@ const (
 	// DefaultRouterScorer is applied by the API when a Scorer is omitted.
 	DefaultRouterScorer RouterScorerAlgorithm = "kv_least_loaded"
 	// DefaultRouterPicker is applied by the API when a Picker is omitted.
-	DefaultRouterPicker RouterPickerAlgorithm = "round_robin"
+	DefaultRouterPicker RouterPickerAlgorithm = "weighted_random"
 )
 
 // RouterPipeline selects each independently composable routing algorithm stage.
@@ -49,7 +49,7 @@ type RouterPipeline struct {
 	Scorer RouterScorerAlgorithm `json:"scorer,omitempty"`
 
 	// +optional
-	// +kubebuilder:default=round_robin
+	// +kubebuilder:default=weighted_random
 	Picker RouterPickerAlgorithm `json:"picker,omitempty"`
 }
 

@@ -13,11 +13,12 @@ use foretoken_router::{
 fn every_compiled_builtin_name_parses_and_builds() {
     for (filter, scorer, picker) in [
         ("allow_all", "uniform", "max"),
-        ("allow_all", "least_loaded", "round_robin"),
-        ("allow_all", "kv_least_loaded", "round_robin"),
-        ("allow_all", "running_request", "round_robin"),
-        ("allow_all", "kv_cache_utilization", "round_robin"),
-        ("allow_all", "queue_depth", "round_robin"),
+        ("allow_all", "kv_least_loaded", "weighted_random"),
+        ("allow_all", "kv_least_loaded", "power_of_two_choices"),
+        ("allow_all", "least_loaded", "max"),
+        ("allow_all", "running_request", "max"),
+        ("allow_all", "kv_cache_utilization", "max"),
+        ("allow_all", "queue_depth", "max"),
     ] {
         let config = RouterPipelineConfig {
             filter: filter.parse().unwrap(),

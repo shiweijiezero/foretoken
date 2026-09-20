@@ -164,7 +164,7 @@ spec:
                       the selected Frontend image.
                     type: string
                   picker:
-                    default: round_robin
+                    default: weighted_random
                     description: RouterPickerAlgorithm names a Picker validated by
                       the selected Frontend image.
                     type: string
