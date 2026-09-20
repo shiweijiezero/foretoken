@@ -16,7 +16,7 @@ foretoken install
 foretoken deploy examples/quickstart
 ```
 
-`foretoken install` reuses a Prometheus that already exists in the cluster or installs a CLI-managed kube-prometheus-stack. The CLI-managed Grafana loads the dashboard automatically. Retrieve its generated administrator credentials, then open Grafana at the address your cluster provides:
+`foretoken install` reuses a Prometheus that already exists in the cluster or installs a CLI-managed kube-prometheus-stack. If it installs the monitoring stack, use the CLI-managed Grafana and retrieve its generated administrator credentials. If it reuses an existing stack, use that platform's Grafana and credentials:
 
 ```bash
 GRAFANA_USER="$(kubectl get secret \
@@ -31,7 +31,7 @@ printf 'Grafana user: %s\nGrafana password: %s\n' \
   "$GRAFANA_USER" "$GRAFANA_PASSWORD"
 ```
 
-In Grafana, open Foretoken System Overview for English or Foretoken 系统概览 for Chinese. Select a namespace and model, then narrow to a model instance, execution role or engine rank. Model-serving, cache, GPU and routing panels follow that selection. Routing decisions shows each instance's share within its model and role; selecting one instance keeps the same overall denominator.
+In Grafana, open Foretoken System Overview for English or Foretoken 系统概览 for Chinese. Select a namespace and model, then narrow to a model instance, execution role or engine rank. Model-serving, cache, GPU and routing panels follow that selection. Routing decisions show each instance's share within its model and role; selecting one instance keeps the same overall denominator.
 
 Shared frontend panels show all traffic through the selected frontend, not just one model. Autoscaling follows the selected model and service; control-plane diagnostics describe the platform.
 
@@ -44,7 +44,7 @@ kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
 ```
 
-In Prometheus, confirm on Targets that the Foretoken targets are `UP` and on Rules that `foretoken.recording` is loaded. This query returns the Frontend request rate:
+In Prometheus, confirm on Targets that the Foretoken targets are `UP` and on Rules that `foretoken.recording` is loaded. If service alerts are enabled, also confirm the corresponding `foretoken.alerting` rules are loaded. This query returns the Frontend request rate:
 
 ```promql
 sum(foretoken:frontend_http_response_starts:rate5m)

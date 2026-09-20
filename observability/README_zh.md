@@ -16,7 +16,7 @@ foretoken install
 foretoken deploy examples/quickstart
 ```
 
-`foretoken install` 会复用集群中已有的 Prometheus，没有时安装一套由 CLI 管理的 kube-prometheus-stack。CLI 管理的 Grafana 会自动加载看板。先获取自动生成的管理员凭据，再通过集群提供的地址打开 Grafana：
+`foretoken install` 会复用集群中已有的 Prometheus，没有时安装一套由 CLI 管理的 kube-prometheus-stack。如果安装了监控栈，使用 CLI 管理的 Grafana 并获取自动生成的管理员凭据；如果复用已有监控栈，则使用该平台的 Grafana 和凭据：
 
 ```bash
 GRAFANA_USER="$(kubectl get secret \
@@ -44,7 +44,7 @@ kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
 ```
 
-在 Prometheus 的 Targets 页面确认 Foretoken target 为 `UP`，在 Rules 页面确认 `foretoken.recording` 已加载。下面的查询返回 Frontend 请求速率：
+在 Prometheus 的 Targets 页面确认 Foretoken target 为 `UP`，在 Rules 页面确认 `foretoken.recording` 已加载；启用服务告警时，再确认对应的 `foretoken.alerting` 规则已加载。下面的查询返回 Frontend 请求速率：
 
 ```promql
 sum(foretoken:frontend_http_response_starts:rate5m)
