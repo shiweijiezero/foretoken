@@ -70,10 +70,9 @@ def normalized_generation_throughput(
     configured_concurrency: int,
     gpu_count: int | None,
 ) -> dict[str, float | None]:
-    """Return output throughput per configured concurrency and per GPU.
+    """Normalize output throughput by configured concurrency and GPU count.
 
-    Missing throughput or denominators produce ``None``; unlimited concurrency
-    has no denominator.
+    Return None when throughput or a denominator is unavailable.
     """
     per_concurrency = None
     per_gpu = None
