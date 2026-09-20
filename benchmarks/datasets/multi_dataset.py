@@ -15,6 +15,7 @@ from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
 from benchmarks.results.metrics import RequestMeasurement, summarize_measurements
 from benchmarks.results.output import (
+    BenchmarkArtifactSink,
     BenchmarkRun,
     ConsoleSink,
     LocalDirectorySink,
@@ -22,8 +23,8 @@ from benchmarks.results.output import (
     build_benchmark_run_record,
     resolved_load_record,
     result_directory_path,
+    wandb_group_name,
 )
-from benchmarks.results.wandb import wandb_group_name
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,12 @@ class MultiDatasetBenchmark:
         if not self.benchmark.outputs.includes("quiet"):
             sinks.append(ConsoleSink())
         if self.benchmark.outputs.includes("local"):
-            sinks.append(LocalDirectorySink(self.benchmark, output_dir))
+            sinks.extend(
+                [
+                    BenchmarkArtifactSink(self.benchmark, output_dir),
+                    LocalDirectorySink(output_dir),
+                ]
+            )
         for sink in sinks:
             sink.open(record)
 

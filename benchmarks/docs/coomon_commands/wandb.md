@@ -20,4 +20,4 @@ The W&B page shows final aggregate metrics, P50/P95/P99 percentile metrics, and 
 
 ![Per-request timings and token counts](../imgs/request-order-wandb.png)
 
-Use `--output local` for local files only, `--output local,quiet` to suppress the console summary, or `--output wandb` for upload only.
+Use `--output local` for local files only, `--output local,quiet` to suppress the console summary, or `--output wandb` for upload only. When W&B is explicitly selected, an initialization, publication, or finalization failure makes the command fail and preserves any artifacts already produced.

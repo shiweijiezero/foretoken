@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import statistics
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +16,10 @@ from benchmarks.integrations.video import VideoSampleResult
 from benchmarks.results.output import (
     BenchmarkRun,
     ResultSink,
+    WandbSink,
     write_json,
 )
-from benchmarks.results.video_wandb import VideoWandbSink
+from benchmarks.results.video_wandb import publish_video_wandb
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +185,7 @@ class VideoArtifactSink:
             str(self.run_dir), "metrics.json", run.metrics
         )
 
-    def close(self) -> None:
+    def close(self, *, exit_code: int = 0) -> None:
         """Release no resources because ResultOutputs owns the directory."""
         return None
 
@@ -202,7 +204,7 @@ class VideoConsoleSink:
         """Log the completed video summary."""
         log_video_summary(self.config, run.metrics)
 
-    def close(self) -> None:
+    def close(self, *, exit_code: int = 0) -> None:
         """Release no resources after console publication."""
         return None
 
@@ -221,7 +223,7 @@ class VideoLocalSink:
         """Report where the completed video artifacts were retained."""
         logger.info("Video artifacts: %s", self.run_dir)
 
-    def close(self) -> None:
+    def close(self, *, exit_code: int = 0) -> None:
         """Release no resources because ResultOutputs owns the directory."""
         return None
 
@@ -237,5 +239,20 @@ def video_result_sinks(
     if config.outputs.includes("local"):
         sinks.append(VideoLocalSink(run_dir))
     if config.outputs.includes("wandb"):
-        sinks.append(VideoWandbSink(config, run_dir))
+        sinks.append(
+            WandbSink(
+                config,
+                execution_dir=str(run_dir),
+                run_name=config.wandb.run_name.strip() or run_dir.name,
+                group=config.wandb.group.strip(),
+                publisher=partial(publish_video_wandb, config),
+                run_config={
+                    **config.to_dict(),
+                    "metric_scopes": {
+                        "wandb_system": "benchmark_client",
+                        "video_response": "remote_service",
+                    },
+                },
+            )
+        )
     return sinks

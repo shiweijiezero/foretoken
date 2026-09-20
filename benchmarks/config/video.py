@@ -178,6 +178,7 @@ class VideoBenchmarkConfig:
             "wandb": {
                 "project": self.wandb.project,
                 "entity": self.wandb.entity,
+                "group": self.wandb.group,
                 "run_name": self.wandb.run_name,
             },
         }

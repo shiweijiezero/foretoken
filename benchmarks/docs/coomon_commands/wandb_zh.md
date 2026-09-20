@@ -20,4 +20,4 @@ W&B 页面会展示最终汇总指标、P50/P95/P99 百分位指标，以及按�
 
 ![逐请求耗时与 token 数](../imgs/request-order-wandb.png)
 
-仅本地输出用 `--output local`，不打印汇总用 `--output local,quiet`，仅上传用 `--output wandb`。
+仅本地输出用 `--output local`，不打印汇总用 `--output local,quiet`，仅上传用 `--output wandb`。显式选择 W&B 后，初始化、发布或结束运行失败会使命令失败，并保留已经生成的评测产物。

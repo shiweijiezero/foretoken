@@ -16,14 +16,20 @@ from pathlib import Path
 from tempfile import mkdtemp
 from typing import Any, Callable, Optional, Protocol, cast
 
-from benchmarks.config.benchmark import BenchmarkConfig, BenchmarkOutputConfig
+import wandb
+from foretoken.manifest import DeploymentError
+
+from benchmarks.config.benchmark import (
+    BenchmarkConfig,
+    BenchmarkOutputConfig,
+    WandbRunConfig,
+)
 from benchmarks.model_service import ModelService
 from benchmarks.results.console import log_benchmark_summary
 from benchmarks.results.environment import client_environment, serving_environment
 from benchmarks.results.metrics import RequestMeasurement
 from benchmarks.results.replicas import KubernetesReplicaObserver
-from benchmarks.results.wandb import WandbBenchmarkRun
-from foretoken.manifest import DeploymentError
+from benchmarks.results.wandb import publish_http_wandb
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +57,29 @@ class ResultSink(Protocol):
 
     def publish(self, run: BenchmarkRun) -> None: ...
 
-    def close(self) -> None: ...
+    def close(self, *, exit_code: int = 0) -> None: ...
 
 
 class _ResultConfiguration(Protocol):
     outputs: BenchmarkOutputConfig
+    wandb: WandbRunConfig
+
+    def to_dict(self) -> dict[str, Any]: ...
 
 
 _ResultSinkFactory = Callable[[str], list[ResultSink]]
+_WandbPublisher = Callable[[Any, BenchmarkRun], None]
+_SYSTEM_STATS_INTERVAL_S = 1.0
+
+
+def wandb_run_timestamp() -> str:
+    """Return a local timestamp for W&B run names and generated groups."""
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def wandb_group_name(config: BenchmarkConfig, service: ModelService) -> str:
+    """Resolve the explicit group or generate one for a multi-run composition."""
+    return config.wandb.group.strip() or f"{service.model}_{wandb_run_timestamp()}"
 
 
 class ConsoleSink:
@@ -70,108 +91,158 @@ class ConsoleSink:
     def publish(self, run: BenchmarkRun) -> None:
         log_benchmark_summary(run.record, run.metrics)
 
-    def close(self) -> None:
+    def close(self, *, exit_code: int = 0) -> None:
         return None
 
 
-class LocalDirectorySink:
-    """Own the local result directory and the configuration and metrics JSON files in it."""
+class BenchmarkArtifactSink:
+    """Materialize HTTP configuration, metrics, and per-request records in the execution directory."""
 
     def __init__(self, benchmark: BenchmarkConfig, output_dir: str) -> None:
         self.benchmark = benchmark
         self.output_dir = output_dir
+        self.config_path: Path | None = None
 
     def open(self, record: dict[str, Any]) -> None:
         os.makedirs(self.output_dir, exist_ok=True)
-
-    def publish(self, run: BenchmarkRun) -> None:
-        write_json(
+        self.config_path = write_json(
             self.output_dir,
             "config.json",
-            {**self.benchmark.to_dict(), **run.record},
+            {**self.benchmark.to_dict(), **record},
         )
-        write_json(self.output_dir, "metrics.json", run.metrics)
+
+    def publish(self, run: BenchmarkRun) -> None:
+        if self.config_path is None:
+            raise RuntimeError("benchmark artifact sink is not open")
+        run.artifacts["config"] = self.config_path
+        run.artifacts["metrics"] = write_json(
+            self.output_dir,
+            "metrics.json",
+            run.metrics,
+        )
         if run.measurements is not None and "raw_output" not in run.artifacts:
-            write_json(self.output_dir, "raw_output.json", [
-                {
-                    "success": item.succeeded,
-                    "status_code": item.status_code,
-                    "error": item.error_message,
-                    "stream": bool(run.metrics["stream"]),
-                    "start_time": item.started_at,
-                    "end_time": item.started_at + item.latency,
-                    "latency": item.latency,
-                    "ttft": item.ttft if run.metrics["stream"] else None,
-                    "tpot": item.tpot if run.metrics["stream"] else None,
-                    "input_tokens": item.input_tokens,
-                    "output_tokens": item.output_tokens,
-                    "cached_input_tokens": item.cached_input_tokens,
-                    "inter_token_latencies": list(item.itl_samples) if run.metrics["stream"] else [],
-                    "conversation_id": item.conversation_id,
-                    "turn": item.turn,
-                }
-                for item in run.measurements
-            ])
+            write_json(
+                self.output_dir,
+                "raw_output.json",
+                [
+                    {
+                        "success": item.succeeded,
+                        "status_code": item.status_code,
+                        "error": item.error_message,
+                        "stream": bool(run.metrics["stream"]),
+                        "start_time": item.started_at,
+                        "end_time": item.started_at + item.latency,
+                        "latency": item.latency,
+                        "ttft": item.ttft if run.metrics["stream"] else None,
+                        "tpot": item.tpot if run.metrics["stream"] else None,
+                        "input_tokens": item.input_tokens,
+                        "output_tokens": item.output_tokens,
+                        "cached_input_tokens": item.cached_input_tokens,
+                        "inter_token_latencies": list(item.itl_samples)
+                        if run.metrics["stream"]
+                        else [],
+                        "conversation_id": item.conversation_id,
+                        "turn": item.turn,
+                    }
+                    for item in run.measurements
+                ],
+            )
+
+    def close(self, *, exit_code: int = 0) -> None:
+        return None
+
+
+class LocalDirectorySink:
+    """Report the persistent HTTP result directory selected by ResultOutputs."""
+
+    def __init__(self, output_dir: str) -> None:
+        self.output_dir = output_dir
+
+    def open(self, record: dict[str, Any]) -> None:
+        return None
+
+    def publish(self, run: BenchmarkRun) -> None:
         logger.info("Results saved: %s", self.output_dir)
 
-    def close(self) -> None:
+    def close(self, *, exit_code: int = 0) -> None:
         return None
 
 
 class WandbSink:
-    """Publish one run as an independent W&B run created when the sink opens."""
+    """Own one W&B SDK run and delegate benchmark-specific content publication."""
 
     def __init__(
         self,
-        benchmark: BenchmarkConfig,
-        service: ModelService,
+        benchmark: _ResultConfiguration,
         *,
         execution_dir: str,
-        label: Optional[str],
-        group: Optional[str],
+        run_name: str,
+        group: str,
+        publisher: _WandbPublisher,
+        run_config: dict[str, Any] | None = None,
     ) -> None:
         self.benchmark = benchmark
-        self.service = service
         self.execution_dir = execution_dir
-        self.label = label
+        self.run_name = run_name
         self.group = group
-        self.wandb_run = WandbBenchmarkRun()
+        self.publisher = publisher
+        self.run_config = run_config
+        self._run: Any | None = None
 
     def open(self, record: dict[str, Any]) -> None:
-        resolved = record["resolved"]
-        self.wandb_run.start(
-            self.benchmark,
-            self.service,
-            output_dir=self.execution_dir,
-            parallel=int(resolved["parallel"]),
-            rate=float(resolved["rate"]),
-            name_suffix=self.label,
-            group=self.group,
+        """Create the SDK run before requests so system metrics cover execution."""
+        wandb_config = self.benchmark.wandb
+        run_config = self.run_config or self.benchmark.to_dict()
+        init_kwargs: dict[str, Any] = {
+            "project": wandb_config.project,
+            "name": self.run_name,
+            "reinit": "create_new",
+            "config": run_config,
+            "dir": self.execution_dir,
+            "settings": wandb.Settings(
+                silent=True,
+                x_stats_sampling_interval=_SYSTEM_STATS_INTERVAL_S,
+            ),
+        }
+        if self.group:
+            init_kwargs["group"] = self.group
+        if wandb_config.entity:
+            init_kwargs["entity"] = wandb_config.entity
+        try:
+            self._run = wandb.init(**init_kwargs)
+        except wandb.errors.Error:
+            logger.exception("W&B initialization failed")
+            raise
+        if self._run is None:
+            raise RuntimeError("W&B initialization returned no run")
+        logger.info(
+            "W&B logging enabled: project=%s name=%s group=%s",
+            wandb_config.project,
+            self.run_name,
+            self.group or "-",
         )
 
     def publish(self, run: BenchmarkRun) -> None:
-        replica_observations = None
-        replica_path = run.artifacts.get("replica_observations")
-        if replica_path is not None:
-            replica_observations = json.loads(
-                replica_path.read_text(encoding="utf-8")
-            )
-        if run.measurements is not None:
-            self.wandb_run.log_request_history(
-                run.measurements,
-                duration=float(run.metrics["benchmark_time"]),
-                stream=bool(run.metrics["stream"]),
-                replica_observations=replica_observations,
-            )
-        raw_output = run.artifacts.get("raw_output")
-        if raw_output is not None:
-            self.wandb_run.log_trace_measurements(
-                json.loads(raw_output.read_text(encoding="utf-8"))
-            )
-        self.wandb_run.log_metrics(run.metrics)
+        """Publish benchmark content through the adapter selected by ResultOutputs."""
+        if self._run is None:
+            raise RuntimeError("W&B sink is not open")
+        try:
+            self.publisher(self._run, run)
+        except wandb.errors.Error:
+            logger.exception("W&B publication failed")
+            raise
 
-    def close(self) -> None:
-        self.wandb_run.finish()
+    def close(self, *, exit_code: int = 0) -> None:
+        """Finish the owned SDK run once with the benchmark exit status."""
+        run = self._run
+        self._run = None
+        if run is None:
+            return
+        try:
+            run.finish(exit_code=exit_code)
+        except wandb.errors.Error:
+            logger.exception("W&B finalization failed")
+            raise
 
 
 def result_directory_path(
@@ -251,8 +322,8 @@ class ResultOutputs:
 
     The execution directory is the local result directory when local output is
     enabled and a temporary directory otherwise; the engine writes its files
-    there. Temporary files are removed after success and retained when W&B
-    publication fails.
+    there. Temporary files are removed after success and retained when an
+    explicitly selected W&B lifecycle or benchmark execution fails.
     """
 
     def __init__(
@@ -281,6 +352,7 @@ class ResultOutputs:
         self._temporary_execution_dir = False
         self._replica_observer: KubernetesReplicaObserver | None = None
         self._environment: dict[str, Any] | None = None
+        self._exit_code = 0
 
     @property
     def execution_dir(self) -> str:
@@ -328,29 +400,51 @@ class ResultOutputs:
                         "standard benchmark results require a service"
                     )
                 standard_benchmark = cast(BenchmarkConfig, self.benchmark)
-                if not outputs.includes("quiet"):
-                    sinks.append(ConsoleSink())
-                if outputs.includes("local"):
+                if outputs.includes("local") or outputs.includes("wandb"):
                     sinks.append(
-                        LocalDirectorySink(
+                        BenchmarkArtifactSink(
                             standard_benchmark,
                             self._execution_dir,
                         )
                     )
+                if not outputs.includes("quiet"):
+                    sinks.append(ConsoleSink())
+                if outputs.includes("local"):
+                    sinks.append(
+                        LocalDirectorySink(self._execution_dir)
+                    )
                 if outputs.includes("wandb"):
+                    base_name = (
+                        standard_benchmark.wandb.run_name.strip()
+                        or f"{self.service.model}_{wandb_run_timestamp()}"
+                    )
+                    run_name = (
+                        f"{base_name}_{self.label}" if self.label else base_name
+                    )
+                    group = (
+                        standard_benchmark.wandb.group.strip()
+                        or self.wandb_group
+                        or ""
+                    )
+                    run_config = standard_benchmark.to_dict()
+                    run_config["service"]["model"] = self.service.model
+                    run_config["model"] = self.service.model
+                    if self.service.model_service_refs:
+                        run_config["declared_gpu_count"] = self.service.gpu_count
                     sinks.append(
                         WandbSink(
                             standard_benchmark,
-                            self.service,
                             execution_dir=self._execution_dir,
-                            label=self.label,
-                            group=self.wandb_group,
+                            run_name=run_name,
+                            group=group,
+                            publisher=publish_http_wandb,
+                            run_config=run_config,
                         )
                     )
             for sink in sinks:
-                self._resources.callback(sink.close)
+                self._resources.callback(self._close_sink, sink)
                 sink.open(self.record)
-            if outputs.includes("local"):
+            if outputs.includes("local") or outputs.includes("wandb"):
                 self._environment = {
                     "client": client_environment(),
                 }
@@ -382,8 +476,11 @@ class ResultOutputs:
                     self._replica_observer = observer
                     self._resources.callback(self._close_replica_observer)
         except BaseException:
+            self._exit_code = 1
             try:
                 self._resources.close()
+            except BaseException:
+                logger.exception("Result cleanup also failed")
             finally:
                 self._release_execution_directory(
                     preserve=outputs.includes("wandb")
@@ -393,6 +490,10 @@ class ResultOutputs:
         self._sinks = sinks
         return self
 
+    def _close_sink(self, sink: ResultSink) -> None:
+        """Close one sink with the exit status owned by this result lifecycle."""
+        sink.close(exit_code=self._exit_code)
+
     def _close_replica_observer(self) -> None:
         """Stop the observer once when publication or context cleanup takes ownership."""
         observer = self._replica_observer
@@ -401,22 +502,20 @@ class ResultOutputs:
             observer.close()
 
     def _release_execution_directory(self, *, preserve: bool) -> None:
-        """Remove a temporary execution directory unless failed publication owns it."""
+        """Remove temporary files after success or report the directory retained after failure."""
         directory = self._execution_dir
-        if not self._temporary_execution_dir or directory is None:
+        if directory is None:
             return
         if preserve:
-            logger.error(
-                "Result artifacts preserved after output failure: %s",
-                directory,
-            )
-        else:
+            logger.error("Benchmark artifacts preserved: %s", directory)
+        elif self._temporary_execution_dir:
             shutil.rmtree(directory)
         self._temporary_execution_dir = False
 
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> bool:
-        """Close every sink once and remove temporary execution files after success or failure."""
-        failed = exc_type is not None
+        """Close every sink once without replacing an active benchmark failure."""
+        failed = exc_type is not None or self._exit_code != 0
+        self._exit_code = 1 if failed else 0
         try:
             try:
                 return self._resources.__exit__(
@@ -424,6 +523,9 @@ class ResultOutputs:
                 )
             except BaseException:
                 failed = True
+                if exc_type is not None:
+                    logger.exception("Result cleanup also failed")
+                    return False
                 raise
         finally:
             self._release_execution_directory(
@@ -432,9 +534,12 @@ class ResultOutputs:
             self._sinks = []
             self._execution_dir = None
             self._replica_observer = None
+            self._exit_code = 0
 
     def publish(self, run: BenchmarkRun) -> None:
-        """Stop run observations, then publish the finished run to every open sink."""
+        """Stop observations, record the run status, and publish every open sink."""
+        if int(run.metrics["success_num"]) == 0:
+            self._exit_code = 1
         observer = self._replica_observer
         self._replica_observer = None
         if observer is not None:

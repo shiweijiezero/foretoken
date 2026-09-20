@@ -17,18 +17,18 @@ from benchmarks.config.benchmark import (
     ParameterSweepConfig,
     normalize_output_token_limit,
 )
-from benchmarks.runs.http import GeneratedLoadBenchmark
+from benchmarks.datasets.conversations import iter_jsonl_rows
 from benchmarks.model_service import ModelService
 from benchmarks.results.console import log_sweep_results
 from benchmarks.results.output import (
     BenchmarkRun,
     result_directory_path,
+    wandb_group_name,
     write_json,
 )
 from benchmarks.results.pareto import plot_sweep_pareto
 from benchmarks.results.sweep import summarize_sweep, write_sweep_csv
-from benchmarks.results.wandb import wandb_group_name
-from benchmarks.datasets.conversations import iter_jsonl_rows
+from benchmarks.runs.http import GeneratedLoadBenchmark
 
 logger = logging.getLogger(__name__)
 

@@ -22,13 +22,8 @@ from benchmarks.results.video import (
     video_result_sinks,
     video_run_record,
 )
-from benchmarks.results.video_wandb import VideoWandbError
 
 logger = logging.getLogger(__name__)
-
-
-class VideoBenchmarkError(RuntimeError):
-    """Report a video benchmark failure that must make the command fail."""
 
 
 async def _run_requests(
@@ -77,32 +72,17 @@ async def run_video_benchmark(
 
     record = video_run_record(config)
     output_dir = None
-    execution_dir = None
-    outputs = ResultOutputs(
+    with ResultOutputs(
         config,
         None,
         record,
         directory_prefix=f"{config.name}_",
         sink_factory=partial(video_result_sinks, config),
-    )
-    try:
-        with outputs:
-            execution_dir = outputs.execution_dir
-            run_dir = Path(execution_dir)
-            results = await _run_requests(config, run_dir)
-            run = create_video_benchmark_run(
-                record,
-                results,
-                run_dir,
-            )
-            outputs.publish(run)
-            if config.outputs.includes("local"):
-                output_dir = execution_dir
-    except VideoWandbError as exc:
-        preserved = (
-            f"; artifacts preserved at {execution_dir}"
-            if execution_dir is not None and Path(execution_dir).is_dir()
-            else ""
-        )
-        raise VideoBenchmarkError(f"{exc}{preserved}") from exc
+    ) as outputs:
+        run_dir = Path(outputs.execution_dir)
+        results = await _run_requests(config, run_dir)
+        run = create_video_benchmark_run(record, results, run_dir)
+        outputs.publish(run)
+        if config.outputs.includes("local"):
+            output_dir = outputs.execution_dir
     return {"metrics": run.metrics, "output_dir": output_dir}

@@ -153,6 +153,18 @@ def _add_benchmark_arguments(
             "Default: {model}_{YYYYMMDD_HHMMSS}"
         ),
     )
+    parser.add_argument(
+        "--wandb-group",
+        default=_default(WandbRunConfig, "group"),
+        help=(
+            "W&B run group"
+            if video
+            else (
+                "Group related runs; automatically assigned for sweeps "
+                "and multiple datasets"
+            )
+        ),
+    )
     if video:
         parser.set_defaults(
             timeout=3600.0,
@@ -380,13 +392,7 @@ def _add_benchmark_arguments(
         help="Fixed prompt text; overrides dataset",
     )
 
-    # Chat Completions-only W&B grouping and parameter sweeps.
-    parser.add_argument(
-        "--wandb-group",
-        default=_default(WandbRunConfig, "group"),
-        help="Group related runs; automatically assigned for sweeps and multiple datasets",
-    )
-    # Parameter sweep
+    # Chat Completions-only parameter sweeps.
     parser.add_argument(
         "--sweep",
         metavar="PATH",

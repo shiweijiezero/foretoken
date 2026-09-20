@@ -95,6 +95,7 @@ def parse_video_arguments(
         wandb=WandbRunConfig(
             project=parsed.wandb_project,
             entity=parsed.wandb_entity,
+            group=parsed.wandb_group,
             run_name=parsed.wandb_run_name,
         ),
         dataset_offset=parsed.dataset_offset,
