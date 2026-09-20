@@ -15,7 +15,7 @@ def _pareto_coordinates(item: dict[str, Any]) -> dict[str, Any] | None:
     """Build scatter data when both normalized throughput coordinates are available."""
     throughput = item["throughput"]
     per_concurrency = throughput.get(
-        "generation_tokens_per_second_per_configured_concurrency"
+        "generation_tokens_per_second_per_user"
     )
     per_gpu = throughput.get("generation_tokens_per_second_per_gpu")
     if per_concurrency is None or per_gpu is None:
@@ -23,7 +23,7 @@ def _pareto_coordinates(item: dict[str, Any]) -> dict[str, Any] | None:
     return {
         "param_group": str(item["parameter_group"]),
         "configured_concurrency": int(item["parallel"]),
-        "generation_tokens_per_second_per_configured_concurrency": float(
+        "generation_tokens_per_second_per_user": float(
             per_concurrency
         ),
         "generation_tokens_per_second_per_gpu": float(per_gpu),
@@ -39,7 +39,7 @@ def _pareto_frontier(
     ordered = sorted(
         points,
         key=lambda row: (
-            -float(row["generation_tokens_per_second_per_configured_concurrency"]),
+            -float(row["generation_tokens_per_second_per_user"]),
             -float(row["generation_tokens_per_second_per_gpu"]),
         ),
     )
@@ -52,7 +52,7 @@ def _pareto_frontier(
             best_y = y_val
     frontier.sort(
         key=lambda row: float(
-            row["generation_tokens_per_second_per_configured_concurrency"]
+            row["generation_tokens_per_second_per_user"]
         )
     )
     return frontier
@@ -80,7 +80,7 @@ def _plot_pareto_scatter(fig_path: Path, points: list[dict[str, Any]]) -> None:
             [
                 float(
                     row[
-                        "generation_tokens_per_second_per_configured_concurrency"
+                        "generation_tokens_per_second_per_user"
                     ]
                 )
                 for row in rows
@@ -101,7 +101,7 @@ def _plot_pareto_scatter(fig_path: Path, points: list[dict[str, Any]]) -> None:
             [
                 float(
                     row[
-                        "generation_tokens_per_second_per_configured_concurrency"
+                        "generation_tokens_per_second_per_user"
                     ]
                 )
                 for row in frontier
@@ -116,7 +116,7 @@ def _plot_pareto_scatter(fig_path: Path, points: list[dict[str, Any]]) -> None:
         )
 
     ax.set_xlabel(
-        "Output token throughput per configured concurrency\n(tokens/s)"
+        "Output token throughput per user\n(tokens/s)"
     )
     ax.set_ylabel("Output token throughput per GPU (tokens/s)")
     ax.grid(True, linestyle="--", linewidth=0.5, alpha=0.6)

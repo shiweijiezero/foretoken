@@ -277,7 +277,7 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
         ]
     )
     normalized = throughput.get(
-        "generation_tokens_per_second_per_configured_concurrency"
+        "generation_tokens_per_second_per_user"
     )
     if normalized is not None:
         lines.append(
@@ -306,7 +306,7 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
 
 def log_sweep_results(results: list[dict[str, Any]]) -> None:
     """Print one summary row for each parameter sweep result."""
-    per_worker_name = "Output tokens/s/configured concurrency"
+    per_worker_name = "Output tokens/s/user"
     header = (
         f"{'Concurrency':>12} {'Arrival rate':>12} {'Work items':>10} "
         f"{'Output tokens/s':>15} {per_worker_name:>32} "
@@ -328,7 +328,7 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
             "generation_tokens_per_second"
         ]
         generation_tokens_per_second_per_concurrency = throughput.get(
-            "generation_tokens_per_second_per_configured_concurrency"
+            "generation_tokens_per_second_per_user"
         )
         generation_tokens_per_second_per_gpu_value = throughput.get(
             "generation_tokens_per_second_per_gpu"

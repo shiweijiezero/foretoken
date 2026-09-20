@@ -32,7 +32,7 @@ def summarize_sweep(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
             for metric in (
                 "requests_per_second",
                 "generation_tokens_per_second",
-                "generation_tokens_per_second_per_configured_concurrency",
+                "generation_tokens_per_second_per_user",
                 "generation_tokens_per_second_per_gpu",
             ):
                 samples[metric].append(run["throughput"][metric])

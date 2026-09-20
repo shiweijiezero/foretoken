@@ -109,7 +109,7 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         ("generation_tokens_per_second", _GENERATION_TOKENS_PER_SECOND),
         ("total_tokens_per_second", _TOTAL_TOKENS_PER_SECOND),
         (
-            "generation_tokens_per_second_per_configured_concurrency",
+            "generation_tokens_per_second_per_user",
             _GENERATION_TOKENS_PER_CONFIGURED_CONCURRENCY,
         ),
         ("generation_tokens_per_second_per_gpu", _GENERATION_TOKENS_PER_GPU),

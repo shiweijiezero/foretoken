@@ -68,25 +68,31 @@ def normalized_generation_throughput(
     generation_tokens_per_second: float | None,
     *,
     configured_concurrency: int,
+    average_active_requests: float | None,
     gpu_count: int | None,
 ) -> dict[str, float | None]:
-    """Normalize output throughput by configured concurrency and GPU count.
+    """Normalize output throughput per user and per GPU.
 
-    Return None when throughput or a denominator is unavailable.
+    A finite ``--parallel`` value represents the configured user count. With
+    unlimited concurrency, use the measured time-weighted average active
+    requests instead. Return None when throughput or a denominator is missing.
     """
-    per_concurrency = None
+    per_user = None
     per_gpu = None
     if generation_tokens_per_second is not None:
-        if configured_concurrency > 0:
-            per_concurrency = (
-                float(generation_tokens_per_second) / configured_concurrency
-            )
+        user_count = (
+            float(configured_concurrency)
+            if configured_concurrency > 0
+            else average_active_requests
+        )
+        if user_count is not None and user_count > 0:
+            per_user = float(generation_tokens_per_second) / user_count
         if gpu_count is not None:
             if gpu_count < 1:
                 raise ValueError(f"gpu_count must be >= 1, got {gpu_count}")
             per_gpu = float(generation_tokens_per_second) / gpu_count
     return {
-        "generation_tokens_per_second_per_configured_concurrency": per_concurrency,
+        "generation_tokens_per_second_per_user": per_user,
         "generation_tokens_per_second_per_gpu": per_gpu,
     }
 
@@ -152,11 +158,17 @@ def summarize_measurements(
         "prompt_tokens_per_second": prompt_tokens_per_second,
         "total_tokens_per_second": total_tokens_per_second,
     }
+    average_active_requests = (
+        sum(item.latency for item in measurements) / total_time
+        if measurements and total_time > 0
+        else None
+    )
     if include_normalized_throughput:
         throughput.update(
             normalized_generation_throughput(
                 generation_tokens_per_second,
                 configured_concurrency=reported_concurrency,
+                average_active_requests=average_active_requests,
                 gpu_count=gpu_count,
             )
         )

@@ -32,7 +32,7 @@ Warmup reuses the workload's starting rows and seed and must succeed before meas
 | Request throughput (req/s) | Successful requests divided by run duration |
 | Input token throughput (tokens/s) | Successful requests' input tokens divided by run duration |
 | Output token throughput (tokens/s) | Successful requests' output tokens divided by run duration |
-| Output tok/s / user | Output throughput divided by a finite `--parallel` value; an auxiliary comparison metric using the configured limit, not actual active concurrency or individual request speed |
+| Output tok/s / user | Output throughput divided by `--parallel`; with `--parallel -1`, uses measured average active requests |
 | Output token throughput per GPU (tokens/s) | Output throughput divided by the model's declared GPU capacity |
 | Mean reported cached input tokens | Mean `usage.prompt_tokens_details.cached_tokens` among successful requests that report it |
 | Benchmark duration (s) | Duration of the whole benchmark run |
