@@ -8,14 +8,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+import shutil
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory, mkdtemp
-from typing import Any, Optional, Protocol
+from tempfile import mkdtemp
+from typing import Any, Callable, Optional, Protocol, cast
 
-from benchmarks.config.benchmark import BenchmarkConfig
+from benchmarks.config.benchmark import BenchmarkConfig, BenchmarkOutputConfig
 from benchmarks.model_service import ModelService
 from benchmarks.results.console import log_benchmark_summary
 from benchmarks.results.environment import client_environment, serving_environment
@@ -51,6 +52,13 @@ class ResultSink(Protocol):
     def publish(self, run: BenchmarkRun) -> None: ...
 
     def close(self) -> None: ...
+
+
+class _ResultConfiguration(Protocol):
+    outputs: BenchmarkOutputConfig
+
+
+_ResultSinkFactory = Callable[[str], list[ResultSink]]
 
 
 class ConsoleSink:
@@ -167,8 +175,9 @@ class WandbSink:
 
 
 def result_directory_path(
-    benchmark: BenchmarkConfig,
+    benchmark: _ResultConfiguration,
     output_dir: Optional[str] = None,
+    directory_prefix: str = "",
 ) -> str:
     """Return an explicit child path, or reserve a unique local directory under ``--output-dir``."""
     if output_dir is not None:
@@ -176,8 +185,14 @@ def result_directory_path(
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if benchmark.outputs.includes("local"):
         os.makedirs(benchmark.outputs.output_dir, exist_ok=True)
-        return mkdtemp(prefix=f"{timestamp}-", dir=benchmark.outputs.output_dir)
-    return os.path.join(benchmark.outputs.output_dir, timestamp)
+        return mkdtemp(
+            prefix=f"{directory_prefix}{timestamp}-",
+            dir=benchmark.outputs.output_dir,
+        )
+    return os.path.join(
+        benchmark.outputs.output_dir,
+        f"{directory_prefix}{timestamp}",
+    )
 
 
 def write_json(directory: str, filename: str, data: Any) -> Path:
@@ -236,18 +251,21 @@ class ResultOutputs:
 
     The execution directory is the local result directory when local output is
     enabled and a temporary directory otherwise; the engine writes its files
-    there, and the temporary directory is removed when the context exits.
+    there. Temporary files are removed after success and retained when W&B
+    publication fails.
     """
 
     def __init__(
         self,
-        benchmark: BenchmarkConfig,
-        service: ModelService,
+        benchmark: _ResultConfiguration,
+        service: ModelService | None,
         record: dict[str, Any],
         *,
         label: str = "",
         output_dir: Optional[str] = None,
         wandb_group: Optional[str] = None,
+        directory_prefix: str = "",
+        sink_factory: _ResultSinkFactory | None = None,
     ) -> None:
         self.benchmark = benchmark
         self.service = service
@@ -255,9 +273,12 @@ class ResultOutputs:
         self.label = label.strip() or None
         self.output_dir = output_dir
         self.wandb_group = wandb_group
+        self.directory_prefix = directory_prefix
+        self.sink_factory = sink_factory
         self._sinks: list[ResultSink] = []
         self._resources = ExitStack()
         self._execution_dir: str | None = None
+        self._temporary_execution_dir = False
         self._replica_observer: KubernetesReplicaObserver | None = None
         self._environment: dict[str, Any] | None = None
 
@@ -273,42 +294,78 @@ class ResultOutputs:
         if self._execution_dir is not None:
             raise RuntimeError("result outputs are already active")
         outputs = self.benchmark.outputs
-        sinks: list[ResultSink] = []
-        if not outputs.includes("quiet"):
-            sinks.append(ConsoleSink())
         if outputs.includes("local"):
-            local = LocalDirectorySink(
+            self._execution_dir = result_directory_path(
                 self.benchmark,
-                result_directory_path(self.benchmark, self.output_dir),
+                self.output_dir,
+                self.directory_prefix,
             )
-            sinks.append(local)
-            self._execution_dir = local.output_dir
         else:
-            self._execution_dir = self._resources.enter_context(
-                TemporaryDirectory(prefix="foretoken-benchmark-")
-            )
-        if outputs.includes("wandb"):
-            sinks.append(
-                WandbSink(
-                    self.benchmark,
-                    self.service,
-                    execution_dir=self._execution_dir,
-                    label=self.label,
-                    group=self.wandb_group,
+            self._temporary_execution_dir = True
+            if outputs.includes("wandb"):
+                os.makedirs(outputs.output_dir, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                self._execution_dir = mkdtemp(
+                    prefix=f"{self.directory_prefix}{timestamp}-",
+                    dir=outputs.output_dir,
                 )
-            )
+            else:
+                self._execution_dir = mkdtemp(
+                    prefix="foretoken-benchmark-"
+                )
+
+        sinks: list[ResultSink] = []
         try:
+            if self.sink_factory is not None:
+                sinks = self.sink_factory(self._execution_dir)
+            else:
+                if not isinstance(self.benchmark, BenchmarkConfig):
+                    raise TypeError(
+                        "non-standard benchmark results require a sink factory"
+                    )
+                if self.service is None:
+                    raise TypeError(
+                        "standard benchmark results require a service"
+                    )
+                standard_benchmark = cast(BenchmarkConfig, self.benchmark)
+                if not outputs.includes("quiet"):
+                    sinks.append(ConsoleSink())
+                if outputs.includes("local"):
+                    sinks.append(
+                        LocalDirectorySink(
+                            standard_benchmark,
+                            self._execution_dir,
+                        )
+                    )
+                if outputs.includes("wandb"):
+                    sinks.append(
+                        WandbSink(
+                            standard_benchmark,
+                            self.service,
+                            execution_dir=self._execution_dir,
+                            label=self.label,
+                            group=self.wandb_group,
+                        )
+                    )
             for sink in sinks:
                 self._resources.callback(sink.close)
                 sink.open(self.record)
             if outputs.includes("local"):
                 self._environment = {
                     "client": client_environment(),
-                    "before": serving_environment(self.service),
                 }
+                if self.service is not None:
+                    self._environment["before"] = serving_environment(
+                        self.service
+                    )
                 write_json(self.execution_dir, "environment.json", self._environment)
-            if self.service.model_service_refs and (
-                outputs.includes("local") or outputs.includes("wandb")
+            if (
+                self.service is not None
+                and self.service.model_service_refs
+                and (
+                    outputs.includes("local")
+                    or outputs.includes("wandb")
+                )
             ):
                 try:
                     observer = KubernetesReplicaObserver(
@@ -325,8 +382,13 @@ class ResultOutputs:
                     self._replica_observer = observer
                     self._resources.callback(self._close_replica_observer)
         except BaseException:
-            self._resources.close()
-            self._execution_dir = None
+            try:
+                self._resources.close()
+            finally:
+                self._release_execution_directory(
+                    preserve=outputs.includes("wandb")
+                )
+                self._execution_dir = None
             raise
         self._sinks = sinks
         return self
@@ -338,11 +400,35 @@ class ResultOutputs:
         if observer is not None:
             observer.close()
 
+    def _release_execution_directory(self, *, preserve: bool) -> None:
+        """Remove a temporary execution directory unless failed publication owns it."""
+        directory = self._execution_dir
+        if not self._temporary_execution_dir or directory is None:
+            return
+        if preserve:
+            logger.error(
+                "Result artifacts preserved after output failure: %s",
+                directory,
+            )
+        else:
+            shutil.rmtree(directory)
+        self._temporary_execution_dir = False
+
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> bool:
         """Close every sink once and remove temporary execution files after success or failure."""
+        failed = exc_type is not None
         try:
-            return self._resources.__exit__(exc_type, exc_value, traceback)
+            try:
+                return self._resources.__exit__(
+                    exc_type, exc_value, traceback
+                )
+            except BaseException:
+                failed = True
+                raise
         finally:
+            self._release_execution_directory(
+                preserve=failed and self.benchmark.outputs.includes("wandb")
+            )
             self._sinks = []
             self._execution_dir = None
             self._replica_observer = None
@@ -363,7 +449,10 @@ class ResultOutputs:
                         observations,
                     )
         if self._environment is not None:
-            self._environment["after"] = serving_environment(self.service)
+            if self.service is not None:
+                self._environment["after"] = serving_environment(
+                    self.service
+                )
             run.artifacts["environment"] = write_json(
                 self.execution_dir, "environment.json", self._environment,
             )

@@ -9,44 +9,27 @@ import asyncio
 import json
 import logging
 import re
-from collections.abc import Iterator
-from contextlib import contextmanager
-from datetime import datetime
+from functools import partial
 from pathlib import Path
-from tempfile import TemporaryDirectory, mkdtemp
 from typing import Any
 
 import httpx
 
 from benchmarks.config.video import VideoBenchmarkConfig
 from benchmarks.integrations.video import VideoGenerationClient, VideoSampleResult
-from benchmarks.results.output import write_json
-from benchmarks.results.video import aggregate_video_results, log_video_summary
-from benchmarks.results.video_wandb import publish_video_to_wandb
+from benchmarks.results.output import ResultOutputs
+from benchmarks.results.video import (
+    create_video_benchmark_run,
+    video_result_sinks,
+    video_run_record,
+)
+from benchmarks.results.video_wandb import VideoWandbError
 
 logger = logging.getLogger(__name__)
 
 
 class VideoBenchmarkError(RuntimeError):
-    """Report an endpoint failure that prevents request execution."""
-
-
-@contextmanager
-def _video_execution_directory(
-    config: VideoBenchmarkConfig,
-) -> Iterator[Path]:
-    """Provide a persistent local directory or a temporary working directory."""
-    if config.outputs.includes("local"):
-        root = Path(config.outputs.output_dir)
-        root.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        yield Path(
-            mkdtemp(prefix=f"{config.name}_{timestamp}-", dir=root)
-        )
-        return
-
-    with TemporaryDirectory(prefix="foretoken-video-benchmark-") as directory:
-        yield Path(directory)
+    """Report a video benchmark failure that must make the command fail."""
 
 
 async def _health_ok(url: str) -> bool:
@@ -76,6 +59,12 @@ async def _run_requests(
             return await client.generate(request, index, output)
 
     try:
+        ffprobe_warning = await client.prepare_video_validation()
+        if ffprobe_warning is not None:
+            logger.warning(
+                "Generated video metadata validation is disabled: %s",
+                ffprobe_warning,
+            )
         return await asyncio.gather(
             *(one(index) for index in range(len(config.requests)))
         )
@@ -101,29 +90,34 @@ async def run_video_benchmark(
         )
     logger.info("Video server is healthy: %s", config.endpoint.health_url)
 
-    with _video_execution_directory(config) as run_dir:
-        execution_dir = str(run_dir)
-        write_json(execution_dir, "config.json", config.to_dict())
-
-        results = await _run_requests(config, run_dir)
-        metrics = aggregate_video_results(results)
-        write_json(
-            execution_dir,
-            "raw_results.json",
-            [item.to_dict() for item in results],
+    record = video_run_record(config)
+    output_dir = None
+    execution_dir = None
+    outputs = ResultOutputs(
+        config,
+        None,
+        record,
+        directory_prefix=f"{config.name}_",
+        sink_factory=partial(video_result_sinks, config),
+    )
+    try:
+        with outputs:
+            execution_dir = outputs.execution_dir
+            run_dir = Path(execution_dir)
+            results = await _run_requests(config, run_dir)
+            run = create_video_benchmark_run(
+                record,
+                results,
+                run_dir,
+            )
+            outputs.publish(run)
+            if config.outputs.includes("local"):
+                output_dir = execution_dir
+    except VideoWandbError as exc:
+        preserved = (
+            f"; artifacts preserved at {execution_dir}"
+            if execution_dir is not None and Path(execution_dir).is_dir()
+            else ""
         )
-        write_json(execution_dir, "metrics.json", metrics)
-        log_video_summary(config, metrics)
-        if config.outputs.includes("wandb"):
-            try:
-                publish_video_to_wandb(config, metrics, results, run_dir)
-            except Exception as exc:
-                logger.warning(
-                    "Video W&B upload failed; local artifacts remain available: %s: %s",
-                    type(exc).__name__,
-                    exc,
-                )
-        output_dir = execution_dir if config.outputs.includes("local") else None
-        if output_dir is not None:
-            logger.info("Video artifacts: %s", output_dir)
-        return {"metrics": metrics, "output_dir": output_dir}
+        raise VideoBenchmarkError(f"{exc}{preserved}") from exc
+    return {"metrics": run.metrics, "output_dir": output_dir}

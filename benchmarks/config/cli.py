@@ -52,18 +52,99 @@ def _dataset_selectors(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def add_common_benchmark_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    require_url: bool = False,
+    timeout_type: type[int] | type[float] = int,
+    timeout_default: int | float = _default(
+        ModelServiceSource, "timeout_seconds"
+    ),
+    number_default: int = _default(HttpLoadSchedule, "request_count"),
+    parallel_default: int = _default(HttpLoadSchedule, "max_concurrency"),
+    output_default: tuple[str, ...] = _default(
+        BenchmarkOutputConfig, "destinations"
+    ),
+    output_dir_default: str = _default(BenchmarkOutputConfig, "output_dir"),
+    include_wandb_group: bool = True,
+) -> None:
+    """Add service, load, and result options shared by benchmark commands."""
+    parser.add_argument(
+        "--url",
+        required=require_url,
+        default=None if require_url else _default(ModelServiceSource, "url"),
+        help="Existing model-service endpoint URL",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=timeout_type,
+        default=timeout_default,
+        help="Request timeout seconds",
+    )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=parallel_default,
+        help="Maximum concurrent requests; -1 removes the limit when supported",
+    )
+    parser.add_argument(
+        "--number",
+        type=int,
+        default=number_default,
+        help=(
+            "Requests to run across selected datasets; zero selects all rows "
+            "when supported"
+        ),
+    )
+    parser.add_argument(
+        "--output",
+        type=_output_destinations,
+        default=output_default,
+        help="Comma-separated outputs: local, wandb, and quiet",
+    )
+    parser.add_argument(
+        "--output-dir",
+        default=output_dir_default,
+        help="Directory for benchmark artifacts",
+    )
+    parser.add_argument(
+        "--wandb-project",
+        default=_default(WandbRunConfig, "project"),
+        help="W&B project",
+    )
+    parser.add_argument(
+        "--wandb-entity",
+        default=_default(WandbRunConfig, "entity"),
+        help="W&B entity",
+    )
+    if include_wandb_group:
+        parser.add_argument(
+            "--wandb-group",
+            default=_default(WandbRunConfig, "group"),
+            help=(
+                "Group related runs; automatically assigned for sweeps and "
+                "multiple datasets"
+            ),
+        )
+    parser.add_argument(
+        "--wandb-run-name",
+        default=_default(WandbRunConfig, "run_name"),
+        help=(
+            "W&B run name or prefix; when omitted, derived from the model or "
+            "result directory"
+        ),
+    )
+
+
 def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
+    add_common_benchmark_arguments(parser)
+
     # Service source
     parser.add_argument(
         "kustomize_path",
         nargs="?",
         metavar="PATH",
         help="Kustomize directory to deploy or reuse",
-    )
-    parser.add_argument(
-        "--url",
-        default=_default(ModelServiceSource, "url"),
-        help="Model service URL, including /v1/chat/completions",
     )
     parser.add_argument(
         "--model",
@@ -74,12 +155,6 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         "--api-key",
         default=_default(ModelServiceSource, "api_key"),
         help="API key",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=int,
-        default=_default(ModelServiceSource, "timeout_seconds"),
-        help="Request timeout seconds",
     )
     parser.add_argument(
         "--max-retries",
@@ -101,23 +176,6 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=_default(HttpLoadSchedule, "warmup_requests"),
         help="Conversations to finish before each generated run; excluded from measured results",
-    )
-    parser.add_argument(
-        "--parallel",
-        type=int,
-        default=_default(HttpLoadSchedule, "max_concurrency"),
-        help=(
-            "Maximum concurrent conversations; a fixed or random prompt is one "
-            "turn; -1 means no concurrency limit"
-        ),
-    )
-    parser.add_argument(
-        "--number",
-        type=int,
-        default=_default(HttpLoadSchedule, "request_count"),
-        help=(
-            "Conversations per run; total across multiple datasets"
-        ),
     )
     parser.add_argument(
         "--rate",
@@ -312,44 +370,6 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         "--prompt",
         default=_default(ChatRequestDataset, "fixed_prompt"),
         help="Fixed prompt text; overrides dataset",
-    )
-
-    # Benchmark results
-    parser.add_argument(
-        "--output",
-        type=_output_destinations,
-        default=_default(BenchmarkOutputConfig, "destinations"),
-        help="Comma-separated outputs: local, wandb, and quiet",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=_default(BenchmarkOutputConfig, "output_dir"),
-        help="Directory for JSON and W&B artifacts",
-    )
-
-    # W&B destinations
-    parser.add_argument(
-        "--wandb-project",
-        default=_default(WandbRunConfig, "project"),
-        help="W&B project",
-    )
-    parser.add_argument(
-        "--wandb-entity",
-        default=_default(WandbRunConfig, "entity"),
-        help="W&B entity",
-    )
-    parser.add_argument(
-        "--wandb-group",
-        default=_default(WandbRunConfig, "group"),
-        help="Group related runs; automatically assigned for sweeps and multiple datasets",
-    )
-    parser.add_argument(
-        "--wandb-run-name",
-        default=_default(WandbRunConfig, "run_name"),
-        help=(
-            "W&B run-name prefix; child runs append their label. "
-            "Default: {model}_{YYYYMMDD_HHMMSS}"
-        ),
     )
 
     # Parameter sweep

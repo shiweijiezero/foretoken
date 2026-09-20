@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import time
 from contextlib import ExitStack, suppress
 from dataclasses import dataclass, field
@@ -43,6 +44,7 @@ class VideoSampleResult:
     server_generation_s: float | None = None
     preprocess_s: float | None = None
     encode_s: float | None = None
+    media_encode_s: float | None = None
     denoise_s: float | None = None
     decode_s: float | None = None
     postprocess_s: float | None = None
@@ -79,6 +81,7 @@ class VideoSampleResult:
             "server_generation_s": self.server_generation_s,
             "preprocess_s": self.preprocess_s,
             "encode_s": self.encode_s,
+            "media_encode_s": self.media_encode_s,
             "denoise_s": self.denoise_s,
             "decode_s": self.decode_s,
             "postprocess_s": self.postprocess_s,
@@ -135,20 +138,19 @@ def normalize_stage_metrics(
         if key.endswith("Pipeline.forward") and "text_encoder" not in key
     ]
     pipeline_s = max(forward) if forward else None
-    video_encode_s = _stage_sum(
+    encode_s = _stage_sum(raw, (".encode_prompt",))
+    if encode_s is None:
+        encode_s = _stage_sum(raw, ("text_encoder.forward",))
+    media_encode_s = _stage_sum(
         raw,
         (
-            ".encode_prompt",
+            "._encode_local_media",
             "._encode_video_conditions",
             "._encode_video_audio_conditions",
             "._encode_visual_condition",
             "._encode_audio_condition",
+            "vae.encode",
         ),
-    )
-    encode_s = (
-        video_encode_s
-        if video_encode_s is not None
-        else _stage_sum(raw, ("text_encoder.forward", "vae.encode"))
     )
     denoise_s = _stage_sum(raw, (".diffuse",))
     decode_s = _stage_sum(raw, (".decode",))
@@ -161,7 +163,9 @@ def normalize_stage_metrics(
         ),
     )
     known_pipeline = sum(
-        value for value in (encode_s, denoise_s, decode_s) if value is not None
+        value
+        for value in (encode_s, media_encode_s, denoise_s, decode_s)
+        if value is not None
     )
     if pipeline_s is not None:
         preprocess_s = max(0.0, pipeline_s - known_pipeline)
@@ -180,6 +184,7 @@ def normalize_stage_metrics(
         ),
         "preprocess_s": preprocess_s,
         "encode_s": encode_s,
+        "media_encode_s": media_encode_s,
         "denoise_s": denoise_s,
         "decode_s": decode_s,
         "postprocess_s": postprocess_s,
@@ -224,11 +229,33 @@ def video_request_form_data(request: VideoGenerationRequest) -> dict[str, str]:
     }
 
 
-async def probe_video(path: Path) -> dict[str, Any]:
-    """Return ffprobe metadata without making tool failures request failures."""
+async def _resolve_ffprobe() -> tuple[str | None, str | None]:
+    """Resolve and launch-check ffprobe once for a video client run."""
+    executable = shutil.which("ffprobe")
+    if executable is None:
+        return None, "ffprobe is not installed"
     try:
         process = await asyncio.create_subprocess_exec(
-            "ffprobe",
+            executable,
+            "-version",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except OSError as exc:
+        return None, f"ffprobe could not start: {exc}"
+    _, stderr = await process.communicate()
+    if process.returncode:
+        message = stderr.decode("utf-8", "replace").strip()
+        detail = message or f"exit status {process.returncode}"
+        return None, f"ffprobe is unavailable: {detail}"
+    return executable, None
+
+
+async def probe_video(path: Path, executable: str = "ffprobe") -> dict[str, Any]:
+    """Return ffprobe metadata or a structured media validation error."""
+    try:
+        process = await asyncio.create_subprocess_exec(
+            executable,
             "-v",
             "error",
             "-count_frames",
@@ -243,22 +270,33 @@ async def probe_video(path: Path) -> dict[str, Any]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-    except FileNotFoundError:
-        return {"warning": "ffprobe is not installed"}
+    except OSError as exc:
+        return {
+            "error": (
+                "ffprobe could not start after its availability check: "
+                f"{exc}"
+            )
+        }
     stdout, stderr = await process.communicate()
     if process.returncode:
         message = stderr.decode("utf-8", "replace").strip()
-        return {"warning": f"ffprobe failed: {message}"}
+        detail = message or f"exit status {process.returncode}"
+        return {"error": f"ffprobe failed: {detail}"}
     try:
-        return json.loads(stdout)
+        metadata = json.loads(stdout)
     except json.JSONDecodeError:
-        return {"warning": "ffprobe returned invalid JSON"}
+        return {"error": "ffprobe returned invalid JSON"}
+    if not isinstance(metadata, dict):
+        return {"error": "ffprobe returned non-object JSON"}
+    return metadata
 
 
 def validate_video_probe(
     probe: dict[str, Any], *, width: int, height: int, num_frames: int
 ) -> str | None:
     """Return a useful error when generated video metadata is unexpected."""
+    if probe.get("error"):
+        return str(probe["error"])
     streams = probe.get("streams")
     if not isinstance(streams, list) or not streams:
         return None if probe.get("warning") else "ffprobe found no video stream"
@@ -281,10 +319,22 @@ class VideoGenerationClient:
 
     def __init__(self, config: VideoBenchmarkConfig):
         self.config = config
+        self._ffprobe_executable: str | None = None
+        self._ffprobe_warning: str | None = None
+        self._ffprobe_prepared = False
         self.client = httpx.AsyncClient(
             timeout=httpx.Timeout(config.endpoint.timeout_s),
             follow_redirects=True,
         )
+
+    async def prepare_video_validation(self) -> str | None:
+        """Prepare ffprobe once and return why metadata validation is disabled."""
+        if not self._ffprobe_prepared:
+            self._ffprobe_executable, self._ffprobe_warning = (
+                await _resolve_ffprobe()
+            )
+            self._ffprobe_prepared = True
+        return self._ffprobe_warning
 
     async def close(self) -> None:
         """Close the underlying HTTP connection pool."""
@@ -400,6 +450,9 @@ class VideoGenerationClient:
         if reference_tokens is None and stage_reference_tokens is not None:
             reference_tokens = stage_reference_tokens
             reference_source = "stage_metadata"
+        peak_gpu_memory_mb = _float_header(headers, "x-peak-memory-mb")
+        if peak_gpu_memory_mb is not None and peak_gpu_memory_mb <= 0:
+            peak_gpu_memory_mb = None
         if part_path is not None and written > 0:
             part_path.replace(output_path)
         elif part_path is not None:
@@ -407,7 +460,15 @@ class VideoGenerationClient:
         output_probe: dict[str, Any] = {}
         validation_error = None
         if output_path is not None and output_path.is_file():
-            output_probe = await probe_video(output_path)
+            if not self._ffprobe_prepared:
+                await self.prepare_video_validation()
+            if self._ffprobe_executable is None:
+                assert self._ffprobe_warning is not None
+                output_probe = {"warning": self._ffprobe_warning}
+            else:
+                output_probe = await probe_video(
+                    output_path, self._ffprobe_executable
+                )
             validation_error = validate_video_probe(
                 output_probe,
                 width=request.width,
@@ -429,7 +490,7 @@ class VideoGenerationClient:
             model=headers.get("x-model", ""),
             client_e2e_s=client_e2e_s,
             e2e_s=e2e_s,
-            peak_gpu_memory_mb=_float_header(headers, "x-peak-memory-mb"),
+            peak_gpu_memory_mb=peak_gpu_memory_mb,
             reference_tokens=reference_tokens,
             reference_tokens_source=reference_source,
             output_path=str(output_path) if output_path is not None else None,
