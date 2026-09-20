@@ -14,7 +14,9 @@
     "metax-glm53-typed-kv-layout.patch",
     "metax-glm53-mla-prefill-fallback.patch",
     "metax-vllm030-fused-moe-all2all-api.patch",
-    "metax030-glm-image-token-mtp.patch"
+    "metax030-glm-image-token-mtp.patch",
+    "metax-sparse-mla-decode-metadata.patch",
+    "metax-sparse-mla-nope-query.patch"
   ],
   "status": "source-pair-bundle; full GLM acceptance pending"
 }

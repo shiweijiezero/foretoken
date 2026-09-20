@@ -16,6 +16,10 @@ Apply these patches in order to the pinned source pair:
    Migrates the MetaX all-to-all helper from the removed boolean argument to vLLM 0.30's all-to-all manager contract.
 4. `metax030-glm-image-token-mtp.patch`
    Routes `Glm5NextForConditionalGeneration` through the existing MTP `image_token_id` compatibility branch.
+5. `metax-sparse-mla-decode-metadata.patch`
+   Carries the maximum decode query length supplied by vLLM's sparse MLA metadata builder.
+6. `metax-sparse-mla-nope-query.patch`
+   Copies the NoPE query into the existing buffer when the RoPE component is empty, retaining the fused concatenation kernel for nonempty RoPE.
 
 The patches target the exact source pair recorded by the corresponding source-built runtime. Rebase or upgrade the source pair only after regenerating and validating the bundle; do not silently apply it to an unrelated release.
 
