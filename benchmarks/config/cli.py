@@ -52,6 +52,21 @@ def _dataset_selectors(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def add_url_argument(
+    parser: argparse.ArgumentParser,
+    *,
+    required: bool = False,
+    help: str = "Model service URL, including /v1/chat/completions",
+) -> None:
+    """Add the shared endpoint URL option used by HTTP benchmark commands."""
+    parser.add_argument(
+        "--url",
+        required=required,
+        default=None if required else _default(ModelServiceSource, "url"),
+        help=help,
+    )
+
+
 def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
     # Service source
     parser.add_argument(
@@ -60,11 +75,7 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="PATH",
         help="Kustomize directory to deploy or reuse",
     )
-    parser.add_argument(
-        "--url",
-        default=_default(ModelServiceSource, "url"),
-        help="Model service URL, including /v1/chat/completions",
-    )
+    add_url_argument(parser)
     parser.add_argument(
         "--model",
         default=_default(ModelServiceSource, "model"),

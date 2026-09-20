@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from benchmarks.config.benchmark import BenchmarkOutputConfig, WandbRunConfig
-from benchmarks.config.benchmark import HttpLoadSchedule, ModelServiceSource
+from benchmarks.config.cli import add_url_argument
 from benchmarks.config.video import (
     VideoBenchmarkConfig,
     VideoDatasetDefaults,
@@ -45,11 +45,7 @@ def parse_video_arguments(
         description="Benchmark an existing synchronous video-generation endpoint",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument(
-        "--url",
-        required=True,
-        help="Existing video-generation endpoint URL",
-    )
+    add_url_argument(parser, required=True)
     parser.add_argument(
         "--timeout",
         type=float,
