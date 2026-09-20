@@ -18,4 +18,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 GPU 温度和功耗规则只使用归属到所选 ModelService 的 ModelGroup 记录指标。当前不提供 GPU 利用率和显存占用告警，但 Dashboard 仍保留这些指标。
 
-需要投递通知时，配置可选的 [Lark 集成](../integrations/lark/README_zh.md)。
+抓取恢复或目标退出服务发现时，`ForetokenMetricsTargetDown` 都会解除。
+
+通知接入见 [Lark](../integrations/lark/README_zh.md) 或 [Slack](../integrations/slack/README_zh.md) 集成。

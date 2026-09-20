@@ -30,14 +30,13 @@ impl RouterRequest {
         &self.generate_request.prompt_token_ids
     }
 
-    /// Rejects request features whose cache identity is not represented by prompt tokens.
+    /// Supplies token and salt identity, excluding unsupported multimodal and adapter semantics.
     pub fn kv_prefix_lookup<'a>(
         &'a self,
         route_target_id: &'a str,
         data_parallel_rank: u32,
     ) -> Result<KvPrefixLookup<'a>, KvPrefixUnavailableReason> {
-        if self.generate_request.cache_salt.is_some()
-            || self.generate_request.lora_request.is_some()
+        if self.generate_request.lora_request.is_some()
             || self.generate_request.mm_features.is_some()
             || self
                 .generate_request
@@ -48,11 +47,16 @@ impl RouterRequest {
             return Err(KvPrefixUnavailableReason::UnsupportedRequest);
         }
 
-        Ok(KvPrefixLookup::new(
+        Ok(KvPrefixLookup {
             route_target_id,
             data_parallel_rank,
-            self.prompt_token_ids(),
-        ))
+            prompt_token_ids: self.prompt_token_ids(),
+            cache_salt: self
+                .generate_request
+                .cache_salt
+                .as_deref()
+                .filter(|salt| !salt.is_empty()),
+        })
     }
 
     /// Returns the prompt length used for route target input-limit matching.

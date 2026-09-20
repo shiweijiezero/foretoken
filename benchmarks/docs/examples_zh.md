@@ -14,7 +14,7 @@ export MODEL_SERVICE_URL="${MODEL_SERVICE_BASE_URL%/}/v1/chat/completions"
 export MODEL_ID=Qwen/Qwen3-0.6B
 ```
 
-其他服务使用其实际 Chat Completions URL 和模型 ID。Gateway 模式使用 Kustomize 路径，由 Foretoken 配置路由请求头。参数扫描也要求使用 Kustomize 写法。
+其他服务使用其实际 Chat Completions URL 和模型 ID。Gateway 模式传入部署配置目录，由 Foretoken 配置路由请求头。参数扫描也必须传入该目录，不支持 `--url`。
 
 ## 命令分类
 

@@ -9,9 +9,8 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
-base64 = "0.22.1"
+base64.workspace = true
 futures.workspace = true
-blake3 = "1.8.2"
 patricia_tree = "0.10.1"
 foretoken-model-protocol.workspace = true
 reqwest.workspace = true
@@ -20,5 +19,6 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+blake3.workspace = true
 axum.workspace = true
 serde_json.workspace = true

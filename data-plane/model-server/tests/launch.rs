@@ -188,7 +188,19 @@ fn kv_variants_render_expected_semantics() {
                 .expect("KV transfer config");
             let config: serde_json::Value = serde_json::from_str(config).unwrap();
             assert_eq!(config["kv_connector_extra_config"]["spec_name"], want);
+            if want == "CPUOffloadingSpec" {
+                assert_eq!(
+                    config["kv_connector_extra_config"]["self_describing_kv_events"],
+                    true
+                );
+            } else {
+                assert!(config["kv_connector_extra_config"]["self_describing_kv_events"].is_null());
+            }
             if want == "TieringOffloadingSpec" {
+                assert_eq!(
+                    config["kv_connector_module_path"],
+                    foretoken_model_server::shared_kv::OFFLOADING_CONNECTOR_MODULE
+                );
                 assert_eq!(
                     config["kv_connector_extra_config"]["secondary_tiers"][0]["root_dir"],
                     "/mnt/foretoken/kv-offload"

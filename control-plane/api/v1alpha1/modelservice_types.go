@@ -6,6 +6,7 @@
 package v1alpha1
 
 import (
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -133,105 +134,18 @@ type ModelPoolTemplate struct {
 	Features *ModelFeatures `json:"features,omitempty"`
 }
 
-// AutoscalingDecisionAlgorithm selects how observed demand is converted into desired replica capacity.
-// +kubebuilder:validation:Enum=queue;queue_threshold
-type AutoscalingDecisionAlgorithm string
+// ModelAutoscalingAlgorithmConfig selects a controller-supported algorithm
+// for one autoscaling stage (trigger, decision, and adjustment) and optionally supplies its parameters.
+type ModelAutoscalingAlgorithmConfig struct {
+	// Algorithm names the controller-supported algorithm for this stage.
+	// +kubebuilder:validation:MinLength=1
+	Algorithm string `json:"algorithm"`
 
-const (
-	AutoscalingDecisionAlgorithmQueue          AutoscalingDecisionAlgorithm = "queue"
-	AutoscalingDecisionAlgorithmQueueThreshold AutoscalingDecisionAlgorithm = "queue_threshold"
-)
-
-// AutoscalingTriggerAlgorithm selects how observations enter automatic capacity evaluation.
-// +kubebuilder:validation:Enum=periodic
-type AutoscalingTriggerAlgorithm string
-
-const AutoscalingTriggerAlgorithmPeriodic AutoscalingTriggerAlgorithm = "periodic"
-
-// ModelAutoscalingTriggerConfig configures the Trigger stage.
-type ModelAutoscalingTriggerConfig struct {
+	// Parameters contains optional settings for the selected algorithm; omitted fields use its defaults.
 	// +optional
-	// +kubebuilder:default=periodic
-	Algorithm AutoscalingTriggerAlgorithm `json:"algorithm,omitempty"`
-
-	// Interval controls how often the controller runs the Trigger stage.
-	// +optional
-	// +kubebuilder:default="5s"
-	Interval Duration `json:"interval,omitempty"`
-}
-
-// ModelAutoscalingQueueDecisionConfig configures HPA-style average queue capacity.
-type ModelAutoscalingQueueDecisionConfig struct {
-	// TargetAverageQueuedRequests is the desired average waiting requests per replica.
-	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=1
-	TargetAverageQueuedRequests *int64 `json:"targetAverageQueuedRequests,omitempty"`
-}
-
-// ModelAutoscalingQueueThresholdDecisionConfig configures absolute backlog boundaries.
-// +kubebuilder:validation:XValidation:rule="self.scaleDownQueuedRequests <= self.scaleUpQueuedRequests",message="scaleDownQueuedRequests must not exceed scaleUpQueuedRequests"
-type ModelAutoscalingQueueThresholdDecisionConfig struct {
-	// ScaleUpQueuedRequests is the queue depth above which one additional replica is recommended.
-	// +optional
-	// +kubebuilder:default=1
-	// +kubebuilder:validation:Minimum=0
-	ScaleUpQueuedRequests *int64 `json:"scaleUpQueuedRequests,omitempty"`
-
-	// ScaleDownQueuedRequests is the queue depth at or below which one fewer idle replica is recommended.
-	// +optional
-	// +kubebuilder:default=0
-	// +kubebuilder:validation:Minimum=0
-	ScaleDownQueuedRequests *int64 `json:"scaleDownQueuedRequests,omitempty"`
-}
-
-// ModelAutoscalingDecisionConfig configures desired-capacity calculation.
-// +kubebuilder:validation:XValidation:rule="self.algorithm == 'queue' ? has(self.queue) && !has(self.queueThreshold) : has(self.queueThreshold) && !has(self.queue)",message="autoscaling decision must configure exactly the selected algorithm"
-type ModelAutoscalingDecisionConfig struct {
-	Algorithm AutoscalingDecisionAlgorithm `json:"algorithm"`
-
-	// +optional
-	Queue *ModelAutoscalingQueueDecisionConfig `json:"queue,omitempty"`
-
-	// +optional
-	QueueThreshold *ModelAutoscalingQueueThresholdDecisionConfig `json:"queueThreshold,omitempty"`
-}
-
-// AutoscalingAdjustmentAlgorithm selects how a desired replica count is stabilized before lifecycle resolution.
-// +kubebuilder:validation:Enum=direct;step
-type AutoscalingAdjustmentAlgorithm string
-
-const (
-	AutoscalingAdjustmentAlgorithmDirect AutoscalingAdjustmentAlgorithm = "direct"
-	AutoscalingAdjustmentAlgorithmStep   AutoscalingAdjustmentAlgorithm = "step"
-)
-
-// ModelAutoscalingScaleUpConfig controls upward stabilization.
-type ModelAutoscalingScaleUpConfig struct {
-	// +optional
-	// +kubebuilder:default="0s"
-	StabilizationWindow NonNegativeDuration `json:"stabilizationWindow,omitempty"`
-}
-
-// ModelAutoscalingScaleDownConfig controls downward stabilization.
-type ModelAutoscalingScaleDownConfig struct {
-	// +optional
-	// +kubebuilder:default="300s"
-	StabilizationWindow NonNegativeDuration `json:"stabilizationWindow,omitempty"`
-}
-
-// ModelAutoscalingAdjustmentConfig configures how desired replica capacity is applied.
-// +kubebuilder:validation:XValidation:rule="self.algorithm != 'direct' || (!has(self.scaleUp) && !has(self.scaleDown))",message="direct adjustment does not accept scaleUp or scaleDown configuration"
-type ModelAutoscalingAdjustmentConfig struct {
-	// +optional
-	// +kubebuilder:default=step
-	Algorithm AutoscalingAdjustmentAlgorithm `json:"algorithm,omitempty"`
-
-	// +optional
-	ScaleUp *ModelAutoscalingScaleUpConfig `json:"scaleUp,omitempty"`
-
-	// +optional
-	ScaleDown *ModelAutoscalingScaleDownConfig `json:"scaleDown,omitempty"`
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Parameters *apiextensionsv1.JSON `json:"parameters,omitempty"`
 }
 
 // ModelAutoscalingConfig configures user-visible service replica autoscaling.
@@ -248,13 +162,12 @@ type ModelAutoscalingConfig struct {
 
 	// Trigger may be omitted to use periodic evaluation every five seconds.
 	// +optional
-	// +kubebuilder:default={}
-	Trigger *ModelAutoscalingTriggerConfig `json:"trigger,omitempty"`
+	Trigger *ModelAutoscalingAlgorithmConfig `json:"trigger,omitempty"`
 
-	Decision ModelAutoscalingDecisionConfig `json:"decision"`
+	Decision ModelAutoscalingAlgorithmConfig `json:"decision"`
 
 	// +optional
-	Adjustment *ModelAutoscalingAdjustmentConfig `json:"adjustment,omitempty"`
+	Adjustment *ModelAutoscalingAlgorithmConfig `json:"adjustment,omitempty"`
 }
 
 // ModelSource selects how model and tokenizer identifiers are resolved.
@@ -266,6 +179,13 @@ const (
 	ModelSourceHF         ModelSource = "hf"
 	ModelSourceModelScope ModelSource = "modelscope"
 )
+
+// ProfilingConfig selects instrumentation prepared when model processes start.
+// Captures are still requested separately through ProfileRun.
+type ProfilingConfig struct {
+	// +kubebuilder:validation:Enum=pytorch;nsight;mctracer
+	Engine string `json:"engine"`
+}
 
 // ModelServiceSpec defines the desired state of a model service.
 // +kubebuilder:validation:XValidation:rule="!has(self.modelPools) || !(has(self.replicas) || has(self.nodes) || has(self.resources) || has(self.maxInputTokens) || has(self.kvCache) || has(self.features))",message="spec.modelPools is mutually exclusive with top-level replicas, nodes, resources, maxInputTokens, kvCache, and features"
@@ -317,6 +237,11 @@ type ModelServiceSpec struct {
 	Resources *ModelResources `json:"resources,omitempty"`
 
 	Timeouts ModelTimeouts `json:"timeouts"`
+
+	// Profiling prepares a profiler for every model Pool; omission preserves PyTorch support.
+	// Changing the prepared engine rolls out new model processes but does not start a capture.
+	// +optional
+	Profiling *ProfilingConfig `json:"profiling,omitempty"`
 
 	// Observability selects model-scoped alerts independently of serving and autoscaling.
 	// +optional

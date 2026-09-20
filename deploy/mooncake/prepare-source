@@ -1,0 +1,196 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Prepares the selected official Mooncake source in the repository submodule.
+set -euo pipefail
+
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+repo_root=$(git -C "${script_dir}/../.." rev-parse --show-toplevel)
+source_dir="${repo_root}/third_party/mooncake"
+mirror=${FORETOKEN_GITHUB_MIRROR:-}
+requested_version=${MOONCAKE_VERSION:-}
+
+git_cmd() {
+    if [[ -n "${mirror}" ]]; then
+        git -c "url.${mirror%/}/.insteadOf=https://github.com/" "$@"
+    else
+        git "$@"
+    fi
+}
+
+fail_dirty_source() {
+    printf '%s\n' \
+        'third_party/mooncake contains changes other than the Foretoken patch series.' \
+        'Preserve or remove those changes before selecting another Mooncake version.' >&2
+    exit 1
+}
+
+release_for() {
+    case "$1" in
+        0.3.12|c7ae97fd24251ed0aaaa613e8251859f170f1ae7)
+            printf '%s|%s|%s\n' \
+                0.3.12 c7ae97fd24251ed0aaaa613e8251859f170f1ae7 \
+                "${repo_root}/deploy/mooncake/patches/v0.3.12"
+            ;;
+        0.3.12.post1|6041a609a8c3af35e778f70db344f145c2914980)
+            printf '%s|%s|%s\n' \
+                0.3.12.post1 6041a609a8c3af35e778f70db344f145c2914980 \
+                "${repo_root}/deploy/mooncake/patches/v0.3.12.post1"
+            ;;
+        0.3.13|e5598b0992cc258b06d22f24d875480e8931a28e)
+            printf '%s|%s|%s\n' \
+                0.3.13 e5598b0992cc258b06d22f24d875480e8931a28e \
+                "${repo_root}/deploy/mooncake/patches"
+            ;;
+        0.3.13.post1|719735896c86b56fabec6cf3e825fb2ea640597a)
+            printf '%s|%s|%s\n' \
+                0.3.13.post1 719735896c86b56fabec6cf3e825fb2ea640597a \
+                "${repo_root}/deploy/mooncake/patches"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+load_patch_series() {
+    local revision=$1 flavor=${2:-current} record version patch_dir
+    record=$(release_for "${revision}") || return 1
+    IFS='|' read -r version _ patch_dir <<<"${record}"
+    patches=()
+    if [[ "${flavor}" == legacy ]]; then
+        if [[ "${version}" != 0.3.12 ]]; then
+            return 1
+        fi
+        patches=(
+            "${patch_dir}/legacy-provider-registration.patch"
+            "${patch_dir}/legacy-client-lifecycle.patch"
+        )
+        return 0
+    fi
+    patches=(
+        "${patch_dir}/provider-registration.patch"
+        "${patch_dir}/client-lifecycle.patch"
+    )
+    if [[ "${version}" == 0.3.13 || "${version}" == 0.3.13.post1 ]]; then
+        patches+=("${patch_dir}/tenant-quota-ha.patch")
+    fi
+}
+
+nested_submodules_are_clean() {
+    git -C "${source_dir}" submodule foreach --quiet --recursive \
+        'test -z "$(git status --porcelain --untracked-files=all)"'
+}
+
+source_is_clean() {
+    git -C "${source_dir}" diff --quiet HEAD -- &&
+        [[ -z "$(git -C "${source_dir}" ls-files --others --exclude-standard)" ]] &&
+        nested_submodules_are_clean
+}
+
+tree_matches_patch_series() {
+    local revision=$1 flavor=$2 expected_index expected_tree patch
+    load_patch_series "${revision}" "${flavor}" || return 1
+    if [[ -n "$(git -C "${source_dir}" ls-files --others --exclude-standard)" ]] ||
+        ! nested_submodules_are_clean; then
+        return 1
+    fi
+
+    expected_index=$(mktemp)
+    rm -f "${expected_index}"
+    GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" read-tree HEAD
+    for patch in "${patches[@]}"; do
+        GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" apply --cached --check "${patch}"
+        GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" apply --cached "${patch}"
+    done
+    expected_tree=$(GIT_INDEX_FILE="${expected_index}" git -C "${source_dir}" write-tree)
+    rm -f "${expected_index}"
+    git -C "${source_dir}" diff --quiet "${expected_tree}" --
+}
+
+reverse_patch_series() {
+    local revision=$1 flavor=$2 index
+    load_patch_series "${revision}" "${flavor}"
+    reverse_patches=()
+    for ((index=${#patches[@]} - 1; index >= 0; index--)); do
+        reverse_patches+=("${patches[index]}")
+    done
+    git -C "${source_dir}" apply --reverse --check "${reverse_patches[@]}"
+    git -C "${source_dir}" apply --reverse "${reverse_patches[@]}"
+}
+
+if [[ -z "${requested_version}" ]]; then
+    gitlink_record=$(git -C "${repo_root}" ls-files --stage -- third_party/mooncake)
+    read -r _ requested_revision _ <<<"${gitlink_record}"
+    if [[ -z "${requested_revision:-}" ]]; then
+        printf '%s\n' 'third_party/mooncake has no recorded gitlink revision.' >&2
+        exit 1
+    fi
+    target_record=$(release_for "${requested_revision}") || {
+        printf 'Default Mooncake gitlink %s is not supported by this source preparer.\n' \
+            "${requested_revision}" >&2
+        exit 1
+    }
+else
+    target_record=$(release_for "${requested_version}") || {
+        printf 'Unsupported MOONCAKE_VERSION=%s; expected 0.3.12, 0.3.12.post1, 0.3.13, or 0.3.13.post1.\n' \
+            "${requested_version}" >&2
+        exit 1
+    }
+fi
+IFS='|' read -r target_version target_revision _ <<<"${target_record}"
+
+source_top=$(git -C "${source_dir}" rev-parse --show-toplevel 2>/dev/null || true)
+if [[ "${source_top}" != "${source_dir}" ]]; then
+    if [[ -d "${source_dir}" ]] &&
+        [[ -n "$(find "${source_dir}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+        printf '%s\n' 'third_party/mooncake exists but is not an initialized Git submodule.' >&2
+        exit 1
+    fi
+    git_cmd -C "${repo_root}" submodule update --init third_party/mooncake
+fi
+
+current_revision=$(git -C "${source_dir}" rev-parse HEAD)
+source_state=unknown
+if source_is_clean; then
+    source_state=clean
+elif tree_matches_patch_series "${current_revision}" current; then
+    source_state=current
+elif tree_matches_patch_series "${current_revision}" legacy; then
+    source_state=legacy
+else
+    fail_dirty_source
+fi
+
+if [[ "${current_revision}" == "${target_revision}" && "${source_state}" == current ]]; then
+    git_cmd -C "${source_dir}" submodule update --init --recursive
+    printf 'Prepared Mooncake %s at %s.\n' \
+        "${target_version}" "${target_revision}"
+    exit 0
+fi
+
+if [[ "${source_state}" == current || "${source_state}" == legacy ]]; then
+    reverse_patch_series "${current_revision}" "${source_state}"
+fi
+if ! source_is_clean; then
+    fail_dirty_source
+fi
+
+if [[ "${current_revision}" != "${target_revision}" ]]; then
+    if ! git -C "${source_dir}" cat-file -e "${target_revision}^{commit}" 2>/dev/null; then
+        git_cmd -C "${source_dir}" fetch --depth=1 origin "${target_revision}"
+    fi
+    git -C "${source_dir}" submodule deinit --force --all >/dev/null 2>&1
+    git -C "${source_dir}" checkout --detach "${target_revision}"
+fi
+git_cmd -C "${source_dir}" submodule update --init --recursive
+
+load_patch_series "${target_revision}" current
+for patch in "${patches[@]}"; do
+    git -C "${source_dir}" apply --check "${patch}"
+    git -C "${source_dir}" apply "${patch}"
+done
+
+printf 'Prepared Mooncake %s at %s.\n' \
+    "${target_version}" "${target_revision}"

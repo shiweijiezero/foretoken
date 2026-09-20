@@ -97,6 +97,12 @@ def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
 
     # HTTP workload
     parser.add_argument(
+        "--warmup-requests",
+        type=int,
+        default=_default(HttpLoadSchedule, "warmup_requests"),
+        help="Conversations to finish before each generated run; excluded from measured results",
+    )
+    parser.add_argument(
         "--parallel",
         type=int,
         default=_default(HttpLoadSchedule, "max_concurrency"),
@@ -383,6 +389,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             max_concurrency=namespace.parallel,
             request_count=namespace.number,
             arrival_rate=namespace.rate,
+            warmup_requests=namespace.warmup_requests,
         ),
         generation=ChatCompletionsGeneration(
             max_tokens=namespace.max_tokens,

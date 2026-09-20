@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Runtime-owned, bounded Torch capture and durable artifact publication.
+//! Runtime-owned, bounded native capture and durable artifact publication.
+
+pub(crate) mod nsight;
 
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{self, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -17,6 +19,23 @@ use uuid::Uuid;
 
 use crate::api::RuntimeHealth;
 use crate::backend::VllmBackend;
+
+/// Profiler instrumentation selected before the engine process starts.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Engine {
+    #[default]
+    Pytorch,
+    Nsight,
+    Mctracer,
+}
+
+/// Optional launch configuration; an omitted choice preserves existing PyTorch capture.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Preparation {
+    pub engine: Engine,
+}
 
 const PROFILE_DIRECTORY: &str = "profiles";
 const START_TIMEOUT: Duration = Duration::from_secs(30);
@@ -29,8 +48,10 @@ pub struct Config {
     data_root: PathBuf,
     pod_uid: String,
     group_uid: String,
-    runtime_id: String,
+    pub(crate) runtime_id: String,
     workers: usize,
+    pub(crate) engine: Engine,
+    python: String,
 }
 
 impl Config {
@@ -39,6 +60,8 @@ impl Config {
         cache: &crate::runtime_cache::Config,
         group_uid: String,
         workers: usize,
+        engine: Engine,
+        python: String,
     ) -> Self {
         Self {
             runtime_cache_claim: cache.claim_name.clone(),
@@ -47,6 +70,8 @@ impl Config {
             group_uid,
             runtime_id: Uuid::new_v4().to_string(),
             workers,
+            engine,
+            python,
         }
     }
 
@@ -70,8 +95,12 @@ impl Config {
         File::open(profile_root)?.sync_all()
     }
 
-    /// Renders the native Torch configuration; iteration schedules remain disabled for this path.
+    /// Renders native configuration without enabling recording at process startup.
     pub fn engine_argument(&self) -> String {
+        if self.engine != Engine::Pytorch {
+            // Native collectors own recording; do not install a competing PyTorch profiler.
+            return "--profiler-config={}".into();
+        }
         format!(
             "--profiler-config={}",
             serde_json::json!({
@@ -103,12 +132,15 @@ pub struct Request {
     pub group_uid: String,
     pub action: Action,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub engine: Engine,
 }
 
 /// Observed capture state returned to the reconciler and stored with sealed artifacts.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Record {
+    pub engine: Engine,
     pub run_uid: String,
     pub phase: String,
     pub duration_ms: u64,
@@ -130,6 +162,7 @@ impl Record {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Observation {
+    engine: Engine,
     runtime_id: String,
     pod_uid: String,
     group_uid: String,
@@ -161,6 +194,7 @@ impl Handle {
     pub fn observe(&self, uid: Option<&str>) -> Observation {
         let state = self.state.lock().expect("capture state lock poisoned");
         Observation {
+            engine: self.config.engine,
             runtime_id: self.config.runtime_id.clone(),
             pod_uid: self.config.pod_uid.clone(),
             group_uid: self.config.group_uid.clone(),
@@ -176,6 +210,9 @@ impl Handle {
             || request.group_uid != self.config.group_uid
         {
             return Err("runtime identity changed".into());
+        }
+        if request.engine != self.config.engine {
+            return Err("requested profiler differs from the prepared runtime".into());
         }
         if request.duration_ms == 0 {
             return Err("duration must be positive".into());
@@ -204,6 +241,7 @@ impl Handle {
             uid.clone(),
             Entry {
                 record: Record {
+                    engine: self.config.engine,
                     run_uid: uid.clone(),
                     phase: if capture { "Starting" } else { "Cancelled" }.into(),
                     duration_ms: request.duration_ms,
@@ -305,9 +343,14 @@ impl Supervisor {
 
     async fn native_operation(&mut self, start: bool) -> Result<(), String> {
         let backend = self.backend.clone();
-        self.native = Some(tokio::spawn(
-            async move { backend.set_profiling(start).await },
-        ));
+        let config = self.handle.config.clone();
+        self.native = Some(tokio::spawn(async move {
+            match config.engine {
+                Engine::Pytorch => backend.set_profiling(start).await,
+                Engine::Nsight => nsight::set_recording(&config, start).await,
+                Engine::Mctracer => backend.set_mctracer(start, &config.staging()).await,
+            }
+        }));
         let budget = if start { START_TIMEOUT } else { STOP_TIMEOUT };
         let result = tokio::time::timeout(
             budget,
@@ -375,6 +418,7 @@ impl Supervisor {
             record.phase = "Stopping".into();
             record.recording_ended_at_unix_ms = Some(now_ms());
         });
+        let export_deadline = tokio::time::Instant::now() + STOP_TIMEOUT;
         self.native_operation(false).await?;
         self.update(uid, |record| record.exported_at_unix_ms = Some(now_ms()));
         let mut record = self
@@ -385,9 +429,11 @@ impl Supervisor {
         let cancelled = *action.borrow() == Action::Cancel;
         record.phase = if cancelled { "Cancelled" } else { "Succeeded" }.into();
         let config = self.handle.config.clone();
-        self.publication = Some(tokio::task::spawn_blocking(move || {
-            seal(&config, record, cancelled)
-        }));
+        self.publication = Some(tokio::spawn(publish_capture(
+            config,
+            record,
+            export_deadline,
+        )));
         let publication = self.publication.as_mut().expect("publication exists").await;
         self.publication = None;
         match publication {
@@ -442,37 +488,49 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-// The supported adapter emits one uncompressed Chrome trace per worker. Validate its contents
-// after every native worker has flushed, then rename the entire directory, including nested output.
-fn seal(config: &Config, mut record: Record, cancelled: bool) -> io::Result<Record> {
-    let staging = config.staging();
-    if !cancelled {
-        let mut traces = 0;
-        let mut gpu_activity = false;
-        for entry in fs::read_dir(&staging)? {
-            let path = entry?.path();
-            if path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.ends_with(".pt.trace.json"))
-            {
-                let file = File::open(path)?;
-                let trace: TorchTrace = serde_json::from_reader(BufReader::new(&file))?;
-                gpu_activity |= trace.events.0;
-                file.sync_all()?;
-                traces += 1;
+// Publish stopped captures through one path, retaining inspection failures without blocking later runs.
+async fn publish_capture(
+    config: Config,
+    mut record: Record,
+    export_deadline: tokio::time::Instant,
+) -> io::Result<Record> {
+    if record.phase == "Succeeded" {
+        let inspection = match config.engine {
+            Engine::Pytorch | Engine::Mctracer => {
+                let config = config.clone();
+                tokio::task::spawn_blocking(move || validate_trace(&config))
+                    .await
+                    .map_err(io::Error::other)?
+            }
+            Engine::Nsight => {
+                tokio::time::timeout_at(export_deadline, nsight::validate_report(&config))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "Nsight report export timed out",
+                        ))
+                    })
+            }
+        };
+        match inspection {
+            Ok(active) => record.gpu_activity = Some(active),
+            Err(error) => {
+                record.phase = "Failed".into();
+                record.message = error.to_string();
             }
         }
-        if traces != config.workers {
-            return Err(io::Error::other(format!(
-                "expected {} worker traces, received {traces}",
-                config.workers
-            )));
-        }
-        record.gpu_activity = Some(gpu_activity);
-        if !gpu_activity {
-            record.message = "No GPU kernel activity was recorded in this window".into();
-        }
+    }
+    tokio::task::spawn_blocking(move || seal(&config, record))
+        .await
+        .map_err(io::Error::other)?
+}
+
+// Publish the record and available files atomically; filesystem failures retain staging for diagnosis.
+fn seal(config: &Config, mut record: Record) -> io::Result<Record> {
+    let staging = config.staging();
+    if record.gpu_activity == Some(false) {
+        record.message = "No GPU kernel activity was recorded in this window".into();
     }
     let relative = format!(
         "{PROFILE_DIRECTORY}/runs/{}/{}",
@@ -482,8 +540,7 @@ fn seal(config: &Config, mut record: Record, cancelled: bool) -> io::Result<Reco
     let mut manifest = File::create(staging.join("manifest.json"))?;
     serde_json::to_writer(&mut manifest, &record)?;
     manifest.write_all(b"\n")?;
-    manifest.sync_all()?;
-    File::open(&staging)?.sync_all()?;
+    sync_capture(&staging)?;
     let runs = config.profile_root().join("runs");
     let destination = config.data_root.join(&relative);
     fs::create_dir_all(destination.parent().expect("run directory has parent"))?;
@@ -493,8 +550,54 @@ fn seal(config: &Config, mut record: Record, cancelled: bool) -> io::Result<Reco
     Ok(record)
 }
 
+// Flush artifacts at the publication boundary, including partial output from cancelled or failed runs.
+fn sync_capture(directory: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            sync_capture(&entry.path())?;
+        } else if kind.is_file() {
+            File::open(entry.path())?.sync_all()?;
+        }
+    }
+    File::open(directory)?.sync_all()
+}
+
+// Validate one native Chrome trace per expected worker before publishing a successful capture.
+fn validate_trace(config: &Config) -> io::Result<bool> {
+    let staging = config.staging();
+    let suffix = match config.engine {
+        Engine::Pytorch => ".pt.trace.json",
+        Engine::Mctracer => ".mctracer.json",
+        Engine::Nsight => unreachable!("Nsight reports use their native inspector"),
+    };
+    let mut traces = 0;
+    let mut gpu_activity = false;
+    for entry in fs::read_dir(&staging)? {
+        let path = entry?.path();
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.ends_with(suffix))
+        {
+            let file = File::open(path)?;
+            let trace: NativeTrace = serde_json::from_reader(BufReader::new(&file))?;
+            gpu_activity |= trace.events.0;
+            traces += 1;
+        }
+    }
+    if traces != config.workers {
+        return Err(io::Error::other(format!(
+            "expected {} worker traces, received {traces}",
+            config.workers
+        )));
+    }
+    Ok(gpu_activity)
+}
+
 #[derive(Deserialize)]
-struct TorchTrace {
+struct NativeTrace {
     #[serde(rename = "traceEvents")]
     events: KernelEvents,
 }
@@ -517,10 +620,19 @@ impl<'de> Deserialize<'de> for KernelEvents {
                 #[derive(Deserialize)]
                 struct Event {
                     cat: Option<String>,
+                    args: Option<KernelArguments>,
+                }
+                #[derive(Deserialize)]
+                struct KernelArguments {
+                    grid: Option<serde::de::IgnoredAny>,
+                    block: Option<serde::de::IgnoredAny>,
                 }
                 let mut kernel = false;
                 while let Some(event) = sequence.next_element::<Event>()? {
-                    kernel |= event.cat.as_deref() == Some("kernel");
+                    kernel |= event.cat.as_deref() == Some("kernel")
+                        || event
+                            .args
+                            .is_some_and(|args| args.grid.is_some() && args.block.is_some());
                 }
                 Ok(KernelEvents(kernel))
             }

@@ -1,8 +1,8 @@
 diff --git a/mooncake-store/src/file_storage.cpp b/mooncake-store/src/file_storage.cpp
-index df917d64..2f202b03 100644
+index e83277b..8015da4 100644
 --- a/mooncake-store/src/file_storage.cpp
 +++ b/mooncake-store/src/file_storage.cpp
-@@ -304,6 +304,11 @@ FileStorage::~FileStorage() {
+@@ -122,6 +122,11 @@ FileStorage::~FileStorage() {
      if (heartbeat_thread_.joinable()) {
          heartbeat_thread_.join();
      }
@@ -15,18 +15,18 @@ index df917d64..2f202b03 100644
      if (client_buffer_gc_thread_.joinable()) {
          client_buffer_gc_thread_.join();
 diff --git a/mooncake-store/src/master_service.cpp b/mooncake-store/src/master_service.cpp
-index 04b3ef56..ced7609f 100644
+index d95cedb..5112a60 100644
 --- a/mooncake-store/src/master_service.cpp
 +++ b/mooncake-store/src/master_service.cpp
-@@ -6447,6 +6447,7 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
-     }
+@@ -9667,6 +9667,7 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
+     soft_pin_deadline_index_.Clear();
  
      // Rebuild total capacity metrics
 +    std::unordered_set<UUID, boost::hash<UUID>> memory_clients;
      {
          MasterMetricManager::instance().reset_total_mem_capacity();
          for (auto& segment_name : segment_names) {
-@@ -6471,6 +6472,7 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
+@@ -9691,6 +9692,7 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
              int64_t total_size = 0;
              for (const auto& [segment, client_id] : all_segments) {
                  Ping(client_id);
@@ -34,21 +34,18 @@ index 04b3ef56..ced7609f 100644
                  total_size += static_cast<int64_t>(segment.size);
                  MasterMetricManager::instance().inc_total_mem_capacity(
                      segment.name, segment.size);
-@@ -6483,6 +6485,27 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
+@@ -9703,6 +9705,24 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
          }
      }
  
 +    // SSD-only owners also need a heartbeat grace window after snapshot restore.
 +    // Otherwise no memory segment seeds their existing client-expiry lifecycle.
 +    std::vector<UUID> disk_clients;
-+    {
-+        auto access = segment_manager_.getLocalDiskSegmentAccess();
-+        const auto& disk_segments = access.getClientLocalDiskSegment();
-+        disk_clients.reserve(disk_segments.size());
-+        for (const auto& entry : disk_segments) {
-+            if (!memory_clients.contains(entry.first)) {
-+                disk_clients.push_back(entry.first);
-+            }
++    auto disk_state = local_ssd_manager_.ExportPersistedState();
++    disk_clients.reserve(disk_state.size());
++    for (const auto& entry : disk_state) {
++        if (!memory_clients.contains(entry.first)) {
++            disk_clients.push_back(entry.first);
 +        }
 +    }
 +    for (const auto& client_id : disk_clients) {

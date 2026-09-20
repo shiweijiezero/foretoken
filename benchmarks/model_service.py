@@ -47,7 +47,7 @@ class ModelService:
     api_key: str
     models: tuple[str, ...]
     hostname: str
-    gpu_count: int
+    gpu_count: int | None
     routing_host: str
     model_service_refs: tuple[ResourceRef, ...]
     # Capture must use the same rendered target that supplied the HTTP endpoint.
@@ -263,7 +263,7 @@ def resolve_model_service(
             api_key=source.api_key,
             models=(source.model,),
             hostname="",
-            gpu_count=1,
+            gpu_count=None,
             routing_host="",
             model_service_refs=(),
         )

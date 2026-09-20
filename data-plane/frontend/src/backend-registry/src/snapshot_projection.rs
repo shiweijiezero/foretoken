@@ -48,6 +48,7 @@ pub(crate) fn project_kv_runtime(
                     spec_kind: "full_attention".into(),
                     sliding_window: None,
                     group_idx: None,
+                    match_all_groups: false,
                 },
             );
             rank_sources.insert(dp_rank, event_source_id);
@@ -64,6 +65,10 @@ pub(crate) fn project_kv_runtime(
                 .collect(),
                 can_restore_or_transfer: store_id.is_some(),
                 shared_lookup_scope: store_id.map(str::to_owned),
+                shared_lookup_placement: store_id.map(|_| KvPlacement {
+                    tier: KvStorageTier::External,
+                    locality: KvCacheLocality::Remote,
+                }),
             },
         );
     };

@@ -32,10 +32,12 @@ fn partition(group_idx: Option<u32>) -> KvPartition {
 fn query(group_idx: Option<u32>) -> KvPrefixQuery<'static> {
     KvPrefixQuery {
         tokens: &[1, 2, 3, 4, 5, 6],
+        cache_salt: None,
         model_revision: "revision",
         scope_id: "scope",
         hash_format: KvHashFormat::NormalizedKeyedBlake3V1,
         group_idx,
+        match_all_groups: false,
         spec_kind: "full",
         sliding_window: None,
     }
@@ -148,6 +150,22 @@ fn placement_group_and_source_identity_are_exact() {
                 (external, 6),
             ],
         );
+        index.apply(
+            owner.clone(),
+            KvIndexEvent::BlockStored {
+                blocks: blocks(None),
+                placement: host_pinned,
+            },
+            now,
+        );
+        let mut all_groups = query(None);
+        all_groups.match_all_groups = true;
+        let wildcard_matches = index
+            .query(&owner, &all_groups, &KEY, now)
+            .into_iter()
+            .map(|matched| (matched.placement, matched.matched_tokens))
+            .collect::<Vec<_>>();
+        assert_eq!(wildcard_matches, [(host_pinned, 6)]);
         // The selector-free protocol clear is scoped by the complete response envelope only.
         index.apply(
             same_event_new_epoch.clone(),

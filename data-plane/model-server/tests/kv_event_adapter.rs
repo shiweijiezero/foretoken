@@ -45,6 +45,7 @@ fn lifecycle_is_rank_local_replayable_and_privacy_preserving() {
     });
     adapter.ingest_msgpack(1, &batch(stored, 1));
 
+    let other_epoch = epoch(&adapter, 0);
     let epoch = epoch(&adapter, 1);
     let page = adapter.delta(1, Some(&epoch), None, 2).unwrap();
     assert_eq!(page.event_source_id, "model-group:dp:1");
@@ -65,7 +66,7 @@ fn lifecycle_is_rank_local_replayable_and_privacy_preserving() {
     assert!(!encoded.contains("token_ids") && !encoded.contains("block_hashes\":[1"));
     assert!(
         adapter
-            .delta(0, Some(&epoch), None, 2)
+            .delta(0, Some(&other_epoch), None, 2)
             .unwrap()
             .deltas
             .is_empty()
@@ -83,7 +84,7 @@ fn lifecycle_is_rank_local_replayable_and_privacy_preserving() {
     ));
 }
 
-// Protects placement normalization and global clear semantics from vLLM events.
+// Protects local-offload identity, placement normalization, and global clear semantics.
 #[test]
 fn placement_and_clear_follow_vllm_lifecycle() {
     let adapter = adapter(1);
@@ -95,7 +96,7 @@ fn placement_and_clear_follow_vllm_lifecycle() {
                 "block_hashes": [1],
                 "token_ids": [1, 2],
                 "block_size": 2,
-                "medium": "CPU_PINNED",
+                "medium": "CPU",
                 "locality": "LOCAL",
                 "extra_keys": null,
                 "kv_cache_spec_kind": "full_attention"
@@ -104,20 +105,73 @@ fn placement_and_clear_follow_vllm_lifecycle() {
         ),
     );
     let epoch = epoch(&adapter, 0);
+    assert!(
+        adapter
+            .delta(0, Some(&epoch), None, 2)
+            .unwrap()
+            .deltas
+            .is_empty()
+    );
+
+    adapter.ingest_msgpack(
+        0,
+        &batch(
+            json!({
+                "type": "BlockStored",
+                "block_hashes": [3],
+                "parent_block_hash": 2,
+                "token_ids": [3, 4],
+                "block_size": 2,
+                "medium": "CPU_PINNED",
+                "locality": "LOCAL",
+                "extra_keys": [null],
+                "kv_cache_spec_kind": "full_attention"
+            }),
+            0,
+        ),
+    );
+    adapter.ingest_msgpack(
+        0,
+        &batch(
+            json!({
+                "type": "BlockStored",
+                "block_hashes": [2],
+                "token_ids": [1, 2],
+                "block_size": 2,
+                "medium": "CPU_PINNED",
+                "locality": "LOCAL",
+                "extra_keys": [null],
+                "kv_cache_spec_kind": "full_attention"
+            }),
+            0,
+        ),
+    );
     let page = adapter.delta(0, Some(&epoch), None, 2).unwrap();
-    assert!(matches!(
-        page.deltas[0].event,
-        KvDeltaEvent::BlockStored {
-            placement: KvPlacement {
-                tier: KvStorageTier::HostPinned,
-                locality: KvCacheLocality::Local
-            },
-            ..
-        }
-    ));
+    assert_eq!(page.deltas.len(), 2);
+    for delta in &page.deltas {
+        assert!(matches!(
+            delta.event,
+            KvDeltaEvent::BlockStored {
+                placement: KvPlacement {
+                    tier: KvStorageTier::HostPinned,
+                    locality: KvCacheLocality::Local
+                },
+                ..
+            }
+        ));
+    }
+    let KvDeltaEvent::BlockStored { blocks: root, .. } = &page.deltas[0].event else {
+        unreachable!()
+    };
+    let KvDeltaEvent::BlockStored { blocks: child, .. } = &page.deltas[1].event else {
+        unreachable!()
+    };
+    assert_eq!(root[0].block_index, 0);
+    assert_eq!(child[0].block_index, 1);
+    assert_eq!(child[0].parent_hash, root[0].block_hash);
 
     adapter.ingest_msgpack(0, &batch(json!({"type":"AllBlocksCleared"}), 0));
-    let clear = adapter.delta(0, Some(&epoch), Some(0), 2).unwrap();
+    let clear = adapter.delta(0, Some(&epoch), Some(1), 2).unwrap();
     assert!(matches!(
         clear.deltas[0].event,
         KvDeltaEvent::AllBlocksCleared
@@ -128,6 +182,7 @@ fn placement_and_clear_follow_vllm_lifecycle() {
 #[test]
 fn protocol_failure_is_unavailable_and_a_valid_batch_recovers() {
     let adapter = adapter(2);
+    let other_epoch = epoch(&adapter, 1);
     let epoch = epoch(&adapter, 0);
     adapter.ingest_msgpack(0, b"not-msgpack");
     assert!(matches!(
@@ -136,13 +191,17 @@ fn protocol_failure_is_unavailable_and_a_valid_batch_recovers() {
     ));
 
     adapter.ingest_msgpack(0, &batch(json!({"type":"AllBlocksCleared"}), 0));
-    assert!(adapter.delta(0, Some(&epoch), None, 2).is_ok());
+    let KvDeltaError::CursorReset(reset) = adapter.delta(0, Some(&epoch), None, 2).unwrap_err()
+    else {
+        panic!("recovered rank must invalidate the old source epoch");
+    };
+    assert!(adapter.delta(0, Some(&reset.epoch), None, 2).is_ok());
     adapter.ingest_msgpack(0, &batch(json!({"type":"AllBlocksCleared"}), 1));
     assert!(matches!(
         adapter.delta(0, Some(&epoch), None, 2),
         Err(KvDeltaError::Unavailable)
     ));
-    assert!(adapter.delta(1, Some(&epoch), None, 2).is_ok());
+    assert!(adapter.delta(1, Some(&other_epoch), None, 2).is_ok());
 }
 
 // Protects cursor reset responses with the exact source and rank identity.

@@ -9,9 +9,8 @@ both through one Grafana ConfigMap. The generated JSON files are deployed artifa
 module is their shared source.
 
 The dashboard reads raw Frontend and model-server metrics over a selected rate interval,
-plus recording rules and bounded router, controller, and autoscaling metrics. Its section order
-follows the Dynamo dashboard: service health first, then the request path from the Frontend through model
-serving and caches to accelerators, and finally routing, control-plane, and autoscaling decisions.
+plus recording rules and bounded router, controller, and autoscaling metrics. Model-serving health,
+latency, caches, resources, and routing come first; shared frontend and platform diagnostics follow.
 """
 
 from __future__ import annotations
@@ -35,32 +34,31 @@ RED = "#d03b3b"
 BLUE = "#2a78d6"
 ORANGE = "#eb6834"
 TEAL = "#1baf7a"
-QUANTILE_COLORS = {"p50": "#86b6ef", "p90": "#3987e5", "p99": "#184f95"}
+QUANTILE_COLORS = {"p50": "#86b6ef", "p95": "#3987e5", "p99": "#184f95"}
 STAGE_COLORS = {"queue": AMBER, "prefill": BLUE, "decode": TEAL}
 
 # Exact UI-string translations keep both dashboards on one query and layout definition.
 ZH = {
     "Foretoken System Overview": "Foretoken 系统概览",
     "Overview": "概览",
-    "Frontend": "Frontend",
+    "Shared frontend": "共享前端",
     "Model Serving": "模型服务",
     "Cache": "缓存",
     "Accelerators and Resources": "加速器与资源",
     "Routing decisions": "路由决策",
     "Control plane": "控制面",
     "Autoscaling decisions": "扩缩容决策",
-    "Frontend targets": "Frontend 采集目标",
-    "Model servers": "模型服务器",
-    "Requests / s": "请求 / s",
-    "5xx ratio": "5xx 比例",
+    "Frontend scrape targets": "前端采集目标",
+    "Model scrape targets": "模型采集目标",
+    "Frontend response starts / s": "前端响应开始速率",
+    "Frontend HTTP 5xx ratio": "前端 HTTP 5xx 比例",
     "Prompt tokens / s": "Prompt token / s",
     "Output tokens / s": "输出 token / s",
-    "Queued requests": "排队请求",
-    "Temporary RuntimeCache": "临时 RuntimeCache",
-    "Request rate by status": "按状态统计的请求速率",
-    "Request rate by endpoint": "按端点统计的请求速率",
-    "Response-start latency": "响应开始延迟",
-    "Admission queue": "准入队列",
+    "Frontend queued requests": "前端排队请求",
+    "Frontend responses by HTTP status": "前端 HTTP 响应状态",
+    "Frontend responses by endpoint": "前端各端点响应速率",
+    "Frontend response-header latency": "前端响应头延迟",
+    "Frontend admission queue": "前端准入队列",
     "Completed request rate": "完成请求速率",
     "Token throughput": "Token 吞吐量",
     "Scheduler state": "调度器状态",
@@ -74,11 +72,9 @@ ZH = {
     "Output length": "输出长度",
     "KV Cache utilization": "KV Cache 使用率",
     "Prefix Cache hit ratio": "Prefix Cache 命中率",
-    "KV index source health": "KV 索引数据源健康度",
-    "RuntimeCache utilization": "RuntimeCache 使用率",
-    "RuntimeCache available space": "RuntimeCache 可用空间",
-    "Node mean GPU utilization": "节点平均 GPU 使用率",
-    "Node mean GPU memory utilization": "节点平均 GPU 显存使用率",
+    "Frontend cache-index health": "前端缓存索引健康度",
+    "Model-file storage usage": "模型文件存储使用率",
+    "Model-file storage free space": "模型文件存储可用空间",
     "GPU utilization by device": "各设备 GPU 使用率",
     "GPU memory by device": "各设备 GPU 显存使用率",
     "GPU power by device": "各设备 GPU 功耗",
@@ -87,7 +83,7 @@ ZH = {
     "Serving memory usage": "服务内存使用量",
     "Routing outcomes": "路由结果",
     "Routing stage latency": "路由阶段延迟",
-    "Routing candidates": "路由候选数",
+    "Eligible instances and ranks": "候选实例与 rank 数量",
     "Reconcile errors": "Reconcile 错误",
     "Reconcile latency": "Reconcile 延迟",
     "Controller workqueues": "控制器工作队列",
@@ -98,93 +94,70 @@ ZH = {
     "Data source": "数据源",
     "Namespace": "命名空间",
     "Frontend service": "Frontend 服务",
-    "Model group": "模型组",
-    "Model role": "模型角色",
+    "Model instance": "模型实例",
+    "Execution role": "执行角色",
     "Model": "模型",
-    "Model service": "模型服务",
+    "Autoscaling service": "扩缩容服务",
     "Output": "输出",
     "Running": "运行中",
     "Waiting": "等待中",
     "mean": "平均值",
-    "Not configured": "未配置",
     "recommendation / {{modelservice}} / {{target_name}} / {{role}}":
         "建议 / {{modelservice}} / {{target_name}} / {{role}}",
-    "adjusted / {{modelservice}} / {{target_name}} / {{role}}":
-        "调整后 / {{modelservice}} / {{target_name}} / {{role}}",
-    "applied / {{modelservice}} / {{target_name}} / {{role}}":
-        "已应用 / {{modelservice}} / {{target_name}} / {{role}}",
-    "ready / {{modelservice}} / {{target_name}} / {{role}}":
-        "就绪 / {{modelservice}} / {{target_name}} / {{role}}",
-    "routable / {{modelservice}} / {{target_name}} / {{role}}":
-        "可路由 / {{modelservice}} / {{target_name}} / {{role}}",
-    "observation / {{modelservice}} / {{target_name}} / {{role}}":
-        "观测 / {{modelservice}} / {{target_name}} / {{role}}",
-    "evaluation / {{modelservice}} / {{target_name}} / {{role}}":
-        "评估 / {{modelservice}} / {{target_name}} / {{role}}",
+    "adjusted / {{modelservice}} / {{target_name}} / {{role}}": "调整后 / {{modelservice}} / {{target_name}} / {{role}}",
+    "applied / {{modelservice}} / {{target_name}} / {{role}}": "已应用 / {{modelservice}} / {{target_name}} / {{role}}",
+    "ready / {{modelservice}} / {{target_name}} / {{role}}": "就绪 / {{modelservice}} / {{target_name}} / {{role}}",
+    "routable / {{modelservice}} / {{target_name}} / {{role}}": "可路由 / {{modelservice}} / {{target_name}} / {{role}}",
+    "observation / {{modelservice}} / {{target_name}} / {{role}}": "观测 / {{modelservice}} / {{target_name}} / {{role}}",
+    "evaluation / {{modelservice}} / {{target_name}} / {{role}}": "评估 / {{modelservice}} / {{target_name}} / {{role}}",
     "Prometheus targets currently reporting for the selected Frontend services.":
         "当前正在上报所选 Frontend 服务指标的 Prometheus target 数量。",
     "Prometheus targets currently reporting for the selected model groups and roles.":
         "当前正在上报所选模型组和角色指标的 Prometheus target 数量。",
-    "Frontend responses started per second over the selected rate window.":
-        "选定速率窗口内每秒开始的 Frontend 响应数。",
+    "Frontend responses started per second over the selected rate window.": "选定速率窗口内每秒开始的 Frontend 响应数。",
     "HTTP responses that started with 5xx divided by all started responses. Streaming failures after headers are not included.":
         "开始时状态为 5xx 的 HTTP 响应占全部已开始响应的比例，不包含响应头发出后的流式失败。",
-    "Prompt tokens processed per second by the selected model servers.":
-        "所选模型服务器每秒处理的 Prompt token 数。",
-    "Generated tokens produced per second by the selected model servers.":
-        "所选模型服务器每秒生成的输出 token 数。",
-    "Requests waiting for frontend admission to a scaling target.":
-        "正在等待 Frontend 准入到扩缩容目标的请求数。",
-    "One when any selected model-server has fallen back to Pod-scoped temporary cache storage. No value means the selected groups do not use RuntimeCache.":
-        "任一所选模型服务器回退到 Pod 范围的临时缓存时为 1；无值表示所选模型组未使用 RuntimeCache。",
+    "Prompt tokens processed per second by the selected model servers.": "所选模型服务器每秒处理的 Prompt token 数。",
+    "Generated tokens produced per second by the selected model servers.": "所选模型服务器每秒生成的输出 token 数。",
+    "Requests waiting for frontend admission to a scaling target.": "正在等待 Frontend 准入到扩缩容目标的请求数。",
     "Frontend response starts grouped by HTTP status class.": "按 HTTP 状态类别分组的 Frontend 响应开始速率。",
     "Frontend response starts grouped by HTTP endpoint.": "按 HTTP 端点分组的 Frontend 响应开始速率。",
     "Time, in seconds, until the Frontend handler produces HTTP response headers. This excludes SSE body delivery; it is neither TTFT nor full-stream duration.":
         "Frontend handler 生成 HTTP 响应头所需的秒数，不包含 SSE 正文传输，也不等同于 TTFT 或完整流持续时间。",
     "Requests waiting for runtime preparation or backend dispatch, grouped by scaling-target kind.":
         "按扩缩容目标类型分组，等待运行时准备或后端派发的请求数。",
-    "Successfully completed model-server requests grouped by finish reason.":
-        "按结束原因分组的模型服务器成功完成请求速率。",
-    "Prompt and generated token throughput for the selected model servers.":
-        "所选模型服务器的 Prompt 与输出 token 吞吐量。",
-    "Requests running in vLLM execution batches or waiting in its scheduler.":
-        "正在 vLLM 执行批次中运行或在调度器中等待的请求数。",
-    "Maximum per-model-group quantile, in seconds, from Frontend handler entry after JSON decoding to the model-server terminal output. Excludes downstream client body consumption. Frontend and model-server clocks must be synchronized.":
-        "从 JSON 解码后的 Frontend handler 入口到模型服务器终止输出的每模型组最大分位数，单位为秒；不包含下游客户端正文消费时间。Frontend 与模型服务器时钟必须同步。",
-    "Maximum per-model-group TTFT quantile, in seconds, from Frontend handler entry after JSON decoding to the first token received by model-server. Chat and completion requests share this origin.":
-        "从 JSON 解码后的 Frontend handler 入口到模型服务器收到首个 token 的每模型组最大 TTFT 分位数，单位为秒；Chat 与 Completion 请求使用相同起点。",
-    "Maximum per-model-group request-level TPOT quantiles and mean over the selected rate window, in milliseconds. Each request contributes its average time between output tokens.":
-        "选定速率窗口内每模型组最大的请求级 TPOT 分位数和平均值，单位为毫秒；每个请求贡献一次输出 token 间平均耗时。",
-    "Maximum per-model-group gap between consecutive output-token events, in milliseconds. Unlike TPOT, each token interval is observed separately.":
-        "每模型组相邻输出 token 事件间隔的最大分位数，单位为毫秒；与 TPOT 不同，每个 token 间隔都会单独观测。",
-    "P90 time, in seconds, a request spends waiting for the scheduler, in prefill, and in decode.":
-        "请求在等待调度器、Prefill 和 Decode 阶段的 P90 耗时，单位为秒。",
-    "Requests preempted per second because KV-cache blocks ran out. Sustained preemption precedes the KV-cache pressure alert.":
-        "因 KV Cache block 耗尽而每秒被抢占的请求数；持续抢占通常先于 KV Cache 压力告警。",
+    "Completed execution requests by model instance, role and finish reason. Multi-stage requests can complete once in each role.":
+        "按模型实例、执行角色和结束原因展示已完成请求。分离式请求会分别在各角色完成一次执行。",
+    "Prompt and generated tokens per second by model instance and execution role.": "按模型实例和执行角色展示输入与输出 token 吞吐量。",
+    "Requests running in vLLM execution batches or waiting in its scheduler.": "正在 vLLM 执行批次中运行或在调度器中等待的请求数。",
+    "Request-weighted latency from frontend processing to generation completion across the selected engines. Excludes downstream client delivery; clocks must be synchronized.":
+        "将所选引擎的请求样本合并后统计：从前端处理开始到生成完成的耗时，不含下游客户端接收时间；节点时钟须同步。",
+    "Request-weighted time from frontend processing to the first token at model-server across the selected engines. Excludes downstream client delivery.":
+        "将所选引擎的请求样本合并后统计：从前端处理开始到模型服务器收到首个 token 的耗时，不含下游客户端接收时间。",
+    "Request-weighted TPOT across selected engines, in milliseconds. Each request contributes its average output-token interval.":
+        "所选引擎合并后的请求级 TPOT，单位毫秒；每个请求贡献一次平均输出 token 间隔。",
+    "Output-token interval distribution across selected engines, in milliseconds. Each token interval is one observation.":
+        "所选引擎的输出 token 间隔分布，单位毫秒；每个间隔贡献一次观测。",
+    "P95 time, in seconds, a request spends waiting for the scheduler, in prefill, and in decode.":
+        "请求在等待调度器、Prefill 和 Decode 阶段的 P95 耗时，单位为秒。",
+    "Scheduler preemptions per second across selected engines; sustained activity indicates KV-cache pressure.":
+        "所选引擎每秒调度抢占次数；持续抢占表示 KV 缓存压力。",
     "Distribution of prompt tokens per request over time.": "随时间变化的单请求 Prompt token 数分布。",
     "Distribution of generated tokens per request over time.": "随时间变化的单请求输出 token 数分布。",
-    "Highest in-engine KV-cache utilization grouped by model role.":
-        "按模型角色分组的引擎内最高 KV Cache 使用率。",
-    "Average local and external Prefix Cache token hit ratios across selected model groups.":
-        "所选模型组的本地与外部 Prefix Cache token 平均命中率。",
+    "KV-cache occupancy by model instance and engine rank.": "按模型实例和引擎 rank 展示 KV 缓存占用率。",
+    "Cache hits divided by queried tokens across selected engines. Idle or unavailable caches have no ratio; local and external observations are separate.":
+        "所选引擎的命中 token 数除以查询 token 数。没有查询或指标不可用时不显示比例；本地与外部缓存分别统计。",
     "Healthy KV event sources divided by configured sources. Disabled or unavailable indexing reports zero.":
         "健康 KV 事件源数除以已配置源数；索引禁用或不可用时为 0。",
     "Mounted RuntimeCache filesystem utilization. Series are absent for model groups without a RuntimeCache.":
         "已挂载 RuntimeCache 文件系统的使用率；未配置 RuntimeCache 的模型组不会产生序列。",
-    "Filesystem space available to model-server processes using a RuntimeCache.":
-        "使用 RuntimeCache 的模型服务器进程可用文件系统空间。",
-    "Mean utilization of Foretoken-attributed GPUs by vendor and node across workload namespaces. Shared devices are counted once; devices without Foretoken Pod attribution are excluded.":
-        "跨工作负载命名空间按厂商和节点统计的 Foretoken GPU 平均使用率；共享设备只计一次，不包含无法关联到 Foretoken Pod 的设备。",
-    "Mean memory utilization of Foretoken-attributed GPUs by vendor and node across workload namespaces. Shared devices are counted once; devices without Foretoken Pod attribution are excluded.":
-        "跨工作负载命名空间按厂商和节点统计的 Foretoken GPU 平均显存使用率；共享设备只计一次，不包含无法关联到 Foretoken Pod 的设备。",
+    "Filesystem space available to model-server processes using a RuntimeCache.": "使用 RuntimeCache 的模型服务器进程可用文件系统空间。",
     "Utilization of each Foretoken-attributed GPU.": "每块可关联到 Foretoken 的 GPU 使用率。",
     "Memory utilization of each Foretoken-attributed GPU.": "每块可关联到 Foretoken 的 GPU 显存使用率。",
     "Power draw of each Foretoken-attributed NVIDIA GPU.": "每块可关联到 Foretoken 的 NVIDIA GPU 功耗。",
     "Temperature of each Foretoken-attributed NVIDIA GPU.": "每块可关联到 Foretoken 的 NVIDIA GPU 温度。",
-    "CPU cores consumed by Frontend and model-server containers in the selected namespaces.":
-        "所选命名空间中 Frontend 与模型服务器容器使用的 CPU 核数。",
-    "Working-set memory used by Frontend and model-server containers in the selected namespaces.":
-        "所选命名空间中 Frontend 与模型服务器容器使用的工作集内存。",
+    "CPU cores used by model-server Pods belonging to the selected model instances.": "所选模型实例的模型服务器 Pod 使用的 CPU 核数。",
+    "Working-set memory of model-server Pods belonging to the selected model instances.": "所选模型实例的模型服务器 Pod 工作集内存。",
     "Selection results by workflow round. A selection failure is not an HTTP status; a request can involve several rounds.":
         "按工作流轮次统计的选择结果；选择失败不是 HTTP 状态，一个请求可能包含多轮选择。",
     "P99 filter, scorer and picker execution time, aggregated from histogram buckets across selected Frontend replicas.":
@@ -195,8 +168,7 @@ ZH = {
         "每秒 controller-runtime 错误数；本分区独立于工作负载命名空间筛选器观察平台控制器。",
     "P99 reconciliation time by controller; this is control-plane work, not inference request latency.":
         "按控制器统计的 P99 Reconcile 耗时，属于控制面工作而非推理请求延迟。",
-    "Queued reconciliations. Current replica counts are deduplicated rather than added across controller replicas.":
-        "排队中的 Reconcile 数；当前副本数会跨控制器副本去重，而不是相加。",
+    "Queued reconciliations, deduplicated across controller replicas.": "待处理的协调任务数，跨控制器副本去重。",
     "Latest published recommendation, adjusted target and applied desired capacity. A missing recommendation means the decision algorithm did not provide one.":
         "最新发布的建议值、调整后目标和已应用期望容量；建议值缺失表示决策算法未提供建议。",
     "Ready and routable capacity published by the autoscaler, compared with applied desired replicas.":
@@ -205,7 +177,27 @@ ZH = {
         "距最近一次观测和评估的时间；Reconcile 停止后该时长会继续增加。观测序列缺失表示尚未发布可用观测。",
     "Current trigger, decision and adjustment outcomes from ModelService status. Reasons are bounded status codes, not log messages.":
         "ModelService status 中当前的触发、决策与调整结果；原因是有限状态码，而不是日志文本。",
+    "No data": "无数据",
+    "Engine rank": "引擎 rank",
+    "Traffic share by instance": "各实例路由份额",
+    "Traffic share by engine rank": "各引擎 rank 路由份额",
+    "Share of routing selections within each model and execution role. All instances form the denominator; this counts choices, not completed requests.":
+        "每个模型及执行角色内，各实例获得的路由选择比例。分母为该模型该角色的全部实例；表示选择次数，不是完成请求数。",
+    "Share of routing selections within each model and role, split by instance and data-parallel rank.":
+        "每个模型及执行角色内，按实例和数据并行 rank 展示路由选择份额。",
+    "Scheduler queued requests": "引擎排队请求",
+    "Requests waiting in the selected model engines, not the shared frontend admission queue.":
+        "所选模型引擎内等待调度的请求，不包含共享前端准入队列。",
+    "Output / {{model_name}} / {{model_group}} / {{model_role}}":
+        "输出 / {{model_name}} / {{model_group}} / {{model_role}}",
+    "Prompt / {{model_name}} / {{model_group}} / {{model_role}}":
+        "输入 / {{model_name}} / {{model_group}} / {{model_role}}",
+    "Running / {{model_group}} / {{model_role}} / rank {{engine}}":
+        "运行中 / {{model_group}} / {{model_role}} / rank {{engine}}",
+    "Waiting / {{model_group}} / {{model_role}} / rank {{engine}}":
+        "等待中 / {{model_group}} / {{model_role}} / rank {{engine}}",
 }
+
 AUTOSCALING_COLUMNS_ZH = {
     "namespace": "命名空间",
     "modelservice": "模型服务",
@@ -221,7 +213,6 @@ AUTOSCALING_COLUMNS_ZH = {
 # Normalized selectors address recording rules and raw selectors address scrape-time metrics.
 FRONTEND = 'namespace=~"$namespace",frontend_service=~"$frontend_service"'
 GROUP = 'namespace=~"$namespace",model_group=~"$model_group",model_role=~"$model_role"'
-MODEL = GROUP + ',model_name=~"$model_name"'
 RAW_FRONTEND = (
     'endpoint="http",namespace=~"$namespace",inference_foretoken_io_frontend_service!="",'
     'inference_foretoken_io_frontend_service=~"$frontend_service"'
@@ -229,12 +220,13 @@ RAW_FRONTEND = (
 RAW_MODEL = (
     'endpoint="model-server",namespace=~"$namespace",inference_foretoken_io_model_group!="",'
     'inference_foretoken_io_model_group=~"$model_group",inference_foretoken_io_model_role!="",'
-    'inference_foretoken_io_model_role=~"$model_role",model_name=~"$model_name"'
+    'inference_foretoken_io_model_role=~"$model_role",model_name=~"$model_name",engine=~"$engine"'
 )
-FRONTEND_DIMENSIONS = "namespace,frontend_service"
-MODEL_DIMENSIONS = "namespace,model_group,model_role,pd_pipeline_scope,model_name"
-ROUTER = 'namespace=~"$namespace",inference_foretoken_io_frontend_service=~"$frontend_service"'
-SERVICE = 'namespace=~"$namespace",modelservice=~"$model_service"'
+ROUTER = (
+    'namespace=~"$namespace",inference_foretoken_io_frontend_service=~"$frontend_service",'
+    'model_name=~"$model_name"'
+)
+SERVICE = 'namespace=~"$namespace",modelservice=~"$model_service",model_name=~"$model_name"'
 CONTROLLER = 'job="foretoken-control-plane"'
 AUTOSCALING_TARGET = "namespace,modelservice,target_kind,target_name,role"
 AUTOSCALING_LEGEND = "{{modelservice}} / {{target_name}} / {{role}}"
@@ -282,16 +274,37 @@ def model_metric(metric: str, *, extra: str = "", rate: bool = False) -> str:
     )
 
 
-def histogram_quantile(bucket_rates: str, dimensions: str, quantile: float) -> str:
-    """Calculate a histogram quantile after preserving the metric's workload dimensions."""
-    return f"histogram_quantile({quantile}, sum by({dimensions},le) ({bucket_rates}))"
+def selected_groups() -> str:
+    """Resolve model identity from engine gauges, including idle model instances."""
+    return f"max by(namespace,model_group) (0 * ({model_metric('vllm:kv_cache_usage_perc')}) + 1)"
+
+
+def scoped_group_metric(expr: str) -> str:
+    """Restrict group-scoped storage and accelerator observations to the selected model."""
+    return f"({expr}) and on(namespace,model_group) ({selected_groups()})"
+
+
+def routing_target_rates() -> str:
+    """Attach readable Group names to selections using the target UID from Service metadata."""
+    rates = (
+        f'sum by(namespace,model_name,model_role,route_target_id,data_parallel_rank) '
+        f'(rate(foretoken_router_target_selections_total{{{ROUTER},model_role=~"$model_role"}}[$__rate_interval]))'
+    )
+    targets = (
+        'max by(namespace,route_target_id,model_group) ('
+        'label_replace(label_replace(up{endpoint="model-server",'
+        'inference_foretoken_io_model_group_uid!=""}, "route_target_id", "$1", '
+        '"inference_foretoken_io_model_group_uid", "(.+)"), "model_group", "$1", '
+        '"inference_foretoken_io_model_group", "(.+)"))'
+    )
+    return f"({rates}) * on(namespace,route_target_id) group_left(model_group) (0 * ({targets}) + 1)"
 
 
 def model_rate_ratio(numerator_metric: str, denominator_metric: str) -> str:
-    """Average per-model-group ratios derived from raw counters over the selected rate window."""
-    numerator = f"sum by({MODEL_DIMENSIONS}) ({model_metric(numerator_metric, rate=True)})"
-    denominator = f"sum by({MODEL_DIMENSIONS}) ({model_metric(denominator_metric, rate=True)})"
-    return f"avg({numerator} / clamp_min({denominator}, 1e-9))"
+    """Weight cache reuse by queried tokens; no queries leave the ratio unavailable."""
+    numerator = model_metric(numerator_metric, rate=True)
+    denominator = model_metric(denominator_metric, rate=True)
+    return f"sum by(model_name,model_role) ({numerator}) / (sum by(model_name,model_role) ({denominator}) > 0)"
 
 
 def steps(*thresholds: tuple[float | None, str]) -> dashboard.ThresholdsConfig:
@@ -312,7 +325,7 @@ def headline(
     unit: str = "short",
     color: str | None = BLUE,
     thresholds: dashboard.ThresholdsConfig | None = None,
-    no_value: str = "0",
+    no_value: str = "No data",
     interval: str | None = None,
 ) -> stat.Panel:
     """A single-value tile in the Overview section, colored by threshold when one is given."""
@@ -389,7 +402,6 @@ def series(
 
 def latency(
     bucket_rates: str,
-    dimensions: str,
     title: str,
     description: str,
     *,
@@ -397,26 +409,28 @@ def latency(
     scale: int = 1,
     mean_rates: tuple[str, str] | None = None,
     span: int = 8,
+    dimensions: str = "model_name,model_role",
 ) -> timeseries.Panel:
     """A raw-histogram latency panel with fixed units and optional interval-local mean."""
     targets = []
-    for name, quantile in (("p50", 0.50), ("p90", 0.90), ("p99", 0.99)):
-        expr = f"max({histogram_quantile(bucket_rates, dimensions, quantile)})"
+    buckets = f"{dimensions},le" if dimensions else "le"
+    prefix = "{{model_name}} / {{model_role}} / " if dimensions else ""
+    for name, quantile in (("p50", 0.50), ("p95", 0.95), ("p99", 0.99)):
+        expr = f"histogram_quantile({quantile}, sum by({buckets}) ({bucket_rates}))"
         if scale != 1:
             expr = f"{scale} * {expr}"
-        targets.append(foretoken_query(expr, name))
+        targets.append(foretoken_query(expr, prefix + name))
     colors = QUANTILE_COLORS
     if mean_rates is not None:
         sum_rates, count_rates = mean_rates
         mean_expr = (
-            f"max(sum by({dimensions}) ({sum_rates}) / "
-            f"clamp_min(sum by({dimensions}) ({count_rates}), 1e-9))"
+            f"sum by({dimensions}) ({sum_rates}) / (sum by({dimensions}) ({count_rates}) > 0)"
         )
         if scale != 1:
             mean_expr = f"{scale} * {mean_expr}"
-        targets.append(foretoken_query(mean_expr, "mean"))
+        targets.append(foretoken_query(mean_expr, prefix + "mean"))
         colors = {**QUANTILE_COLORS, "mean": ORANGE}
-    return series(title, description, targets, unit=unit, span=span, colors=colors).decimals(2)
+    return series(title, description, targets, unit=unit, span=span, colors=colors if not dimensions else None).decimals(2).height(10)
 
 
 def distribution(title: str, description: str, metric: str) -> heatmap.Panel:
@@ -450,7 +464,7 @@ def by_device(title: str, description: str, rule: str, *, unit: str) -> timeseri
     return series(
         title,
         description,
-        [query(f"max by(node, device_id) ({rule})", DEVICE_LEGEND)],
+        [query(f"max by(vendor,node,device_id) ({scoped_group_metric(f'{rule}{{{GROUP}}}')})", "{{vendor}} / " + DEVICE_LEGEND)],
         unit=unit,
         span=6,
     )
@@ -544,30 +558,38 @@ def build() -> dashboard_models.Dashboard:
         )
         .with_variable(
             variable(
+                "model_name", "Model",
+                'label_values(vllm:kv_cache_usage_perc{endpoint="model-server",namespace=~"$namespace"}, model_name)',
+            )
+        )
+        .with_variable(
+            variable(
                 "model_group",
-                "Model group",
-                'label_values(foretoken:model_server_up:sum{namespace=~"$namespace"}, model_group)',
+                "Model instance",
+                'label_values(vllm:kv_cache_usage_perc{endpoint="model-server",namespace=~"$namespace",model_name=~"$model_name"}, inference_foretoken_io_model_group)',
             )
         )
         .with_variable(
             variable(
                 "model_role",
-                "Model role",
+                "Execution role",
                 'label_values(foretoken:model_server_up:sum{namespace=~"$namespace",model_group=~"$model_group"}, model_role)',
             )
         )
         .with_variable(
             variable(
-                "model_name",
-                "Model",
-                f"label_values(foretoken:model_server_kv_cache_usage_ratio:max{{{GROUP}}}, model_name)",
+                "engine",
+                "Engine rank",
+                'label_values(vllm:kv_cache_usage_perc{endpoint="model-server",namespace=~"$namespace",'
+                'model_name=~"$model_name",inference_foretoken_io_model_group=~"$model_group",'
+                'inference_foretoken_io_model_role=~"$model_role"}, engine)',
             )
         )
         .with_variable(
             variable(
                 "model_service",
-                "Model service",
-                'label_values(foretoken_autoscaling_applied_replicas{namespace=~"$namespace"}, modelservice)',
+                "Autoscaling service",
+                'label_values(foretoken_autoscaling_applied_replicas{namespace=~"$namespace",model_name=~"$model_name"}, modelservice)',
             )
         )
     )
@@ -578,42 +600,11 @@ def build() -> dashboard_models.Dashboard:
     board.with_row(dashboard.Row("Overview"))
     board.with_panel(
         headline(
-            "Frontend targets",
-            "Prometheus targets currently reporting for the selected Frontend services.",
-            f"sum(foretoken:frontend_up:sum{{{FRONTEND}}})",
-            color=None,
-            thresholds=steps((None, RED), (1, GREEN)),
-        )
-    )
-    board.with_panel(
-        headline(
-            "Model servers",
+            "Model scrape targets",
             "Prometheus targets currently reporting for the selected model groups and roles.",
-            f"sum(foretoken:model_server_up:sum{{{GROUP}}})",
+            f"sum({scoped_group_metric(f'foretoken:model_server_up:sum{{{GROUP}}}')})",
             color=None,
             thresholds=steps((None, RED), (1, GREEN)),
-        )
-    )
-    board.with_panel(
-        headline(
-            "Requests / s",
-            "Frontend responses started per second over the selected rate window.",
-            f"sum({frontend_request_rates})",
-            unit="reqps",
-            interval="5s",
-        )
-    )
-    board.with_panel(
-        headline(
-            "5xx ratio",
-            "HTTP responses that started with 5xx divided by all started responses. "
-            "Streaming failures after headers are not included.",
-            f"(sum({frontend_5xx_rates}) or 0 * sum({frontend_request_rates})) "
-            f"/ clamp_min(sum({frontend_request_rates}), 1e-9)",
-            unit="percentunit",
-            color=None,
-            thresholds=steps((None, GREEN), (0.01, AMBER), (0.05, RED)),
-            interval="5s",
         )
     )
     board.with_panel(
@@ -637,75 +628,12 @@ def build() -> dashboard_models.Dashboard:
     )
     board.with_panel(
         headline(
-            "Queued requests",
-            "Requests waiting for frontend admission to a scaling target.",
-            f"sum(foretoken:frontend_upstream_queued_requests:sum{{{FRONTEND}}})",
+            "Scheduler queued requests",
+            "Requests waiting in the selected model engines, not the shared frontend admission queue.",
+            f"sum({model_metric('vllm:num_requests_waiting')})",
             color=None,
             thresholds=steps((None, GREEN), (1, ORANGE)),
-        )
-    )
-    board.with_panel(
-        headline(
-            "Temporary RuntimeCache",
-            "One when any selected model-server has fallen back to Pod-scoped temporary cache storage. "
-            "No value means the selected groups do not use RuntimeCache.",
-            f"max(foretoken:model_server_runtime_cache_temporary:max{{{GROUP}}})",
-            color=None,
-            thresholds=steps((None, GREEN), (1, RED)),
-            no_value="Not configured",
-        )
-    )
-
-    board.with_row(dashboard.Row("Frontend"))
-    board.with_panel(
-        series(
-            "Request rate by status",
-            "Frontend response starts grouped by HTTP status class.",
-            [foretoken_query(f"sum by(status) ({frontend_request_rates})", "{{status}}")],
-            unit="reqps",
-            span=6,
-            colors={"2xx": GREEN, "4xx": ORANGE, "5xx": RED},
-            stack=True,
-        )
-    )
-    board.with_panel(
-        series(
-            "Request rate by endpoint",
-            "Frontend response starts grouped by HTTP endpoint.",
-            [foretoken_query(f"sum by(handler) ({frontend_request_rates})", "{{handler}}")],
-            unit="reqps",
-            span=6,
-            stack=True,
-        )
-    )
-    board.with_panel(
-        latency(
-            frontend_metric(
-                "http_request_duration_seconds_bucket",
-                extra='handler=~"/v1/(chat/completions|completions|generate)"',
-                rate=True,
-            ),
-            f"{FRONTEND_DIMENSIONS},handler",
-            "Response-start latency",
-            "Time, in seconds, until the Frontend handler produces HTTP response headers. "
-            "This excludes SSE body delivery; it is neither TTFT nor full-stream duration.",
-            unit="suffix: s",
-            span=6,
-        )
-    )
-    board.with_panel(
-        series(
-            "Admission queue",
-            "Requests waiting for runtime preparation or backend dispatch, grouped by scaling-target kind.",
-            [
-                query(
-                    f"sum by(target_kind) (foretoken:frontend_upstream_queued_requests:sum{{{FRONTEND}}})",
-                    "{{target_kind}}",
-                )
-            ],
-            unit="short",
-            span=6,
-            colors={"Pool": BLUE, "EPDPipelineScope": ORANGE},
+            interval="5s",
         )
     )
 
@@ -713,11 +641,11 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Completed request rate",
-            "Successfully completed model-server requests grouped by finish reason.",
+            "Completed execution requests by model instance, role and finish reason. Multi-stage requests can complete once in each role.",
             [
                 foretoken_query(
-                    f"sum by(finished_reason) ({model_metric('vllm:request_success_total', rate=True)})",
-                    "{{finished_reason}}",
+                    f"sum by(model_name,model_group,model_role,finished_reason) ({model_metric('vllm:request_success_total', rate=True)})",
+                    "{{model_name}} / {{model_group}} / {{model_role}} / {{finished_reason}}",
                 )
             ],
             unit="reqps",
@@ -728,10 +656,10 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Token throughput",
-            "Prompt and generated token throughput for the selected model servers.",
+            "Prompt and generated tokens per second by model instance and execution role.",
             [
-                foretoken_query(f"sum({model_metric('vllm:prompt_tokens_total', rate=True)})", "Prompt"),
-                foretoken_query(f"sum({model_metric('vllm:generation_tokens_total', rate=True)})", "Output"),
+                foretoken_query(f"sum by(model_name,model_group,model_role) ({model_metric('vllm:prompt_tokens_total', rate=True)})", "Prompt / {{model_name}} / {{model_group}} / {{model_role}}"),
+                foretoken_query(f"sum by(model_name,model_group,model_role) ({model_metric('vllm:generation_tokens_total', rate=True)})", "Output / {{model_name}} / {{model_group}} / {{model_role}}"),
             ],
             unit="suffix: tok/s",
             span=8,
@@ -743,8 +671,8 @@ def build() -> dashboard_models.Dashboard:
             "Scheduler state",
             "Requests running in vLLM execution batches or waiting in its scheduler.",
             [
-                foretoken_query(f"sum({model_metric('vllm:num_requests_running')})", "Running"),
-                foretoken_query(f"sum({model_metric('vllm:num_requests_waiting')})", "Waiting"),
+                foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:num_requests_running')})", "Running / {{model_group}} / {{model_role}} / rank {{engine}}"),
+                foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:num_requests_waiting')})", "Waiting / {{model_group}} / {{model_role}} / rank {{engine}}"),
             ],
             unit="short",
             span=8,
@@ -754,31 +682,24 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         latency(
             model_metric("vllm:e2e_request_latency_seconds_bucket", rate=True),
-            MODEL_DIMENSIONS,
             "End-to-end latency (E2EL)",
-            "Maximum per-model-group quantile, in seconds, from Frontend handler entry after JSON decoding "
-            "to the model-server terminal output. Excludes downstream client body consumption. "
-            "Frontend and model-server clocks must be synchronized.",
+            "Request-weighted latency from frontend processing to generation completion across the selected engines. Excludes downstream client delivery; clocks must be synchronized.",
             unit="suffix: s",
         )
     )
     board.with_panel(
         latency(
             model_metric("vllm:time_to_first_token_seconds_bucket", rate=True),
-            MODEL_DIMENSIONS,
             "Time to first token (TTFT)",
-            "Maximum per-model-group TTFT quantile, in seconds, from Frontend handler entry after JSON "
-            "decoding to the first token received by model-server. Chat and completion requests share this origin.",
+            "Request-weighted time from frontend processing to the first token at model-server across the selected engines. Excludes downstream client delivery.",
             unit="suffix: s",
         )
     )
     board.with_panel(
         latency(
             model_metric("vllm:request_time_per_output_token_seconds_bucket", rate=True),
-            MODEL_DIMENSIONS,
             "Time per output token (TPOT)",
-            "Maximum per-model-group request-level TPOT quantiles and mean over the selected rate window, "
-            "in milliseconds. Each request contributes its average time between output tokens.",
+            "Request-weighted TPOT across selected engines, in milliseconds. Each request contributes its average output-token interval.",
             unit="suffix: ms",
             scale=1_000,
             mean_rates=(
@@ -790,10 +711,8 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         latency(
             model_metric("vllm:inter_token_latency_seconds_bucket", rate=True),
-            MODEL_DIMENSIONS,
             "Inter-token latency (ITL)",
-            "Maximum per-model-group gap between consecutive output-token events, in milliseconds. "
-            "Unlike TPOT, each token interval is observed separately.",
+            "Output-token interval distribution across selected engines, in milliseconds. Each token interval is one observation.",
             unit="suffix: ms",
             scale=1_000,
         )
@@ -801,11 +720,11 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Request time by stage",
-            "P90 time, in seconds, a request spends waiting for the scheduler, in prefill, and in decode.",
+            "P95 time, in seconds, a request spends waiting for the scheduler, in prefill, and in decode.",
             [
                 foretoken_query(
-                    f"max({histogram_quantile(model_metric(metric, rate=True), MODEL_DIMENSIONS, 0.90)})",
-                    stage,
+                    f"histogram_quantile(0.95, sum by(model_name,model_role,le) ({model_metric(metric, rate=True)}))",
+                    "{{model_name}} / {{model_role}} / " + stage,
                 )
                 for stage, metric in (
                     ("queue", "vllm:request_queue_time_seconds_bucket"),
@@ -821,8 +740,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Preemptions",
-            "Requests preempted per second because KV-cache blocks ran out. Sustained preemption "
-            "precedes the KV-cache pressure alert.",
+            "Scheduler preemptions per second across selected engines; sustained activity indicates KV-cache pressure.",
             [foretoken_query(f"sum({model_metric('vllm:num_preemptions_total', rate=True)})", "Preemptions")],
             unit="ops",
             span=8,
@@ -848,59 +766,50 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "KV Cache utilization",
-            "Highest in-engine KV-cache utilization grouped by model role.",
-            [query(f"max by(model_role) (foretoken:model_server_kv_cache_usage_ratio:max{{{MODEL}}})", "{{model_role}}")],
-            unit="percentunit",
-            span=8,
-        )
-    )
-    board.with_panel(
-        series(
-            "Prefix Cache hit ratio",
-            "Average local and external Prefix Cache token hit ratios across selected model groups.",
-            [
-                foretoken_query(
-                    model_rate_ratio("vllm:prefix_cache_hits_total", "vllm:prefix_cache_queries_total"),
-                    "local",
-                ),
-                foretoken_query(
-                    model_rate_ratio(
-                        "vllm:external_prefix_cache_hits_total",
-                        "vllm:external_prefix_cache_queries_total",
-                    ),
-                    "external",
-                ),
-            ],
-            unit="percentunit",
-            span=8,
-            colors={"local": BLUE, "external": TEAL},
-        )
-    )
-    board.with_panel(
-        series(
-            "KV index source health",
-            "Healthy KV event sources divided by configured sources. Disabled or unavailable indexing reports zero.",
-            [query(f"foretoken:frontend_kv_index_source_health_ratio:min{{{FRONTEND}}}", "{{frontend_service}}")],
-            unit="percentunit",
-            span=8,
-        )
-    )
-    board.with_panel(
-        series(
-            "RuntimeCache utilization",
-            "Mounted RuntimeCache filesystem utilization. Series are absent for model groups without a RuntimeCache.",
-            [query(f"foretoken:model_server_runtime_cache_usage_ratio:max{{{GROUP}}}", "{{model_group}} / {{model_role}}")],
+            "KV-cache occupancy by model instance and engine rank.",
+            [query(f"max by(model_name,model_group,model_role,engine) ({model_metric('vllm:kv_cache_usage_perc')})", "{{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}")],
             unit="percentunit",
             span=12,
         )
     )
     board.with_panel(
         series(
-            "RuntimeCache available space",
+            "Prefix Cache hit ratio",
+            "Cache hits divided by queried tokens across selected engines. Idle or unavailable caches have no ratio; local and external observations are separate.",
+            [
+                foretoken_query(
+                    model_rate_ratio("vllm:prefix_cache_hits_total", "vllm:prefix_cache_queries_total"),
+                    "{{model_name}} / {{model_role}} / local",
+                ),
+                foretoken_query(
+                    model_rate_ratio(
+                        "vllm:external_prefix_cache_hits_total",
+                        "vllm:external_prefix_cache_queries_total",
+                    ),
+                    "{{model_name}} / {{model_role}} / external",
+                ),
+            ],
+            unit="percentunit",
+            span=12,
+            colors={"local": BLUE, "external": TEAL},
+        )
+    )
+    board.with_panel(
+        series(
+            "Model-file storage usage",
+            "Mounted RuntimeCache filesystem utilization. Series are absent for model groups without a RuntimeCache.",
+            [query(scoped_group_metric(f"foretoken:model_server_runtime_cache_usage_ratio:max{{{GROUP}}}"), "{{model_group}} / {{model_role}}")],
+            unit="percentunit",
+            span=12,
+        )
+    )
+    board.with_panel(
+        series(
+            "Model-file storage free space",
             "Filesystem space available to model-server processes using a RuntimeCache.",
             [
                 query(
-                    f"foretoken:model_server_runtime_cache_available_bytes:min{{{GROUP}}}",
+                    scoped_group_metric(f"foretoken:model_server_runtime_cache_available_bytes:min{{{GROUP}}}"),
                     "{{model_group}} / {{model_role}}",
                 )
             ],
@@ -910,38 +819,6 @@ def build() -> dashboard_models.Dashboard:
     )
 
     board.with_row(dashboard.Row("Accelerators and Resources"))
-    gpu_note = (
-        "by vendor and node across workload namespaces. Shared devices are counted once; "
-        "devices without Foretoken Pod attribution are excluded."
-    )
-    board.with_panel(
-        series(
-            "Node mean GPU utilization",
-            "Mean utilization of Foretoken-attributed GPUs " + gpu_note,
-            [
-                query(
-                    "avg by(vendor, node) (max by(vendor, node, device_id) (foretoken:accelerator_gpu_utilization_ratio))",
-                    "{{vendor}} / {{node}}",
-                )
-            ],
-            unit="percentunit",
-            span=6,
-        )
-    )
-    board.with_panel(
-        series(
-            "Node mean GPU memory utilization",
-            "Mean memory utilization of Foretoken-attributed GPUs " + gpu_note,
-            [
-                query(
-                    "avg by(vendor, node) (max by(vendor, node, device_id) (foretoken:accelerator_gpu_memory_usage_ratio))",
-                    "{{vendor}} / {{node}}",
-                )
-            ],
-            unit="percentunit",
-            span=6,
-        )
-    )
     board.with_panel(
         by_device(
             "GPU utilization by device",
@@ -974,91 +851,220 @@ def build() -> dashboard_models.Dashboard:
             unit="celsius",
         )
     )
-    container = 'namespace=~"$namespace",container=~"frontend|model-server"'
+    container = 'namespace=~"$namespace",container="model-server"'
+    selected_pods = f"max by(namespace,pod) (0 * ({model_metric('vllm:kv_cache_usage_perc')}) + 1)"
     board.with_panel(
         series(
             "Serving CPU usage",
-            "CPU cores consumed by Frontend and model-server containers in the selected namespaces.",
+            "CPU cores used by model-server Pods belonging to the selected model instances.",
             [
                 query(
-                    f"sum by(container) (rate(container_cpu_usage_seconds_total{{{container}}}[$__rate_interval]))",
-                    "{{container}}",
+                    f"sum by(namespace,pod) (rate(container_cpu_usage_seconds_total{{{container}}}[$__rate_interval])) and on(namespace,pod) ({selected_pods})",
+                    "{{namespace}} / {{pod}}",
                     interval="30s",
                 )
             ],
             unit="cores",
-            span=6,
+            span=12,
             colors={"frontend": BLUE, "model-server": ORANGE},
         )
     )
     board.with_panel(
         series(
             "Serving memory usage",
-            "Working-set memory used by Frontend and model-server containers in the selected namespaces.",
+            "Working-set memory of model-server Pods belonging to the selected model instances.",
             [
                 query(
-                    f"sum by(container) (container_memory_working_set_bytes{{{container}}})",
-                    "{{container}}",
+                    f"sum by(namespace,pod) (container_memory_working_set_bytes{{{container}}}) and on(namespace,pod) ({selected_pods})",
+                    "{{namespace}} / {{pod}}",
                     interval="30s",
                 )
             ],
             unit="bytes",
-            span=6,
+            span=12,
             colors={"frontend": BLUE, "model-server": ORANGE},
         )
     )
 
-    # Routing and control-plane sections are collapsed: they matter when investigating the
-    # platform rather than during routine checks of the request path.
-    routing = dashboard.Row("Routing decisions")
-    routing.with_panel(
+    # Route distribution complements instance load; controller internals remain diagnostic.
+    board.with_row(dashboard.Row("Routing decisions"))
+    selections = routing_target_rates()
+    selected_ranks = (
+        'max by(namespace,model_group,data_parallel_rank) ('
+        f'label_replace(0 * ({model_metric("vllm:kv_cache_usage_perc")}) + 1, '
+        '"data_parallel_rank", "$1", "engine", "(.+)"))'
+    )
+    shares = (
+        f"({selections}) / on(namespace,model_name,model_role) group_left() "
+        f"(sum by(namespace,model_name,model_role) ({selections}) > 0)"
+    )
+    board.with_panel(
+        series(
+            "Traffic share by instance",
+            "Share of routing selections within each model and execution role. All instances form the denominator; this counts choices, not completed requests.",
+            [foretoken_query(
+                f"sum by(namespace,model_name,model_role,model_group) ({shares}) and on(namespace,model_group) ({selected_groups()})",
+                "{{model_name}} / {{model_role}} / {{model_group}}",
+            )],
+            unit="percentunit", span=12,
+        ).height(10)
+    )
+    board.with_panel(
+        series(
+            "Traffic share by engine rank",
+            "Share of routing selections within each model and role, split by instance and data-parallel rank.",
+            [foretoken_query(f"({shares}) and on(namespace,model_group,data_parallel_rank) ({selected_ranks})", "{{model_name}} / {{model_role}} / {{model_group}} / rank {{data_parallel_rank}}")],
+            unit="percentunit", span=12,
+        ).height(10)
+    )
+    board.with_panel(
         series(
             "Routing outcomes",
             "Selection results by workflow round. A selection failure is not an HTTP status; "
             "a request can involve several rounds.",
             [
                 foretoken_query(
-                    f"sum by(round,outcome) (rate(foretoken_router_selections_total{{{ROUTER}}}[$__rate_interval]))",
-                    "{{round}} / {{outcome}}",
+                    f"sum by(model_name,round,outcome) (rate(foretoken_router_selections_total{{{ROUTER}}}[$__rate_interval]))",
+                    "{{model_name}} / {{round}} / {{outcome}}",
                 )
             ],
             unit="reqps",
             span=8,
         )
     )
-    routing.with_panel(
+    board.with_panel(
         series(
             "Routing stage latency",
             "P99 filter, scorer and picker execution time, aggregated from histogram buckets "
             "across selected Frontend replicas.",
             [
                 foretoken_query(
-                    "histogram_quantile(0.99, sum by(round,stage,algorithm,le) "
+                    "histogram_quantile(0.99, sum by(model_name,round,stage,algorithm,le) "
                     f"(rate(foretoken_router_stage_duration_seconds_bucket{{{ROUTER}}}[$__rate_interval])))",
-                    "{{round}} / {{stage}} / {{algorithm}}",
+                    "{{model_name}} / {{round}} / {{stage}} / {{algorithm}}",
                 )
             ],
             unit="s",
             span=8,
         )
     )
-    routing.with_panel(
+    board.with_panel(
         series(
-            "Routing candidates",
+            "Eligible instances and ranks",
             "Mean available, filtered and selectable candidate counts. Selectable counts include data-parallel ranks.",
             [
                 foretoken_query(
-                    f"sum by(round,stage) (rate(foretoken_router_candidates_sum{{{ROUTER}}}[$__rate_interval])) "
-                    f"/ sum by(round,stage) (rate(foretoken_router_candidates_count{{{ROUTER}}}[$__rate_interval]))",
-                    "{{round}} / {{stage}}",
+                    f"sum by(model_name,round,stage) (rate(foretoken_router_candidates_sum{{{ROUTER}}}[$__rate_interval])) "
+                    f"/ (sum by(model_name,round,stage) (rate(foretoken_router_candidates_count{{{ROUTER}}}[$__rate_interval])) > 0)",
+                    "{{model_name}} / {{round}} / {{stage}}",
                 )
             ],
             unit="short",
             span=8,
         )
     )
-    board.with_row(routing)
+    board.with_row(dashboard.Row("Shared frontend"))
+    board.with_panel(
+        headline(
+            "Frontend scrape targets",
+            "Prometheus targets currently reporting for the selected Frontend services.",
+            f"sum(foretoken:frontend_up:sum{{{FRONTEND}}})",
+            color=None,
+            thresholds=steps((None, RED), (1, GREEN)),
+        )
+    )
+    board.with_panel(
+        headline(
+            "Frontend response starts / s",
+            "Frontend responses started per second over the selected rate window.",
+            f"sum({frontend_request_rates})",
+            unit="reqps",
+            interval="5s",
+        )
+    )
+    board.with_panel(
+        headline(
+            "Frontend HTTP 5xx ratio",
+            "HTTP responses that started with 5xx divided by all started responses. "
+            "Streaming failures after headers are not included.",
+            f"(sum({frontend_5xx_rates}) or 0 * sum({frontend_request_rates})) "
+            f"/ (sum({frontend_request_rates}) > 0)",
+            unit="percentunit",
+            color=None,
+            thresholds=steps((None, GREEN), (0.01, AMBER), (0.05, RED)),
+            interval="5s",
+        )
+    )
+    board.with_panel(
+        headline(
+            "Frontend queued requests",
+            "Requests waiting for frontend admission to a scaling target.",
+            f"sum(foretoken:frontend_upstream_queued_requests:sum{{{FRONTEND}}})",
+            color=None,
+            thresholds=steps((None, GREEN), (1, ORANGE)),
+        )
+    )
+    board.with_panel(
+        series(
+            "Frontend responses by HTTP status",
+            "Frontend response starts grouped by HTTP status class.",
+            [foretoken_query(f"sum by(status) ({frontend_request_rates})", "{{status}}")],
+            unit="reqps",
+            span=6,
+            colors={"2xx": GREEN, "4xx": ORANGE, "5xx": RED},
+            stack=True,
+        )
+    )
+    board.with_panel(
+        series(
+            "Frontend responses by endpoint",
+            "Frontend response starts grouped by HTTP endpoint.",
+            [foretoken_query(f"sum by(handler) ({frontend_request_rates})", "{{handler}}")],
+            unit="reqps",
+            span=6,
+            stack=True,
+        )
+    )
+    board.with_panel(
+        latency(
+            frontend_metric(
+                "http_request_duration_seconds_bucket",
+                extra='handler=~"/v1/(chat/completions|completions|generate)"',
+                rate=True,
+            ),
+            "Frontend response-header latency",
+            "Time, in seconds, until the Frontend handler produces HTTP response headers. "
+            "This excludes SSE body delivery; it is neither TTFT nor full-stream duration.",
+            unit="suffix: s",
+            span=6,
+            dimensions="",
+        )
+    )
+    board.with_panel(
+        series(
+            "Frontend admission queue",
+            "Requests waiting for runtime preparation or backend dispatch, grouped by scaling-target kind.",
+            [
+                query(
+                    f"sum by(target_kind) (foretoken:frontend_upstream_queued_requests:sum{{{FRONTEND}}})",
+                    "{{target_kind}}",
+                )
+            ],
+            unit="short",
+            span=6,
+            colors={"Pool": BLUE, "EPDPipelineScope": ORANGE},
+        )
+    )
 
+    board.with_panel(
+        series(
+            "Frontend cache-index health",
+            "Healthy KV event sources divided by configured sources. Disabled or unavailable indexing reports zero.",
+            [query(f"foretoken:frontend_kv_index_source_health_ratio:min{{{FRONTEND}}}", "{{frontend_service}}")],
+            unit="percentunit",
+            span=8,
+        )
+    )
     control_plane = dashboard.Row("Control plane")
     control_plane.with_panel(
         series(
@@ -1093,8 +1099,7 @@ def build() -> dashboard_models.Dashboard:
     control_plane.with_panel(
         series(
             "Controller workqueues",
-            "Queued reconciliations. Current replica counts are deduplicated rather than added "
-            "across controller replicas.",
+            'Queued reconciliations, deduplicated across controller replicas.',
             [foretoken_query(f"max by(name) (workqueue_depth{{{CONTROLLER}}})", "{{name}}")],
             unit="short",
             span=8,

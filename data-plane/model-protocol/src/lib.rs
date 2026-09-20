@@ -3,6 +3,9 @@
 
 //! Versioned internal HTTP contract for already-tokenized vLLM requests.
 
+mod kv_hash;
+pub use kv_hash::normalized_kv_block_hash;
+
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -208,6 +211,8 @@ pub const KV_OBSERVATION_TIMEOUT: std::time::Duration = std::time::Duration::fro
 pub struct KvSharedPrefixRequest {
     pub prompt_token_ids: Vec<u32>,
     pub dp_rank: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_salt: Option<String>,
 }
 
 /// A live connector observation, not an event-index entry or a cache lease.
@@ -216,6 +221,7 @@ pub struct KvSharedPrefixRequest {
 pub struct KvSharedPrefixResponse {
     pub model_group_id: String,
     pub scope_id: String,
+    pub placement: KvPlacement,
     pub matched_tokens: usize,
     pub block_size: usize,
 }
@@ -265,8 +271,8 @@ pub struct KvPlacement {
     pub locality: KvCacheLocality,
 }
 
-/// Complete semantic namespace for request-side normalized hashes. A missing request discriminator
-/// (LoRA, multimodal input, cache salt, or unknown extra cache key) is unsupported, never a miss.
+/// Model and layout namespace for normalized hashes. Cache salt enters the root block hash;
+/// unsupported LoRA, multimodal, and unknown extra cache keys never produce token-only matches.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct KvPartition {

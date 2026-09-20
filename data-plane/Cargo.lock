@@ -1272,6 +1272,8 @@ dependencies = [
 name = "foretoken-model-protocol"
 version = "0.0.1"
 dependencies = [
+ "base64 0.22.1",
+ "blake3",
  "serde",
  "serde_json",
  "vllm-engine-core-client",
@@ -1332,6 +1334,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+ "tracing",
  "vllm-llm",
 ]
 

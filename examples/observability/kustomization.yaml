@@ -7,11 +7,3 @@ resources:
   - ../quickstart
 patches:
   - path: observability.yaml
-  # Keep the base deployment's data directory when using this overlay.
-  - target:
-      kind: RuntimeCache
-      name: models
-    patch: |-
-      - op: replace
-        path: /spec/directory
-        value: ../quickstart/data

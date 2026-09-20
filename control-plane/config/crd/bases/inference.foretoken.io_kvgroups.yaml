@@ -239,19 +239,19 @@ spec:
                 - name
                 - uid
                 type: object
-              masterAdminPort:
-                format: int32
-                maximum: 65535
-                minimum: 1
-                type: integer
-              masterRPCPort:
-                format: int32
-                maximum: 65535
-                minimum: 1
-                type: integer
-              masterServiceDNS:
-                description: MasterServiceDNS is the namespaced ClusterIP Service
-                  DNS name resolved by KVPool.
+              masterAdminEndpoint:
+                description: MasterAdminEndpoint resolves through the leader-only
+                  Kubernetes Service.
+                minLength: 1
+                type: string
+              masterClusterID:
+                description: MasterClusterID selects the native HA namespace when
+                  MasterServerAddress uses etcd discovery.
+                type: string
+              masterServerAddress:
+                description: |-
+                  MasterServerAddress is the complete native Mooncake Master entry. It is a
+                  Service address in single-Master mode or an etcd:// entry in HA mode.
                 minLength: 1
                 type: string
               ordinal:
@@ -288,8 +288,7 @@ spec:
             required:
             - client
             - kvPoolRef
-            - masterRPCPort
-            - masterServiceDNS
+            - masterServerAddress
             - ordinal
             - revision
             - timeouts

@@ -20,14 +20,20 @@ def request_series(
     measurements: list[RequestMeasurement], *, stream: bool
 ) -> Iterator[dict[str, Any]]:
     """Yield each logical request in stable send order, including failures."""
-    for index, item in enumerate(sorted(measurements, key=lambda item: item.started_at), 1):
+    for index, item in enumerate(
+        sorted(measurements, key=lambda item: item.started_at), 1
+    ):
         row = {
             REQUEST_INDEX: index,
             "Requests/E2EL (s)": item.latency,
-            "Requests/Input tokens": item.input_tokens,
-            "Requests/Output tokens": item.output_tokens,
             "Requests/Success": int(item.succeeded),
         }
+        if item.input_tokens is not None:
+            row["Requests/Input tokens"] = item.input_tokens
+        if item.output_tokens is not None:
+            row["Requests/Output tokens"] = item.output_tokens
+        if item.cached_input_tokens is not None:
+            row["Requests/Cached input tokens"] = item.cached_input_tokens
         if stream and item.succeeded:
             if item.ttft is not None:
                 row["Requests/TTFT (s)"] = item.ttft
@@ -42,6 +48,7 @@ def cumulative_series(
     """Yield running aggregates in request-completion order on the elapsed-time axis."""
     completed = succeeded = 0
     input_tokens = output_tokens = 0
+    input_tokens_complete = output_tokens_complete = True
     latency_total = ttft_total = tpot_total = itl_total = 0.0
     ttft_count = tpot_count = itl_count = 0
     ordered = sorted(
@@ -52,8 +59,14 @@ def cumulative_series(
         completed += 1
         if item.succeeded:
             succeeded += 1
-            input_tokens += item.input_tokens
-            output_tokens += item.output_tokens
+            if item.input_tokens is None:
+                input_tokens_complete = False
+            else:
+                input_tokens += item.input_tokens
+            if item.output_tokens is None:
+                output_tokens_complete = False
+            else:
+                output_tokens += item.output_tokens
             latency_total += item.latency
             if stream:
                 if item.ttft is not None:
@@ -74,16 +87,25 @@ def cumulative_series(
             "Cumulative/Success rate (%)": 100.0 * succeeded / completed,
         }
         if succeeded:
-            row["Cumulative/Mean input tokens"] = input_tokens / succeeded
-            row["Cumulative/Mean output tokens"] = output_tokens / succeeded
+            if input_tokens_complete:
+                row["Cumulative/Mean input tokens"] = input_tokens / succeeded
+            if output_tokens_complete:
+                row["Cumulative/Mean output tokens"] = output_tokens / succeeded
             row["Cumulative/Mean E2EL (s)"] = latency_total / succeeded
         if elapsed > 0:
             row["Cumulative/Request throughput (req/s)"] = succeeded / elapsed
-            row["Cumulative/Input token throughput (tokens/s)"] = input_tokens / elapsed
-            row["Cumulative/Output token throughput (tokens/s)"] = output_tokens / elapsed
-            row["Cumulative/Total token throughput (tokens/s)"] = (
-                input_tokens + output_tokens
-            ) / elapsed
+            if input_tokens_complete:
+                row["Cumulative/Input token throughput (tokens/s)"] = (
+                    input_tokens / elapsed
+                )
+            if output_tokens_complete:
+                row["Cumulative/Output token throughput (tokens/s)"] = (
+                    output_tokens / elapsed
+                )
+            if input_tokens_complete and output_tokens_complete:
+                row["Cumulative/Total token throughput (tokens/s)"] = (
+                    input_tokens + output_tokens
+                ) / elapsed
         if ttft_count:
             row["Cumulative/Mean TTFT (s)"] = ttft_total / ttft_count
         if tpot_count:
@@ -143,14 +165,22 @@ def time_series(
             "Time/Successful requests in window": len(successful),
             "Time/Failed requests in window": len(rows) - len(successful),
             "Time/Request throughput (req/s)": len(successful) / width,
-            "Time/Completed input tokens per second": sum(item.input_tokens for item in successful) / width,
-            "Time/Completed output tokens per second": sum(item.output_tokens for item in successful) / width,
             "Time/Mean in-flight requests": area / width,
         }
+        if all(item.input_tokens is not None for item in successful):
+            row["Time/Completed input tokens per second"] = (
+                sum(int(item.input_tokens) for item in successful) / width
+            )
+        if all(item.output_tokens is not None for item in successful):
+            row["Time/Completed output tokens per second"] = (
+                sum(int(item.output_tokens) for item in successful) / width
+            )
         if rows:
             row["Time/Failure rate (%)"] = 100 * (len(rows) - len(successful)) / len(rows)
         if successful:
-            row["Time/E2EL p95 (s)"] = percentile_summary([item.latency for item in successful])["p95"]
+            row["Time/E2EL p95 (s)"] = percentile_summary(
+                [item.latency for item in successful]
+            )["p95"]
             if stream:
                 timing_fields = (
                     ("ttft", "TTFT", 1.0, "s"),

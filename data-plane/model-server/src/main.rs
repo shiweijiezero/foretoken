@@ -15,6 +15,7 @@ use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
 use foretoken_model_server::config::RuntimeConfig;
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
+use foretoken_model_server::managed_engine::ManagedEngine;
 use foretoken_model_server::profiling;
 use foretoken_model_server::runtime_cache;
 use foretoken_model_server::runtime_transport::LOOPBACK_HOST;
@@ -26,7 +27,7 @@ use vllm_engine_core_client::{
     EngineCoreClient, EngineCoreClientConfig, EngineCoreProtocol, TransportMode,
 };
 use vllm_llm::Llm;
-use vllm_managed_engine::{ManagedEngineHandle, allocate_handshake_port};
+use vllm_managed_engine::allocate_handshake_port;
 
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
@@ -50,6 +51,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             cache,
             required_env(MODEL_GROUP_UID_ENV)?,
             workers,
+            config.launch.profiling.engine,
+            config.launch.python_executable(),
         ))
     } else {
         None
@@ -330,9 +333,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         warn!(%error, "could not shut down EngineCore client cleanly");
     }
     let remaining = deadline.saturating_duration_since(Instant::now());
-    if let Err(error) = engine.shutdown(remaining).await {
-        warn!(%error, "could not shut down managed EngineCore cleanly");
-    }
+    engine.shutdown(remaining).await.map_err(io::Error::other)?;
     health.set_process_alive(false);
     if let Some(profiler) = &mut profiler {
         profiler.engine_stopped("runtime terminated").await;
@@ -465,7 +466,7 @@ async fn spawn_engine_attempt(
     profiling: Option<&profiling::Config>,
     mode: runtime_cache::Mode,
     startup_deadline: Instant,
-) -> Result<(ManagedEngineHandle, EngineCoreProtocol, u16), EngineStartupFailure> {
+) -> Result<(ManagedEngine, EngineCoreProtocol, u16), EngineStartupFailure> {
     let mut environment = if let Some(cache) = cache {
         cache.set_mode(mode);
         cache
@@ -482,8 +483,10 @@ async fn spawn_engine_attempt(
             cache_mode_failure(mode, "profiling storage preparation failed", error)
         })?;
     }
-    if config.launch.shared_prefix_lookup() {
-        let mut python_paths = vec![std::path::PathBuf::from(shared_kv::PYTHON_MODULE_PATH)];
+    if config.launch.shared_prefix_lookup()
+        || config.launch.profiling.engine == profiling::Engine::Mctracer
+    {
+        let mut python_paths = vec![std::path::PathBuf::from("/opt/foretoken/python")];
         if let Some(existing) = std::env::var_os("PYTHONPATH") {
             python_paths.extend(std::env::split_paths(&existing));
         }
@@ -493,6 +496,8 @@ async fn spawn_engine_attempt(
             "PYTHONPATH".into(),
             python_path.to_string_lossy().into_owned(),
         ));
+    }
+    if config.launch.shared_prefix_lookup() {
         environment.push((
             shared_kv::LOOKUP_ENDPOINT_ENV.into(),
             shared_kv::lookup_endpoint("*", 0),
@@ -533,6 +538,11 @@ async fn spawn_engine_attempt(
         && let Some(profile) = profiling
     {
         managed_engine.python_args.push(profile.engine_argument());
+        if config.launch.profiling.engine == profiling::Engine::Mctracer {
+            managed_engine
+                .python_args
+                .push("--worker-cls=foretoken_mctracer.Worker".into());
+        }
     }
     let protocol_timeout = startup_deadline.saturating_duration_since(Instant::now());
     if protocol_timeout.is_zero() {
@@ -551,7 +561,10 @@ async fn spawn_engine_attempt(
         ))
     })?
     .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
-    let engine = ManagedEngineHandle::spawn_with_env(managed_engine, environment)
+    let mut command = managed_engine.to_command();
+    command.envs(environment);
+    let instrumentation = profiling.filter(|_| mode == runtime_cache::Mode::Persistent);
+    let engine = ManagedEngine::spawn(command, instrumentation)
         .await
         .map_err(|error| {
             classify_engine_startup_failure(
@@ -571,7 +584,7 @@ async fn start_engine_attempt(
     mode: runtime_cache::Mode,
     startup_deadline: Instant,
     cache_server: &mut Option<tokio::task::JoinHandle<io::Result<()>>>,
-) -> Result<(ManagedEngineHandle, EngineCoreClient), EngineStartupFailure> {
+) -> Result<(ManagedEngine, EngineCoreClient), EngineStartupFailure> {
     let (engine, engine_protocol, handshake_port) =
         spawn_engine_attempt(config, cache, profiling, mode, startup_deadline).await?;
     // vLLM keeps its single EngineCore handshake local even when TP/PP spans nodes.
@@ -616,7 +629,11 @@ async fn start_engine_attempt(
     match client {
         Ok(client) => Ok((engine, client)),
         Err(error) => {
-            let _ = engine.shutdown(config.launch.drain_timeout()).await;
+            // Failed cleanup must end this runtime, not start a temporary-cache retry beside the old engine.
+            engine
+                .shutdown(config.launch.drain_timeout())
+                .await
+                .map_err(|reason| EngineStartupFailure::Other(io::Error::other(reason)))?;
             Err(error)
         }
     }

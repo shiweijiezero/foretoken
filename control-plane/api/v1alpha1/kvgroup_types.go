@@ -56,18 +56,19 @@ type KVGroupSpec struct {
 	Revision string `json:"revision"`
 	// +kubebuilder:validation:Minimum=0
 	Ordinal int32 `json:"ordinal"`
-	// MasterServiceDNS is the namespaced ClusterIP Service DNS name resolved by KVPool.
+	// MasterServerAddress is the complete native Mooncake Master entry. It is a
+	// Service address in single-Master mode or an etcd:// entry in HA mode.
 	// +kubebuilder:validation:MinLength=1
-	MasterServiceDNS string `json:"masterServiceDNS"`
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	MasterRPCPort int32 `json:"masterRPCPort"`
+	MasterServerAddress string `json:"masterServerAddress"`
+	// MasterClusterID selects the native HA namespace when MasterServerAddress uses etcd discovery.
 	// +optional
-	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=65535
-	MasterAdminPort int32               `json:"masterAdminPort,omitempty"`
-	Client          KVGroupClientConfig `json:"client"`
-	Timeouts        KVTimeouts          `json:"timeouts"`
+	MasterClusterID string `json:"masterClusterID,omitempty"`
+	// MasterAdminEndpoint resolves through the leader-only Kubernetes Service.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	MasterAdminEndpoint string              `json:"masterAdminEndpoint,omitempty"`
+	Client              KVGroupClientConfig `json:"client"`
+	Timeouts            KVTimeouts          `json:"timeouts"`
 }
 
 // +enum

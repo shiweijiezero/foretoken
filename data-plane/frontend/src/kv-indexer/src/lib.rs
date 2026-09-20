@@ -41,6 +41,8 @@ pub struct KvPrefixLookup<'a> {
     pub data_parallel_rank: u32,
     /// Prompt tokens hashed by the selected locality index.
     pub prompt_token_ids: &'a [u32],
+    /// Cache identity already attached to the generation request; not an authentication claim.
+    pub cache_salt: Option<&'a str>,
 }
 
 impl<'a> KvPrefixLookup<'a> {
@@ -53,6 +55,7 @@ impl<'a> KvPrefixLookup<'a> {
             route_target_id,
             data_parallel_rank,
             prompt_token_ids,
+            cache_salt: None,
         }
     }
 }

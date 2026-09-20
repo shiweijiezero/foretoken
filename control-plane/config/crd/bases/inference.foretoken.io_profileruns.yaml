@@ -75,6 +75,8 @@ spec:
                   runtime.
                 enum:
                 - pytorch
+                - nsight
+                - mctracer
                 type: string
               modelServiceRef:
                 description: ProfileServiceReference selects one existing ModelService

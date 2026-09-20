@@ -1,0 +1,38 @@
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/offloading/events.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/offloading/events.py
+@@ -29,6 +29,7 @@
+ from vllm.logger import init_logger
+ from vllm.v1.core.kv_cache_utils import (
+     BlockHash,
++    generate_block_hash_extra_keys,
+     maybe_convert_block_hash,
+     resolve_block_hashes,
+ )
+@@ -295,6 +296,18 @@
+         tok_end = tok_start + group_config.tokens_per_chunk
+         assert tok_end <= len(req.all_token_ids)
+         token_ids = tuple(req.all_token_ids[tok_start:tok_end])
++        extra_keys: list[tuple[Any, ...] | None] = []
++        curr_mm_idx = 0
++        for block_start in range(
++            tok_start, tok_end, group_config.tokens_per_block
++        ):
++            block_extra_keys, curr_mm_idx = generate_block_hash_extra_keys(
++                req,
++                block_start,
++                block_start + group_config.tokens_per_block,
++                curr_mm_idx,
++            )
++            extra_keys.append(block_extra_keys)
+
+         lora_id: int | None = None
+         lora_name: str | None = None
+@@ -309,7 +322,7 @@
+             block_size=group_config.tokens_per_block,
+             lora_id=lora_id,
+             lora_name=lora_name,
+-            extra_keys=None,
++            extra_keys=tuple(extra_keys),
+             group_idx=group_config.group_idx,
+             kv_cache_spec=group_config.kv_event_group_spec,
+         )

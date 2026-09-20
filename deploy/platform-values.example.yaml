@@ -4,6 +4,15 @@
 # Copy this file and replace the image and GPU values with settings that exist
 # in your cluster. The registry must be reachable by workload nodes. Select
 # frontend topology through foretoken install options rather than this file.
+
+# Enable Slack notifications with a webhook Secret in foretoken-platform.
+# observability:
+#   notifications:
+#     slack:
+#       webhookSecret:
+#         name: foretoken-slack-webhook
+#         key: url
+
 image:
   repository: registry.example.com/foretoken/control-plane
   tag: dev

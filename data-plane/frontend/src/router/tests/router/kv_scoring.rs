@@ -61,17 +61,17 @@ fn prefix(tokens: usize, tier: KvStorageTier, locality: KvCacheLocality) -> KvPr
     }
 }
 
-// Protects cache locality from requests whose cache identity cannot be shared safely.
+// Preserves explicit cache isolation and honors requests that disable prefix reuse.
 #[test]
-fn kv_lookup_rejects_requests_with_separate_cache_semantics() {
+fn kv_lookup_preserves_salt_and_rejects_disabled_prefix_cache() {
     let mut salted = request();
     Arc::get_mut(&mut salted.generate_request)
         .expect("test request has one owner")
         .cache_salt = Some("tenant-a".into());
-    assert!(matches!(
-        salted.kv_prefix_lookup("target", 0),
-        Err(KvPrefixUnavailableReason::UnsupportedRequest)
-    ));
+    assert_eq!(
+        salted.kv_prefix_lookup("target", 0).unwrap().cache_salt,
+        Some("tenant-a")
+    );
 
     let mut disabled = request();
     Arc::get_mut(&mut disabled.generate_request)

@@ -191,6 +191,10 @@ type ModelGroupRuntime struct {
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
 
+	// Profiling fixes the instrumentation prepared at runtime startup.
+	// +optional
+	Profiling *ProfilingConfig `json:"profiling,omitempty"`
+
 	// InternalGenerateRequestBodyLimitBytes is the group-local generate request
 	// body limit resolved from the ModelService specification.
 	// +kubebuilder:validation:Minimum=1048576

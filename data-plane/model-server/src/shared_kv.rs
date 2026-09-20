@@ -3,7 +3,7 @@
 
 //! Reads shared prefix observations from each DP rank's active native Store connector.
 
-use foretoken_model_protocol::{KvSharedPrefixRequest, KvSharedPrefixResponse};
+use foretoken_model_protocol::{KvPlacement, KvSharedPrefixRequest, KvSharedPrefixResponse};
 use serde::Deserialize;
 use zeromq::prelude::{Socket, SocketRecv, SocketSend};
 
@@ -14,13 +14,15 @@ pub fn lookup_endpoint(host: &str, dp_rank: u32) -> String {
     format!("tcp://{host}:{}", LOOKUP_BASE_PORT + dp_rank)
 }
 pub const LOOKUP_ENDPOINT_ENV: &str = "FORETOKEN_SHARED_KV_LOOKUP_ENDPOINT";
-pub const CONNECTOR_MODULE: &str = "foretoken_mooncake";
-pub const PYTHON_MODULE_PATH: &str = "/opt/foretoken/python";
+pub const MOONCAKE_CONNECTOR_MODULE: &str = "foretoken_mooncake";
+pub const OFFLOADING_CONNECTOR_MODULE: &str =
+    "vllm.distributed.kv_transfer.kv_connector.v1.offloading_connector";
 
 #[derive(Clone)]
 pub struct SharedKvLookup {
     model_group_id: String,
     scope_id: String,
+    placement: KvPlacement,
     endpoints: Vec<String>,
 }
 
@@ -38,6 +40,10 @@ impl SharedKvLookup {
         scope_id: String,
         config: &crate::config::RuntimeConfig,
     ) -> Self {
+        let placement = config
+            .launch
+            .shared_prefix_placement()
+            .expect("shared KV lookup requires a connector-owned placement");
         let endpoints = (0..config.launch.parallelism.dp)
             .map(|rank| {
                 let host = config.member.as_ref().map_or_else(
@@ -54,6 +60,7 @@ impl SharedKvLookup {
         Self {
             model_group_id,
             scope_id,
+            placement,
             endpoints,
         }
     }
@@ -82,6 +89,7 @@ impl SharedKvLookup {
         Some(KvSharedPrefixResponse {
             model_group_id: self.model_group_id.clone(),
             scope_id: self.scope_id.clone(),
+            placement: self.placement,
             matched_tokens,
             block_size: response.block_size,
         })

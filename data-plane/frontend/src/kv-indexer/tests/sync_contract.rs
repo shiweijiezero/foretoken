@@ -28,6 +28,7 @@ fn source(endpoint: String) -> KvEventSourceConfig {
         spec_kind: "full".into(),
         sliding_window: None,
         group_idx: None,
+        match_all_groups: false,
     }
 }
 
@@ -41,6 +42,7 @@ fn runtime(endpoint: String) -> KvRuntimeConfig {
                 readable_placements: Default::default(),
                 can_restore_or_transfer: false,
                 shared_lookup_scope: None,
+                shared_lookup_placement: None,
             },
         )]),
         requested_implementation: KvLocalityIndexImplementation::Auto,
@@ -110,6 +112,7 @@ fn route_binding_is_exact_and_auto_status_reports_observed_topology() {
                 readable_placements: Default::default(),
                 can_restore_or_transfer: false,
                 shared_lookup_scope: None,
+                shared_lookup_placement: None,
             },
         )]),
         requested_implementation: KvLocalityIndexImplementation::Auto,
@@ -171,6 +174,7 @@ fn auto_resolution_uses_owner_scope_and_readable_tier_capability() {
                     }]),
                     can_restore_or_transfer: true,
                     shared_lookup_scope: None,
+                    shared_lookup_placement: None,
                 },
             )]),
             requested_implementation: KvLocalityIndexImplementation::Auto,
@@ -247,6 +251,7 @@ fn multi_rank_route_binding_requires_an_explicit_exact_rank() {
                     readable_placements: Default::default(),
                     can_restore_or_transfer: false,
                     shared_lookup_scope: None,
+                    shared_lookup_placement: None,
                 },
             )]),
             requested_implementation: KvLocalityIndexImplementation::Auto,
@@ -258,6 +263,7 @@ fn multi_rank_route_binding_requires_an_explicit_exact_rank() {
         route_target_id: "route",
         data_parallel_rank,
         prompt_token_ids: &[],
+        cache_salt: None,
     };
     assert_eq!(
         indexer.prefix_matches(lookup(2)),

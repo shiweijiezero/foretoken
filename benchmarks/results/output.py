@@ -18,6 +18,7 @@ from typing import Any, Optional, Protocol
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
 from benchmarks.results.console import log_benchmark_summary
+from benchmarks.results.environment import client_environment, serving_environment
 from benchmarks.results.metrics import RequestMeasurement
 from benchmarks.results.replicas import KubernetesReplicaObserver
 from benchmarks.results.wandb import WandbBenchmarkRun
@@ -96,6 +97,7 @@ class LocalDirectorySink:
                     "tpot": item.tpot if run.metrics["stream"] else None,
                     "input_tokens": item.input_tokens,
                     "output_tokens": item.output_tokens,
+                    "cached_input_tokens": item.cached_input_tokens,
                     "inter_token_latencies": list(item.itl_samples) if run.metrics["stream"] else [],
                     "conversation_id": item.conversation_id,
                     "turn": item.turn,
@@ -222,8 +224,7 @@ def build_benchmark_run_record(
             "rate": load_record["rate"],
         },
     }
-    if benchmark.is_multi_turn:
-        record["multi_turn"] = True
+    if not benchmark.trace.trace_selector:
         record["max_turns"] = workload.max_turns
     if workload.dataset_selectors == ["random"]:
         record["random_seed"] = workload.random_seed
@@ -258,6 +259,7 @@ class ResultOutputs:
         self._resources = ExitStack()
         self._execution_dir: str | None = None
         self._replica_observer: KubernetesReplicaObserver | None = None
+        self._environment: dict[str, Any] | None = None
 
     @property
     def execution_dir(self) -> str:
@@ -299,6 +301,12 @@ class ResultOutputs:
             for sink in sinks:
                 self._resources.callback(sink.close)
                 sink.open(self.record)
+            if outputs.includes("local"):
+                self._environment = {
+                    "client": client_environment(),
+                    "before": serving_environment(self.service),
+                }
+                write_json(self.execution_dir, "environment.json", self._environment)
             if self.service.model_service_refs and (
                 outputs.includes("local") or outputs.includes("wandb")
             ):
@@ -354,5 +362,10 @@ class ResultOutputs:
                         "replica_observations.json",
                         observations,
                     )
+        if self._environment is not None:
+            self._environment["after"] = serving_environment(self.service)
+            run.artifacts["environment"] = write_json(
+                self.execution_dir, "environment.json", self._environment,
+            )
         for sink in self._sinks:
             sink.publish(run)

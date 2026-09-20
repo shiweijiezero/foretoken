@@ -39,6 +39,7 @@ func TestInvalidPDRouteWithdrawsOnlyItsService(t *testing.T) {
 	aggregatePool.Spec.Template.Features.Tools = true
 	aggregateGroup := modelGroup(aggregatePool, "quickstart-qwen3-0.6b-default-revision-1-default-0", 0)
 	aggregateGroup.Spec.Features.Tools = true
+	aggregateGroup.Spec.KVRuntime = &inferencev1alpha1.ModelGroupKVRuntimeConfig{Offload: &inferencev1alpha1.ModelGroupKVOffloadRuntime{CPUBytes: 1 << 30}}
 	markPoolRoutingReady(aggregatePool, "r1")
 	markServiceRoutingReady(aggregate, aggregatePool)
 	markGroupReady(aggregateGroup)
@@ -167,6 +168,45 @@ func assertSnapshotGroupEndpoint(t *testing.T, ctx context.Context, c client.Cli
 		return
 	}
 	t.Fatalf("routing endpoint for Group %q was not published", group.Name)
+}
+
+func assertSnapshotKVPlacements(t *testing.T, ctx context.Context, c client.Client, namespace string, group *inferencev1alpha1.ModelGroup, expected []string, canRestore bool, expectedLookup string) {
+	t.Helper()
+	var decoded struct {
+		Groups []struct {
+			RouteTargetID string `json:"route_target_id"`
+			Placements    []struct {
+				Tier     string `json:"tier"`
+				Locality string `json:"locality"`
+			} `json:"kv_readable_placements"`
+			Lookup *struct {
+				Tier     string `json:"tier"`
+				Locality string `json:"locality"`
+			} `json:"kv_lookup_placement"`
+			CanRestore bool `json:"kv_can_restore_or_transfer"`
+		} `json:"groups"`
+	}
+	if err := json.Unmarshal([]byte(servingSnapshotPayload(t, ctx, c, namespace)), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range decoded.Groups {
+		if entry.RouteTargetID != string(group.UID) {
+			continue
+		}
+		actual := make([]string, 0, len(entry.Placements))
+		for _, placement := range entry.Placements {
+			actual = append(actual, placement.Tier+"/"+placement.Locality)
+		}
+		lookup := ""
+		if entry.Lookup != nil {
+			lookup = entry.Lookup.Tier + "/" + entry.Lookup.Locality
+		}
+		if !slices.Equal(actual, expected) || entry.CanRestore != canRestore || lookup != expectedLookup {
+			t.Fatalf("KV route capabilities = %v restore=%t lookup=%q, want %v restore=%t lookup=%q", actual, entry.CanRestore, lookup, expected, canRestore, expectedLookup)
+		}
+		return
+	}
+	t.Fatalf("KV route capabilities for Group %q were not published", group.Name)
 }
 
 func assertSnapshotPoolTargets(t *testing.T, ctx context.Context, c client.Client, namespace string) {

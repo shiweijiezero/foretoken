@@ -106,14 +106,6 @@ func (reconciler *KVPoolReconciler) reconcileGroups(ctx context.Context, pool *i
 		spec := desired
 		spec.Ordinal = group.Spec.Ordinal
 		if !reflect.DeepEqual(group.Spec, spec) {
-			// Resolved Master admin settings can change without changing requester revision.
-			adminPortOnly := group.Spec
-			adminPortOnly.MasterAdminPort = spec.MasterAdminPort
-			if reflect.DeepEqual(adminPortOnly, spec) {
-				retiring = append(retiring, group)
-				materialized = false
-				continue
-			}
 			return kvGroupState{}, fmt.Errorf("KVGroup %q has an unexpected immutable spec", group.Name)
 		}
 		current[group.Spec.Ordinal] = group
@@ -165,12 +157,15 @@ func desiredKVGroupSpec(pool *inferencev1alpha1.KVPool, service *inferencev1alph
 	if client.Protocol == "rdma" && client.RDMAResourceName == "" {
 		return inferencev1alpha1.KVGroupSpec{}, fmt.Errorf("KVPool %q requires rdmaResourceName", pool.Name)
 	}
+	connection, err := resolveKVMasterConnection(service)
+	if err != nil {
+		return inferencev1alpha1.KVGroupSpec{}, err
+	}
 	_, _, _, masterService := kvMasterNames(service)
-	rpcPort, _, _ := masterPorts(service.Spec.Master)
-	masterDNS := fmt.Sprintf("%s.%s.svc.cluster.local", masterService, pool.Namespace)
-	adminPort := pool.Spec.MasterAdminPort
-	if client.StorageRegistration == nil || !client.StorageRegistration.Enabled {
-		adminPort = 0
+	_, _, metricsPort := masterPorts(service.Spec.Master)
+	adminEndpoint := ""
+	if client.StorageRegistration != nil && client.StorageRegistration.Enabled {
+		adminEndpoint = fmt.Sprintf("%s.%s.svc.cluster.local:%d", masterService, pool.Namespace, metricsPort)
 	}
 	var disk *inferencev1alpha1.KVGroupDisk
 	if configured := client.Disk; configured != nil {
@@ -198,14 +193,14 @@ func desiredKVGroupSpec(pool *inferencev1alpha1.KVPool, service *inferencev1alph
 		StorageRegistration: client.StorageRegistration,
 	}
 	return inferencev1alpha1.KVGroupSpec{
-		KVPoolRef:        inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
-		Revision:         pool.Spec.Revision,
-		Ordinal:          0,
-		MasterServiceDNS: masterDNS,
-		MasterRPCPort:    rpcPort,
-		MasterAdminPort:  adminPort,
-		Client:           groupClient,
-		Timeouts:         service.Spec.Timeouts,
+		KVPoolRef:           inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
+		Revision:            pool.Spec.Revision,
+		Ordinal:             0,
+		MasterServerAddress: connection.ServerAddress,
+		MasterClusterID:     connection.ClusterID,
+		MasterAdminEndpoint: adminEndpoint,
+		Client:              groupClient,
+		Timeouts:            service.Spec.Timeouts,
 	}, nil
 }
 

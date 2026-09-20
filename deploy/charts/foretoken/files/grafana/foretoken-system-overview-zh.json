@@ -37,13 +37,13 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "当前正在上报所选 Frontend 服务指标的 Prometheus target 数量。",
+      "description": "当前正在上报所选模型组和角色指标的 Prometheus target 数量。",
       "fieldConfig": {
         "defaults": {
           "color": {
             "mode": "thresholds"
           },
-          "noValue": "0",
+          "noValue": "无数据",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -89,14 +89,14 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(foretoken:frontend_up:sum{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"})",
+          "expr": "sum((foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
           "instant": false,
-          "legendFormat": "Frontend 采集目标",
+          "legendFormat": "模型采集目标",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Frontend 采集目标",
+      "title": "模型采集目标",
       "transparent": false,
       "type": "stat"
     },
@@ -105,27 +105,24 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "当前正在上报所选模型组和角色指标的 Prometheus target 数量。",
+      "description": "所选模型服务器每秒处理的 Prompt token 数。",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
           },
-          "noValue": "0",
+          "noValue": "无数据",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "#d03b3b",
+                "color": "#2a78d6",
                 "value": null
-              },
-              {
-                "color": "#0ca30c",
-                "value": 1
               }
             ]
           },
-          "unit": "short"
+          "unit": "suffix: tok/s"
         },
         "overrides": []
       },
@@ -157,14 +154,2245 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"})",
+          "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:prompt_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
-          "legendFormat": "模型服务器",
+          "interval": "5s",
+          "legendFormat": "Prompt token / s",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "模型服务器",
+      "title": "Prompt token / s",
+      "transparent": false,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所选模型服务器每秒生成的输出 token 数。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#eb6834",
+            "mode": "fixed"
+          },
+          "noValue": "无数据",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#eb6834",
+                "value": null
+              }
+            ]
+          },
+          "unit": "suffix: tok/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 1
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "输出 token / s",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "输出 token / s",
+      "transparent": false,
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所选模型引擎内等待调度的请求，不包含共享前端准入队列。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "无数据",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0ca30c",
+                "value": null
+              },
+              {
+                "color": "#eb6834",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 1
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(label_replace(label_replace(label_replace(vllm:num_requests_waiting{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "引擎排队请求",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "引擎排队请求",
+      "transparent": false,
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "id": 0,
+      "panels": [],
+      "title": "模型服务",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "按模型实例、执行角色和结束原因展示已完成请求。分离式请求会分别在各角色完成一次执行。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 24,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never",
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            }
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 6
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name,model_group,model_role,finished_reason) (label_replace(label_replace(label_replace(rate(vllm:request_success_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_group}} / {{model_role}} / {{finished_reason}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "完成请求速率",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "按模型实例和执行角色展示输入与输出 token 吞吐量。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "suffix: tok/s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Prompt"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#2a78d6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "输出"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#eb6834",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 6
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name,model_group,model_role) (label_replace(label_replace(label_replace(rate(vllm:prompt_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "输入 / {{model_name}} / {{model_group}} / {{model_role}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name,model_group,model_role) (label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "输出 / {{model_name}} / {{model_group}} / {{model_role}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Token 吞吐量",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "正在 vLLM 执行批次中运行或在调度器中等待的请求数。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "运行中"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#2a78d6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "等待中"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#eb6834",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 6
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(vllm:num_requests_running{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "运行中 / {{model_group}} / {{model_role}} / rank {{engine}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(vllm:num_requests_waiting{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "等待中 / {{model_group}} / {{model_role}} / rank {{engine}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "调度器状态",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "将所选引擎的请求样本合并后统计：从前端处理开始到生成完成的耗时，不含下游客户端接收时间；节点时钟须同步。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "decimals": 2,
+          "unit": "suffix: s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.5, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / p50",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / p95",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.99, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / p99",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "端到端延迟 (E2EL)",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "将所选引擎的请求样本合并后统计：从前端处理开始到模型服务器收到首个 token 的耗时，不含下游客户端接收时间。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "decimals": 2,
+          "unit": "suffix: s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 8,
+        "y": 14
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.5, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / p50",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / p95",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.99, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / p99",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "首 token 延迟 (TTFT)",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所选引擎合并后的请求级 TPOT，单位毫秒；每个请求贡献一次平均输出 token 间隔。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "decimals": 2,
+          "unit": "suffix: ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "1000 * histogram_quantile(0.5, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / p50",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "1000 * histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / p95",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "1000 * histogram_quantile(0.99, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / p99",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "1000 * sum by(model_name,model_role) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / (sum by(model_name,model_role) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) > 0)",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / mean",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "每输出 token 耗时 (TPOT)",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所选引擎的输出 token 间隔分布，单位毫秒；每个间隔贡献一次观测。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "decimals": 2,
+          "unit": "suffix: ms"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "1000 * histogram_quantile(0.5, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / p50",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "1000 * histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / p95",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "1000 * histogram_quantile(0.99, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / p99",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Token 间延迟 (ITL)",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "请求在等待调度器、Prefill 和 Decode 阶段的 P95 耗时，单位为秒。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "suffix: s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "queue"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#eda100",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "prefill"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#2a78d6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "decode"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#1baf7a",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 24
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_queue_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / queue",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_prefill_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / prefill",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_decode_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / decode",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "各阶段请求耗时",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所选引擎每秒调度抢占次数；持续抢占表示 KV 缓存压力。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "ops"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "抢占"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#d03b3b",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:num_preemptions_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "抢占",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "抢占",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "随时间变化的单请求 Prompt token 数分布。",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "color": {
+          "exponent": 0,
+          "fill": "",
+          "mode": "scheme",
+          "reverse": false,
+          "scheme": "Blues",
+          "steps": 64
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1e-09
+        },
+        "legend": {
+          "show": true
+        },
+        "selectionMode": "x",
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single"
+        },
+        "yAxis": {
+          "unit": "short"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(le) (label_replace(label_replace(label_replace(rate(vllm:request_prompt_tokens_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "format": "heatmap",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{le}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Prompt 长度",
+      "transparent": false,
+      "type": "heatmap"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "随时间变化的单请求输出 token 数分布。",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "color": {
+          "exponent": 0,
+          "fill": "",
+          "mode": "scheme",
+          "reverse": false,
+          "scheme": "Blues",
+          "steps": 64
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1e-09
+        },
+        "legend": {
+          "show": true
+        },
+        "selectionMode": "x",
+        "showValue": "auto",
+        "tooltip": {
+          "mode": "single"
+        },
+        "yAxis": {
+          "unit": "short"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(le) (label_replace(label_replace(label_replace(rate(vllm:request_generation_tokens_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "format": "heatmap",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{le}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "输出长度",
+      "transparent": false,
+      "type": "heatmap"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "id": 0,
+      "panels": [],
+      "title": "缓存",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "按模型实例和引擎 rank 展示 KV 缓存占用率。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 43
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "legendFormat": "{{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "KV Cache 使用率",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所选引擎的命中 token 数除以查询 token 数。没有查询或指标不可用时不显示比例；本地与外部缓存分别统计。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "local"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#2a78d6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "external"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#1baf7a",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 43
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name,model_role) (label_replace(label_replace(label_replace(rate(vllm:prefix_cache_hits_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / (sum by(model_name,model_role) (label_replace(label_replace(label_replace(rate(vllm:prefix_cache_queries_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) > 0)",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / local",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name,model_role) (label_replace(label_replace(label_replace(rate(vllm:external_prefix_cache_hits_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / (sum by(model_name,model_role) (label_replace(label_replace(label_replace(rate(vllm:external_prefix_cache_queries_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) > 0)",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / external",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Prefix Cache 命中率",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "已挂载 RuntimeCache 文件系统的使用率；未配置 RuntimeCache 的模型组不会产生序列。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 51
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(foretoken:model_server_runtime_cache_usage_ratio:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))",
+          "instant": false,
+          "legendFormat": "{{model_group}} / {{model_role}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "模型文件存储使用率",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "使用 RuntimeCache 的模型服务器进程可用文件系统空间。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 51
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(foretoken:model_server_runtime_cache_available_bytes:min{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))",
+          "instant": false,
+          "legendFormat": "{{model_group}} / {{model_role}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "模型文件存储可用空间",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 59
+      },
+      "id": 0,
+      "panels": [],
+      "title": "加速器与资源",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "每块可关联到 Foretoken 的 GPU 使用率。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 0,
+        "y": 60
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_utilization_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "各设备 GPU 使用率",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "每块可关联到 Foretoken 的 GPU 显存使用率。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 6,
+        "y": 60
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_memory_usage_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "各设备 GPU 显存使用率",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "每块可关联到 Foretoken 的 NVIDIA GPU 功耗。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "watt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 60
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "各设备 GPU 功耗",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "每块可关联到 Foretoken 的 NVIDIA GPU 温度。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 60
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "各设备 GPU 温度",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所选模型实例的模型服务器 Pod 使用的 CPU 核数。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "cores"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "frontend"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#2a78d6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "model-server"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#eb6834",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 68
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(namespace,pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container=\"model-server\"}[$__rate_interval])) and on(namespace,pod) (max by(namespace,pod) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))",
+          "instant": false,
+          "interval": "30s",
+          "legendFormat": "{{namespace}} / {{pod}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "服务 CPU 使用量",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所选模型实例的模型服务器 Pod 工作集内存。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "bytes"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "frontend"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#2a78d6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "model-server"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#eb6834",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 68
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(namespace,pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"model-server\"}) and on(namespace,pod) (max by(namespace,pod) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))",
+          "instant": false,
+          "interval": "30s",
+          "legendFormat": "{{namespace}} / {{pod}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "服务内存使用量",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 76
+      },
+      "id": 0,
+      "panels": [],
+      "title": "路由决策",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "每个模型及执行角色内，各实例获得的路由选择比例。分母为该模型该角色的全部实例；表示选择次数，不是完成请求数。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 77
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(namespace,model_name,model_role,model_group) (((sum by(namespace,model_name,model_role,route_target_id,data_parallel_rank) (rate(foretoken_router_target_selections_total{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\",model_role=~\"$model_role\"}[$__rate_interval]))) * on(namespace,route_target_id) group_left(model_group) (0 * (max by(namespace,route_target_id,model_group) (label_replace(label_replace(up{endpoint=\"model-server\",inference_foretoken_io_model_group_uid!=\"\"}, \"route_target_id\", \"$1\", \"inference_foretoken_io_model_group_uid\", \"(.+)\"), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"))) + 1)) / on(namespace,model_name,model_role) group_left() (sum by(namespace,model_name,model_role) ((sum by(namespace,model_name,model_role,route_target_id,data_parallel_rank) (rate(foretoken_router_target_selections_total{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\",model_role=~\"$model_role\"}[$__rate_interval]))) * on(namespace,route_target_id) group_left(model_group) (0 * (max by(namespace,route_target_id,model_group) (label_replace(label_replace(up{endpoint=\"model-server\",inference_foretoken_io_model_group_uid!=\"\"}, \"route_target_id\", \"$1\", \"inference_foretoken_io_model_group_uid\", \"(.+)\"), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"))) + 1)) > 0)) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / {{model_group}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "各实例路由份额",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "每个模型及执行角色内，按实例和数据并行 rank 展示路由选择份额。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "max": 1,
+          "min": 0,
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 77
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(((sum by(namespace,model_name,model_role,route_target_id,data_parallel_rank) (rate(foretoken_router_target_selections_total{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\",model_role=~\"$model_role\"}[$__rate_interval]))) * on(namespace,route_target_id) group_left(model_group) (0 * (max by(namespace,route_target_id,model_group) (label_replace(label_replace(up{endpoint=\"model-server\",inference_foretoken_io_model_group_uid!=\"\"}, \"route_target_id\", \"$1\", \"inference_foretoken_io_model_group_uid\", \"(.+)\"), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"))) + 1)) / on(namespace,model_name,model_role) group_left() (sum by(namespace,model_name,model_role) ((sum by(namespace,model_name,model_role,route_target_id,data_parallel_rank) (rate(foretoken_router_target_selections_total{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\",model_role=~\"$model_role\"}[$__rate_interval]))) * on(namespace,route_target_id) group_left(model_group) (0 * (max by(namespace,route_target_id,model_group) (label_replace(label_replace(up{endpoint=\"model-server\",inference_foretoken_io_model_group_uid!=\"\"}, \"route_target_id\", \"$1\", \"inference_foretoken_io_model_group_uid\", \"(.+)\"), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"))) + 1)) > 0)) and on(namespace,model_group,data_parallel_rank) (max by(namespace,model_group,data_parallel_rank) (label_replace(0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1, \"data_parallel_rank\", \"$1\", \"engine\", \"(.+)\")))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{model_role}} / {{model_group}} / rank {{data_parallel_rank}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "各引擎 rank 路由份额",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "按工作流轮次统计的选择结果；选择失败不是 HTTP 状态，一个请求可能包含多轮选择。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 87
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name,round,outcome) (rate(foretoken_router_selections_total{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\"}[$__rate_interval]))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{round}} / {{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "路由结果",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "从所选 Frontend 副本直方图桶聚合得到的 Filter、Scorer 与 Picker P99 执行时间。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 87
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "histogram_quantile(0.99, sum by(model_name,round,stage,algorithm,le) (rate(foretoken_router_stage_duration_seconds_bucket{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\"}[$__rate_interval])))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{round}} / {{stage}} / {{algorithm}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "路由阶段延迟",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "可用、过滤后和可选择候选项的平均数量；可选择数量包含数据并行 rank。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 87
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name,round,stage) (rate(foretoken_router_candidates_sum{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\"}[$__rate_interval])) / (sum by(model_name,round,stage) (rate(foretoken_router_candidates_count{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\"}[$__rate_interval])) > 0)",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}} / {{round}} / {{stage}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "候选实例与 rank 数量",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 95
+      },
+      "id": 0,
+      "panels": [],
+      "title": "共享前端",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "当前正在上报所选 Frontend 服务指标的 Prometheus target 数量。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "无数据",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#d03b3b",
+                "value": null
+              },
+              {
+                "color": "#0ca30c",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 96
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "showPercentChange": false,
+        "textMode": "auto",
+        "wideLayout": true
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum(foretoken:frontend_up:sum{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"})",
+          "instant": false,
+          "legendFormat": "前端采集目标",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "前端采集目标",
       "transparent": false,
       "type": "stat"
     },
@@ -180,7 +2408,7 @@
             "fixedColor": "#2a78d6",
             "mode": "fixed"
           },
-          "noValue": "0",
+          "noValue": "无数据",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -197,8 +2425,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 12,
-        "y": 1
+        "x": 6,
+        "y": 96
       },
       "options": {
         "colorMode": "value",
@@ -225,12 +2453,12 @@
           "expr": "sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "请求 / s",
+          "legendFormat": "前端响应开始速率",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "请求 / s",
+      "title": "前端响应开始速率",
       "transparent": false,
       "type": "stat"
     },
@@ -245,7 +2473,7 @@
           "color": {
             "mode": "thresholds"
           },
-          "noValue": "0",
+          "noValue": "无数据",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -270,8 +2498,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 18,
-        "y": 1
+        "x": 12,
+        "y": 96
       },
       "options": {
         "colorMode": "value",
@@ -295,147 +2523,15 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "(sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",status=\"5xx\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) or 0 * sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) / clamp_min(sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")), 1e-9)",
+          "expr": "(sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",status=\"5xx\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) or 0 * sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) / (sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) > 0)",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "5xx 比例",
+          "legendFormat": "前端 HTTP 5xx 比例",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "5xx 比例",
-      "transparent": false,
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "所选模型服务器每秒处理的 Prompt token 数。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "#2a78d6",
-            "mode": "fixed"
-          },
-          "noValue": "0",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#2a78d6",
-                "value": null
-              }
-            ]
-          },
-          "unit": "suffix: tok/s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 0,
-        "y": 5
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:prompt_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "Prompt token / s",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Prompt token / s",
-      "transparent": false,
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "所选模型服务器每秒生成的输出 token 数。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "#eb6834",
-            "mode": "fixed"
-          },
-          "noValue": "0",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#eb6834",
-                "value": null
-              }
-            ]
-          },
-          "unit": "suffix: tok/s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 5
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "输出 token / s",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "输出 token / s",
+      "title": "前端 HTTP 5xx 比例",
       "transparent": false,
       "type": "stat"
     },
@@ -450,7 +2546,7 @@
           "color": {
             "mode": "thresholds"
           },
-          "noValue": "0",
+          "noValue": "无数据",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -471,8 +2567,8 @@
       "gridPos": {
         "h": 4,
         "w": 6,
-        "x": 12,
-        "y": 5
+        "x": 18,
+        "y": 96
       },
       "options": {
         "colorMode": "value",
@@ -498,95 +2594,14 @@
           },
           "expr": "sum(foretoken:frontend_upstream_queued_requests:sum{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"})",
           "instant": false,
-          "legendFormat": "排队请求",
+          "legendFormat": "前端排队请求",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "排队请求",
+      "title": "前端排队请求",
       "transparent": false,
       "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "任一所选模型服务器回退到 Pod 范围的临时缓存时为 1；无值表示所选模型组未使用 RuntimeCache。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "noValue": "未配置",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#0ca30c",
-                "value": null
-              },
-              {
-                "color": "#d03b3b",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 5
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max(foretoken:model_server_runtime_cache_temporary:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"})",
-          "instant": false,
-          "legendFormat": "临时 RuntimeCache",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "临时 RuntimeCache",
-      "transparent": false,
-      "type": "stat"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 9
-      },
-      "id": 0,
-      "panels": [],
-      "title": "Frontend",
-      "type": "row"
     },
     {
       "datasource": {
@@ -663,7 +2678,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 10
+        "y": 100
       },
       "options": {
         "legend": {
@@ -694,7 +2709,7 @@
           "refId": "A"
         }
       ],
-      "title": "按状态统计的请求速率",
+      "title": "前端 HTTP 响应状态",
       "transparent": false,
       "type": "timeseries"
     },
@@ -727,7 +2742,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 10
+        "y": 100
       },
       "options": {
         "legend": {
@@ -758,7 +2773,7 @@
           "refId": "A"
         }
       ],
-      "title": "按端点统计的请求速率",
+      "title": "前端各端点响应速率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -801,7 +2816,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "p90"
+              "options": "p95"
             },
             "properties": [
               {
@@ -831,10 +2846,10 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 6,
         "x": 12,
-        "y": 10
+        "y": 100
       },
       "options": {
         "legend": {
@@ -857,7 +2872,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max(histogram_quantile(0.5, sum by(namespace,frontend_service,handler,le) (label_replace(rate(http_request_duration_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",handler=~\"/v1/(chat/completions|completions|generate)\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))",
+          "expr": "histogram_quantile(0.5, sum by(le) (label_replace(rate(http_request_duration_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",handler=~\"/v1/(chat/completions|completions|generate)\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
           "legendFormat": "p50",
@@ -869,10 +2884,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max(histogram_quantile(0.9, sum by(namespace,frontend_service,handler,le) (label_replace(rate(http_request_duration_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",handler=~\"/v1/(chat/completions|completions|generate)\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))",
+          "expr": "histogram_quantile(0.95, sum by(le) (label_replace(rate(http_request_duration_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",handler=~\"/v1/(chat/completions|completions|generate)\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "p90",
+          "legendFormat": "p95",
           "range": true,
           "refId": "B"
         },
@@ -881,7 +2896,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max(histogram_quantile(0.99, sum by(namespace,frontend_service,handler,le) (label_replace(rate(http_request_duration_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",handler=~\"/v1/(chat/completions|completions|generate)\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))))",
+          "expr": "histogram_quantile(0.99, sum by(le) (label_replace(rate(http_request_duration_seconds_bucket{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",handler=~\"/v1/(chat/completions|completions|generate)\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
           "legendFormat": "p99",
@@ -889,7 +2904,7 @@
           "refId": "C"
         }
       ],
-      "title": "响应开始延迟",
+      "title": "前端响应头延迟",
       "transparent": false,
       "type": "timeseries"
     },
@@ -949,7 +2964,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 10
+        "y": 100
       },
       "options": {
         "legend": {
@@ -979,1348 +2994,7 @@
           "refId": "A"
         }
       ],
-      "title": "准入队列",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 18
-      },
-      "id": 0,
-      "panels": [],
-      "title": "模型服务",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "按结束原因分组的模型服务器成功完成请求速率。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 24,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never",
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            }
-          },
-          "unit": "reqps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 19
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(finished_reason) (label_replace(label_replace(label_replace(rate(vllm:request_success_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "{{finished_reason}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "完成请求速率",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "所选模型服务器的 Prompt 与输出 token 吞吐量。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "suffix: tok/s"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Prompt"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#2a78d6",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "输出"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#eb6834",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 19
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:prompt_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "Prompt",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "输出",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Token 吞吐量",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "正在 vLLM 执行批次中运行或在调度器中等待的请求数。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "short"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "运行中"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#2a78d6",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "等待中"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#eb6834",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 19
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum(label_replace(label_replace(label_replace(vllm:num_requests_running{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "运行中",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum(label_replace(label_replace(label_replace(vllm:num_requests_waiting{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "等待中",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "调度器状态",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "从 JSON 解码后的 Frontend handler 入口到模型服务器终止输出的每模型组最大分位数，单位为秒；不包含下游客户端正文消费时间。Frontend 与模型服务器时钟必须同步。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "decimals": 2,
-          "unit": "suffix: s"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p50"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#86b6ef",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p90"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#3987e5",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p99"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#184f95",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 27
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max(histogram_quantile(0.5, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "p50",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max(histogram_quantile(0.9, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "p90",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max(histogram_quantile(0.99, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "p99",
-          "range": true,
-          "refId": "C"
-        }
-      ],
-      "title": "端到端延迟 (E2EL)",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "从 JSON 解码后的 Frontend handler 入口到模型服务器收到首个 token 的每模型组最大 TTFT 分位数，单位为秒；Chat 与 Completion 请求使用相同起点。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "decimals": 2,
-          "unit": "suffix: s"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p50"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#86b6ef",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p90"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#3987e5",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p99"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#184f95",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 27
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max(histogram_quantile(0.5, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "p50",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max(histogram_quantile(0.9, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "p90",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max(histogram_quantile(0.99, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "p99",
-          "range": true,
-          "refId": "C"
-        }
-      ],
-      "title": "首 token 延迟 (TTFT)",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "选定速率窗口内每模型组最大的请求级 TPOT 分位数和平均值，单位为毫秒；每个请求贡献一次输出 token 间平均耗时。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "decimals": 2,
-          "unit": "suffix: ms"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p50"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#86b6ef",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p90"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#3987e5",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p99"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#184f95",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "平均值"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#eb6834",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 27
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "1000 * max(histogram_quantile(0.5, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "p50",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "1000 * max(histogram_quantile(0.9, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "p90",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "1000 * max(histogram_quantile(0.99, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "p99",
-          "range": true,
-          "refId": "C"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "1000 * max(sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / clamp_min(sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")), 1e-9))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "平均值",
-          "range": true,
-          "refId": "D"
-        }
-      ],
-      "title": "每输出 token 耗时 (TPOT)",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "每模型组相邻输出 token 事件间隔的最大分位数，单位为毫秒；与 TPOT 不同，每个 token 间隔都会单独观测。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "decimals": 2,
-          "unit": "suffix: ms"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p50"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#86b6ef",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p90"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#3987e5",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "p99"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#184f95",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 35
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "1000 * max(histogram_quantile(0.5, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "p50",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "1000 * max(histogram_quantile(0.9, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "p90",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "1000 * max(histogram_quantile(0.99, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "p99",
-          "range": true,
-          "refId": "C"
-        }
-      ],
-      "title": "Token 间延迟 (ITL)",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "请求在等待调度器、Prefill 和 Decode 阶段的 P90 耗时，单位为秒。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "suffix: s"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "queue"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#eda100",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "prefill"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#2a78d6",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "decode"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#1baf7a",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 35
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max(histogram_quantile(0.9, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:request_queue_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "queue",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max(histogram_quantile(0.9, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:request_prefill_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "prefill",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max(histogram_quantile(0.9, sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name,le) (label_replace(label_replace(label_replace(rate(vllm:request_decode_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "decode",
-          "range": true,
-          "refId": "C"
-        }
-      ],
-      "title": "各阶段请求耗时",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "因 KV Cache block 耗尽而每秒被抢占的请求数；持续抢占通常先于 KV Cache 压力告警。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "ops"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "抢占"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#d03b3b",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 35
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:num_preemptions_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "抢占",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "抢占",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "随时间变化的单请求 Prompt token 数分布。",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 43
-      },
-      "options": {
-        "calculate": false,
-        "cellGap": 1,
-        "color": {
-          "exponent": 0,
-          "fill": "",
-          "mode": "scheme",
-          "reverse": false,
-          "scheme": "Blues",
-          "steps": 64
-        },
-        "exemplars": {
-          "color": "rgba(255,0,255,0.7)"
-        },
-        "filterValues": {
-          "le": 1e-09
-        },
-        "legend": {
-          "show": true
-        },
-        "selectionMode": "x",
-        "showValue": "auto",
-        "tooltip": {
-          "mode": "single"
-        },
-        "yAxis": {
-          "unit": "short"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(le) (label_replace(label_replace(label_replace(rate(vllm:request_prompt_tokens_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "format": "heatmap",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "{{le}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Prompt 长度",
-      "transparent": false,
-      "type": "heatmap"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "随时间变化的单请求输出 token 数分布。",
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 43
-      },
-      "options": {
-        "calculate": false,
-        "cellGap": 1,
-        "color": {
-          "exponent": 0,
-          "fill": "",
-          "mode": "scheme",
-          "reverse": false,
-          "scheme": "Blues",
-          "steps": 64
-        },
-        "exemplars": {
-          "color": "rgba(255,0,255,0.7)"
-        },
-        "filterValues": {
-          "le": 1e-09
-        },
-        "legend": {
-          "show": true
-        },
-        "selectionMode": "x",
-        "showValue": "auto",
-        "tooltip": {
-          "mode": "single"
-        },
-        "yAxis": {
-          "unit": "short"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(le) (label_replace(label_replace(label_replace(rate(vllm:request_generation_tokens_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "format": "heatmap",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "{{le}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "输出长度",
-      "transparent": false,
-      "type": "heatmap"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 51
-      },
-      "id": 0,
-      "panels": [],
-      "title": "缓存",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "按模型角色分组的引擎内最高 KV Cache 使用率。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "max": 1,
-          "min": 0,
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 52
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max by(model_role) (foretoken:model_server_kv_cache_usage_ratio:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\",model_name=~\"$model_name\"})",
-          "instant": false,
-          "legendFormat": "{{model_role}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "KV Cache 使用率",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "所选模型组的本地与外部 Prefix Cache token 平均命中率。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "max": 1,
-          "min": 0,
-          "unit": "percentunit"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "local"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#2a78d6",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "external"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#1baf7a",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 52
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "avg(sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name) (label_replace(label_replace(label_replace(rate(vllm:prefix_cache_hits_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / clamp_min(sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name) (label_replace(label_replace(label_replace(rate(vllm:prefix_cache_queries_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")), 1e-9))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "local",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "avg(sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name) (label_replace(label_replace(label_replace(rate(vllm:external_prefix_cache_hits_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / clamp_min(sum by(namespace,model_group,model_role,pd_pipeline_scope,model_name) (label_replace(label_replace(label_replace(rate(vllm:external_prefix_cache_queries_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")), 1e-9))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "external",
-          "range": true,
-          "refId": "B"
-        }
-      ],
-      "title": "Prefix Cache 命中率",
+      "title": "前端准入队列",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2350,8 +3024,8 @@
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 16,
-        "y": 52
+        "x": 0,
+        "y": 110
       },
       "options": {
         "legend": {
@@ -2381,684 +3055,7 @@
           "refId": "A"
         }
       ],
-      "title": "KV 索引数据源健康度",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "已挂载 RuntimeCache 文件系统的使用率；未配置 RuntimeCache 的模型组不会产生序列。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "max": 1,
-          "min": 0,
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 60
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "foretoken:model_server_runtime_cache_usage_ratio:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}",
-          "instant": false,
-          "legendFormat": "{{model_group}} / {{model_role}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "RuntimeCache 使用率",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "使用 RuntimeCache 的模型服务器进程可用文件系统空间。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "bytes"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 60
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "foretoken:model_server_runtime_cache_available_bytes:min{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}",
-          "instant": false,
-          "legendFormat": "{{model_group}} / {{model_role}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "RuntimeCache 可用空间",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 68
-      },
-      "id": 0,
-      "panels": [],
-      "title": "加速器与资源",
-      "type": "row"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "跨工作负载命名空间按厂商和节点统计的 Foretoken GPU 平均使用率；共享设备只计一次，不包含无法关联到 Foretoken Pod 的设备。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "max": 1,
-          "min": 0,
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 0,
-        "y": 69
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "avg by(vendor, node) (max by(vendor, node, device_id) (foretoken:accelerator_gpu_utilization_ratio))",
-          "instant": false,
-          "legendFormat": "{{vendor}} / {{node}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "节点平均 GPU 使用率",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "跨工作负载命名空间按厂商和节点统计的 Foretoken GPU 平均显存使用率；共享设备只计一次，不包含无法关联到 Foretoken Pod 的设备。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "max": 1,
-          "min": 0,
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 6,
-        "y": 69
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "avg by(vendor, node) (max by(vendor, node, device_id) (foretoken:accelerator_gpu_memory_usage_ratio))",
-          "instant": false,
-          "legendFormat": "{{vendor}} / {{node}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "节点平均 GPU 显存使用率",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "每块可关联到 Foretoken 的 GPU 使用率。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "max": 1,
-          "min": 0,
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 12,
-        "y": 69
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max by(node, device_id) (foretoken:accelerator_gpu_utilization_ratio)",
-          "instant": false,
-          "legendFormat": "{{node}} / {{device_id}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "各设备 GPU 使用率",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "每块可关联到 Foretoken 的 GPU 显存使用率。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "max": 1,
-          "min": 0,
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 18,
-        "y": 69
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max by(node, device_id) (foretoken:accelerator_gpu_memory_usage_ratio)",
-          "instant": false,
-          "legendFormat": "{{node}} / {{device_id}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "各设备 GPU 显存使用率",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "每块可关联到 Foretoken 的 NVIDIA GPU 功耗。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "watt"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 0,
-        "y": 77
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max by(node, device_id) (foretoken:accelerator_gpu_power_watts)",
-          "instant": false,
-          "legendFormat": "{{node}} / {{device_id}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "各设备 GPU 功耗",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "每块可关联到 Foretoken 的 NVIDIA GPU 温度。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "celsius"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 6,
-        "y": 77
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max by(node, device_id) (foretoken:accelerator_gpu_temperature_celsius)",
-          "instant": false,
-          "legendFormat": "{{node}} / {{device_id}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "各设备 GPU 温度",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "所选命名空间中 Frontend 与模型服务器容器使用的 CPU 核数。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "cores"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "frontend"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#2a78d6",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "model-server"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#eb6834",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 12,
-        "y": 77
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(container) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container=~\"frontend|model-server\"}[$__rate_interval]))",
-          "instant": false,
-          "interval": "30s",
-          "legendFormat": "{{container}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "服务 CPU 使用量",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "所选命名空间中 Frontend 与模型服务器容器使用的工作集内存。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "bytes"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "frontend"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#2a78d6",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "model-server"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#eb6834",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 18,
-        "y": 77
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(container) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=~\"frontend|model-server\"})",
-          "instant": false,
-          "interval": "30s",
-          "legendFormat": "{{container}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "服务内存使用量",
+      "title": "前端缓存索引健康度",
       "transparent": false,
       "type": "timeseries"
     },
@@ -3068,201 +3065,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 85
-      },
-      "id": 0,
-      "panels": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "description": "按工作流轮次统计的选择结果；选择失败不是 HTTP 状态，一个请求可能包含多轮选择。",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic-by-name"
-              },
-              "custom": {
-                "fillOpacity": 8,
-                "lineWidth": 2,
-                "pointSize": 8,
-                "showPoints": "never"
-              },
-              "unit": "reqps"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 8,
-            "x": 0,
-            "y": 86
-          },
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "repeatDirection": "h",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "expr": "sum by(round,outcome) (rate(foretoken_router_selections_total{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]))",
-              "instant": false,
-              "interval": "5s",
-              "legendFormat": "{{round}} / {{outcome}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "路由结果",
-          "transparent": false,
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "description": "从所选 Frontend 副本直方图桶聚合得到的 Filter、Scorer 与 Picker P99 执行时间。",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic-by-name"
-              },
-              "custom": {
-                "fillOpacity": 8,
-                "lineWidth": 2,
-                "pointSize": 8,
-                "showPoints": "never"
-              },
-              "unit": "s"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 8,
-            "x": 8,
-            "y": 86
-          },
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "repeatDirection": "h",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "expr": "histogram_quantile(0.99, sum by(round,stage,algorithm,le) (rate(foretoken_router_stage_duration_seconds_bucket{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval])))",
-              "instant": false,
-              "interval": "5s",
-              "legendFormat": "{{round}} / {{stage}} / {{algorithm}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "路由阶段延迟",
-          "transparent": false,
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "description": "可用、过滤后和可选择候选项的平均数量；可选择数量包含数据并行 rank。",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic-by-name"
-              },
-              "custom": {
-                "fillOpacity": 8,
-                "lineWidth": 2,
-                "pointSize": 8,
-                "showPoints": "never"
-              },
-              "unit": "short"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 8,
-            "x": 16,
-            "y": 86
-          },
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "repeatDirection": "h",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "expr": "sum by(round,stage) (rate(foretoken_router_candidates_sum{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval])) / sum by(round,stage) (rate(foretoken_router_candidates_count{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]))",
-              "instant": false,
-              "interval": "5s",
-              "legendFormat": "{{round}} / {{stage}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "路由候选数",
-          "transparent": false,
-          "type": "timeseries"
-        }
-      ],
-      "title": "路由决策",
-      "type": "row"
-    },
-    {
-      "collapsed": true,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 94
+        "y": 118
       },
       "id": 0,
       "panels": [
@@ -3291,7 +3094,7 @@
             "h": 8,
             "w": 8,
             "x": 0,
-            "y": 95
+            "y": 119
           },
           "options": {
             "legend": {
@@ -3351,7 +3154,7 @@
             "h": 8,
             "w": 8,
             "x": 8,
-            "y": 95
+            "y": 119
           },
           "options": {
             "legend": {
@@ -3391,7 +3194,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "排队中的 Reconcile 数；当前副本数会跨控制器副本去重，而不是相加。",
+          "description": "待处理的协调任务数，跨控制器副本去重。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3411,7 +3214,7 @@
             "h": 8,
             "w": 8,
             "x": 16,
-            "y": 95
+            "y": 119
           },
           "options": {
             "legend": {
@@ -3456,7 +3259,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 103
+        "y": 127
       },
       "id": 0,
       "panels": [],
@@ -3488,7 +3291,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 104
+        "y": 128
       },
       "options": {
         "legend": {
@@ -3511,7 +3314,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_recommendation_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_recommendation_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\",model_name=~\"$model_name\"})",
           "instant": false,
           "legendFormat": "建议 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
@@ -3522,7 +3325,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_adjusted_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_adjusted_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\",model_name=~\"$model_name\"})",
           "instant": false,
           "legendFormat": "调整后 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
@@ -3533,7 +3336,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\",model_name=~\"$model_name\"})",
           "instant": false,
           "legendFormat": "已应用 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
@@ -3569,7 +3372,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 104
+        "y": 128
       },
       "options": {
         "legend": {
@@ -3592,7 +3395,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\",model_name=~\"$model_name\"})",
           "instant": false,
           "legendFormat": "已应用 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
@@ -3603,7 +3406,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_ready_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_ready_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\",model_name=~\"$model_name\"})",
           "instant": false,
           "legendFormat": "就绪 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
@@ -3614,7 +3417,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_routable_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_routable_replicas{namespace=~\"$namespace\",modelservice=~\"$model_service\",model_name=~\"$model_name\"})",
           "instant": false,
           "legendFormat": "可路由 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
@@ -3650,7 +3453,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 104
+        "y": 128
       },
       "options": {
         "legend": {
@@ -3673,7 +3476,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "time() - max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_observation_timestamp_seconds{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "expr": "time() - max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_observation_timestamp_seconds{namespace=~\"$namespace\",modelservice=~\"$model_service\",model_name=~\"$model_name\"})",
           "instant": false,
           "legendFormat": "观测 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
@@ -3684,7 +3487,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "time() - max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_evaluation_timestamp_seconds{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "expr": "time() - max by(namespace,modelservice,target_kind,target_name,role) (foretoken_autoscaling_evaluation_timestamp_seconds{namespace=~\"$namespace\",modelservice=~\"$model_service\",model_name=~\"$model_name\"})",
           "instant": false,
           "legendFormat": "评估 / {{modelservice}} / {{target_name}} / {{role}}",
           "range": true,
@@ -3705,7 +3508,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 112
+        "y": 136
       },
       "options": {
         "cellHeight": "sm",
@@ -3725,7 +3528,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(namespace,modelservice,target_kind,target_name,role,stage,algorithm,disposition,reason) (foretoken_autoscaling_stage{namespace=~\"$namespace\",modelservice=~\"$model_service\"})",
+          "expr": "max by(namespace,modelservice,target_kind,target_name,role,stage,algorithm,disposition,reason) (foretoken_autoscaling_stage{namespace=~\"$namespace\",modelservice=~\"$model_service\",model_name=~\"$model_name\"})",
           "format": "table",
           "instant": true,
           "interval": "5s",
@@ -3844,10 +3647,10 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "includeAll": true,
-        "label": "模型组",
+        "label": "模型",
         "multi": true,
-        "name": "model_group",
-        "query": "label_values(foretoken:model_server_up:sum{namespace=~\"$namespace\"}, model_group)",
+        "name": "model_name",
+        "query": "label_values(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\"}, model_name)",
         "refresh": 1,
         "skipUrlSync": false,
         "sort": 1,
@@ -3864,7 +3667,27 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "includeAll": true,
-        "label": "模型角色",
+        "label": "模型实例",
+        "multi": true,
+        "name": "model_group",
+        "query": "label_values(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\"}, inference_foretoken_io_model_group)",
+        "refresh": 1,
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "allValue": ".*",
+        "allowCustomValue": true,
+        "auto": false,
+        "auto_count": 30,
+        "auto_min": "10s",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "includeAll": true,
+        "label": "执行角色",
         "multi": true,
         "name": "model_role",
         "query": "label_values(foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\"}, model_role)",
@@ -3884,10 +3707,10 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "includeAll": true,
-        "label": "模型",
+        "label": "引擎 rank",
         "multi": true,
-        "name": "model_name",
-        "query": "label_values(foretoken:model_server_kv_cache_usage_ratio:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}, model_name)",
+        "name": "engine",
+        "query": "label_values(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\"}, engine)",
         "refresh": 1,
         "skipUrlSync": false,
         "sort": 1,
@@ -3904,10 +3727,10 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "includeAll": true,
-        "label": "模型服务",
+        "label": "扩缩容服务",
         "multi": true,
         "name": "model_service",
-        "query": "label_values(foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\"}, modelservice)",
+        "query": "label_values(foretoken_autoscaling_applied_replicas{namespace=~\"$namespace\",model_name=~\"$model_name\"}, modelservice)",
         "refresh": 1,
         "skipUrlSync": false,
         "sort": 1,

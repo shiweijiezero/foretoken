@@ -63,7 +63,7 @@ spec:
                 type: string
               master:
                 description: KVMasterSpec configures the KVService-level Mooncake
-                  Master singleton.
+                  Master runtime.
                 properties:
                   fsGroup:
                     description: FSGroup sets the group used to access the mounted
@@ -71,6 +71,28 @@ spec:
                     format: int64
                     minimum: 0
                     type: integer
+                  highAvailability:
+                    description: |-
+                      HighAvailability switches the Master to Mooncake's native etcd-backed HA mode.
+                      The controller fixes the runtime to two Masters and enables native OpLog replication.
+                    properties:
+                      etcdEndpoints:
+                        description: |-
+                          EtcdEndpoints are the external etcd client addresses used for leadership,
+                          OpLog replication, and native client leader discovery.
+                        items:
+                          description: EtcdEndpoint is one external etcd client address
+                            accepted by Mooncake.
+                          maxLength: 1024
+                          minLength: 1
+                          type: string
+                        maxItems: 16
+                        minItems: 1
+                        type: array
+                        x-kubernetes-list-type: set
+                    required:
+                    - etcdEndpoints
+                    type: object
                   image:
                     minLength: 1
                     type: string
@@ -162,7 +184,7 @@ spec:
                     type: integer
                   snapshot:
                     description: |-
-                      SnapshotStorage configures the Master singleton snapshot volume. The provider's
+                      SnapshotStorage configures the single-Master snapshot volume. The provider's
                       snapshot retention is not a Foretoken cache TTL or eviction policy.
                     properties:
                       retentionPolicy:
@@ -216,6 +238,10 @@ spec:
                 - image
                 - resources
                 type: object
+                x-kubernetes-validations:
+                - message: master.highAvailability and master.snapshot are mutually
+                    exclusive
+                  rule: '!(has(self.highAvailability) && has(self.snapshot))'
               requester:
                 description: KVRequesterSpec configures ModelGroup Store requester
                   configuration.
@@ -502,6 +528,10 @@ spec:
                 description: KVServiceBinding is the immutable current requester configuration
                   consumed by ModelPools.
                 properties:
+                  clusterID:
+                    description: ClusterID is the native HA namespace consumed by
+                      controller-owned requesters.
+                    type: string
                   configMapKey:
                     type: string
                   configMapName:

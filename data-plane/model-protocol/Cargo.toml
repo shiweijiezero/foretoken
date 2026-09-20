@@ -9,6 +9,8 @@ license.workspace = true
 description = "Typed internal protocol between Foretoken frontend and model-server"
 
 [dependencies]
+base64.workspace = true
+blake3.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 vllm-engine-core-client.workspace = true

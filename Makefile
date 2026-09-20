@@ -7,6 +7,7 @@ CONTROL_PLANE_IMAGE ?= foretoken-control-plane:dev
 FRONTEND_IMAGE ?= foretoken-frontend:dev
 MODEL_SERVER_IMAGE ?= foretoken-model-server:dev
 MOONCAKE_IMAGE ?= foretoken-mooncake
+MOONCAKE_VERSION ?=
 
 OCI_REGISTRY := $(patsubst %/,%,$(strip $(FORETOKEN_OCI_REGISTRY)))
 OCI_SOURCE ?= https://github.com/shiweijiezero/foretoken
@@ -108,18 +109,16 @@ image-benchmark:
 
 .PHONY: mooncake-source image-mooncake
 mooncake-source:
-	$(GIT) submodule update --init third_party/mooncake
-	$(GIT) -C third_party/mooncake submodule update --init extern/pybind11 extern/yalantinglibs
-	@for patch in provider-registration client-lifecycle; do \
-		if ! $(GIT) -C third_party/mooncake apply --reverse --check \
-			"../../deploy/mooncake/patches/$$patch.patch" >/dev/null 2>&1; then \
-			$(GIT) -C third_party/mooncake apply "../../deploy/mooncake/patches/$$patch.patch" || exit $$?; \
-		fi; \
-	done
+	MOONCAKE_VERSION="$(MOONCAKE_VERSION)" \
+		FORETOKEN_GITHUB_MIRROR="$(FORETOKEN_GITHUB_MIRROR)" \
+		./deploy/mooncake/prepare-source
 
 image-mooncake: mooncake-source
 	docker build $(if $(BUILD_JOBS),--build-arg BUILD_JOBS=$(BUILD_JOBS),) \
 		$(if $(OCI_REGISTRY),--build-arg BASE_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \
 		$(if $(MOONCAKE_BUILD_IMAGE),--build-arg BUILD_IMAGE="$(MOONCAKE_BUILD_IMAGE)",) \
 		$(if $(MOONCAKE_RUNTIME_IMAGE),--build-arg RUNTIME_IMAGE="$(MOONCAKE_RUNTIME_IMAGE)",) \
+		$(if $(MOONCAKE_GO_IMAGE),--build-arg GO_IMAGE="$(MOONCAKE_GO_IMAGE)",) \
+		--build-arg GOPROXY \
+		--build-arg GOSUMDB \
 		-f deploy/mooncake/Dockerfile -t "$(MOONCAKE_IMAGE)" .

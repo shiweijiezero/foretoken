@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Log quota-pressure eviction before reusing memory extents in Mooncake 0.3.13 HA.
+# Retain native replica allocations through the existing durable-finalize owner.
+
+diff --git a/mooncake-store/src/master_service.cpp b/mooncake-store/src/master_service.cpp
+--- a/mooncake-store/src/master_service.cpp
++++ b/mooncake-store/src/master_service.cpp
+@@ -9709,6 +9709,8 @@
+ MasterService::TenantQuotaEvictionResult
+ MasterService::EvictTenantMemoryForQuota(const TenantId& tenant_id,
+                                          uint64_t target_bytes) {
++    using RetainedReplicaBatches =
++        std::vector<std::shared_ptr<std::vector<Replica>>>;
+     TenantQuotaEvictionResult total;
+     if (!enable_multi_tenants_ || target_bytes == 0) {
+         return total;
+@@ -9729,10 +9731,32 @@
+     };
+     auto evict_replicas =
+         [&, this](TenantState& tenant_state, ObjectMetadata& metadata,
+-                  std::vector<std::vector<Replica>>& deferred_replicas) {
++                  RetainedReplicaBatches& deferred_replicas) {
++            auto retained = std::make_shared<std::vector<Replica>>();
++            if (enable_oplog_) {
++                auto remaining = BuildRemainingReplicaDescriptors(
++                    metadata, is_evictable_memory_replica);
++                // Keep allocation extents alive until both the shard lock has
++                // been released and the removal is durable. Reusing them sooner
++                // can restore old and new objects over the same memory range.
++                auto persisted = AppendOpLogWithDurableFinalize(
++                    remaining.empty() ? OpType::REMOVE : OpType::PUT_END,
++                    metadata.tenant_id.value(), metadata.user_key,
++                    remaining.empty()
++                        ? std::string{}
++                        : SerializeMetadataForOpLogFromReplicaDescriptors(
++                              metadata, remaining),
++                    [retained](const OpLogEntry&) { (void)retained; });
++                if (!persisted) {
++                    LOG(WARNING) << "Tenant quota eviction OpLog failed: "
++                                 << persisted.error();
++                    return uint64_t{0};
++                }
++            }
+             const uint64_t before_charge = CompletedMemoryQuotaCharge(metadata);
+-            auto replicas = PopReplicasWithCacheTotalAccounting(
++            *retained = PopReplicasWithCacheTotalAccounting(
+                 metadata, is_evictable_memory_replica);
++            auto& replicas = *retained;
+             std::vector<ReplicaID> erased_ids;
+             erased_ids.reserve(replicas.size());
+             for (const auto& replica : replicas) {
+@@ -9741,7 +9765,7 @@
+             RecordDynamicReplicaRemoval(metadata, erased_ids);
+             const uint64_t replica_count = replicas.size();
+             if (!replicas.empty()) {
+-                deferred_replicas.emplace_back(std::move(replicas));
++                deferred_replicas.emplace_back(std::move(retained));
+             }
+             const uint64_t after_charge = CompletedMemoryQuotaCharge(metadata);
+             if (before_charge > after_charge) {
+@@ -9766,7 +9790,7 @@
+     auto try_evict_or_offload = [&, this](const std::string& key,
+                                           ObjectMetadata& metadata,
+                                           TenantState& tenant_state,
+-                                          std::vector<std::vector<Replica>>&
++                                          RetainedReplicaBatches&
+                                               deferred_replicas) {
+         if (!offload_on_evict_) {
+             return evict_replicas(tenant_state, metadata, deferred_replicas);
+@@ -9818,7 +9842,7 @@
+     auto try_evict_group_or_object =
+         [&, this](const std::string& key, ObjectMetadata& metadata,
+                   TenantState& tenant_state,
+-                  std::vector<std::vector<Replica>>& deferred_replicas,
++                  RetainedReplicaBatches& deferred_replicas,
+                   bool allow_soft_pinned) -> TenantQuotaEvictionResult {
+         if (!metadata.IsGrouped()) {
+             uint64_t freed = try_evict_or_offload(key, metadata, tenant_state,
+@@ -9878,7 +9902,7 @@
+              scanned < kNumShards && total.freed_bytes < target_bytes;
+              ++scanned) {
+             const size_t shard_idx = (start_shard + scanned) % kNumShards;
+-            std::vector<std::vector<Replica>> deferred_replicas;
++            RetainedReplicaBatches deferred_replicas;
+             {
+                 MetadataShardAccessorRW shard(this, shard_idx);
+                 auto tenant_it = shard->tenants.find(normalized_tenant);

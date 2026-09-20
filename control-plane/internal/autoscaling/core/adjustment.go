@@ -35,12 +35,6 @@ type ReplicaAdjustment struct {
 	Message  string
 }
 
-type AdjustmentConfig struct {
-	ScaleUpStabilizationWindow   time.Duration
-	ScaleDownStabilizationWindow time.Duration
-	History                      *RecommendationHistory
-}
-
 type AdjustmentAlgorithm interface {
 	Name() string
 	Adjust(AdjustmentInput) (ReplicaAdjustment, error)

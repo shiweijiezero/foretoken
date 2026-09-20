@@ -1,0 +1,16 @@
+diff --git a/rust/src/managed-engine/src/process.rs b/rust/src/managed-engine/src/process.rs
+--- a/rust/src/managed-engine/src/process.rs
++++ b/rust/src/managed-engine/src/process.rs
+@@ -92,6 +92,12 @@
+             "starting managed Python headless engine"
+         );
+ 
++        Self::spawn_command(command).await
++    }
++
++    /// Own a caller-prepared engine command, including optional instrumentation wrappers.
++    /// The returned handle retains process-group monitoring and shutdown responsibility.
++    pub async fn spawn_command(command: StdCommand) -> Result<Self> {
+         let mut command = Command::from(command);
+         command.stdin(Stdio::null()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
+ 

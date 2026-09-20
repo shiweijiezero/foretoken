@@ -3,18 +3,19 @@
 
 """Read-only prefix lookup through the active vLLM Mooncake Store worker."""
 
+import logging
 import os
-import threading
 
-import zmq
+from foretoken_runtime import PrefixLookupServer, offset_tcp_endpoint
 from vllm.distributed.kv_transfer.kv_connector.v1.mooncake.store.connector import (
     MooncakeStoreConnector as UpstreamMooncakeStoreConnector,
 )
-from vllm.distributed.kv_events import ZmqEventPublisher
 from vllm.sampling_params import SamplingParams
 from vllm.utils.hashing import get_hash_fn_by_name
 from vllm.v1.core.kv_cache_utils import get_request_block_hasher, init_none_hash
 from vllm.v1.request import Request
+
+logger = logging.getLogger(__name__)
 
 
 class _CheckedStore:
@@ -43,7 +44,7 @@ class _LookupView:
 
 
 class _PrefixServer:
-    """Own the local query socket until connector shutdown; no KV data is transferred."""
+    """Expose one DP rank's native connector through the shared socket lifecycle."""
 
     def __init__(self, worker, config):
         self.worker = worker
@@ -53,51 +54,40 @@ class _PrefixServer:
             raise ValueError("shared prefix lookup requires PYTHONHASHSEED")
         init_none_hash(hash_fn)
         self.block_hasher = get_request_block_hasher(worker.hash_block_size, hash_fn)
-        self.stopping = threading.Event()
-        self.context = zmq.Context()
         self.dp_rank = config.parallel_config.data_parallel_index
-        self.endpoint = ZmqEventPublisher.offset_endpoint_port(
+        endpoint = offset_tcp_endpoint(
             os.environ["FORETOKEN_SHARED_KV_LOOKUP_ENDPOINT"], self.dp_rank
         )
-        self.thread = threading.Thread(target=self._serve, daemon=True)
-        self.thread.start()
+        self.server = PrefixLookupServer(endpoint, self._lookup)
 
-    def _serve(self):
-        with self.context.socket(zmq.REP) as socket:
-            socket.setsockopt(zmq.LINGER, 0)
-            socket.bind(self.endpoint)
-            while not self.stopping.is_set():
-                if not socket.poll(100):
-                    continue
-                query = socket.recv_json()
-                if query["dpRank"] != self.dp_rank:
-                    socket.send_json({
-                        "matchedTokens": None,
-                        "blockSize": self.worker.coord.lcm_block_size,
-                    })
-                    continue
-                tokens = query["promptTokenIds"]
-                request = Request(
-                    request_id="prefix-observation",
-                    prompt_token_ids=tokens,
-                    sampling_params=SamplingParams(max_tokens=1),
-                    pooling_params=None,
-                    block_hasher=self.block_hasher,
-                )
-                # Match the native scheduler's complete-block lookup boundary.
-                block_size = self.worker.coord.lcm_block_size
-                token_len = len(tokens) // block_size * block_size
-                view = _LookupView(self.worker)
-                matched = type(self.worker).lookup(view, token_len, request.block_hashes)
-                socket.send_json({
-                    "matchedTokens": None if view.store.failed else matched,
-                    "blockSize": block_size,
-                })
+    def _lookup(self, query):
+        block_size = self.worker.coord.lcm_block_size
+        if query.get("dpRank") != self.dp_rank:
+            return {"matchedTokens": None, "blockSize": block_size}
+        try:
+            tokens = query["promptTokenIds"]
+            request = Request(
+                request_id="prefix-observation",
+                prompt_token_ids=tokens,
+                sampling_params=SamplingParams(max_tokens=1),
+                pooling_params=None,
+                cache_salt=query.get("cacheSalt"),
+                block_hasher=self.block_hasher,
+            )
+            # Match the native scheduler's complete-block lookup boundary.
+            token_len = len(tokens) // block_size * block_size
+            view = _LookupView(self.worker)
+            matched = type(self.worker).lookup(view, token_len, request.block_hashes)
+            return {
+                "matchedTokens": None if view.store.failed else matched,
+                "blockSize": block_size,
+            }
+        except Exception:
+            logger.exception("vLLM shared KV prefix lookup failed")
+            return {"matchedTokens": None, "blockSize": block_size}
 
     def close(self):
-        self.stopping.set()
-        self.thread.join()
-        self.context.term()
+        self.server.close()
 
 
 class MooncakeStoreConnector(UpstreamMooncakeStoreConnector):

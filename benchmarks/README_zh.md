@@ -38,6 +38,8 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
+添加 `--warmup-requests 16` 可在每次测量前完成 16 段预热对话，不计入正式指标。
+
 `--parallel` 控制并发数，`--rate` 控制每秒请求到达率，各自设为 `-1` 表示不限。默认不限速、并发为 1。例如按平均每秒 5 个请求发送且不限并发：
 
 ```bash
@@ -96,11 +98,14 @@ foretoken bench examples/quickstart \
 
 ```bash
 foretoken bench examples/quickstart \
+  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
+  --min-prompt-length 128 --max-prompt-length 256 --random-seed 0 \
   --sweep benchmarks/examples/sweep.jsonl \
+  --warmup-requests 16 --num-runs 3 \
   --output local,wandb
 ```
 
-参数扫描使用 Kustomize 部署，在同一模型服务上比较不同配置。
+参数扫描需传入部署配置目录，例如 `examples/quickstart`，目前不支持 `--url`。自定义负载点与配置对比见[参数扫描](docs/coomon_commands/sweep_zh.md)。
 
 ### 使用已有服务地址
 
@@ -114,7 +119,7 @@ foretoken bench \
   --output local,wandb
 ```
 
-其他服务使用其实际 Chat Completions URL 和模型名称。Gateway 模式使用上面的 Kustomize 写法，由 CLI 配置路由请求头。
+其他服务使用其实际 Chat Completions URL 和模型名称。Gateway 模式传入上面的部署配置目录，由 CLI 配置路由请求头。
 
 ## 查看结果
 

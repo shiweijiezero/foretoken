@@ -25,139 +25,50 @@ type modelScalingConfig struct {
 	MetricsMaxAge   time.Duration
 }
 
-// scalingConfig resolves one ModelService autoscaling configuration into runtime algorithms and limits.
+// scalingConfig builds the autoscaler, replica bounds, and metrics freshness for one ModelService; absent autoscaling selects fixed capacity.
 func (reconciler *ModelServiceReconciler) scalingConfig(service *inferencev1alpha1.ModelService) (modelScalingConfig, error) {
-	config := modelScalingConfig{
-		Autoscaler:      autoscaling.Manual(),
-		Limits:          core.ReplicaLimits{MinReplicas: 0, MaxReplicas: maxDesiredReplicas},
-		PollingInterval: defaultScalingPollInterval,
-		MetricsMaxAge:   3 * defaultScalingPollInterval,
+	config := service.Spec.Autoscaling
+	if config == nil {
+		return modelScalingConfig{Autoscaler: autoscaling.Manual(), Limits: core.ReplicaLimits{MaxReplicas: maxDesiredReplicas}}, nil
 	}
-	autoscalingConfig := service.Spec.Autoscaling
-	if autoscalingConfig == nil {
-		return config, nil
+	if config.MinReplicas < 1 || config.MaxReplicas < config.MinReplicas {
+		return modelScalingConfig{}, fmt.Errorf("autoscaling group bounds are invalid")
 	}
-
-	pollingInterval, err := durationOrDefault(triggerInterval(autoscalingConfig.Trigger), defaultScalingPollInterval)
-	if err != nil {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling trigger.interval: %w", err)
+	if config.Decision.Algorithm == "" || config.Decision.Algorithm == "manual" {
+		return modelScalingConfig{}, fmt.Errorf("autoscaling decision.algorithm must select an automatic policy; omit autoscaling for fixed capacity")
 	}
-	metricsMaxAge := 3 * pollingInterval
-	scaleUpWindow, err := nonNegativeDurationOrDefault(scaleUpStabilizationWindow(autoscalingConfig.Adjustment), 0)
-	if err != nil {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling adjustment.scaleUp.stabilizationWindow: %w", err)
-	}
-	scaleDownWindow, err := nonNegativeDurationOrDefault(scaleDownStabilizationWindow(autoscalingConfig.Adjustment), 5*time.Minute)
-	if err != nil {
-		return modelScalingConfig{}, fmt.Errorf("autoscaling adjustment.scaleDown.stabilizationWindow: %w", err)
-	}
-
 	selected, err := autoscaling.New(autoscaling.Configuration{
-		DecisionAlgorithm:   autoscaling.DecisionAlgorithmName(autoscalingConfig.Decision.Algorithm),
-		TriggerAlgorithm:    autoscaling.TriggerAlgorithmName(triggerAlgorithm(autoscalingConfig.Trigger)),
-		AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmName(adjustmentAlgorithm(autoscalingConfig.Adjustment)),
-		Decision:            decisionConfig(autoscalingConfig.Decision),
-		Adjustment: core.AdjustmentConfig{
-			ScaleUpStabilizationWindow:   scaleUpWindow,
-			ScaleDownStabilizationWindow: scaleDownWindow,
-			History:                      reconciler.autoscalingRecommendationHistory(),
-		},
+		Decision:   algorithmConfiguration(&config.Decision),
+		Trigger:    algorithmConfiguration(config.Trigger),
+		Adjustment: algorithmConfiguration(config.Adjustment),
+		History:    reconciler.autoscalingRecommendationHistory(),
 	})
 	if err != nil {
 		return modelScalingConfig{}, err
 	}
-	config.Autoscaler = selected
-	config.Limits = core.ReplicaLimits{MinReplicas: autoscalingConfig.MinReplicas, MaxReplicas: autoscalingConfig.MaxReplicas}
-	config.PollingInterval = pollingInterval
-	config.MetricsMaxAge = metricsMaxAge
-	return config, nil
+	interval := selected.PollingInterval()
+	return modelScalingConfig{
+		Autoscaler:      selected,
+		Limits:          core.ReplicaLimits{MinReplicas: config.MinReplicas, MaxReplicas: config.MaxReplicas},
+		PollingInterval: interval,
+		MetricsMaxAge:   3 * interval,
+	}, nil
 }
 
-func triggerAlgorithm(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.AutoscalingTriggerAlgorithm {
+// algorithmConfiguration converts one API stage configuration to the runtime form without interpreting its parameters.
+func algorithmConfiguration(config *inferencev1alpha1.ModelAutoscalingAlgorithmConfig) autoscaling.AlgorithmConfiguration {
 	if config == nil {
-		return ""
+		return autoscaling.AlgorithmConfiguration{}
 	}
-	return config.Algorithm
-}
-
-func triggerInterval(config *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.Duration {
-	if config == nil {
-		return ""
+	result := autoscaling.AlgorithmConfiguration{Algorithm: config.Algorithm}
+	if config.Parameters != nil {
+		result.Parameters = config.Parameters.Raw
 	}
-	return config.Interval
-}
-
-func decisionConfig(config inferencev1alpha1.ModelAutoscalingDecisionConfig) core.DecisionConfig {
-	decision := core.DecisionConfig{}
-	if config.Queue != nil {
-		decision.TargetAverageQueuedRequests = int64OrDefault(config.Queue.TargetAverageQueuedRequests, 1)
-	}
-	if config.QueueThreshold != nil {
-		decision.ScaleUpQueuedRequests = int64OrDefault(config.QueueThreshold.ScaleUpQueuedRequests, 1)
-		decision.ScaleDownQueuedRequests = int64OrDefault(config.QueueThreshold.ScaleDownQueuedRequests, 0)
-	}
-	return decision
-}
-
-func adjustmentAlgorithm(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) inferencev1alpha1.AutoscalingAdjustmentAlgorithm {
-	if config == nil {
-		return ""
-	}
-	return config.Algorithm
-}
-
-func scaleUpStabilizationWindow(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) inferencev1alpha1.NonNegativeDuration {
-	if config == nil || config.ScaleUp == nil {
-		return ""
-	}
-	return config.ScaleUp.StabilizationWindow
-}
-
-func scaleDownStabilizationWindow(config *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) inferencev1alpha1.NonNegativeDuration {
-	if config == nil || config.ScaleDown == nil {
-		return ""
-	}
-	return config.ScaleDown.StabilizationWindow
-}
-
-func int32OrDefault(value *int32, fallback int32) int32 {
-	if value == nil {
-		return fallback
-	}
-	return *value
-}
-
-func int64OrDefault(value *int64, fallback int64) int64 {
-	if value == nil {
-		return fallback
-	}
-	return *value
-}
-
-func durationOrDefault(value inferencev1alpha1.Duration, fallback time.Duration) (time.Duration, error) {
-	if value == "" {
-		return fallback, nil
-	}
-	duration, err := time.ParseDuration(string(value))
-	if err != nil || duration <= 0 {
-		return 0, fmt.Errorf("must be a positive duration")
-	}
-	return duration, nil
-}
-
-func nonNegativeDurationOrDefault(value inferencev1alpha1.NonNegativeDuration, fallback time.Duration) (time.Duration, error) {
-	if value == "" {
-		return fallback, nil
-	}
-	duration, err := time.ParseDuration(string(value))
-	if err != nil || duration < 0 {
-		return 0, fmt.Errorf("must be a non-negative duration")
-	}
-	return duration, nil
+	return result
 }
 
 // applyScaling evaluates autoscaling targets and returns compiled pools with applied capacity.
-func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool) ([]compiler.ModelPool, []inferencev1alpha1.AutoscalingTargetStatus, error) {
+func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, service *inferencev1alpha1.ModelService, compiledPools []compiler.ModelPool, scaling modelScalingConfig) ([]compiler.ModelPool, []inferencev1alpha1.AutoscalingTargetStatus, error) {
 	owned, err := reconciler.ownedPools(ctx, service)
 	if err != nil {
 		return nil, nil, err
@@ -171,11 +82,6 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 	if err := reconciler.List(ctx, &groupList, client.InNamespace(service.Namespace)); err != nil {
 		return nil, nil, fmt.Errorf("list ModelGroups: %w", err)
 	}
-	scaling, err := reconciler.scalingConfig(service)
-	if err != nil {
-		return nil, nil, err
-	}
-
 	// Ordinary Pools scale independently. Encoder, prefill, and decode instead share one
 	// E/P/D pipeline-scope decision, which is applied back to all three Pool intents together.
 	evaluatedAt := metav1.Now()

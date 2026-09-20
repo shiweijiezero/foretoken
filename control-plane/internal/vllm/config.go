@@ -31,15 +31,16 @@ type EffectiveConfig struct {
 // LaunchPlanV1 is the versioned, private Go-to-Rust launch contract. Rust is
 // the only component that renders this contract into vLLM command-line flags.
 type LaunchPlanV1 struct {
-	Version                               int                               `json:"version"`
-	NodeCount                             int32                             `json:"nodeCount"`
-	Artifacts                             LaunchArtifacts                   `json:"artifacts"`
-	Parallelism                           LaunchParallelism                 `json:"parallelism"`
-	KV                                    LaunchKVPlan                      `json:"kv"`
-	EC                                    *LaunchECPlan                     `json:"ec,omitempty"`
-	Lifecycle                             LaunchLifecycle                   `json:"lifecycle"`
-	InternalGenerateRequestBodyLimitBytes int64                             `json:"internalGenerateRequestBodyLimitBytes"`
-	EngineArgs                            inferencev1alpha1.EngineArguments `json:"engineArgs,omitempty"`
+	Version                               int                                `json:"version"`
+	NodeCount                             int32                              `json:"nodeCount"`
+	Artifacts                             LaunchArtifacts                    `json:"artifacts"`
+	Parallelism                           LaunchParallelism                  `json:"parallelism"`
+	KV                                    LaunchKVPlan                       `json:"kv"`
+	EC                                    *LaunchECPlan                      `json:"ec,omitempty"`
+	Lifecycle                             LaunchLifecycle                    `json:"lifecycle"`
+	InternalGenerateRequestBodyLimitBytes int64                              `json:"internalGenerateRequestBodyLimitBytes"`
+	EngineArgs                            inferencev1alpha1.EngineArguments  `json:"engineArgs,omitempty"`
+	Profiling                             *inferencev1alpha1.ProfilingConfig `json:"profiling,omitempty"`
 }
 
 type LaunchArtifacts struct {
@@ -179,7 +180,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if err != nil {
 		return LaunchPlanV1{}, err
 	}
-	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy()}, nil
+	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
 }
 
 // JSON returns deterministic output because LaunchPlanV1 uses only ordered structs and slices.
@@ -343,7 +344,7 @@ var controllerOwnedArgs = []string{
 	"--grpc", "--headless", "--hf-token", "--host", "--kv-events-config", "--kv-transfer-config",
 	"--master-addr", "--master-port", "--model", "--nnodes", "--node-rank",
 	"--port", "--profiler-config", "--revision",
-	"--runner", "--served-model-name", "--tokenizer", "--tokenizer-revision",
+	"--runner", "--served-model-name", "--tokenizer", "--tokenizer-revision", "--worker-cls",
 }
 
 var engineArgName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)

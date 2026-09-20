@@ -34,9 +34,3 @@ type DecisionAlgorithm interface {
 	Name() string
 	RecommendReplicas(ScalingSnapshot) (ReplicaRecommendation, error)
 }
-
-type DecisionConfig struct {
-	TargetAverageQueuedRequests int64
-	ScaleUpQueuedRequests       int64
-	ScaleDownQueuedRequests     int64
-}

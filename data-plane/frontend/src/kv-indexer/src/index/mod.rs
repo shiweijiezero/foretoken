@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 //! Source-isolated typed KV locality indexes.
-use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use foretoken_model_protocol::normalized_kv_block_hash;
 use std::time::{Duration, Instant};
 
 pub mod positional_hash;
@@ -40,10 +40,12 @@ pub enum KvIndexEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KvPrefixQuery<'a> {
     pub tokens: &'a [u32],
+    pub cache_salt: Option<&'a str>,
     pub model_revision: &'a str,
     pub scope_id: &'a str,
     pub hash_format: foretoken_model_protocol::KvHashFormat,
     pub group_idx: Option<u32>,
+    pub match_all_groups: bool,
     pub spec_kind: &'a str,
     pub sliding_window: Option<u32>,
 }
@@ -135,27 +137,4 @@ impl KvLocalityIndex for KvLocalityIndexes {
             Self::RadixTree(index) => index.query(source, query, key, now),
         }
     }
-}
-
-/// Derives the protocol's keyed, partition-scoped block identity for both index implementations.
-///
-/// Positional and radix indexes consume the returned value for matching; callers retain the key and input partition.
-pub(super) fn normalized_block_hash(
-    key: &[u8; 32],
-    parent: &KvBlockHash,
-    tokens: &[u32],
-    partition: &KvPartition,
-) -> KvBlockHash {
-    let mut hasher = blake3::Hasher::new_keyed(key);
-    hasher.update(parent.0.as_bytes());
-    hasher.update(partition.model_revision.as_bytes());
-    hasher.update(partition.scope_id.as_bytes());
-    hasher.update(&partition.hash_block_size.to_le_bytes());
-    hasher.update(&partition.group_idx.unwrap_or(u32::MAX).to_le_bytes());
-    hasher.update(partition.spec_kind.as_bytes());
-    hasher.update(&partition.sliding_window.unwrap_or(u32::MAX).to_le_bytes());
-    for token in tokens {
-        hasher.update(&token.to_le_bytes());
-    }
-    KvBlockHash(URL_SAFE_NO_PAD.encode(hasher.finalize().as_bytes()))
 }

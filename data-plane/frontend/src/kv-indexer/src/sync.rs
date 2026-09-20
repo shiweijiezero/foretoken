@@ -28,6 +28,8 @@ pub struct KvEventSourceConfig {
     pub spec_kind: String,
     pub sliding_window: Option<u32>,
     pub group_idx: Option<u32>,
+    #[serde(default)]
+    pub match_all_groups: bool,
 }
 /// Binding separates router identity from owner identity and only permits lower-tier hints when a
 /// candidate declares it can read, restore, or transfer the exact placement.
@@ -42,6 +44,9 @@ pub struct KvRouteBinding {
     /// Controller-owned query-sharing scope; layout compatibility is checked separately.
     #[serde(default)]
     pub shared_lookup_scope: Option<String>,
+    /// Exact placement owned by that query provider.
+    #[serde(default)]
+    pub shared_lookup_placement: Option<KvPlacement>,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -341,10 +346,12 @@ impl KvIndexer {
         };
         let q = KvPrefixQuery {
             tokens: lookup.prompt_token_ids,
+            cache_salt: lookup.cache_salt,
             model_revision: &source.model_revision,
             scope_id: &source.scope_id,
             hash_format: KvHashFormat::NormalizedKeyedBlake3V1,
             group_idx: source.group_idx,
+            match_all_groups: source.match_all_groups,
             spec_kind: &source.spec_kind,
             sliding_window: source.sliding_window,
         };
@@ -476,17 +483,22 @@ impl KvPrefixIndexer for KvIndexer {
         lookups: &[KvPrefixLookup<'_>],
     ) -> Option<std::sync::Arc<dyn KvPrefixIndexer>> {
         self.state.as_ref()?;
-        // Query once per actual Store and compatible layout, not once per candidate replica.
+        // Query once per connector-owned lookup scope and compatible layout, not per candidate.
         let mut shared = BTreeMap::new();
         let mut targets = BTreeMap::new();
         for lookup in lookups {
             let Some(binding) = self.config.route_bindings.get(lookup.route_target_id) else {
                 continue;
             };
-            let Some(store_id) = binding.shared_lookup_scope.as_deref() else {
+            let (Some(lookup_scope), Some(lookup_placement)) = (
+                binding.shared_lookup_scope.as_deref(),
+                binding.shared_lookup_placement,
+            ) else {
                 continue;
             };
-            if !binding.can_restore_or_transfer {
+            if !binding.can_restore_or_transfer
+                || !binding.readable_placements.contains(&lookup_placement)
+            {
                 continue;
             }
             let Some(source_id) = binding
@@ -498,7 +510,12 @@ impl KvPrefixIndexer for KvIndexer {
             let Some(source) = self.source(source_id) else {
                 continue;
             };
-            let key = (store_id.to_owned(), source.scope_id.clone());
+            let key = (
+                lookup_scope.to_owned(),
+                source.scope_id.clone(),
+                lookup.cache_salt.map(str::to_owned),
+                lookup_placement,
+            );
             shared
                 .entry(key.clone())
                 .or_insert_with(|| (source.clone(), lookup.prompt_token_ids.to_vec()));
@@ -514,7 +531,8 @@ impl KvPrefixIndexer for KvIndexer {
             shared
                 .into_iter()
                 .map(|(key, (source, tokens))| async move {
-                    let response = fetch_shared_prefix(&self.client, &source, &tokens).await;
+                    let response =
+                        fetch_shared_prefix(&self.client, &source, &tokens, key.2.as_deref()).await;
                     (key, response)
                 }),
         )
@@ -540,7 +558,10 @@ impl KvPrefixIndexer for KvIndexer {
                 prepared.insert(id, local);
                 continue;
             };
-            let observation = observations.get(key).and_then(Option::as_ref);
+            let observation = observations
+                .get(key)
+                .and_then(Option::as_ref)
+                .filter(|response| response.placement == key.3);
             let mut matches = match &local {
                 KvPrefixQueryResult::Matches(matches) => {
                     matches.clone().into_iter().collect::<Vec<_>>()
@@ -549,10 +570,7 @@ impl KvPrefixIndexer for KvIndexer {
             };
             if let Some(response) = observation.filter(|response| response.matched_tokens > 0) {
                 matches.push(KvPrefixMatch {
-                    placement: KvPlacement {
-                        tier: KvStorageTier::External,
-                        locality: KvCacheLocality::Remote,
-                    },
+                    placement: response.placement,
                     matched_tokens: response.matched_tokens,
                 });
             }
@@ -577,6 +595,7 @@ async fn fetch_shared_prefix(
     client: &reqwest::Client,
     source: &KvEventSourceConfig,
     tokens: &[u32],
+    cache_salt: Option<&str>,
 ) -> Option<foretoken_model_protocol::KvSharedPrefixResponse> {
     let url = format!(
         "{}{}",
@@ -588,6 +607,7 @@ async fn fetch_shared_prefix(
         .json(&foretoken_model_protocol::KvSharedPrefixRequest {
             prompt_token_ids: tokens.to_vec(),
             dp_rank: source.dp_rank,
+            cache_salt: cache_salt.map(str::to_owned),
         })
         .send()
         .await
@@ -598,6 +618,7 @@ async fn fetch_shared_prefix(
     let response: foretoken_model_protocol::KvSharedPrefixResponse = response.json().await.ok()?;
     if response.model_group_id != source.model_group_id
         || response.scope_id != source.scope_id
+        || response.placement.locality == foretoken_model_protocol::KvCacheLocality::Unspecified
         || response.block_size == 0
         || response.matched_tokens > tokens.len()
         || !response.matched_tokens.is_multiple_of(response.block_size)

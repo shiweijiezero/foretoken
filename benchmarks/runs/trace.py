@@ -122,8 +122,9 @@ def _request_measurement(record: dict[str, Any]) -> RequestMeasurement:
         latency=float(record["latency"]),
         tpot=record["tpot"],
         itl_samples=tuple(record["inter_token_latencies"]),
-        input_tokens=int(record["input_tokens"]),
-        output_tokens=int(record["output_tokens"]),
+        input_tokens=record["input_tokens"],
+        output_tokens=record["output_tokens"],
+        cached_input_tokens=record["cached_input_tokens"],
         succeeded=bool(record["success"]),
         conversation_id=record["conversation_id"],
         turn=None,
@@ -340,7 +341,8 @@ class TraceReplayBenchmark:
                 arrival_rate=-1.0,
                 request_count=request_count,
                 reported_concurrency=reported_concurrency,
-                include_user_throughput=False,
+                gpu_count=self.service.gpu_count,
+                include_normalized_throughput=False,
             )
             self._attach_replay_metrics(metrics, records)
             # The raw replay records carry trace timing that RequestMeasurement

@@ -4,10 +4,17 @@
 ARG BASE_IMAGE_REGISTRY=docker.io
 ARG BUILD_IMAGE=${BASE_IMAGE_REGISTRY}/library/ubuntu:24.04
 ARG RUNTIME_IMAGE=${BASE_IMAGE_REGISTRY}/library/ubuntu:24.04
+ARG GO_IMAGE=${BASE_IMAGE_REGISTRY}/library/golang:1.25.10-bookworm
+
+FROM ${GO_IMAGE} AS go
 
 FROM ${BUILD_IMAGE} AS build
 
 ARG BUILD_JOBS=2
+ARG GOPROXY
+ARG GOSUMDB
+COPY --from=go /usr/local/go /usr/local/go
+ENV PATH=/usr/local/go/bin:${PATH}
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential ca-certificates cmake ninja-build pkg-config python3-dev \
     libasio-dev libboost-dev libcurl4-openssl-dev libgflags-dev \
@@ -18,10 +25,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src/mooncake
 COPY third_party/mooncake/ ./
 
-# Install the pinned header-only RPC dependency without its examples or tests.
-RUN cmake -S extern/yalantinglibs -B /build/ylt \
-      -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARK=OFF -DBUILD_UNIT_TESTS=OFF \
-    && cmake --install /build/ylt
+# Older supported releases vendor the RPC dependency as a submodule. Newer
+# releases fetch their pinned source during the main CMake configuration.
+RUN if [ -d extern/yalantinglibs ]; then \
+      cmake -S extern/yalantinglibs -B /build/ylt \
+        -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARK=OFF -DBUILD_UNIT_TESTS=OFF; \
+      cmake --install /build/ylt; \
+    fi
 
 # The Store image does not own GPU requester runtimes or Python wheel lifecycles.
 RUN cmake -S . -B /build/mooncake -G Ninja \
@@ -29,7 +39,8 @@ RUN cmake -S . -B /build/mooncake -G Ninja \
       -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
       -DCMAKE_INSTALL_RPATH=/usr/local/lib/mooncake \
       -DUSE_CUDA=OFF -DUSE_MACA=OFF -DUSE_TCP=ON \
-      -DUSE_ETCD=OFF -DUSE_HTTP=ON -DWITH_STORE_RUST=OFF -DWITH_EP=OFF \
+      -DUSE_ETCD=OFF -DSTORE_USE_ETCD=ON -DUSE_HTTP=ON \
+      -DWITH_STORE_RUST=OFF -DWITH_EP=OFF \
       -DBUILD_UNIT_TESTS=OFF -DBUILD_BENCHMARK=OFF \
       -DPython3_EXECUTABLE=/usr/bin/python3 \
     && cmake --build /build/mooncake \
@@ -37,10 +48,13 @@ RUN cmake -S . -B /build/mooncake -G Ninja \
     && install -Dm755 /build/mooncake/mooncake-store/src/mooncake_master /out/bin/mooncake_master \
     && install -Dm755 /build/mooncake/mooncake-store/src/mooncake_client /out/bin/mooncake_client \
     && install -Dm755 /build/mooncake/mooncake-common/libasio.so /out/lib/mooncake/libasio.so \
+    && install -Dm755 /build/mooncake/mooncake-common/etcd/libetcd_wrapper.so /out/lib/mooncake/libetcd_wrapper.so \
     && install -Dm644 LICENSE-APACHE /out/share/licenses/mooncake/LICENSE-APACHE
 
-RUN install -Dm644 extern/yalantinglibs/LICENSE /out/share/licenses/yalantinglibs/LICENSE \
-    && install -Dm644 extern/yalantinglibs/NOTICE /out/share/licenses/yalantinglibs/NOTICE \
+RUN ylt_source=extern/yalantinglibs \
+    && if [ ! -d "${ylt_source}" ]; then ylt_source=/build/mooncake/_deps/yalantinglibs-src; fi \
+    && install -Dm644 "${ylt_source}/LICENSE" /out/share/licenses/yalantinglibs/LICENSE \
+    && install -Dm644 "${ylt_source}/NOTICE" /out/share/licenses/yalantinglibs/NOTICE \
     && install -Dm644 /usr/share/doc/libasio-dev/copyright /out/share/licenses/asio/copyright \
     && install -Dm644 /usr/share/doc/libboost1.83-dev/copyright /out/share/licenses/boost/copyright
 

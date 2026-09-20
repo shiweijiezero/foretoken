@@ -4,6 +4,23 @@
 
 `metrics.json` 保存汇总指标，`raw_output.json` 保存逐请求记录。标准负载还保留 `benchmark_data.db` 和 `benchmark.log`。
 
+## 实验记录
+
+本地结果包括：
+
+| 文件 | 内容 |
+| --- | --- |
+| `environment.json` | 客户端版本与源码状态；Kustomize 模式另有执行前后的服务设置、镜像 ID 和节点信息，读取失败记录在 `error` 中 |
+| `warmup/` | 预热结果，不计入正式指标和 profiling 采集 |
+| `sweep_points.json` | 每次扫描运行的结果 |
+| `sweep_summary.json`、`sweep_summary.csv` | 各参数点在重复运行中的均值、中位数、样本标准差及范围 |
+
+扫描汇总中，`runs` 是重复次数，`samples` 是有效样本数。缺失时延不计入样本，零吞吐和失败数仍保留；少于两个样本时，`stddev` 不可用。以 `_seconds` 结尾的时延指标使用秒。各次 p95 的汇总不等于合并请求后的 p95。
+
+预热复用负载的起始数据行和随机种子，全部成功后才开始测量。轨迹回放需要单独预热。
+
+## 请求指标
+
 | 指标 | 含义 |
 | --- | --- |
 | Success rate | 成功请求数除以尝试请求数 |
@@ -15,13 +32,16 @@
 | Request throughput (req/s) | 成功请求数除以运行时间 |
 | Input token throughput (tokens/s) | 成功请求的输入 token 总数除以运行时间 |
 | Output token throughput (tokens/s) | 成功请求的输出 token 总数除以运行时间 |
-| Output token throughput per user (tokens/s) | 输出吞吐量除以配置并发数；`--parallel -1` 时等于总输出吞吐量 |
-| Output token throughput per GPU (tokens/s) | 输出吞吐量除以模型声明的 GPU 容量，用于扫描比较 |
+| `Output tok/s / user` | 输出吞吐量除以 `--parallel`；`--parallel -1` 时使用实测平均活跃请求数 |
+| Output token throughput per GPU (tokens/s) | 输出吞吐量除以模型声明的 GPU 容量 |
+| Mean reported cached input tokens | 成功请求中已报告的 `usage.prompt_tokens_details.cached_tokens` 平均值 |
 | Benchmark duration (s) | 整次评测的持续时间 |
 
 请求延迟分布只统计成功请求。`--no-stream` 保留延迟和吞吐量，不报告 TTFT、TPOT 和 ITL。仅含用量统计的分片不计入流式计时。
 
-多轮数据的每个 HTTP 轮次是一条请求。某轮失败会终止当前对话，成功轮次数不等于成功对话数。多数据集保留各数据集的对话百分位，不直接平均。
+服务未报告 token 用量时，对应 token 数保持不可用。如果任一成功请求缺少输入或输出用量，需要完整 token 总数的汇总指标也保持不可用，不把缺失值当作零。缓存输入 token 保留服务报告的原值，包括明确报告的零；它不表示某个存储层或 KV store 的命中率。
+
+只有负载实际执行多轮对话时才发布会话指标。每个 HTTP 轮次是一条请求。某轮失败会终止当前对话，成功轮次数不等于成功对话数。多数据集保留各数据集的对话百分位，不直接平均。
 
 ## 曲线
 
@@ -29,7 +49,7 @@
 
 - 时间曲线按一秒完成窗口展示请求数、吞吐量、失败率、耗时 p95 和平均在途请求数；最后一个窗口使用实际时长。
 - 累计曲线展示已完成请求的累计数量、成功率、平均耗时和从运行开始计算的吞吐量。
-- 逐请求曲线按发送顺序展示每条请求的耗时、token 数和成功状态，序号从 1 开始。
+- 逐请求曲线按发送顺序展示每条请求的耗时、服务已报告的 token 数和成功状态，序号从 1 开始。
 - Kustomize 评测还会按模型服务和扩缩目标记录控制器实际应用的期望副本数和 Ready 副本数。
 
 图表和终端中的 TTFT、E2EL、会话耗时使用秒，TPOT、ITL 使用毫秒。原始 JSON 耗时仍以秒保存。

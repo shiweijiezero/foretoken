@@ -3,17 +3,21 @@
 package decision
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 
-	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/algorithm"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
 )
 
 type Queue struct{ TargetAverageQueuedRequests int64 }
 
+const queueName = "queue"
+
 // Name identifies the queue decision algorithm for registry consumers.
-func (Queue) Name() string { return "queue" }
+func (Queue) Name() string { return queueName }
+
+var queueDescriptor = core.DecisionDescriptor{Name: queueName, Factory: NewQueue}
 
 // RecommendReplicas converts aggregate waiting requests into an HPA-style average-value recommendation.
 func (queue Queue) RecommendReplicas(snapshot core.ScalingSnapshot) (core.ReplicaRecommendation, error) {
@@ -47,13 +51,14 @@ func recommendation(replicas int32, state core.RecommendationState, reason core.
 	return core.ReplicaRecommendation{State: state, Replicas: replicas, Reason: reason, Message: message}
 }
 
-func init() {
-	if err := algorithm.RegisterDecisionAlgorithm("queue", func(config core.DecisionConfig) (core.DecisionAlgorithm, error) {
-		if config.TargetAverageQueuedRequests <= 0 {
-			return nil, fmt.Errorf("autoscaling targetAverageQueuedRequests must be positive")
-		}
-		return Queue{TargetAverageQueuedRequests: config.TargetAverageQueuedRequests}, nil
-	}); err != nil {
-		panic(err)
+// NewQueue constructs the queue policy for the built-in registry and validates its capacity target.
+func NewQueue(parameters json.RawMessage) (core.DecisionAlgorithm, error) {
+	target := int64(1)
+	if err := core.DecodeParameters(parameters, map[string]any{"targetAverageQueuedRequests": &target}); err != nil {
+		return nil, err
 	}
+	if target <= 0 {
+		return nil, fmt.Errorf("autoscaling targetAverageQueuedRequests must be positive")
+	}
+	return Queue{TargetAverageQueuedRequests: target}, nil
 }

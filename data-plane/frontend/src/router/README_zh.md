@@ -21,11 +21,11 @@ spec:
 | Scorer | `kv_least_loaded`、`least_loaded`、`uniform`、`queue_depth`、`running_request`、`kv_cache_utilization` | `kv_least_loaded` | 按所选策略为目标评分 |
 | Picker | `weighted_random`、`max`、`power_of_two_choices` | `weighted_random` | 按路由分数从高到低的排名采样目标 |
 
-每个 pipeline 阶段都通过名称选择算法。如果部署提供了其他路由实现，也可以在相同的 `routerPipeline` 字段中填写对应名称。
+`kv_least_loaded` 优先比较可复用的 KV 前缀长度，再比较已确认的缓存层级和本地性，最后比较当前及下游 Decode 负载。无法提供完整缓存身份的层级不会获得位置偏好。`HostPinned` 是用于 KV 卸载的页锁定主机内存。`least_loaded` 只比较负载，`uniform` 为所有候选赋予相同分数。
 
-`kv_least_loaded` 会先比较可复用的 KV 前缀长度，再比较缓存层级和本地性，最后比较当前负载或下游 Decode 负载。`HostPinned` 指用于 offload KV 传输的页锁定主机内存，与设备显存和磁盘存储不同；因此现有 KV indexer 中的本地缓存与 offload 缓存位置仍然参与评分。`least_loaded` 忽略 KV 位置，只按当前请求负载评分。`weighted_random` 将完整的 `RouteScore` 排名转换为从高到低的权重后采样，因此排名更高的目标更容易被选中，但不会让每个请求都落到同一目标。`power_of_two_choices` 随机抽取两个目标并选择分数更高者，避免每次扫描整个候选池造成路由抖动，同时保留负载感知。
+`weighted_random` 根据完整分数的排名生成采样权重，同分候选权重相等；`max` 选择最高分候选；`power_of_two_choices` 随机抽取两个不同候选，选择分数更高者，同分时随机选择。只有两个候选时，P2C 会比较两者，不能阻止请求集中到分数更高的一方。
 
-将 `scorer` 设为 `queue_depth`，可优先选择调度器中等待请求较少的目标；设为 `running_request`，可优先选择运行请求较少的目标；设为 `kv_cache_utilization`，可优先选择实测 KV Cache 使用率较低的目标。需要按分数比例选择时，可将这些 scorer 与 `weighted_random` 搭配使用；需要降低路由抖动时，可使用 `power_of_two_choices`。
+将 `scorer` 设为 `queue_depth`，可优先选择调度器中等待请求较少的目标；设为 `running_request`，可优先选择运行请求较少的目标；设为 `kv_cache_utilization`，可优先选择实测 KV Cache 使用率较低的目标。Picker 按所选的采样或最高分规则进行选择。
 
 路由会区分同一模型执行组内的各个 DP rank。负载策略使用对应 rank 的当前调度器计数，使用率策略使用对应 rank 的 KV Cache 使用率；收到首个遥测响应即可评分，无需等满速率窗口。缺失观测不代表零负载：有实测值的候选优于未知候选，全部未知时仍由 Picker 选择。这三个纯指标策略不叠加前缀位置、待派发请求或下游阶段负载。
 

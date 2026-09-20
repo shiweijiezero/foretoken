@@ -26,6 +26,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 )
 
 const profileFinalizer = "inference.foretoken.io/profile-stop"
@@ -49,6 +50,7 @@ type profileRecord struct {
 }
 
 type profileObservation struct {
+	Engine            string         `json:"engine"`
 	RuntimeID         string         `json:"runtimeId"`
 	PodUID            string         `json:"podUid"`
 	GroupUID          string         `json:"groupUid"`
@@ -176,7 +178,12 @@ func (r *ProfileRunReconciler) Reconcile(ctx context.Context, request ctrl.Reque
 				GroupUID   string `json:"groupUid"`
 				Action     string `json:"action"`
 				DurationMS int64  `json:"durationMs"`
-			}{string(run.UID), participant.RuntimeID, participant.GroupUID, action, duration.Milliseconds()}
+				Engine     string `json:"engine,omitempty"`
+			}{string(run.UID), participant.RuntimeID, participant.GroupUID, action, duration.Milliseconds(), ""}
+			// Existing PyTorch runtimes predate the engine field and reject unknown fields.
+			if run.Spec.Engine != "pytorch" {
+				operation.Engine = run.Spec.Engine
+			}
 			observation, err = r.profileHTTP(ctx, participant.Endpoint, string(run.UID), operation)
 			if err != nil {
 				allDone = false
@@ -333,6 +340,13 @@ func (r *ProfileRunReconciler) prepareProfile(ctx context.Context, run *api.Prof
 				if observation.GroupUID != string(group.UID) || observation.PodUID != string(pod.UID) || observation.RuntimeID == "" || observation.RuntimeCacheClaim != cache.ClaimName {
 					return plan, fmt.Errorf("runtime returned an incomplete or mismatched RuntimeCache identity")
 				}
+				engine := observation.Engine
+				if engine == "" {
+					engine = "pytorch" // Original runtimes expose only PyTorch capture.
+				}
+				if engine != run.Spec.Engine {
+					return plan, fmt.Errorf("runtime is prepared for %s, requested %s; set ModelService spec.profiling.engine and redeploy", engine, run.Spec.Engine)
+				}
 				plan.Participants = append(plan.Participants, api.ProfileParticipant{GroupName: group.Name, GroupUID: string(group.UID), PodName: pod.Name, PodUID: string(pod.UID), RuntimeID: observation.RuntimeID, Endpoint: endpoint})
 				selected++
 			}
@@ -351,8 +365,16 @@ func (r *ProfileRunReconciler) prepareProfile(ctx context.Context, run *api.Prof
 	return plan, nil
 }
 
-// verifyProfilePod checks the complete ownership chain rather than trusting a Pod label.
+// verifyProfilePod checks the complete workload ownership chain rather than trusting a Pod label.
 func (r *ProfileRunReconciler) verifyProfilePod(ctx context.Context, pod *corev1.Pod, group *api.ModelGroup) error {
+	if group.Spec.NodeCount > 1 {
+		return r.verifyLeaderWorkerSetProfilePod(ctx, pod, group)
+	}
+	return r.verifyDeploymentProfilePod(ctx, pod, group)
+}
+
+// verifyDeploymentProfilePod preserves the single-node Deployment ownership contract.
+func (r *ProfileRunReconciler) verifyDeploymentProfilePod(ctx context.Context, pod *corev1.Pod, group *api.ModelGroup) error {
 	owner := metav1.GetControllerOf(pod)
 	if owner == nil || owner.Kind != "ReplicaSet" {
 		return fmt.Errorf("diagnostic Pod is not owned by a ReplicaSet")
@@ -366,7 +388,78 @@ func (r *ProfileRunReconciler) verifyProfilePod(ctx context.Context, pod *corev1
 		return err
 	}
 	if !metav1.IsControlledBy(pod, replicaSet) || !metav1.IsControlledBy(replicaSet, deployment) || !metav1.IsControlledBy(deployment, group) {
-		return fmt.Errorf("diagnostic Pod ownership does not match ModelGroup")
+		return fmt.Errorf("diagnostic Pod ownership does not match ModelGroup Deployment")
+	}
+	return nil
+}
+
+// verifyLeaderWorkerSetProfilePod follows the distinct leader and worker ownership chains
+// back to the single LWS execution group controlled by the ModelGroup.
+func (r *ProfileRunReconciler) verifyLeaderWorkerSetProfilePod(ctx context.Context, pod *corev1.Pod, group *api.ModelGroup) error {
+	workloadName := modelGroupLeaderWorkerSetName(group)
+	workload := new(lwsv1.LeaderWorkerSet)
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: group.Namespace, Name: workloadName}, workload); err != nil {
+		return err
+	}
+	if !metav1.IsControlledBy(workload, group) {
+		return fmt.Errorf("diagnostic LeaderWorkerSet ownership does not match ModelGroup")
+	}
+	if workload.Spec.Replicas == nil || *workload.Spec.Replicas != 1 || workload.Spec.LeaderWorkerTemplate.Size == nil || *workload.Spec.LeaderWorkerTemplate.Size != group.Spec.MemberCount {
+		return fmt.Errorf("diagnostic LeaderWorkerSet must contain one complete ModelGroup")
+	}
+	if pod.Labels[modelGroupLabel] != group.Name || pod.Labels[lwsv1.SetNameLabelKey] != workload.Name || pod.Labels[lwsv1.GroupIndexLabelKey] != "0" {
+		return fmt.Errorf("diagnostic Pod identity does not match ModelGroup LeaderWorkerSet")
+	}
+	workerIndex, err := strconv.Atoi(pod.Labels[lwsv1.WorkerIndexLabelKey])
+	if err != nil || workerIndex < 0 || int32(workerIndex) >= group.Spec.MemberCount {
+		return fmt.Errorf("diagnostic Pod has an invalid LeaderWorkerSet worker index")
+	}
+
+	owner := metav1.GetControllerOf(pod)
+	if owner == nil || owner.Kind != "StatefulSet" {
+		return fmt.Errorf("diagnostic LeaderWorkerSet Pod is not owned by a StatefulSet")
+	}
+	statefulSet := new(appsv1.StatefulSet)
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: owner.Name}, statefulSet); err != nil {
+		return err
+	}
+	if !metav1.IsControlledBy(pod, statefulSet) {
+		return fmt.Errorf("diagnostic Pod ownership does not match its StatefulSet")
+	}
+	if workerIndex == 0 {
+		statefulSetOwner := metav1.GetControllerOf(statefulSet)
+		if statefulSet.Name != workload.Name || statefulSetOwner == nil || statefulSetOwner.Kind != "LeaderWorkerSet" || !metav1.IsControlledBy(statefulSet, workload) {
+			return fmt.Errorf("diagnostic leader Pod ownership does not match ModelGroup LeaderWorkerSet")
+		}
+		return nil
+	}
+
+	leaderName := pod.Annotations[lwsv1.LeaderPodNameAnnotationKey]
+	if leaderName == "" || statefulSet.Name != leaderName {
+		return fmt.Errorf("diagnostic worker Pod does not identify its LeaderWorkerSet leader")
+	}
+	leader := new(corev1.Pod)
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: leaderName}, leader); err != nil {
+		return err
+	}
+	if leader.Labels[modelGroupLabel] != group.Name || leader.Labels[lwsv1.SetNameLabelKey] != workload.Name || leader.Labels[lwsv1.GroupIndexLabelKey] != "0" || leader.Labels[lwsv1.WorkerIndexLabelKey] != "0" {
+		return fmt.Errorf("diagnostic worker Pod leader identity does not match ModelGroup LeaderWorkerSet")
+	}
+	statefulSetOwner := metav1.GetControllerOf(statefulSet)
+	if statefulSetOwner == nil || statefulSetOwner.Kind != "Pod" || !metav1.IsControlledBy(statefulSet, leader) {
+		return fmt.Errorf("diagnostic worker StatefulSet ownership does not match its LeaderWorkerSet leader")
+	}
+	leaderOwner := metav1.GetControllerOf(leader)
+	if leaderOwner == nil || leaderOwner.Kind != "StatefulSet" {
+		return fmt.Errorf("diagnostic LeaderWorkerSet leader is not owned by a StatefulSet")
+	}
+	leaderStatefulSet := new(appsv1.StatefulSet)
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Namespace: leader.Namespace, Name: leaderOwner.Name}, leaderStatefulSet); err != nil {
+		return err
+	}
+	leaderStatefulSetOwner := metav1.GetControllerOf(leaderStatefulSet)
+	if leaderStatefulSet.Name != workload.Name || leaderStatefulSetOwner == nil || leaderStatefulSetOwner.Kind != "LeaderWorkerSet" || !metav1.IsControlledBy(leader, leaderStatefulSet) || !metav1.IsControlledBy(leaderStatefulSet, workload) {
+		return fmt.Errorf("diagnostic leader ownership does not match ModelGroup LeaderWorkerSet")
 	}
 	return nil
 }

@@ -2,6 +2,7 @@
 package autoscaling_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -15,11 +16,9 @@ func TestPipelineSeparatesReplicaRecommendationFromAdjustment(t *testing.T) {
 	snapshot.Replicas.RequestedReplicas = 1
 	snapshot.Metrics.WaitingRequests = 5
 	planner, err := autoscaling.New(autoscaling.Configuration{
-		DecisionAlgorithm:   autoscaling.DecisionAlgorithmQueue,
-		TriggerAlgorithm:    autoscaling.TriggerAlgorithmPeriodic,
-		AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmStep,
-		Decision:            core.DecisionConfig{TargetAverageQueuedRequests: 2},
-		Adjustment:          core.AdjustmentConfig{History: core.NewRecommendationHistory()},
+		Decision:   autoscaling.AlgorithmConfiguration{Algorithm: "queue", Parameters: json.RawMessage(`{"targetAverageQueuedRequests":2}`)},
+		Adjustment: autoscaling.AlgorithmConfiguration{Algorithm: "step"},
+		History:    core.NewRecommendationHistory(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -37,10 +36,8 @@ func TestPipelineSeparatesReplicaRecommendationFromAdjustment(t *testing.T) {
 // TestQueueAverageValueCanRecommendLowerCapacity protects the full HPA AverageValue formula under sustained low queue.
 func TestQueueAverageValueCanRecommendLowerCapacity(t *testing.T) {
 	planner, err := autoscaling.New(autoscaling.Configuration{
-		DecisionAlgorithm:   autoscaling.DecisionAlgorithmQueue,
-		TriggerAlgorithm:    autoscaling.TriggerAlgorithmPeriodic,
-		AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmDirect,
-		Decision:            core.DecisionConfig{TargetAverageQueuedRequests: 1},
+		Decision:   autoscaling.AlgorithmConfiguration{Algorithm: "queue", Parameters: json.RawMessage(`{"targetAverageQueuedRequests":1}`)},
+		Adjustment: autoscaling.AlgorithmConfiguration{Algorithm: "direct"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -76,11 +73,9 @@ func TestAutomaticInsufficientDataStillEnforcesHardBounds(t *testing.T) {
 	snapshot.Limits = core.ReplicaLimits{MinReplicas: 1, MaxReplicas: 8}
 	snapshot.Metrics.State = core.MetricsUnavailable
 	planner, err := autoscaling.New(autoscaling.Configuration{
-		DecisionAlgorithm:   autoscaling.DecisionAlgorithmQueue,
-		TriggerAlgorithm:    autoscaling.TriggerAlgorithmPeriodic,
-		AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmStep,
-		Decision:            core.DecisionConfig{TargetAverageQueuedRequests: 1},
-		Adjustment:          core.AdjustmentConfig{History: core.NewRecommendationHistory()},
+		Decision:   autoscaling.AlgorithmConfiguration{Algorithm: "queue", Parameters: json.RawMessage(`{"targetAverageQueuedRequests":1}`)},
+		Adjustment: autoscaling.AlgorithmConfiguration{Algorithm: "step"},
+		History:    core.NewRecommendationHistory(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -98,13 +93,8 @@ func TestAutomaticInsufficientDataStillEnforcesHardBounds(t *testing.T) {
 // TestQueueThresholdUsesAbsoluteBacklogBoundaries protects the independent fixed-backlog user policy.
 func TestQueueThresholdUsesAbsoluteBacklogBoundaries(t *testing.T) {
 	planner, err := autoscaling.New(autoscaling.Configuration{
-		DecisionAlgorithm:   autoscaling.DecisionAlgorithmQueueThreshold,
-		TriggerAlgorithm:    autoscaling.TriggerAlgorithmPeriodic,
-		AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmDirect,
-		Decision: core.DecisionConfig{
-			ScaleUpQueuedRequests:   10,
-			ScaleDownQueuedRequests: 0,
-		},
+		Decision:   autoscaling.AlgorithmConfiguration{Algorithm: "queue_threshold", Parameters: json.RawMessage(`{"scaleUpQueuedRequests":10,"scaleDownQueuedRequests":0}`)},
+		Adjustment: autoscaling.AlgorithmConfiguration{Algorithm: "direct"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -128,14 +118,9 @@ func TestQueueThresholdUsesAbsoluteBacklogBoundaries(t *testing.T) {
 func TestScaleDownStabilizationRetainsRecentHigherRecommendation(t *testing.T) {
 	history := core.NewRecommendationHistory()
 	planner, err := autoscaling.New(autoscaling.Configuration{
-		DecisionAlgorithm:   autoscaling.DecisionAlgorithmQueue,
-		TriggerAlgorithm:    autoscaling.TriggerAlgorithmPeriodic,
-		AdjustmentAlgorithm: autoscaling.AdjustmentAlgorithmStep,
-		Decision:            core.DecisionConfig{TargetAverageQueuedRequests: 2},
-		Adjustment: core.AdjustmentConfig{
-			ScaleDownStabilizationWindow: 5 * time.Minute,
-			History:                      history,
-		},
+		Decision:   autoscaling.AlgorithmConfiguration{Algorithm: "queue", Parameters: json.RawMessage(`{"targetAverageQueuedRequests":2}`)},
+		Adjustment: autoscaling.AlgorithmConfiguration{Algorithm: "step"},
+		History:    history,
 	})
 	if err != nil {
 		t.Fatal(err)

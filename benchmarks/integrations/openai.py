@@ -77,7 +77,9 @@ class ChatCompletionsLoadClient:
 
         started_at = time.perf_counter()
         timing = ChatStreamTiming()
-        input_tokens = output_tokens = 0
+        input_tokens: int | None = None
+        output_tokens: int | None = None
+        cached_input_tokens: int | None = None
         status_code: Optional[int] = None
         error_message: Optional[str] = None
         success = True
@@ -97,9 +99,15 @@ class ChatCompletionsLoadClient:
                     if chunk.usage is not None:
                         input_tokens = int(chunk.usage.prompt_tokens)
                         output_tokens = int(chunk.usage.completion_tokens)
+                        details = chunk.usage.prompt_tokens_details
+                        if details is not None and details.cached_tokens is not None:
+                            cached_input_tokens = int(details.cached_tokens)
             elif response.usage is not None:
                 input_tokens = int(response.usage.prompt_tokens)
                 output_tokens = int(response.usage.completion_tokens)
+                details = response.usage.prompt_tokens_details
+                if details is not None and details.cached_tokens is not None:
+                    cached_input_tokens = int(details.cached_tokens)
         except (APIError, httpx.HTTPError) as exc:
             success = False
             status_code = getattr(exc, "status_code", None)
@@ -131,5 +139,6 @@ class ChatCompletionsLoadClient:
             "inter_token_latencies": timing.intervals if stream else [],
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "cached_input_tokens": cached_input_tokens,
             "error": error_message,
         }

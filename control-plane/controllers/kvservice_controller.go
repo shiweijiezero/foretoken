@@ -7,10 +7,14 @@ package controllers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"reflect"
 	"strconv"
+	"time"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
@@ -31,7 +35,10 @@ const (
 	snapshotRetentionAnnotation  = "inference.foretoken.io/snapshot-retention"
 )
 
-type KVServiceReconciler struct{ client.Client }
+type KVServiceReconciler struct {
+	client.Client
+	HTTPClient *http.Client
+}
 
 type kvServiceCondition struct {
 	ready   bool
@@ -49,10 +56,14 @@ type kvServiceStatus struct {
 
 // SetupWithManager registers KVService reconciliation for master infrastructure and KVPools.
 func (reconciler *KVServiceReconciler) SetupWithManager(manager ctrl.Manager) error {
+	if reconciler.HTTPClient == nil {
+		reconciler.HTTPClient = &http.Client{Timeout: 2 * time.Second}
+	}
 	return ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.KVService{}).
 		Owns(&inferencev1alpha1.KVPool{}).
 		Owns(&appsv1.Deployment{}).
+		Owns(&appsv1.StatefulSet{}).
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
@@ -112,9 +123,12 @@ func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ct
 			ready:          kvServiceCondition{reason: "ObservationFailed", message: "Client availability could not be determined"},
 		}))
 	}
-	// Use one complete observation for availability and writes so a Pool
-	// create or delete failure does not revoke other compatible capacity.
-	applyErr := reconciler.reconcilePools(ctx, service, pools, desiredPools)
+	// A changed Master entry reaches clients only after its native infrastructure is ready.
+	// Existing Pools remain untouched while a new single or HA Master cohort starts.
+	var applyErr error
+	if infrastructureReady || len(pools) == 0 {
+		applyErr = reconciler.reconcilePools(ctx, service, pools, desiredPools)
+	}
 	ready := infrastructureReady && capacityAvailable
 	phase := inferencev1alpha1.KVServicePhaseProgressing
 	if ready && poolsConverged {
@@ -135,35 +149,105 @@ func (reconciler *KVServiceReconciler) Reconcile(ctx context.Context, request ct
 		status.phase = inferencev1alpha1.KVServicePhaseDegraded
 		status.pools = kvServiceCondition{reason: "ApplyFailed", message: "KVPools were not fully materialized"}
 	}
-	return ctrl.Result{}, errors.Join(applyErr, reconciler.updateStatus(ctx, service, status))
+	result := ctrl.Result{}
+	if service.Spec.Master.HighAvailability != nil {
+		result.RequeueAfter = 5 * time.Second
+	}
+	return result, errors.Join(applyErr, reconciler.updateStatus(ctx, service, status))
 }
 
 // reconcileInfrastructure applies the master resources and maintains their requester configuration lifecycle.
 func (reconciler *KVServiceReconciler) reconcileInfrastructure(ctx context.Context, service *inferencev1alpha1.KVService) (*inferencev1alpha1.KVServiceBinding, error) {
-	config, requesterConfig, deployment, kubeService, pvc, err := desiredKVMasterResources(service)
+	resources, err := desiredKVMasterResources(service)
 	if err != nil {
 		return nil, err
 	}
-	requesterName, err := reconciler.reconcileRequesterConfig(ctx, service, requesterConfig)
+	pending, err := reconciler.reconcileMasterWorkloadMode(ctx, service, resources)
+	if err != nil || pending {
+		return nil, err
+	}
+	requesterName, err := reconciler.reconcileRequesterConfig(ctx, service, resources.requesterConfig)
 	if err != nil {
 		return nil, err
 	}
-	for _, object := range []client.Object{config, deployment, kubeService} {
+	objects := []client.Object{resources.config}
+	for _, kubeService := range resources.services {
+		objects = append(objects, kubeService)
+	}
+	if resources.deployment != nil {
+		objects = append(objects, resources.deployment)
+	}
+	if resources.statefulSet != nil {
+		objects = append(objects, resources.statefulSet)
+	}
+	for _, object := range objects {
 		if err := reconciler.applyOwned(ctx, service, object); err != nil {
+			return nil, err
+		}
+	}
+	if resources.statefulSet != nil {
+		if err := reconciler.reconcileHAMasterUpdate(ctx, service, resources.statefulSet); err != nil {
 			return nil, err
 		}
 	}
 	if err := reconciler.removeStaleRequesterConfigs(ctx, service, requesterName); err != nil {
 		return nil, err
 	}
-	if pvc != nil {
-		if err := reconciler.applyOwned(ctx, service, pvc); err != nil {
+	if resources.pvc != nil {
+		if err := reconciler.applyOwned(ctx, service, resources.pvc); err != nil {
 			return nil, err
 		}
-	} else if err := reconciler.reconcileSnapshotRemoval(ctx, service); err != nil {
-		return nil, err
+	} else if service.Spec.Master.HighAvailability == nil {
+		if err := reconciler.reconcileSnapshotRemoval(ctx, service); err != nil {
+			return nil, err
+		}
 	}
-	return desiredKVServiceBinding(service, requesterName), nil
+	return desiredKVServiceBinding(requesterName, resources.connection), nil
+}
+
+// reconcileMasterWorkloadMode removes the superseded workload before changing its shared config.
+// Mode switches are explicit cache-loss migrations and never run both Master modes concurrently.
+func (reconciler *KVServiceReconciler) reconcileMasterWorkloadMode(ctx context.Context, service *inferencev1alpha1.KVService, desired kvMasterResources) (bool, error) {
+	masterName, _, _, _ := kvMasterNames(service)
+	if desired.statefulSet != nil {
+		present, err := reconciler.deleteIfPresent(ctx, &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: masterName, Namespace: service.Namespace}})
+		return present, err
+	}
+	present, err := reconciler.deleteIfPresent(ctx, &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: masterName, Namespace: service.Namespace}})
+	if err != nil || present {
+		return present, err
+	}
+	present, err = reconciler.deleteIfPresent(ctx, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: kvMasterHeadlessServiceName(service), Namespace: service.Namespace}})
+	return present, err
+}
+
+// reconcileHAMasterUpdate replaces the observed standby before the leader for an OnDelete StatefulSet.
+func (reconciler *KVServiceReconciler) reconcileHAMasterUpdate(ctx context.Context, service *inferencev1alpha1.KVService, desired *appsv1.StatefulSet) error {
+	members, err := reconciler.observeHAMasterMembers(ctx, service)
+	if err != nil || len(members) != 2 || !haMasterCohortReady(members) {
+		return err
+	}
+	desiredRevision := desired.Spec.Template.Annotations[kvMasterConfigRevision]
+	var outdatedLeader *corev1.Pod
+	upToDateStandby := false
+	for _, member := range members {
+		if member.pod.Annotations[kvMasterConfigRevision] == desiredRevision {
+			if member.health.Role == "standby" {
+				upToDateStandby = true
+			}
+			continue
+		}
+		if member.health.Role == "standby" {
+			return reconciler.Delete(ctx, member.pod, client.PropagationPolicy(metav1.DeletePropagationForeground), client.Preconditions{UID: &member.pod.UID})
+		}
+		if member.health.Role == "leader" {
+			outdatedLeader = member.pod
+		}
+	}
+	if outdatedLeader != nil && upToDateStandby {
+		return reconciler.Delete(ctx, outdatedLeader, client.PropagationPolicy(metav1.DeletePropagationForeground), client.Preconditions{UID: &outdatedLeader.UID})
+	}
+	return nil
 }
 
 // reconcileRequesterConfig reuses a configuration with the same connection
@@ -278,9 +362,10 @@ func (reconciler *KVServiceReconciler) applyOwned(ctx context.Context, owner *in
 	if err := controllerutil.SetControllerReference(owner, desired, reconciler.Scheme()); err != nil {
 		return err
 	}
-	if _, ok := desired.(*appsv1.Deployment); ok {
-		// Take ownership of workload fields previously written by Update while
-		// preserving the Deployment controller's revision annotation.
+	switch desired.(type) {
+	case *appsv1.Deployment, *appsv1.StatefulSet:
+		// Workload controllers own their revision metadata; server-side apply keeps
+		// the KVService controller responsible only for the desired workload spec.
 		return reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner("foretoken-kvservice"), client.ForceOwnership)
 	}
 	if missing {
@@ -407,8 +492,10 @@ func normalizedKVPoolSpec(service *inferencev1alpha1.KVService, template inferen
 		template.Client.StorageRegistration = &registration
 	}
 	normalized := inferencev1alpha1.NormalizedKVPoolTemplate{Client: template.Client, NodeSelector: template.NodeSelector}
-	_, _, _, masterService := kvMasterNames(service)
-	rpcPort, _, _ := masterPorts(service.Spec.Master)
+	connection, err := resolveKVMasterConnection(service)
+	if err != nil {
+		return inferencev1alpha1.KVPoolSpec{}, err
+	}
 	adminPort := int32(0)
 	if template.Client.StorageRegistration != nil && template.Client.StorageRegistration.Enabled {
 		_, _, adminPort = masterPorts(service.Spec.Master)
@@ -416,7 +503,7 @@ func normalizedKVPoolSpec(service *inferencev1alpha1.KVService, template inferen
 	return inferencev1alpha1.KVPoolSpec{
 		KVServiceRef:    inferencev1alpha1.LocalObjectReference{Name: service.Name, UID: string(service.UID)},
 		PoolName:        template.Name,
-		Revision:        kvPoolRevision(normalized, masterService, rpcPort),
+		Revision:        kvPoolRevision(normalized, connection.ServerAddress, adminPort),
 		MasterAdminPort: adminPort,
 		DesiredGroups:   template.Replicas,
 		Template:        normalized,
@@ -453,14 +540,105 @@ func (reconciler *KVServiceReconciler) ownedPools(ctx context.Context, service *
 // infrastructureReady reads the persisted master Deployment availability.
 func (reconciler *KVServiceReconciler) infrastructureReady(ctx context.Context, service *inferencev1alpha1.KVService) (bool, error) {
 	master, _, _, _ := kvMasterNames(service)
-	deployment := new(appsv1.Deployment)
-	if err := reconciler.Get(ctx, client.ObjectKey{Namespace: service.Namespace, Name: master}, deployment); err != nil {
-		if apierrors.IsNotFound(err) {
-			return false, nil
+	if service.Spec.Master.HighAvailability == nil {
+		deployment := new(appsv1.Deployment)
+		if err := reconciler.Get(ctx, client.ObjectKey{Namespace: service.Namespace, Name: master}, deployment); err != nil {
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			return false, err
 		}
+		return frontendDeploymentAvailable(deployment), nil
+	}
+	members, err := reconciler.observeHAMasterMembers(ctx, service)
+	if err != nil {
 		return false, err
 	}
-	return frontendDeploymentAvailable(deployment), nil
+	return haMasterCohortReady(members), nil
+}
+
+type mooncakeMasterHealth struct {
+	Status        string  `json:"status"`
+	Role          string  `json:"role"`
+	HAState       string  `json:"ha_state"`
+	ServiceReady  bool    `json:"service_ready"`
+	LeaderAddress *string `json:"leader_address,omitempty"`
+	ViewVersion   *uint64 `json:"view_version,omitempty"`
+}
+
+type haMasterMember struct {
+	pod    *corev1.Pod
+	health mooncakeMasterHealth
+}
+
+// observeHAMasterMembers reads each native admin endpoint without deriving a second leader state.
+func (reconciler *KVServiceReconciler) observeHAMasterMembers(ctx context.Context, service *inferencev1alpha1.KVService) ([]haMasterMember, error) {
+	masterName, _, _, _ := kvMasterNames(service)
+	master := new(appsv1.StatefulSet)
+	if err := reconciler.Get(ctx, client.ObjectKey{Namespace: service.Namespace, Name: masterName}, master); err != nil {
+		return nil, client.IgnoreNotFound(err)
+	}
+	if !metav1.IsControlledBy(master, service) {
+		return nil, fmt.Errorf("Master StatefulSet %q is not owned by this KVService", master.Name)
+	}
+	pods := new(corev1.PodList)
+	if err := reconciler.List(ctx, pods, client.InNamespace(service.Namespace), client.MatchingLabels{kvServiceLabel: kvLabelValue(service.Name), "inference.foretoken.io/component": "mooncake-master", kvMasterModeLabel: "ha"}); err != nil {
+		return nil, err
+	}
+	_, _, metricsPort := masterPorts(service.Spec.Master)
+	members := make([]haMasterMember, 0, len(pods.Items))
+	for index := range pods.Items {
+		pod := &pods.Items[index]
+		if !metav1.IsControlledBy(pod, master) || !pod.DeletionTimestamp.IsZero() || pod.Status.PodIP == "" {
+			continue
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+net.JoinHostPort(pod.Status.PodIP, strconv.Itoa(int(metricsPort)))+"/health", nil)
+		if err != nil {
+			return nil, err
+		}
+		response, err := reconciler.HTTPClient.Do(request)
+		if err != nil {
+			continue
+		}
+		var health mooncakeMasterHealth
+		decodeErr := json.NewDecoder(response.Body).Decode(&health)
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK || decodeErr != nil {
+			continue
+		}
+		members = append(members, haMasterMember{pod: pod, health: health})
+	}
+	return members, nil
+}
+
+// haMasterCohortReady requires one serving leader and one caught-up standby in the same native view.
+func haMasterCohortReady(members []haMasterMember) bool {
+	if len(members) != 2 {
+		return false
+	}
+	leaders, standbys := 0, 0
+	var leaderAddress string
+	var view uint64
+	for _, member := range members {
+		switch {
+		case member.health.Role == "leader" && member.health.HAState == "serving" && member.health.ServiceReady && member.health.LeaderAddress != nil && member.health.ViewVersion != nil:
+			leaders++
+			leaderAddress, view = *member.health.LeaderAddress, *member.health.ViewVersion
+		case member.health.Role == "standby" && member.health.HAState == "standby" && !member.health.ServiceReady && member.health.LeaderAddress != nil && member.health.ViewVersion != nil:
+			standbys++
+		default:
+			return false
+		}
+	}
+	if leaders != 1 || standbys != 1 {
+		return false
+	}
+	for _, member := range members {
+		if member.health.LeaderAddress == nil || member.health.ViewVersion == nil || *member.health.LeaderAddress != leaderAddress || *member.health.ViewVersion != view {
+			return false
+		}
+	}
+	return true
 }
 
 // kvPoolState validates the complete Pool observation before writes and reports
@@ -529,7 +707,7 @@ func (reconciler *KVServiceReconciler) reconcileDelete(ctx context.Context, serv
 	// the controller-owned Pools are gone, and wait for its deletion to converge.
 	pending := false
 	masterName, configName, pvcName, serviceName := kvMasterNames(service)
-	for _, object := range []client.Object{&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: masterName, Namespace: service.Namespace}}, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: service.Namespace}}, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: service.Namespace}}} {
+	for _, object := range []client.Object{&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: masterName, Namespace: service.Namespace}}, &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: masterName, Namespace: service.Namespace}}, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: serviceName, Namespace: service.Namespace}}, &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: kvMasterHeadlessServiceName(service), Namespace: service.Namespace}}, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: configName, Namespace: service.Namespace}}} {
 		present, err := reconciler.deleteIfPresent(ctx, object)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -617,14 +795,13 @@ func (reconciler *KVServiceReconciler) updateStatus(ctx context.Context, service
 
 // desiredKVServiceBinding projects the selected configuration version to model
 // consumers; changing the replica count does not change that version.
-func desiredKVServiceBinding(service *inferencev1alpha1.KVService, requesterName string) *inferencev1alpha1.KVServiceBinding {
-	_, _, _, masterService := kvMasterNames(service)
-	rpcPort, _, _ := masterPorts(service.Spec.Master)
+func desiredKVServiceBinding(requesterName string, connection kvMasterConnection) *inferencev1alpha1.KVServiceBinding {
 	return &inferencev1alpha1.KVServiceBinding{
-		Revision:       kvPoolRevision(inferencev1alpha1.NormalizedKVPoolTemplate{}, requesterName, rpcPort),
+		Revision:       kvPoolRevision(inferencev1alpha1.NormalizedKVPoolTemplate{}, requesterName, 0),
 		ConfigMapName:  requesterName,
 		ConfigMapKey:   requesterConfigKey,
-		MasterEndpoint: fmt.Sprintf("%s.%s.svc:%d", masterService, service.Namespace, rpcPort),
+		MasterEndpoint: connection.ServerAddress,
+		ClusterID:      connection.ClusterID,
 		PythonHashSeed: "0",
 	}
 }
@@ -641,9 +818,9 @@ func setKVServiceCondition(service *inferencev1alpha1.KVService, conditionType s
 
 func infrastructureCondition(ready bool) kvServiceCondition {
 	if ready {
-		return kvServiceCondition{ready: true, reason: "Available", message: "Master Deployment is available"}
+		return kvServiceCondition{ready: true, reason: "Available", message: "Master infrastructure is available"}
 	}
-	return kvServiceCondition{reason: "DeploymentNotAvailable", message: "Master Deployment is not available"}
+	return kvServiceCondition{reason: "InfrastructureNotAvailable", message: "Master infrastructure is not available"}
 }
 
 func poolsCondition(ready bool) kvServiceCondition {

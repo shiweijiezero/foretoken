@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: bitsandbytes-qwen2.5-0.5b
+spec:
+  model: Qwen/Qwen2.5-0.5B-Instruct
+  source: hf
+  backend: vllm
+  replicas: 1
+  resources:
+    requests:
+      cpu: "2"
+      memory: 8Gi
+      gpu:
+        count: 1
+    limits:
+      cpu: "4"
+      memory: 16Gi
+  timeouts:
+    startup: 5m
+    drain: 2m
+  engineArgs:
+    tensor-parallel-size: 1
+    quantization: bitsandbytes
+    dtype: bfloat16

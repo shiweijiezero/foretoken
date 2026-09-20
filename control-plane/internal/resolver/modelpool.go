@@ -9,7 +9,6 @@ import (
 	"fmt"
 
 	"k8s.io/apimachinery/pkg/api/resource"
-	"k8s.io/apimachinery/pkg/util/validation"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
@@ -46,8 +45,8 @@ type ECProfile struct {
 
 // RuntimeProfile contains platform-owned values for the initial vLLM runtime profile.
 type RuntimeProfile struct {
-	Revision           string
 	Image              string
+	NsightImage        string
 	ModelServerPort    int32
 	DeviceResourceName string
 	RuntimeClassName   string
@@ -99,9 +98,6 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if template.NodeCount < 1 || template.MemberCount != template.NodeCount {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM Groups require one member per node")
 	}
-	if errors := validation.IsDNS1123Label(profile.Revision); len(errors) > 0 || len(profile.Revision) > 16 {
-		return ModelGroupTemplate{}, fmt.Errorf("inference engine profile revision must be a DNS label of at most 16 characters")
-	}
 	if profile.Image == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("inference engine image is not configured")
 	}
@@ -136,6 +132,20 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if pdRuntime != nil && kvRuntime != nil && kvRuntime.Offload != nil {
 		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D does not support local KV offload")
 	}
+	image := profile.Image
+	if template.Profiling != nil && template.Profiling.Engine == "nsight" {
+		if profile.NsightImage == "" {
+			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems image is not configured; set runtime.vllm.nsightImage")
+		}
+		image = profile.NsightImage
+		if profile.DeviceResourceName != "nvidia.com/gpu" {
+			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires NVIDIA GPUs")
+		}
+		if template.RuntimeCache == nil {
+			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires a persistent RuntimeCache")
+		}
+	}
+
 	var rdma *inferencev1alpha1.RDMAAllocation
 	if template.NodeCount > 1 || effective.Parallelism.EP != nil || pdRuntime != nil {
 		rdma = profile.RDMA.DeepCopy()
@@ -146,6 +156,14 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if rdma != nil && (rdma.ResourceName == "" || rdma.ResourceCount < 1) {
 		return ModelGroupTemplate{}, fmt.Errorf("platform RDMA allocation is incomplete")
 	}
+	if template.Profiling != nil && template.Profiling.Engine == "mctracer" {
+		if profile.DeviceResourceName != "metax-tech.com/gpu" {
+			return ModelGroupTemplate{}, fmt.Errorf("mcTracer requires MetaX GPUs")
+		}
+		if template.RuntimeCache == nil {
+			return ModelGroupTemplate{}, fmt.Errorf("mcTracer requires a persistent RuntimeCache")
+		}
+	}
 	resources := *template.Resources.DeepCopy()
 
 	nodeSelector := map[string]string(nil)
@@ -153,7 +171,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		nodeSelector = map[string]string{profile.NodeSelectorKey: profile.NodeSelectorValue}
 	}
 
-	resolved := ModelGroupTemplate{
+	return ModelGroupTemplate{
 		Role: template.Role,
 		Artifacts: inferencev1alpha1.ModelGroupArtifacts{
 			Model:             effective.Model,
@@ -166,9 +184,10 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		},
 		Runtime: inferencev1alpha1.ModelGroupRuntime{
 			Backend:                               template.Backend,
-			Image:                                 profile.Image,
+			Image:                                 image,
 			Port:                                  profile.ModelServerPort,
 			EngineArgs:                            effective.EngineArgs,
+			Profiling:                             template.Profiling.DeepCopy(),
 			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,
 		},
 		PDRuntime:      pdRuntime,
@@ -188,9 +207,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			NodeSelector:       nodeSelector,
 		},
 		Network: template.Network,
-	}
-	resolved.Revision = profile.Revision
-	return resolved, nil
+	}, nil
 }
 
 // resolveKVRuntime binds the selected cache mode to a validated ModelGroup runtime contract.

@@ -252,6 +252,19 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
+                  profiling:
+                    description: Profiling is the service-selected instrumentation
+                      for this Pool's processes.
+                    properties:
+                      engine:
+                        enum:
+                        - pytorch
+                        - nsight
+                        - mctracer
+                        type: string
+                    required:
+                    - engine
+                    type: object
                   resources:
                     description: ModelResources defines resources for one runtime
                       member Pod.

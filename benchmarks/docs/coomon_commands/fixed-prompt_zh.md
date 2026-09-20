@@ -13,10 +13,4 @@ foretoken bench examples/quickstart \
 
 每次请求使用相同提示词。Kustomize 评测未指定 `--prompt` 或 `--dataset` 时使用 `Hello`。
 
-## 输出示例
-
-以下为已有服务上的小规模运行：
-
-![命令行输出](../imgs/fixed-prompt-cli.png)
-
-![W&B 运行页面](../imgs/fixed-prompt-wandb.png)
+![命令行输出示例](../imgs/fixed-prompt-cli.png)

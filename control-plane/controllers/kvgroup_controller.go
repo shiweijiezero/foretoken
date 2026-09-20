@@ -211,7 +211,7 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNames
 	registrationPort := storageManagementPort(group)
 	automountToken, allowPrivilegeEscalation, readOnlyRootFilesystem := false, false, true
 	args := []string{
-		fmt.Sprintf("--master_server_address=%s:%d", group.Spec.MasterServiceDNS, group.Spec.MasterRPCPort),
+		"--master_server_address=" + group.Spec.MasterServerAddress,
 		"--host=$(POD_IP)", fmt.Sprintf("--port=%d", port), "--protocol=" + group.Spec.Client.Protocol,
 		fmt.Sprintf("--global_segment_size=%s", group.Spec.Client.MemoryCapacityBytes), fmt.Sprintf("--enable_offload=%t", group.Spec.Client.Disk != nil), "--metadata_server=P2PHANDSHAKE",
 	}
@@ -220,6 +220,9 @@ func desiredKVGroupResources(group *inferencev1alpha1.KVGroup, controlPlaneNames
 	volumes := []corev1.Volume{{Name: "shm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}}}
 	mounts := []corev1.VolumeMount{{Name: "shm", MountPath: "/dev/shm"}}
 	env := []corev1.EnvVar{{Name: "POD_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}}}
+	if group.Spec.MasterClusterID != "" {
+		env = append(env, corev1.EnvVar{Name: "MC_STORE_CLUSTER_ID", Value: group.Spec.MasterClusterID})
+	}
 	if disk := group.Spec.Client.Disk; disk != nil {
 		pvc = &corev1.PersistentVolumeClaim{
 			TypeMeta:   metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "PersistentVolumeClaim"},
@@ -507,8 +510,8 @@ func (reconciler *KVGroupReconciler) checkStorageRegistration(ctx context.Contex
 	if clientResponse.SSDEnabled != (group.Spec.Client.Disk != nil) {
 		return false, kvGroupCondition{reason: "Unsupported", message: "Storage registration does not match the configured disk tier"}
 	}
-	if group.Spec.MasterAdminPort == 0 {
-		return false, kvGroupCondition{reason: "Unsupported", message: "Master admin port is not resolved for storage registration"}
+	if group.Spec.MasterAdminEndpoint == "" {
+		return false, kvGroupCondition{reason: "Unsupported", message: "Master admin endpoint is not resolved for storage registration"}
 	}
 	var diskCapacity int64
 	if disk := group.Spec.Client.Disk; disk != nil {
@@ -518,7 +521,7 @@ func (reconciler *KVGroupReconciler) checkStorageRegistration(ctx context.Contex
 			return false, kvGroupCondition{reason: "Unsupported", message: "KVGroup disk capacity is not a valid byte quantity"}
 		}
 	}
-	masterURL := fmt.Sprintf("http://%s:%d%s?client_id=%s", group.Spec.MasterServiceDNS, group.Spec.MasterAdminPort, masterRegistrationPath, url.QueryEscape(clientID))
+	masterURL := fmt.Sprintf("http://%s%s?client_id=%s", group.Spec.MasterAdminEndpoint, masterRegistrationPath, url.QueryEscape(clientID))
 	var masterResponse kvMasterRegistrationResponse
 	if err := reconciler.readProviderJSON(ctx, masterURL, &masterResponse); err != nil {
 		return false, storageRegistrationCondition(err)
@@ -527,7 +530,7 @@ func (reconciler *KVGroupReconciler) checkStorageRegistration(ctx context.Contex
 	if !valid || masterID != clientID || masterResponse.SSDRegistered != (group.Spec.Client.Disk != nil) || masterResponse.SSDReportedCapacityBytes != diskCapacity {
 		return false, kvGroupCondition{reason: "Unsupported", message: "Master registration does not match client identity or SSD capacity"}
 	}
-	segmentsURL := fmt.Sprintf("http://%s:%d/get_segments_detail", group.Spec.MasterServiceDNS, group.Spec.MasterAdminPort)
+	segmentsURL := fmt.Sprintf("http://%s/get_segments_detail", group.Spec.MasterAdminEndpoint)
 	var segmentsResponse kvSegmentsDetailResponse
 	if err := reconciler.readProviderJSON(ctx, segmentsURL, &segmentsResponse); err != nil {
 		return false, storageRegistrationCondition(err)

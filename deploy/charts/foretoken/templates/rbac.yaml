@@ -279,6 +279,7 @@ rules:
       - apps
     resources:
       - deployments
+      - statefulsets
     verbs:
       - get
       - list
@@ -295,6 +296,7 @@ rules:
       - get
       - list
       - watch
+      - delete
   - apiGroups:
       - ""
     resources:

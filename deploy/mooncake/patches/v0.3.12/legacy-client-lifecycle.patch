@@ -1,0 +1,63 @@
+diff --git a/mooncake-store/src/file_storage.cpp b/mooncake-store/src/file_storage.cpp
+index df917d64..2f202b03 100644
+--- a/mooncake-store/src/file_storage.cpp
++++ b/mooncake-store/src/file_storage.cpp
+@@ -304,6 +304,11 @@ FileStorage::~FileStorage() {
+     if (heartbeat_thread_.joinable()) {
+         heartbeat_thread_.join();
+     }
++    // The heartbeat can launch a rescan that still accesses members during teardown.
++    if (rescan_future_.valid()) {
++        rescan_future_.wait();
++        rescan_future_ = std::future<void>();
++    }
+     client_buffer_gc_running_ = false;
+     if (client_buffer_gc_thread_.joinable()) {
+         client_buffer_gc_thread_.join();
+diff --git a/mooncake-store/src/master_service.cpp b/mooncake-store/src/master_service.cpp
+index 04b3ef56..ced7609f 100644
+--- a/mooncake-store/src/master_service.cpp
++++ b/mooncake-store/src/master_service.cpp
+@@ -6447,6 +6447,7 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
+     }
+
+     // Rebuild total capacity metrics
++    std::unordered_set<UUID, boost::hash<UUID>> memory_clients;
+     {
+         MasterMetricManager::instance().reset_total_mem_capacity();
+         for (auto& segment_name : segment_names) {
+@@ -6471,6 +6472,7 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
+             int64_t total_size = 0;
+             for (const auto& [segment, client_id] : all_segments) {
+                 Ping(client_id);
++                memory_clients.insert(client_id);
+                 total_size += static_cast<int64_t>(segment.size);
+                 MasterMetricManager::instance().inc_total_mem_capacity(
+                     segment.name, segment.size);
+@@ -6483,6 +6485,27 @@ tl::expected<void, SerializationError> MasterService::ApplySnapshotState(
+         }
+     }
+
++    // SSD-only owners also need a heartbeat grace window after snapshot restore.
++    // Otherwise no memory segment seeds their existing client-expiry lifecycle.
++    std::vector<UUID> disk_clients;
++    {
++        auto access = segment_manager_.getLocalDiskSegmentAccess();
++        const auto& disk_segments = access.getClientLocalDiskSegment();
++        disk_clients.reserve(disk_segments.size());
++        for (const auto& entry : disk_segments) {
++            if (!memory_clients.contains(entry.first)) {
++                disk_clients.push_back(entry.first);
++            }
++        }
++    }
++    for (const auto& client_id : disk_clients) {
++        auto ping = Ping(client_id);
++        if (!ping) {
++            LOG(ERROR) << "[Restore] Failed to schedule SSD owner expiry: "
++                       << toString(ping.error());
++        }
++    }
++
+     return {};
+ }

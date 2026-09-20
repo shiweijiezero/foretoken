@@ -188,7 +188,7 @@ impl RadixTreeIndex {
                 partition.model_revision == query.model_revision
                     && partition.scope_id == query.scope_id
                     && partition.hash_format == query.hash_format
-                    && partition.group_idx == query.group_idx
+                    && (query.match_all_groups || partition.group_idx == query.group_idx)
                     && partition.spec_kind == query.spec_kind
                     && partition.sliding_window == query.sliding_window
                     && partition.hash_block_size > 0
@@ -204,7 +204,7 @@ impl RadixTreeIndex {
             .tokens
             .chunks_exact(partition.hash_block_size as usize)
         {
-            let hash = normalized_block_hash(key, &parent, tokens, partition);
+            let hash = normalized_kv_block_hash(key, &parent, tokens, partition, query.cache_salt);
             let Some(bytes) = Self::hash_bytes(&hash) else {
                 return Vec::new();
             };
@@ -220,40 +220,64 @@ impl RadixTreeIndex {
         key: &[u8; 32],
     ) -> Vec<KvPrefixMatch> {
         let mut matches = Vec::new();
+        let expected_groups = source_tree
+            .trees_by_placement
+            .values()
+            .flat_map(|placement| placement.trees_by_group.keys().copied())
+            .collect::<BTreeSet<_>>();
         for (placement, placement_tree) in &source_tree.trees_by_placement {
             if placement.locality == foretoken_model_protocol::KvCacheLocality::Unspecified {
                 continue;
             }
-            let Some(tree) = placement_tree.trees_by_group.get(&query.group_idx) else {
+            let selected_groups = placement_tree
+                .trees_by_group
+                .iter()
+                .filter(|(group_idx, _)| query.match_all_groups || **group_idx == query.group_idx)
+                .collect::<Vec<_>>();
+            if selected_groups.is_empty()
+                || (query.match_all_groups && selected_groups.len() != expected_groups.len())
+            {
                 continue;
-            };
-            for partition in Self::matching_partitions(tree, query) {
-                let query_path = Self::query_path(key, query, &partition);
-                // `common_prefixes` performs the compressed-trie lookup; direct boundary probes
-                // then select the full-block prefix even when the compressed iterator coalesces it.
-                let mut best = tree
-                    .entries_by_path
-                    .common_prefixes(&query_path)
-                    .filter(|(path, entry)| {
-                        path.len() % HASH_BYTES == 0 && entry.block.partition == partition
-                    })
-                    .map(|(path, entry)| (path.len(), entry))
-                    .max_by_key(|(length, _)| *length);
-                for end in (HASH_BYTES..=query_path.len()).step_by(HASH_BYTES) {
-                    if let Some(entry) = tree.entries_by_path.get(&query_path[..end])
-                        && entry.block.partition == partition
-                    {
-                        best = Some((end, entry));
+            }
+            let mut matched_by_group = Vec::with_capacity(selected_groups.len());
+            for (_, tree) in selected_groups {
+                let mut group_match = 0;
+                for partition in Self::matching_partitions(tree, query) {
+                    let query_path = Self::query_path(key, query, &partition);
+                    // `common_prefixes` performs the compressed-trie lookup; direct boundary probes
+                    // then select the full-block prefix even when the compressed iterator coalesces it.
+                    let mut best = tree
+                        .entries_by_path
+                        .common_prefixes(&query_path)
+                        .filter(|(path, entry)| {
+                            path.len() % HASH_BYTES == 0 && entry.block.partition == partition
+                        })
+                        .map(|(path, entry)| (path.len(), entry))
+                        .max_by_key(|(length, _)| *length);
+                    for end in (HASH_BYTES..=query_path.len()).step_by(HASH_BYTES) {
+                        if let Some(entry) = tree.entries_by_path.get(&query_path[..end])
+                            && entry.block.partition == partition
+                        {
+                            best = Some((end, entry));
+                        }
+                    }
+                    if let Some((length, _)) = best {
+                        let matched_tokens =
+                            length / HASH_BYTES * partition.hash_block_size as usize;
+                        group_match = group_match.max(matched_tokens);
                     }
                 }
-                let Some((length, _)) = best else {
-                    continue;
-                };
-                let matched_complete_blocks = (length / HASH_BYTES) as u64;
+                matched_by_group.push(group_match);
+            }
+            let matched_tokens = if query.match_all_groups {
+                matched_by_group.into_iter().min().unwrap_or(0)
+            } else {
+                matched_by_group.into_iter().max().unwrap_or(0)
+            };
+            if matched_tokens > 0 {
                 matches.push(KvPrefixMatch {
                     placement: *placement,
-                    matched_tokens: matched_complete_blocks as usize
-                        * partition.hash_block_size as usize,
+                    matched_tokens,
                 });
             }
         }

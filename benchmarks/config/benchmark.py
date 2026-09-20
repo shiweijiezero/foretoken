@@ -63,6 +63,7 @@ class HttpLoadSchedule:
     request_count: int = 100
     # -1 sends as fast as possible; positive values use a Poisson arrival rate.
     arrival_rate: float = -1.0
+    warmup_requests: int = 0
 
     def validate(self) -> None:
         """Reject load coordinates that would block or cannot express the requested schedule."""
@@ -80,6 +81,8 @@ class HttpLoadSchedule:
             raise ValueError(
                 f"--number must be >= 1, got {self.request_count}"
             )
+        if self.warmup_requests < 0:
+            raise ValueError("--warmup-requests must be >= 0")
 
 
 @dataclass
@@ -311,11 +314,6 @@ class BenchmarkConfig:
             return replace(workload, fixed_prompt="Hello")
         return workload
 
-    @property
-    def is_multi_turn(self) -> bool:
-        """Return whether a dataset row owns a conversation lifecycle."""
-        return not self.trace.trace_selector
-
     def validate(self) -> None:
         """Validate each section, then the rules that span sections, before acquiring resources."""
         self.service.validate()
@@ -366,6 +364,8 @@ class BenchmarkConfig:
                 "--sweep cannot be combined with multiple --dataset sources"
             )
         if has_trace:
+            if self.load.warmup_requests:
+                raise ValueError("--warmup-requests is not supported with --trace; warm up separately")
             if workload.max_turns not in (None, -1):
                 raise ValueError(
                     "--max-turns cannot be combined with --trace; trace replay "
@@ -421,6 +421,7 @@ class BenchmarkConfig:
             "parallel": self.load.max_concurrency,
             "number": self.load.request_count,
             "rate": self.load.arrival_rate,
+            "warmup_requests": self.load.warmup_requests,
         }
         workload = self.resolved_workload
         dataset = {
@@ -439,8 +440,7 @@ class BenchmarkConfig:
             "trace_max_concurrency": self.trace.max_concurrency,
             "trace_synthetic_prefix_reuse": self.trace.synthetic_prefix_reuse,
         }
-        if self.is_multi_turn:
-            dataset["multi_turn"] = True
+        if not self.trace.trace_selector:
             dataset["max_turns"] = workload.max_turns
         return {
             "service": service,

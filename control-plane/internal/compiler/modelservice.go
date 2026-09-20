@@ -52,9 +52,6 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	if err != nil {
 		return nil, err
 	}
-	if err := validateAutoscalingConfig(spec.Autoscaling); err != nil {
-		return nil, err
-	}
 	internalGenerateRequestBodyLimitBytes := valueOrDefaultInt64(spec.InternalGenerateRequestBodyLimitBytes, inferencev1alpha1.DefaultInternalGenerateRequestBodyLimitBytes)
 	if internalGenerateRequestBodyLimitBytes < inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes || internalGenerateRequestBodyLimitBytes > inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes {
 		return nil, fmt.Errorf("internalGenerateRequestBodyLimitBytes must be between %d and %d", inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes, inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes)
@@ -190,8 +187,16 @@ func compilePool(spec inferencev1alpha1.ModelServiceSpec, source inferencev1alph
 			KVCache:                               normalizedKVCache,
 			Features:                              normalizedFeatures,
 			EngineArgs:                            engineArgs.DeepCopy(),
+			Profiling:                             normalizeProfiling(spec.Profiling),
 		},
 	}, nil
+}
+
+func normalizeProfiling(input *inferencev1alpha1.ProfilingConfig) *inferencev1alpha1.ProfilingConfig {
+	if input == nil || input.Engine == "pytorch" {
+		return nil
+	}
+	return input.DeepCopy()
 }
 
 // The remaining compiler helpers normalize user shorthand into stable Pool template fields.
@@ -278,75 +283,6 @@ func normalizeKVCache(input *inferencev1alpha1.KVCache) (*inferencev1alpha1.Norm
 		output.MooncakeStore = &inferencev1alpha1.NormalizedMooncakeStore{Profile: store.Profile}
 	}
 	return &output, nil
-}
-
-func validateAutoscalingConfig(config *inferencev1alpha1.ModelAutoscalingConfig) error {
-	if config == nil {
-		return nil
-	}
-	if config.MinReplicas < 1 || config.MaxReplicas < config.MinReplicas {
-		return fmt.Errorf("autoscaling group bounds are invalid")
-	}
-	decision := config.Decision
-	switch decision.Algorithm {
-	case inferencev1alpha1.AutoscalingDecisionAlgorithmQueue:
-		if decision.Queue == nil || decision.QueueThreshold != nil || valueOrDefaultInt64(decision.Queue.TargetAverageQueuedRequests, 1) <= 0 {
-			return fmt.Errorf("autoscaling queue decision configuration is invalid")
-		}
-	case inferencev1alpha1.AutoscalingDecisionAlgorithmQueueThreshold:
-		if decision.QueueThreshold == nil || decision.Queue != nil {
-			return fmt.Errorf("autoscaling queue_threshold decision configuration is invalid")
-		}
-		scaleUp := valueOrDefaultInt64(decision.QueueThreshold.ScaleUpQueuedRequests, 1)
-		scaleDown := valueOrDefaultInt64(decision.QueueThreshold.ScaleDownQueuedRequests, 0)
-		if scaleDown < 0 || scaleUp < 0 || scaleDown > scaleUp {
-			return fmt.Errorf("autoscaling decision queue thresholds are invalid")
-		}
-	default:
-		return fmt.Errorf("autoscaling decision algorithm is required")
-	}
-	if adjustment := config.Adjustment; adjustment != nil && adjustment.Algorithm == inferencev1alpha1.AutoscalingAdjustmentAlgorithmDirect && (adjustment.ScaleUp != nil || adjustment.ScaleDown != nil) {
-		return fmt.Errorf("autoscaling direct adjustment does not accept scaleUp or scaleDown configuration")
-	}
-	if duration, err := time.ParseDuration(string(triggerInterval(config.Trigger))); err != nil || duration <= 0 {
-		return fmt.Errorf("autoscaling trigger.interval must be a positive duration")
-	}
-	for field, value := range map[string]inferencev1alpha1.NonNegativeDuration{
-		"autoscaling.adjustment.scaleUp.stabilizationWindow":   scaleUpWindow(config.Adjustment),
-		"autoscaling.adjustment.scaleDown.stabilizationWindow": scaleDownWindow(config.Adjustment),
-	} {
-		if duration, err := time.ParseDuration(string(value)); err != nil || duration < 0 {
-			return fmt.Errorf("%s must be a non-negative duration", field)
-		}
-	}
-	return nil
-}
-
-func triggerInterval(trigger *inferencev1alpha1.ModelAutoscalingTriggerConfig) inferencev1alpha1.Duration {
-	if trigger == nil {
-		return "5s"
-	}
-	return valueOrDefaultDuration(trigger.Interval, "5s")
-}
-
-func scaleUpWindow(adjustment *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) inferencev1alpha1.NonNegativeDuration {
-	if adjustment == nil || adjustment.ScaleUp == nil {
-		return "0s"
-	}
-	if adjustment.ScaleUp.StabilizationWindow == "" {
-		return "0s"
-	}
-	return adjustment.ScaleUp.StabilizationWindow
-}
-
-func scaleDownWindow(adjustment *inferencev1alpha1.ModelAutoscalingAdjustmentConfig) inferencev1alpha1.NonNegativeDuration {
-	if adjustment == nil || adjustment.ScaleDown == nil {
-		return "300s"
-	}
-	if adjustment.ScaleDown.StabilizationWindow == "" {
-		return "300s"
-	}
-	return adjustment.ScaleDown.StabilizationWindow
 }
 
 func normalizeTimeouts(input inferencev1alpha1.ModelTimeouts) (inferencev1alpha1.ModelTimeouts, error) {

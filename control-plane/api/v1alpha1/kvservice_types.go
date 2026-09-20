@@ -37,7 +37,7 @@ const (
 	RetentionPolicyRetain RetentionPolicy = "Retain"
 )
 
-// SnapshotStorage configures the Master singleton snapshot volume. The provider's
+// SnapshotStorage configures the single-Master snapshot volume. The provider's
 // snapshot retention is not a Foretoken cache TTL or eviction policy.
 type SnapshotStorage struct {
 	// +optional
@@ -50,7 +50,23 @@ type SnapshotStorage struct {
 	RetentionPolicy RetentionPolicy `json:"retentionPolicy,omitempty"`
 }
 
-// KVMasterSpec configures the KVService-level Mooncake Master singleton.
+// EtcdEndpoint is one external etcd client address accepted by Mooncake.
+// +kubebuilder:validation:MinLength=1
+// +kubebuilder:validation:MaxLength=1024
+type EtcdEndpoint string
+
+// KVMasterHighAvailability enables Mooncake's native two-Master etcd-backed lifecycle.
+type KVMasterHighAvailability struct {
+	// EtcdEndpoints are the external etcd client addresses used for leadership,
+	// OpLog replication, and native client leader discovery.
+	// +listType=set
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=16
+	EtcdEndpoints []EtcdEndpoint `json:"etcdEndpoints"`
+}
+
+// KVMasterSpec configures the KVService-level Mooncake Master runtime.
+// +kubebuilder:validation:XValidation:rule="!(has(self.highAvailability) && has(self.snapshot))",message="master.highAvailability and master.snapshot are mutually exclusive"
 type KVMasterSpec struct {
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
@@ -86,6 +102,10 @@ type KVMasterSpec struct {
 	SnapshotRetentionCount int32 `json:"snapshotRetentionCount,omitempty"`
 	// +optional
 	Snapshot *SnapshotStorage `json:"snapshot,omitempty"`
+	// HighAvailability switches the Master to Mooncake's native etcd-backed HA mode.
+	// The controller fixes the runtime to two Masters and enables native OpLog replication.
+	// +optional
+	HighAvailability *KVMasterHighAvailability `json:"highAvailability,omitempty"`
 }
 
 // KVDisk configures storage requested by each future client Group. Its size is a
@@ -190,6 +210,9 @@ type KVServiceBinding struct {
 	ConfigMapName  string `json:"configMapName"`
 	ConfigMapKey   string `json:"configMapKey"`
 	MasterEndpoint string `json:"masterEndpoint"`
+	// ClusterID is the native HA namespace consumed by controller-owned requesters.
+	// +optional
+	ClusterID      string `json:"clusterID,omitempty"`
 	PythonHashSeed string `json:"pythonHashSeed"`
 }
 

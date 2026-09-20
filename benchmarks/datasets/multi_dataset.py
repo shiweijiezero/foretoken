@@ -152,8 +152,9 @@ class MultiDatasetBenchmark:
             arrival_rate=load_record["rate"],
             request_count=total_requests,
             reported_concurrency=load_record["resolved_parallel"],
+            gpu_count=self.service.gpu_count,
         )
-        if self.benchmark.is_multi_turn:
+        if any("conversation" in child["metrics"] for child in dataset_results):
             empty_distribution = {
                 "mean": None,
                 "p50": None,
@@ -166,10 +167,28 @@ class MultiDatasetBenchmark:
                     **child["metrics"]["conversation"],
                 }
                 for child in dataset_results
+                if "conversation" in child["metrics"]
             ]
+            attempted_conversations = sum(
+                int(child["attempted_num"])
+                for child in child_conversations
+            )
+            conversation_results = [
+                child
+                for child in dataset_results
+                if "conversation" in child["metrics"]
+            ]
+            conversation_requests = sum(
+                int(child["metrics"]["request_num"])
+                for child in conversation_results
+            )
+            conversation_time = sum(
+                float(child["metrics"]["benchmark_time"])
+                for child in conversation_results
+            )
             successful_turns = sum(
                 int(child["metrics"]["success_num"])
-                for child in dataset_results
+                for child in conversation_results
             )
             weighted_context_turns = sum(
                 float(
@@ -179,20 +198,20 @@ class MultiDatasetBenchmark:
                     or 0.0
                 )
                 * int(child["metrics"]["success_num"])
-                for child in dataset_results
-            )
-            metrics["multi_turn"] = True
-            metrics["throughput"]["attempted_conversations_per_second"] = (
-                total_requests / metrics["benchmark_time"]
-                if metrics["benchmark_time"] > 0
-                else 0.0
+                for child in conversation_results
             )
             metrics["conversation"] = {
-                "attempted_num": total_requests,
+                "attempted_num": attempted_conversations,
+                "request_num": conversation_requests,
                 "max_turns": self.benchmark.resolved_workload.max_turns,
                 "avg_turn_requests": (
-                    metrics["request_num"] / total_requests
-                    if total_requests
+                    conversation_requests / attempted_conversations
+                    if attempted_conversations
+                    else 0.0
+                ),
+                "attempted_conversations_per_second": (
+                    attempted_conversations / conversation_time
+                    if conversation_time > 0
                     else 0.0
                 ),
                 "avg_context_turns_per_request": (
@@ -207,8 +226,6 @@ class MultiDatasetBenchmark:
                 "first_turn_ttft": dict(empty_distribution),
                 "time_to_final_answer_token": dict(empty_distribution),
                 "decode_tokens_per_second": dict(empty_distribution),
-                "cache_hit_rate_percent": dict(empty_distribution),
-                "eligible_cache_hit_rate_percent": dict(empty_distribution),
                 "per_dataset": child_conversations,
             }
         run = BenchmarkRun(

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
@@ -42,8 +43,8 @@ class GeneratedLoadBenchmark:
         self.output_dir = output_dir
         self.wandb_group = wandb_group
 
-    def run(self) -> BenchmarkRun:
-        """Run the load point and return its published result."""
+    def run(self, *, phase_label: str = "Measurement") -> BenchmarkRun:
+        """Run the labeled workload phase and return its published result."""
         load_record = resolved_load_record(self.benchmark)
         record = build_benchmark_run_record(
             self.benchmark, self.service, "standard_load", load_record
@@ -56,6 +57,34 @@ class GeneratedLoadBenchmark:
             output_dir=self.output_dir,
             wandb_group=self.wandb_group,
         ) as outputs:
+            # Drain a separate run before opening a capture or measuring traffic.
+            # EvalScope's built-in warmup can overlap measured requests to keep
+            # the server busy; capture requires a completed warmup phase instead.
+            # Reuse the same executor and result lifecycle, with warmup disabled
+            # in the child so its records cannot mix with the measured run.
+            warmup_count = self.benchmark.load.warmup_requests
+            if warmup_count:
+                warmup = replace(
+                    self.benchmark,
+                    load=replace(
+                        self.benchmark.load,
+                        request_count=warmup_count,
+                        warmup_requests=0,
+                    ),
+                    profile=None,
+                    outputs=replace(
+                        self.benchmark.outputs,
+                        destinations=("local", "quiet")
+                        if self.benchmark.outputs.includes("local") else ("quiet",),
+                    ),
+                )
+                warmed = GeneratedLoadBenchmark(
+                    warmup,
+                    self.service,
+                    output_dir=str(Path(outputs.execution_dir) / "warmup"),
+                ).run(phase_label="Warmup")
+                if warmed.metrics["failed_num"] or not warmed.metrics["success_num"]:
+                    raise ValueError("Warmup requests failed; measurement was not started")
             profile_options = self.benchmark.profile
             profile = None
             if profile_options is not None:
@@ -75,6 +104,7 @@ class GeneratedLoadBenchmark:
                     self.benchmark,
                     self.service,
                     outputs.execution_dir,
+                    phase_label=phase_label,
                     profile=profile,
                 )
             run = BenchmarkRun(

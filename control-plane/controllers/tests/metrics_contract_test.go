@@ -11,6 +11,7 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/controllers"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/core"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -32,11 +33,9 @@ func TestStaleSourceMetricsStillEnforceMaximumCapacity(t *testing.T) {
 	service.Spec.Autoscaling = &inferencev1alpha1.ModelAutoscalingConfig{
 		MinReplicas: 1,
 		MaxReplicas: 3,
-		Decision: inferencev1alpha1.ModelAutoscalingDecisionConfig{
-			Algorithm: inferencev1alpha1.AutoscalingDecisionAlgorithmQueue,
-			Queue: &inferencev1alpha1.ModelAutoscalingQueueDecisionConfig{
-				TargetAverageQueuedRequests: pointer(int64(1)),
-			},
+		Decision: inferencev1alpha1.ModelAutoscalingAlgorithmConfig{
+			Algorithm:  "queue",
+			Parameters: &apiextensionsv1.JSON{Raw: []byte(`{"targetAverageQueuedRequests":1}`)},
 		},
 	}
 	now := time.Now()
@@ -70,11 +69,9 @@ func TestMetricsAggregationDrivesPoolScalingContract(t *testing.T) {
 	service.Spec.Autoscaling = &inferencev1alpha1.ModelAutoscalingConfig{
 		MinReplicas: 1,
 		MaxReplicas: 2,
-		Decision: inferencev1alpha1.ModelAutoscalingDecisionConfig{
-			Algorithm: inferencev1alpha1.AutoscalingDecisionAlgorithmQueue,
-			Queue: &inferencev1alpha1.ModelAutoscalingQueueDecisionConfig{
-				TargetAverageQueuedRequests: pointer(int64(1)),
-			},
+		Decision: inferencev1alpha1.ModelAutoscalingAlgorithmConfig{
+			Algorithm:  "queue",
+			Parameters: &apiextensionsv1.JSON{Raw: []byte(`{"targetAverageQueuedRequests":1}`)},
 		},
 	}
 	now := time.Now()

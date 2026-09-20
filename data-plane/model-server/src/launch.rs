@@ -12,7 +12,9 @@ use serde_json::json;
 use vllm_managed_engine::ManagedEngineConfig;
 
 use foretoken_artifacts::ModelSource;
-use foretoken_model_protocol::RuntimeEcTransferMetadata;
+use foretoken_model_protocol::{
+    KvCacheLocality, KvPlacement, KvStorageTier, RuntimeEcTransferMetadata,
+};
 
 use crate::runtime_transport::{KV_EVENT_TOPIC, LOOPBACK_HOST, kv_event_endpoint};
 
@@ -33,6 +35,8 @@ pub struct LaunchPlanV1 {
     #[serde(default)]
     pub ec: EcTransferPlan,
     pub lifecycle: Lifecycle,
+    #[serde(default)]
+    pub profiling: crate::profiling::Preparation,
     #[serde(rename = "internalGenerateRequestBodyLimitBytes")]
     pub internal_generate_request_body_limit_bytes: usize,
     #[serde(default, rename = "engineArgs")]
@@ -331,6 +335,14 @@ impl LaunchPlanV1 {
         self.ec.validate()
     }
 
+    /// Resolves the image's Python interpreter for engine launch and native report inspection.
+    pub fn python_executable(&self) -> String {
+        std::env::var(VLLM_PYTHON_ENV)
+            .ok()
+            .filter(|python| !python.is_empty())
+            .unwrap_or_else(|| DEFAULT_VLLM_PYTHON.into())
+    }
+
     /// Returns the EngineCore connection deadline consumed during model-server startup.
     ///
     /// The duration is derived from the retained controller-owned lifecycle plan.
@@ -376,10 +388,7 @@ impl LaunchPlanV1 {
         member: Option<&crate::config::MemberContext>,
     ) -> Result<ManagedEngineConfig, String> {
         let mut config = ManagedEngineConfig {
-            python: std::env::var(VLLM_PYTHON_ENV)
-                .ok()
-                .filter(|python| !python.is_empty())
-                .unwrap_or_else(|| DEFAULT_VLLM_PYTHON.into()),
+            python: self.python_executable(),
             model: self.artifacts.model.clone(),
             handshake_host: LOOPBACK_HOST.into(),
             handshake_port,
@@ -482,12 +491,24 @@ impl LaunchPlanV1 {
 }
 
 impl LaunchPlanV1 {
+    /// Returns the connector-owned placement exposed by live prefix observation.
+    pub fn shared_prefix_placement(&self) -> Option<KvPlacement> {
+        match self.kv {
+            KvPlan::FilesystemOffload { .. } => Some(KvPlacement {
+                tier: KvStorageTier::Disk,
+                locality: KvCacheLocality::Local,
+            }),
+            KvPlan::MooncakeStore { .. } | KvPlan::MultiConnector { .. } => Some(KvPlacement {
+                tier: KvStorageTier::External,
+                locality: KvCacheLocality::Remote,
+            }),
+            _ => None,
+        }
+    }
+
     /// Reports whether the selected connector exposes live shared-prefix observations.
     pub fn shared_prefix_lookup(&self) -> bool {
-        matches!(
-            self.kv,
-            KvPlan::MooncakeStore { .. } | KvPlan::MultiConnector { .. }
-        )
+        self.shared_prefix_placement().is_some()
     }
 }
 
@@ -509,7 +530,8 @@ impl KvPlan {
         let store = |role: KvRole| {
             let mut config = json!({"kv_connector":"MooncakeStoreConnector","kv_role":role.as_str(),"kv_load_failure_policy":"recompute"});
             if shared_prefix_lookup {
-                config["kv_connector_module_path"] = json!(crate::shared_kv::CONNECTOR_MODULE);
+                config["kv_connector_module_path"] =
+                    json!(crate::shared_kv::MOONCAKE_CONNECTOR_MODULE);
             }
             config
         };
@@ -521,15 +543,17 @@ impl KvPlan {
                 device_name,
                 ..
             } => Some(pd(*role, *protocol, device_name)),
-            Self::CpuOffload { cpu_bytes, .. } => Some(
-                json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"spec_name":"CPUOffloadingSpec"}}),
+            Self::CpuOffload {
+                cpu_bytes, events, ..
+            } => Some(
+                json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"spec_name":"CPUOffloadingSpec","self_describing_kv_events":events}}),
             ),
             Self::FilesystemOffload {
                 cpu_bytes,
                 storage_path,
                 events,
             } => Some(
-                json!({"kv_connector":"OffloadingConnector","kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"spec_name":"TieringOffloadingSpec","secondary_tiers":[{"type":"fs","root_dir":storage_path,"enable_kv_events":events}]}}),
+                json!({"kv_connector":"OffloadingConnector","kv_connector_module_path":crate::shared_kv::OFFLOADING_CONNECTOR_MODULE,"kv_role":"kv_both","kv_connector_extra_config":{"cpu_bytes_to_use":cpu_bytes,"spec_name":"TieringOffloadingSpec","secondary_tiers":[{"type":"fs","root_dir":storage_path,"enable_kv_events":events}]}}),
             ),
             Self::MooncakeStore { role, .. } => Some(store(*role)),
             Self::MultiConnector {

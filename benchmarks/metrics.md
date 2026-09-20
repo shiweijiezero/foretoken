@@ -4,6 +4,23 @@ English | [简体中文](metrics_zh.md) · [Common commands](docs/examples.md)
 
 `metrics.json` contains aggregate results; `raw_output.json` contains per-request records. Standard workloads also retain `benchmark_data.db` and `benchmark.log`.
 
+## Experiment records
+
+Local output includes:
+
+| File | Content |
+| --- | --- |
+| `environment.json` | Client versions and source state; Kustomize runs also include serving settings, image IDs and nodes before/after execution. Failed reads have an `error` field. |
+| `warmup/` | Warmup results, excluded from measured metrics and profiling |
+| `sweep_points.json` | Every sweep repetition |
+| `sweep_summary.json`, `sweep_summary.csv` | Per-point mean, median, sample standard deviation and range across repetitions |
+
+In sweep summaries, `runs` counts repetitions and `samples` counts available values. Missing timings are omitted; zero throughput and failure counts remain. `stddev` is unavailable for fewer than two samples. Timing metrics ending in `_seconds` use seconds. Summaries of run p95 values are not pooled request percentiles.
+
+Warmup reuses the workload's starting rows and seed and must succeed before measurement begins. Trace replay requires separate warmup.
+
+## Request metrics
+
 | Metric | Meaning |
 | --- | --- |
 | Success rate | Successful requests divided by attempted requests |
@@ -15,13 +32,16 @@ English | [简体中文](metrics_zh.md) · [Common commands](docs/examples.md)
 | Request throughput (req/s) | Successful requests divided by run duration |
 | Input token throughput (tokens/s) | Successful requests' input tokens divided by run duration |
 | Output token throughput (tokens/s) | Successful requests' output tokens divided by run duration |
-| Output token throughput per user (tokens/s) | Output throughput divided by configured concurrency; `--parallel -1` uses total output throughput |
-| Output token throughput per GPU (tokens/s) | Output throughput divided by the model's declared GPU capacity, used in sweeps |
+| Output tok/s / user | Output throughput divided by `--parallel`; with `--parallel -1`, uses measured average active requests |
+| Output token throughput per GPU (tokens/s) | Output throughput divided by the model's declared GPU capacity |
+| Mean reported cached input tokens | Mean `usage.prompt_tokens_details.cached_tokens` among successful requests that report it |
 | Benchmark duration (s) | Duration of the whole benchmark run |
 
 Request latency distributions use successful requests. `--no-stream` retains latency and throughput but omits TTFT, TPOT, and ITL. Usage-only chunks do not advance streaming timing.
 
-For multi-turn data, each HTTP turn is a request. A failed turn stops that conversation; successful turns are not successful conversations. Multi-dataset runs keep conversation percentiles per dataset instead of averaging them.
+Token counts remain unavailable when the service does not report them. If any successful request lacks input or output usage, aggregates that require the complete corresponding token total are unavailable rather than treating the missing value as zero. Cached input tokens preserve the service-reported value, including an explicit zero; they do not represent a storage-tier or KV-store hit rate.
+
+Conversation metrics are published only when the workload actually executes multiple turns. Each HTTP turn is a request. A failed turn stops that conversation; successful turns are not successful conversations. Multi-dataset runs keep conversation percentiles per dataset instead of averaging them.
 
 ## Curves
 
@@ -29,7 +49,7 @@ W&B records these views after each run:
 
 - Time series use elapsed seconds for one-second completion-window counts, throughput, failure rate, p95 timings, and mean in-flight requests. The last window uses its actual duration.
 - Cumulative series show completed-request totals, success rate, mean timings, and throughput since the run began.
-- Request series use request index in send order, starting at one, for individual timings, token counts, and success.
+- Request series use request index in send order, starting at one, for individual timings, reported token counts, and success.
 - Kustomize runs also record controller-applied desired and Ready replicas for each model service and scaling target.
 
 Charts and console output use seconds for TTFT, E2EL, and conversation timings, and milliseconds for TPOT and ITL. Raw JSON timings remain in seconds.

@@ -80,7 +80,7 @@ impl PositionalHashIndex {
                 partition.model_revision == query.model_revision
                     && partition.scope_id == query.scope_id
                     && partition.hash_format == query.hash_format
-                    && partition.group_idx == query.group_idx
+                    && (query.match_all_groups || partition.group_idx == query.group_idx)
                     && partition.spec_kind == query.spec_kind
                     && partition.sliding_window == query.sliding_window
                     && partition.hash_block_size > 0
@@ -102,9 +102,27 @@ impl PositionalHashIndex {
             })
             .collect::<BTreeSet<_>>();
         let partitions = Self::matching_partitions(entries, query);
+        let groups = if query.match_all_groups {
+            entries
+                .iter()
+                .map(|entry| &entry.block.partition)
+                .filter(|partition| {
+                    partition.model_revision == query.model_revision
+                        && partition.scope_id == query.scope_id
+                        && partition.hash_format == query.hash_format
+                })
+                .map(|partition| partition.group_idx)
+                .collect::<BTreeSet<_>>()
+        } else {
+            partitions
+                .iter()
+                .map(|partition| partition.group_idx)
+                .collect()
+        };
         let mut matches = Vec::new();
 
         for placement in placements {
+            let mut matched_by_group = BTreeMap::<Option<u32>, usize>::new();
             for partition in &partitions {
                 let mut parent = KvBlockHash(String::new());
                 let mut matched_complete_blocks = 0;
@@ -113,7 +131,8 @@ impl PositionalHashIndex {
                     .chunks_exact(partition.hash_block_size as usize)
                     .enumerate()
                 {
-                    let hash = normalized_block_hash(key, &parent, tokens, partition);
+                    let hash =
+                        normalized_kv_block_hash(key, &parent, tokens, partition, query.cache_salt);
                     let found = entries.iter().any(|entry| {
                         entry.placement == placement
                             && entry.block.partition == *partition
@@ -127,13 +146,26 @@ impl PositionalHashIndex {
                     parent = hash;
                     matched_complete_blocks += 1;
                 }
-                if matched_complete_blocks > 0 {
-                    matches.push(KvPrefixMatch {
-                        placement,
-                        matched_tokens: matched_complete_blocks as usize
-                            * partition.hash_block_size as usize,
-                    });
-                }
+                let matched_tokens =
+                    matched_complete_blocks as usize * partition.hash_block_size as usize;
+                matched_by_group
+                    .entry(partition.group_idx)
+                    .and_modify(|current| *current = (*current).max(matched_tokens))
+                    .or_insert(matched_tokens);
+            }
+            let matched_tokens = if query.match_all_groups {
+                (matched_by_group.len() == groups.len())
+                    .then(|| matched_by_group.values().copied().min())
+                    .flatten()
+                    .unwrap_or(0)
+            } else {
+                matched_by_group.values().copied().max().unwrap_or(0)
+            };
+            if matched_tokens > 0 {
+                matches.push(KvPrefixMatch {
+                    placement,
+                    matched_tokens,
+                });
             }
         }
         matches.sort();
