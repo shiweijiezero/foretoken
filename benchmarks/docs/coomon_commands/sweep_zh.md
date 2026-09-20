@@ -40,4 +40,3 @@ foretoken deploy examples/quickstart --timeout 20m
 
 W&B 按一秒完成窗口展示 E2EL p95；帕累托图比较整组运行中每用户、每张声明 GPU 的输出 tok/s。缺少任一分母的点不会进入图中。
 
-![按一秒完成窗口统计的 E2EL p95 时间曲线](../imgs/sweep-wandb.png)

@@ -12,3 +12,5 @@ foretoken bench examples/quickstart \
 ```
 
 每次请求使用相同提示词。Kustomize 评测未指定 `--prompt` 或 `--dataset` 时使用 `Hello`。
+
+![命令行输出示例](../imgs/fixed-prompt-cli.png)

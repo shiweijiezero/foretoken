@@ -12,3 +12,5 @@ foretoken bench examples/quickstart \
 ```
 
 The service returns the complete response at once. End-to-end latency and throughput remain available; TTFT, TPOT, and ITL are not reported.
+
+![Recorded CLI output](../imgs/nonstream-cli.png)
