@@ -10,7 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from benchmarks.config.benchmark import BenchmarkOutputConfig, WandbRunConfig
-from benchmarks.config.cli import add_url_argument
+from benchmarks.config.cli import _add_benchmark_arguments
 from benchmarks.config.video import (
     VideoBenchmarkConfig,
     VideoDatasetDefaults,
@@ -31,11 +31,6 @@ class VideoBenchCommand:
     dry_run: bool = False
 
 
-def _output_destinations(value: str) -> tuple[str, ...]:
-    """Parse the video command's comma-separated result destinations."""
-    return tuple(item.strip() for item in value.split(",") if item.strip())
-
-
 def parse_video_arguments(
     argv: Sequence[str], *, command_name: str = "video"
 ) -> VideoBenchCommand:
@@ -45,59 +40,7 @@ def parse_video_arguments(
         description="Benchmark an existing synchronous video-generation endpoint",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    add_url_argument(parser, required=True)
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=3600.0,
-        help="Request timeout seconds",
-    )
-    parser.add_argument(
-        "--parallel",
-        type=int,
-        default=1,
-        help="Maximum concurrent video requests",
-    )
-    parser.add_argument(
-        "--number",
-        type=int,
-        default=0,
-        help="Number of video requests; zero uses all selected rows",
-    )
-    parser.add_argument(
-        "--output",
-        type=_output_destinations,
-        default=("local",),
-        help="Comma-separated outputs: local, wandb, and quiet",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default="results/video",
-        help="Directory for video benchmark artifacts",
-    )
-    parser.add_argument("--wandb-project", default="foretoken-bench")
-    parser.add_argument("--wandb-entity", default="")
-    parser.add_argument("--wandb-run-name", default="")
-    parser.add_argument(
-        "--health-url",
-        default="",
-        help="Health endpoint; derived from --url when omitted",
-    )
-    parser.add_argument(
-        "--dataset",
-        required=True,
-        help=(
-            "Native video JSONL path or an auto-downloaded selector such as "
-            "VideoArgusBench/TI2V (FORETOKEN_DATA_ROOT owns local data and "
-            "the download cache when set)"
-        ),
-    )
-    parser.add_argument(
-        "--dataset-offset",
-        type=int,
-        default=0,
-        help="Number of dataset rows to skip",
-    )
+    _add_benchmark_arguments(parser, video=True)
     parser.add_argument("--width", type=int, default=1024)
     parser.add_argument("--height", type=int, default=576)
     parser.add_argument("--num-frames", type=int, default=124)

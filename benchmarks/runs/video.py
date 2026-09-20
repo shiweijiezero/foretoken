@@ -13,10 +13,9 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from benchmarks.config.video import VideoBenchmarkConfig
 from benchmarks.integrations.video import VideoGenerationClient, VideoSampleResult
+from benchmarks.model_service import require_health_endpoint
 from benchmarks.results.output import ResultOutputs
 from benchmarks.results.video import (
     create_video_benchmark_run,
@@ -30,16 +29,6 @@ logger = logging.getLogger(__name__)
 
 class VideoBenchmarkError(RuntimeError):
     """Report a video benchmark failure that must make the command fail."""
-
-
-async def _health_ok(url: str) -> bool:
-    """Return whether the configured external service is ready for requests."""
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(url)
-        return response.is_success
-    except httpx.HTTPError:
-        return False
 
 
 async def _run_requests(
@@ -83,12 +72,8 @@ async def run_video_benchmark(
         )
         return {"metrics": {"request_num": 0, "success_num": 0}, "dry_run": True}
 
-    if not await _health_ok(config.endpoint.health_url):
-        raise VideoBenchmarkError(
-            f"Video endpoint is not healthy: {config.endpoint.health_url}. "
-            "Start the video service before running the benchmark."
-        )
-    logger.info("Video server is healthy: %s", config.endpoint.health_url)
+    await require_health_endpoint(config.endpoint.health_url)
+    logger.info("Video server health check passed")
 
     record = video_run_record(config)
     output_dir = None

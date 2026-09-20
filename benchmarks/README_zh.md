@@ -121,6 +121,8 @@ foretoken bench \
 
 其他服务使用其实际 Chat Completions URL 和模型名称。Gateway 模式传入上面的部署配置目录，由 CLI 配置路由请求头。
 
+需要在请求前检查公开的健康端点时，添加 `--health-url https://model.example/health`；不传时，URL 模式直接开始评测。
+
 ## 查看结果
 
 本地结果保存在 `results/` 下的独立目录，结束后会打印位置。`metrics.json` 是汇总，`raw_output.json` 是逐请求记录。

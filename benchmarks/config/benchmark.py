@@ -39,6 +39,7 @@ class ModelServiceSource:
 
     kustomize_path: str = ""
     url: str = ""
+    health_url: str = ""
     model: str = ""
     api_key: str = "EMPTY"
     timeout_seconds: int = 300
@@ -411,6 +412,7 @@ class BenchmarkConfig:
         service = {
             "kustomize_path": self.service.kustomize_path,
             "url": self.service.url,
+            "health_url": self.service.health_url,
             "model": self.service.model,
             "timeout": self.service.timeout_seconds,
             "max_retries": self.service.max_retries,

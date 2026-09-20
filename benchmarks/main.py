@@ -14,7 +14,11 @@ from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.config.cli import parse_benchmark_arguments
 from benchmarks.config.video_cli import parse_video_arguments
 from benchmarks.datasets.multi_dataset import MultiDatasetBenchmark
-from benchmarks.model_service import ModelService, resolve_model_service
+from benchmarks.model_service import (
+    ModelService,
+    require_health_endpoint,
+    resolve_model_service,
+)
 from benchmarks.results.console import (
     configure_logging,
     format_benchmark_config,
@@ -76,6 +80,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         with resolve_model_service(
             benchmark.service, retain_runtime_cache=benchmark.profile is not None
         ) as service:
+            if benchmark.service.health_url:
+                asyncio.run(require_health_endpoint(benchmark.service.health_url))
+                logger.info("Model service health check passed")
             if benchmark.service.kustomize_path and not quiet:
                 print_model_service(service)
 

@@ -121,6 +121,8 @@ foretoken bench \
 
 For another service, use its actual Chat Completions URL and model name. In Gateway mode, pass the deployment configuration directory shown above so the CLI supplies routing headers.
 
+Add `--health-url https://model.example/health` to check a public health endpoint before sending requests. Without it, URL-based benchmarks start directly.
+
 ## Read results
 
 Local results are saved in a separate directory under `results/`, printed when the run finishes. `metrics.json` contains the summary and `raw_output.json` contains per-request records.
