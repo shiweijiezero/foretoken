@@ -351,8 +351,6 @@ class ParameterSweepBenchmark:
                 point["parameter_group"] = str(combination["_parameter_group"])
                 point["run_number"] = run_number
                 point["gpu_count"] = self.service.gpu_count
-                if point_benchmark.is_multi_turn:
-                    point["multi_turn"] = True
                 point["bench"] = dict(combination)
                 point["label"] = f"{combination_name}|p={point['parallel']}"
                 all_points.append(point)
@@ -361,8 +359,9 @@ class ParameterSweepBenchmark:
         if len(all_points) > 1:
             if local_enabled:
                 fig_path = plot_sweep_pareto(all_points, experiment_dir)
-                artifacts["pareto"] = fig_path
-                logger.info("Pareto plot: %s", fig_path)
+                if fig_path is not None:
+                    artifacts["pareto"] = fig_path
+                    logger.info("Pareto plot: %s", fig_path)
             if not self.benchmark.outputs.includes("quiet"):
                 log_sweep_results(all_points)
 

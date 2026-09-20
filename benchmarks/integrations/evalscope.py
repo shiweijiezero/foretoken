@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import os
 import random
 import sqlite3
@@ -22,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
     from benchmarks.profiling.capture import BenchmarkProfile
-    from evalscope.perf.utils.perf_models import BenchmarkSummary, PercentileResult
+    from evalscope.perf.utils.perf_models import BenchmarkSummary
     from evalscope.perf.utils.trace_metrics import TraceLevelSummary
 
 from benchmarks.config.benchmark import BenchmarkConfig
@@ -30,8 +29,9 @@ from benchmarks.model_service import ModelService
 from benchmarks.integrations.streaming import ChatStreamTiming
 from benchmarks.results.metrics import (
     RequestMeasurement,
-    generation_tokens_per_second_per_user,
+    compute_tpot,
     percentile_summary,
+    summarize_measurements,
 )
 from benchmarks.datasets.conversations import (
     load_conversation_tasks,
@@ -216,8 +216,11 @@ def _evalscope_arguments_type() -> type:
             if result.success and not last_turn and has_tool_calls:
                 result.success = False
                 result.error = "Model requested tool execution before the next turn; a harness is required"
+            reported_input = result.prompt_tokens
+            reported_output = result.completion_tokens
+            reported_cached = result.real_cached_tokens
             if result.success and self.param.output_length_range is not None:
-                actual = result.completion_tokens
+                actual = reported_output
                 expected = body["max_tokens"]
                 if actual != expected:
                     result.success = False
@@ -239,8 +242,9 @@ def _evalscope_arguments_type() -> type:
                 "latency": completed_at - result.start_time,
                 "status_code": http_status,
                 "error": None if result.success else result.error,
-                "input_tokens": result.prompt_tokens,
-                "output_tokens": result.completion_tokens,
+                "input_tokens": reported_input,
+                "output_tokens": reported_output,
+                "cached_input_tokens": reported_cached,
                 "empty_stream": result.is_stream and timing.first_output_at is None,
             }
             diagnostics_path = Path(self.param.outputs_dir) / "request_diagnostics.jsonl"
@@ -293,6 +297,11 @@ def _evalscope_arguments(
     argument_values: dict[str, Any] = {
         "model": service.model,
         "url": service.chat_completions_url,
+        "tokenizer_path": (
+            resolve_tokenizer_path(dataset.tokenizer)
+            if dataset.tokenizer
+            else None
+        ),
         "api": _EVALSCOPE_API,
         "api_key": service.api_key,
         "headers": service.request_headers,
@@ -350,7 +359,6 @@ def _evalscope_arguments(
             {
                 "dataset": "random",
                 "dataset_offset": dataset.row_offset,
-                "tokenizer_path": resolve_tokenizer_path(dataset.tokenizer),
                 "min_prompt_length": dataset.minimum_prompt_tokens,
                 "max_prompt_length": dataset.maximum_prompt_tokens,
                 "prefix_length": dataset.shared_prefix_tokens,
@@ -388,33 +396,6 @@ def _evalscope_arguments(
     return ForetokenEvalScopeArguments(**argument_values)
 
 
-def _percentile_value(
-    percentiles: PercentileResult,
-    label: str,
-    field: str,
-    *,
-    scale: float = 1.0,
-) -> float | None:
-    value = float(percentiles.get_p(label, field))
-    return value * scale if math.isfinite(value) and value >= 0 else None
-
-
-def _metric_distribution(
-    summary_value: float,
-    percentiles: PercentileResult,
-    field: str,
-    *,
-    scale: float = 1.0,
-) -> dict[str, float | None]:
-    mean = float(summary_value) * scale
-    return {
-        "mean": mean if math.isfinite(mean) and mean >= 0 else None,
-        "p50": _percentile_value(percentiles, "50%", field, scale=scale),
-        "p95": _percentile_value(percentiles, "95%", field, scale=scale),
-        "p99": _percentile_value(percentiles, "99%", field, scale=scale),
-    }
-
-
 def _trace_metric_distribution(
     trace_summary: TraceLevelSummary | None,
     metric_name: str,
@@ -432,130 +413,47 @@ def _trace_metric_distribution(
     return {"mean": None, "p50": None, "p95": None, "p99": None}
 
 
-def _map_evalscope_metrics(
+def _conversation_metrics(
     benchmark: BenchmarkConfig,
     summary: BenchmarkSummary,
-    percentiles: PercentileResult,
-    trace_summary: TraceLevelSummary | None = None,
-    *,
-    single_turn: bool,
+    trace_summary: TraceLevelSummary | None,
 ) -> dict[str, Any]:
-    """Map typed EvalScope results to Foretoken metric fields."""
-    schedule = benchmark.load
-    reported_concurrency = schedule.max_concurrency
-    if benchmark.generation.stream and summary.succeed_requests:
-        ttft = _metric_distribution(
-            summary.avg_ttft, percentiles, "ttft", scale=0.001
-        )
-        tpot = _metric_distribution(
-            summary.avg_tpot, percentiles, "tpot", scale=0.001
-        )
-        itl = _metric_distribution(
-            summary.avg_itl, percentiles, "itl", scale=0.001
-        )
-    else:
-        empty = {"mean": None, "p50": None, "p95": None, "p99": None}
-        ttft = dict(empty)
-        tpot = dict(empty)
-        itl = dict(empty)
-
-    output_throughput = float(summary.output_token_throughput)
-    total_throughput = float(summary.total_token_throughput)
-    throughput = {
-        "requests_per_second": float(summary.request_throughput),
-        "generation_tokens_per_second": output_throughput,
-        "prompt_tokens_per_second": max(
-            0.0, total_throughput - output_throughput
-        ),
-        "total_tokens_per_second": total_throughput,
-        "generation_tokens_per_second_per_user": generation_tokens_per_second_per_user(
-            output_throughput,
-            reported_concurrency,
-        ),
-    }
-    metrics = {
+    """Map EvalScope's actual multi-turn trace summary without duplicating request metrics."""
+    conversation_count = int(benchmark.load.request_count)
+    benchmark_time = float(summary.time_taken)
+    return {
+        "attempted_num": conversation_count,
         "request_num": int(summary.total_requests),
-        "success_num": int(summary.succeed_requests),
-        "failed_num": int(summary.failed_requests),
-        "success_rate": (
-            summary.succeed_requests / summary.total_requests
-            if summary.total_requests
+        "max_turns": benchmark.resolved_workload.max_turns,
+        "avg_turn_requests": (
+            int(summary.total_requests) / conversation_count
+            if conversation_count
             else 0.0
         ),
-        "stream": benchmark.generation.stream,
-        "latency": _metric_distribution(
-            summary.avg_latency, percentiles, "latency"
-        ),
-        "ttft": ttft,
-        "tpot": tpot,
-        "itl": itl,
-        "throughput": throughput,
-        "avg_input_tokens": (
-            float(summary.avg_input_tokens)
+        "avg_context_turns_per_request": (
+            float(summary.avg_turns)
             if summary.succeed_requests
+            and summary.avg_turns is not None
+            and summary.avg_turns >= 0
             else None
         ),
-        "avg_output_tokens": (
-            float(summary.avg_output_tokens)
-            if summary.succeed_requests
-            else None
-        ),
-        "benchmark_time": float(summary.time_taken),
-        "rate": float(schedule.arrival_rate),
-        "number": int(schedule.request_count),
-        "parallel": reported_concurrency,
-    }
-    if benchmark.is_multi_turn:
-        metrics["multi_turn"] = True
-        conversation_count = int(schedule.request_count)
-        benchmark_time = float(summary.time_taken)
-        throughput["attempted_conversations_per_second"] = (
+        "attempted_conversations_per_second": (
             conversation_count / benchmark_time if benchmark_time > 0 else 0.0
-        )
-        metrics["conversation"] = {
-            "attempted_num": conversation_count,
-            "max_turns": benchmark.resolved_workload.max_turns,
-            "avg_turn_requests": (
-                int(summary.total_requests) / conversation_count
-                if conversation_count
-                else 0.0
-            ),
-            "avg_context_turns_per_request": (
-                (1.0 if single_turn else float(summary.avg_turns))
-                if summary.succeed_requests and (
-                    single_turn or (summary.avg_turns is not None and summary.avg_turns >= 0)
-                )
-                else None
-            ),
-            "latency": _trace_metric_distribution(
-                trace_summary, "Latency (s)"
-            ),
-            "first_turn_ttft": _trace_metric_distribution(
-                trace_summary if benchmark.generation.stream else None,
-                "First-Turn TTFT (s)",
-            ),
-            "time_to_final_answer_token": _trace_metric_distribution(
-                trace_summary if benchmark.generation.stream else None,
-                "TTFAT (s)",
-            ),
-            "decode_tokens_per_second": _trace_metric_distribution(
-                trace_summary if benchmark.generation.stream else None,
-                "Decode TPS",
-            ),
-            "cache_hit_rate_percent": _trace_metric_distribution(
-                trace_summary, "Cache Hit Rate (%)"
-            ),
-            "eligible_cache_hit_rate_percent": _trace_metric_distribution(
-                trace_summary, "Eligible Cache Hit Rate (%)"
-            ),
-        }
-        if single_turn:
-            # One-turn conversations have exactly the same timing samples as
-            # their HTTP requests; no conversation trace summary is needed.
-            metrics["conversation"]["latency"] = dict(metrics["latency"])
-            metrics["conversation"]["first_turn_ttft"] = dict(ttft)
-            metrics["conversation"]["time_to_final_answer_token"] = dict(ttft)
-    return metrics
+        ),
+        "latency": _trace_metric_distribution(trace_summary, "Latency (s)"),
+        "first_turn_ttft": _trace_metric_distribution(
+            trace_summary if benchmark.generation.stream else None,
+            "First-Turn TTFT (s)",
+        ),
+        "time_to_final_answer_token": _trace_metric_distribution(
+            trace_summary if benchmark.generation.stream else None,
+            "TTFAT (s)",
+        ),
+        "decode_tokens_per_second": _trace_metric_distribution(
+            trace_summary if benchmark.generation.stream else None,
+            "Decode TPS",
+        ),
+    }
 
 
 def _read_evalscope_request_measurements(
@@ -579,7 +477,6 @@ def _read_evalscope_request_measurements(
         rows = connection.execute(
             """
             SELECT success, start_time, latency, first_chunk_latency,
-                   prompt_tokens, completion_tokens, time_per_output_token,
                    inter_token_latencies, completed_time
             FROM result
             ORDER BY start_time
@@ -588,46 +485,47 @@ def _read_evalscope_request_measurements(
     if not rows:
         return [], None
     first_start = min(float(row[1]) for row in rows)
-    measurements = [
-        RequestMeasurement(
-            started_at=float(row[1]) - first_start,
-            ttft=(
-                float(row[3]) if row[3] is not None
-                and not diagnostics.get(float(row[1]), {}).get("empty_stream") else None
-            ),
-            latency=float(
-                row[2] if row[2] is not None
-                else diagnostics.get(float(row[1]), {}).get("latency", float(row[8]) - float(row[1]))
-            ),
-            tpot=(
-                float(row[6]) if row[6] is not None
-                and not diagnostics.get(float(row[1]), {}).get("empty_stream") else None
-            ),
-            itl_samples=(
-                () if diagnostics.get(float(row[1]), {}).get("empty_stream")
-                else tuple(float(value) for value in json.loads(row[7] or "[]"))
-            ),
-            input_tokens=int(
-                row[4] if row[4] is not None
-                else diagnostics.get(float(row[1]), {}).get("input_tokens") or 0
-            ),
-            output_tokens=int(
-                row[5] if row[5] is not None
-                else diagnostics.get(float(row[1]), {}).get("output_tokens") or 0
-            ),
-            succeeded=bool(row[0]),
-            conversation_id=None,
-            turn=None,
-            status_code=diagnostics.get(float(row[1]), {}).get("status_code"),
-            error_message=diagnostics.get(float(row[1]), {}).get("error"),
+    measurements = []
+    for row in rows:
+        diagnostic = diagnostics.get(float(row[1]), {})
+        latency = float(
+            row[2]
+            if row[2] is not None
+            else diagnostic.get("latency", float(row[5]) - float(row[1]))
         )
-        for row in rows
-    ]
+        empty_stream = bool(diagnostic.get("empty_stream"))
+        ttft = (
+            float(row[3])
+            if row[3] is not None and not empty_stream
+            else None
+        )
+        output_tokens = diagnostic.get("output_tokens")
+        measurements.append(
+            RequestMeasurement(
+                started_at=float(row[1]) - first_start,
+                ttft=ttft,
+                latency=latency,
+                tpot=compute_tpot(latency, ttft, output_tokens),
+                itl_samples=(
+                    ()
+                    if empty_stream
+                    else tuple(float(value) for value in json.loads(row[4] or "[]"))
+                ),
+                input_tokens=diagnostic.get("input_tokens"),
+                output_tokens=output_tokens,
+                cached_input_tokens=diagnostic.get("cached_input_tokens"),
+                succeeded=bool(row[0]),
+                conversation_id=None,
+                turn=None,
+                status_code=diagnostic.get("status_code"),
+                error_message=diagnostic.get("error"),
+            )
+        )
     return measurements, first_start
 
 
 @contextmanager
-def _evalscope_phase(label: str, conversations: int) -> Iterator[None]:
+def _evalscope_phase(label: str, work_items: int) -> Iterator[None]:
     """Announce a workload phase and scope its EvalScope log filtering to this call."""
     from evalscope.utils.logger import get_logger
 
@@ -635,13 +533,22 @@ def _evalscope_phase(label: str, conversations: int) -> Iterator[None]:
     thread_id = threading.get_ident()
 
     def include_record(record: logging.LogRecord) -> bool:
-        # The native handoff warning describes overlapping built-in warmup;
-        # Foretoken finishes its separate warmup before starting measurement.
-        return record.thread != thread_id or record.funcName != "_log_warmup_handoff"
+        if record.thread != thread_id or record.levelno >= logging.ERROR:
+            return True
+        if record.levelno >= logging.WARNING:
+            return record.funcName != "_log_warmup_handoff"
+        # Foretoken owns user-visible configuration and result summaries. Keep
+        # EvalScope's execution progress while removing its duplicate argument
+        # dump and summary tables from this adapter's console output.
+        return record.funcName not in {
+            "_log_warmup_handoff",
+            "run_one_benchmark",
+            "summary_result",
+        }
 
     logger.addFilter(include_record)
     try:
-        logger.info("%s: %d conversations", label, conversations)
+        logger.info("%s: %d work items", label, work_items)
         yield
     finally:
         logger.removeFilter(include_record)
@@ -697,26 +604,31 @@ def run_evalscope_standard_load(
             Path(materialized_dataset).unlink(missing_ok=True)
     point = next(iter(result.values()))
     summary = point["metrics"]
-    percentiles = point["percentiles"]
     trace_summary = point.get("trace_summary")
-    metrics = _map_evalscope_metrics(
-        benchmark, summary, percentiles, trace_summary,
-        single_turn=not arguments.multi_turn,
-    )
     measurements, time_origin = _read_evalscope_request_measurements(output_dir)
-    if benchmark.generation.stream and any(
-        item.succeeded and item.ttft is None for item in measurements
-    ):
-        # Streams without choices chunks have no token-arrival timing.
-        # Exclude their upstream zeros rather than report instantaneous tokens.
-        successful = [item for item in measurements if item.succeeded]
-        metrics["ttft"] = percentile_summary([item.ttft for item in successful if item.ttft is not None])
-        metrics["tpot"] = percentile_summary([item.tpot for item in successful if item.tpot is not None])
-        metrics["itl"] = percentile_summary([value for item in successful for value in item.itl_samples])
-        conversation = metrics["conversation"]
-        for key in ("first_turn_ttft", "time_to_final_answer_token", "decode_tokens_per_second"):
-            conversation[key] = percentile_summary([])
-        if not arguments.multi_turn:
-            conversation["first_turn_ttft"] = dict(metrics["ttft"])
-            conversation["time_to_final_answer_token"] = dict(metrics["ttft"])
+    metrics = summarize_measurements(
+        measurements,
+        total_time=float(summary.time_taken),
+        stream=benchmark.generation.stream,
+        arrival_rate=float(benchmark.load.arrival_rate),
+        request_count=int(benchmark.load.request_count),
+        reported_concurrency=int(benchmark.load.max_concurrency),
+        gpu_count=service.gpu_count,
+    )
+    if arguments.multi_turn:
+        metrics["conversation"] = _conversation_metrics(
+            benchmark, summary, trace_summary
+        )
+        if benchmark.generation.stream and any(
+            item.succeeded and item.ttft is None for item in measurements
+        ):
+            # EvalScope's trace summary uses zero for streams without output
+            # chunks. Keep those conversation timings unavailable instead.
+            conversation = metrics["conversation"]
+            for key in (
+                "first_turn_ttft",
+                "time_to_final_answer_token",
+                "decode_tokens_per_second",
+            ):
+                conversation[key] = percentile_summary([])
     return metrics, measurements, time_origin

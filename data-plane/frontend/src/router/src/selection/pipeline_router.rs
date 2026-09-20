@@ -27,15 +27,21 @@ pub struct PipelineRouter<C: Send + 'static = ()> {
     kv_prefix_indexer: Arc<dyn KvPrefixIndexer>,
     route_target_stats_reader: Arc<dyn RouteTargetStatsReader>,
     pipeline: Arc<RouterPipeline<C>>,
+    metrics: Arc<crate::metrics::RouterMetricsScope>,
 }
 impl<C: Send + 'static> PipelineRouter<C> {
     /// Creates a Router with no-op KV-prefix and route-target statistics readers.
     pub fn with_pipeline(inventory: Arc<dyn RouteInventory>, pipeline: RouterPipeline<C>) -> Self {
+        let metrics = Arc::new(crate::metrics::RouterMetricsScope::new(
+            inventory.as_ref(),
+            pipeline.algorithm_names,
+        ));
         Self {
             inventory,
             kv_prefix_indexer: Arc::new(NoopKvPrefixIndexer),
             route_target_stats_reader: Arc::new(NoopRouteTargetStatsReader),
             pipeline: Arc::new(pipeline),
+            metrics,
         }
     }
 
@@ -106,7 +112,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
         error: RouteError,
     ) -> Result<RouteCandidate, RouteError> {
         let started = Instant::now();
-        let metrics = &crate::metrics::METRICS;
+        let metrics = &self.metrics;
         let round = routing_progress.current_stage;
         let [filter_name, scorer_name, picker_name] = self.pipeline.algorithm_names;
         // Keep every early return inside the round so failed candidate discovery or invalid
@@ -115,7 +121,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
             // Filter and Scorer see the complete compatible, healthy snapshot. Stage and connector
             // eligibility are applied after scoring and before Picker.
             let candidates = self.candidates(request);
-            metrics.candidates(round, "available", candidates.len());
+            metrics.candidates(&request.model, round, "available", candidates.len());
             let stage_started = Instant::now();
             let filtered_indexes = self.pipeline.filter.filter(
                 request,
@@ -124,7 +130,13 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 routing_progress,
                 customized_context,
             );
-            metrics.stage(round, "filter", filter_name, stage_started.elapsed());
+            metrics.stage(
+                &request.model,
+                round,
+                "filter",
+                filter_name,
+                stage_started.elapsed(),
+            );
             let mut seen_indexes = BTreeSet::new();
             let filtered = filtered_indexes
                 .into_iter()
@@ -138,7 +150,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                         .ok_or(RouteError::InvalidFilterIndex { index: index.0 })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            metrics.candidates(round, "filtered", filtered.len());
+            metrics.candidates(&request.model, round, "filtered", filtered.len());
             let stage_started = Instant::now();
             let scores = self.pipeline.scorer.score(
                 request,
@@ -147,7 +159,13 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 routing_progress,
                 customized_context,
             );
-            metrics.stage(round, "scorer", scorer_name, stage_started.elapsed());
+            metrics.stage(
+                &request.model,
+                round,
+                "scorer",
+                scorer_name,
+                stage_started.elapsed(),
+            );
             if scores.len() != filtered.len() {
                 return Err(RouteError::InvalidScorerResult {
                     expected: filtered.len(),
@@ -164,7 +182,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 .filter(|candidate| eligible(&candidate.candidate, &scored))
                 .cloned()
                 .collect::<Vec<_>>();
-            metrics.candidates(round, "selectable", selectable.len());
+            metrics.candidates(&request.model, round, "selectable", selectable.len());
             if selectable.is_empty() {
                 return Err(error);
             }
@@ -175,7 +193,13 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 routing_progress,
                 customized_context,
             );
-            metrics.stage(round, "picker", picker_name, stage_started.elapsed());
+            metrics.stage(
+                &request.model,
+                round,
+                "picker",
+                picker_name,
+                stage_started.elapsed(),
+            );
             let picked = picked.ok_or(RouteError::EmptyPickerResult)?;
             let candidate = selectable
                 .get(picked.0)
@@ -203,7 +227,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
             }
             Ok(candidate)
         })();
-        metrics.selection(round, started.elapsed(), result.as_ref().err());
+        metrics.selection(&request.model, round, started.elapsed(), result.as_ref());
         result
     }
 
@@ -459,6 +483,7 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
                 kv_prefix_indexer,
                 route_target_stats_reader: self.route_target_stats_reader.clone(),
                 pipeline: self.pipeline.clone(),
+                metrics: self.metrics.clone(),
             },
             customized_context: (self.pipeline.customized_context_factory)(&request),
             request,

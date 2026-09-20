@@ -29,6 +29,8 @@ spec:
 
 路由会区分同一模型执行组内的各个 DP rank。负载策略使用对应 rank 的当前调度器计数，使用率策略使用对应 rank 的 KV Cache 使用率；收到首个遥测响应即可评分，无需等满速率窗口。缺失观测不代表零负载：有实测值的候选优于未知候选，全部未知时仍由 Picker 选择。这三个纯指标策略不叠加前缀位置、待派发请求或下游阶段负载。
 
+Frontend 的 `/metrics` 按 `model_name` 输出路由结果和耗时。成功选择目标时，`foretoken_router_target_selections_total` 按 `model_name`、`model_role`、`route_target_id` 和 `data_parallel_rank` 计数，表示路由选择，不因后续准入、生成失败或取消而改写。模型与目标标签只来自服务配置。
+
 只有模型、输入限制、请求能力和目标健康状态都兼容时，请求才会成为候选项。对于预填充/解码分离或编码/预填充/解码分离的服务，路由会确保选中的各阶段彼此兼容。
 
 KV 索引返回 `Unavailable` 时，目标仍可参与路由，但不获得 KV 前缀匹配优先权；路由仍会考虑其负载。位置查询和退化行为见 [KV 前缀索引](../kv-indexer/README_zh.md)。

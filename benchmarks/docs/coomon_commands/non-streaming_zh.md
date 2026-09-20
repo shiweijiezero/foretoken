@@ -12,11 +12,3 @@ foretoken bench examples/quickstart \
 ```
 
 服务一次返回完整回答。仍统计端到端耗时和吞吐量，不报告 TTFT、TPOT 和 ITL。
-
-## 输出示例
-
-以下为已有服务上的小规模运行：
-
-![命令行输出](../imgs/nonstream-cli.png)
-
-![W&B 运行页面](../imgs/nonstream-wandb.png)

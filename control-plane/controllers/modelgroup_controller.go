@@ -41,6 +41,7 @@ const (
 	conditionWorkloadAvailable     = "WorkloadAvailable"
 	conditionSchedulingCapacity    = "SchedulingCapacity"
 	modelGroupLabel                = "inference.foretoken.io/model-group"
+	modelGroupUIDLabel             = "inference.foretoken.io/model-group-uid"
 	modelGroupRoleLabel            = "inference.foretoken.io/model-role"
 	modelGroupPDPipelineScopeLabel = "inference.foretoken.io/pd-pipeline-scope"
 	multusNetworksAnnotation       = "k8s.v1.cni.cncf.io/networks"
@@ -387,9 +388,13 @@ func (reconciler *ModelGroupReconciler) reconcileService(ctx context.Context, gr
 	if group.Spec.NodeCount > 1 {
 		selector[lwsv1.WorkerIndexLabelKey] = "0"
 	}
+	// Scrape metadata links route-target identity to the readable Group name without
+	// changing workload selectors or forcing existing Deployments to be recreated.
+	serviceLabels := maps.Clone(labels)
+	serviceLabels[modelGroupUIDLabel] = string(group.UID)
 	desired := &corev1.Service{
 		TypeMeta:   metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "Service"},
-		ObjectMeta: metav1.ObjectMeta{Name: modelGroupServiceName(group), Namespace: group.Namespace, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: modelGroupServiceName(group), Namespace: group.Namespace, Labels: serviceLabels},
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeClusterIP,
 			Selector: selector,

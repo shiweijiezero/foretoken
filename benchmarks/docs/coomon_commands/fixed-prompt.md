@@ -12,11 +12,3 @@ foretoken bench examples/quickstart \
 ```
 
 Each request uses the same prompt. Without `--prompt` or `--dataset`, a Kustomize benchmark uses `Hello`.
-
-## Example output
-
-A short run against an existing service:
-
-![CLI output](../imgs/fixed-prompt-cli.png)
-
-![W&B run](../imgs/fixed-prompt-wandb.png)

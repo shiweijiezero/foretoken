@@ -36,15 +36,17 @@ _TOTAL_REQUESTS = "Requests"
 _SUCCEED_REQUESTS = "Successful requests"
 _FAILED_REQUESTS = "Failed requests"
 _REQUESTS_PER_SECOND = "Request throughput (req/s)"
-_AVERAGE_LATENCY = "Mean end-to-end latency (E2EL) (s)"
+_SUCCESS_RATE = "Success rate (%)"
 _AVERAGE_INPUT_TOKENS = "Mean input tokens"
 _INPUT_TOKENS_PER_SECOND = "Input token throughput (tokens/s)"
 _GENERATION_TOKENS_PER_SECOND = "Output token throughput (tokens/s)"
 _TOTAL_TOKENS_PER_SECOND = "Total tokens per second (tokens/s)"
-_AVERAGE_TTFT = "Mean TTFT (s)"
-_AVERAGE_TPOT = "Mean TPOT (ms)"
-_AVERAGE_ITL = "Mean ITL (ms)"
 _AVERAGE_OUTPUT_TOKENS = "Mean output tokens"
+_AVERAGE_CACHED_INPUT_TOKENS = "Mean reported cached input tokens"
+_GENERATION_TOKENS_PER_CONFIGURED_CONCURRENCY = (
+    "Output token throughput per configured concurrency (tokens/s)"
+)
+_GENERATION_TOKENS_PER_GPU = "Output token throughput per GPU (tokens/s)"
 _CONCURRENT_CONVERSATIONS = "Concurrent conversations"
 _CONVERSATIONS = "Conversations attempted"
 _CONVERSATIONS_PER_SECOND = "Attempted conversations per second"
@@ -58,16 +60,20 @@ _DISTRIBUTION_METRICS = (
     ("latency", "End-to-end latency (E2EL) (s)", 1.0),
     ("ttft", "TTFT (s)", 1.0),
     ("tpot", "TPOT (ms)", 1000.0),
+    ("itl", "ITL (ms)", 1000.0),
     ("replay_delay", "Replay delay (s)", 1.0),
     ("trace_e2e_ttft", "TTFT including replay delay (s)", 1.0),
     ("trace_e2e_latency", "E2EL including replay delay (s)", 1.0),
+)
+_TRACE_DISTRIBUTION_METRICS = tuple(
+    item for item in _DISTRIBUTION_METRICS if item[0] != "itl"
 )
 _TRACE_HISTORY_KEYS = {
     "requests_per_second": "Trace/Scheduled requests per second",
     "successful_requests_per_second": "Trace/Successful scheduled requests/s",
     **{
         key: f"Trace/{name} p95"
-        for key, name, _ in _DISTRIBUTION_METRICS
+        for key, name, _ in _TRACE_DISTRIBUTION_METRICS
     },
 }
 
@@ -95,24 +101,32 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         _TOTAL_REQUESTS: int(metrics["request_num"]),
         _SUCCEED_REQUESTS: int(metrics["success_num"]),
         _FAILED_REQUESTS: int(metrics["failed_num"]),
+        _SUCCESS_RATE: round(float(metrics["success_rate"]) * 100.0, 4),
         _REQUESTS_PER_SECOND: round(float(throughput["requests_per_second"]), 4),
-        _INPUT_TOKENS_PER_SECOND: round(
-            float(throughput["prompt_tokens_per_second"]), 4
-        ),
-        _GENERATION_TOKENS_PER_SECOND: round(
-            float(throughput["generation_tokens_per_second"]), 4
-        ),
-        _TOTAL_TOKENS_PER_SECOND: round(
-            float(throughput["total_tokens_per_second"]), 4
-        ),
     }
+    throughput_fields = (
+        ("prompt_tokens_per_second", _INPUT_TOKENS_PER_SECOND),
+        ("generation_tokens_per_second", _GENERATION_TOKENS_PER_SECOND),
+        ("total_tokens_per_second", _TOTAL_TOKENS_PER_SECOND),
+        (
+            "generation_tokens_per_second_per_configured_concurrency",
+            _GENERATION_TOKENS_PER_CONFIGURED_CONCURRENCY,
+        ),
+        ("generation_tokens_per_second_per_gpu", _GENERATION_TOKENS_PER_GPU),
+    )
+    for source, destination in throughput_fields:
+        value = throughput.get(source)
+        if value is not None:
+            message[destination] = round(float(value), 4)
     optional = (
         ("avg_input_tokens", _AVERAGE_INPUT_TOKENS, 1.0, 4),
         ("avg_output_tokens", _AVERAGE_OUTPUT_TOKENS, 1.0, 4),
-        ("latency", _AVERAGE_LATENCY, 1.0, 4),
-        ("ttft", _AVERAGE_TTFT, 1.0, 4),
-        ("tpot", _AVERAGE_TPOT, 1000.0, 2),
-        ("itl", _AVERAGE_ITL, 1000.0, 2),
+        (
+            "avg_cached_input_tokens",
+            _AVERAGE_CACHED_INPUT_TOKENS,
+            1.0,
+            4,
+        ),
     )
     for source, destination, scale, digits in optional:
         value = metrics[source]
@@ -134,7 +148,7 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         message[_CONCURRENT_CONVERSATIONS] = int(metrics["parallel"])
         message[_CONVERSATIONS] = int(conversation["attempted_num"])
         message[_CONVERSATIONS_PER_SECOND] = round(
-            float(throughput["attempted_conversations_per_second"]), 4
+            float(conversation["attempted_conversations_per_second"]), 4
         )
         message[_AVERAGE_TURNS_PER_CONVERSATION] = round(
             float(conversation["avg_turn_requests"]), 4
@@ -147,7 +161,6 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
                 if value is not None:
                     message[f"{name}/{percentile}"] = round(float(value), 4)
     return message
-
 
 
 def _trace_bucket_rows(
@@ -177,7 +190,7 @@ def _trace_bucket_rows(
             "requests_per_second": len(bucket_results) / bucket_seconds,
             "successful_requests_per_second": len(successful) / bucket_seconds,
         }
-        for key, _, scale in _DISTRIBUTION_METRICS:
+        for key, _, scale in _TRACE_DISTRIBUTION_METRICS:
             values = [
                 float(result[key])
                 for result in successful
@@ -216,11 +229,16 @@ class WandbBenchmarkRun:
         base = wandb_config.run_name.strip() or f"{service.model}_{wandb_run_timestamp()}"
         group = wandb_config.group.strip() or group
         name = f"{base}_{name_suffix}" if name_suffix else base
+        run_config = config.to_dict()
+        run_config["service"]["model"] = service.model
+        run_config["model"] = service.model
+        if service.model_service_refs:
+            run_config["declared_gpu_count"] = service.gpu_count
         init_kwargs: dict[str, Any] = {
             "project": wandb_config.project,
             "name": name,
             "reinit": "create_new",
-            "config": config.to_dict(),
+            "config": run_config,
             "dir": output_dir,
             "settings": wandb.Settings(
                 x_stats_sampling_interval=_SYSTEM_STATS_INTERVAL_S

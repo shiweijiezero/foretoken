@@ -314,11 +314,6 @@ class BenchmarkConfig:
             return replace(workload, fixed_prompt="Hello")
         return workload
 
-    @property
-    def is_multi_turn(self) -> bool:
-        """Return whether a dataset row owns a conversation lifecycle."""
-        return not self.trace.trace_selector
-
     def validate(self) -> None:
         """Validate each section, then the rules that span sections, before acquiring resources."""
         self.service.validate()
@@ -445,8 +440,7 @@ class BenchmarkConfig:
             "trace_max_concurrency": self.trace.max_concurrency,
             "trace_synthetic_prefix_reuse": self.trace.synthetic_prefix_reuse,
         }
-        if self.is_multi_turn:
-            dataset["multi_turn"] = True
+        if not self.trace.trace_selector:
             dataset["max_turns"] = workload.max_turns
         return {
             "service": service,

@@ -26,9 +26,15 @@ def summarize_sweep(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
         samples: dict[str, list[float | None]] = defaultdict(list)
         for run in runs:
             for metric in ("request_num", "success_num", "failed_num", "success_rate",
-                           "avg_input_tokens", "avg_output_tokens", "benchmark_time"):
+                           "avg_input_tokens", "avg_output_tokens",
+                           "avg_cached_input_tokens", "benchmark_time"):
                 samples[metric].append(run[metric])
-            for metric in ("requests_per_second", "generation_tokens_per_second"):
+            for metric in (
+                "requests_per_second",
+                "generation_tokens_per_second",
+                "generation_tokens_per_second_per_configured_concurrency",
+                "generation_tokens_per_second_per_gpu",
+            ):
                 samples[metric].append(run["throughput"][metric])
             for metric in ("latency", "ttft", "tpot", "itl"):
                 for statistic in ("mean", "p50", "p95", "p99"):

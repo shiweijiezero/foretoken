@@ -34,7 +34,7 @@ type autoscalingCollector struct {
 
 // newAutoscalingCollector binds the controller's cached ModelService reader to a Prometheus collector.
 func newAutoscalingCollector(reader client.Reader) *autoscalingCollector {
-	labels := []string{"namespace", "modelservice", "target_kind", "target_name", "role"}
+	labels := []string{"namespace", "modelservice", "model_name", "target_kind", "target_name", "role"}
 	desc := func(name, help string) *prometheus.Desc {
 		return prometheus.NewDesc("foretoken_autoscaling_"+name, help, labels, nil)
 	}
@@ -91,7 +91,7 @@ func (collector *autoscalingCollector) Collect(ch chan<- prometheus.Metric) {
 			continue
 		}
 		for _, target := range service.Status.Autoscaling {
-			labels := []string{service.Namespace, service.Name, target.Kind, strings.TrimPrefix(target.ID, target.Kind+"/"), target.Role}
+			labels := []string{service.Namespace, service.Name, service.Spec.Model, target.Kind, strings.TrimPrefix(target.ID, target.Kind+"/"), target.Role}
 			emit := func(desc *prometheus.Desc, value float64) {
 				ch <- prometheus.MustNewConstMetric(desc, prometheus.GaugeValue, value, labels...)
 			}

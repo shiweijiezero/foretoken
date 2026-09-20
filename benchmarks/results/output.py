@@ -97,6 +97,7 @@ class LocalDirectorySink:
                     "tpot": item.tpot if run.metrics["stream"] else None,
                     "input_tokens": item.input_tokens,
                     "output_tokens": item.output_tokens,
+                    "cached_input_tokens": item.cached_input_tokens,
                     "inter_token_latencies": list(item.itl_samples) if run.metrics["stream"] else [],
                     "conversation_id": item.conversation_id,
                     "turn": item.turn,
@@ -223,8 +224,7 @@ def build_benchmark_run_record(
             "rate": load_record["rate"],
         },
     }
-    if benchmark.is_multi_turn:
-        record["multi_turn"] = True
+    if not benchmark.trace.trace_selector:
         record["max_turns"] = workload.max_turns
     if workload.dataset_selectors == ["random"]:
         record["random_seed"] = workload.random_seed

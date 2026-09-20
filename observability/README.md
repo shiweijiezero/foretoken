@@ -31,7 +31,11 @@ printf 'Grafana user: %s\nGrafana password: %s\n' \
   "$GRAFANA_USER" "$GRAFANA_PASSWORD"
 ```
 
-In Grafana, open Foretoken System Overview for English or Foretoken 系统概览 for Chinese. It follows a request through the Frontend, model serving, caches, and accelerators, and ends with autoscaling decisions; routing and control-plane details are in collapsed sections. Filters narrow the view to a namespace, Frontend service, model group, model role, model, or model service.
+In Grafana, open Foretoken System Overview for English or Foretoken 系统概览 for Chinese. Select a namespace and model, then narrow to a model instance, execution role or engine rank. Model-serving, cache, GPU and routing panels follow that selection. Routing decisions shows each instance's share within its model and role; selecting one instance keeps the same overall denominator.
+
+Shared frontend panels show all traffic through the selected frontend, not just one model. Autoscaling follows the selected model and service; control-plane diagnostics describe the platform.
+
+After upgrading Foretoken, run `foretoken install` again to update the controller, frontend, scrape configuration, and dashboards. Importing dashboard JSON alone does not update metric producers.
 
 ## Check that collection works
 
@@ -119,7 +123,7 @@ Selecting the power alert also requires a positive `spec.observability.alerts.th
 | mxExporter | MetaX utilization and memory |
 | kubelet/cAdvisor | Container CPU and memory |
 
-Dashboard latency metrics use seconds for TTFT and E2EL, and milliseconds for TPOT and ITL. TPOT includes both percentile and mean values.
+Dashboard latency metrics use seconds for TTFT and E2EL, and milliseconds for TPOT and ITL. The p50/p95/p99 percentiles combine request histograms across the selected instances, separately for each model and role. Prefix-cache hit ratios divide total hit tokens by total queried tokens; idle or missing observations have no ratio. Routing shares count selection decisions, not completed requests or cache hits.
 
 The following recording rules remain available for alerts and fixed-window queries. Model-serving rules are derived from vLLM metrics.
 

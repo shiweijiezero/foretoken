@@ -12,11 +12,3 @@ foretoken bench examples/quickstart \
 ```
 
 The service returns the complete response at once. End-to-end latency and throughput remain available; TTFT, TPOT, and ITL are not reported.
-
-## Example output
-
-A short run against an existing service:
-
-![CLI output](../imgs/nonstream-cli.png)
-
-![W&B run](../imgs/nonstream-wandb.png)

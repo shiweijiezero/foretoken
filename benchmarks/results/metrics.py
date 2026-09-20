@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -27,8 +27,9 @@ class RequestMeasurement:
     latency: float
     tpot: float | None
     itl_samples: tuple[float, ...]
-    input_tokens: int
-    output_tokens: int
+    input_tokens: int | None
+    output_tokens: int | None
+    cached_input_tokens: int | None
     succeeded: bool
     conversation_id: str | None
     turn: int | None
@@ -51,11 +52,11 @@ def percentile_summary(values: list[float]) -> dict[str, float | None]:
 
 def compute_tpot(
     latency: float,
-    ttft: Optional[float],
-    output_tokens: int,
-) -> Optional[float]:
+    ttft: float | None,
+    output_tokens: int | None,
+) -> float | None:
     """Compute TPOT from the latency and token count of one streamed request."""
-    if ttft is None:
+    if ttft is None or output_tokens is None:
         return None
     denominator = int(output_tokens) - 1
     if denominator <= 0:
@@ -63,29 +64,34 @@ def compute_tpot(
     return (latency - ttft) / denominator
 
 
-def configured_user_denominator(parallel: int) -> int:
-    """Return the denominator for per-user throughput; unlimited concurrency uses one."""
-    return 1 if parallel < 0 else int(parallel)
+def normalized_generation_throughput(
+    generation_tokens_per_second: float | None,
+    *,
+    configured_concurrency: int,
+    gpu_count: int | None,
+) -> dict[str, float | None]:
+    """Normalize known output throughput by the available workload denominators.
 
-
-def generation_tokens_per_second_per_user(
-    generation_tokens_per_second: float,
-    parallel: int,
-) -> float:
-    """Normalize output throughput by the configured closed-loop concurrency."""
-    return float(generation_tokens_per_second) / float(
-        configured_user_denominator(parallel)
-    )
-
-
-def generation_tokens_per_second_per_gpu(
-    generation_tokens_per_second: float,
-    gpu_count: int,
-) -> float:
-    """Normalize output throughput by the GPU count for the current workload point."""
-    if gpu_count < 1:
-        raise ValueError(f"gpu_count must be >= 1, got {gpu_count}")
-    return float(generation_tokens_per_second) / float(gpu_count)
+    Concurrency normalization requires a finite configured limit.
+    GPU normalization is available only for Kubernetes deployments whose model
+    capacity is declared. Missing denominators remain unavailable rather than
+    being replaced with one.
+    """
+    per_concurrency = None
+    per_gpu = None
+    if generation_tokens_per_second is not None:
+        if configured_concurrency > 0:
+            per_concurrency = (
+                float(generation_tokens_per_second) / configured_concurrency
+            )
+        if gpu_count is not None:
+            if gpu_count < 1:
+                raise ValueError(f"gpu_count must be >= 1, got {gpu_count}")
+            per_gpu = float(generation_tokens_per_second) / gpu_count
+    return {
+        "generation_tokens_per_second_per_configured_concurrency": per_concurrency,
+        "generation_tokens_per_second_per_gpu": per_gpu,
+    }
 
 
 def summarize_measurements(
@@ -96,7 +102,8 @@ def summarize_measurements(
     arrival_rate: float,
     request_count: int,
     reported_concurrency: int,
-    include_user_throughput: bool = True,
+    gpu_count: int | None,
+    include_normalized_throughput: bool = True,
 ) -> dict[str, Any]:
     """Aggregate request measurements and workload coordinates into the published metrics.
 
@@ -115,22 +122,45 @@ def summarize_measurements(
         tpots = [item.tpot for item in successful if item.tpot is not None]
         itls = [value for item in successful for value in item.itl_samples]
 
-    output_tokens = sum(item.output_tokens for item in successful)
-    input_tokens = sum(item.input_tokens for item in successful)
+    input_complete = all(item.input_tokens is not None for item in successful)
+    output_complete = all(item.output_tokens is not None for item in successful)
+    input_tokens = (
+        sum(int(item.input_tokens) for item in successful) if input_complete else None
+    )
+    output_tokens = (
+        sum(int(item.output_tokens) for item in successful) if output_complete else None
+    )
+    reported_cached_tokens = [
+        item.cached_input_tokens
+        for item in successful
+        if item.cached_input_tokens is not None
+    ]
     success_count = len(successful)
     request_num = len(measurements)
 
+    generation_tokens_per_second = (
+        output_tokens / total_time if output_tokens is not None else None
+    )
+    prompt_tokens_per_second = (
+        input_tokens / total_time if input_tokens is not None else None
+    )
+    total_tokens_per_second = (
+        (input_tokens + output_tokens) / total_time
+        if input_tokens is not None and output_tokens is not None
+        else None
+    )
     throughput: dict[str, Any] = {
         "requests_per_second": success_count / total_time,
-        "generation_tokens_per_second": output_tokens / total_time,
-        "prompt_tokens_per_second": input_tokens / total_time,
-        "total_tokens_per_second": (input_tokens + output_tokens) / total_time,
+        "generation_tokens_per_second": generation_tokens_per_second,
+        "prompt_tokens_per_second": prompt_tokens_per_second,
+        "total_tokens_per_second": total_tokens_per_second,
     }
-    if include_user_throughput:
-        throughput["generation_tokens_per_second_per_user"] = (
-            generation_tokens_per_second_per_user(
-                throughput["generation_tokens_per_second"],
-                reported_concurrency,
+    if include_normalized_throughput:
+        throughput.update(
+            normalized_generation_throughput(
+                generation_tokens_per_second,
+                configured_concurrency=reported_concurrency,
+                gpu_count=gpu_count,
             )
         )
     return {
@@ -145,10 +175,19 @@ def summarize_measurements(
         "itl": percentile_summary(itls),
         "throughput": throughput,
         "avg_input_tokens": (
-            input_tokens / success_count if success_count else None
+            input_tokens / success_count
+            if success_count and input_tokens is not None
+            else None
         ),
         "avg_output_tokens": (
-            output_tokens / success_count if success_count else None
+            output_tokens / success_count
+            if success_count and output_tokens is not None
+            else None
+        ),
+        "avg_cached_input_tokens": (
+            sum(reported_cached_tokens) / len(reported_cached_tokens)
+            if reported_cached_tokens
+            else None
         ),
         "benchmark_time": total_time,
         "rate": arrival_rate,
