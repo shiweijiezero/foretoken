@@ -281,7 +281,7 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
     )
     if normalized is not None:
         lines.append(
-            "  Output tok/s / concurrency: "
+            "  Output tok/s / user:"
             f"{_format_metric(normalized)}"
         )
     per_gpu = throughput.get("generation_tokens_per_second_per_gpu")

@@ -44,7 +44,7 @@ _TOTAL_TOKENS_PER_SECOND = "Total tokens per second (tokens/s)"
 _AVERAGE_OUTPUT_TOKENS = "Mean output tokens"
 _AVERAGE_CACHED_INPUT_TOKENS = "Mean reported cached input tokens"
 _GENERATION_TOKENS_PER_CONFIGURED_CONCURRENCY = (
-    "Output tok/s / concurrency"
+    "Output tok/s / user"
 )
 _GENERATION_TOKENS_PER_GPU = "Output token throughput per GPU (tokens/s)"
 _CONCURRENT_CONVERSATIONS = "Concurrent conversations"
