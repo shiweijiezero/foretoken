@@ -32,7 +32,7 @@
 | Request throughput (req/s) | 成功请求数除以运行时间 |
 | Input token throughput (tokens/s) | 成功请求的输入 token 总数除以运行时间 |
 | Output token throughput (tokens/s) | 成功请求的输出 token 总数除以运行时间 |
-| Output token throughput per configured concurrency (tokens/s) | 输出吞吐量除以有限的 `--parallel` 值 |
+| Output token throughput per configured concurrency (tokens/s) | 输出吞吐量除以有限的 `--parallel` 值，作为辅助比较指标；除数是配置上限，不是实际活跃并发数，结果不代表单个请求的生成速度 |
 | Output token throughput per GPU (tokens/s) | 输出吞吐量除以模型声明的 GPU 容量 |
 | Mean reported cached input tokens | 成功请求中已报告的 `usage.prompt_tokens_details.cached_tokens` 平均值 |
 | Benchmark duration (s) | 整次评测的持续时间 |

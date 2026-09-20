@@ -70,12 +70,10 @@ def normalized_generation_throughput(
     configured_concurrency: int,
     gpu_count: int | None,
 ) -> dict[str, float | None]:
-    """Normalize known output throughput by the available workload denominators.
+    """Return output throughput per configured concurrency and per GPU.
 
-    Concurrency normalization requires a finite configured limit.
-    GPU normalization is available only for Kubernetes deployments whose model
-    capacity is declared. Missing denominators remain unavailable rather than
-    being replaced with one.
+    Missing throughput or denominators produce ``None``; unlimited concurrency
+    has no denominator.
     """
     per_concurrency = None
     per_gpu = None
