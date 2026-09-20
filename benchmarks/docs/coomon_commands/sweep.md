@@ -39,4 +39,3 @@ Qwen3-0.6B on one A100 80GB PCIe GPU:
 ![Recorded sweep output](../imgs/sweep-cli.png)
 
 W&B shows E2EL p95 in one-second completion windows; the Pareto plot compares whole-run output tok/s per user and per declared GPU. Points without either denominator are omitted.
-
