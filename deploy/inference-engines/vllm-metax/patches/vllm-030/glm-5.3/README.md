@@ -1,6 +1,6 @@
 # GLM-5.3 on the vLLM 0.30 MetaX source pair
 
-This directory is the versioned source-patch bundle for the GLM-5.3-Flash BF16 runtime validated with the vLLM 0.30 development core and the MetaX 0.29 development plugin.
+This directory contains the source-patch bundle for GLM-5.3-Flash BF16 on the vLLM 0.30 development core and MetaX 0.29 development plugin.
 
 The bundle is intentionally separate from the generic MetaX 0.26 installer. It is not selected by the 0.26 release path and does not claim that the public MetaX 0.26 release supports GLM-5.3.
 
@@ -23,5 +23,4 @@ The patches target the exact source pair recorded by the corresponding source-bu
 
 The first patch bundle has passed C500 layout, HMA stride, BF16 prefill and six-token decode checks. The remaining patches have passed source-level and packaged import checks. Full two-node GLM weight loading, MTP initialization, KV transfer, and OpenAI-compatible generation remain the runtime acceptance boundary.
 
-5. `metax030-glm-mtp-kv-group.patch`
-   Keeps MTP layers on the shared target sparse-MQA top-k path instead of creating MTP-local indexer and tail KV groups.
+MTP requires its full sparse indexer and separate MLA, compressed-indexer, and tail cache groups. Use the pinned core's Model Runner V2 (`VLLM_USE_V2_MODEL_RUNNER=1`) for multi-group draft attention; the legacy proposer assumes a single draft KV-cache group. Each proposal computes MTP-specific top-k indices in its first step and reuses those indices only in subsequent draft steps.
