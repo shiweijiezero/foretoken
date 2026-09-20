@@ -67,21 +67,13 @@ def add_common_benchmark_arguments(
     ),
     output_dir_default: str = _default(BenchmarkOutputConfig, "output_dir"),
     include_wandb_group: bool = True,
-    url_help: str = "Existing model-service endpoint URL",
-    parallel_help: str = (
-        "Maximum concurrent requests; -1 removes the limit when supported"
-    ),
-    number_help: str = (
-        "Requests to run across selected datasets; zero selects all rows "
-        "when supported"
-    ),
 ) -> None:
     """Add service, load, and result options shared by benchmark commands."""
     parser.add_argument(
         "--url",
         required=require_url,
         default=None if require_url else _default(ModelServiceSource, "url"),
-        help=url_help,
+        help="Existing model-service endpoint URL",
     )
     parser.add_argument(
         "--timeout",
@@ -93,13 +85,16 @@ def add_common_benchmark_arguments(
         "--parallel",
         type=int,
         default=parallel_default,
-        help=parallel_help,
+        help="Maximum concurrent requests; -1 removes the limit when supported",
     )
     parser.add_argument(
         "--number",
         type=int,
         default=number_default,
-        help=number_help,
+        help=(
+            "Requests to run across selected datasets; zero selects all rows "
+            "when supported"
+        ),
     )
     parser.add_argument(
         "--output",
@@ -142,15 +137,7 @@ def add_common_benchmark_arguments(
 
 
 def _add_benchmark_arguments(parser: argparse.ArgumentParser) -> None:
-    add_common_benchmark_arguments(
-        parser,
-        url_help="Model service URL, including /v1/chat/completions",
-        parallel_help=(
-            "Maximum concurrent conversations; a fixed or random prompt is one "
-            "turn; -1 means no concurrency limit"
-        ),
-        number_help="Conversations per run; total across multiple datasets",
-    )
+    add_common_benchmark_arguments(parser)
 
     # Service source
     parser.add_argument(
