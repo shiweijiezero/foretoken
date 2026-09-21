@@ -28,6 +28,7 @@ from benchmarks.model_service import ModelService
 from benchmarks.results.console import log_benchmark_summary
 from benchmarks.results.environment import client_environment, serving_environment
 from benchmarks.results.metrics import RequestMeasurement
+from benchmarks.results.prometheus import PrometheusObserver
 from benchmarks.results.replicas import KubernetesReplicaObserver
 from benchmarks.results.wandb import publish_http_wandb
 
@@ -359,6 +360,7 @@ class ResultOutputs:
         self._execution_dir: str | None = None
         self._temporary_execution_dir = False
         self._replica_observer: KubernetesReplicaObserver | None = None
+        self._prometheus_observer: PrometheusObserver | None = None
         self._environment: dict[str, Any] | None = None
         self._exit_code = 0
 
@@ -483,6 +485,17 @@ class ResultOutputs:
                 else:
                     self._replica_observer = observer
                     self._resources.callback(self._close_replica_observer)
+                try:
+                    prometheus_observer = PrometheusObserver(self.service)
+                    prometheus_observer.start()
+                except (DeploymentError, RuntimeError) as exc:
+                    logger.warning(
+                        "Prometheus observation unavailable; continuing with benchmark: %s",
+                        exc,
+                    )
+                else:
+                    self._prometheus_observer = prometheus_observer
+                    self._resources.callback(self._close_prometheus_observer)
         except BaseException:
             self._exit_code = 1
             try:
@@ -506,6 +519,13 @@ class ResultOutputs:
         """Stop the observer once when publication or context cleanup takes ownership."""
         observer = self._replica_observer
         self._replica_observer = None
+        if observer is not None:
+            observer.close()
+
+    def _close_prometheus_observer(self) -> None:
+        """Stop the Prometheus observer once when cleanup takes ownership."""
+        observer = self._prometheus_observer
+        self._prometheus_observer = None
         if observer is not None:
             observer.close()
 
@@ -542,6 +562,7 @@ class ResultOutputs:
             self._sinks = []
             self._execution_dir = None
             self._replica_observer = None
+            self._prometheus_observer = None
             self._exit_code = 0
 
     def publish(self, run: BenchmarkRun) -> None:
@@ -561,6 +582,15 @@ class ResultOutputs:
                         "replica_observations.json",
                         observations,
                     )
+        prometheus_observer = self._prometheus_observer
+        self._prometheus_observer = None
+        if prometheus_observer is not None:
+            observations = prometheus_observer.finish(run.time_origin)
+            run.artifacts["prometheus_observations"] = write_json(
+                self.execution_dir,
+                "prometheus_observations.json",
+                observations,
+            )
         if self._environment is not None:
             if self.service is not None:
                 self._environment["after"] = serving_environment(

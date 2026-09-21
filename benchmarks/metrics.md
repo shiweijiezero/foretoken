@@ -11,6 +11,7 @@ Local output includes:
 | File | Content |
 | --- | --- |
 | `environment.json` | Client versions and source state; Kustomize runs also include serving settings, image IDs and nodes before/after execution. Failed reads have an `error` field. |
+| `prometheus_observations.json` | Kustomize-run Prometheus samples for model-server, GPU, KV, routing, and queue metrics when a compatible Prometheus is available. |
 | `warmup/` | Warmup results, excluded from measured metrics and profiling |
 | `sweep_points.json` | Every sweep repetition |
 | `sweep_summary.json`, `sweep_summary.csv` | Per-point mean, median, sample standard deviation and range across repetitions |
@@ -54,7 +55,7 @@ W&B records these views after each run:
 - Time series use elapsed seconds for one-second completion-window counts, throughput, failure rate, p95 timings, and mean in-flight requests. The last window uses its actual duration.
 - Cumulative series show completed-request totals, success rate, mean timings, and throughput since the run began.
 - Request series use request index in send order, starting at one, for individual timings, reported token counts, success, and `slo_met` when SLO criteria are enabled.
-- Kustomize runs also record controller-applied desired and Ready replicas for each model service and scaling target.
+- Kustomize runs also record controller-applied desired and Ready replicas for each model service and scaling target; Prometheus observations are uploaded as a W&B benchmark artifact when available.
 
 Charts and console output use seconds for TTFT, E2EL, and conversation timings, and milliseconds for TPOT and ITL. Raw JSON timings remain in seconds.
 

@@ -11,6 +11,7 @@
 | 文件 | 内容 |
 | --- | --- |
 | `environment.json` | 客户端版本与源码状态；Kustomize 模式另有执行前后的服务设置、镜像 ID 和节点信息，读取失败记录在 `error` 中 |
+| `prometheus_observations.json` | Kustomize 评测中采集的 model-server、GPU、KV、路由和队列指标；集群没有兼容 Prometheus 时不生成 |
 | `warmup/` | 预热结果，不计入正式指标和 profiling 采集 |
 | `sweep_points.json` | 每次扫描运行的结果 |
 | `sweep_summary.json`、`sweep_summary.csv` | 各参数点在重复运行中的均值、中位数、样本标准差及范围 |
@@ -54,7 +55,7 @@
 - 时间曲线按一秒完成窗口展示请求数、吞吐量、失败率、耗时 p95 和平均在途请求数；最后一个窗口使用实际时长。
 - 累计曲线展示已完成请求的累计数量、成功率、平均耗时和从运行开始计算的吞吐量。
 - 逐请求曲线按发送顺序展示每条请求的耗时、服务已报告的 token 数和成功状态；启用 SLO 条件时还展示 `slo_met`，序号从 1 开始。
-- Kustomize 评测还会按模型服务和扩缩目标记录控制器实际应用的期望副本数和 Ready 副本数。
+- Kustomize 评测还会按模型服务和扩缩目标记录控制器实际应用的期望副本数和 Ready 副本数；可用时，Prometheus 观测会作为 W&B Benchmark artifact 上传。
 
 图表和终端中的 TTFT、E2EL、会话耗时使用秒，TPOT、ITL 使用毫秒。原始 JSON 耗时仍以秒保存。
 

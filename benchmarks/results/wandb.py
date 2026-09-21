@@ -10,6 +10,8 @@ import json
 import math
 from typing import TYPE_CHECKING, Any
 
+import wandb
+
 from benchmarks.results.metrics import percentile_summary
 
 if TYPE_CHECKING:
@@ -260,5 +262,11 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 }
             )
             sdk_run.log(message)
+
+    prometheus_path = run.artifacts.get("prometheus_observations")
+    if prometheus_path is not None:
+        artifact = wandb.Artifact("benchmark-observations", type="benchmark")
+        artifact.add_file(str(prometheus_path), name=prometheus_path.name)
+        sdk_run.log_artifact(artifact)
 
     sdk_run.log(wandb_metric_fields(run.metrics))
