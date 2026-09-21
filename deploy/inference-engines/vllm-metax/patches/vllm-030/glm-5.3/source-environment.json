@@ -17,6 +17,7 @@
     "metax030-glm-image-token-mtp.patch",
     "metax-sparse-mla-decode-metadata.patch",
     "metax-sparse-mla-nope-query.patch",
+    "metax-glm53-sequence-parallel-dense-mlp.patch",
     "metax-paged-mqa-schedule.patch"
   ],
   "status": "source-pair-bundle; full GLM acceptance pending"
