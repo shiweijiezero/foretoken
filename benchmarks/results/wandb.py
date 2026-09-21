@@ -230,6 +230,7 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 request_series(
                     run.measurements,
                     stream=bool(run.metrics["stream"]),
+                    slo_met=(run.metrics.get("slo") or {}).get("request_slo_met"),
                 ),
             ),
         )

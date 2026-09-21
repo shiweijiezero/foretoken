@@ -41,7 +41,7 @@
 
 ## SLO 结果
 
-启用 `--slo-params` 后，使用延迟类条件的请求会在 `raw_output.json` 中获得 `slo_met`。汇总结果同时记录同一条件下的 SLO 达标率、请求 goodput 和 token goodput。SLO 容量搜索仍按配置的聚合条件判断探测点，并搜索满足条件的最大并发。
+启用 `--slo-params` 后，使用延迟类条件的请求会在 `raw_output.json` 和 W&B 逐请求曲线中获得 `slo_met`。CLI、`metrics.json` 和 W&B Summary 同时记录同一条件下的 SLO 达标率、请求 goodput 和 token goodput。SLO 容量搜索仍按配置的聚合条件判断探测点，并搜索满足条件的最大并发。
 
 服务未报告 token 用量时，对应 token 数保持不可用。如果任一成功请求缺少输入或输出用量，需要完整 token 总数的汇总指标也保持不可用，不把缺失值当作零。缓存输入 token 保留服务报告的原值，包括明确报告的零；它不表示某个存储层或 KV store 的命中率。
 

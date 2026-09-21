@@ -41,7 +41,7 @@ Request latency distributions use successful requests. `--no-stream` retains lat
 
 ## SLO results
 
-When `--slo-params` is enabled, each request with latency-based criteria receives `slo_met` in `raw_output.json`. The summary records SLO attainment, request goodput, and token goodput for the same criteria. Probe-level SLO capacity search still evaluates the configured aggregate criteria and searches the largest satisfying concurrency.
+When `--slo-params` is enabled, each request with latency-based criteria receives `slo_met` in `raw_output.json` and the W&B request-index history. The CLI, `metrics.json`, and W&B Summary record SLO attainment, request goodput, and token goodput for the same criteria. Probe-level SLO capacity search still evaluates the configured aggregate criteria and searches the largest satisfying concurrency.
 
 Token counts remain unavailable when the service does not report them. If any successful request lacks input or output usage, aggregates that require the complete corresponding token total are unavailable rather than treating the missing value as zero. Cached input tokens preserve the service-reported value, including an explicit zero; they do not represent a storage-tier or KV-store hit rate.
 

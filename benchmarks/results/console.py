@@ -252,6 +252,18 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
             *metric_lines,
         ]
     )
+    slo = metrics.get("slo")
+    if isinstance(slo, dict) and slo.get("slo_attainment") is not None:
+        lines.extend(
+            [
+                "  SLO attainment (%): "
+                f"{_format_metric(float(slo['slo_attainment']) * 100)}",
+                "  SLO request goodput (req/s): "
+                f"{_format_metric(slo.get('request_goodput'))}",
+                "  SLO token goodput (tokens/s): "
+                f"{_format_metric(slo.get('token_goodput'))}",
+            ]
+        )
     if multi_turn:
         conversation = metrics["conversation"]
         if conversation.get("per_dataset"):
