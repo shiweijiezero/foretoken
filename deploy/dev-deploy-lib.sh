@@ -69,6 +69,7 @@ build_dev_images() {
     model_image_args=(--build-arg "UV_IMAGE=$UV_IMAGE")
   fi
 
+  printf 'Building control-plane image: %s\n' "$CONTROL_PLANE_IMAGE"
   docker build \
     "${control_plane_image_args[@]}" \
     "${go_args[@]}" \
@@ -76,8 +77,10 @@ build_dev_images() {
     -t "$CONTROL_PLANE_IMAGE" \
     .
 
+  printf 'Preparing pinned vLLM build source\n'
   make vllm-source
 
+  printf 'Building frontend image: %s\n' "$FRONTEND_IMAGE"
   docker build \
     "${data_plane_image_args[@]}" \
     "${cargo_args[@]}" \
@@ -85,6 +88,7 @@ build_dev_images() {
     -t "$FRONTEND_IMAGE" \
     .
 
+  printf 'Building model-server image: %s\n' "$MODEL_SERVER_IMAGE"
   docker build \
     "${data_plane_image_args[@]}" \
     "${model_image_args[@]}" \

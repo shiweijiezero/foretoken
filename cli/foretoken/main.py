@@ -35,6 +35,7 @@ from foretoken.kubernetes import (
 )
 from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.platform import PlatformLifecycle
+from foretoken.progress import StartupProgress
 from foretoken.storage import DirectoryVolumes
 
 
@@ -93,6 +94,7 @@ def _deploy(
         kubectl,
         timeout,
         report=_report_progress,
+        observe=StartupProgress(kubectl, lambda line: print(line, flush=True)).poll,
     )
     print(f"Foretoken deployment is ready in {time.monotonic() - started:.1f}s")
     if capture is not None:
@@ -136,6 +138,7 @@ def _status(kustomize_path: str | None, namespace: str | None, watch: bool) -> N
 
     started = time.monotonic()
     previous: dict[ResourceRef, tuple[str, str, str]] = {}
+    startup = StartupProgress(kubectl, lambda line: print(line, flush=True))
     while True:
         progress = selected_progress()
         elapsed = time.monotonic() - started
@@ -144,6 +147,7 @@ def _status(kustomize_path: str | None, namespace: str | None, watch: bool) -> N
             if previous.get(item.resource) != signature:
                 _report_progress(elapsed, item)
                 previous[item.resource] = signature
+        startup.poll((item.resource for item in progress), elapsed)
         time.sleep(2)
 
 
