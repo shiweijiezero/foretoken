@@ -107,18 +107,18 @@ foretoken bench examples/quickstart \
 
 参数扫描需传入部署配置目录，例如 `examples/quickstart`，目前不支持 `--url`。自定义负载点与配置对比见[参数扫描](docs/coomon_commands/sweep_zh.md)。
 
-### SLA 自动调参
+### SLO 容量搜索
 
 ```bash
 foretoken bench examples/quickstart \
   --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
   --min-prompt-length 128 --max-prompt-length 256 \
   --parallel 2 \
-  --sla-params '[{"p99_latency":"<=2"}]' \
-  --sla-upper-bound 32 --output local,wandb
+  --slo-params '[{"p99_latency":"<=2"}]' \
+  --slo-upper-bound 32 --output local,wandb
 ```
 
-搜索复用 EvalScope；指标名与限制见 [SLA 自动调参](docs/coomon_commands/sla_zh.md)。
+搜索复用 EvalScope；指标名与限制见 [SLO 容量搜索](docs/coomon_commands/slo_zh.md)。
 
 ### 使用已有服务地址
 

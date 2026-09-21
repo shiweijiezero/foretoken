@@ -15,7 +15,7 @@ from typing import Any, Callable
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.datasets.multi_dataset import MultiDatasetBenchmark
 from benchmarks.model_service import ModelService
-from benchmarks.results.console import log_sla_results
+from benchmarks.results.console import log_slo_results
 from benchmarks.results.output import (
     BenchmarkRun,
     result_directory_path,
@@ -27,7 +27,7 @@ from benchmarks.runs.http import GeneratedLoadBenchmark, run_http_dataset
 from benchmarks.runs.trace import TraceReplayBenchmark
 
 
-_SLA_ALIASES = {
+_SLO_ALIASES = {
     "latency.mean": "avg_latency",
     "ttft.mean": "avg_ttft",
     "tpot.mean": "avg_tpot",
@@ -45,7 +45,7 @@ _OPERATORS: dict[str, Callable[[float, float], bool]] = {
 
 
 def _metric_value(metrics: dict[str, Any], name: str) -> float | None:
-    name = _SLA_ALIASES.get(name, name)
+    name = _SLO_ALIASES.get(name, name)
     if name in {"avg_latency", "avg_ttft", "avg_tpot", "rps", "tps"}:
         if name == "rps":
             value = metrics["throughput"].get("requests_per_second")
@@ -64,7 +64,7 @@ def _metric_value(metrics: dict[str, Any], name: str) -> float | None:
         if name == f"{prefix}_tpot":
             value = metrics["tpot"].get(prefix)
             return float(value) if value is not None else None
-    raise ValueError(f"unknown SLA metric: {name}")
+    raise ValueError(f"unknown SLO metric: {name}")
 
 
 def _average_metric_values(
@@ -80,13 +80,21 @@ def _average_metric_values(
     return values
 
 
+def _mean_optional(values: list[dict[str, Any]], key: str) -> float | None:
+    """Average a diagnostic SLO value when every repeated run reports it."""
+    samples = [value.get(key) for value in values]
+    if not samples or any(sample is None for sample in samples):
+        return None
+    return sum(float(sample) for sample in samples) / len(samples)
+
+
 def _average_values_pass(
     values: dict[str, float], criteria: dict[str, str]
 ) -> bool:
     for name, expression in criteria.items():
         match = _CRITERION.fullmatch(expression)
         if match is None:
-            raise ValueError(f"invalid SLA criterion for {name!r}: {expression!r}")
+            raise ValueError(f"invalid SLO criterion for {name!r}: {expression!r}")
         value = values.get(name, float("nan"))
         if not math.isfinite(value) or not _OPERATORS[match.group(1)](
             value, float(match.group(2))
@@ -95,7 +103,7 @@ def _average_values_pass(
     return True
 
 
-class SlaAutoTuneBenchmark:
+class SloAutoTuneBenchmark:
     """Probe a fixed request budget and publish one W&B run per search point."""
 
     def __init__(
@@ -116,20 +124,25 @@ class SlaAutoTuneBenchmark:
         value: int,
         group_index: int,
         run_index: int,
+        criteria: dict[str, str],
         base_dir: str,
         wandb_group: str,
     ) -> BenchmarkRun:
-        label = f"sla-group-{group_index}-parallel-{value}-run-{run_index + 1}"
+        probe_config = replace(
+            self.benchmark,
+            slo=replace(self.benchmark.slo, params=[criteria]),
+        )
+        label = f"slo-group-{group_index}-parallel-{value}-run-{run_index + 1}"
         probe_dir = os.path.join(
             base_dir,
             f"group-{group_index}",
             f"parallel-{value}",
             f"run-{run_index + 1}",
         )
-        if self.benchmark.trace.trace_selector:
+        if probe_config.trace.trace_selector:
             probe_benchmark = replace(
-                self.benchmark,
-                trace=replace(self.benchmark.trace, max_concurrency=value),
+                probe_config,
+                trace=replace(probe_config.trace, max_concurrency=value),
             )
             return TraceReplayBenchmark(
                 probe_benchmark,
@@ -138,10 +151,10 @@ class SlaAutoTuneBenchmark:
                 output_dir=probe_dir,
                 wandb_group=wandb_group,
             ).run()
-        if self.benchmark.resolved_workload.has_multiple_datasets:
+        if probe_config.resolved_workload.has_multiple_datasets:
             probe_benchmark = replace(
-                self.benchmark,
-                load=replace(self.benchmark.load, max_concurrency=value),
+                probe_config,
+                load=replace(probe_config.load, max_concurrency=value),
             )
             return MultiDatasetBenchmark(
                 probe_benchmark,
@@ -151,10 +164,10 @@ class SlaAutoTuneBenchmark:
                 wandb_group=wandb_group,
                 label=label,
             ).run()
-        if self.benchmark.is_multi_turn:
+        if probe_config.is_multi_turn:
             probe_benchmark = replace(
-                self.benchmark,
-                load=replace(self.benchmark.load, max_concurrency=value),
+                probe_config,
+                load=replace(probe_config.load, max_concurrency=value),
             )
             return ConversationBudgetBenchmark(
                 probe_benchmark,
@@ -164,8 +177,8 @@ class SlaAutoTuneBenchmark:
                 wandb_group=wandb_group,
             ).run()
         probe_benchmark = replace(
-            self.benchmark,
-            load=replace(self.benchmark.load, max_concurrency=value),
+            probe_config,
+            load=replace(probe_config.load, max_concurrency=value),
         )
         return GeneratedLoadBenchmark(
             probe_benchmark,
@@ -177,31 +190,31 @@ class SlaAutoTuneBenchmark:
 
     def run(self) -> BenchmarkRun:
         """Binary-search each criterion group while keeping the request budget fixed."""
-        if not self.benchmark.sla.params:
-            raise ValueError("--sla-params is required for SLA auto-tune")
+        if not self.benchmark.slo.params:
+            raise ValueError("--slo-params is required for SLO auto-tune")
         base_dir = result_directory_path(
-            self.benchmark, self.output_dir, "sla-"
+            self.benchmark, self.output_dir, "slo-"
         )
         os.makedirs(base_dir, exist_ok=True)
         wandb_group = wandb_group_name(self.benchmark, self.service)
         summaries: list[dict[str, Any]] = []
         winning_run: BenchmarkRun | None = None
-        for group_index, criteria in enumerate(self.benchmark.sla.params):
+        for group_index, criteria in enumerate(self.benchmark.slo.params):
             cache: dict[int, tuple[BenchmarkRun, list[dict[str, Any]]]] = {}
 
             def probe(value: int) -> tuple[BenchmarkRun, list[dict[str, Any]]]:
                 if value not in cache:
                     runs = [
                         self._run_probe(
-                            value, group_index, run_index, base_dir, wandb_group
+                            value, group_index, run_index, criteria, base_dir, wandb_group
                         )
-                        for run_index in range(self.benchmark.sla.num_runs)
+                        for run_index in range(self.benchmark.slo.num_runs)
                     ]
                     cache[value] = (runs[-1], [run.metrics for run in runs])
                 return cache[value]
 
-            low = self.benchmark.sla.lower_bound
-            high = self.benchmark.sla.upper_bound
+            low = self.benchmark.slo.lower_bound
+            high = self.benchmark.slo.upper_bound
             best = None
             while low <= high:
                 value = (low + high) // 2
@@ -217,6 +230,10 @@ class SlaAutoTuneBenchmark:
                     low = value + 1
                 else:
                     high = value - 1
+                slo_values = [
+                    metrics.get("slo") or {}
+                    for metrics in metrics_list
+                ]
                 summaries.append(
                     {
                         "group": group_index,
@@ -224,6 +241,9 @@ class SlaAutoTuneBenchmark:
                         "request_budget": self.benchmark.load.request_count,
                         "criteria": criteria,
                         "average_values": average_values,
+                        "slo_attainment": _mean_optional(slo_values, "slo_attainment"),
+                        "request_goodput": _mean_optional(slo_values, "request_goodput"),
+                        "token_goodput": _mean_optional(slo_values, "token_goodput"),
                         "satisfied": passed,
                     }
                 )
@@ -244,9 +264,9 @@ class SlaAutoTuneBenchmark:
                     }
                 )
         if winning_run is None:
-            raise ValueError("no SLA probe satisfied the configured criteria")
-        artifact = write_json(base_dir, "sla_results.json", {"probes": summaries})
+            raise ValueError("no SLO probe satisfied the configured criteria")
+        artifact = write_json(base_dir, "slo_results.json", {"probes": summaries})
         if not self.benchmark.outputs.includes("quiet"):
-            log_sla_results({"probes": summaries})
-        winning_run.artifacts["sla_results"] = artifact
+            log_slo_results({"probes": summaries})
+        winning_run.artifacts["slo_results"] = artifact
         return winning_run

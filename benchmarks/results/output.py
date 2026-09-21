@@ -121,12 +121,19 @@ class BenchmarkArtifactSink:
             run.metrics,
         )
         if run.measurements is not None and "raw_output" not in run.artifacts:
+            slo = run.metrics.get("slo") or {}
+            slo_met = slo.get("request_slo_met")
             write_json(
                 self.output_dir,
                 "raw_output.json",
                 [
                     {
                         "success": item.succeeded,
+                        **(
+                            {"slo_met": slo_met[index]}
+                            if isinstance(slo_met, list)
+                            else {}
+                        ),
                         "status_code": item.status_code,
                         "error": item.error_message,
                         "stream": bool(run.metrics["stream"]),
@@ -144,7 +151,7 @@ class BenchmarkArtifactSink:
                         "conversation_id": item.conversation_id,
                         "turn": item.turn,
                     }
-                    for item in run.measurements
+                    for index, item in enumerate(run.measurements)
                 ],
             )
 

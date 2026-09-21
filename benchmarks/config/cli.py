@@ -23,7 +23,7 @@ from benchmarks.config.benchmark import (
     HttpLoadSchedule,
     ModelServiceSource,
     ParameterSweepConfig,
-    SlaTuneConfig,
+    SloTuneConfig,
     WandbRunConfig,
 )
 
@@ -406,7 +406,7 @@ def _add_benchmark_arguments(
         "--num-runs",
         type=int,
         default=_default(ParameterSweepConfig, "num_runs"),
-        help="Runs per sweep combination or repeated SLA probe",
+        help="Runs per sweep combination or repeated SLO probe",
     )
     parser.add_argument(
         "--experiment-name",
@@ -415,25 +415,25 @@ def _add_benchmark_arguments(
     )
 
     parser.add_argument(
-        "--sla-params",
+        "--slo-params",
         type=json.loads,
-        default=_default(SlaTuneConfig, "params"),
+        default=_default(SloTuneConfig, "params"),
         help=(
-            "JSON SLA constraints that enable search; metrics in one object are ANDed, "
+            "JSON SLO criteria that enable search; metrics in one object are ANDed, "
             "objects are searched independently"
         ),
     )
     parser.add_argument(
-        "--sla-upper-bound",
+        "--slo-upper-bound",
         type=int,
-        default=_default(SlaTuneConfig, "upper_bound"),
-        help="Upper bound of the SLA search variable",
+        default=_default(SloTuneConfig, "upper_bound"),
+        help="Upper bound of the SLO search variable",
     )
     parser.add_argument(
-        "--sla-lower-bound",
+        "--slo-lower-bound",
         type=int,
-        default=_default(SlaTuneConfig, "lower_bound"),
-        help="Lower bound of the SLA search variable",
+        default=_default(SloTuneConfig, "lower_bound"),
+        help="Lower bound of the SLO search variable",
     )
 
 
@@ -503,11 +503,11 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             num_runs=namespace.num_runs,
             experiment_name=namespace.experiment_name,
         ),
-        sla=SlaTuneConfig(
-            params=namespace.sla_params,
+        slo=SloTuneConfig(
+            params=namespace.slo_params,
             num_runs=namespace.num_runs,
-            upper_bound=namespace.sla_upper_bound,
-            lower_bound=namespace.sla_lower_bound,
+            upper_bound=namespace.slo_upper_bound,
+            lower_bound=namespace.slo_lower_bound,
         ),
         profile=(
             BenchmarkProfileConfig(namespace.profile_engine, namespace.profile_duration)

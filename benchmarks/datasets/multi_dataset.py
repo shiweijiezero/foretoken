@@ -168,6 +168,7 @@ class MultiDatasetBenchmark:
             request_count=total_requests,
             reported_concurrency=load_record["resolved_parallel"],
             gpu_count=self.service.gpu_count,
+            slo_criteria=(self.benchmark.slo.params[0] if self.benchmark.slo.params else None),
         )
         if any("conversation" in child["metrics"] for child in dataset_results):
             empty_distribution = {

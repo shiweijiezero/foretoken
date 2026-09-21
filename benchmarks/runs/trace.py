@@ -283,7 +283,7 @@ class TraceReplayBenchmark:
             start_offset_seconds=trace.start_offset_seconds,
             duration_seconds=trace.duration_seconds,
         )
-        if self.benchmark.sla.params:
+        if self.benchmark.slo.params:
             events = events[: self.benchmark.load.request_count]
         trace_format = reader.trace_format
         if trace_format is None:
@@ -359,8 +359,13 @@ class TraceReplayBenchmark:
                 reported_concurrency=reported_concurrency,
                 gpu_count=self.service.gpu_count,
                 include_normalized_throughput=False,
+                slo_criteria=(self.benchmark.slo.params[0] if self.benchmark.slo.params else None),
             )
             self._attach_replay_metrics(metrics, records)
+            slo_met = (metrics.get("slo") or {}).get("request_slo_met")
+            if isinstance(slo_met, list):
+                for record, request_slo_met in zip(records, slo_met):
+                    record["slo_met"] = request_slo_met
             # The raw replay records carry trace timing that RequestMeasurement
             # does not; they are written as an artifact for the W&B trace charts.
             raw_output: Path = write_json(

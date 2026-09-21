@@ -155,6 +155,7 @@ class ConversationBudgetBenchmark:
                 request_count=self.benchmark.load.request_count,
                 reported_concurrency=self.benchmark.load.max_concurrency,
                 gpu_count=self.service.gpu_count,
+                slo_criteria=(self.benchmark.slo.params[0] if self.benchmark.slo.params else None),
             )
             metrics["multi_turn"] = True
             metrics["conversation"] = {

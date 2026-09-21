@@ -628,6 +628,7 @@ def run_evalscope_standard_load(
         request_count=int(benchmark.load.request_count),
         reported_concurrency=int(benchmark.load.max_concurrency),
         gpu_count=service.gpu_count,
+        slo_criteria=(benchmark.slo.params[0] if benchmark.slo.params else None),
     )
     if arguments.multi_turn:
         metrics["conversation"] = _conversation_metrics(

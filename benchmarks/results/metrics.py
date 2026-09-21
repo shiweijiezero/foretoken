@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 
 import numpy as np
@@ -97,6 +98,70 @@ def normalized_generation_throughput(
     }
 
 
+_SLO_CRITERION = re.compile(r"^(?:avg_|p50_|p90_|p95_|p99_)?(latency|ttft|tpot|itl)$")
+_SLO_OPERATORS = {
+    "<": lambda actual, expected: actual < expected,
+    "<=": lambda actual, expected: actual <= expected,
+    "==": lambda actual, expected: actual == expected,
+    ">=": lambda actual, expected: actual >= expected,
+    ">": lambda actual, expected: actual > expected,
+}
+_SLO_EXPRESSION = re.compile(r"^(<=|>=|==|<|>)\s*(-?(?:\d+(?:\.\d*)?|\.\d+))$")
+
+
+def request_slo_results(
+    measurements: list[RequestMeasurement],
+    criteria: dict[str, str] | None,
+    total_time: float,
+) -> dict[str, Any] | None:
+    """Evaluate request-level SLO diagnostics and goodput from measured requests."""
+    if not criteria:
+        return None
+    checks: list[tuple[str, Any, float]] = []
+    for name, expression in criteria.items():
+        metric_match = _SLO_CRITERION.fullmatch(name)
+        expression_match = _SLO_EXPRESSION.fullmatch(expression)
+        if metric_match is None or expression_match is None:
+            continue
+        checks.append((metric_match.group(1), _SLO_OPERATORS[expression_match.group(1)], float(expression_match.group(2))))
+    if not checks:
+        return {
+            "criteria": criteria,
+            "request_slo_met": None,
+            "slo_attainment": None,
+            "request_goodput": None,
+            "token_goodput": None,
+        }
+
+    request_slo_met: list[bool] = []
+    good_requests = 0
+    good_tokens = 0
+    for item in measurements:
+        values = {
+            "latency": item.latency,
+            "ttft": item.ttft,
+            "tpot": item.tpot,
+            "itl": max(item.itl_samples) if item.itl_samples else None,
+        }
+        met = item.succeeded
+        for metric, operator, expected in checks:
+            actual = values[metric]
+            met = met and actual is not None and operator(float(actual), expected)
+        request_slo_met.append(bool(met))
+        if met:
+            good_requests += 1
+            good_tokens += int(item.output_tokens or 0)
+
+    duration = float(total_time)
+    return {
+        "criteria": criteria,
+        "request_slo_met": request_slo_met,
+        "slo_attainment": good_requests / len(measurements) if measurements else 0.0,
+        "request_goodput": good_requests / duration if duration > 0 else None,
+        "token_goodput": good_tokens / duration if duration > 0 else None,
+    }
+
+
 def summarize_measurements(
     measurements: list[RequestMeasurement],
     *,
@@ -107,6 +172,7 @@ def summarize_measurements(
     reported_concurrency: int,
     gpu_count: int | None,
     include_normalized_throughput: bool = True,
+    slo_criteria: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Aggregate request measurements and workload coordinates into the published metrics.
 
@@ -172,6 +238,7 @@ def summarize_measurements(
                 gpu_count=gpu_count,
             )
         )
+    slo = request_slo_results(measurements, slo_criteria, total_time)
     return {
         "request_num": request_num,
         "success_num": success_count,
@@ -202,4 +269,5 @@ def summarize_measurements(
         "rate": arrival_rate,
         "number": request_count,
         "parallel": reported_concurrency,
+        "slo": slo,
     }

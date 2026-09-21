@@ -280,8 +280,8 @@ class ParameterSweepConfig:
 
 
 @dataclass
-class SlaTuneConfig:
-    """Store SLA search criteria and concurrency bounds."""
+class SloTuneConfig:
+    """Store SLO search criteria and concurrency bounds."""
 
     params: list[dict[str, str]] | None = None
     num_runs: int = 1
@@ -289,14 +289,14 @@ class SlaTuneConfig:
     lower_bound: int = 1
 
     def validate(self) -> None:
-        """Validate SLA criteria and search bounds before starting a workload."""
+        """Validate SLO criteria and search bounds before starting a workload."""
         if self.params is None:
             return
         if not self.params or any(
             not isinstance(group, dict) or not group for group in self.params
         ):
             raise ValueError(
-                "--sla-params must be a non-empty JSON array of non-empty objects"
+                "--slo-params must be a non-empty JSON array of non-empty objects"
             )
         if any(
             not all(
@@ -305,13 +305,13 @@ class SlaTuneConfig:
             )
             for group in self.params
         ):
-            raise ValueError("--sla-params metric names and criteria must be strings")
+            raise ValueError("--slo-params metric names and criteria must be strings")
         if self.num_runs < 1:
             raise ValueError("--num-runs must be >= 1")
         if self.lower_bound < 1:
-            raise ValueError("--sla-lower-bound must be >= 1")
+            raise ValueError("--slo-lower-bound must be >= 1")
         if self.upper_bound < self.lower_bound:
-            raise ValueError("--sla-upper-bound must be >= --sla-lower-bound")
+            raise ValueError("--slo-upper-bound must be >= --slo-lower-bound")
 
 
 @dataclass
@@ -336,7 +336,7 @@ class BenchmarkConfig:
     outputs: BenchmarkOutputConfig = field(default_factory=BenchmarkOutputConfig)
     wandb: WandbRunConfig = field(default_factory=WandbRunConfig)
     sweep: ParameterSweepConfig = field(default_factory=ParameterSweepConfig)
-    sla: SlaTuneConfig = field(default_factory=SlaTuneConfig)
+    slo: SloTuneConfig = field(default_factory=SloTuneConfig)
     profile: BenchmarkProfileConfig | None = None
 
     @property
@@ -395,14 +395,14 @@ class BenchmarkConfig:
         if self.is_multi_turn and self.load.arrival_rate != -1:
             raise ValueError("multi-turn workloads require --rate -1")
         self.trace.validate()
-        self.sla.validate()
+        self.slo.validate()
 
-        if self.sla.params:
+        if self.slo.params:
             if self.sweep.path:
-                raise ValueError("--sla-params cannot be combined with --sweep")
+                raise ValueError("--slo-params cannot be combined with --sweep")
             if self.load.arrival_rate != -1 and not self.trace.trace_selector:
                 raise ValueError(
-                    "--sla-params requires --rate -1 for generated workloads"
+                    "--slo-params requires --rate -1 for generated workloads"
                 )
 
         trace = self.trace
@@ -448,7 +448,7 @@ class BenchmarkConfig:
                 raise ValueError(
                     "--trace uses record timestamps; omit --rate"
                 )
-            if self.load != HttpLoadSchedule() and not self.sla.params:
+            if self.load != HttpLoadSchedule() and not self.slo.params:
                 raise ValueError(
                     "--trace replays the selected trace window; use "
                     "--trace-max-concurrency instead of --parallel/--number"
@@ -538,11 +538,11 @@ class BenchmarkConfig:
                 "num_runs": self.sweep.num_runs,
                 "experiment_name": self.sweep.experiment_name,
             },
-            "sla": {
-                "params": self.sla.params,
-                "num_runs": self.sla.num_runs,
-                "upper_bound": self.sla.upper_bound,
-                "lower_bound": self.sla.lower_bound,
+            "slo": {
+                "params": self.slo.params,
+                "num_runs": self.slo.num_runs,
+                "upper_bound": self.slo.upper_bound,
+                "lower_bound": self.slo.lower_bound,
             },
             "profile": (
                 {"engine": self.profile.engine, "duration": self.profile.duration}

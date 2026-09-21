@@ -107,18 +107,18 @@ foretoken bench examples/quickstart \
 
 For parameter sweeps, pass a deployment configuration directory such as `examples/quickstart`; `--url` is currently unsupported. See [Parameter sweeps](docs/coomon_commands/sweep.md) to customize points and compare configurations.
 
-### SLA auto-tune
+### SLO capacity search
 
 ```bash
 foretoken bench examples/quickstart \
   --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
   --min-prompt-length 128 --max-prompt-length 256 \
   --parallel 2 \
-  --sla-params '[{"p99_latency":"<=2"}]' \
-  --sla-upper-bound 32 --output local,wandb
+  --slo-params '[{"p99_latency":"<=2"}]' \
+  --slo-upper-bound 32 --output local,wandb
 ```
 
-Search reuses EvalScope; see [SLA auto-tune](docs/coomon_commands/sla.md) for metric names and limits.
+Search reuses EvalScope; see [SLO capacity search](docs/coomon_commands/slo.md) for metric names and limits.
 
 ### An existing service URL
 
