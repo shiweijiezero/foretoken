@@ -94,9 +94,7 @@ foretoken profile view
 
 Open the printed URL to browse captures. PyTorch traces open in Perfetto; the browser needs access to `ui.perfetto.dev`. Select an Nsight timeline and click “Open in NVIDIA Nsight Systems” to open the official viewer in a new tab. mcTracer JSON opens in the same Perfetto view when the report uses the Perfetto-compatible trace format.
 
-The Nsight viewer starts on demand in the cluster, reads only the selected report, and does not allocate a GPU. The browser must be able to reach its LoadBalancer address and the assigned HTTP and TURN TCP ports. Session access is automatic; no NVIDIA account or manual report upload is needed. Press Ctrl+C to remove the temporary viewers and their access credentials; capture files remain unchanged.
-
-Viewer images can be overridden through `profiling.nsightViewerImage` and `profiling.viewerProxyImage` in Helm values. Set `profiling.nsightViewerImage` to an empty string for download-only access. Reports and SQLite exports can always be downloaded.
+The selected report opens in a new browser tab. Press Ctrl+C to stop the viewer; capture files remain available for download.
 
 When the deployment and capture records are no longer needed, clean up with:
 

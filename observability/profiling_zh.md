@@ -94,9 +94,7 @@ foretoken profile view
 
 打开打印的网址浏览采集结果。PyTorch trace 在 Perfetto 中查看，浏览器需能访问 `ui.perfetto.dev`。选择 Nsight 时间线后，点击“Open in NVIDIA Nsight Systems”，即可在新标签页中使用 NVIDIA 官方查看器。mcTracer JSON 使用 Perfetto 兼容的 trace 格式时，会在同一个 Perfetto 页面中打开。
 
-Nsight 查看器按需在集群内启动，只读访问选中的报告，不占用 GPU。浏览器需能访问其 LoadBalancer 地址及分配的 HTTP 和 TURN TCP 端口；TURN 用于传输远程界面的视频画面。会话访问凭据自动准备，无需 NVIDIA 账号或手工上传报告。按 Ctrl+C 会删除临时查看器及其访问凭据，采集文件保持不变。
-
-需要更换查看器镜像时，在 Helm values 中设置 `profiling.nsightViewerImage` 和 `profiling.viewerProxyImage`；将 `profiling.nsightViewerImage` 设为空字符串则只提供下载。原生报告和 SQLite 导出文件始终可以下载。
+选中的报告会在新浏览器标签页中打开。按 Ctrl+C 停止查看器，采集文件仍可下载。
 
 不再需要该部署及采集记录时清理：
 
