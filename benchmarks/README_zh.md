@@ -118,7 +118,7 @@ foretoken bench examples/quickstart \
   --slo-upper-bound 32 --output local,wandb
 ```
 
-搜索复用 EvalScope；指标名与限制见 [SLO 容量搜索](docs/coomon_commands/slo_zh.md)。
+生成式单轮 SLO 评测复用 EvalScope；多轮、多数据集和轨迹回放保留各自的执行路径。指标名与限制见 [SLO 容量搜索](docs/coomon_commands/slo_zh.md)。
 
 ### 使用已有服务地址
 

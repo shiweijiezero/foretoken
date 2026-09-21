@@ -118,7 +118,7 @@ foretoken bench examples/quickstart \
   --slo-upper-bound 32 --output local,wandb
 ```
 
-Search reuses EvalScope; see [SLO capacity search](docs/coomon_commands/slo.md) for metric names and limits.
+Generated single-turn SLO runs reuse EvalScope; conversation, multi-dataset, and trace runs keep their existing execution paths. See [SLO capacity search](docs/coomon_commands/slo.md) for metric names and limits.
 
 ### An existing service URL
 

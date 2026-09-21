@@ -53,7 +53,7 @@ W&B records these views after each run:
 
 - Time series use elapsed seconds for one-second completion-window counts, throughput, failure rate, p95 timings, and mean in-flight requests. The last window uses its actual duration.
 - Cumulative series show completed-request totals, success rate, mean timings, and throughput since the run began.
-- Request series use request index in send order, starting at one, for individual timings, reported token counts, and success.
+- Request series use request index in send order, starting at one, for individual timings, reported token counts, success, and `slo_met` when SLO criteria are enabled.
 - Kustomize runs also record controller-applied desired and Ready replicas for each model service and scaling target.
 
 Charts and console output use seconds for TTFT, E2EL, and conversation timings, and milliseconds for TPOT and ITL. Raw JSON timings remain in seconds.

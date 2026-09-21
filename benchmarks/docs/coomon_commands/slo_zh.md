@@ -1,4 +1,4 @@
-# SLO 自动调参
+# SLO 容量搜索
 
 [English](slo.md) | 简体中文 · [常用命令](../examples_zh.md)
 
