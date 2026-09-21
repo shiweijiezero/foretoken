@@ -1,0 +1,17 @@
+--- a/deep_gemm/fp8_attention.py
++++ b/deep_gemm/fp8_attention.py
+@@ -67,6 +67,14 @@
+                          clean_logits: bool = True,
+                          backend: str = "triton") -> torch.Tensor:
+     if backend == "triton":
++        from deep_gemm.bf16_attention import get_paged_mqa_logits_metadata
++
++        # MACA uses an OOT platform, so vLLM's CUDA-only schedule is not populated.
++        # Both the direct FP8 and unified FP8/FP4 entry points pass through here.
++        schedule_meta = get_paged_mqa_logits_metadata(
++            context_lens, fused_kv_cache.shape[1],
++            torch.cuda.get_device_properties(q.device).multi_processor_count,
++        )
+         return fp8_paged_mqa_logits_triton(q, fused_kv_cache, weights, context_lens, block_table, schedule_meta, max_context_len, clean_logits=clean_logits)
+     elif backend == "tilelang":
+         return fp8_paged_mqa_logits_tilelang(q, fused_kv_cache, weights, context_lens, block_table, schedule_meta, max_context_len, clean_logits=clean_logits)

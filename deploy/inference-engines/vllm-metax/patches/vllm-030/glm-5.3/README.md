@@ -20,6 +20,8 @@ Apply these patches in order to the pinned source pair:
    Carries the maximum decode query length supplied by vLLM's sparse MLA metadata builder.
 6. `metax-sparse-mla-nope-query.patch`
    Copies the NoPE query into the existing buffer when the RoPE component is empty, retaining the fused concatenation kernel for nonempty RoPE.
+7. `metax-paged-mqa-schedule.patch`
+   Builds the paged-MQA schedule with MetaX DeepGEMM instead of consuming the uninitialized buffer left by the upstream CUDA-only metadata path.
 
 The patches target the exact source pair recorded by the corresponding source-built runtime. Rebase or upgrade the source pair only after regenerating and validating the bundle; do not silently apply it to an unrelated release.
 

@@ -16,7 +16,8 @@
     "metax-vllm030-fused-moe-all2all-api.patch",
     "metax030-glm-image-token-mtp.patch",
     "metax-sparse-mla-decode-metadata.patch",
-    "metax-sparse-mla-nope-query.patch"
+    "metax-sparse-mla-nope-query.patch",
+    "metax-paged-mqa-schedule.patch"
   ],
   "status": "source-pair-bundle; full GLM acceptance pending"
 }
