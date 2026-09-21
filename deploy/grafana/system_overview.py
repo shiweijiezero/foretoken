@@ -126,9 +126,10 @@ ZH = {
         "Frontend handler 生成 HTTP 响应头所需的秒数，不包含 SSE 正文传输，也不等同于 TTFT 或完整流持续时间。",
     "Requests waiting for runtime preparation or backend dispatch, grouped by scaling-target kind.":
         "按扩缩容目标类型分组，等待运行时准备或后端派发的请求数。",
-    "Completed execution requests by model instance, role and finish reason. Multi-stage requests can complete once in each role.":
-        "按模型实例、执行角色和结束原因展示已完成请求。分离式请求会分别在各角色完成一次执行。",
-    "Prompt and generated tokens per second by model instance and execution role.": "按模型实例和执行角色展示输入与输出 token 吞吐量。",
+    "Completed execution requests by backend and finish reason. A backend is one model instance and data-parallel rank; multi-stage requests can complete once in each role.":
+        "按后端和结束原因展示已完成请求。一个后端对应一个模型实例和数据并行 rank；分离式请求会分别在各角色完成一次执行。",
+    "Prompt and generated tokens per second by backend. A backend is one model instance and data-parallel rank.":
+        "按后端展示输入与输出 token 吞吐量。一个后端对应一个模型实例和数据并行 rank。",
     "Requests running in vLLM execution batches or waiting in its scheduler.": "正在 vLLM 执行批次中运行或在调度器中等待的请求数。",
     "Request-weighted latency from frontend processing to generation completion across the selected engines. Excludes downstream client delivery; clocks must be synchronized.":
         "将所选引擎的请求样本合并后统计：从前端处理开始到生成完成的耗时，不含下游客户端接收时间；节点时钟须同步。",
@@ -140,8 +141,8 @@ ZH = {
         "所选引擎的输出 token 间隔分布，单位毫秒；每个间隔贡献一次观测。",
     "P95 time, in seconds, a request spends waiting for the scheduler, in prefill, and in decode.":
         "请求在等待调度器、Prefill 和 Decode 阶段的 P95 耗时，单位为秒。",
-    "Scheduler preemptions per second across selected engines; sustained activity indicates KV-cache pressure.":
-        "所选引擎每秒调度抢占次数；持续抢占表示 KV 缓存压力。",
+    "Scheduler preemptions per second by backend; sustained activity indicates KV-cache pressure.":
+        "按后端统计每秒调度抢占次数；持续抢占表示 KV 缓存压力。",
     "Distribution of prompt tokens per request over time.": "随时间变化的单请求 Prompt token 数分布。",
     "Distribution of generated tokens per request over time.": "随时间变化的单请求输出 token 数分布。",
     "KV-cache occupancy by model instance and engine rank.": "按模型实例和引擎 rank 展示 KV 缓存占用率。",
@@ -179,19 +180,16 @@ ZH = {
         "ModelService status 中当前的触发、决策与调整结果；原因是有限状态码，而不是日志文本。",
     "No data": "无数据",
     "Engine rank": "引擎 rank",
-    "Traffic share by instance": "各实例路由份额",
-    "Traffic share by engine rank": "各引擎 rank 路由份额",
-    "Share of routing selections within each model and execution role. All instances form the denominator; this counts choices, not completed requests.":
-        "每个模型及执行角色内，各实例获得的路由选择比例。分母为该模型该角色的全部实例；表示选择次数，不是完成请求数。",
-    "Share of routing selections within each model and role, split by instance and data-parallel rank.":
-        "每个模型及执行角色内，按实例和数据并行 rank 展示路由选择份额。",
+    "Routing share by backend": "各后端路由占比",
+    "Share of routing selections within each model and execution role. Each backend is one model instance and data-parallel rank; all backends form the denominator. This counts choices, not completed requests.":
+        "每个模型及执行角色内，各后端获得的路由选择比例。一个后端对应一个模型实例和数据并行 rank，分母为该模型该角色的全部后端；表示选择次数，不是完成请求数。",
     "Scheduler queued requests": "引擎排队请求",
     "Requests waiting in the selected model engines, not the shared frontend admission queue.":
         "所选模型引擎内等待调度的请求，不包含共享前端准入队列。",
-    "Output / {{model_name}} / {{model_group}} / {{model_role}}":
-        "输出 / {{model_name}} / {{model_group}} / {{model_role}}",
-    "Prompt / {{model_name}} / {{model_group}} / {{model_role}}":
-        "输入 / {{model_name}} / {{model_group}} / {{model_role}}",
+    "Output / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}":
+        "输出 / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}",
+    "Prompt / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}":
+        "输入 / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}",
     "Running / {{model_group}} / {{model_role}} / rank {{engine}}":
         "运行中 / {{model_group}} / {{model_role}} / rank {{engine}}",
     "Waiting / {{model_group}} / {{model_role}} / rank {{engine}}":
@@ -641,11 +639,11 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Completed request rate",
-            "Completed execution requests by model instance, role and finish reason. Multi-stage requests can complete once in each role.",
+            "Completed execution requests by backend and finish reason. A backend is one model instance and data-parallel rank; multi-stage requests can complete once in each role.",
             [
                 foretoken_query(
-                    f"sum by(model_name,model_group,model_role,finished_reason) ({model_metric('vllm:request_success_total', rate=True)})",
-                    "{{model_name}} / {{model_group}} / {{model_role}} / {{finished_reason}}",
+                    f"sum by(model_name,model_group,model_role,engine,finished_reason) ({model_metric('vllm:request_success_total', rate=True)})",
+                    "{{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}} / {{finished_reason}}",
                 )
             ],
             unit="reqps",
@@ -656,10 +654,10 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Token throughput",
-            "Prompt and generated tokens per second by model instance and execution role.",
+            "Prompt and generated tokens per second by backend. A backend is one model instance and data-parallel rank.",
             [
-                foretoken_query(f"sum by(model_name,model_group,model_role) ({model_metric('vllm:prompt_tokens_total', rate=True)})", "Prompt / {{model_name}} / {{model_group}} / {{model_role}}"),
-                foretoken_query(f"sum by(model_name,model_group,model_role) ({model_metric('vllm:generation_tokens_total', rate=True)})", "Output / {{model_name}} / {{model_group}} / {{model_role}}"),
+                foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:prompt_tokens_total', rate=True)})", "Prompt / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}"),
+                foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:generation_tokens_total', rate=True)})", "Output / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}"),
             ],
             unit="suffix: tok/s",
             span=8,
@@ -740,11 +738,10 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Preemptions",
-            "Scheduler preemptions per second across selected engines; sustained activity indicates KV-cache pressure.",
-            [foretoken_query(f"sum({model_metric('vllm:num_preemptions_total', rate=True)})", "Preemptions")],
+            "Scheduler preemptions per second by backend; sustained activity indicates KV-cache pressure.",
+            [foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:num_preemptions_total', rate=True)})", "{{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}")],
             unit="ops",
             span=8,
-            colors={"Preemptions": RED},
         )
     )
     board.with_panel(
@@ -886,7 +883,7 @@ def build() -> dashboard_models.Dashboard:
         )
     )
 
-    # Route distribution complements instance load; controller internals remain diagnostic.
+    # Route distribution uses the smallest routable unit; controller internals remain diagnostic.
     board.with_row(dashboard.Row("Routing decisions"))
     selections = routing_target_rates()
     selected_ranks = (
@@ -900,21 +897,13 @@ def build() -> dashboard_models.Dashboard:
     )
     board.with_panel(
         series(
-            "Traffic share by instance",
-            "Share of routing selections within each model and execution role. All instances form the denominator; this counts choices, not completed requests.",
+            "Routing share by backend",
+            "Share of routing selections within each model and execution role. Each backend is one model instance and data-parallel rank; all backends form the denominator. This counts choices, not completed requests.",
             [foretoken_query(
-                f"sum by(namespace,model_name,model_role,model_group) ({shares}) and on(namespace,model_group) ({selected_groups()})",
-                "{{model_name}} / {{model_role}} / {{model_group}}",
+                f"({shares}) and on(namespace,model_group,data_parallel_rank) ({selected_ranks})",
+                "{{model_name}} / {{model_role}} / {{model_group}} / rank {{data_parallel_rank}}",
             )],
-            unit="percentunit", span=12,
-        ).height(10)
-    )
-    board.with_panel(
-        series(
-            "Traffic share by engine rank",
-            "Share of routing selections within each model and role, split by instance and data-parallel rank.",
-            [foretoken_query(f"({shares}) and on(namespace,model_group,data_parallel_rank) ({selected_ranks})", "{{model_name}} / {{model_role}} / {{model_group}} / rank {{data_parallel_rank}}")],
-            unit="percentunit", span=12,
+            unit="percentunit", span=24,
         ).height(10)
     )
     board.with_panel(

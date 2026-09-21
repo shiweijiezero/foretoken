@@ -31,7 +31,7 @@ printf 'Grafana user: %s\nGrafana password: %s\n' \
   "$GRAFANA_USER" "$GRAFANA_PASSWORD"
 ```
 
-In Grafana, open Foretoken System Overview for English or Foretoken 系统概览 for Chinese. Select a namespace and model, then narrow to a model instance, execution role or engine rank. Model-serving, cache, GPU and routing panels follow that selection. Routing decisions show each instance's share within its model and role; selecting one instance keeps the same overall denominator.
+In Grafana, open Foretoken System Overview for English or Foretoken 系统概览 for Chinese. Select a namespace and model, then narrow to a model instance, execution role or engine rank. Model-serving, cache, GPU and routing panels follow that selection. Routing decisions show each backend's share within its model and role; a backend is one model instance and data-parallel rank. The selected backend lines keep the full model-and-role denominator.
 
 Shared frontend panels show all traffic through the selected frontend, not just one model. Autoscaling follows the selected model and service; control-plane diagnostics describe the platform.
 
@@ -123,7 +123,7 @@ Selecting the power alert also requires a positive `spec.observability.alerts.th
 | mxExporter | MetaX utilization and memory |
 | kubelet/cAdvisor | Container CPU and memory |
 
-Dashboard latency metrics use seconds for TTFT and E2EL, and milliseconds for TPOT and ITL. The p50/p95/p99 percentiles combine request histograms across the selected instances, separately for each model and role. Prefix-cache hit ratios divide total hit tokens by total queried tokens; idle or missing observations have no ratio. Routing shares count selection decisions, not completed requests or cache hits.
+Dashboard latency metrics use seconds for TTFT and E2EL, and milliseconds for TPOT and ITL. The p50/p95/p99 percentiles combine request histograms across the selected instances, separately for each model and role. Request rates, token throughput and scheduler pressure are shown by backend, where a backend is one model instance and data-parallel rank; the same panels retain the model-level totals in their summary tiles. Prefix-cache hit ratios divide total hit tokens by total queried tokens; idle or missing observations have no ratio. Routing shares count selection decisions, not completed requests or cache hits.
 
 The following recording rules remain available for alerts and fixed-window queries. Model-serving rules are derived from vLLM metrics.
 

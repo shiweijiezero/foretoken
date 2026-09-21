@@ -31,7 +31,7 @@ printf 'Grafana user: %s\nGrafana password: %s\n' \
   "$GRAFANA_USER" "$GRAFANA_PASSWORD"
 ```
 
-在 Grafana 中打开 Foretoken 系统概览，或英文版 Foretoken System Overview。先选命名空间和模型，再按模型实例、执行角色或引擎 rank 缩小范围。模型服务、缓存、GPU 和路由面板随之筛选。“路由决策”展示同一模型、同一角色内各实例的份额；只选一个实例时，分母仍保留该模型该角色的全部实例。
+在 Grafana 中打开 Foretoken 系统概览，或英文版 Foretoken System Overview。先选命名空间和模型，再按模型实例、执行角色或引擎 rank 缩小范围。模型服务、缓存、GPU 和路由面板随之筛选。“路由决策”展示同一模型、同一角色内各后端的占比；一个后端对应一个模型实例和数据并行 rank。筛选后端时，分母仍保留该模型该角色的全部后端。
 
 “共享前端”展示所选前端的全部流量，不归属于单个模型。扩缩容按所选模型和服务查看，控制面诊断则反映整个平台。
 
@@ -123,7 +123,7 @@ foretoken deploy examples/observability --timeout 20m
 | mxExporter | 沐曦利用率和显存 |
 | kubelet/cAdvisor | 容器 CPU 和内存 |
 
-看板中的 TTFT 和 E2EL 使用秒，TPOT 和 ITL 使用毫秒。p50/p95/p99 分位数按模型和角色，合并所选实例的请求直方图后计算。前缀缓存命中率使用命中 token 总数除以查询 token 总数，没有查询或指标缺失时不显示比例。路由份额统计选择次数，不代表请求完成率或缓存命中率。
+看板中的 TTFT 和 E2EL 使用秒，TPOT 和 ITL 使用毫秒。p50/p95/p99 分位数按模型和角色，合并所选实例的请求直方图后计算。请求速率、token 吞吐量和调度压力按后端展示，一个后端对应一个模型实例和数据并行 rank；概览卡片仍保留模型级总量。前缀缓存命中率使用命中 token 总数除以查询 token 总数，没有查询或指标缺失时不显示比例。路由份额统计选择次数，不代表请求完成率或缓存命中率。
 
 下列记录规则供告警和固定窗口查询使用。模型服务相关规则来自 vLLM 指标。
 
