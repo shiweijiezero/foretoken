@@ -284,9 +284,11 @@
           name.textContent =
             file.format === "nsight"
               ? "Nsight Systems timeline"
-              : file.format === "sqlite"
-                ? "Nsight analysis database"
-                : file.name.split("/").pop();
+              : file.name.endsWith(".mctracer.json")
+                ? "mcTracer timeline"
+                : file.format === "sqlite"
+                  ? "Nsight analysis database"
+                  : file.name.split("/").pop();
           const detail = document.createElement("span");
           detail.className = "detail";
           detail.textContent = `${new Date(fileTime(file)).toLocaleString()} · ${(file.size / 1048576).toFixed(1)} MiB`;

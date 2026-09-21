@@ -92,7 +92,7 @@ Run on your local computer with a kubeconfig for the target cluster:
 foretoken profile view
 ```
 
-Open the printed URL to browse captures. PyTorch traces open in Perfetto; the browser needs access to `ui.perfetto.dev`. Select an Nsight timeline and click “Open in NVIDIA Nsight Systems” to open the official viewer in a new tab. For mcTracer, download the native JSON and open it in [mcTracer-Viewer](https://developer.metax-tech.com/api/client/document/preview/1190/index.html).
+Open the printed URL to browse captures. PyTorch traces open in Perfetto; the browser needs access to `ui.perfetto.dev`. Select an Nsight timeline and click “Open in NVIDIA Nsight Systems” to open the official viewer in a new tab. mcTracer JSON opens in the same Perfetto view when the report uses the Perfetto-compatible trace format.
 
 The Nsight viewer starts on demand in the cluster, reads only the selected report, and does not allocate a GPU. The browser must be able to reach its LoadBalancer address and the assigned HTTP and TURN TCP ports. Session access is automatic; no NVIDIA account or manual report upload is needed. Press Ctrl+C to remove the temporary viewers and their access credentials; capture files remain unchanged.
 
