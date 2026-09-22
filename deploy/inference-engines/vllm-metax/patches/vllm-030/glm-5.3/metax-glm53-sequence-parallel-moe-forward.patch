@@ -1,0 +1,20 @@
+diff --git a/vllm/models/glm5next/common/model.py b/vllm/models/glm5next/common/model.py
+--- a/vllm/models/glm5next/common/model.py
++++ b/vllm/models/glm5next/common/model.py
+@@ -472,7 +472,15 @@ class Glm5NextDecoderLayer(nn.Module):
+             hidden_states, residual = self.post_attention_layernorm(
+                 attn_output, residual=residual
+             )
+-            hidden_states = self.mlp(hidden_states)
++            if self._mlp_is_moe:
++                hidden_states = self.mlp(
++                    hidden_states,
++                    already_sequence_parallel=(
++                        self.is_sequence_parallel and not self.is_mtp_layer
++                    ),
++                )
++            else:
++                hidden_states = self.mlp(hidden_states)
+             if self.is_mtp_layer:
+                 # Return the unsummed pair: the MTP caller feeds it straight
+                 # into shared_head's fused_add_rms_norm (one kernel instead of

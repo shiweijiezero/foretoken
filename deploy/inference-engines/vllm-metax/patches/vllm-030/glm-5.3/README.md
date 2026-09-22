@@ -22,7 +22,11 @@ Apply these patches in order to the pinned source pair:
    Copies the NoPE query into the existing buffer when the RoPE component is empty, retaining the fused concatenation kernel for nonempty RoPE.
 7. `metax-glm53-sequence-parallel-dense-mlp.patch`
    Passes the sequence-parallel flag to GLM5Next dense MLP layers so TP ranks do not reduce token rows from different sequence shards.
-8. `metax-paged-mqa-schedule.patch`
+8. `metax-glm53-sequence-parallel-moe-forward.patch`
+   Preserves the already-sharded sequence-parallel input when the GLM5Next non-mHC path invokes a MoE layer while retaining the full-input MTP path.
+9. `metax-glm53-mhc-native-norm.patch`
+   Applies the requested RMSNorm in MetaX's out-of-tree native mHC fallback before returning the layer input.
+10. `metax-paged-mqa-schedule.patch`
    Builds the paged-MQA schedule with MetaX DeepGEMM instead of consuming the uninitialized buffer left by the upstream CUDA-only metadata path.
 
 The patches target the exact source pair recorded by the corresponding source-built runtime. Rebase or upgrade the source pair only after regenerating and validating the bundle; do not silently apply it to an unrelated release.

@@ -18,6 +18,8 @@
     "metax-sparse-mla-decode-metadata.patch",
     "metax-sparse-mla-nope-query.patch",
     "metax-glm53-sequence-parallel-dense-mlp.patch",
+    "metax-glm53-sequence-parallel-moe-forward.patch",
+    "metax-glm53-mhc-native-norm.patch",
     "metax-paged-mqa-schedule.patch"
   ],
   "status": "source-pair-bundle; full GLM acceptance pending"
