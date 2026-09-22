@@ -221,6 +221,15 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 		if _, err := r.Reconcile(ctx, request); err != nil {
 			t.Fatal(err)
 		}
+		current = get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.ModelPool))
+		readyCondition := meta.FindStatusCondition(current.Status.Conditions, "Ready")
+		if readyCondition == nil || readyCondition.Status != metav1.ConditionFalse {
+			t.Fatalf("pool remained ready while serving cohort was drained: %#v", current.Status.Conditions)
+		}
+		rolloutCondition := meta.FindStatusCondition(current.Status.Conditions, "RolloutPending")
+		if rolloutCondition == nil || rolloutCondition.Message != "The target Group revision is Unschedulable; the serving revision is being drained" {
+			t.Fatalf("unexpected rollout status: %#v", current.Status.Conditions)
+		}
 		if err := c.List(ctx, &groups, client.InNamespace(pool.Namespace)); err != nil {
 			t.Fatal(err)
 		}

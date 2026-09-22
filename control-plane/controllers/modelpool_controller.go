@@ -255,7 +255,8 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 	if targetReady {
 		preparedRevision = template.Revision
 	}
-	ready := pool.Spec.DesiredGroups > 0 && revisionServingReady(groups, servingRevision)
+	servingRevisionDraining := targetInsufficientCapacity && servingRevision != "" && servingRevision != template.Revision
+	ready := pool.Spec.DesiredGroups > 0 && revisionServingReady(groups, servingRevision) && !servingRevisionDraining
 	rolloutPending := preparedRevision != template.Revision || servingRevision != template.Revision || !targetReady
 
 	// Keep the old cohort for zero-downtime replacement while the target can
@@ -436,7 +437,7 @@ func rolloutReason(state groupState) string {
 
 func rolloutMessage(state groupState) string {
 	if state.InsufficientCapacity {
-		return "The target Group revision is Unschedulable; the active revision remains serving"
+		return "The target Group revision is Unschedulable; the serving revision is being drained"
 	}
 	if state.RolloutPending {
 		return "Requested Group capacity is converging or superseded Groups are being retired"
