@@ -43,6 +43,7 @@ type modelServerTelemetry struct {
 	RunningRequests          uint64  `json:"running_requests"`
 	SchedulerRunningRequests *uint64 `json:"scheduler_running_requests"`
 	SchedulerWaitingRequests *uint64 `json:"scheduler_waiting_requests"`
+	KVCacheUsage             *float64 `json:"kv_cache_usage"`
 }
 
 type frontendDiagnostics struct {

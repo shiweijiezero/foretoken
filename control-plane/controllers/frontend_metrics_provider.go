@@ -73,6 +73,7 @@ func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target
 	collectionCtx, cancel := context.WithTimeout(ctx, provider.collectionTimeout)
 	defer cancel()
 	var runtimeQueuedRequests, dispatchQueuedRequests, schedulerWaitingRequests, schedulerRunningRequests, activeRequests uint64
+	var kvCacheUsage *float64
 	var queueSamples, modelSamples int64
 	var queueObservedAt, modelObservedAt time.Time
 	group, collectionCtx := errgroup.WithContext(collectionCtx)
@@ -83,7 +84,7 @@ func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target
 	})
 	group.Go(func() error {
 		var err error
-		schedulerWaitingRequests, schedulerRunningRequests, activeRequests, modelSamples, modelObservedAt, err = provider.modelDemand(collectionCtx, target)
+		schedulerWaitingRequests, schedulerRunningRequests, activeRequests, kvCacheUsage, modelSamples, modelObservedAt, err = provider.modelDemand(collectionCtx, target)
 		return err
 	})
 	if err := group.Wait(); err != nil {
@@ -115,6 +116,7 @@ func (provider *HTTPScalingMetricsProvider) Snapshot(ctx context.Context, target
 		)),
 		RunningRequests: saturatingInt64(schedulerRunningRequests),
 		ActiveRequests:  saturatingInt64(activeRequests),
+		KVCacheUsage:    kvCacheUsage,
 	}, nil
 }
 
@@ -178,19 +180,19 @@ func (provider *HTTPScalingMetricsProvider) frontendQueue(ctx context.Context, t
 }
 
 // modelDemand sums scheduler backlog and admitted requests from routable model servers for one target.
-func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, target core.TargetID) (uint64, uint64, uint64, int64, time.Time, error) {
+func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, target core.TargetID) (uint64, uint64, uint64, *float64, int64, time.Time, error) {
 	service := new(inferencev1alpha1.ModelService)
 	if err := provider.client.Get(ctx, client.ObjectKey{Namespace: target.ServiceNamespace, Name: target.ServiceName}, service); err != nil {
-		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("get ModelService for telemetry: %w", err)
+		return 0, 0, 0, nil, 0, time.Time{}, fmt.Errorf("get ModelService for telemetry: %w", err)
 	}
 	if string(service.UID) != target.ServiceUID {
-		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("ModelService UID changed for target %q", target.Name)
+		return 0, 0, 0, nil, 0, time.Time{}, fmt.Errorf("ModelService UID changed for target %q", target.Name)
 	}
 	// Demand follows only the service-selected serving revision; preparing and draining
 	// cohorts must not influence the Pool's scaling decision.
 	var pools inferencev1alpha1.ModelPoolList
 	if err := provider.client.List(ctx, &pools, client.InNamespace(target.ServiceNamespace)); err != nil {
-		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("list ModelPools for telemetry: %w", err)
+		return 0, 0, 0, nil, 0, time.Time{}, fmt.Errorf("list ModelPools for telemetry: %w", err)
 	}
 	selectedPools := make(map[string]*inferencev1alpha1.ModelPool)
 	for index := range pools.Items {
@@ -204,17 +206,18 @@ func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, tar
 		selectedPools[string(pool.UID)] = pool
 	}
 	if len(selectedPools) == 0 {
-		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("no ModelPools found for target %q", target.Name)
+		return 0, 0, 0, nil, 0, time.Time{}, fmt.Errorf("no ModelPools found for target %q", target.Name)
 	}
 
 	var groups inferencev1alpha1.ModelGroupList
 	if err := provider.client.List(ctx, &groups, client.InNamespace(target.ServiceNamespace)); err != nil {
-		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("list ModelGroups for telemetry: %w", err)
+		return 0, 0, 0, nil, 0, time.Time{}, fmt.Errorf("list ModelGroups for telemetry: %w", err)
 	}
 	type modelDemandSample struct {
 		waitingRequests uint64
 		runningRequests uint64
 		activeRequests  uint64
+		kvCacheUsage    *float64
 		observedAt      time.Time
 	}
 	results := make(chan modelDemandSample, len(groups.Items))
@@ -246,31 +249,44 @@ func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, tar
 				waitingRequests: *telemetry.SchedulerWaitingRequests,
 				runningRequests: *telemetry.SchedulerRunningRequests,
 				activeRequests:  telemetry.RunningRequests,
+				kvCacheUsage:    telemetry.KVCacheUsage,
 				observedAt:      time.UnixMilli(int64(telemetry.CollectedAtUnixMS)),
 			}
 			return nil
 		})
 	}
 	if err := requestGroup.Wait(); err != nil {
-		return 0, 0, 0, 0, time.Time{}, err
+		return 0, 0, 0, nil, 0, time.Time{}, err
 	}
 	close(results)
 	var waitingRequests, runningRequests, activeRequests uint64
+	var kvCacheTotal float64
+	kvCacheAvailable := true
 	var samples int64
 	var oldest time.Time
 	for sample := range results {
 		waitingRequests = saturatingAdd(waitingRequests, sample.waitingRequests)
 		runningRequests = saturatingAdd(runningRequests, sample.runningRequests)
 		activeRequests = saturatingAdd(activeRequests, sample.activeRequests)
+		if sample.kvCacheUsage == nil {
+			kvCacheAvailable = false
+		} else {
+			kvCacheTotal += *sample.kvCacheUsage
+		}
 		samples++
 		if oldest.IsZero() || sample.observedAt.Before(oldest) {
 			oldest = sample.observedAt
 		}
 	}
 	if samples == 0 {
-		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("no routable ModelGroups for target %q", target.Name)
+		return 0, 0, 0, nil, 0, time.Time{}, fmt.Errorf("no routable ModelGroups for target %q", target.Name)
 	}
-	return waitingRequests, runningRequests, activeRequests, samples, oldest, nil
+	var kvCacheUsage *float64
+	if kvCacheAvailable {
+		value := kvCacheTotal / float64(samples)
+		kvCacheUsage = &value
+	}
+	return waitingRequests, runningRequests, activeRequests, kvCacheUsage, samples, oldest, nil
 }
 
 // getFrontendTelemetry reads and validates one frontend autoscaling telemetry response.

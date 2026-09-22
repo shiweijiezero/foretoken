@@ -32,6 +32,7 @@ Every stage accepts an `algorithm` and an optional `parameters` object. Omitted 
 | Decision | `queue` | `targetAverageQueuedRequests: 1` |
 | Decision | `queue_threshold` | `scaleUpQueuedRequests: 1`, `scaleDownQueuedRequests: 0` |
 | Decision | `aimd` | `additiveIncrease: 1`, `multiplicativeDecreasePercent: 50`, `scaleUpQueuedRequests: 0` |
+| Decision | `dynamo_load` | `mode: throughput`, prefill queue thresholds `1/0`, decode KV-cache thresholds `0.8/0.6` |
 | Trigger | `periodic` | `interval: 5s` |
 | Adjustment | `step` | `scaleUpStabilizationWindow: 0s`, `scaleDownStabilizationWindow: 300s` |
 | Adjustment | `direct` | No parameters |
@@ -50,6 +51,24 @@ adjustment:
 ```
 
 Unknown algorithms and invalid parameters produce a `ScalingFailed` condition on the `ModelService`.
+
+## Dynamo reactive load
+
+Select `dynamo_load` for a Dynamo-compatible reactive policy:
+
+```yaml
+decision:
+  algorithm: dynamo_load
+  parameters:
+    mode: throughput
+```
+
+Aggregate, encoder, and prefill Pools use queued requests. Decode Pools use
+the model-server KV-cache utilization when it is available. `latency` mode
+uses lower decode thresholds (`0.4` scale up and `0.1` scale down). The
+algorithm fails closed when the required decode metric is unavailable; it does
+not interpret a missing metric as zero. The existing trigger, step adjustment,
+hard bounds, and lifecycle constraints remain in effect.
 
 ## AIMD
 
