@@ -258,6 +258,23 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 	ready := pool.Spec.DesiredGroups > 0 && revisionServingReady(groups, servingRevision)
 	rolloutPending := preparedRevision != template.Revision || servingRevision != template.Revision || !targetReady
 
+	// Keep the old cohort for zero-downtime replacement while the target can
+	// schedule. If the target is explicitly unschedulable, retaining the old
+	// cohort prevents a full cluster from ever making progress; drain it so the
+	// target can acquire the same resources.
+	if targetInsufficientCapacity && servingRevision != "" && servingRevision != template.Revision {
+		for index := range groups {
+			group := &groups[index]
+			if group.Spec.Revision != servingRevision {
+				continue
+			}
+			rolloutPending = true
+			if err := reconciler.Delete(ctx, group); err != nil && !apierrors.IsNotFound(err) {
+				return groupState{}, fmt.Errorf("delete unschedulable serving ModelGroup %q: %w", group.Name, err)
+			}
+		}
+	}
+
 	// The Pool keeps both its target cohort and the service-selected serving cohort.
 	// Other revisions are no longer reachable and can enter their normal drain finalizer.
 	for index := range groups {

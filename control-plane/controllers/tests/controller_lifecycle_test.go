@@ -171,6 +171,64 @@ func TestModelServingControllerLifecycle(t *testing.T) {
 		}
 	})
 
+	t.Run("ModelPool retires serving cohort when target is unschedulable", func(t *testing.T) {
+		service := modelService("capacity-rollout", 1)
+		pool := modelPool(service, "capacity-rollout-default", 1)
+		c := controllerClient(t, service, pool)
+		profile := resolver.RuntimeProfile{Image: "vllm:test", ModelServerPort: 9000, DeviceResourceName: "nvidia.com/gpu", NodeSelectorKey: "nvidia.com/gpu.product", NodeSelectorValue: "NVIDIA-H100-80GB-HBM3"}
+		r := &controllers.ModelPoolReconciler{Client: c, APIReader: c, TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: profile}}
+		request := ctrl.Request{NamespacedName: client.ObjectKeyFromObject(pool)}
+		for range 2 {
+			if _, err := r.Reconcile(ctx, request); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var groups inferencev1alpha1.ModelGroupList
+		if err := c.List(ctx, &groups, client.InNamespace(pool.Namespace)); err != nil {
+			t.Fatal(err)
+		}
+		markGroupReady(&groups.Items[0])
+		if err := c.Status().Update(ctx, &groups.Items[0]); err != nil {
+			t.Fatal(err)
+		}
+		current := get(t, ctx, c, request.NamespacedName, new(inferencev1alpha1.ModelPool))
+		current.Status.PreparedRevision = groups.Items[0].Spec.Revision
+		if err := c.Status().Update(ctx, current); err != nil {
+			t.Fatal(err)
+		}
+		serviceState := get(t, ctx, c, client.ObjectKeyFromObject(service), new(inferencev1alpha1.ModelService))
+		serviceState.Status.ServingPoolRevisions = []inferencev1alpha1.ServingPoolRevision{{PoolName: current.Spec.PoolName, PoolUID: string(current.UID), Revision: current.Status.PreparedRevision}}
+		if err := c.Status().Update(ctx, serviceState); err != nil {
+			t.Fatal(err)
+		}
+		profile.Image = "vllm:next"
+		r.TemplateResolver = resolver.StaticModelPoolResolver{RuntimeProfile: profile}
+		if _, err := r.Reconcile(ctx, request); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.List(ctx, &groups, client.InNamespace(pool.Namespace)); err != nil {
+			t.Fatal(err)
+		}
+		for index := range groups.Items {
+			if groups.Items[index].Spec.Revision == current.Status.PreparedRevision {
+				continue
+			}
+			meta.SetStatusCondition(&groups.Items[index].Status.Conditions, metav1.Condition{Type: "SchedulingCapacity", Status: metav1.ConditionFalse, Reason: "InsufficientCapacity", ObservedGeneration: groups.Items[index].Generation})
+			if err := c.Status().Update(ctx, &groups.Items[index]); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := r.Reconcile(ctx, request); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.List(ctx, &groups, client.InNamespace(pool.Namespace)); err != nil {
+			t.Fatal(err)
+		}
+		if len(groups.Items) != 1 || groups.Items[0].Spec.Revision == current.Status.PreparedRevision {
+			t.Fatalf("serving cohort was not retired after target became unschedulable: %#v", groups.Items)
+		}
+	})
+
 	t.Run("KVService materializes storage infrastructure, Pool, and Groups", func(t *testing.T) {
 		service := kvService()
 		c := controllerClient(t, service)
