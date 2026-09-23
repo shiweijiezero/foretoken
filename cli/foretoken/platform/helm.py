@@ -165,6 +165,34 @@ class Helm(HelmClient):
             self._config.dcgm_exporter.release_name, self._config.namespace
         )
 
+    def dcgm_resource(self, release: ReleaseRef) -> ResourceRef:
+        """Read the managed DCGM Exporter DaemonSet identity from Helm."""
+        rendered = self.run(
+            ["get", "manifest", release.name, "--namespace", release.namespace]
+        ).stdout
+        try:
+            resources = [
+                item
+                for item in yaml.safe_load_all(rendered)
+                if isinstance(item, dict)
+                and item.get("apiVersion") == "apps/v1"
+                and item.get("kind") == "DaemonSet"
+            ]
+        except yaml.YAMLError as exc:
+            raise DeploymentError(
+                "managed DCGM Exporter chart returned invalid YAML"
+            ) from exc
+        if len(resources) != 1:
+            raise DeploymentError(
+                "managed DCGM Exporter chart must contain one DaemonSet"
+            )
+        metadata = resources[0]["metadata"]
+        return ResourceRef(
+            "DaemonSet",
+            metadata["name"],
+            metadata.get("namespace") or release.namespace,
+        )
+
     def envoy_gateway_release(self) -> ReleaseRef:
         """Return the Envoy Gateway release managed with the platform."""
         return ReleaseRef(
