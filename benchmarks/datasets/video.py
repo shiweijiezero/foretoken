@@ -12,6 +12,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from huggingface_hub import snapshot_download
+
 from benchmarks.config.video import (
     VideoDatasetDefaults,
     VideoGenerationRequest,
@@ -380,8 +382,6 @@ def resolve_video_dataset(path_or_selector: str) -> str:
         selector_task,
         f" at {cache_dir}" if cache_dir else "",
     )
-    from huggingface_hub import snapshot_download
-
     snapshot_path = Path(
         snapshot_download(
             repo_id=_VIDEOARGUS_REPO_ID,

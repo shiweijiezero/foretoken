@@ -11,6 +11,8 @@ from functools import cache
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+from huggingface_hub import hf_hub_download, snapshot_download
+
 logger = logging.getLogger(__name__)
 
 # Remote tokenizers download only files needed for tokenization and decoding.
@@ -56,8 +58,6 @@ def resolve_tokenizer_path(tokenizer_path: str) -> str:
             f"Tokenizer path does not exist locally: {tokenizer_path!r}; "
             "pass an existing directory or a Hugging Face repository ID"
         )
-
-    from huggingface_hub import snapshot_download
 
     cache_dir = _configured_hub_cache_dir()
     logger.info(
@@ -116,8 +116,6 @@ def parse_hf_file_uri(uri: str) -> tuple[str, Optional[str], str]:
 
 def resolve_hf_file_uri(uri: str) -> str:
     """Download a Hugging Face dataset file and return its local cache path."""
-    from huggingface_hub import hf_hub_download
-
     repo_id, revision, filename = parse_hf_file_uri(uri)
     return hf_hub_download(
         repo_id=repo_id,

@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+import wandb
+
 from benchmarks.config.evaluation import EvaluationConfig
 from benchmarks.results.output import (
     BenchmarkRun,
@@ -217,8 +219,6 @@ class EvaluationArtifactSink:
 
 def publish_quality_wandb(session: Any, run: BenchmarkRun) -> None:
     """Publish native-valued scalars, a complete score table, and downloadable run artifacts."""
-    import wandb
-
     columns = [
         "task",
         "level",
