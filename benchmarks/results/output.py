@@ -323,6 +323,7 @@ def build_benchmark_run_record(
     if benchmark.is_multi_turn:
         record["multi_turn"] = True
         record["max_turns"] = workload.max_turns
+        record["conversation_history"] = workload.conversation_history
     if workload.dataset_selectors == ["random"]:
         record["random_seed"] = workload.random_seed
     return record

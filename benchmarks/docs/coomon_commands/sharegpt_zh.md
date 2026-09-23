@@ -7,7 +7,7 @@
 ```bash
 foretoken bench examples/quickstart \
   --dataset benchmarks/examples/sharegpt.jsonl \
-  --max-turns 2 --num-prompts 1 --output local,wandb
+  --max-turns 2 --num-prompts 2 --output local,wandb
 ```
 
-`human` 是用户消息，`gpt` 是参考答案，后续追问使用模型真实生成的回答。需要 system 消息或图片内容时，使用[本地数据指南](conversations_zh.md)中的 OpenAI `messages` 格式。
+`human` 表示用户消息，`gpt` 表示记录的 assistant 答案。历史来源的选择，以及包含 system 消息或图片的 OpenAI `messages` 格式，见[本地对话数据](conversations_zh.md)。

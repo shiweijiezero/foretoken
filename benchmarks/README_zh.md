@@ -72,7 +72,9 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-`--dataset` 也接受本地 JSONL 文件，以及逗号分隔的多个数据集。多个数据集共享同一个全局到达时钟和并发预算，结果保留数据集身份与分组指标。每行是一段对话，默认运行全部轮次，并使用模型的真实回答继续。`--num-prompts` 表示 HTTP 请求预算。多轮负载由 `--request-rate` 控制新对话的启动速率，依赖前序响应的后续轮次在响应完成后继续；`--max-concurrency` 限制同时进行的对话数。
+`--dataset` 支持 Hugging Face 数据集、本地 JSONL 文件，以及逗号分隔的多个数据集。每行是一段对话，每轮都会请求模型生成；后续轮次默认使用数据集中的答案作为历史。切换历史来源和限制轮数，见[本地对话数据](docs/coomon_commands/conversations_zh.md)。
+
+`--num-prompts` 表示 HTTP 请求预算。多轮负载由 `--request-rate` 控制新对话的启动速率，依赖前序响应的后续轮次在响应完成后继续；`--max-concurrency` 限制同时进行的对话数。
 
 ### 在评测时采集 Profile
 

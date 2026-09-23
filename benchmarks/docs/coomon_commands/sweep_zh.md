@@ -16,7 +16,7 @@ foretoken bench examples/quickstart \
 
 该示例在 1、2、4 并发下各发送 384 个请求，每个请求要求输出 256 个 token。每个参数点重复三次，每次重复前预热 16 段对话。参数扫描需传入部署配置目录，例如 `examples/quickstart`；多轮和多数据集会使用与独立评测相同的全局调度器。
 
-每行 JSONL 定义负载、生成或数据集设置。`max_concurrency`、`num_prompts`、`request_rate`、`arrival_pattern`、`burstiness`、`duration`、`warmup_requests` 等规范字段的列表会展开成笛卡尔组合。扫描行可以包含 SLO 条件，每个点分别执行自己的 SLO 搜索，也可以使用时间戳轨迹回放。新配置使用 `max_concurrency`，不再使用 `parallel`。
+每行 JSONL 定义负载、生成或数据集设置。`max_concurrency`、`num_prompts`、`request_rate`、`arrival_pattern`、`burstiness`、`duration`、`warmup_requests`、`conversation_history` 等规范字段的列表会展开成笛卡尔组合。扫描行可以包含 SLO 条件，每个点分别执行自己的 SLO 搜索，也可以使用时间戳轨迹回放。新配置使用 `max_concurrency`，不再使用 `parallel`。
 
 视频生成也复用同一套扫描生命周期和结果目录结构，但只展开视频自己的字段，不伪造 HTTP 指标：
 
