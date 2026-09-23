@@ -20,4 +20,4 @@ GPU temperature and power rules use only recording series attributed to the sele
 
 `ForetokenMetricsTargetDown` resolves when scraping resumes or the target leaves service discovery.
 
-For delivery, configure a [Lark](../integrations/lark/README.md) or [Slack](../integrations/slack/README.md) receiver.
+For delivery, configure a [Lark](../integrations/lark/README.md), [Slack](../integrations/slack/README.md), or [DingTalk](../integrations/dingtalk/README.md) receiver.
