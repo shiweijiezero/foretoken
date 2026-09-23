@@ -10,11 +10,11 @@ foretoken bench examples/quickstart \
   --num-prompts 3 --max-concurrency 2 --output local,wandb
 ```
 
-文件包含一个单轮对话和一个多轮对话。默认运行全部用户轮次，每轮都会请求模型生成，但后续请求使用数据集答案作为历史（`--conversation-history dataset`）。添加 `--conversation-history generated` 可改用模型实际回答。该选项只改变历史来源，不改变输出长度控制；轨迹回放仍独立发送记录中的请求。
+这条命令发送三个请求，完成一个单轮对话和一个两轮对话。同一对话的下一轮会等待上一轮响应结束后再发送。
 
-`--num-prompts` 是这些对话共享的 HTTP 请求预算。多轮对话使用所选到达过程启动，并在每次响应后继续依赖轮次，结果会分别报告请求数和对话数。
+默认采用 `--conversation-history dataset`：后续请求使用数据集记录的 assistant 答案作为历史，每轮仍请求模型生成新回答并测量性能。添加 `--conversation-history generated`，则将本次实际生成的回答用于后续历史。
 
-只运行首个用户轮次：
+`--num-prompts` 限制所有对话合计发送的 HTTP 请求数。若只运行每段对话的首轮：
 
 ```bash
 foretoken bench examples/quickstart \

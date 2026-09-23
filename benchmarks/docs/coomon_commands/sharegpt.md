@@ -10,4 +10,4 @@ foretoken bench examples/quickstart \
   --max-turns 2 --num-prompts 2 --output local,wandb
 ```
 
-`human` identifies a user message and `gpt` a reference answer. Follow-ups use the recorded `gpt` answer by default; `--conversation-history generated` uses the model's actual response instead. For system messages or image content, use the OpenAI-style `messages` format in the [local dataset guide](conversations.md).
+`human` identifies a user message and `gpt` the recorded assistant answer. Conversation history options and the OpenAI-style `messages` format for system messages or images are described in [Local conversations](conversations.md).
