@@ -557,6 +557,7 @@ def _evalscope_phase(label: str, work_items: int) -> Iterator[None]:
         return record.funcName not in {
             "_log_warmup_handoff",
             "run_one_benchmark",
+            "statistic_benchmark_metric",
             "summary_result",
         }
 

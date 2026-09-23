@@ -108,7 +108,7 @@ def format_benchmark_config(
         slo_lines = (
             f"  SLO params : {params_label}\n"
             f"  SLO concurrency bounds="
-            f"[{slo.lower_bound}, {slo.upper_bound}], "
+            f"[{slo.lower_bound}, {slo.upper_bound if slo.upper_bound is not None else 'none'}], "
             f"num_runs={slo.num_runs}\n"
         )
     else:

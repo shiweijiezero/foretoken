@@ -309,7 +309,7 @@ class SloTuneConfig:
 
     params: list[dict[str, str]] | None = None
     num_runs: int = 1
-    upper_bound: int = 65536
+    upper_bound: Optional[int] = None
     lower_bound: int = 1
 
     def validate(self) -> None:
@@ -334,7 +334,10 @@ class SloTuneConfig:
             raise ValueError("--num-runs must be >= 1")
         if self.lower_bound < 1:
             raise ValueError("--slo-lower-bound must be >= 1")
-        if self.upper_bound < self.lower_bound:
+        if (
+            self.upper_bound is not None
+            and self.upper_bound < self.lower_bound
+        ):
             raise ValueError("--slo-upper-bound must be >= --slo-lower-bound")
 
 
@@ -385,6 +388,38 @@ class BenchmarkConfig:
             and workload.dataset_selectors != ["random"]
         )
 
+    def slo_search_start(self) -> int:
+        """Resolve the first concurrency probe for an SLO binary search."""
+        if self.trace.trace_selector:
+            configured = self.trace.max_concurrency
+        else:
+            configured = self.load.max_concurrency
+            if configured == -1:
+                raise ValueError(
+                    "--slo-params requires --max-concurrency >= 1"
+                )
+        low = self.slo.lower_bound
+        high = self.slo.upper_bound
+        if configured is None or low >= configured:
+            if high is not None:
+                start = (low + high) // 2
+            else:
+                start = low
+        else:
+            start = configured
+        if start < low or (high is not None and start > high):
+            bounds = (
+                f"[{low}, {high}]"
+                if high is not None
+                else f">= {low}"
+            )
+            raise ValueError(
+                "SLO search start must be within "
+                f"[--slo-lower-bound, --slo-upper-bound]; got {start} not in "
+                f"{bounds}"
+            )
+        return start
+
     def validate(self) -> None:
         """Validate each section, then the rules that span sections, before acquiring resources."""
         self.service.validate()
@@ -411,6 +446,9 @@ class BenchmarkConfig:
         if self.trace.trace_selector and self.load.arrival_pattern != "poisson":
             raise ValueError("--trace cannot be combined with generated arrival patterns")
         self.slo.validate()
+
+        if self.slo.params:
+            self.slo_search_start()
 
         trace = self.trace
         has_trace = bool(trace.trace_selector)

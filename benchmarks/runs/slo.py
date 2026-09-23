@@ -5,12 +5,9 @@
 
 from __future__ import annotations
 
-import math
-import operator
 import os
-import re
 from dataclasses import replace
-from typing import Any, Callable
+from typing import Any
 
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
@@ -30,14 +27,6 @@ _SLO_ALIASES = {
     "tpot.mean": "avg_tpot",
     "throughput.requests_per_second": "rps",
     "throughput.generation_tokens_per_second": "tps",
-}
-_CRITERION = re.compile(r"^(<=|>=|==|<|>)\s*(-?(?:\d+(?:\.\d*)?|\.\d+))$")
-_OPERATORS: dict[str, Callable[[float, float], bool]] = {
-    "<=": operator.le,
-    ">=": operator.ge,
-    "==": operator.eq,
-    "<": operator.lt,
-    ">": operator.gt,
 }
 
 
@@ -85,19 +74,34 @@ def _mean_optional(values: list[dict[str, Any]], key: str) -> float | None:
     return sum(float(sample) for sample in samples) / len(samples)
 
 
-def _average_values_pass(
-    values: dict[str, float], criteria: dict[str, str]
+def _check_slo(
+    parallel: int,
+    criteria: dict[str, str],
+    average_values: dict[str, float],
+    metrics_list: list[dict[str, Any]],
 ) -> bool:
-    for name, expression in criteria.items():
-        match = _CRITERION.fullmatch(expression)
-        if match is None:
-            raise ValueError(f"invalid SLO criterion for {name!r}: {expression!r}")
-        value = values.get(name, float("nan"))
-        if not math.isfinite(value) or not _OPERATORS[match.group(1)](
-            value, float(match.group(2))
-        ):
-            return False
-    return True
+    """Reuse EvalScope ``check_sla`` for pass/fail and criterion comparison logs."""
+    from evalscope.perf.sla import sla_run
+    from evalscope.perf.sla.sla_run import check_sla, parse_sla_params
+    from evalscope.perf.utils.perf_models import BenchmarkSummary
+
+    success = all(float(item["success_rate"]) >= 1.0 for item in metrics_list)
+    total = max(int(metrics_list[-1].get("request_num") or 1), 1)
+    results = {
+        "metrics": BenchmarkSummary(
+            total_requests=total,
+            succeed_requests=total if success else 0,
+            failed_requests=0 if success else total,
+        )
+    }
+    previous = sla_run.get_metric_values
+    sla_run.get_metric_values = lambda _: average_values
+    try:
+        return check_sla(
+            results, parse_sla_params([criteria]), f"parallel={parallel}"
+        )
+    finally:
+        sla_run.get_metric_values = previous
 
 
 class SloAutoTuneBenchmark:
@@ -159,6 +163,7 @@ class SloAutoTuneBenchmark:
         wandb_group = wandb_group_name(self.benchmark, self.service)
         summaries: list[dict[str, Any]] = []
         winning_run: BenchmarkRun | None = None
+        start = self.benchmark.slo_search_start()
         for group_index, criteria in enumerate(self.benchmark.slo.params):
             cache: dict[int, tuple[BenchmarkRun, list[dict[str, Any]]]] = {}
 
@@ -176,20 +181,17 @@ class SloAutoTuneBenchmark:
             low = self.benchmark.slo.lower_bound
             high = self.benchmark.slo.upper_bound
             best = None
-            while low <= high:
-                value = (low + high) // 2
+
+            def evaluate(value: int) -> bool:
+                nonlocal winning_run, best
                 run, metrics_list = probe(value)
                 average_values = _average_metric_values(metrics_list, criteria)
-                passed = (
-                    all(item["success_rate"] >= 1.0 for item in metrics_list)
-                    and _average_values_pass(average_values, criteria)
+                passed = _check_slo(
+                    value, criteria, average_values, metrics_list
                 )
                 if passed:
                     best = value
                     winning_run = run
-                    low = value + 1
-                else:
-                    high = value - 1
                 slo_values = [
                     metrics.get("slo") or {}
                     for metrics in metrics_list
@@ -209,22 +211,31 @@ class SloAutoTuneBenchmark:
                         "satisfied": passed,
                     }
                 )
-            if best is None:
-                summaries.append(
-                    {
-                        "group": group_index,
-                        "criteria": criteria,
-                        "max_satisfied": None,
-                    }
-                )
+                return passed
+
+            if evaluate(start):
+                low = start + 1
+                if high is None:
+                    probe_value = max(start * 2, start + 1)
+                    while evaluate(probe_value):
+                        low = probe_value + 1
+                        probe_value *= 2
+                    high = probe_value - 1
             else:
-                summaries.append(
-                    {
-                        "group": group_index,
-                        "criteria": criteria,
-                        "max_satisfied": best,
-                    }
-                )
+                high = start - 1
+            while low <= high:
+                value = (low + high) // 2
+                if evaluate(value):
+                    low = value + 1
+                else:
+                    high = value - 1
+            summaries.append(
+                {
+                    "group": group_index,
+                    "criteria": criteria,
+                    "max_satisfied": best,
+                }
+            )
         if winning_run is None:
             raise ValueError("no SLO probe satisfied the configured criteria")
         artifact = write_json(base_dir, "slo_results.json", {"probes": summaries})
