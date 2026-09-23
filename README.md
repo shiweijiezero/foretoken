@@ -80,11 +80,6 @@ curl --fail-with-body --no-buffer \
 ### 5. Measure the model service
 
 ```bash
-pip install 'foretoken[bench]'
-
-# From a source checkout:
-# pip install -e '.[bench]'
-
 foretoken perf examples/quickstart --output local
 ```
 

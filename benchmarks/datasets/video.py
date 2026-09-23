@@ -380,13 +380,8 @@ def resolve_video_dataset(path_or_selector: str) -> str:
         selector_task,
         f" at {cache_dir}" if cache_dir else "",
     )
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError as exc:
-        raise RuntimeError(
-            "automatic video dataset download requires huggingface_hub; "
-            "install foretoken[bench]"
-        ) from exc
+    from huggingface_hub import snapshot_download
+
     snapshot_path = Path(
         snapshot_download(
             repo_id=_VIDEOARGUS_REPO_ID,

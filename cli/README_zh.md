@@ -139,7 +139,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 ## 评测模型服务
 
-使用 `foretoken perf` 测量服务性能，使用 `foretoken eval` 调用 lm-evaluation-harness 或 EvalScope 评测模型质量。两者都接受 Kustomize 目录，或通过 `--url` 指定已有服务。安装、命令和结果设置见[模型服务评测](../benchmarks/README_zh.md)。
+使用 `foretoken perf` 测量服务性能，使用 `foretoken eval` 调用 lm-evaluation-harness 或 EvalScope 评测模型质量。两者都接受 Kustomize 目录，或通过 `--url` 指定已有服务。命令和结果设置见[模型服务评测](../benchmarks/README_zh.md)。
 
 ## 采集诊断 Profile
 

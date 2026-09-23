@@ -14,7 +14,6 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 从仓库根目录执行：
 
 ```bash
-pip install -e '.[bench]'
 foretoken perf examples/quickstart \
   --profile --profile-engine pytorch --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local
@@ -76,7 +75,6 @@ runtime:
 [Nsight 示例](../examples/profile/nsight/README_zh.md)已选择该工具，并沿用快速开始示例的持久存储：
 
 ```bash
-pip install -e '.[bench]'
 foretoken perf examples/profile/nsight \
   --profile --profile-engine nsight --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local

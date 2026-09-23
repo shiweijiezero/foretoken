@@ -14,7 +14,6 @@ Inspect vLLM execution with PyTorch Profiler on NVIDIA or [MetaX GPUs](../docs/m
 Run from the repository root:
 
 ```bash
-pip install -e '.[bench]'
 foretoken perf examples/quickstart \
   --profile --profile-engine pytorch --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local
@@ -76,7 +75,6 @@ Add `--values nsight-values.yaml` to the source installation command used for th
 The [Nsight example](../examples/profile/nsight/README.md) selects the tool and uses the Quick Start's persistent storage:
 
 ```bash
-pip install -e '.[bench]'
 foretoken perf examples/profile/nsight \
   --profile --profile-engine nsight --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local

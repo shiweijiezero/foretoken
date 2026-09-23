@@ -12,7 +12,7 @@ This Quick Start overlay captures CUDA/NVTX activity from Qwen3-0.6B in the `for
 Run a short workload and capture it:
 
 ```bash
-pip install -e '.[bench]'
+pip install -e .
 foretoken perf examples/profile/nsight \
   --profile --profile-engine nsight --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local

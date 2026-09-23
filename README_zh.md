@@ -80,11 +80,6 @@ curl --fail-with-body --no-buffer \
 ### 5. 测量模型服务性能
 
 ```bash
-pip install 'foretoken[bench]'
-
-# 从源码目录安装：
-# pip install -e '.[bench]'
-
 foretoken perf examples/quickstart --output local
 ```
 

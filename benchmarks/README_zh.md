@@ -9,10 +9,10 @@
 使用 Python 3.11 或更高版本安装性能与质量评测工具：
 
 ```bash
-pip install 'foretoken[bench,eval]'
+pip install foretoken
 
 # 从源码目录安装：
-# pip install -e '.[bench,eval]'
+# pip install -e .
 ```
 
 以下命令在[快速开始](../README_zh.md#快速开始)准备的仓库目录运行。传入 Kustomize 目录时，命令会复用已运行的服务，服务不存在时自动部署；结束后只删除本次评测创建的资源。单模型部署自动选择模型，多模型部署通过 `--model` 指定。

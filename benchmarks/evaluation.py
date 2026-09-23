@@ -18,15 +18,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         config, help_requested = parse_evaluation_arguments(
             sys.argv[1:] if argv is None else argv
         )
-        try:
-            native = native_arguments(
-                config.evaluator,
-                ["--help"] if help_requested else list(config.arguments),
-            )
-        except ModuleNotFoundError as error:
-            raise ValueError(
-                "Install evaluation dependencies with: pip install 'foretoken[eval]'"
-            ) from error
+        native = native_arguments(
+            config.evaluator,
+            ["--help"] if help_requested else list(config.arguments),
+        )
         # Only transport and publication belong to Foretoken. Other native
         # options, including structured model arguments, retain upstream ownership.
         owned = (

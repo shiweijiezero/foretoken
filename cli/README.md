@@ -139,7 +139,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 ## Evaluate model services
 
-Use `foretoken perf` to measure service performance and `foretoken eval` to score model quality with lm-evaluation-harness or EvalScope. Both accept a Kustomize directory or `--url` for an existing service. Installation, commands, and result settings are in [Model Service Evaluation](../benchmarks/README.md).
+Use `foretoken perf` to measure service performance and `foretoken eval` to score model quality with lm-evaluation-harness or EvalScope. Both accept a Kustomize directory or `--url` for an existing service. Commands and result settings are in [Model Service Evaluation](../benchmarks/README.md).
 
 ## Capture a diagnostic profile
 

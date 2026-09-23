@@ -24,15 +24,9 @@ def create_trace_random_dataset_plugin(
     request_count: int,
 ) -> Any:
     """Create EvalScope's public random dataset plugin for one trace payload set."""
-    try:
-        from evalscope.perf.arguments import Arguments
-        from evalscope.perf.plugin.datasets.random_dataset import RandomDatasetPlugin
-        from evalscope.utils.model_utils import seed_everything
-    except ModuleNotFoundError as error:
-        raise ValueError(
-            "random trace payloads require EvalScope; install benchmark "
-            "dependencies with: pip install 'foretoken[bench]'"
-        ) from error
+    from evalscope.perf.arguments import Arguments
+    from evalscope.perf.plugin.datasets.random_dataset import RandomDatasetPlugin
+    from evalscope.utils.model_utils import seed_everything
 
     workload = benchmark.resolved_workload
     seed_everything(workload.random_seed)

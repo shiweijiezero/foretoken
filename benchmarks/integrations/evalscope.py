@@ -103,17 +103,11 @@ class _TimedClientSession:
 @cache
 def _evalscope_arguments_type() -> type:
     """Register the adapter lazily and reuse its argument type across sequential loads."""
-    try:
-        from pydantic import Field
-        from evalscope.perf.arguments import Arguments
-        from evalscope.perf.plugin.api.openai_api import OpenaiPlugin
-        from evalscope.perf.plugin.registry import register_api, register_dataset
-        from evalscope.perf.plugin.datasets.base import DatasetPluginBase, Turn as EvalScopeTurn
-    except ModuleNotFoundError as error:
-        raise ValueError(
-            "standard HTTP loads require EvalScope; install benchmark "
-            "dependencies with: pip install 'foretoken[bench]'"
-        ) from error
+    from pydantic import Field
+    from evalscope.perf.arguments import Arguments
+    from evalscope.perf.plugin.api.openai_api import OpenaiPlugin
+    from evalscope.perf.plugin.registry import register_api, register_dataset
+    from evalscope.perf.plugin.datasets.base import DatasetPluginBase, Turn as EvalScopeTurn
 
     class ForetokenEvalScopeArguments(Arguments):
         """Carry Foretoken request semantics and an unpersisted capture handle into EvalScope."""
@@ -620,12 +614,6 @@ def run_evalscope_standard_load(
         from evalscope.perf.utils.handler import PerfBenchmarkInterrupted
         from evalscope.utils.logger import configure_logging
         from evalscope.utils.model_utils import seed_everything
-    except ModuleNotFoundError as error:
-        raise ValueError(
-            "standard HTTP loads require EvalScope; install benchmark "
-            "dependencies with: pip install 'foretoken[bench]'"
-        ) from error
-
     finally:
         # Importing EvalScope can reconfigure the root logger; Foretoken owns its level.
         logging.getLogger().setLevel(console_level)

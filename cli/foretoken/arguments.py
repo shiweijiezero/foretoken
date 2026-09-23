@@ -72,14 +72,14 @@ class EndpointCommand:
 
 @dataclass(frozen=True)
 class PerformanceCommand:
-    """Forward performance benchmark arguments to the optional benchmark module."""
+    """Forward performance benchmark arguments to the benchmark module."""
 
     arguments: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class EvaluationCommand:
-    """Forward model evaluation arguments to the optional benchmark module."""
+    """Forward model evaluation arguments to the benchmark module."""
 
     arguments: tuple[str, ...]
 

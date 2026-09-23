@@ -9,10 +9,10 @@ Use `foretoken perf` to measure latency and throughput, and `foretoken eval` to 
 Install the performance and quality evaluation tools with Python 3.11 or later:
 
 ```bash
-pip install 'foretoken[bench,eval]'
+pip install foretoken
 
 # From a source checkout:
-# pip install -e '.[bench,eval]'
+# pip install -e .
 ```
 
 The commands below run from the repository checkout prepared by the [Quick Start](../README.md#quick-start). Passing a Kustomize directory reuses its running services or deploys them when absent. Only resources created by the evaluation command are removed afterwards. A single-model deployment supplies the model name automatically; use `--model` to choose among multiple models.

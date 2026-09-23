@@ -160,34 +160,6 @@ def _endpoint(kustomize_path: str, timeout: str, host: bool) -> None:
     print(endpoint.url)
 
 
-def _performance(arguments: Sequence[str]) -> None:
-    """Load optional benchmark dependencies only when the perf command runs."""
-    try:
-        from benchmarks.main import main as benchmark_main
-    except ModuleNotFoundError as exc:
-        if exc.name and not exc.name.startswith(("benchmarks", "foretoken")):
-            raise SystemExit(
-                "foretoken perf requires benchmark dependencies; "
-                "install them with: pip install 'foretoken[bench]'"
-            ) from exc
-        raise
-    benchmark_main(arguments)
-
-
-def _evaluation(arguments: Sequence[str]) -> None:
-    """Load optional evaluation dependencies only when the eval command runs."""
-    try:
-        from benchmarks.evaluation import main as evaluation_main
-    except ModuleNotFoundError as exc:
-        if exc.name and not exc.name.startswith(("benchmarks", "foretoken")):
-            raise SystemExit(
-                "foretoken eval requires evaluation dependencies; "
-                "install them with: pip install 'foretoken[eval]'"
-            ) from exc
-        raise
-    evaluation_main(arguments)
-
-
 def main(argv: Sequence[str] | None = None) -> None:
     """Dispatch Foretoken deployment, status, and benchmark commands."""
     command = parse_arguments(sys.argv[1:] if argv is None else argv)
@@ -212,9 +184,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                 command.host,
             )
         elif isinstance(command, PerformanceCommand):
-            _performance(command.arguments)
+            from benchmarks.main import main as benchmark_main
+
+            benchmark_main(command.arguments)
         elif isinstance(command, EvaluationCommand):
-            _evaluation(command.arguments)
+            from benchmarks.evaluation import main as evaluation_main
+
+            evaluation_main(command.arguments)
         elif isinstance(command, ProfileViewCommand):
             from foretoken.profiling.viewer import view
 
