@@ -1,151 +1,96 @@
-# 模型服务性能评测
+# 模型服务评测
 
 [English](README.md) | 简体中文
 
-使用 `foretoken bench` 评测模型服务性能。
+使用 `foretoken perf` 测量延迟和吞吐量，使用 `foretoken eval` 调用 lm-evaluation-harness 或 EvalScope，为模型回答评分。
 
 ## 开始使用
 
-需要 Python 3.11 或更高版本：
+使用 Python 3.11 或更高版本安装性能与质量评测工具：
 
 ```bash
-pip install 'foretoken[bench]'
+pip install 'foretoken[bench,eval]'
 
-# 如果使用源码安装：
-# pip install -e '.[bench]'
-
-wandb login
+# 从源码目录安装：
+# pip install -e '.[bench,eval]'
 ```
 
-以下命令在仓库根目录执行。集群准备见[快速开始](../README_zh.md#快速开始)，已有平台可跳过安装：
+以下命令在[快速开始](../README_zh.md#快速开始)准备的仓库目录运行。传入 Kustomize 目录时，命令会复用已运行的服务，服务不存在时自动部署；结束后只删除本次评测创建的资源。单模型部署自动选择模型，多模型部署通过 `--model` 指定。
+
+## 测量性能
 
 ```bash
-foretoken install
-foretoken bench examples/quickstart --num-prompts 10 --output local,wandb
-```
-
-默认发送 `Hello`。已部署的服务直接复用；临时部署的资源会在评测后清理。单模型部署自动选择模型，多模型时添加 `--model`。
-
-## 常用命令
-
-### 并发评测
-
-```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --prompt "用一句话解释什么是 token。" \
-  --max-concurrency 8 --num-prompts 100 \
-  --max-tokens 128 \
-  --output local,wandb
+  --max-concurrency 4 --num-prompts 20 --max-tokens 128 \
+  --output local
 ```
 
-添加 `--warmup-requests 16` 可在每次测量前完成 16 段预热对话，不计入正式指标。
+汇总结果包括请求成功率、延迟和吞吐量。流式请求还报告首 token 耗时（TTFT）和每输出 token 耗时（TPOT）。定义与单位见[性能指标](metrics_zh.md)。
 
-`--max-concurrency` 控制在途请求数，`--request-rate` 控制每秒请求到达率。`--arrival-pattern` 可选 `constant`、`poisson` 或 `gamma`；`--burstiness` 控制 Gamma 到达的突发程度。`--duration` 到期后停止新的请求准入，并等待已经准入的请求完成；未显式传入 `--num-prompts` 时，评测时长就是请求预算，显式传入时两个条件同时生效。需要按时间戳回放时单独传入 `--trace`。预热请求使用当前负载控制，但不计入正式指标。`--request-rate -1` 表示取消速率限制，`--max-concurrency -1` 表示取消并发上限。默认不限速、并发为 1。例如按平均每秒 5 个请求发送且不限并发：
+对话数据集的后续轮次默认使用数据集记录的答案作为历史；切换为模型生成的历史或限制轮数，见[本地对话数据](docs/coomon_commands/conversations_zh.md)。
+
+[性能评测示例](docs/examples_zh.md)涵盖数据集、多轮对话、请求速率、轨迹回放、参数扫描、SLO 搜索和视频生成。如需同时采集执行时间线，按[性能剖析指南](../observability/profiling_zh.md)添加 `--profile`。全部性能参数见 `foretoken perf --help`。
+
+## 评测模型质量
+
+### lm-evaluation-harness
+
+先运行一小部分 GSM8K 数学题：
 
 ```bash
-foretoken bench examples/quickstart \
-  --request-rate 5 --max-concurrency -1 --num-prompts 100 \
-  --output local,wandb
+foretoken eval examples/quickstart \
+  --evaluator lm-eval \
+  --model Qwen/Qwen3-0.6B \
+  --tasks gsm8k --limit 100 \
+  --output local
 ```
 
-按时间限制运行时添加 `--duration 60`；达到 60 秒或请求预算后停止启动新请求。
+默认评测框架是 `lm-eval`。任务名、采样设置、示例数量等评测参数直接采用[上游 CLI 的写法](https://github.com/EleutherAI/lm-evaluation-harness/blob/main/docs/interface.md)。例如，添加 `--num_fewshot 0` 使用零样本提示，添加 `--log_samples` 保存逐题输入和回答。连接信息由 Foretoken 提供，其他 API 选项仍可通过 `--model_args` 设置，例如 `--model_args num_concurrent=4`。
 
-### 随机负载
+Chat Completions 接口适用于根据生成答案评分的任务。通过候选答案的对数似然评分的任务需要其他模型接口；使用此端点时，选择生成式任务变体。
+
+### EvalScope
 
 ```bash
-foretoken bench examples/quickstart \
-  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
-  --min-prompt-length 128 --max-prompt-length 512 \
-  --min-output-length 64 --max-output-length 256 \
-  --max-concurrency 8 --num-prompts 100 \
-  --output local,wandb
+foretoken eval examples/quickstart \
+  --evaluator evalscope \
+  --model Qwen/Qwen3-0.6B \
+  --datasets gsm8k --limit 100 \
+  --output local
 ```
 
-输出长度控制需要服务支持 `min_tokens` 和 `ignore_eos`，未达到抽样长度的请求记为失败。不传输出上下界时，使用普通的 `--max-tokens` 上限，默认 4096。随机负载可以不传 `--num-prompts` 而只用 `--duration`，请求体会按需生成直到截止时间；两者同时传入时先达到的限制生效。
+使用 [EvalScope 原生参数](https://evalscope.readthedocs.io/zh-cn/latest/get_started/basic_usage.html)配置评测，例如 `--dataset-args` 和 `--generation-config`。两个框架都可以去掉 `--limit`，运行完整的所选任务。提示词和判分设置由所选框架及任务定义。
 
-### 数据集与多轮对话
+## 评测已有服务
+
+将部署目录换成 `--url`，并指定服务提供的模型名。此模式不使用 Kubernetes 资源：
 
 ```bash
-foretoken bench examples/quickstart \
-  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
-  --max-concurrency 4 --num-prompts 20 \
-  --output local,wandb
+foretoken eval \
+  --url http://127.0.0.1:8008/v1/chat/completions \
+  --evaluator lm-eval \
+  --model Qwen/Qwen3-0.6B \
+  --tasks gsm8k --limit 100 \
+  --output local
 ```
 
-`--dataset` 支持 Hugging Face 数据集、本地 JSONL 文件，以及逗号分隔的多个数据集。每行是一段对话，每轮都会请求模型生成；后续轮次默认使用数据集中的答案作为历史。切换历史来源和限制轮数，见[本地对话数据](docs/coomon_commands/conversations_zh.md)。
+填写服务实际的 Chat Completions URL；需要认证时添加 `--api-key`。`foretoken perf` 使用相同的 URL 和模型选项。Foretoken Gateway 部署则传入 Kustomize 目录，由命令查找地址并配置路由请求头。
 
-`--num-prompts` 表示 HTTP 请求预算。多轮负载由 `--request-rate` 控制新对话的启动速率，依赖前序响应的后续轮次在响应完成后继续；`--max-concurrency` 限制同时进行的对话数。
+## 查看和保存结果
 
-### 在评测时采集 Profile
+终端先显示所选模型和评测框架，再列出任务分数，以及框架提供的样本数和标准误差。各子集的详细分数和答案提取方式保留在结果文件与 W&B 分数表中。对比运行时，使用相同的框架、任务配置和样本范围。
 
-```bash
-foretoken bench examples/quickstart \
-  --profile --profile-engine pytorch --profile-duration 15s \
-  --num-prompts 2 --max-tokens 128 --output local
-```
+两个命令默认同时输出到终端、本地文件和 W&B。使用 W&B 前执行 `wandb login` 完成登录；仅需本地结果时，使用上面示例中的 `--output local`。
 
-Profile 会复用普通评测的负载控制；`--duration`、`--request-rate`、`--arrival-pattern` 和 `--max-concurrency` 仍然生效，采集在预热完成后开始，并在已准入请求排空后关闭。轨迹回放、多轮、多数据集、SLO 探测和 HTTP 参数扫描点都可使用同一个 Profile；扫描的每个参数点和重复运行都会在自己的目录写入 `profile.json`。Profile 仍只支持 Foretoken Kustomize 部署，不用于视频评测。环境配置和结果查看见[性能剖析](../observability/profiling_zh.md)。
+| 输出选项 | 运行结果 |
+| --- | --- |
+| 不传 `--output`，或使用 `local,wandb` | 打印结果、保存本地文件并上传 W&B |
+| `local` | 打印结果并保存本地文件 |
+| `wandb` | 打印结果并上传 W&B |
+| `local,quiet` | 保存本地文件，不显示控制台进度和汇总 |
+| `local,wandb,quiet` | 保存并上传结果，不显示控制台进度和汇总 |
 
-### 轨迹回放
+本地结果默认保存在 `results/` 下，每次运行使用独立目录；`--output-dir` 修改结果父目录，运行结束后会打印保存位置。质量评测的 `metrics.json` 汇总任务指标，`native/` 保留框架报告及其生成的逐样本记录，`evaluator.log` 保存运行日志。性能结果文件见[性能指标](metrics_zh.md)。
 
-```bash
-foretoken bench examples/quickstart \
-  --trace benchmarks/examples/trace.jsonl \
-  --dataset benchmarks/examples/trace.jsonl \
-  --trace-max-concurrency 4 --max-tokens 128 \
-  --output local,wandb
-```
-
-轨迹记录决定请求数量和到达时间，每条记录独立回放。
-
-### 参数扫描
-
-```bash
-foretoken bench examples/quickstart \
-  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
-  --min-prompt-length 128 --max-prompt-length 256 --random-seed 0 \
-  --sweep benchmarks/examples/sweep.jsonl \
-  --warmup-requests 16 --num-runs 3 \
-  --output local,wandb
-```
-
-参数扫描需传入部署配置目录，例如 `examples/quickstart`，目前不支持 `--url`。自定义负载点与配置对比见[参数扫描](docs/coomon_commands/sweep_zh.md)。
-
-### SLO 并发搜索
-
-```bash
-foretoken bench examples/quickstart \
-  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
-  --min-prompt-length 128 --max-prompt-length 256 \
-  --max-concurrency 2 \
-  --slo-params '[{"p99_latency":"<=2"}]' \
-  --slo-upper-bound 32 --output local,wandb
-```
-
-SLO 探测点保留生成式、多轮、多数据集和轨迹负载各自的调度语义。指标名与限制见 [SLO 并发搜索](docs/coomon_commands/slo_zh.md)。
-
-### 使用已有服务地址
-
-对于默认模式下已部署的快速开始示例，先获取地址：
-
-```bash
-MODEL_SERVICE_URL="$(foretoken endpoint examples/quickstart)/v1/chat/completions"
-foretoken bench \
-  --url "$MODEL_SERVICE_URL" --model Qwen/Qwen3-0.6B \
-  --prompt "你好" --num-prompts 20 \
-  --output local,wandb
-```
-
-其他服务使用其实际 Chat Completions URL 和模型名称。Gateway 模式传入上面的部署配置目录，由 CLI 配置路由请求头。
-
-需要在请求前检查公开的健康端点时，添加 `--health-url https://model.example/health`；不传时，URL 模式直接开始评测。
-
-## 查看结果
-
-本地结果保存在 `results/` 下的独立目录，结束后会打印位置。`metrics.json` 是汇总，`raw_output.json` 是逐请求记录。
-
-先看成功率、端到端耗时 E2EL 和输出 token 吞吐量。流式评测还报告首分片耗时 TTFT、平均输出 token 耗时 TPOT 和分片间隔 ITL；`--no-stream` 只关闭这些流式指标。
-
-示例同时保存本地结果并上传 W&B。仅需本地结果用 `--output local`，修改结果父目录用 `--output-dir`。
-
-各类用法见[常用命令](docs/examples_zh.md)，指标定义见[结果指标](metrics_zh.md)。全部参数见 `foretoken bench --help`。
+W&B 中的质量评测包含任务指标、分数表，以及保存评测文件的 artifact。通过 `--wandb-project`、`--wandb-entity`、`--wandb-group` 和 `--wandb-run-name` 组织对比。[W&B 性能输出](docs/coomon_commands/wandb_zh.md)介绍 `perf` 的延迟、吞吐量和逐请求视图。

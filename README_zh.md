@@ -21,7 +21,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 
 | 功能 | 说明 | 状态 |
 |---|---|---|
-| [性能评测](benchmarks/README_zh.md) | 评测模型服务性能 | 开发中 |
+| [评测](benchmarks/README_zh.md) | 评测模型服务性能和模型质量 | 开发中 |
 | [性能剖析](observability/profiling_zh.md) | 采集模型服务的 PyTorch、NVIDIA Nsight Systems 或沐曦 mcTracer 执行时间线 | 开发中 |
 | 硬件适配 | 统一设备能力、运行时、通信和指标接口；参阅[沐曦部署指南](docs/metax-deployment_zh.md) | 开发中 |
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
@@ -85,10 +85,10 @@ pip install 'foretoken[bench]'
 # 从源码目录安装：
 # pip install -e '.[bench]'
 
-foretoken bench examples/quickstart --output local,wandb
+foretoken perf examples/quickstart --output local
 ```
 
-首次使用 W&B 请先运行 `wandb login`。更多示例见[模型服务性能评测](benchmarks/README_zh.md)。
+更多性能负载、W&B 输出，以及使用 `foretoken eval` 评测模型质量的用法，见[模型服务评测](benchmarks/README_zh.md)。
 
 ## 网关模式
 

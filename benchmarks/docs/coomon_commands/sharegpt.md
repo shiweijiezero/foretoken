@@ -5,7 +5,7 @@ English | [简体中文](sharegpt_zh.md) · [Common commands](../examples.md)
 After [setup](../examples.md#setup), run the repository's [ShareGPT sample](../../examples/sharegpt.jsonl):
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --dataset benchmarks/examples/sharegpt.jsonl \
   --max-turns 2 --num-prompts 2 --output local,wandb
 ```

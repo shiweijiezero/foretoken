@@ -17,8 +17,10 @@ logger = logging.getLogger(__name__)
 def configure_logging(console_enabled: bool) -> None:
     """Configure console logging and keep HTTP library logs from interfering with progress output."""
     logging.basicConfig(
-        level=logging.INFO if console_enabled else logging.WARNING,
+        level=logging.INFO if console_enabled else logging.ERROR,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        # Native evaluator imports may install handlers before CLI configuration.
+        force=True,
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -271,17 +273,14 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
                 "  Conversation distributions: see per-dataset child results"
             )
         else:
-            lines.extend(
-                [
-                    _percentile_row(
-                        "Conversation latency", conversation["latency"]
-                    ),
-                    _percentile_row(
-                        "Time to final-answer token (TTFAT)",
-                        conversation["time_to_final_answer_token"],
-                    ),
-                ]
-            )
+            # Task execution reports conversation counts; native trace summaries
+            # can additionally provide conversation-level timing distributions.
+            for key, label in (
+                ("latency", "Conversation latency"),
+                ("time_to_final_answer_token", "Time to final-answer token (TTFAT)"),
+            ):
+                if key in conversation:
+                    lines.append(_percentile_row(label, conversation[key]))
         lines.append(
             "  Conversations/s attempted: "
             f"{_format_metric(conversation['attempted_conversations_per_second'])}"
@@ -340,7 +339,7 @@ def log_slo_results(slo: dict[str, Any]) -> None:
                 )
             else:
                 lines.append(
-                    f"  Group {row.get('group')}: parallel={row.get('parallel')} "
+                    f"  Group {row.get('group')}: max concurrency={row['max_concurrency']} "
                     f"satisfied={row.get('satisfied')} criteria={row.get('criteria')}"
                 )
     else:

@@ -1,10 +1,10 @@
-# Common benchmark commands
+# Performance examples
 
 English | [简体中文](examples_zh.md)
 
 ## Setup
 
-Install the benchmark client as described in [Model Service Benchmarks](../README.md). Run commands from the repository root, using the cluster prepared by the [Quick Start](../../README.md#quick-start). Run `wandb login` before first using W&B.
+Install the client as described in [Model Service Evaluation](../README.md). Run commands from the repository root, using the cluster prepared by the [Quick Start](../../README.md#quick-start). Run `wandb login` before first using W&B.
 
 The command guides use `examples/quickstart`. For another existing service, replace that path with `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"`. For the Quick Start already deployed in the default mode, obtain those values with:
 
@@ -30,7 +30,9 @@ Use the actual Chat Completions URL and model ID for other services. In Gateway 
 - [StudyChat replay](coomon_commands/studychat.md)
 - [Mooncake trace replay](coomon_commands/mooncake-trace.md)
 - [Parameter sweeps](coomon_commands/sweep.md)
+- [SLO concurrency search](coomon_commands/slo.md)
+- [Profiling](../../observability/profiling.md)
 - [Video generation](coomon_commands/video.md)
 - [W&B output](coomon_commands/wandb.md)
 
-Metric definitions are in [Result metrics](../metrics.md). All options are listed by `foretoken bench --help`.
+Metric definitions are in [Result metrics](../metrics.md). All options are listed by `foretoken perf --help`.

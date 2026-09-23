@@ -137,13 +137,13 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 `--host` returns the host and optional port for direct access, or the configured routing hostname for an HTTP Gateway. `foretoken endpoint` waits for the LoadBalancer or Gateway address; use `foretoken deploy` to wait for the services to become ready.
 
-## Benchmark model services
+## Evaluate model services
 
-Use `foretoken bench` to measure model-service performance. Commands and examples are in [Model Service Benchmarks](../benchmarks/README.md).
+Use `foretoken perf` to measure service performance and `foretoken eval` to score model quality with lm-evaluation-harness or EvalScope. Both accept a Kustomize directory or `--url` for an existing service. Installation, commands, and result settings are in [Model Service Evaluation](../benchmarks/README.md).
 
 ## Capture a diagnostic profile
 
-Add `--profile` to `foretoken deploy` or `foretoken bench` to capture performance data. Use `foretoken profile view` to browse results. See [Profiling](../observability/profiling.md).
+Add `--profile` to `foretoken deploy` or `foretoken perf` to capture performance data. Use `foretoken profile view` to browse results. See [Profiling](../observability/profiling.md).
 
 ## Clean up
 

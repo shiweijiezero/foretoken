@@ -5,7 +5,7 @@ English | [简体中文](mooncake-trace_zh.md) · [Common commands](../examples.
 The Mooncake trace dataset records request lengths and shared prefix blocks, not the original text. After [setup](../examples.md#setup), generate synthetic inputs with those shared prefixes:
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --trace valeriol29/mooncake-traces:conversation \
   --trace-start 57 --trace-duration 5 \
   --dataset random --tokenizer-path Qwen/Qwen3-0.6B \

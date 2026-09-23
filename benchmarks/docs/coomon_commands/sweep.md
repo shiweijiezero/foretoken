@@ -5,7 +5,7 @@ English | [简体中文](sweep_zh.md) · [Common commands](../examples.md)
 After [setup](../examples.md#setup), compare concurrency levels with the existing [parameter file](../../examples/sweep.jsonl):
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
   --min-prompt-length 128 --max-prompt-length 256 --random-seed 0 \
   --temperature 0 \
@@ -21,7 +21,7 @@ Each JSONL row defines load, generation, or dataset settings. Lists of canonical
 Video generation uses the same sweep lifecycle and result directory layout, with video-owned fields instead of HTTP metrics:
 
 ```bash
-foretoken bench video \
+foretoken perf video \
   --url http://127.0.0.1:8091/v1/videos/sync \
   --dataset VideoArgusBench/TI2V \
   --sweep benchmarks/examples/video-sweep.jsonl \
@@ -42,7 +42,7 @@ Change the model's [inference parameters](../../../docs/inference-parameters.md)
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-`bench` reuses existing services without applying YAML changes. Keep the workload, hardware and cache policy consistent; append `--experiment-name baseline --wandb-group comparison` to the benchmark command, changing the experiment name for each variant. When finished, remove the explicitly deployed service with `foretoken delete examples/quickstart`.
+`perf` reuses existing services without applying YAML changes. Keep the workload, hardware and cache policy consistent; append `--experiment-name baseline --wandb-group comparison` to the benchmark command, changing the experiment name for each variant. When finished, remove the explicitly deployed service with `foretoken delete examples/quickstart`.
 
 ## Example output
 

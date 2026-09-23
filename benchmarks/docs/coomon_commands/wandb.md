@@ -7,7 +7,7 @@ After [setup](../examples.md#setup), choose the project, group, and run name:
 ```bash
 wandb login
 
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --num-prompts 20 --output local,wandb \
   --wandb-project foretoken-bench \
   --wandb-group qwen-comparison \

@@ -5,7 +5,7 @@
 Mooncake trace 数据集记录请求长度和共享前缀块，不包含原始文本。完成[准备步骤](../examples_zh.md#准备)后，按记录生成共享前缀输入：
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --trace valeriol29/mooncake-traces:conversation \
   --trace-start 57 --trace-duration 5 \
   --dataset random --tokenizer-path Qwen/Qwen3-0.6B \

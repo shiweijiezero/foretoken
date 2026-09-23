@@ -5,7 +5,7 @@
 完成[准备步骤](../examples_zh.md#准备)后，按平均每秒 5 个请求发送，同时最多允许 16 个请求在途：
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --prompt "你好" --request-rate 5 --max-concurrency 16 --num-prompts 100 \
   --output local,wandb
 ```
@@ -15,7 +15,7 @@ foretoken bench examples/quickstart \
 去掉并发上限：
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --prompt "你好" --request-rate 5 --max-concurrency -1 --num-prompts 100 \
   --output local,wandb
 ```
@@ -25,11 +25,11 @@ foretoken bench examples/quickstart \
 使用固定间隔或 Gamma 到达：
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --prompt "你好" --request-rate 5 --arrival-pattern constant \
   --max-concurrency 16 --num-prompts 100 --output local
 
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --prompt "你好" --request-rate 5 --arrival-pattern gamma \
   --burstiness 0.5 --max-concurrency 16 --num-prompts 100 --output local
 ```

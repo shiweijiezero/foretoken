@@ -5,7 +5,7 @@
 完成[准备步骤](../examples_zh.md#准备)后，用逗号分隔数据集：
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --dataset r0b0tlab/qwen3.8-max-distillation-50k:train,ianncity/GLM-5.2-Conversation:train \
   --max-concurrency 4 --num-prompts 20 --output local,wandb
 ```

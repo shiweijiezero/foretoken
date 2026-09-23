@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import shutil
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +49,8 @@ class BenchmarkRun:
     measurements: list[RequestMeasurement] | None
     artifacts: dict[str, Path]
     time_origin: float | None = None
+    # Quality evaluations have an execution status independent of the model's score.
+    exit_code: int | None = None
 
 
 class ResultSink(Protocol):
@@ -198,6 +200,16 @@ class WandbSink:
         self.run_config = run_config
         self._run: Any | None = None
 
+    @contextmanager
+    def _sdk_console(self):
+        """Keep SDK progress in the run log when the caller selects quiet output."""
+        if not self.benchmark.outputs.includes("quiet"):
+            yield
+            return
+        with open(os.path.join(self.execution_dir, "wandb.log"), "a", encoding="utf-8") as log:
+            with redirect_stdout(log), redirect_stderr(log):
+                yield
+
     def open(self, record: dict[str, Any]) -> None:
         """Create the SDK run before requests so system metrics cover execution."""
         wandb_config = self.benchmark.wandb
@@ -218,7 +230,8 @@ class WandbSink:
         if wandb_config.entity:
             init_kwargs["entity"] = wandb_config.entity
         try:
-            self._run = wandb.init(**init_kwargs)
+            with self._sdk_console():
+                self._run = wandb.init(**init_kwargs)
         except wandb.errors.Error:
             logger.exception("W&B initialization failed")
             raise
@@ -236,7 +249,8 @@ class WandbSink:
         if self._run is None:
             raise RuntimeError("W&B sink is not open")
         try:
-            self.publisher(self._run, run)
+            with self._sdk_console():
+                self.publisher(self._run, run)
         except wandb.errors.Error:
             logger.exception("W&B publication failed")
             raise
@@ -248,7 +262,8 @@ class WandbSink:
         if run is None:
             return
         try:
-            run.finish(exit_code=exit_code)
+            with self._sdk_console():
+                run.finish(exit_code=exit_code)
         except wandb.errors.Error:
             logger.exception("W&B finalization failed")
             raise
@@ -586,7 +601,7 @@ class ResultOutputs:
                 raise
         finally:
             self._release_execution_directory(
-                preserve=failed and self.benchmark.outputs.includes("wandb")
+                preserve=failed
             )
             self._sinks = []
             self._execution_dir = None
@@ -596,7 +611,9 @@ class ResultOutputs:
 
     def publish(self, run: BenchmarkRun) -> None:
         """Stop observations, record the run status, and publish every open sink."""
-        if int(run.metrics["success_num"]) == 0:
+        if run.exit_code is not None:
+            self._exit_code = run.exit_code
+        elif int(run.metrics["success_num"]) == 0:
             self._exit_code = 1
         observer = self._replica_observer
         self._replica_observer = None

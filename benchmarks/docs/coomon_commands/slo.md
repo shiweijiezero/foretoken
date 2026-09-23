@@ -5,7 +5,7 @@ English | [简体中文](slo_zh.md) · [Common commands](../examples.md)
 After the [setup steps](../examples.md#setup), search the largest client-concurrency setting that meets latency or throughput constraints under the selected arrival process. Foretoken owns the request budget, search, and result publication; the search preserves the selected workload schedule.
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
   --min-prompt-length 128 --max-prompt-length 512 \
   --num-prompts 100 --max-concurrency 2 \

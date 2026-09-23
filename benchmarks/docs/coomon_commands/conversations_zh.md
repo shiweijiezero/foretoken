@@ -5,7 +5,7 @@
 完成[准备步骤](../examples_zh.md#准备)后，直接使用仓库中的[对话数据](../../examples/conversations.jsonl)：
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --dataset benchmarks/examples/conversations.jsonl \
   --num-prompts 3 --max-concurrency 2 --output local,wandb
 ```
@@ -17,7 +17,7 @@ foretoken bench examples/quickstart \
 `--num-prompts` 限制所有对话合计发送的 HTTP 请求数。若只运行每段对话的首轮：
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --dataset benchmarks/examples/conversations.jsonl \
   --max-turns 1 --num-prompts 2 --output local,wandb
 ```

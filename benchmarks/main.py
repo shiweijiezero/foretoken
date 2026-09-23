@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""``foretoken bench`` HTTP benchmark entry point."""
+"""``foretoken perf`` HTTP performance benchmark entry point."""
 
 from __future__ import annotations
 

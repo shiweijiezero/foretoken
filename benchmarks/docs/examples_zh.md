@@ -1,10 +1,10 @@
-# 常用评测命令
+# 性能评测示例
 
 [English](examples.md) | 简体中文
 
 ## 准备
 
-按[模型服务性能评测](../README_zh.md)安装评测客户端，并按[快速开始](../../README_zh.md#快速开始)准备集群。以下命令在仓库根目录执行。首次使用 W&B 请先运行 `wandb login`。
+按[模型服务评测](../README_zh.md)安装评测客户端，并按[快速开始](../../README_zh.md#快速开始)准备集群。以下命令在仓库根目录执行。首次使用 W&B 请先运行 `wandb login`。
 
 各命令使用 `examples/quickstart`。评测其他已有服务时，将该路径换成 `--url "$MODEL_SERVICE_URL" --model "$MODEL_ID"`。默认模式下已部署的快速开始示例可以这样获取地址：
 
@@ -30,7 +30,9 @@ export MODEL_ID=Qwen/Qwen3-0.6B
 - [StudyChat 轨迹回放](coomon_commands/studychat_zh.md)
 - [Mooncake trace 回放](coomon_commands/mooncake-trace_zh.md)
 - [参数扫描](coomon_commands/sweep_zh.md)
+- [SLO 并发搜索](coomon_commands/slo_zh.md)
+- [性能剖析](../../observability/profiling_zh.md)
 - [视频生成评测](coomon_commands/video_zh.md)
 - [W&B 输出](coomon_commands/wandb_zh.md)
 
-指标定义见[结果指标](../metrics_zh.md)。全部参数见 `foretoken bench --help`。
+指标定义见[结果指标](../metrics_zh.md)。全部参数见 `foretoken perf --help`。

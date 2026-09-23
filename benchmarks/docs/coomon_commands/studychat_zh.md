@@ -5,7 +5,7 @@
 完成[准备步骤](../examples_zh.md#准备)后，选择公开轨迹中一段有请求的短窗口：
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --trace KrisQ/StudyChat --dataset KrisQ/StudyChat \
   --trace-start 18609050.546 --trace-duration 60 \
   --trace-max-concurrency 4 --max-tokens 32 \

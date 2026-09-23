@@ -5,7 +5,7 @@ English | [简体中文](tools_zh.md) · [Common commands](../examples.md)
 After [setup](../examples.md#setup), send the repository's [tool request sample](../../examples/tools.jsonl) to a model service with tool-calling support:
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --dataset benchmarks/examples/tools.jsonl --num-prompts 1 \
   --output local,wandb
 ```

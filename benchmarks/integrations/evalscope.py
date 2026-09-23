@@ -11,10 +11,17 @@ import logging
 import os
 import random
 import sqlite3
+import sys
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import (
+    ExitStack,
+    asynccontextmanager,
+    contextmanager,
+    redirect_stderr,
+    redirect_stdout,
+)
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -539,8 +546,10 @@ def _read_evalscope_request_measurements(
 
 
 @contextmanager
-def _evalscope_phase(label: str, work_items: int) -> Iterator[None]:
-    """Announce a workload phase and scope its EvalScope log filtering to this call."""
+def _evalscope_phase(
+    label: str, work_items: int, *, quiet: bool, output_dir: str
+) -> Iterator[None]:
+    """Scope native progress output to one phase while keeping errors visible."""
     from evalscope.utils.logger import get_logger
 
     logger = get_logger()
@@ -561,12 +570,38 @@ def _evalscope_phase(label: str, work_items: int) -> Iterator[None]:
             "summary_result",
         }
 
-    logger.addFilter(include_record)
-    try:
-        logger.info("%s: %d work items", label, work_items)
-        yield
-    finally:
-        logger.removeFilter(include_record)
+    with ExitStack() as output:
+        console_handlers = []
+        error_handler = None
+        if quiet:
+            # EvalScope's progress bars write directly to stderr and retain
+            # console handlers created before this phase. Route both to a log,
+            # leaving the native file handler and request measurements unchanged.
+            progress = output.enter_context(
+                open(os.path.join(output_dir, "progress.log"), "a", encoding="utf-8")
+            )
+            for handler in logger.handlers:
+                if isinstance(handler, logging.StreamHandler) and not isinstance(
+                    handler, logging.FileHandler
+                ):
+                    console_handlers.append((handler, handler.stream))
+                    handler.setStream(progress)
+            error_handler = logging.StreamHandler(sys.stderr)
+            error_handler.setLevel(logging.ERROR)
+            logger.addHandler(error_handler)
+            output.enter_context(redirect_stdout(progress))
+            output.enter_context(redirect_stderr(progress))
+        logger.addFilter(include_record)
+        try:
+            logger.info("%s: %d work items", label, work_items)
+            yield
+        finally:
+            logger.removeFilter(include_record)
+            if error_handler is not None:
+                logger.removeHandler(error_handler)
+                error_handler.close()
+            for handler, stream in console_handlers:
+                handler.setStream(stream)
 
 
 def run_evalscope_standard_load(
@@ -579,6 +614,7 @@ def run_evalscope_standard_load(
 ) -> tuple[dict[str, Any], list[RequestMeasurement], float | None]:
     """Run through EvalScope and return metrics, measurements, and their monotonic origin."""
 
+    console_level = logging.getLogger().level
     try:
         from evalscope.perf.main import run_one_benchmark
         from evalscope.perf.utils.handler import PerfBenchmarkInterrupted
@@ -590,33 +626,42 @@ def run_evalscope_standard_load(
             "dependencies with: pip install 'foretoken[bench]'"
         ) from error
 
+    finally:
+        # Importing EvalScope can reconfigure the root logger; Foretoken owns its level.
+        logging.getLogger().setLevel(console_level)
+
     os.makedirs(output_dir, exist_ok=True)
     (Path(output_dir) / "request_diagnostics.jsonl").unlink(missing_ok=True)
     configure_logging(
         False,
         os.path.join(output_dir, "benchmark.log"),
     )
-    arguments = _evalscope_arguments(benchmark, service, output_dir)
-    arguments.profile = profile
-    seed_everything(benchmark.resolved_workload.random_seed)
-    materialized_dataset = (
-        arguments.dataset_path
-        if arguments.dataset == _EVALSCOPE_DATASET
-        else None
-    )
-    try:
-        # EvalScope owns its event loop and signal cancellation on the main thread.
-        with _evalscope_phase(phase_label, benchmark.load.request_count):
+    with _evalscope_phase(
+        phase_label,
+        benchmark.load.request_count,
+        quiet=benchmark.outputs.includes("quiet"),
+        output_dir=output_dir,
+    ):
+        arguments = _evalscope_arguments(benchmark, service, output_dir)
+        arguments.profile = profile
+        seed_everything(benchmark.resolved_workload.random_seed)
+        materialized_dataset = (
+            arguments.dataset_path
+            if arguments.dataset == _EVALSCOPE_DATASET
+            else None
+        )
+        try:
+            # EvalScope owns its event loop and signal cancellation on the main thread.
             result = run_one_benchmark(arguments, output_dir)
-    except PerfBenchmarkInterrupted as error:
-        raise SystemExit(error.exit_code) from None
-    except asyncio.CancelledError:
-        if profile is not None and profile.error is not None:
-            raise profile.error from None
-        raise
-    finally:
-        if materialized_dataset:
-            Path(materialized_dataset).unlink(missing_ok=True)
+        except PerfBenchmarkInterrupted as error:
+            raise SystemExit(error.exit_code) from None
+        except asyncio.CancelledError:
+            if profile is not None and profile.error is not None:
+                raise profile.error from None
+            raise
+        finally:
+            if materialized_dataset:
+                Path(materialized_dataset).unlink(missing_ok=True)
     point = next(iter(result.values()))
     summary = point["metrics"]
     trace_summary = point.get("trace_summary")

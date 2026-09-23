@@ -1,4 +1,4 @@
-# Result metrics
+# Performance metrics
 
 English | [简体中文](metrics_zh.md) · [Common commands](docs/examples.md)
 

@@ -1,4 +1,4 @@
-# 结果指标
+# 性能指标
 
 [English](metrics.md) | 简体中文 · [常用命令](docs/examples_zh.md)
 

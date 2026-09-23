@@ -5,7 +5,7 @@ English | [简体中文](non-streaming_zh.md) · [Common commands](../examples.m
 After [setup](../examples.md#setup), run from the repository root:
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --prompt "Name a planet." --no-stream \
   --num-prompts 20 --max-tokens 32 \
   --output local,wandb

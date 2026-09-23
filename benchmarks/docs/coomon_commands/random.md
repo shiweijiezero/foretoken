@@ -5,7 +5,7 @@ English | [简体中文](random_zh.md) · [Common commands](../examples.md)
 After [setup](../examples.md#setup), generate random inputs and sample an output target for each request:
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
   --min-prompt-length 128 --max-prompt-length 512 \
   --min-output-length 64 --max-output-length 256 \

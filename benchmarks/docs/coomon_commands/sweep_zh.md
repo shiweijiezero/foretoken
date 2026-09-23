@@ -5,7 +5,7 @@
 完成[准备步骤](../examples_zh.md#准备)后，使用现有[参数文件](../../examples/sweep.jsonl)比较不同并发下的表现：
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
   --min-prompt-length 128 --max-prompt-length 256 --random-seed 0 \
   --temperature 0 \
@@ -21,7 +21,7 @@ foretoken bench examples/quickstart \
 视频生成也复用同一套扫描生命周期和结果目录结构，但只展开视频自己的字段，不伪造 HTTP 指标：
 
 ```bash
-foretoken bench video \
+foretoken perf video \
   --url http://127.0.0.1:8091/v1/videos/sync \
   --dataset VideoArgusBench/TI2V \
   --sweep benchmarks/examples/video-sweep.jsonl \
@@ -42,7 +42,7 @@ foretoken bench video \
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-`bench` 复用已有服务时不会应用 YAML 修改。各方案保持负载、硬件和缓存策略一致，在评测命令后添加 `--experiment-name baseline --wandb-group comparison`，每种方案使用不同实验名。完成后，执行 `foretoken delete examples/quickstart` 删除显式部署的服务。
+`perf` 复用已有服务时不会应用 YAML 修改。各方案保持负载、硬件和缓存策略一致，在评测命令后添加 `--experiment-name baseline --wandb-group comparison`，每种方案使用不同实验名。完成后，执行 `foretoken delete examples/quickstart` 删除显式部署的服务。
 
 ## 输出示例
 

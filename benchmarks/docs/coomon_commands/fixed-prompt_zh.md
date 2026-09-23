@@ -5,7 +5,7 @@
 完成[准备步骤](../examples_zh.md#准备)后，在仓库根目录运行：
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --prompt "用一句话解释什么是 token。" \
   --max-concurrency 4 --num-prompts 20 --max-tokens 64 \
   --output local,wandb

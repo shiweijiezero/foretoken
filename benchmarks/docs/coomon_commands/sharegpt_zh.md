@@ -5,7 +5,7 @@
 完成[准备步骤](../examples_zh.md#准备)后，运行仓库中的 [ShareGPT 数据](../../examples/sharegpt.jsonl)：
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --dataset benchmarks/examples/sharegpt.jsonl \
   --max-turns 2 --num-prompts 2 --output local,wandb
 ```

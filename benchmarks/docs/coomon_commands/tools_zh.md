@@ -5,7 +5,7 @@
 完成[准备步骤](../examples_zh.md#准备)后，向支持工具调用的模型服务发送仓库中的[工具请求数据](../../examples/tools.jsonl)：
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --dataset benchmarks/examples/tools.jsonl --num-prompts 1 \
   --output local,wandb
 ```

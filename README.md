@@ -21,7 +21,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 
 | Feature | Description | Status |
 |---|---|---|
-| [Benchmarking](benchmarks/README.md) | Measure model-service performance | In development |
+| [Evaluation](benchmarks/README.md) | Measure service performance and model quality | In development |
 | [Profiling](observability/profiling.md) | Capture PyTorch, NVIDIA Nsight Systems, or MetaX mcTracer timelines for a model service | In development |
 | Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics; see [MetaX deployment](docs/metax-deployment.md) | In development |
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
@@ -85,10 +85,10 @@ pip install 'foretoken[bench]'
 # From a source checkout:
 # pip install -e '.[bench]'
 
-foretoken bench examples/quickstart --output local,wandb
+foretoken perf examples/quickstart --output local
 ```
 
-Run `wandb login` before first using W&B. See [Model Service Benchmarks](benchmarks/README.md) for more examples.
+See [Model Service Evaluation](benchmarks/README.md) for performance workloads, W&B output, and model-quality scoring with `foretoken eval`.
 
 ## Gateway Mode
 

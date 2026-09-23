@@ -17,7 +17,7 @@
 ## TI2V 评测
 
 ```bash
-foretoken bench video \
+foretoken perf video \
   --url http://127.0.0.1:8091/v1/videos/sync \
   --dataset VideoArgusBench/TI2V \
   --num-prompts 10 \
@@ -47,7 +47,7 @@ foretoken bench video \
 ## TV2V 评测
 
 ```bash
-foretoken bench video \
+foretoken perf video \
   --url http://127.0.0.1:8091/v1/videos/sync \
   --dataset VideoArgusBench/TV2V \
   --num-prompts 10 \

@@ -12,11 +12,12 @@ from collections.abc import Sequence
 from urllib.parse import urlsplit
 
 from foretoken.arguments import (
-    BenchCommand,
     DeleteCommand,
     DeployCommand,
     EndpointCommand,
+    EvaluationCommand,
     InstallCommand,
+    PerformanceCommand,
     ProfileCommand,
     ProfileViewCommand,
     StatusCommand,
@@ -159,18 +160,32 @@ def _endpoint(kustomize_path: str, timeout: str, host: bool) -> None:
     print(endpoint.url)
 
 
-def _bench(arguments: Sequence[str]) -> None:
-    """Load optional benchmark dependencies only when the bench command runs."""
+def _performance(arguments: Sequence[str]) -> None:
+    """Load optional benchmark dependencies only when the perf command runs."""
     try:
         from benchmarks.main import main as benchmark_main
     except ModuleNotFoundError as exc:
         if exc.name and not exc.name.startswith(("benchmarks", "foretoken")):
             raise SystemExit(
-                "foretoken bench requires benchmark dependencies; "
+                "foretoken perf requires benchmark dependencies; "
                 "install them with: pip install 'foretoken[bench]'"
             ) from exc
         raise
     benchmark_main(arguments)
+
+
+def _evaluation(arguments: Sequence[str]) -> None:
+    """Load optional evaluation dependencies only when the eval command runs."""
+    try:
+        from benchmarks.evaluation import main as evaluation_main
+    except ModuleNotFoundError as exc:
+        if exc.name and not exc.name.startswith(("benchmarks", "foretoken")):
+            raise SystemExit(
+                "foretoken eval requires evaluation dependencies; "
+                "install them with: pip install 'foretoken[eval]'"
+            ) from exc
+        raise
+    evaluation_main(arguments)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -196,8 +211,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                 command.timeout,
                 command.host,
             )
-        elif isinstance(command, BenchCommand):
-            _bench(command.arguments)
+        elif isinstance(command, PerformanceCommand):
+            _performance(command.arguments)
+        elif isinstance(command, EvaluationCommand):
+            _evaluation(command.arguments)
         elif isinstance(command, ProfileViewCommand):
             from foretoken.profiling.viewer import view
 

@@ -5,7 +5,7 @@
 完成[准备步骤](../examples_zh.md#准备)后，可在延迟或吞吐约束下搜索仍满足 SLO 的最大客户端并发设置。搜索在选定的到达过程下运行，结果不把固定到达率下的客户端并发上限称为服务容量。Foretoken 负责请求预算、搜索和结果发布。
 
 ```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
   --min-prompt-length 128 --max-prompt-length 512 \
   --num-prompts 100 --max-concurrency 2 \

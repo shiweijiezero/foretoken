@@ -15,7 +15,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ```bash
 pip install -e '.[bench]'
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --profile --profile-engine pytorch --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local
 ```
@@ -77,7 +77,7 @@ runtime:
 
 ```bash
 pip install -e '.[bench]'
-foretoken bench examples/profile/nsight \
+foretoken perf examples/profile/nsight \
   --profile --profile-engine nsight --profile-duration 15s \
   --num-prompts 2 --max-tokens 128 --output local
 ```
