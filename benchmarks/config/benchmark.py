@@ -196,6 +196,7 @@ class ChatRequestDataset:
     fixed_prompt: str = ""
     # -1 means the complete conversation; positive values truncate turns.
     max_turns: Optional[int] = -1
+    conversation_history: str = "dataset"
 
     @property
     def has_multiple_datasets(self) -> bool:
@@ -212,6 +213,8 @@ class ChatRequestDataset:
             raise ValueError(
                 "--max-turns must be -1 (complete conversation) or >= 1"
             )
+        if self.conversation_history not in {"dataset", "generated"}:
+            raise ValueError("--conversation-history must be dataset or generated")
         if self.fixed_prompt and self.has_multiple_datasets:
             raise ValueError(
                 "--prompt cannot be combined with multiple --dataset values"
@@ -432,6 +435,8 @@ class BenchmarkConfig:
         self.generation.validate()
         workload = self.resolved_workload
         workload.validate()
+        if workload.conversation_history == "generated" and not self.is_multi_turn:
+            raise ValueError("--conversation-history generated requires a conversation dataset without --trace")
         if self.generation.min_output_length is not None and workload.dataset_selectors != ["random"]:
             raise ValueError("output length control requires --dataset random")
         if (
@@ -558,6 +563,8 @@ class BenchmarkConfig:
         }
         if not self.trace.trace_selector:
             dataset["max_turns"] = workload.max_turns
+        if self.is_multi_turn:
+            dataset["conversation_history"] = workload.conversation_history
         return {
             "service": service,
             "load": load,

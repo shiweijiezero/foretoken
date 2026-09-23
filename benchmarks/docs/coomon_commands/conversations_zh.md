@@ -7,10 +7,12 @@
 ```bash
 foretoken bench examples/quickstart \
   --dataset benchmarks/examples/conversations.jsonl \
-  --num-prompts 2 --max-concurrency 2 --output local,wandb
+  --num-prompts 3 --max-concurrency 2 --output local,wandb
 ```
 
-文件包含一个单轮对话和一个多轮对话。默认运行全部用户轮次，用模型真实回答继续，而不是参考答案。`--num-prompts` 是这些对话共享的 HTTP 请求预算。多轮对话使用所选到达过程启动，并在每次响应后继续依赖轮次，结果会分别报告请求数和对话数。
+文件包含一个单轮对话和一个多轮对话。默认运行全部用户轮次，每轮都会请求模型生成，但后续请求使用数据集答案作为历史（`--conversation-history dataset`）。添加 `--conversation-history generated` 可改用模型实际回答。该选项只改变历史来源，不改变输出长度控制；轨迹回放仍独立发送记录中的请求。
+
+`--num-prompts` 是这些对话共享的 HTTP 请求预算。多轮对话使用所选到达过程启动，并在每次响应后继续依赖轮次，结果会分别报告请求数和对话数。
 
 只运行首个用户轮次：
 

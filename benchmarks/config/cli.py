@@ -329,6 +329,12 @@ def _add_benchmark_arguments(
         ),
     )
     parser.add_argument(
+        "--conversation-history",
+        choices=("dataset", "generated"),
+        default=_default(ChatRequestDataset, "conversation_history"),
+        help="Answer source for conversation history; trace replay uses its recorded requests",
+    )
+    parser.add_argument(
         "--trace",
         dest="trace_path",
         default=_default(ArrivalTraceSchedule, "trace_selector"),
@@ -502,6 +508,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             apply_chat_template=namespace.apply_chat_template,
             fixed_prompt=namespace.prompt,
             max_turns=namespace.max_turns,
+            conversation_history=namespace.conversation_history,
         ),
         trace=ArrivalTraceSchedule(
             trace_selector=namespace.trace_path,

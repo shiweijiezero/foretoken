@@ -163,7 +163,8 @@ class TaskLoadBenchmark:
                                 return
                             acquired = True
                     context: list[dict[str, Any]] = []
-                    turns = [task.messages()]
+                    turns = [(task.messages(), None)]
+                    generated_history = self.benchmark.resolved_workload.conversation_history == "generated"
                     if self.benchmark.is_multi_turn:
                         turns = split_chat_conversation(task.messages())
                         max_turns = self.benchmark.resolved_workload.max_turns
@@ -173,7 +174,7 @@ class TaskLoadBenchmark:
                             conversation_ids.add(task.id)
                     sent_turns = 0
                     conversation_succeeded = True
-                    for turn_index, turn in enumerate(turns):
+                    for turn_index, (turn, reference_answer) in enumerate(turns):
                         if deadline is not None and time.perf_counter() - started >= deadline:
                             break
                         async with budget_lock:
@@ -187,7 +188,7 @@ class TaskLoadBenchmark:
                             context + turn,
                             task.metadata,
                         )
-                        if self.benchmark.is_multi_turn and turn_index < len(turns) - 1 and response.get("tool_calls"):
+                        if generated_history and turn_index < len(turns) - 1 and response.get("tool_calls"):
                             response["success"] = False
                             response["error"] = "Model requested tool execution before the next turn; a harness is required"
                         if profile is not None:
@@ -214,10 +215,11 @@ class TaskLoadBenchmark:
                         if not response["success"]:
                             conversation_succeeded = False
                             break
-                        if self.benchmark.is_multi_turn and turn_index < len(turns) - 1 and response.get("tool_calls"):
-                            break
                         context.extend(turn)
-                        context.append({"role": "assistant", "content": response["generated_text"]})
+                        if generated_history:
+                            context.append({"role": "assistant", "content": response["generated_text"]})
+                        elif reference_answer is not None:
+                            context.append(reference_answer)
                     if self.benchmark.is_multi_turn and conversation_succeeded and sent_turns == len(turns):
                         async with lock:
                             completed_conversations += 1

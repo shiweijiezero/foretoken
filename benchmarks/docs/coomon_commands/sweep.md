@@ -16,7 +16,7 @@ foretoken bench examples/quickstart \
 
 This runs 384 requests at concurrency 1, 2 and 4, requesting 256 output tokens each. Every point is repeated three times, with 16 warmup conversations before each repetition. Pass a deployment configuration directory such as `examples/quickstart`; sweeps support multi-turn, multi-dataset, and timestamp-trace workloads with their normal scheduling semantics.
 
-Each JSONL row defines load, generation, or dataset settings. Lists of canonical fields such as `max_concurrency`, `num_prompts`, `request_rate`, `arrival_pattern`, `burstiness`, `duration`, and `warmup_requests` expand as Cartesian combinations. SLO criteria may be included with a sweep; each point then runs its own SLO search. Use `max_concurrency`, not `parallel`, in new sweep files.
+Each JSONL row defines load, generation, or dataset settings. Lists of canonical fields such as `max_concurrency`, `num_prompts`, `request_rate`, `arrival_pattern`, `burstiness`, `duration`, `warmup_requests`, and `conversation_history` expand as Cartesian combinations. SLO criteria may be included with a sweep; each point then runs its own SLO search. Use `max_concurrency`, not `parallel`, in new sweep files.
 
 Video generation uses the same sweep lifecycle and result directory layout, with video-owned fields instead of HTTP metrics:
 

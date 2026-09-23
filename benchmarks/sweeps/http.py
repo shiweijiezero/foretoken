@@ -78,6 +78,7 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "apply_chat_template": ("workload", "apply_chat_template", _preserve_value),
     "prompt": ("workload", "fixed_prompt", str),
     "max_turns": ("workload", "max_turns", int),
+    "conversation_history": ("workload", "conversation_history", str),
 }
 
 

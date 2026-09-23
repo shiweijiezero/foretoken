@@ -243,13 +243,13 @@ def _conversation_task(
 
 def split_chat_conversation(
     messages: list[dict[str, Any]],
-) -> list[list[dict[str, Any]]]:
-    """Split answer turns while retaining recorded tool calls and their results as context.
+) -> list[tuple[list[dict[str, Any]], dict[str, Any] | None]]:
+    """Pair each request delta with its recorded answer for the conversation executor.
 
-    A recorded call/result block is prefilled history, not a tool invocation.
-    Ordinary reference answers are replaced by the benchmark engine's responses.
+    Recorded tool calls and results remain together in the request delta.
+    An unanswered final request has no reference answer.
     """
-    turns: list[list[dict[str, Any]]] = []
+    turns: list[tuple[list[dict[str, Any]], dict[str, Any] | None]] = []
     current: list[dict[str, Any]] = []
     pending_tools: set[str] = set()
     for index, message in enumerate(messages):
@@ -280,14 +280,14 @@ def split_chat_conversation(
                 raise ValueError("Recorded tool calls need matching results; tool execution requires a harness")
             if role == "assistant":
                 if current:
-                    turns.append(current)
+                    turns.append((current, message))
                     current = []
             else:
                 current.append(message)
     if pending_tools:
         raise ValueError("Recorded tool calls need matching results; tool execution requires a harness")
     if current:
-        turns.append(current)
+        turns.append((current, None))
     return turns
 
 

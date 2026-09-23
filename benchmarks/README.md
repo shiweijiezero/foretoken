@@ -72,7 +72,9 @@ foretoken bench examples/quickstart \
   --output local,wandb
 ```
 
-`--dataset` also accepts a local JSONL file and multiple selectors separated by commas. Multiple datasets share one global arrival clock and concurrency budget, with per-dataset identity retained in the result. Each row is a conversation, and all turns run by default using the model's actual answers. `--num-prompts` is the HTTP request budget. Multi-turn conversations schedule conversation starts with `--request-rate` and continue dependent turns after each response; `--max-concurrency` limits conversations in progress.
+`--dataset` also accepts a local JSONL file and multiple selectors separated by commas. Multiple datasets share one global arrival clock and concurrency budget, with per-dataset identity retained in the result. Each row is a conversation, and all turns run by default. Every turn generates a response, while subsequent requests use the dataset's recorded answers as history. Use `--conversation-history generated` to continue with the model's actual responses instead.
+
+`--num-prompts` is the HTTP request budget. Multi-turn conversations schedule conversation starts with `--request-rate` and continue dependent turns after each response; `--max-concurrency` limits conversations in progress.
 
 ### Capture while benchmarking
 

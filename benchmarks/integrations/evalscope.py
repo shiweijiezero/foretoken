@@ -268,7 +268,7 @@ def _materialize_evalscope_request_dataset(
     effective_turn_lists: list[list[list[dict[str, Any]]]] = []
     remaining = request_budget
     for task in tasks:
-        turns = split_chat_conversation(task.messages())
+        turns = [messages for messages, _ in split_chat_conversation(task.messages())]
         if max_turns is not None and max_turns > 0:
             turns = turns[:max_turns]
         if not turns or remaining <= 0:

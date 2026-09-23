@@ -7,10 +7,12 @@ After [setup](../examples.md#setup), run the repository's [conversation dataset]
 ```bash
 foretoken bench examples/quickstart \
   --dataset benchmarks/examples/conversations.jsonl \
-  --num-prompts 2 --max-concurrency 2 --output local,wandb
+  --num-prompts 3 --max-concurrency 2 --output local,wandb
 ```
 
-The file contains one single-turn and one multi-turn conversation. All user turns run by default, using the model's actual answers rather than reference text. `--num-prompts` is the HTTP request budget shared by the selected conversations. Multi-turn conversation starts use the selected arrival process and continue dependent turns after each response; the result reports both request and conversation counts.
+The file contains one single-turn and one multi-turn conversation. All user turns run by default. Each turn generates a response, but subsequent requests use recorded dataset answers as history (`--conversation-history dataset`). Add `--conversation-history generated` to use the model's responses instead. This choice changes history only, not output-length controls; trace replay sends its recorded requests independently.
+
+`--num-prompts` is the HTTP request budget shared by the selected conversations. Multi-turn conversation starts use the selected arrival process and continue dependent turns after each response; the result reports both request and conversation counts.
 
 To run only the first user turn:
 
