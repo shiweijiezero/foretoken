@@ -20,6 +20,8 @@ def native_arguments(evaluator: str, arguments: list[str]) -> argparse.Namespace
     parser = argparse.ArgumentParser(
         prog=f"foretoken eval --evaluator {evaluator}", allow_abbrev=False
     )
+    # Each framework initializes process-wide registries and logging on import.
+    # Load only the selected evaluator in the parent and its execution child.
     if evaluator == "lm-eval":
         from lm_eval._cli.run import Run
 
@@ -77,8 +79,9 @@ def validate_model_transport(arguments: dict[str, Any]) -> None:
 def _run_lm_eval(arguments: list[str], service: dict[str, Any], directory: str) -> None:
     """Use the harness CLI runner with a chat transport that owns service authentication."""
     from lm_eval.api.registry import register_model
+    from lm_eval.config.evaluate_config import EvaluatorConfig
     from lm_eval.models.openai_completions import LocalChatCompletion
-    from lm_eval.utils import setup_logging
+    from lm_eval.utils import setup_logging, simple_parse_args_string
 
     @register_model("foretoken-chat-completions")
     class ForetokenChatCompletion(LocalChatCompletion):
@@ -96,8 +99,6 @@ def _run_lm_eval(arguments: list[str], service: dict[str, Any], directory: str) 
                 "Authorization": f"Bearer {self.api_key}",
             }
 
-    from lm_eval.config.evaluate_config import EvaluatorConfig
-
     setup_logging()
     args = native_arguments("lm-eval", arguments)
     args.output_path = directory
@@ -106,8 +107,6 @@ def _run_lm_eval(arguments: list[str], service: dict[str, Any], directory: str) 
     # Resolve YAML and native CLI precedence upstream before injecting the service.
     # Passing a new --model_args string would discard model options loaded from YAML.
     if args.config:
-        from lm_eval.utils import simple_parse_args_string
-
         configured = (
             EvaluatorConfig.load_yaml_config(args.config).get("model_args") or {}
         )

@@ -26,10 +26,21 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
+from evalscope.perf.arguments import Arguments
+from evalscope.perf.main import run_one_benchmark
+from evalscope.perf.plugin.api.default_api import StreamedResponseHandler
+from evalscope.perf.plugin.api.openai_api import OpenaiPlugin
+from evalscope.perf.plugin.datasets.base import DatasetPluginBase, Turn as EvalScopeTurn
+from evalscope.perf.plugin.registry import register_api, register_dataset
+from evalscope.perf.utils.handler import PerfBenchmarkInterrupted
+from evalscope.perf.utils.perf_models import BenchmarkSummary
+from evalscope.perf.utils.trace_metrics import TraceLevelSummary
+from evalscope.utils.logger import configure_logging, get_logger
+from evalscope.utils.model_utils import seed_everything
+from pydantic import Field
+
 if TYPE_CHECKING:
     from benchmarks.profiling.capture import BenchmarkProfile
-    from evalscope.perf.utils.perf_models import BenchmarkSummary
-    from evalscope.perf.utils.trace_metrics import TraceLevelSummary
 
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
@@ -71,8 +82,6 @@ class _TimedStreamResponse:
 
     async def iter_any(self):
         """Timestamp complete SSE messages, preserving coalesced-message arrival times."""
-        from evalscope.perf.plugin.api.default_api import StreamedResponseHandler
-
         decoder = StreamedResponseHandler()
         async for data in self._content.iter_any():
             received_at = time.perf_counter()
@@ -103,12 +112,6 @@ class _TimedClientSession:
 @cache
 def _evalscope_arguments_type() -> type:
     """Register the adapter lazily and reuse its argument type across sequential loads."""
-    from pydantic import Field
-    from evalscope.perf.arguments import Arguments
-    from evalscope.perf.plugin.api.openai_api import OpenaiPlugin
-    from evalscope.perf.plugin.registry import register_api, register_dataset
-    from evalscope.perf.plugin.datasets.base import DatasetPluginBase, Turn as EvalScopeTurn
-
     class ForetokenEvalScopeArguments(Arguments):
         """Carry Foretoken request semantics and an unpersisted capture handle into EvalScope."""
 
@@ -544,8 +547,6 @@ def _evalscope_phase(
     label: str, work_items: int, *, quiet: bool, output_dir: str
 ) -> Iterator[None]:
     """Scope native progress output to one phase while keeping errors visible."""
-    from evalscope.utils.logger import get_logger
-
     logger = get_logger()
     thread_id = threading.get_ident()
 
@@ -607,16 +608,6 @@ def run_evalscope_standard_load(
     profile: BenchmarkProfile | None = None,
 ) -> tuple[dict[str, Any], list[RequestMeasurement], float | None]:
     """Run through EvalScope and return metrics, measurements, and their monotonic origin."""
-
-    console_level = logging.getLogger().level
-    try:
-        from evalscope.perf.main import run_one_benchmark
-        from evalscope.perf.utils.handler import PerfBenchmarkInterrupted
-        from evalscope.utils.logger import configure_logging
-        from evalscope.utils.model_utils import seed_everything
-    finally:
-        # Importing EvalScope can reconfigure the root logger; Foretoken owns its level.
-        logging.getLogger().setLevel(console_level)
 
     os.makedirs(output_dir, exist_ok=True)
     (Path(output_dir) / "request_diagnostics.jsonl").unlink(missing_ok=True)

@@ -17,7 +17,9 @@ from tempfile import mkdtemp
 from typing import Any, Callable, Optional, Protocol, cast
 
 import wandb
+from foretoken.arguments import ProfileCommand
 from foretoken.manifest import DeploymentError
+from foretoken.profiling import ProfileRun
 
 from benchmarks.config.benchmark import (
     BenchmarkConfig,
@@ -399,8 +401,6 @@ class ResultOutputs:
         if profile_options is None:
             return None
         # Keep the capture adapter's import local to avoid a results/capture cycle.
-        from foretoken.arguments import ProfileCommand
-        from foretoken.profiling import ProfileRun
         from benchmarks.profiling.capture import BenchmarkProfile
 
         command = ProfileCommand(

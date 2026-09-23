@@ -10,6 +10,9 @@ import sys
 
 from benchmarks.config.evaluation import parse_evaluation_arguments
 from benchmarks.integrations.quality import native_arguments
+from benchmarks.model_service import resolve_model_service
+from benchmarks.results.console import configure_logging
+from benchmarks.runs.evaluation import run_evaluation
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -50,10 +53,6 @@ def main(argv: Sequence[str] | None = None) -> None:
                 raise ValueError(
                     f"model arguments cannot replace {name}; select the service with --model, --url and --api-key"
                 )
-
-        from benchmarks.model_service import resolve_model_service
-        from benchmarks.results.console import configure_logging
-        from benchmarks.runs.evaluation import run_evaluation
 
         configure_logging(not config.outputs.includes("quiet"))
         with resolve_model_service(config.service) as service:

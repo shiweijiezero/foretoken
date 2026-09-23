@@ -36,6 +36,7 @@ from foretoken.kubernetes import (
 )
 from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.platform import PlatformLifecycle
+from foretoken.profiling import ProfileRun
 from foretoken.storage import DirectoryVolumes
 
 
@@ -80,8 +81,6 @@ def _deploy(
     timeout_seconds(timeout)
     capture = None
     if profile is not None:
-        from foretoken.profiling import ProfileRun
-
         # Resolve the selected model before changing the deployment.
         capture = ProfileRun(profile, deployment=deployment)
     namespace = deployment.namespace or "<current>"
