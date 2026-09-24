@@ -8,7 +8,7 @@
 apiVersion: monitoring.coreos.com/v1alpha1
 kind: AlertmanagerConfig
 metadata:
-  name: foretoken-dingtalk
+  name: foretoken-@PLATFORM@
 spec:
   route:
     groupBy:
@@ -20,12 +20,12 @@ spec:
       - name: service
         matchType: "="
         value: foretoken
-    receiver: dingtalk
+    receiver: @PLATFORM@
   receivers:
-    - name: dingtalk
+    - name: @PLATFORM@
       webhookConfigs:
         - urlSecret:
-            name: foretoken-dingtalk-webhook
+            name: foretoken-@PLATFORM@-webhook
             key: url
           sendResolved: true
           maxAlerts: 5
@@ -72,4 +72,4 @@ spec:
             {{- if and (eq $language "bilingual") (ne $line.zh $line.en) }}{{ $rendered = printf "%s / %s" $line.zh $line.en }}{{ end -}}
             {{- if $index }}{{ $text = printf "%s\n%s" $text $rendered }}{{ else }}{{ $text = $rendered }}{{ end -}}
             {{- end -}}
-            {{- dict "msgtype" "text" "text" (dict "content" $text) | toJson -}}
+            @ENVELOPE@

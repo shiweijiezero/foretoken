@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 #
+# Generated from observability/integrations/webhook.yaml.tmpl by make alert-receivers.
 # Optional Alertmanager receiver for Foretoken alerts. The referenced Secret
 # and the AlertmanagerConfig must exist in the same namespace.
 

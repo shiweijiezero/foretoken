@@ -20,12 +20,16 @@ GIT = git $(if $(FORETOKEN_GITHUB_MIRROR),-c url.$(patsubst %/,%,$(FORETOKEN_GIT
 
 .PHONY: vllm-source build-data-plane format verify-data-plane dev-build dev-deploy \
 	image-control-plane image-frontend image-vllm-metax image-model-server \
-	image-model-server-metax image-benchmark dashboard
+	image-model-server-metax image-benchmark dashboard alert-receivers
 
 # Regenerates the localized Grafana dashboards shipped by the chart; needs the `dev` extra installed.
 dashboard:
 	python3 deploy/grafana/system_overview.py --locale en > deploy/charts/foretoken/files/grafana/foretoken-system-overview.json
 	python3 deploy/grafana/system_overview.py --locale zh > deploy/charts/foretoken/files/grafana/foretoken-system-overview-zh.json
+
+# Regenerates standalone Lark and DingTalk receivers from the shared alert text.
+alert-receivers:
+	python3 observability/integrations/generate_webhooks.py
 
 vllm-source:
 	@test -f data-plane/third_party/vllm/rust/Cargo.toml || \
