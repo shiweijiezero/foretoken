@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Foretoken Frontend
 
-`foretoken-frontend` receives inference traffic and returns OpenAI-compatible responses. Declare a `FrontendService` through a maintained example or your own service configuration; Foretoken creates and configures the frontend workloads automatically.
+`foretoken-frontend` serves OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages at the same address. Declare a `FrontendService` through a maintained example or your own service configuration; Foretoken creates and configures the frontend workloads automatically.
 
 ## Use it
 
@@ -14,6 +14,21 @@ Follow the repository [Quick Start](../../README.md) to deploy a frontend and ma
 The frontend supports collected JSON and SSE streaming responses, completions and chat completions, tokenization, tools, reasoning, structured output, and capability-gated image input. Image input currently accepts bounded base64 `data:` content, not remote media URLs.
 
 Configure aggregate serving or separate prefill/decode (P/D) or encoder/prefill/decode (E/P/D) stages in `ModelService`. Disaggregated serving requires platform support for the selected runtime and transport.
+
+## Inference APIs
+
+Use the frontend address returned by `foretoken endpoint` for all three protocols. The request path selects the protocol; no separate service or protocol setting is needed.
+
+| API | POST path | Conversation input |
+| --- | --- | --- |
+| OpenAI Chat Completions | `/v1/chat/completions` | `messages` |
+| OpenAI Responses | `/v1/responses` | `input`; use `store: false` and send the conversation history on each turn |
+| Anthropic Messages | `/v1/messages` | `messages` and the required `max_tokens` output budget |
+| Anthropic token counting | `/v1/messages/count_tokens` | `messages`, with the same system prompt and tools as generation |
+
+All generation endpoints accept `stream: true` for SSE. Clients execute tools and return their results in the next request. Responses accepts function tools, namespaced functions, and unconstrained custom-text tools; server-hosted tools such as web search require a separate execution service and are not accepted here. Responses does not retain conversation history or provide background execution.
+
+Forced tool choice and strict tool schemas require a model service with structured-output support. Thinking controls depend on the model's chat template. Output budgets include reasoning tokens even when the response hides reasoning; Messages accepts a total `max_tokens` budget, not a separate `thinking.budget_tokens` allowance.
 
 ## Endpoint access
 

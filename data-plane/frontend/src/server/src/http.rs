@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::DefaultBodyLimit;
 use axum::extract::rejection::JsonRejection;
@@ -70,10 +70,12 @@ pub fn router(
         )
         .merge(public)
         .with_state(AppState {
-            generation,
+            generation: generation.clone(),
             models,
             stream_idle,
         })
+        .merge(crate::messages::router(generation.clone(), stream_idle))
+        .merge(crate::responses::router(generation, stream_idle))
         .layer(DefaultBodyLimit::max(MAX_HTTP_BODY_BYTES))
         .layer(middleware::from_fn(foretoken_metrics::track_http_metrics))
 }
@@ -643,7 +645,7 @@ struct OpenAiJsonSchema {
 }
 
 /// Generates the backend and Mooncake request identity for one HTTP generation.
-fn server_request_id(prefix: &str) -> String {
+pub(crate) fn server_request_id(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4())
 }
 fn sampling(
@@ -711,6 +713,12 @@ pub(crate) fn openai_error(error: GenerationError) -> Response {
             "server_error",
             "unavailable",
         ),
+        GenerationError::DeadlineExceeded => (
+            StatusCode::GATEWAY_TIMEOUT,
+            "request deadline exceeded",
+            "server_error",
+            "request_timeout",
+        ),
         GenerationError::BackendRejected => (
             StatusCode::BAD_GATEWAY,
             "model server rejected the request",
@@ -748,6 +756,7 @@ async fn completions(
 ) -> Response {
     // Handler entry, after JSON decoding, is the shared TTFT and completion-latency origin.
     // All fan-out requests include the same frontend admission and preprocessing time.
+    let started_at = Instant::now();
     let arrival_time = Some(vllm_llm::current_unix_timestamp_secs());
     let Json(request) = match request {
         Ok(request) => request,
@@ -790,6 +799,7 @@ async fn completions(
                     cache_salt: request.cache_salt.clone(),
                     session_id: request.session_id.clone(),
                     arrival_time,
+                    started_at,
                     tool_call_parser: ParserSelection::None,
                     reasoning_parser: ParserSelection::None,
                 })
@@ -829,6 +839,7 @@ async fn chat_completions(
     State(state): State<AppState>,
     request: Result<Json<ChatCompletionRequest>, JsonRejection>,
 ) -> Response {
+    let started_at = Instant::now();
     let arrival_time = Some(vllm_llm::current_unix_timestamp_secs());
     let Json(request) = match request {
         Ok(request) => request,
@@ -856,41 +867,20 @@ async fn chat_completions(
         Ok(tools) => tools,
         Err(_) => return client_error(),
     };
-    let mut tool_choice = match request
+    let tool_choice = match request
         .tool_choice
         .as_ref()
         .map(openai_tool_choice)
         .transpose()
     {
         Ok(Some(choice)) => choice,
+        // OpenAI's omitted tool_choice defaults to auto when tools are supplied.
+        Ok(None) if !tools.is_empty() => ChatToolChoice::Auto,
         Ok(None) => ChatToolChoice::None,
         Err(_) => return client_error(),
     };
-    if !tools.is_empty() && matches!(&tool_choice, ChatToolChoice::None) {
-        // OpenAI's omitted tool_choice defaults to auto when tools are supplied.
-        tool_choice = ChatToolChoice::Auto;
-    }
-    chat_with_request(
-        state,
-        request,
-        id,
-        arrival_time,
-        messages,
-        tools,
-        tool_choice,
-    )
-    .await
-}
 
-async fn chat_with_request(
-    state: AppState,
-    request: ChatCompletionRequest,
-    id: String,
-    arrival_time: Option<f64>,
-    messages: Vec<ChatMessage>,
-    tools: Vec<ChatTool>,
-    tool_choice: ChatToolChoice,
-) -> Response {
+    // Lower sampling and rendering options before entering the shared generation lifecycle.
     let stream = request.stream;
     let include_usage = request.stream_options.include_usage;
     if include_usage && !stream {
@@ -925,8 +915,6 @@ async fn chat_with_request(
         sampling_params.structured_outputs = Some(constraint);
     }
     let include_reasoning = request.include_reasoning.unwrap_or(false);
-    let reasoning_requested = include_reasoning
-        || matches!(request.reasoning_effort, Some(effort) if effort != ReasoningEffort::None);
     let tool_requested = !tools.is_empty() && !matches!(&tool_choice, ChatToolChoice::None);
     let tool_context = match ResolvedToolContext::new(
         &messages,
@@ -974,16 +962,14 @@ async fn chat_with_request(
                 cache_salt: chat.cache_salt.clone(),
                 session_id: chat.session_id.clone(),
                 arrival_time,
+                started_at,
                 tool_call_parser: if tool_requested {
                     ParserSelection::Auto
                 } else {
                     ParserSelection::None
                 },
-                reasoning_parser: if reasoning_requested {
-                    ParserSelection::Auto
-                } else {
-                    ParserSelection::None
-                },
+                // Parse reasoning independently of whether the response exposes it.
+                reasoning_parser: ParserSelection::Auto,
             },
             chat,
             include_reasoning,

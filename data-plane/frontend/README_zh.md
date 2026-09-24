@@ -5,7 +5,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Foretoken Frontend
 
-`foretoken-frontend` 接收推理请求并返回 OpenAI 兼容响应。通过维护中的示例或自己的服务配置声明 `FrontendService`，Foretoken 会自动创建并配置前端工作负载。
+`foretoken-frontend` 在同一地址提供 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 接口。通过维护中的示例或自己的服务配置声明 `FrontendService`，Foretoken 会自动创建并配置前端工作负载。
 
 ## 使用方式
 
@@ -14,6 +14,21 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 前端支持普通 JSON 和 SSE 流式响应、Completion、Chat Completion、分词、工具调用、reasoning、structured output 与受能力约束的图片输入。图片输入当前只接受大小受限的 base64 `data:` 内容，不接受远程媒体 URL。
 
 通过 `ModelService` 配置聚合部署、预填充/解码分离（P/D）或编码/预填充/解码分离（E/P/D）。分离式推理需要平台支持所选运行时和传输方式。
+
+## 推理接口
+
+三种协议共用 `foretoken endpoint` 返回的前端地址，由请求路径区分，无需另建服务或切换协议配置。
+
+| API | POST 路径 | 对话输入 |
+| --- | --- | --- |
+| OpenAI Chat Completions | `/v1/chat/completions` | `messages` |
+| OpenAI Responses | `/v1/responses` | `input`；设置 `store: false`，每轮携带对话历史 |
+| Anthropic Messages | `/v1/messages` | `messages`，并用必填的 `max_tokens` 指定输出预算 |
+| Anthropic token 计数 | `/v1/messages/count_tokens` | `messages`，以及与生成请求一致的系统提示和工具定义 |
+
+生成接口均支持通过 `stream: true` 返回 SSE 流。工具由客户端执行，再将结果带入下一轮请求。Responses 支持函数工具、带命名空间的函数和无语法约束的自定义文本工具；不支持需要服务端执行的网页搜索等工具，也不保存对话历史或执行后台任务。
+
+强制工具选择和严格工具 schema 需要模型服务具备结构化输出能力。思考控制参数的效果取决于模型的对话模板。即使响应隐藏了思考，输出预算仍包含思考 token；Messages 使用 `max_tokens` 总预算，不接受独立的 `thinking.budget_tokens` 预算。
 
 ## 接口访问范围
 

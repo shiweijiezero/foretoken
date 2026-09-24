@@ -71,9 +71,9 @@ ENV FORETOKEN_VLLM_PYTHON=${FORETOKEN_VLLM_PYTHON}
 # Patch the installed Python engine, not the independent Rust build source.
 # A derived Foretoken image may already contain this exact backport.
 RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
-    --mount=type=bind,source=data-plane/patches/vllm-python-profiling.patch,target=/tmp/vllm-profiling.patch \
-    --mount=type=bind,source=data-plane/patches/vllm-0.26-offloading-event-identity.patch,target=/tmp/vllm-0.26-offload-identity.patch \
-    --mount=type=bind,source=data-plane/patches/vllm-offloading-event-identity.patch,target=/tmp/vllm-offload-identity.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-python-profiling.patch,target=/tmp/vllm-profiling.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-0.26-offloading-event-identity.patch,target=/tmp/vllm-0.26-offload-identity.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-offloading-event-identity.patch,target=/tmp/vllm-offload-identity.patch \
     vllm_site="$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
       'from importlib.metadata import distribution; print(distribution("vllm").locate_file(""))')" \
     && if patch --force --reverse --dry-run --fuzz=0 --strip=1 \

@@ -395,7 +395,8 @@ pub(crate) fn idle_timed(
                 Ok(Some(event)) => yield event,
                 Ok(None) => break,
                 Err(_) => {
-                    // Dropping the output stream after this item aborts the backend request.
+                    // Cancel before yielding: the HTTP reader may stop polling after the error.
+                    drop(stream);
                     yield Err(foretoken_text::Error::StreamClosedBeforeTerminalOutput {
                         request_id: "idle-timeout".into(),
                     });
@@ -406,7 +407,11 @@ pub(crate) fn idle_timed(
     }
 }
 
-fn chat_events(
+/// Parses the shared decoded stream into structured chat events for every HTTP protocol.
+///
+/// The runtime stream retains the total deadline and backend cleanup; this layer adds the
+/// independently configured idle budget before the model-specific output processor runs.
+pub(crate) fn chat_events(
     generated: GeneratedChat,
     idle: Duration,
 ) -> foretoken_chat::Result<(

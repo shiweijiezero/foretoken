@@ -28,12 +28,12 @@ exclude = ["third_party/vllm"]
 [workspace.metadata.foretoken]
 vllm_source = "third_party/vllm"
 vllm_patches = [
-    "patches/vllm-chat-request-processor.patch",
-    "patches/vllm-engine-core-version-compatibility.patch",
-    "patches/vllm-http-latency-histogram-buckets.patch",
-    "patches/vllm-latency-histogram-buckets.patch",
-    "patches/vllm-managed-engine-command.patch",
-    "patches/vllm-offloading-event-identity.patch",
+    "patches/vllm/vllm-chat-request-processor.patch",
+    "patches/vllm/vllm-engine-core-version-compatibility.patch",
+    "patches/vllm/vllm-http-latency-histogram-buckets.patch",
+    "patches/vllm/vllm-latency-histogram-buckets.patch",
+    "patches/vllm/vllm-managed-engine-command.patch",
+    "patches/vllm/vllm-offloading-event-identity.patch",
 ]
 
 [workspace.package]
