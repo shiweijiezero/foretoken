@@ -29,6 +29,7 @@ FROM ${RUST_BUILDER_IMAGE} AS builder
 ARG FORETOKEN_GITHUB_MIRROR
 ARG FORETOKEN_CARGO_REGISTRY
 ARG CARGO_NET_GIT_FETCH_WITH_CLI
+ARG FORETOKEN_MODEL_SERVER_BINARY=foretoken-model-server
 
 RUN if [ "${CARGO_NET_GIT_FETCH_WITH_CLI}" = true ]; then \
       apt-get update \
@@ -58,10 +59,25 @@ RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/regis
     fi \
     && cargo build --locked --release \
       --manifest-path data-plane/Cargo.toml \
-      --package foretoken-model-server \
+      --package foretoken-model-server --bin "${FORETOKEN_MODEL_SERVER_BINARY}" \
     && install -Dm755 \
-      data-plane/target/release/foretoken-model-server \
-      /out/foretoken-model-server
+      "data-plane/target/release/${FORETOKEN_MODEL_SERVER_BINARY}" \
+      /out/model-server
+
+# vLLM-Omni images already contain their Python runtime and model plugins. This
+# target only adds the thin Foretoken lifecycle/proxy adapter and deliberately
+# skips the standard vLLM patch and dependency stages below.
+FROM ${INFERENCE_ENGINE_IMAGE} AS omni-runtime
+
+ARG OMNI_VIDEO_SYNC_TIMEOUT=4000
+ENV VLLM_OMNI_VIDEO_SYNC_TIMEOUT=${OMNI_VIDEO_SYNC_TIMEOUT}
+
+ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
+ARG OCI_REVISION
+LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
+      org.opencontainers.image.revision="${OCI_REVISION}"
+COPY --from=builder /out/model-server /usr/local/bin/foretoken-omni-model-server
+ENTRYPOINT ["foretoken-omni-model-server"]
 
 FROM ${INFERENCE_ENGINE_IMAGE} AS engine-runtime
 
@@ -122,7 +138,7 @@ ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
 ARG OCI_REVISION
 LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
-COPY --from=builder /out/foretoken-model-server /usr/local/bin/foretoken-model-server
+COPY --from=builder /out/model-server /usr/local/bin/foretoken-model-server
 COPY data-plane/model-server/python/ /opt/foretoken/python/
 
 # Preserve the inference engine image's runtime user and environment. The workload owns its

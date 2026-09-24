@@ -323,6 +323,14 @@
         "vllm"
       ],
       "properties": {
+        "vllmOmni": {
+          "type": "object",
+          "required": ["image"],
+          "properties": {
+            "image": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
         "vllm": {
           "type": "object",
           "required": [

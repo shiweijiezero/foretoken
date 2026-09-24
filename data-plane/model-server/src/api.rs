@@ -80,9 +80,9 @@ impl RuntimeHealth {
     pub fn accepting(&self) -> bool {
         self.admission.load(Ordering::Acquire) & ADMISSION_OPEN != 0
     }
-    // Reserve admission and transfer the slot to a permit held by the response stream. Closing
-    // admission clears only the open bit, so existing requests can drain without a race.
-    fn try_admit(self: &Arc<Self>) -> Option<AdmissionPermit> {
+    /// Reserves admission and transfers the slot to a response-held permit.
+    /// Closing admission clears only the open bit, so existing requests can drain.
+    pub fn try_admit(self: &Arc<Self>) -> Option<AdmissionPermit> {
         let mut current = self.admission.load(Ordering::Acquire);
         loop {
             if current & ADMISSION_OPEN == 0 {
@@ -104,12 +104,14 @@ impl RuntimeHealth {
             }
         }
     }
-    fn running_requests(&self) -> u64 {
+    /// Returns the number of accepted requests still holding a permit.
+    pub fn running_requests(&self) -> u64 {
         self.admission.load(Ordering::Acquire) & RUNNING_REQUESTS_MASK
     }
 }
 
-struct AdmissionPermit {
+/// Slot released when an accepted response stream is dropped.
+pub struct AdmissionPermit {
     health: Arc<RuntimeHealth>,
 }
 

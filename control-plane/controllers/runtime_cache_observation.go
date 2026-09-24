@@ -38,6 +38,9 @@ func observeRuntimeCache(ctx context.Context, kubeClient client.Client, cache *i
 	var failures []error
 	for index := range groups.Items {
 		group := &groups.Items[index]
+		if group.Spec.Runtime.Backend != "vllm" {
+			continue
+		}
 		binding := group.Spec.Artifacts.Cache
 		if binding == nil || binding.ClaimName != claimName {
 			continue

@@ -445,32 +445,7 @@ impl LaunchPlanV1 {
             {
                 continue;
             }
-            match value {
-                serde_json::Value::Null => {}
-                serde_json::Value::Bool(enabled) => args.push(if *enabled {
-                    format!("--{name}")
-                } else {
-                    format!("--no-{name}")
-                }),
-                serde_json::Value::String(value) => args.push(format!("--{name}={value}")),
-                serde_json::Value::Array(values) => {
-                    args.push(format!("--{name}"));
-                    for value in values {
-                        let value = match value {
-                            serde_json::Value::String(value) => value.clone(),
-                            value => value.to_string(),
-                        };
-                        // A list item must not become a separate CLI option.
-                        if value.starts_with('-') && value.parse::<f64>().is_err() {
-                            return Err(format!(
-                                "engineArgs.{name} contains an option-like list value"
-                            ));
-                        }
-                        args.push(value);
-                    }
-                }
-                value => args.push(format!("--{name}={value}")),
-            }
+            append_engine_arg(&mut args, name, value)?;
         }
         if matches!(self.ec.role, Some(EcRole::Producer)) {
             args.extend([
@@ -493,6 +468,41 @@ impl LaunchPlanV1 {
         }
         Ok(args)
     }
+}
+
+/// Appends one controller-normalized engine option to a shell-free command line.
+pub fn append_engine_arg(
+    args: &mut Vec<String>,
+    name: &str,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    match value {
+        serde_json::Value::Null => {}
+        serde_json::Value::Bool(enabled) => args.push(if *enabled {
+            format!("--{name}")
+        } else {
+            format!("--no-{name}")
+        }),
+        serde_json::Value::String(value) => args.push(format!("--{name}={value}")),
+        serde_json::Value::Array(values) => {
+            args.push(format!("--{name}"));
+            for value in values {
+                let value = match value {
+                    serde_json::Value::String(value) => value.clone(),
+                    value => value.to_string(),
+                };
+                // A list item must not become a separate CLI option.
+                if value.starts_with('-') && value.parse::<f64>().is_err() {
+                    return Err(format!(
+                        "engineArgs.{name} contains an option-like list value"
+                    ));
+                }
+                args.push(value);
+            }
+        }
+        value => args.push(format!("--{name}={value}")),
+    }
+    Ok(())
 }
 
 impl LaunchPlanV1 {

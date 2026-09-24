@@ -115,7 +115,7 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	HuggingFaceAccess *HuggingFaceAccess `json:"huggingFaceAccess,omitempty"`
 
-	// +kubebuilder:validation:Enum=vllm
+	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
 
 	Role ModelRole `json:"role"`

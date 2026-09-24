@@ -94,6 +94,9 @@ spec:
             {{- end }}
             {{- with (include "foretoken.runtimeVllmImage" .) }}
             - {{ printf "--inference-engine-image=%s" (include "foretoken.imageWithRegistry" (dict "registry" $.Values.global.imageRegistry "image" .)) | quote }}
+            {{- with $.Values.runtime.vllmOmni.image }}
+            - {{ printf "--omni-inference-engine-image=%s" (include "foretoken.imageWithRegistry" (dict "registry" $.Values.global.imageRegistry "image" .)) | quote }}
+            {{- end }}
             {{- with $.Values.runtime.vllm.nsightImage }}
             - {{ printf "--nsight-image=%s" (include "foretoken.imageWithRegistry" (dict "registry" $.Values.global.imageRegistry "image" .)) | quote }}
             {{- end }}

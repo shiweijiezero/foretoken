@@ -151,6 +151,10 @@ def _endpoint(kustomize_path: str, timeout: str, host: bool) -> None:
     """Wait for and print the public endpoint of one rendered deployment."""
     kubectl = Kubectl()
     deployment = load_deployment(kustomize_path, kubectl)
+    if deployment.frontend is None:
+        raise DeploymentError(
+            "deployment has no FrontendService; forward a ModelGroup Service instead"
+        )
     print("Waiting for the frontend endpoint", file=sys.stderr, flush=True)
     endpoint = resolve_frontend_endpoint(deployment, kubectl, timeout)
     if host:

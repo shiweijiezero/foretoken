@@ -570,6 +570,7 @@ spec:
                   backend:
                     enum:
                     - vllm
+                    - vllm-omni
                     type: string
                   engineArgs:
                     additionalProperties:
