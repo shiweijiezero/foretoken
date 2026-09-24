@@ -98,6 +98,11 @@ spec:
                     description: ECProfile is the controller-owned platform EC profile
                       selected for encoder and prefill Pools.
                     type: string
+                  encoderCacheGeneration:
+                    description: EncoderCacheGeneration isolates encoder outputs across
+                      service configuration updates.
+                    format: int64
+                    type: integer
                   engineArgs:
                     additionalProperties:
                       x-kubernetes-preserve-unknown-fields: true

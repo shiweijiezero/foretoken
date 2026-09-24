@@ -38,6 +38,8 @@ pub struct RouteCandidate {
     /// Latest route-target gauges and available windowed statistics for this routing round.
     /// Group totals and rank-local gauges share one observation without duplicate polling.
     pub route_target_stats: Option<Arc<RouteTargetStats>>,
+    /// Requests reserved by this frontend for the exact target and DP rank.
+    pub local_load: crate::RoutingLoadSnapshot,
 }
 
 impl RouteCandidate {

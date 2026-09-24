@@ -7,8 +7,8 @@ use std::time::Duration;
 use axum::{Json, Router, http::StatusCode, routing::get};
 use foretoken_backend_registry::{
     BackendRegistry, BackendRegistryBuild, ModelSource, ServingSnapshot, SnapshotEpdComponent,
-    SnapshotEpdPipelineScope, SnapshotError, SnapshotGroup, SnapshotModel, SnapshotPdComponent,
-    SnapshotPdPipelineScope,
+    SnapshotEpdPipelineScope, SnapshotError, SnapshotGroup, SnapshotModel, SnapshotParallelism,
+    SnapshotPdComponent, SnapshotPdPipelineScope,
 };
 use foretoken_engine_core_client::protocol::dtype::ModelDtype;
 use foretoken_llm_facade::{LlmFacadeResolver, RouteStage};
@@ -52,6 +52,14 @@ fn pd_component(id: &str, role: ModelServerRole) -> SnapshotPdComponent {
         kv_scope_id: "scope".into(),
         kv_lookup_scope: None,
         data_parallel_size: 1,
+        parallelism: SnapshotParallelism {
+            tp: 1,
+            pp: 1,
+            dp: 1,
+            pcp: 1,
+            dcp: 1,
+            ep: false,
+        },
     }
 }
 
@@ -98,10 +106,16 @@ fn pd_snapshot() -> ServingSnapshot {
 }
 
 fn epd_component(id: &str, role: ModelServerRole) -> SnapshotEpdComponent {
+    let pool = match role {
+        ModelServerRole::Encoder => "encoder",
+        ModelServerRole::Prefill => "prefill",
+        ModelServerRole::Decode => "decode",
+        ModelServerRole::Aggregate => unreachable!("aggregate is not an E/P/D component"),
+    };
     SnapshotEpdComponent {
         service_uid: "service".into(),
-        pool_uid: "pool".into(),
-        pool_name: "pool".into(),
+        pool_uid: format!("pool-{pool}"),
+        pool_name: pool.into(),
         route_target_id: RouteTargetId::new(id),
         role,
         model: "model".into(),
@@ -109,7 +123,17 @@ fn epd_component(id: &str, role: ModelServerRole) -> SnapshotEpdComponent {
         revision: "r1".into(),
         tokenizer: "tokenizer".into(),
         tokenizer_revision: "r1".into(),
-        capabilities: ["chat".into()].into_iter().collect(),
+        capabilities: if role == ModelServerRole::Encoder {
+            [
+                "chat".into(),
+                "multimodal".into(),
+                "multimodal.image".into(),
+            ]
+            .into_iter()
+            .collect()
+        } else {
+            ["chat".into()].into_iter().collect()
+        },
         max_input_tokens: None,
         endpoint: "http://127.0.0.1:1".into(),
         prefill_bootstrap_endpoint: (role == ModelServerRole::Prefill)
@@ -117,6 +141,14 @@ fn epd_component(id: &str, role: ModelServerRole) -> SnapshotEpdComponent {
         kv_scope_id: "scope".into(),
         kv_lookup_scope: None,
         data_parallel_size: 1,
+        parallelism: SnapshotParallelism {
+            tp: 1,
+            pp: 1,
+            dp: 1,
+            pcp: 1,
+            dcp: 1,
+            ep: false,
+        },
     }
 }
 
@@ -131,12 +163,17 @@ fn epd_snapshot() -> ServingSnapshot {
             tokenizer: "tokenizer".into(),
             tokenizer_revision: "r1".into(),
             capabilities: ["chat".into()].into_iter().collect(),
-            admission_target_sets: vec![RouteTargetSet::new(vec![ScalingTarget {
-                service_uid: "service".into(),
-                name: "epd".into(),
-                uid: "service".into(),
-                kind: ScalingTargetKind::EPDPipelineScope,
-            }])],
+            admission_target_sets: vec![RouteTargetSet::new(
+                ["encoder", "prefill", "decode"]
+                    .into_iter()
+                    .map(|name| ScalingTarget {
+                        service_uid: "service".into(),
+                        name: name.into(),
+                        uid: format!("pool-{name}"),
+                        kind: ScalingTargetKind::Pool,
+                    })
+                    .collect(),
+            )],
         }],
         groups: vec![],
         pd_components: vec![],
@@ -456,11 +493,10 @@ fn epd_snapshot_projects_all_compatible_routes_and_prefill_kv_sources() {
             .iter()
             .any(|route| route.role == ModelServerRole::Encoder)
     );
-    assert!(
-        routes.iter().all(|route| {
-            route.admission_targets.targets() == std::slice::from_ref(&route.target)
-        })
-    );
+    assert!(routes.iter().all(|route| {
+        route.admission_targets.targets().len() == 3
+            && route.admission_targets.targets().contains(&route.target)
+    }));
     assert_eq!(build.kv_runtime_config.route_bindings.len(), 2);
     assert_eq!(build.kv_runtime_config.event_sources.len(), 2);
     assert!(build.kv_runtime_config.route_bindings.contains_key("p0"));

@@ -11,18 +11,36 @@ import logging
 import os
 import random
 import sqlite3
+import sys
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import (
+    ExitStack,
+    asynccontextmanager,
+    contextmanager,
+    redirect_stderr,
+    redirect_stdout,
+)
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
 
+from evalscope.perf.arguments import Arguments
+from evalscope.perf.main import run_one_benchmark
+from evalscope.perf.plugin.api.default_api import StreamedResponseHandler
+from evalscope.perf.plugin.api.openai_api import OpenaiPlugin
+from evalscope.perf.plugin.datasets.base import DatasetPluginBase, Turn as EvalScopeTurn
+from evalscope.perf.plugin.registry import register_api, register_dataset
+from evalscope.perf.utils.handler import PerfBenchmarkInterrupted
+from evalscope.perf.utils.perf_models import BenchmarkSummary
+from evalscope.perf.utils.trace_metrics import TraceLevelSummary
+from evalscope.utils.logger import configure_logging, get_logger
+from evalscope.utils.model_utils import seed_everything
+from pydantic import Field
+
 if TYPE_CHECKING:
     from benchmarks.profiling.capture import BenchmarkProfile
-    from evalscope.perf.utils.perf_models import BenchmarkSummary
-    from evalscope.perf.utils.trace_metrics import TraceLevelSummary
 
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
@@ -64,8 +82,6 @@ class _TimedStreamResponse:
 
     async def iter_any(self):
         """Timestamp complete SSE messages, preserving coalesced-message arrival times."""
-        from evalscope.perf.plugin.api.default_api import StreamedResponseHandler
-
         decoder = StreamedResponseHandler()
         async for data in self._content.iter_any():
             received_at = time.perf_counter()
@@ -96,18 +112,6 @@ class _TimedClientSession:
 @cache
 def _evalscope_arguments_type() -> type:
     """Register the adapter lazily and reuse its argument type across sequential loads."""
-    try:
-        from pydantic import Field
-        from evalscope.perf.arguments import Arguments
-        from evalscope.perf.plugin.api.openai_api import OpenaiPlugin
-        from evalscope.perf.plugin.registry import register_api, register_dataset
-        from evalscope.perf.plugin.datasets.base import DatasetPluginBase, Turn as EvalScopeTurn
-    except ModuleNotFoundError as error:
-        raise ValueError(
-            "standard HTTP loads require EvalScope; install benchmark "
-            "dependencies with: pip install 'foretoken[bench]'"
-        ) from error
-
     class ForetokenEvalScopeArguments(Arguments):
         """Carry Foretoken request semantics and an unpersisted capture handle into EvalScope."""
 
@@ -260,22 +264,33 @@ def _evalscope_arguments_type() -> type:
 def _materialize_evalscope_request_dataset(
     benchmark: BenchmarkConfig,
     output_dir: str,
-) -> tuple[str, bool]:
-    """Prepare complete tool-aware turn deltas and report whether they need multi-turn workers."""
+) -> tuple[str, bool, int]:
+    """Materialize conversations without exceeding the configured request budget."""
     tasks = load_conversation_tasks(benchmark)
-    turn_lists = [split_chat_conversation(task.messages()) for task in tasks]
+    request_budget = benchmark.load.request_count
     max_turns = benchmark.resolved_workload.max_turns
-    effective_turn_lists = [
-        turns[:max_turns] if max_turns is not None and max_turns > 0 else turns
-        for turns in turn_lists
-    ]
+    effective_turn_lists: list[list[list[dict[str, Any]]]] = []
+    remaining = request_budget
+    for task in tasks:
+        turns = [messages for messages, _ in split_chat_conversation(task.messages())]
+        if max_turns is not None and max_turns > 0:
+            turns = turns[:max_turns]
+        if not turns or remaining <= 0:
+            break
+        selected = turns[:remaining]
+        effective_turn_lists.append(selected)
+        remaining -= len(selected)
     multi_turn = any(len(turns) > 1 for turns in effective_turn_lists)
     path = Path(output_dir) / "request_dataset.jsonl"
     with path.open("w", encoding="utf-8") as file:
         for task, turns in zip(tasks, effective_turn_lists):
-            json.dump({"turns": turns, "fields": dict(task.metadata)}, file, ensure_ascii=False)
+            json.dump(
+                {"turns": turns, "fields": dict(task.metadata)},
+                file,
+                ensure_ascii=False,
+            )
             file.write("\n")
-    return str(path), multi_turn
+    return str(path), multi_turn, len(effective_turn_lists)
 
 
 def _evalscope_arguments(
@@ -369,13 +384,13 @@ def _evalscope_arguments(
             }
         )
     else:
-        dataset_path, multi_turn = _materialize_evalscope_request_dataset(
+        dataset_path, multi_turn, conversation_count = _materialize_evalscope_request_dataset(
             benchmark, output_dir
         )
         if multi_turn and schedule.arrival_rate != -1:
             Path(dataset_path).unlink(missing_ok=True)
             raise ValueError(
-                "Multi-turn conversations require --rate -1; "
+                "Multi-turn conversations require --request-rate -1; "
                 "rate schedules independent requests"
             )
         argument_values.update(
@@ -383,6 +398,9 @@ def _evalscope_arguments(
                 "dataset": _EVALSCOPE_DATASET,
                 "dataset_path": dataset_path,
                 "dataset_offset": 0,
+                # EvalScope's multi-turn scheduler counts conversations; the
+                # materialized dataset already enforces Foretoken's request budget.
+                "number": conversation_count if multi_turn else schedule.request_count,
                 "multi_turn": multi_turn,
                 # EvalScope uses None for an unbounded custom conversation; -1
                 # is Foretoken's explicit complete-conversation spelling.
@@ -417,9 +435,9 @@ def _conversation_metrics(
     benchmark: BenchmarkConfig,
     summary: BenchmarkSummary,
     trace_summary: TraceLevelSummary | None,
+    conversation_count: int,
 ) -> dict[str, Any]:
-    """Map EvalScope's actual multi-turn trace summary without duplicating request metrics."""
-    conversation_count = int(benchmark.load.request_count)
+    """Map EvalScope's multi-turn trace summary without duplicating request metrics."""
     benchmark_time = float(summary.time_taken)
     return {
         "attempted_num": conversation_count,
@@ -525,10 +543,10 @@ def _read_evalscope_request_measurements(
 
 
 @contextmanager
-def _evalscope_phase(label: str, work_items: int) -> Iterator[None]:
-    """Announce a workload phase and scope its EvalScope log filtering to this call."""
-    from evalscope.utils.logger import get_logger
-
+def _evalscope_phase(
+    label: str, work_items: int, *, quiet: bool, output_dir: str
+) -> Iterator[None]:
+    """Scope native progress output to one phase while keeping errors visible."""
     logger = get_logger()
     thread_id = threading.get_ident()
 
@@ -543,15 +561,42 @@ def _evalscope_phase(label: str, work_items: int) -> Iterator[None]:
         return record.funcName not in {
             "_log_warmup_handoff",
             "run_one_benchmark",
+            "statistic_benchmark_metric",
             "summary_result",
         }
 
-    logger.addFilter(include_record)
-    try:
-        logger.info("%s: %d work items", label, work_items)
-        yield
-    finally:
-        logger.removeFilter(include_record)
+    with ExitStack() as output:
+        console_handlers = []
+        error_handler = None
+        if quiet:
+            # EvalScope's progress bars write directly to stderr and retain
+            # console handlers created before this phase. Route both to a log,
+            # leaving the native file handler and request measurements unchanged.
+            progress = output.enter_context(
+                open(os.path.join(output_dir, "progress.log"), "a", encoding="utf-8")
+            )
+            for handler in logger.handlers:
+                if isinstance(handler, logging.StreamHandler) and not isinstance(
+                    handler, logging.FileHandler
+                ):
+                    console_handlers.append((handler, handler.stream))
+                    handler.setStream(progress)
+            error_handler = logging.StreamHandler(sys.stderr)
+            error_handler.setLevel(logging.ERROR)
+            logger.addHandler(error_handler)
+            output.enter_context(redirect_stdout(progress))
+            output.enter_context(redirect_stderr(progress))
+        logger.addFilter(include_record)
+        try:
+            logger.info("%s: %d work items", label, work_items)
+            yield
+        finally:
+            logger.removeFilter(include_record)
+            if error_handler is not None:
+                logger.removeHandler(error_handler)
+                error_handler.close()
+            for handler, stream in console_handlers:
+                handler.setStream(stream)
 
 
 def run_evalscope_standard_load(
@@ -564,44 +609,38 @@ def run_evalscope_standard_load(
 ) -> tuple[dict[str, Any], list[RequestMeasurement], float | None]:
     """Run through EvalScope and return metrics, measurements, and their monotonic origin."""
 
-    try:
-        from evalscope.perf.main import run_one_benchmark
-        from evalscope.perf.utils.handler import PerfBenchmarkInterrupted
-        from evalscope.utils.logger import configure_logging
-        from evalscope.utils.model_utils import seed_everything
-    except ModuleNotFoundError as error:
-        raise ValueError(
-            "standard HTTP loads require EvalScope; install benchmark "
-            "dependencies with: pip install 'foretoken[bench]'"
-        ) from error
-
     os.makedirs(output_dir, exist_ok=True)
     (Path(output_dir) / "request_diagnostics.jsonl").unlink(missing_ok=True)
     configure_logging(
         False,
         os.path.join(output_dir, "benchmark.log"),
     )
-    arguments = _evalscope_arguments(benchmark, service, output_dir)
-    arguments.profile = profile
-    seed_everything(benchmark.resolved_workload.random_seed)
-    materialized_dataset = (
-        arguments.dataset_path
-        if arguments.dataset == _EVALSCOPE_DATASET
-        else None
-    )
-    try:
-        # EvalScope owns its event loop and signal cancellation on the main thread.
-        with _evalscope_phase(phase_label, benchmark.load.request_count):
+    with _evalscope_phase(
+        phase_label,
+        benchmark.load.request_count,
+        quiet=benchmark.outputs.includes("quiet"),
+        output_dir=output_dir,
+    ):
+        arguments = _evalscope_arguments(benchmark, service, output_dir)
+        arguments.profile = profile
+        seed_everything(benchmark.resolved_workload.random_seed)
+        materialized_dataset = (
+            arguments.dataset_path
+            if arguments.dataset == _EVALSCOPE_DATASET
+            else None
+        )
+        try:
+            # EvalScope owns its event loop and signal cancellation on the main thread.
             result = run_one_benchmark(arguments, output_dir)
-    except PerfBenchmarkInterrupted as error:
-        raise SystemExit(error.exit_code) from None
-    except asyncio.CancelledError:
-        if profile is not None and profile.error is not None:
-            raise profile.error from None
-        raise
-    finally:
-        if materialized_dataset:
-            Path(materialized_dataset).unlink(missing_ok=True)
+        except PerfBenchmarkInterrupted as error:
+            raise SystemExit(error.exit_code) from None
+        except asyncio.CancelledError:
+            if profile is not None and profile.error is not None:
+                raise profile.error from None
+            raise
+        finally:
+            if materialized_dataset:
+                Path(materialized_dataset).unlink(missing_ok=True)
     point = next(iter(result.values()))
     summary = point["metrics"]
     trace_summary = point.get("trace_summary")
@@ -614,10 +653,11 @@ def run_evalscope_standard_load(
         request_count=int(benchmark.load.request_count),
         reported_concurrency=int(benchmark.load.max_concurrency),
         gpu_count=service.gpu_count,
+        slo_criteria=(benchmark.slo.params[0] if benchmark.slo.params else None),
     )
     if arguments.multi_turn:
         metrics["conversation"] = _conversation_metrics(
-            benchmark, summary, trace_summary
+            benchmark, summary, trace_summary, int(arguments.number)
         )
         if benchmark.generation.stream and any(
             item.succeeded and item.ttft is None for item in measurements

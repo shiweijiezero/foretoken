@@ -12,7 +12,7 @@ use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use foretoken_router::{RouteTargetSet, ScalingTarget, ScalingTargetKind};
+use foretoken_router::{RouteTargetSet, ScalingTarget};
 use serde::Serialize;
 
 pub use vllm_metrics::*;
@@ -39,16 +39,8 @@ impl From<&ScalingTarget> for QueuedTarget {
     fn from(target: &ScalingTarget) -> Self {
         Self {
             service_uid: target.service_uid.clone(),
-            target_kind: match target.kind {
-                ScalingTargetKind::Pool => "Pool",
-                ScalingTargetKind::EPDPipelineScope => "EPDPipelineScope",
-            }
-            .to_owned(),
-            target_id: if target.kind == ScalingTargetKind::Pool {
-                target.uid.clone()
-            } else {
-                target.service_uid.clone()
-            },
+            target_kind: "Pool".to_owned(),
+            target_id: target.uid.clone(),
         }
     }
 }

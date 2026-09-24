@@ -29,8 +29,8 @@ func validateGroupRuntime(group *inferencev1alpha1.ModelGroup) error {
 	if rdma := group.Spec.RDMA; rdma != nil && (rdma.ResourceName == "" || rdma.ResourceCount < 1) {
 		return fmt.Errorf("RDMA allocation requires a resource name and positive count")
 	}
-	if group.Spec.PDRuntime != nil && group.Spec.RDMA == nil {
-		return fmt.Errorf("P/D Groups require an RDMA allocation")
+	if group.Spec.PDRuntime != nil && group.Spec.PDRuntime.Protocol == "rdma" && group.Spec.RDMA == nil {
+		return fmt.Errorf("P/D Groups with RDMA transport require an RDMA allocation")
 	}
 	if group.Spec.Role == inferencev1alpha1.ModelRolePrefill && group.Spec.PDRuntime != nil {
 		if group.Spec.PDRuntime.BootstrapPort == group.Spec.Runtime.Port {
@@ -75,8 +75,8 @@ func validateMooncakeStoreRuntime(group *inferencev1alpha1.ModelGroup, store *in
 	return nil
 }
 
-// Each serving role admits a different combination of P/D and EC runtime state. Split
-// roles additionally share the restricted parallelism contract required by their transports.
+// Each serving role admits a different combination of P/D and EC runtime state.
+// The engine adapter validates topology when compiling the launch plan.
 func validateGroupRole(group *inferencev1alpha1.ModelGroup) error {
 	switch group.Spec.Role {
 	case inferencev1alpha1.ModelRoleAggregate:
@@ -106,7 +106,7 @@ func validateEncoderRole(group *inferencev1alpha1.ModelGroup) error {
 	if !completeECRuntime(group.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleProducer) {
 		return fmt.Errorf("encoder Groups require a complete EC producer runtime config")
 	}
-	return validateEPDParallelism(group.Spec.Parallelism)
+	return nil
 }
 
 func validatePrefillRole(group *inferencev1alpha1.ModelGroup) error {
@@ -116,7 +116,7 @@ func validatePrefillRole(group *inferencev1alpha1.ModelGroup) error {
 	if group.Spec.ECRuntime != nil && !completeECRuntime(group.Spec.ECRuntime, inferencev1alpha1.ECTransferRoleConsumer) {
 		return fmt.Errorf("prefill Groups require a complete EC consumer runtime config")
 	}
-	return validateEPDParallelism(group.Spec.Parallelism)
+	return nil
 }
 
 func validateDecodeRole(group *inferencev1alpha1.ModelGroup) error {
@@ -126,7 +126,7 @@ func validateDecodeRole(group *inferencev1alpha1.ModelGroup) error {
 	if group.Spec.ECRuntime != nil {
 		return fmt.Errorf("decode Groups must not have an EC runtime config")
 	}
-	return validateEPDParallelism(group.Spec.Parallelism)
+	return nil
 }
 
 func validatePDRuntime(group *inferencev1alpha1.ModelGroup) error {
@@ -150,11 +150,4 @@ func completeECRuntime(runtime *inferencev1alpha1.ModelGroupECRuntimeConfig, rol
 		runtime.Role == role &&
 		runtime.SharedStorageClaim != "" &&
 		runtime.SharedStoragePath != ""
-}
-
-func validateEPDParallelism(parallelism inferencev1alpha1.CompiledParallelism) error {
-	if parallelism.TP != 1 || parallelism.PP != 1 || parallelism.DP != 1 || parallelism.PCP != 1 || parallelism.DCP != 1 || parallelism.EP != nil {
-		return fmt.Errorf("E/P/D Groups currently require TP=PP=DP=PCP=DCP=1 with EP disabled")
-	}
-	return nil
 }

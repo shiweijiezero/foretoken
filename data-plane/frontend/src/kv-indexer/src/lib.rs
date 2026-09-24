@@ -13,13 +13,24 @@ pub use sync::*;
 
 /// Deterministic prefix facts for one exact route-to-source binding.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct KvPrefixMatches(Vec<KvPrefixMatch>);
+pub struct KvPrefixMatches(Vec<KvPrefixMatch>, Option<u32>);
 
 impl KvPrefixMatches {
     /// Sorts facts into a stable order before exposing them to a scorer.
     pub fn new(mut matches: Vec<KvPrefixMatch>) -> Self {
         matches.sort();
-        Self(matches)
+        Self(matches, None)
+    }
+
+    /// Attaches the source partition's block size, including on a confirmed cache miss.
+    pub(crate) fn with_block_size(mut self, block_size: Option<u32>) -> Self {
+        self.1 = block_size;
+        self
+    }
+
+    /// Returns observed block granularity; None means the source has not advertised a partition.
+    pub fn block_size(&self) -> Option<u32> {
+        self.1
     }
 }
 

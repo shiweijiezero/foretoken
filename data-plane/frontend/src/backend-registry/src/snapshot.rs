@@ -23,6 +23,16 @@ pub struct ServingSnapshot {
     #[serde(default)]
     pub epd_pipeline_scopes: Vec<SnapshotEpdPipelineScope>,
 }
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotParallelism {
+    pub tp: u32,
+    pub pp: u32,
+    pub dp: u32,
+    pub pcp: u32,
+    pub dcp: u32,
+    pub ep: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotModel {
     pub service_uid: String,
@@ -62,6 +72,8 @@ pub struct SnapshotEpdComponent {
     #[serde(default)]
     pub kv_lookup_scope: Option<String>,
     pub data_parallel_size: u32,
+    #[serde(default)]
+    pub parallelism: SnapshotParallelism,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotEpdPipelineScope {
@@ -101,6 +113,8 @@ pub struct SnapshotPdComponent {
     #[serde(default)]
     pub kv_lookup_scope: Option<String>,
     pub data_parallel_size: u32,
+    #[serde(default)]
+    pub parallelism: SnapshotParallelism,
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotPdPipelineScope {
@@ -179,7 +193,7 @@ impl ServingSnapshot {
     ///
     /// Registry projection uses this validation before materializing routes; the returned map is derived for the caller.
     pub fn model_identities(&self) -> Result<BTreeMap<String, ModelIdentity>, SnapshotError> {
-        let mut identities = BTreeMap::new();
+        let mut identities = BTreeMap::<String, ModelIdentity>::new();
         for (model, source, revision, tokenizer, tokenizer_revision, capabilities) in self
             .models
             .iter()
@@ -238,11 +252,20 @@ impl ServingSnapshot {
                 tokenizer_revision: tokenizer_revision.clone(),
                 capabilities: capabilities.clone(),
             };
-            match identities.get(model) {
-                Some(existing) if existing != &value => {
+            match identities.get_mut(model) {
+                Some(existing)
+                    if existing.source != value.source
+                        || existing.revision != value.revision
+                        || existing.tokenizer != value.tokenizer
+                        || existing.tokenizer_revision != value.tokenizer_revision =>
+                {
                     return Err(SnapshotError::ConflictingIdentity(model.clone()));
                 }
-                Some(_) => {}
+                Some(existing) => {
+                    // Stages share model identity, but Encoder alone advertises image input.
+                    // Routing still checks the selected stage's own capabilities.
+                    existing.capabilities.extend(value.capabilities);
+                }
                 None => {
                     identities.insert(model.clone(), value);
                 }
@@ -269,7 +292,7 @@ pub enum SnapshotError {
     DuplicateRouteTarget(RouteTargetId),
     #[error("routing snapshot has incomplete P/D component {0:?}")]
     IncompletePdComponent(RouteTargetId),
-    #[error("routing snapshot P/D component {0:?} must use MooncakeConnector over rdma")]
+    #[error("routing snapshot P/D component {0:?} must use MooncakeConnector over rdma or tcp")]
     UnsupportedPdTransport(RouteTargetId),
     #[error(
         "routing configuration P/D linked processing unit {0:?} is incomplete or crosses a ModelService boundary"

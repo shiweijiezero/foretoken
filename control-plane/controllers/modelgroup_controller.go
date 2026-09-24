@@ -150,6 +150,12 @@ func (reconciler *ModelGroupReconciler) validateModelPoolOwnership(ctx context.C
 	if group.Spec.ModelPoolRef.UID != string(pool.UID) || !metav1.IsControlledBy(group, pool) {
 		return fmt.Errorf("ModelGroup %q is not owned by its referenced ModelPool", group.Name)
 	}
+	if pd := group.Spec.PDRuntime; pd != nil && (pd.ServiceUID == "" || pd.ServiceUID != pool.Spec.ModelServiceRef.UID) {
+		return fmt.Errorf("ModelGroup P/D network scope does not match its owning ModelService")
+	}
+	if ec := group.Spec.ECRuntime; ec != nil && (ec.ServiceUID == "" || ec.ServiceUID != pool.Spec.ModelServiceRef.UID) {
+		return fmt.Errorf("ModelGroup encoder cache scope does not match its owning ModelService")
+	}
 	return nil
 }
 
@@ -230,9 +236,14 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
 	if group.Spec.PDRuntime != nil {
-		// P/D requires verbs; missing RDMA devices must not silently select TCP.
+		// Transport selection is explicit: RDMA must find an allocated HCA, while TCP
+		// uses Mooncake's CUDA-aware host staging instead of silently falling back.
+		forceTransport := corev1.EnvVar{Name: "MC_FORCE_HCA", Value: "1"}
+		if group.Spec.PDRuntime.Protocol == "tcp" {
+			forceTransport = corev1.EnvVar{Name: "MC_FORCE_TCP", Value: "1"}
+		}
 		env = append(env,
-			corev1.EnvVar{Name: "MC_FORCE_HCA", Value: "1"},
+			forceTransport,
 			corev1.EnvVar{Name: "VLLM_MOONCAKE_BOOTSTRAP_PORT", Value: strconv.Itoa(int(group.Spec.PDRuntime.BootstrapPort))},
 			corev1.EnvVar{Name: "VLLM_MOONCAKE_ABORT_REQUEST_TIMEOUT", Value: strconv.Itoa(int(group.Spec.PDRuntime.AbortRequestTimeoutSeconds))},
 		)

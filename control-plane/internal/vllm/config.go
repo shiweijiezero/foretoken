@@ -9,6 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/url"
+	"path"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -131,10 +134,6 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 	if err := validateParallelism(effective.Parallelism); err != nil {
 		return EffectiveConfig{}, err
 	}
-	p := effective.Parallelism
-	if template.Role != inferencev1alpha1.ModelRoleAggregate && (p.TP != 1 || p.PP != 1 || p.DP != 1 || p.PCP != 1 || p.DCP != 1 || p.EP != nil) {
-		return EffectiveConfig{}, fmt.Errorf("split serving currently requires single-rank engine parallelism")
-	}
 	capacity := int64(template.NodeCount) * int64(template.Resources.Requests.GPU.Count)
 	ranks := int64(effective.Parallelism.PP) * int64(effective.Parallelism.TP) * int64(effective.Parallelism.PCP) * int64(effective.Parallelism.DP)
 	if capacity != ranks {
@@ -147,9 +146,6 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, error) {
 	if group.NodeCount < 1 {
 		return LaunchPlanV1{}, fmt.Errorf("model-server launch plan requires a positive node count")
-	}
-	if group.NodeCount > 1 && group.Parallelism.PCP != 1 {
-		return LaunchPlanV1{}, fmt.Errorf("multi-node vLLM multiprocessing requires prefill context parallelism 1")
 	}
 	startup, err := parsePositiveDuration(group.Timeouts.Startup, "startup")
 	if err != nil {
@@ -251,7 +247,7 @@ func buildECPlan(group inferencev1alpha1.ModelGroupSpec) (*LaunchECPlan, error) 
 	return &LaunchECPlan{
 		ProfileName: ec.ProfileName, ProfileRevision: ec.ProfileRevision,
 		Connector: ec.Connector, Role: string(ec.Role),
-		SharedStoragePath: ec.SharedStoragePath,
+		SharedStoragePath: path.Join(ec.SharedStoragePath, ec.ServiceUID, fmt.Sprint(ec.Generation), "profile="+url.PathEscape(ec.ProfileRevision)),
 	}, nil
 }
 
@@ -313,19 +309,49 @@ func extractParallelism(args inferencev1alpha1.EngineArguments) (inferencev1alph
 	return p, nil
 }
 
+// CompatibleKVTransfer reports whether controller-selected Groups can exchange Mooncake KV.
+// Worker and scheduler sizing may differ; model interpretation and cache representation may not.
+func CompatibleKVTransfer(left, right inferencev1alpha1.ModelGroupSpec) bool {
+	if left.Runtime.Backend != right.Runtime.Backend || left.Runtime.Image != right.Runtime.Image {
+		return false
+	}
+	leftTP, rightTP := left.Parallelism.TP, right.Parallelism.TP
+	if leftTP < 1 || rightTP < 1 || (leftTP%rightTP != 0 && rightTP%leftTP != 0) {
+		return false
+	}
+	names := make(map[string]struct{}, len(left.Runtime.EngineArgs)+len(right.Runtime.EngineArgs))
+	for name := range left.Runtime.EngineArgs {
+		names[name] = struct{}{}
+	}
+	for name := range right.Runtime.EngineArgs {
+		names[name] = struct{}{}
+	}
+	for name := range names {
+		switch name {
+		case "gpu-memory-utilization", "kv-cache-memory-bytes", "max-num-seqs", "max-num-batched-tokens", "max-model-len", "enforce-eager", "compilation-config", "cuda-graph-sizes", "max-cudagraph-capture-size", "scheduling-policy", "enable-chunked-prefill", "mm-processor-cache-gb", "mm-encoder-only":
+			continue
+		}
+		var leftValue, rightValue any
+		if value, ok := left.Runtime.EngineArgs[name]; ok {
+			if json.Unmarshal(value.Raw, &leftValue) != nil {
+				return false
+			}
+		}
+		if value, ok := right.Runtime.EngineArgs[name]; ok {
+			if json.Unmarshal(value.Raw, &rightValue) != nil {
+				return false
+			}
+		}
+		if !reflect.DeepEqual(leftValue, rightValue) {
+			return false
+		}
+	}
+	return true
+}
+
 func validateParallelism(parallelism inferencev1alpha1.CompiledParallelism) error {
 	if parallelism.TP < 1 || parallelism.PP < 1 || parallelism.DP < 1 || parallelism.PCP < 1 || parallelism.DCP < 1 {
 		return fmt.Errorf("vLLM topology values must be positive")
-	}
-	if parallelism.PCP > 1 && parallelism.DP > 1 {
-		return fmt.Errorf("vLLM prefill context parallelism greater than 1 requires data parallelism 1")
-	}
-	if parallelism.PCP == 1 {
-		if parallelism.TP%parallelism.DCP != 0 {
-			return fmt.Errorf("vLLM decode context parallelism must divide tensor parallelism")
-		}
-	} else if parallelism.DCP != 1 && parallelism.DCP != parallelism.PCP && parallelism.DCP != parallelism.TP*parallelism.PCP {
-		return fmt.Errorf("vLLM decode context parallelism is incompatible with tensor and prefill context parallelism")
 	}
 	if parallelism.EP != nil && parallelism.EP.EPLB && parallelism.EP.Size == 1 {
 		return fmt.Errorf("vLLM EPLB requires more than one expert-parallel rank")
@@ -342,7 +368,7 @@ var controllerOwnedArgs = []string{
 	"--distributed-executor-backend", "--download-dir", "--ec-manager-config", "--ec-transfer-config",
 	"--enable-elastic-ep", "--enable-prefix-caching",
 	"--grpc", "--headless", "--hf-token", "--host", "--kv-events-config", "--kv-transfer-config",
-	"--master-addr", "--master-port", "--model", "--nnodes", "--node-rank",
+	"--master-addr", "--master-port", "--mm-device-do-normalize", "--model", "--nnodes", "--node-rank",
 	"--port", "--profiler-config", "--revision",
 	"--runner", "--served-model-name", "--tokenizer", "--tokenizer-revision", "--worker-cls",
 }

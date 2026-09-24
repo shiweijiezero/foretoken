@@ -60,6 +60,11 @@ frontend:
     namespace: ""
     sectionName: ""
 
+# Native viewers start only when a report is opened through foretoken profile view.
+profiling:
+  nsightViewerImage: nvcr.io/nvidia/devtools/nsight-streamer-nsys:2026.3.1
+  viewerProxyImage: docker.io/nginxinc/nginx-unprivileged:1.28-alpine
+
 # Integrates Foretoken metric endpoints with an existing Prometheus Operator.
 observability:
   # auto discovers the required APIs during installation; enabled supports offline rendering and GitOps.
@@ -100,15 +105,16 @@ runtime:
       nodeSelector:
         key: ""
         value: ""
-    # Set every field to enable the local vLLM build source's ECExampleConnector over an existing RWX PVC.
+    # A sharedStorageClaim enables encoder transfer; the RWX PVC must exist in each model namespace.
     ec:
-      profileName: ""
-      profileRevision: ""
+      profileName: "" # Defaults to shared-storage when enabled.
+      profileRevision: "" # Inherits runtime.vllm.profileRevision.
       connector: "ECExampleConnector"
       sharedStorageClaim: ""
       sharedStoragePath: "/var/lib/foretoken/ec"
-    # Connector settings; device allocation is shared with distributed execution under rdma.
+    # Connector settings; RDMA device allocation is shared with distributed execution.
     pd:
+      protocol: rdma
       # Empty lets Mooncake select from the Pod's allocated devices by topology.
       rdmaDeviceName: ""
       bootstrapPort: 8998

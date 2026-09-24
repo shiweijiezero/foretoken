@@ -117,11 +117,11 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	if effective.Revision == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM --revision is required before ModelGroup creation")
 	}
-	pdRuntime, err := resolvePDRuntime(template, effective.Parallelism, profile.MooncakePD)
+	pdRuntime, err := resolvePDRuntime(template, profile.MooncakePD)
 	if err != nil {
 		return ModelGroupTemplate{}, err
 	}
-	ecRuntime, err := resolveECRuntime(template, effective.Parallelism, profile.EC)
+	ecRuntime, err := resolveECRuntime(template, profile.EC)
 	if err != nil {
 		return ModelGroupTemplate{}, err
 	}
@@ -145,13 +145,12 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires a persistent RuntimeCache")
 		}
 	}
-
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if template.NodeCount > 1 || effective.Parallelism.EP != nil || pdRuntime != nil {
+	if template.NodeCount > 1 || effective.Parallelism.EP != nil || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
 		rdma = profile.RDMA.DeepCopy()
 	}
-	if pdRuntime != nil && rdma == nil {
-		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D requires a platform RDMA allocation")
+	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
+		return ModelGroupTemplate{}, fmt.Errorf("Mooncake P/D with RDMA transport requires a platform RDMA allocation")
 	}
 	if rdma != nil && (rdma.ResourceName == "" || rdma.ResourceCount < 1) {
 		return ModelGroupTemplate{}, fmt.Errorf("platform RDMA allocation is incomplete")
@@ -249,7 +248,7 @@ func resolveKVRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile
 }
 
 // resolveECRuntime resolves the platform EC profile for encoder and prefill roles.
-func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, parallelism inferencev1alpha1.CompiledParallelism, profile *ECProfile) (*inferencev1alpha1.ModelGroupECRuntimeConfig, error) {
+func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile *ECProfile) (*inferencev1alpha1.ModelGroupECRuntimeConfig, error) {
 	if template.Role != inferencev1alpha1.ModelRoleEncoder && template.Role != inferencev1alpha1.ModelRolePrefill {
 		return nil, nil
 	}
@@ -259,9 +258,6 @@ func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, paralle
 	}
 	if template.ECProfile == "" {
 		return nil, fmt.Errorf("encoder ModelPool EC profile is required")
-	}
-	if template.NodeCount != 1 || template.MemberCount != 1 || parallelism.TP != 1 || parallelism.PP != 1 || parallelism.DP != 1 || parallelism.PCP != 1 || parallelism.DCP != 1 || parallelism.EP != nil {
-		return nil, fmt.Errorf("E/P/D requires a single member/node and TP=PP=DP=PCP=DCP=1 without expert parallelism")
 	}
 	if profile == nil || profile.Name == "" || profile.Revision == "" || profile.Connector != "ECExampleConnector" || profile.SharedStorageClaim == "" || profile.SharedStoragePath == "" {
 		return nil, fmt.Errorf("EC runtime profile is incomplete")
@@ -274,6 +270,7 @@ func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, paralle
 		role = inferencev1alpha1.ECTransferRoleProducer
 	}
 	return &inferencev1alpha1.ModelGroupECRuntimeConfig{
+		Generation:  template.EncoderCacheGeneration,
 		ProfileName: profile.Name, ProfileRevision: profile.Revision,
 		Connector: profile.Connector, Role: role,
 		SharedStorageClaim: profile.SharedStorageClaim,
@@ -282,18 +279,19 @@ func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, paralle
 }
 
 // resolvePDRuntime resolves the platform Mooncake P/D profile for split serving roles.
-func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, parallelism inferencev1alpha1.CompiledParallelism, profile *MooncakePDProfile) (*inferencev1alpha1.ModelGroupPDRuntimeConfig, error) {
+func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile *MooncakePDProfile) (*inferencev1alpha1.ModelGroupPDRuntimeConfig, error) {
 	if template.Role == inferencev1alpha1.ModelRoleAggregate || template.Role == inferencev1alpha1.ModelRoleEncoder {
 		return nil, nil
-	}
-	if template.NodeCount != 1 || template.MemberCount != 1 || parallelism.TP != 1 || parallelism.PP != 1 || parallelism.DP != 1 || parallelism.PCP != 1 || parallelism.DCP != 1 || parallelism.EP != nil {
-		return nil, fmt.Errorf("Mooncake P/D requires a single member/node and TP=PP=DP=PCP=DCP=1 without expert parallelism")
 	}
 	if profile == nil || profile.Name == "" || profile.Revision == "" || profile.Protocol == "" || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 {
 		return nil, fmt.Errorf("Mooncake P/D runtime profile is incomplete")
 	}
-	if profile.Protocol != "rdma" {
+	if profile.Protocol != "rdma" && profile.Protocol != "tcp" {
 		return nil, fmt.Errorf("Mooncake P/D protocol %q is not supported", profile.Protocol)
+	}
+	rdmaDeviceName := profile.RDMADeviceName
+	if profile.Protocol == "tcp" {
+		rdmaDeviceName = ""
 	}
 	return &inferencev1alpha1.ModelGroupPDRuntimeConfig{
 		ProfileName:                profile.Name,
@@ -302,12 +300,20 @@ func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, paralle
 		Protocol:                   profile.Protocol,
 		BootstrapPort:              profile.BootstrapPort,
 		AbortRequestTimeoutSeconds: profile.AbortRequestTimeoutSeconds,
-		RDMADeviceName:             profile.RDMADeviceName,
+		RDMADeviceName:             rdmaDeviceName,
 	}, nil
 }
 
 // Spec binds a resolved template to one Pool revision ordinal.
 func (template ModelGroupTemplate) Spec(pool *inferencev1alpha1.ModelPool, ordinal int32) inferencev1alpha1.ModelGroupSpec {
+	pdRuntime := template.PDRuntime.DeepCopy()
+	if pdRuntime != nil {
+		pdRuntime.ServiceUID = pool.Spec.ModelServiceRef.UID
+	}
+	ecRuntime := template.ECRuntime.DeepCopy()
+	if ecRuntime != nil {
+		ecRuntime.ServiceUID = pool.Spec.ModelServiceRef.UID
+	}
 	return inferencev1alpha1.ModelGroupSpec{
 		ModelPoolRef:   inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
 		Revision:       template.Revision,
@@ -315,9 +321,9 @@ func (template ModelGroupTemplate) Spec(pool *inferencev1alpha1.ModelPool, ordin
 		Role:           template.Role,
 		Artifacts:      template.Artifacts,
 		Runtime:        template.Runtime,
-		PDRuntime:      template.PDRuntime,
+		PDRuntime:      pdRuntime,
 		RDMA:           template.RDMA,
-		ECRuntime:      template.ECRuntime,
+		ECRuntime:      ecRuntime,
 		KVRuntime:      template.KVRuntime,
 		Resources:      template.Resources,
 		Timeouts:       template.Timeouts,

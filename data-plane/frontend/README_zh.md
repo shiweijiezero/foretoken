@@ -13,7 +13,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 前端支持普通 JSON 和 SSE 流式响应、Completion、Chat Completion、分词、工具调用、reasoning、structured output 与受能力约束的图片输入。图片输入当前只接受大小受限的 base64 `data:` 内容，不接受远程媒体 URL。
 
-通过 `ModelService` 配置聚合部署、预填充/解码分离（P/D）或编码/预填充/解码分离（E/P/D）。分离式推理需要平台支持所选运行时和传输方式。
+通过 `ModelService` 配置聚合部署、预填充/解码分离（P/D）或编码/预填充/解码分离（E/P/D）。分离式推理需要平台支持所选运行时和传输方式。[E/P/D 示例](../../examples/encoder-prefill-decode/README_zh.md)展示独立图片编码和张量并行解码。
 
 ## 接口访问范围
 

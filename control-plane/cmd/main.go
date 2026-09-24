@@ -128,7 +128,7 @@ func main() {
 	flag.StringVar(&vllmECSharedStoragePath, "vllm-ec-shared-storage-path", "/var/lib/foretoken/ec", "In-container shared EC storage path.")
 	flag.StringVar(&vllmPDProfileName, "vllm-pd-profile-name", "", "Opaque platform-owned Mooncake P/D profile name; empty disables P/D.")
 	flag.StringVar(&vllmPDProfileRevision, "vllm-pd-profile-revision", "", "Opaque platform-owned Mooncake P/D profile revision.")
-	flag.StringVar(&vllmPDProtocol, "vllm-pd-protocol", "", "Mooncake P/D protocol; only rdma is supported.")
+	flag.StringVar(&vllmPDProtocol, "vllm-pd-protocol", "", "Mooncake P/D transport: rdma or tcp.")
 	flag.IntVar(&vllmPDBootstrapPort, "vllm-pd-bootstrap-port", 0, "Mooncake bootstrap port.")
 	flag.IntVar(&vllmPDAbortRequestTimeoutSeconds, "vllm-pd-abort-request-timeout-seconds", 0, "Mooncake abort request timeout in seconds.")
 	flag.StringVar(&vllmPDRDMADeviceName, "vllm-pd-rdma-device-name", "", "Optional comma-separated HCA filter; empty lets Mooncake select allocated devices by topology.")

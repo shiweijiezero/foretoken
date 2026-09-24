@@ -1,0 +1,23 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: FrontendService
+metadata:
+  name: epd
+spec:
+  replicas: 1
+  resources:
+    requests:
+      cpu: "2"
+      memory: 4Gi
+  timeouts:
+    request: 5m
+    streamIdle: 2m
+  routerPipeline:
+    filter:
+      algorithm: allow_all
+    scorer:
+      algorithm: least_loaded
+    picker:
+      algorithm: weighted_random

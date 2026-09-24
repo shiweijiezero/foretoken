@@ -1,1 +1,1 @@
-{"_benchmark_name": "output256", "parallel": [1, 2, 4], "number": 384, "min_output_length": 256, "max_output_length": 256}
+{"_benchmark_name": "output256", "max_concurrency": [1, 2, 4], "num_prompts": 384, "min_output_length": 256, "max_output_length": 256}

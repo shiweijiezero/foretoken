@@ -6,6 +6,7 @@
 package controllers
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strconv"
@@ -59,11 +60,14 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	readOnlyRootFilesystem := true
 	terminationGracePeriodSeconds := requestTimeoutSeconds + 5
 	servingConfigMap := frontendServingConfigMapName(frontend)
-	routerFilter := frontend.Spec.RouterPipeline.Filter
-	routerScorer := frontend.Spec.RouterPipeline.Scorer
-	routerPicker := frontend.Spec.RouterPipeline.Picker
-	if routerFilter == "" || routerScorer == "" || routerPicker == "" {
+	if frontend.Spec.RouterPipeline.Filter.Algorithm == "" ||
+		frontend.Spec.RouterPipeline.Scorer.Algorithm == "" ||
+		frontend.Spec.RouterPipeline.Picker.Algorithm == "" {
 		return nil, nil, nil, fmt.Errorf("frontend routerPipeline was not defaulted")
+	}
+	routerPipeline, err := json.Marshal(frontend.Spec.RouterPipeline)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("encode router pipeline: %w", err)
 	}
 	cacheMountPath := "/var/cache/foretoken"
 	if profile.RuntimeCache != nil {
@@ -78,9 +82,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 		{Name: "FORETOKEN_REQUEST_TIMEOUT_SECONDS", Value: strconv.FormatInt(requestTimeoutSeconds, 10)},
 		{Name: "FORETOKEN_STREAM_IDLE_SECONDS", Value: strconv.FormatInt(streamIdleSeconds, 10)},
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
-		{Name: "FORETOKEN_ROUTER_FILTER", Value: string(routerFilter)},
-		{Name: "FORETOKEN_ROUTER_SCORER", Value: string(routerScorer)},
-		{Name: "FORETOKEN_ROUTER_PICKER", Value: string(routerPicker)},
+		{Name: "FORETOKEN_ROUTER_PIPELINE", Value: string(routerPipeline)},
 	}
 	frontendEnv = append(frontendEnv, runtimeconfig.HuggingFaceEnv(profile.HuggingFaceAccess)...)
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}

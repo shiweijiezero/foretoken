@@ -31,54 +31,6 @@ func modelPoolReplicaState(service *inferencev1alpha1.ModelService, pool *infere
 	return replicaState
 }
 
-// epdPipelineReplicaState reports the number of complete E/P/D executions available from
-// the three compatible role pools. Routing is free across ordinals, so usable capacity is
-// the least Ready role count rather than the number of ordinal-aligned triplets.
-func epdPipelineReplicaState(service *inferencev1alpha1.ModelService, pools map[string]*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, requested int32) core.ReplicaState {
-	readyOrdinals := map[inferencev1alpha1.ModelRole]map[int32]struct{}{
-		inferencev1alpha1.ModelRoleEncoder: {},
-		inferencev1alpha1.ModelRolePrefill: {},
-		inferencev1alpha1.ModelRoleDecode:  {},
-	}
-	transitioning := false
-	for index := range groups {
-		group := &groups[index]
-		pool := poolForEPDGroup(pools, group)
-		if pool == nil || group.Spec.Revision != serviceServingRevision(service, pool) || group.Spec.Ordinal >= requested {
-			continue
-		}
-		if group.DeletionTimestamp.IsZero() && group.Status.Phase == inferencev1alpha1.ModelGroupPhaseReady && routingGroupReady(group) {
-			readyOrdinals[group.Spec.Role][group.Spec.Ordinal] = struct{}{}
-		} else {
-			transitioning = true
-		}
-	}
-
-	ready := requested
-	for _, role := range []inferencev1alpha1.ModelRole{inferencev1alpha1.ModelRoleEncoder, inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode} {
-		ready = min(ready, int32(len(readyOrdinals[role])))
-	}
-	return core.ReplicaState{
-		ReadyReplicas:    ready,
-		RoutableReplicas: ready,
-		Transitioning:    transitioning || ready < requested,
-	}
-}
-
-func poolForEPDGroup(pools map[string]*inferencev1alpha1.ModelPool, group *inferencev1alpha1.ModelGroup) *inferencev1alpha1.ModelPool {
-	if _, expected := map[inferencev1alpha1.ModelRole]struct{}{
-		inferencev1alpha1.ModelRoleEncoder: {}, inferencev1alpha1.ModelRolePrefill: {}, inferencev1alpha1.ModelRoleDecode: {},
-	}[group.Spec.Role]; !expected {
-		return nil
-	}
-	for _, pool := range pools {
-		if pool != nil && pool.Spec.Template.Role == group.Spec.Role && modelGroupOwnedByPool(group, pool) {
-			return pool
-		}
-	}
-	return nil
-}
-
 func modelGroupOwnedByPool(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) bool {
 	return group != nil && pool != nil &&
 		group.Spec.ModelPoolRef.Name == pool.Name && group.Spec.ModelPoolRef.UID == string(pool.UID) &&

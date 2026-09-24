@@ -42,11 +42,13 @@ Values are YAML booleans, numbers, strings, lists or objects. Omitted options re
 
 `nodes` selects how many Kubernetes nodes each model replica uses; `resources.requests.gpu.count` is the GPU count per member Pod. Their product must equal TP × PP × DP × PCP for vLLM. DCP does not add GPUs. Expert parallelism uses native `enable-expert-parallel`, `all2all-backend` and `enable-eplb` options.
 
-Aggregated replicas can span nodes. Foretoken places one member on each node and manages startup, readiness and restart as a complete group. `foretoken install` prepares the LeaderWorkerSet controller and RDMA allocation; communication libraries select from allocated devices. A persistent cache used across nodes must be accessible from every member. Multi-node execution currently requires PCP=1; split serving remains single-node and single-rank.
+Model replicas can span nodes. Foretoken places one member on each node and manages startup, readiness and restart as a complete group. `foretoken install` prepares the LeaderWorkerSet controller and RDMA allocation; communication libraries select from allocated devices. A persistent cache used across nodes must be accessible from every member.
+
+P/D and E/P/D Pools can select their own parallelism settings within the model and engine's supported combinations. PCP and DCP support also depends on the attention backend. The [EPD runtime](../examples/encoder-prefill-decode/README.md) includes CP-aware Mooncake transfer: Prefill and Decode must use matching PCP/DCP cache layouts, and their TP sizes must divide one another.
 
 `modelPools[].engineArgs`, when supplied, replaces the service-level native options for that Pool. Service replica counts remain separate from engine data parallelism.
 
-With EP enabled, attention can use TP × DP while routed experts span the corresponding EP group. Sharing experts does not share attention KV caches: routing selects a model group and a DP rank, using rank-local prefix-cache observations. Missing or interrupted KV event streams are treated as unknown locality, not cache hits; other ranks retain their observations. Load scoring uses each DP rank's running requests, waiting requests and KV utilization from the same telemetry snapshot; group totals remain available for autoscaling. With Mooncake Store enabled, the selected rank's native connector checks shared prefixes across all required cache shards.
+With EP enabled, attention can use TP × DP while routed experts span the corresponding EP group. Sharing experts does not share attention KV caches between DP ranks.
 
 ## Speculative decoding
 

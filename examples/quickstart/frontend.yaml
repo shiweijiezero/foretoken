@@ -20,6 +20,9 @@ spec:
     request: 10m # Maximum duration of a client request.
     streamIdle: 5m # Maximum time a stream may produce no response chunks.
   routerPipeline:
-    filter: allow_all
-    scorer: least_loaded
-    picker: weighted_random
+    filter:
+      algorithm: allow_all
+    scorer:
+      algorithm: least_loaded
+    picker:
+      algorithm: weighted_random

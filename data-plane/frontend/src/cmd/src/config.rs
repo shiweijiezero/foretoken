@@ -7,16 +7,14 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use foretoken_router::{FilterAlgorithm, PickerAlgorithm, RouterPipelineConfig, ScorerAlgorithm};
+use foretoken_router::RouterPipelineConfig;
 
 const SERVING_SNAPSHOT_ENV: &str = "FORETOKEN_SERVING_SNAPSHOT";
 const LISTEN_ADDRESS_ENV: &str = "FORETOKEN_LISTEN_ADDRESS";
 const REQUEST_TIMEOUT_SECONDS_ENV: &str = "FORETOKEN_REQUEST_TIMEOUT_SECONDS";
 const STREAM_IDLE_SECONDS_ENV: &str = "FORETOKEN_STREAM_IDLE_SECONDS";
 const KV_INDEX_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
-const ROUTER_FILTER_ENV: &str = "FORETOKEN_ROUTER_FILTER";
-const ROUTER_SCORER_ENV: &str = "FORETOKEN_ROUTER_SCORER";
-const ROUTER_PICKER_ENV: &str = "FORETOKEN_ROUTER_PICKER";
+const ROUTER_PIPELINE_ENV: &str = "FORETOKEN_ROUTER_PIPELINE";
 pub(crate) struct RuntimeConfig {
     pub(crate) serving_snapshot: PathBuf,
     pub(crate) listen_address: String,
@@ -48,29 +46,16 @@ impl RuntimeConfig {
 pub(crate) fn router_pipeline_from_env(
     get_env: impl Fn(&str) -> Result<String, env::VarError>,
 ) -> Result<RouterPipelineConfig, String> {
-    let pipeline = RouterPipelineConfig {
-        filter: optional_algorithm(&get_env, ROUTER_FILTER_ENV, FilterAlgorithm::default())?,
-        scorer: optional_algorithm(&get_env, ROUTER_SCORER_ENV, ScorerAlgorithm::default())?,
-        picker: optional_algorithm(&get_env, ROUTER_PICKER_ENV, PickerAlgorithm::default())?,
+    let pipeline = match get_env(ROUTER_PIPELINE_ENV) {
+        Ok(value) => serde_json::from_str(&value)
+            .map_err(|error| format!("invalid router pipeline: {error}"))?,
+        Err(env::VarError::NotPresent) => RouterPipelineConfig::default(),
+        Err(env::VarError::NotUnicode(_)) => {
+            return Err("router pipeline must be valid UTF-8".into());
+        }
     };
     pipeline.validate().map_err(|error| error.to_string())?;
     Ok(pipeline)
-}
-
-fn optional_algorithm<T>(
-    get_env: &impl Fn(&str) -> Result<String, env::VarError>,
-    name: &str,
-    default: T,
-) -> Result<T, String>
-where
-    T: std::str::FromStr,
-    T::Err: std::fmt::Display,
-{
-    match get_env(name) {
-        Ok(value) => value.parse().map_err(|error: T::Err| error.to_string()),
-        Err(env::VarError::NotPresent) => Ok(default),
-        Err(env::VarError::NotUnicode(_)) => Err(format!("{name} must be valid UTF-8")),
-    }
 }
 
 fn required_env(name: &str) -> Result<String, String> {

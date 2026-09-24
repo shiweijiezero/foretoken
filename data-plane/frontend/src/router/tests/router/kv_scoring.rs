@@ -118,6 +118,7 @@ fn target_stats(running_requests: u64) -> Arc<RouteTargetStats> {
 fn candidate(id: &str, role: ModelServerRole, load: u64) -> RouteCandidate {
     let route = route(id, role);
     RouteCandidate {
+        local_load: Default::default(),
         route_target_id: route.route_target_id,
         target: route.target,
         admission_targets: route.admission_targets,

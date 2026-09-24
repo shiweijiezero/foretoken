@@ -319,7 +319,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Completed execution requests by model instance, role and finish reason. Multi-stage requests can complete once in each role.",
+      "description": "Completed execution requests by backend and finish reason. A backend is one model instance and data-parallel rank; multi-stage requests can complete once in each role.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -366,10 +366,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(model_name,model_group,model_role,finished_reason) (label_replace(label_replace(label_replace(rate(vllm:request_success_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "expr": "sum by(model_name,model_group,model_role,engine,finished_reason) (label_replace(label_replace(label_replace(rate(vllm:request_success_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_group}} / {{model_role}} / {{finished_reason}}",
+          "legendFormat": "{{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}} / {{finished_reason}}",
           "range": true,
           "refId": "A"
         }
@@ -383,7 +383,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Prompt and generated tokens per second by model instance and execution role.",
+      "description": "Prompt and generated tokens per second by backend. A backend is one model instance and data-parallel rank.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -457,10 +457,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(model_name,model_group,model_role) (label_replace(label_replace(label_replace(rate(vllm:prompt_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "expr": "sum by(model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(rate(vllm:prompt_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "Prompt / {{model_name}} / {{model_group}} / {{model_role}}",
+          "legendFormat": "Prompt / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}",
           "range": true,
           "refId": "A"
         },
@@ -469,10 +469,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(model_name,model_group,model_role) (label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "expr": "sum by(model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "Output / {{model_name}} / {{model_group}} / {{model_role}}",
+          "legendFormat": "Output / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}",
           "range": true,
           "refId": "B"
         }
@@ -1071,7 +1071,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Scheduler preemptions per second across selected engines; sustained activity indicates KV-cache pressure.",
+      "description": "Scheduler preemptions per second by backend; sustained activity indicates KV-cache pressure.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1085,23 +1085,7 @@
           },
           "unit": "ops"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Preemptions"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#d03b3b",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -1130,10 +1114,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:num_preemptions_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "expr": "sum by(model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(rate(vllm:num_preemptions_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "Preemptions",
+          "legendFormat": "{{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}",
           "range": true,
           "refId": "A"
         }
@@ -2016,7 +2000,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Share of routing selections within each model and execution role. All instances form the denominator; this counts choices, not completed requests.",
+      "description": "Share of routing selections within each model and execution role. Each backend is one model instance and data-parallel rank; all backends form the denominator. This counts choices, not completed requests.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2036,70 +2020,8 @@
       },
       "gridPos": {
         "h": 10,
-        "w": 12,
+        "w": 24,
         "x": 0,
-        "y": 77
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(namespace,model_name,model_role,model_group) (((sum by(namespace,model_name,model_role,route_target_id,data_parallel_rank) (rate(foretoken_router_target_selections_total{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\",model_role=~\"$model_role\"}[$__rate_interval]))) * on(namespace,route_target_id) group_left(model_group) (0 * (max by(namespace,route_target_id,model_group) (label_replace(label_replace(up{endpoint=\"model-server\",inference_foretoken_io_model_group_uid!=\"\"}, \"route_target_id\", \"$1\", \"inference_foretoken_io_model_group_uid\", \"(.+)\"), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"))) + 1)) / on(namespace,model_name,model_role) group_left() (sum by(namespace,model_name,model_role) ((sum by(namespace,model_name,model_role,route_target_id,data_parallel_rank) (rate(foretoken_router_target_selections_total{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\",model_role=~\"$model_role\"}[$__rate_interval]))) * on(namespace,route_target_id) group_left(model_group) (0 * (max by(namespace,route_target_id,model_group) (label_replace(label_replace(up{endpoint=\"model-server\",inference_foretoken_io_model_group_uid!=\"\"}, \"route_target_id\", \"$1\", \"inference_foretoken_io_model_group_uid\", \"(.+)\"), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"))) + 1)) > 0)) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / {{model_group}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Traffic share by instance",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Share of routing selections within each model and role, split by instance and data-parallel rank.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "max": 1,
-          "min": 0,
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 12,
-        "x": 12,
         "y": 77
       },
       "options": {
@@ -2131,7 +2053,7 @@
           "refId": "A"
         }
       ],
-      "title": "Traffic share by engine rank",
+      "title": "Routing share by backend",
       "transparent": false,
       "type": "timeseries"
     },

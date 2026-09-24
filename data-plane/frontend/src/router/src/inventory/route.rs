@@ -30,8 +30,6 @@ impl RouteTargetId {
 pub enum ScalingTargetKind {
     /// ModelPool-owned capacity.
     Pool,
-    /// Capacity owned by an E/P/D route set.
-    EPDPipelineScope,
 }
 
 /// Stable control-plane target that owns route target capacity.

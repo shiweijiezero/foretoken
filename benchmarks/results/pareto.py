@@ -22,7 +22,7 @@ def _pareto_coordinates(item: dict[str, Any]) -> dict[str, Any] | None:
         return None
     return {
         "param_group": str(item["parameter_group"]),
-        "configured_concurrency": int(item["parallel"]),
+        "configured_concurrency": int(item["max_concurrency"]),
         "generation_tokens_per_second_per_user": float(
             per_concurrency
         ),

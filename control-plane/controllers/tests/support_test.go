@@ -28,9 +28,9 @@ func pointer[T any](value T) *T { return &value }
 
 func routerPipeline() inferencev1alpha1.RouterPipeline {
 	return inferencev1alpha1.RouterPipeline{
-		Filter: inferencev1alpha1.DefaultRouterFilter,
-		Scorer: inferencev1alpha1.DefaultRouterScorer,
-		Picker: inferencev1alpha1.DefaultRouterPicker,
+		Filter: inferencev1alpha1.RouterStage{Algorithm: inferencev1alpha1.DefaultRouterFilter},
+		Scorer: inferencev1alpha1.RouterStage{Algorithm: inferencev1alpha1.DefaultRouterScorer},
+		Picker: inferencev1alpha1.RouterStage{Algorithm: inferencev1alpha1.DefaultRouterPicker},
 	}
 }
 

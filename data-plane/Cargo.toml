@@ -30,6 +30,8 @@ vllm_source = "third_party/vllm"
 vllm_patches = [
     "patches/vllm-chat-request-processor.patch",
     "patches/vllm-engine-core-version-compatibility.patch",
+    "patches/vllm-mooncake-context-parallel.patch",
+    "patches/vllm-multinode-pcp-world-size.patch",
     "patches/vllm-http-latency-histogram-buckets.patch",
     "patches/vllm-latency-histogram-buckets.patch",
     "patches/vllm-managed-engine-command.patch",

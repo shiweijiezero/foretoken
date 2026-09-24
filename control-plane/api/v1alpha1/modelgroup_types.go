@@ -77,10 +77,14 @@ type ModelGroupPDRuntimeConfig struct {
 	// +kubebuilder:validation:MaxLength=256
 	ProfileRevision string `json:"profileRevision"`
 
+	// ServiceUID bounds transfer side channels to Pools owned by one ModelService.
+	// +kubebuilder:validation:MinLength=1
+	ServiceUID string `json:"serviceUID"`
+
 	// +kubebuilder:validation:Enum=MooncakeConnector
 	Connector string `json:"connector"`
 
-	// +kubebuilder:validation:Enum=rdma
+	// +kubebuilder:validation:Enum=rdma;tcp
 	Protocol string `json:"protocol"`
 
 	// +kubebuilder:validation:Minimum=1
@@ -110,6 +114,13 @@ const (
 // The controller resolves every value from a platform profile; users cannot supply
 // connector options, module paths, or peer endpoints.
 type ModelGroupECRuntimeConfig struct {
+	// Generation selects the owning service configuration's encoder cache directory.
+	Generation int64 `json:"generation"`
+
+	// ServiceUID isolates encoder entries from other services sharing the volume.
+	// +kubebuilder:validation:MinLength=1
+	ServiceUID string `json:"serviceUID"`
+
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=256
 	ProfileName string `json:"profileName"`

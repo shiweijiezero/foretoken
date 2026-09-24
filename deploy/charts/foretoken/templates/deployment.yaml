@@ -106,20 +106,22 @@ spec:
             - {{ printf "--gpu-node-selector-key=%s" . | quote }}
             - {{ printf "--gpu-node-selector-value=%s" $.Values.runtime.vllm.gpu.nodeSelector.value | quote }}
             {{- end }}
-            {{- if $.Values.runtime.vllm.ec.profileName }}
-            - {{ printf "--vllm-ec-profile-name=%s" $.Values.runtime.vllm.ec.profileName | quote }}
-            - {{ printf "--vllm-ec-profile-revision=%s" $.Values.runtime.vllm.ec.profileRevision | quote }}
+            {{- if or $.Values.runtime.vllm.ec.profileName $.Values.runtime.vllm.ec.sharedStorageClaim }}
+            - {{ printf "--vllm-ec-profile-name=%s" ($.Values.runtime.vllm.ec.profileName | default "shared-storage") | quote }}
+            - {{ printf "--vllm-ec-profile-revision=%s" ($.Values.runtime.vllm.ec.profileRevision | default $.Values.runtime.vllm.profileRevision) | quote }}
             - {{ printf "--vllm-ec-connector=%s" $.Values.runtime.vllm.ec.connector | quote }}
             - {{ printf "--vllm-ec-shared-storage-claim=%s" $.Values.runtime.vllm.ec.sharedStorageClaim | quote }}
             - {{ printf "--vllm-ec-shared-storage-path=%s" $.Values.runtime.vllm.ec.sharedStoragePath | quote }}
             {{- end }}
-            {{- if (include "foretoken.rdmaResourceName" $) }}
+            {{- if or (eq $.Values.runtime.vllm.pd.protocol "tcp") (include "foretoken.rdmaResourceName" $) }}
             - --vllm-pd-profile-name=mooncake
             - {{ printf "--vllm-pd-profile-revision=%s" $.Values.runtime.vllm.profileRevision | quote }}
-            - --vllm-pd-protocol=rdma
+            - {{ printf "--vllm-pd-protocol=%s" $.Values.runtime.vllm.pd.protocol | quote }}
             - {{ printf "--vllm-pd-bootstrap-port=%d" (int $.Values.runtime.vllm.pd.bootstrapPort) | quote }}
             - {{ printf "--vllm-pd-abort-request-timeout-seconds=%d" (int $.Values.runtime.vllm.pd.abortRequestTimeoutSeconds) | quote }}
             - {{ printf "--vllm-pd-rdma-device-name=%s" $.Values.runtime.vllm.pd.rdmaDeviceName | quote }}
+            {{- end }}
+            {{- if (include "foretoken.rdmaResourceName" $) }}
             - {{ printf "--rdma-resource-name=%s" (include "foretoken.rdmaResourceName" $) | quote }}
             - {{ printf "--rdma-resource-count=%d" (int $.Values.rdma.resourceCount) | quote }}
             {{- end }}

@@ -3,8 +3,9 @@
 
 //! Connector-compatible stage selection for Aggregate, P/D, and E/P/D routes.
 
+use crate::routing_load::{ReservationKey, RoutingReservations};
 use std::collections::BTreeSet;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use foretoken_kv_indexer::{KvPrefixIndexer, NoopKvPrefixIndexer};
@@ -27,6 +28,7 @@ pub struct PipelineRouter<C: Send + 'static = ()> {
     kv_prefix_indexer: Arc<dyn KvPrefixIndexer>,
     route_target_stats_reader: Arc<dyn RouteTargetStatsReader>,
     pipeline: Arc<RouterPipeline<C>>,
+    routing_load: Arc<Mutex<RoutingReservations>>,
     metrics: Arc<crate::metrics::RouterMetricsScope>,
 }
 impl<C: Send + 'static> PipelineRouter<C> {
@@ -41,8 +43,15 @@ impl<C: Send + 'static> PipelineRouter<C> {
             kv_prefix_indexer: Arc::new(NoopKvPrefixIndexer),
             route_target_stats_reader: Arc::new(NoopRouteTargetStatsReader),
             pipeline: Arc::new(pipeline),
+            routing_load: Arc::new(Mutex::new(RoutingReservations::default())),
             metrics,
         }
+    }
+
+    /// Shares frontend-owned request load across runtime generations built by RuntimeBuilder.
+    pub fn with_load_state(mut self, state: crate::RoutingLoadState) -> Self {
+        self.routing_load = state.0;
+        self
     }
 
     /// Replaces the KV-prefix reader used by Filter and Scorer.
@@ -61,8 +70,13 @@ impl<C: Send + 'static> PipelineRouter<C> {
     }
 
     // Builds the immutable, rank-expanded candidate snapshot for one selection round. Dynamic
-    // health, capabilities, and telemetry are captured before algorithms observe it.
-    fn candidates(&self, request: &RouterRequest) -> Vec<RouteCandidate> {
+    // health, capabilities, rank-local telemetry, and frontend reservations are captured before
+    // algorithms observe it.
+    fn candidates(
+        &self,
+        request: &RouterRequest,
+        reservations: &RoutingReservations,
+    ) -> Vec<RouteCandidate> {
         self.inventory
             .model_routes()
             .candidates(request)
@@ -77,6 +91,14 @@ impl<C: Send + 'static> PipelineRouter<C> {
                         .inventory
                         .effective_capabilities(&route.route_target_id),
                     request,
+                    // In E/P/D, Encoder owns media encoding; P/D consume its result and KV.
+                    !matches!(
+                        route.role,
+                        ModelServerRole::Prefill | ModelServerRole::Decode
+                    ) || !route
+                        .pipeline_scope_id
+                        .as_deref()
+                        .is_some_and(|scope| self.pipeline_scope_has_encoder(request, scope)),
                 )
             })
             .flat_map(|route| {
@@ -96,6 +118,8 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     pipeline_scope_id: route.pipeline_scope_id.clone(),
                     data_parallel_rank,
                     route_target_stats: stats.clone(),
+                    local_load: reservations
+                        .snapshot(&(route.route_target_id.clone(), data_parallel_rank)),
                 })
             })
             .collect()
@@ -120,7 +144,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
         let result = (|| {
             // Filter and Scorer see the complete compatible, healthy snapshot. Stage and connector
             // eligibility are applied after scoring and before Picker.
-            let candidates = self.candidates(request);
+            // Snapshot, scoring, and reservation share one lock so concurrent selections see load.
+            let mut reservations = self
+                .routing_load
+                .lock()
+                .expect("routing load lock poisoned");
+            let candidates = self.candidates(request, &reservations);
             metrics.candidates(&request.model, round, "available", candidates.len());
             let stage_started = Instant::now();
             let filtered_indexes = self.pipeline.filter.filter(
@@ -225,6 +254,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     "KV routing observation"
                 );
             }
+            reservations.reserve(request, &candidate, self.kv_prefix_indexer.as_ref());
             Ok(candidate)
         })();
         metrics.selection(&request.model, round, started.elapsed(), result.as_ref());
@@ -361,8 +391,39 @@ struct Session<C: Send + 'static> {
     request: RouterRequest,
     customized_context: C,
     stage: SessionStage,
+    selected: Vec<ReservationKey>,
+}
+impl<C: Send + 'static> Drop for Session<C> {
+    fn drop(&mut self) {
+        self.stage_complete();
+    }
 }
 impl<C: Send + 'static> RouteSession for Session<C> {
+    fn response_started(&mut self) {
+        let mut reservations = self
+            .router
+            .routing_load
+            .lock()
+            .expect("routing load lock poisoned");
+        for key in &self.selected {
+            reservations.release_prompt_load(key, &self.request.generate_request.request_id);
+        }
+    }
+
+    fn stage_complete(&mut self) {
+        if self.selected.is_empty() {
+            return;
+        }
+        let mut reservations = self
+            .router
+            .routing_load
+            .lock()
+            .expect("routing load lock poisoned");
+        for key in self.selected.drain(..) {
+            reservations.release(&key, &self.request.generate_request.request_id);
+        }
+    }
+
     fn select_initial(&mut self) -> Result<RouteDecision, RouteError> {
         let routing_progress = RoutingProgress {
             current_stage: RoutingStage::Initial,
@@ -391,6 +452,10 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             ModelServerRole::Aggregate => SessionStage::Complete,
             ModelServerRole::Decode => unreachable!("initial eligibility rejects Decode"),
         };
+        self.selected.push((
+            candidate.route_target_id.clone(),
+            candidate.data_parallel_rank,
+        ));
         Ok(candidate.decision())
     }
 
@@ -415,6 +480,8 @@ impl<C: Send + 'static> RouteSession for Session<C> {
                 .expect("eligible prefill has a pipeline scope"),
             encoder_completed: true,
         };
+        self.selected
+            .push((prefill.route_target_id.clone(), prefill.data_parallel_rank));
         Ok(prefill.decision())
     }
 
@@ -444,6 +511,8 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             &mut self.customized_context,
         )?;
         self.stage = SessionStage::Complete;
+        self.selected
+            .push((decode.route_target_id.clone(), decode.data_parallel_rank));
         Ok(decode.decision())
     }
 }
@@ -452,7 +521,13 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
     async fn start(&self, request: RouterRequest) -> Box<dyn RouteSession> {
         let kv_prefix_indexer =
             if self.pipeline.filter.needs_kv_prefix() || self.pipeline.scorer.needs_kv_prefix() {
-                let candidates = self.candidates(&request);
+                let candidates = {
+                    let reservations = self
+                        .routing_load
+                        .lock()
+                        .expect("routing load lock poisoned");
+                    self.candidates(&request, &reservations)
+                };
                 let lookups = candidates
                     .iter()
                     .filter(|candidate| {
@@ -483,11 +558,13 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
                 kv_prefix_indexer,
                 route_target_stats_reader: self.route_target_stats_reader.clone(),
                 pipeline: self.pipeline.clone(),
+                routing_load: self.routing_load.clone(),
                 metrics: self.metrics.clone(),
             },
             customized_context: (self.pipeline.customized_context_factory)(&request),
             request,
             stage: SessionStage::Initial,
+            selected: Vec::new(),
         })
     }
 }

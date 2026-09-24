@@ -127,6 +127,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		group := modelGroup(pool, "pd-r1-0", 0)
 		group.Spec.Role = inferencev1alpha1.ModelRolePrefill
 		group.Spec.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{
+			ServiceUID:                 string(service.UID),
 			ProfileName:                "pd",
 			ProfileRevision:            "r1",
 			Connector:                  "MooncakeConnector",

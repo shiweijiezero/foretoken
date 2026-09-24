@@ -13,7 +13,7 @@ Follow the repository [Quick Start](../../README.md) to deploy a frontend and ma
 
 The frontend supports collected JSON and SSE streaming responses, completions and chat completions, tokenization, tools, reasoning, structured output, and capability-gated image input. Image input currently accepts bounded base64 `data:` content, not remote media URLs.
 
-Configure aggregate serving or separate prefill/decode (P/D) or encoder/prefill/decode (E/P/D) stages in `ModelService`. Disaggregated serving requires platform support for the selected runtime and transport.
+Configure aggregate serving or separate prefill/decode (P/D) or encoder/prefill/decode (E/P/D) stages in `ModelService`. Disaggregated serving requires platform support for the selected runtime and transport. The [E/P/D example](../../examples/encoder-prefill-decode/README.md) separates image encoding and uses tensor-parallel decoding.
 
 ## Endpoint access
 

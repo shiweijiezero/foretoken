@@ -4,8 +4,8 @@
 //! Router pipeline registry and configuration tests.
 
 use foretoken_router::{
-    FilterAlgorithm, PickerAlgorithm, RouterPipelineConfig, RouterPipelineConfigError,
-    ScorerAlgorithm,
+    FilterAlgorithm, FilterStage, PickerStage, RouterPipelineConfig, RouterPipelineConfigError,
+    ScorerStage,
 };
 
 // Protects every documented built-in router algorithm from missing compile-time registration.
@@ -19,11 +19,22 @@ fn every_compiled_builtin_name_parses_and_builds() {
         ("allow_all", "running_request", "max"),
         ("allow_all", "kv_cache_utilization", "max"),
         ("allow_all", "queue_depth", "max"),
+        ("allow_all", "token_load", "max"),
+        ("allow_all", "prefix", "max"),
     ] {
         let config = RouterPipelineConfig {
-            filter: filter.parse().unwrap(),
-            scorer: scorer.parse().unwrap(),
-            picker: picker.parse().unwrap(),
+            filter: FilterStage {
+                algorithm: filter.parse().unwrap(),
+                parameters: Default::default(),
+            },
+            scorer: ScorerStage {
+                algorithm: scorer.parse().unwrap(),
+                parameters: Default::default(),
+            },
+            picker: PickerStage {
+                algorithm: picker.parse().unwrap(),
+                parameters: Default::default(),
+            },
         };
         let _ = config.build().unwrap();
     }
@@ -36,11 +47,19 @@ fn empty_and_unknown_names_are_explicit_errors() {
         "".parse::<FilterAlgorithm>(),
         Err(RouterPipelineConfigError::EmptyName)
     );
-    assert!("community-scorer".parse::<ScorerAlgorithm>().is_ok());
     let unknown = RouterPipelineConfig {
-        filter: "allow_all".parse().unwrap(),
-        scorer: "community-scorer".parse().unwrap(),
-        picker: PickerAlgorithm::default(),
+        filter: FilterStage {
+            algorithm: "allow_all".parse().unwrap(),
+            parameters: Default::default(),
+        },
+        scorer: ScorerStage {
+            algorithm: "community-scorer".parse().unwrap(),
+            parameters: Default::default(),
+        },
+        picker: PickerStage {
+            algorithm: "weighted_random".parse().unwrap(),
+            parameters: Default::default(),
+        },
     };
     assert!(matches!(
         unknown.build(),

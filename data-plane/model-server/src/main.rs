@@ -13,7 +13,7 @@ use foretoken_artifacts::ModelSource;
 use foretoken_model_protocol::{RuntimeMetadataResponse, RuntimeModelIdentity};
 use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
-use foretoken_model_server::config::RuntimeConfig;
+use foretoken_model_server::config::{MODEL_GROUP_UID_ENV, RuntimeConfig};
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
 use foretoken_model_server::managed_engine::ManagedEngine;
 use foretoken_model_server::profiling;
@@ -31,7 +31,6 @@ use vllm_managed_engine::allocate_handshake_port;
 
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
-const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
 const TEMPORARY_MODEL_SOURCE_ROOT: &str = "/tmp/foretoken-model-source";
 
 #[tokio::main]
@@ -484,9 +483,12 @@ async fn spawn_engine_attempt(
         })?;
     }
     if config.launch.shared_prefix_lookup()
+        || config.launch.ec.enabled()
         || config.launch.profiling.engine == profiling::Engine::Mctracer
     {
-        let mut python_paths = vec![std::path::PathBuf::from("/opt/foretoken/python")];
+        let mut python_paths = vec![PathBuf::from(
+            foretoken_model_server::launch::PYTHON_MODULE_PATH,
+        )];
         if let Some(existing) = std::env::var_os("PYTHONPATH") {
             python_paths.extend(std::env::split_paths(&existing));
         }
@@ -561,6 +563,12 @@ async fn spawn_engine_attempt(
         ))
     })?
     .map_err(|error| classify_engine_startup_failure(cache, mode, format!("{error}")))?;
+    // Rust preprocessing already normalizes pixels. Newer engines otherwise normalize them twice.
+    if matches!(engine_protocol, EngineCoreProtocol::V0_28ToV0_30) {
+        managed_engine
+            .python_args
+            .push("--no-mm-device-do-normalize".into());
+    }
     let mut command = managed_engine.to_command();
     command.envs(environment);
     let instrumentation = profiling.filter(|_| mode == runtime_cache::Mode::Persistent);

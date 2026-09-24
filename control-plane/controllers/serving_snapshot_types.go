@@ -56,6 +56,16 @@ type servingSnapshotGroup struct {
 	DataParallelSize  int32                         `json:"data_parallel_size"`
 }
 
+// servingSnapshotParallelism is the controller-owned execution topology used by KV transfer.
+type servingSnapshotParallelism struct {
+	TP  int32 `json:"tp"`
+	PP  int32 `json:"pp"`
+	DP  int32 `json:"dp"`
+	PCP int32 `json:"pcp"`
+	DCP int32 `json:"dcp"`
+	EP  bool  `json:"ep"`
+}
+
 // servingSnapshotPDComponent is one P or D component. Linked route sets express compatibility without P×D materialization.
 type servingSnapshotPDComponent struct {
 	RouteTargetID            string                        `json:"route_target_id"`
@@ -80,6 +90,7 @@ type servingSnapshotPDComponent struct {
 	KVScopeID                string                        `json:"kv_scope_id"`
 	KVLookupScope            string                        `json:"kv_lookup_scope,omitempty"`
 	DataParallelSize         int32                         `json:"data_parallel_size"`
+	Parallelism              servingSnapshotParallelism    `json:"parallelism"`
 }
 
 type servingSnapshotPDPipelineScope struct {
@@ -107,6 +118,7 @@ type servingSnapshotEPDComponent struct {
 	KVScopeID                string                        `json:"kv_scope_id"`
 	KVLookupScope            string                        `json:"kv_lookup_scope,omitempty"`
 	DataParallelSize         int32                         `json:"data_parallel_size"`
+	Parallelism              servingSnapshotParallelism    `json:"parallelism"`
 }
 
 type servingSnapshotEPDPipelineScope struct {

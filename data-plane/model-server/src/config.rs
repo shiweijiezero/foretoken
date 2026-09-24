@@ -9,6 +9,8 @@ use crate::launch::LaunchPlanV1;
 
 const LAUNCH_PLAN_ENV: &str = "FORETOKEN_VLLM_LAUNCH_PLAN";
 const LISTEN_ENV: &str = "FORETOKEN_INTERNAL_LISTEN";
+/// Controller-projected ModelGroup identity shared by all member Pods.
+pub const MODEL_GROUP_UID_ENV: &str = "FORETOKEN_MODEL_GROUP_UID";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeConfig {
@@ -20,6 +22,7 @@ pub struct RuntimeConfig {
 /// Pod-local identity supplied by Kubernetes and LeaderWorkerSet for distributed startup.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemberContext {
+    pub model_group_uid: String,
     pub index: usize,
     pub address: std::net::IpAddr,
     pub leader_address: String,
@@ -58,6 +61,7 @@ impl RuntimeConfig {
                 .parse::<std::net::IpAddr>()
                 .map_err(|_| "FORETOKEN_MEMBER_IP must be a Pod IP address".to_string())?;
             Some(MemberContext {
+                model_group_uid: required_env(MODEL_GROUP_UID_ENV)?,
                 index,
                 address,
                 leader_address: required_env("LWS_LEADER_ADDRESS")?,

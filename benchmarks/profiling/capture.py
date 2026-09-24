@@ -17,10 +17,11 @@ from benchmarks.results.output import write_json
 
 
 class BenchmarkProfile:
-    """Gate prepared requests on capture readiness and stop the capture after workload exit.
+    """Gate measured requests on capture readiness and stop after workload drain.
 
-    EvalScope owns HTTP tasks and drains its executor before this context exits.
-    The controller and runtime continue to own recording deadlines and artifacts.
+    The surrounding workload runner owns HTTP tasks and drains its executor before
+    this context exits; the controller and runtime own recording deadlines and
+    retained capture artifacts.
     """
 
     def __init__(self, run: ProfileRun, output_dir: str) -> None:
@@ -28,6 +29,7 @@ class BenchmarkProfile:
         self.output_dir = output_dir
         self.error: DeploymentError | None = None
         self._ready: asyncio.Task[None] | None = None
+        self._started = False
         self.capturing_observed_at: str | None = None
         self.first_request_at: str | None = None
         self.last_response_at: str | None = None
@@ -46,6 +48,7 @@ class BenchmarkProfile:
             status = await asyncio.to_thread(self.run.observe)
             if status.get("phase") == "Capturing":
                 self.capturing_observed_at = datetime.now(timezone.utc).isoformat()
+                self._started = True
                 return
             if self.run.terminal or status.get("phase") == "Stopping":
                 raise DeploymentError(
@@ -55,8 +58,17 @@ class BenchmarkProfile:
             await asyncio.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
         raise DeploymentError("timed out waiting for the profile to start recording")
 
+    def start_sync(self) -> None:
+        """Start capture before a synchronous HTTP runner begins its scheduling clock."""
+        if not self._started:
+            asyncio.run(self._start())
+
     async def before_request(self) -> None:
-        """Release each EvalScope request after a single shared startup, outside HTTP timing."""
+        """Release each request after a single shared startup, outside HTTP timing."""
+        if self._started:
+            if self.first_request_at is None:
+                self.first_request_at = datetime.now(timezone.utc).isoformat()
+            return
         if self._ready is None:
             self._ready = asyncio.create_task(self._start())
         try:

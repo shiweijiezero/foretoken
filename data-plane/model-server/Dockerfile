@@ -107,13 +107,13 @@ ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 # Engine images may provide a Python virtual environment without pip.
 # MACA also exposes torch.version.cuda, so select dependencies from the engine build.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
-    backend="$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
-      'import torch; print("maca" if getattr(torch.version, "maca", None) else "cuda" if torch.version.cuda else "other")')" \
+    python_path=$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
+      'import sys; print(sys.executable)') \
+    && backend=$("$python_path" -c \
+      'import torch; print("maca" if getattr(torch.version, "maca", None) else "cuda" if torch.version.cuda else "other")') \
     && set -- modelscope==1.35.3 \
-    && case "$backend" in \
-         cuda) set -- "$@" bitsandbytes==0.49.2 ;; \
-       esac \
-    && uv pip install --no-cache --python "${FORETOKEN_VLLM_PYTHON:-python}" \
+    && case "$backend" in cuda) set -- "$@" bitsandbytes==0.49.2 ;; esac \
+    && uv pip install --no-cache --python "$python_path" \
       --default-index "${UV_DEFAULT_INDEX}" "$@"
 
 FROM engine-runtime AS runtime

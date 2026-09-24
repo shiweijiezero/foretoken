@@ -29,6 +29,18 @@ declare_router_algorithms! {
 ///
 /// Returns the selected position in `scored_candidates`, or `None` when the list is empty.
 pub trait RoutePicker<C: Send + 'static = ()>: Send + Sync {
+    /// Applies algorithm-owned parameters during pipeline construction.
+    fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
+        if parameters
+            .as_object()
+            .is_some_and(|parameters| parameters.is_empty())
+        {
+            Ok(())
+        } else {
+            Err("this picker accepts no parameters".into())
+        }
+    }
+
     fn pick(
         &self,
         request: &RouterRequest,

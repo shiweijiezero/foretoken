@@ -18,6 +18,9 @@ spec:
     request: 60m
     streamIdle: 30m
   routerPipeline:
-    filter: allow_all
-    scorer: kv_least_loaded
-    picker: weighted_random
+    filter:
+      algorithm: allow_all
+    scorer:
+      algorithm: kv_least_loaded
+    picker:
+      algorithm: weighted_random

@@ -6,9 +6,14 @@
 from __future__ import annotations
 
 import random
+from collections.abc import Iterator
 from functools import lru_cache
 from itertools import islice
 from typing import Any
+
+from evalscope.perf.arguments import Arguments
+from evalscope.perf.plugin.datasets.random_dataset import RandomDatasetPlugin
+from evalscope.utils.model_utils import seed_everything
 
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
@@ -23,16 +28,6 @@ def create_trace_random_dataset_plugin(
     request_count: int,
 ) -> Any:
     """Create EvalScope's public random dataset plugin for one trace payload set."""
-    try:
-        from evalscope.perf.arguments import Arguments
-        from evalscope.perf.plugin.datasets.random_dataset import RandomDatasetPlugin
-        from evalscope.utils.model_utils import seed_everything
-    except ModuleNotFoundError as error:
-        raise ValueError(
-            "random trace payloads require EvalScope; install benchmark "
-            "dependencies with: pip install 'foretoken[bench]'"
-        ) from error
-
     workload = benchmark.resolved_workload
     seed_everything(workload.random_seed)
     arguments = Arguments(
@@ -71,6 +66,28 @@ def _random_task(message: Any, index: int) -> Task:
         "EvalScope random dataset returned unsupported message type "
         f"{type(message).__name__}"
     )
+
+
+def iter_duration_random_requests(
+    benchmark: BenchmarkConfig,
+    service: ModelService,
+) -> Iterator[Task]:
+    """Yield deterministic random tasks on demand for a duration-bounded workload."""
+    workload = benchmark.resolved_workload
+    plugin = create_trace_random_dataset_plugin(benchmark, service, request_count=1)
+    generator = random.Random(workload.random_seed)
+    minimum, maximum = plugin._resolve_prompt_length_bounds()
+    token_count = len(plugin.allowed_tokens)
+    index = 0
+    while True:
+        input_length = generator.randrange(minimum, maximum)
+        offset = generator.randrange(token_count)
+        message = plugin.generate_token_sequence(input_length, offset, index)[0]
+        task = _random_task(message, index)
+        del message
+        yield task
+        del task
+        index += 1
 
 
 def generate_trace_random_requests(

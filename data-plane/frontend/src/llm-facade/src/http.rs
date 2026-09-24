@@ -162,10 +162,11 @@ fn is_ndjson(value: Option<&reqwest::header::HeaderValue>) -> bool {
 struct BootstrapRank {
     engine_id: String,
 }
-/// Fetches the rank-zero prefill engine ID required by Mooncake P/D dispatch.
+/// Fetches the selected prefill rank's engine ID for Mooncake P/D dispatch.
 pub async fn bootstrap_engine_id(
     client: &reqwest::Client,
     bootstrap_endpoint: &str,
+    data_parallel_rank: u32,
 ) -> Result<String, LlmFacadeError> {
     let response = client
         .get(format!(
@@ -183,7 +184,7 @@ pub async fn bootstrap_engine_id(
         .await
         .map_err(|_| LlmFacadeError::Protocol)?;
     ranks
-        .get("0")
+        .get(&data_parallel_rank.to_string())
         .filter(|rank| !rank.engine_id.is_empty())
         .map(|rank| rank.engine_id.clone())
         .ok_or(LlmFacadeError::Protocol)

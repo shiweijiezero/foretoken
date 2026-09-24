@@ -1,0 +1,239 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Shared by the vendored source build and the pinned EPD runtime image.
+
+diff --git a/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py b/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py
+index dd94ffb2f..adec0a3f5 100644
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_connector.py
+@@ -39,6 +39,8 @@
+     MooncakeKVConnectorStats,
+ )
+ from vllm.distributed.parallel_state import (
++    get_dcp_group,
++    get_pcp_group,
+     get_pp_group,
+     get_tensor_model_parallel_rank,
+     get_tensor_model_parallel_world_size,
+@@ -388,6 +390,10 @@
+     kv_caches_base_addr: list[int]
+     block_lens: list[int]
+     kv_block_lens: list[int]
++    remote_pcp_size: int = 1
++    remote_pcp_rank: int = 0
++    remote_dcp_size: int = 1
++    remote_dcp_rank: int = 0
+     registered_layer_names: list[str] = msgspec.field(default_factory=list)
+     registered_layer_indices: list[int] = msgspec.field(default_factory=list)
+     registered_group_indices: list[int] = msgspec.field(default_factory=list)
+@@ -967,6 +973,12 @@
+         self.dp_rank = dp_local_rank if parallel_config.local_engines_only else dp_rank
+         self.pp_size = vllm_config.parallel_config.pipeline_parallel_size
+         self.pp_rank = get_pp_group().rank_in_group
++        self.pcp_size = get_pcp_group().world_size
++        self.pcp_rank = get_pcp_group().rank_in_group if self.pcp_size > 1 else 0
++        self.dcp_size = get_dcp_group().world_size
++        self.dcp_rank = (
++            get_dcp_group().rank_in_group if self.dcp_size > 1 else 0
++        )
+ 
+         self.kv_caches_base_addr: list[int] = []
+         self.device_kv_caches: dict[str, torch.Tensor] = {}
+@@ -1108,6 +1120,8 @@
+             dp_rank=self.dp_rank,
+             tp_rank=self.tp_rank,
+             pp_rank=self.pp_rank,
++            pcp_rank=self.pcp_rank,
++            dcp_rank=self.dcp_rank,
+             addr=worker_addr,
+         )
+         while True:
+@@ -1194,7 +1208,24 @@
+         self, identity: bytes, sock: zmq.asyncio.Socket, meta: MooncakeXferMetadata
+     ):
+         pending_reqs: dict[ReqId, SendBlockMeta] = {}
+-        remote_tp_ranks = self.transfer_topo.handshake_target_ranks(meta.remote_tp_size)
++        if (
++            meta.remote_pcp_size != self.pcp_size
++            or meta.remote_dcp_size != self.dcp_size
++            or meta.remote_pcp_rank != self.pcp_rank
++            or meta.remote_dcp_rank != self.dcp_rank
++        ):
++            msg = (
++                "Mooncake CP topology mismatch: "
++                f"remote pcp={meta.remote_pcp_size}/{meta.remote_pcp_rank}, "
++                f"dcp={meta.remote_dcp_size}/{meta.remote_dcp_rank}; "
++                f"local pcp={self.pcp_size}/{self.pcp_rank}, "
++                f"dcp={self.dcp_size}/{self.dcp_rank}"
++            )
++            logger.error(msg)
++            response = MooncakeXferResponse(status=MooncakeXferResponseStatus.ERROR, err_msg=msg)
++            await sock.send_multipart((identity, self._encoder.encode(response)))
++            return
++        remote_tp_ranks = self._handshake_target_ranks(meta.remote_tp_size)
+         if meta.remote_tp_rank not in remote_tp_ranks:
+             # This D worker does not pair with the P worker.
+             msg = (
+@@ -1380,6 +1411,23 @@
+                 err_msg=err_msg,
+             )
+             await sock.send_multipart((identity, self._encoder.encode(response)))
++
++    def _handshake_target_ranks(self, remote_tp_size: int) -> list[int]:
++        """Map heterogeneous TP peers within the current DCP shard."""
++        if self.pcp_size != 1 or self.dcp_size <= 1:
++            return self.transfer_topo.handshake_target_ranks(remote_tp_size)
++        assert self.tp_size % self.dcp_size == 0
++        assert remote_tp_size % self.dcp_size == 0
++        local_group_size = self.tp_size // self.dcp_size
++        remote_group_size = remote_tp_size // self.dcp_size
++        local_group_rank = self.tp_rank // self.dcp_size
++        tp_ratio = _get_tp_ratio(local_group_size, remote_group_size)
++        if tp_ratio > 0:
++            remote_group_ranks = [local_group_rank // tp_ratio]
++        else:
++            ratio_abs = -tp_ratio
++            remote_group_ranks = [local_group_rank * ratio_abs + i for i in range(ratio_abs)]
++        return [rank * self.dcp_size + self.dcp_rank for rank in remote_group_ranks]
+ 
+     def resolve_need_send(
+         self,
+@@ -1831,6 +1879,10 @@
+                 req_id: (pull_meta.transfer_id, pull_meta.local_block_ids)
+                 for req_id, pull_meta in pull_metas.items()
+             },
++            remote_pcp_size=self.pcp_size,
++            remote_pcp_rank=self.pcp_rank,
++            remote_dcp_size=self.dcp_size,
++            remote_dcp_rank=self.dcp_rank,
+             kv_caches_base_addr=self.kv_caches_base_addr,
+             block_lens=self.block_len_per_layer,
+             kv_block_lens=self.kv_block_len_per_layer,
+@@ -1911,13 +1963,16 @@
+                 data: dict = response.json()
+                 for _, dp_entry in data.items():
+                     remote_engine_id = dp_entry["engine_id"]
+-                    self._remote_agents[remote_engine_id] = {
+-                        int(tp_rank): {
+-                            int(pp_rank): worker_addr
+-                            for pp_rank, worker_addr in tp_entry.items()
+-                        }
+-                        for tp_rank, tp_entry in dp_entry["worker_addr"].items()
+-                    }
++                    cp_key = self.pcp_rank * 100000 + self.dcp_rank
++                    selected = {}
++                    for tp_rank, tp_entry in dp_entry["worker_addr"].items():
++                        pp_workers = {}
++                        for pp_rank, cp_entry in tp_entry.items():
++                            if str(cp_key) in cp_entry:
++                                pp_workers[int(pp_rank)] = cp_entry[str(cp_key)]
++                        if pp_workers:
++                            selected[int(tp_rank)] = pp_workers
++                    self._remote_agents[remote_engine_id] = selected
+                     self._tp_size[remote_engine_id] = len(dp_entry["worker_addr"])
+         except Exception as e:
+             logger.error(
+@@ -1935,7 +1990,7 @@
+         remote_engine_id: EngineId,
+         pull_metas: dict[ReqId, PullReqMeta],
+     ):
+-        remote_tp_ranks = self.transfer_topo.handshake_target_ranks(
++        remote_tp_ranks = self._handshake_target_ranks(
+             self._tp_size[remote_engine_id]
+         )
+         worker_addrs: list[str] = []
+@@ -2082,10 +2137,15 @@
+         remote_tp_rank: int,
+         remote_tp_size: int,
+     ) -> tuple[bool, int, int, int]:
+-        return _compute_sender_transfer_plan(
+-            local_tp_rank=self.tp_rank,
++        local_transfer_rank = self.tp_rank
++        remote_transfer_rank = remote_tp_rank
++        if self.pcp_size == 1 and self.dcp_size > 1:
++            local_transfer_rank //= self.dcp_size
++            remote_transfer_rank //= self.dcp_size
++        return _compute_sender_transfer_plan(
++            local_tp_rank=local_transfer_rank,
+             local_tp_size=self.tp_size,
+-            remote_tp_rank=remote_tp_rank,
++            remote_tp_rank=remote_transfer_rank,
+             remote_tp_size=remote_tp_size,
+             local_kv_block_len=local_kv_block_len,
+             remote_kv_block_len=remote_kv_block_len,
+@@ -2143,11 +2203,13 @@
+ 
+ def should_launch_bootstrap_server(vllm_config: VllmConfig) -> bool:
+     assert (parallel_config := vllm_config.parallel_config)
+-    # Only the TP=0, PP=0 worker of the designated engine should launch it.
++    # Only the TP=0, PP=0, PCP=0 worker of the designated engine launches it.
+     if get_tensor_model_parallel_rank() != 0:
+         return False
+     if get_pp_group().rank_in_group != 0:
+         return False
++    if get_pcp_group().rank_in_group != 0:
++        return False
+ 
+     # In hybrid or external LB mode,
+     # each instance should have its own bootstrap server.
+diff --git a/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_utils.py b/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_utils.py
+index 2d158387f..a2208e2a5 100644
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_utils.py
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/mooncake/mooncake_utils.py
+@@ -21,14 +21,16 @@
+     dp_rank: int
+     tp_rank: int
+     pp_rank: int
++    pcp_rank: int = 0
++    dcp_rank: int = 0
+     addr: WorkerAddr
+ 
+ 
+ @dataclass
+ class EngineEntry:
+     engine_id: EngineId
+-    # {tp_rank: {pp_rank: worker_addr}}
+-    worker_addr: dict[int, dict[int, WorkerAddr]]
++    # {tp_rank: {pp_rank: {cp_rank_key: worker_addr}}}
++    worker_addr: dict[int, dict[int, dict[int, WorkerAddr]]]
+ 
+ 
+ class MooncakeBootstrapServer:
+@@ -98,24 +100,31 @@
+             dp_entry.worker_addr[payload.tp_rank] = {}
+ 
+         tp_entry = dp_entry.worker_addr[payload.tp_rank]
+-        if payload.pp_rank in tp_entry:
++        if payload.pp_rank not in tp_entry:
++            tp_entry[payload.pp_rank] = {}
++        pp_entry = tp_entry[payload.pp_rank]
++        cp_key = payload.pcp_rank * 100000 + payload.dcp_rank
++        if cp_key in pp_entry:
+             raise HTTPException(
+                 status_code=400,
+                 detail=(
+                     f"Worker with dp_rank={payload.dp_rank}, "
+-                    f"tp_rank={payload.tp_rank}, pp_rank={payload.pp_rank} "
++                    f"tp_rank={payload.tp_rank}, pp_rank={payload.pp_rank}, "
++                    f"pcp_rank={payload.pcp_rank}, dcp_rank={payload.dcp_rank} "
+                     f"is already registered at "
+-                    f"{tp_entry[payload.pp_rank]}, "
++                    f"{pp_entry[cp_key]}, "
+                     f"but still want to register at {payload.addr}"
+                 ),
+             )
+ 
+-        tp_entry[payload.pp_rank] = payload.addr
++        pp_entry[cp_key] = payload.addr
+         logger.debug(
+-            "Registered worker: engine_id=%s, dp_rank=%d, tp_rank=%d, pp_rank=%d at %s",
++            "Registered worker: engine_id=%s, dp_rank=%d, tp_rank=%d, pp_rank=%d, pcp_rank=%d, dcp_rank=%d at %s",
+             payload.engine_id,
+             payload.dp_rank,
+             payload.tp_rank,
+             payload.pp_rank,
++            payload.pcp_rank,
++            payload.dcp_rank,
+             payload.addr,
+         )

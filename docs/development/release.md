@@ -71,6 +71,20 @@ Each artifact has one authoritative version source:
 
 Published versions are immutable. Never rebuild and overwrite a version already present on PyPI or in an OCI registry. Increment the development, pre-release, post-release, or patch number as appropriate.
 
+## Release descriptions
+
+Use the [Release Description Template](release-template.md) when creating a GitHub Release. A release description is a user-facing summary of the published combination, not a copy of the commit log. Keep the following information when it affects installation or operation:
+
+- three to five highlights and grouped changes for users;
+- compatibility across Python, Kubernetes, NVIDIA, MetaX, APIs, and configuration;
+- breaking changes, deprecations, and the exact upgrade action;
+- every published package, OCI image variant, Helm Chart, and tagged example;
+- actionable known limitations, factual thanks, and a compare link to the full history.
+
+Remove sections that do not apply. Link related pull requests when they help readers trace a change, and do not claim support that was not confirmed for this release.
+
+The [Chinese template](release-template_zh.md) follows the same release contract and should be written naturally for Chinese readers.
+
 ## Build and push the release artifacts
 
 Prepare compatible NVIDIA and MetaX inference-runtime images, then replace the registry prefix and runtime image names below with your own:

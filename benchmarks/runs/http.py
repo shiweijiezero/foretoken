@@ -10,13 +10,9 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
-from foretoken.arguments import ProfileCommand
-from foretoken.profiling import ProfileRun
-
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.integrations.evalscope import run_evalscope_standard_load
 from benchmarks.model_service import ModelService
-from benchmarks.profiling.capture import BenchmarkProfile
 from benchmarks.results.output import (
     BenchmarkRun,
     ResultOutputs,
@@ -57,18 +53,13 @@ class GeneratedLoadBenchmark:
             output_dir=self.output_dir,
             wandb_group=self.wandb_group,
         ) as outputs:
-            # Drain a separate run before opening a capture or measuring traffic.
-            # EvalScope's built-in warmup can overlap measured requests to keep
-            # the server busy; capture requires a completed warmup phase instead.
-            # Reuse the same executor and result lifecycle, with warmup disabled
-            # in the child so its records cannot mix with the measured run.
-            warmup_count = self.benchmark.load.warmup_requests
-            if warmup_count:
+            profile = outputs.create_profile()
+            if profile is not None and self.benchmark.load.warmup_requests:
                 warmup = replace(
                     self.benchmark,
                     load=replace(
                         self.benchmark.load,
-                        request_count=warmup_count,
+                        request_count=self.benchmark.load.warmup_requests,
                         warmup_requests=0,
                     ),
                     profile=None,
@@ -85,21 +76,9 @@ class GeneratedLoadBenchmark:
                 ).run(phase_label="Warmup")
                 if warmed.metrics["failed_num"] or not warmed.metrics["success_num"]:
                     raise ValueError("Warmup requests failed; measurement was not started")
-            profile_options = self.benchmark.profile
-            profile = None
-            if profile_options is not None:
-                command = ProfileCommand(
-                    kustomize_path=self.benchmark.service.kustomize_path,
-                    model=self.service.model,
-                    profile_engine=profile_options.engine,
-                    profile_duration=profile_options.duration,
-                    timeout=self.benchmark.service.wait_timeout,
-                )
-                profile = BenchmarkProfile(
-                    ProfileRun(command, deployment=self.service.deployment),
-                    outputs.execution_dir,
-                )
             with (profile if profile is not None else nullcontext()):
+                if profile is not None:
+                    profile.start_sync()
                 metrics, measurements, time_origin = run_evalscope_standard_load(
                     self.benchmark,
                     self.service,
@@ -119,16 +98,3 @@ class GeneratedLoadBenchmark:
             )
             outputs.publish(run)
         return run
-
-
-def run_http_dataset(
-    benchmark: BenchmarkConfig,
-    service: ModelService,
-    label: str,
-    output_dir: str,
-    wandb_group: str | None,
-) -> BenchmarkRun:
-    """Run one dataset with the output location and group selected by its composition."""
-    return GeneratedLoadBenchmark(
-        benchmark, service, label=label, output_dir=output_dir, wandb_group=wandb_group
-    ).run()

@@ -205,6 +205,25 @@ func (reconciler *ModelServiceReconciler) reconcilePools(ctx context.Context, se
 		byPoolName[pool.Spec.PoolName] = pool
 	}
 
+	// Cache identity follows encoder content, not replica counts or service alert settings.
+	cacheGeneration := service.Generation
+	for _, compiled := range compiledPools {
+		if compiled.Template.Role != inferencev1alpha1.ModelRoleEncoder {
+			continue
+		}
+		if previous := byPoolName[compiled.Name]; previous != nil {
+			before, after := previous.Spec.Template, compiled.Template
+			if before.EncoderCacheGeneration > 0 && before.Model == after.Model && before.Source == after.Source && before.ModelRevision == after.ModelRevision && before.Backend == after.Backend && before.ECProfile == after.ECProfile && reflect.DeepEqual(before.EngineArgs, after.EngineArgs) {
+				cacheGeneration = before.EncoderCacheGeneration
+			}
+		}
+	}
+	for index := range compiledPools {
+		if compiledPools[index].Template.ECProfile != "" {
+			compiledPools[index].Template.EncoderCacheGeneration = cacheGeneration
+		}
+	}
+
 	desired := make(map[string]struct{}, len(compiledPools))
 	for _, compiled := range compiledPools {
 		desired[compiled.Name] = struct{}{}
@@ -297,7 +316,10 @@ func (reconciler *ModelServiceReconciler) commitServingGeneration(ctx context.Co
 	})
 	if len(selected) > 0 {
 		switch {
-		case poolsHaveEPD(servicePools):
+		case poolsHaveEPD(servicePools) || serviceDeclaresEPD(candidate):
+			if !poolsContainCompleteEPD(servicePools) {
+				return false, nil
+			}
 			if _, _, err := projectServiceEPDComponents(candidate, servicePools, groups.Items); err != nil {
 				return false, err
 			}

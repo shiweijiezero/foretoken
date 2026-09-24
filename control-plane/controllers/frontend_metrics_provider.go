@@ -187,7 +187,7 @@ func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, tar
 		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("ModelService UID changed for target %q", target.Name)
 	}
 	// Demand follows only the service-selected serving revision; preparing and draining
-	// cohorts must not influence scaling. E/P/D aggregates all three stages as one target.
+	// cohorts must not influence the Pool's scaling decision.
 	var pools inferencev1alpha1.ModelPoolList
 	if err := provider.client.List(ctx, &pools, client.InNamespace(target.ServiceNamespace)); err != nil {
 		return 0, 0, 0, 0, time.Time{}, fmt.Errorf("list ModelPools for telemetry: %w", err)
@@ -198,10 +198,7 @@ func (provider *HTTPScalingMetricsProvider) modelDemand(ctx context.Context, tar
 		if !pool.DeletionTimestamp.IsZero() || pool.Spec.ModelServiceRef.UID != target.ServiceUID {
 			continue
 		}
-		if target.Kind == core.TargetPool && string(pool.UID) != target.UID {
-			continue
-		}
-		if target.Kind == core.TargetEPDPipelineScope && !isEPDRole(pool.Spec.Template.Role) {
+		if string(pool.UID) != target.UID {
 			continue
 		}
 		selectedPools[string(pool.UID)] = pool
@@ -328,12 +325,8 @@ func (provider *HTTPScalingMetricsProvider) getModelTelemetry(ctx context.Contex
 }
 
 func telemetryTarget(values []frontendAutoscalingTarget, target core.TargetID) (frontendAutoscalingTarget, bool) {
-	targetID := target.UID
-	if target.Kind == core.TargetEPDPipelineScope {
-		targetID = target.ServiceUID
-	}
 	for _, value := range values {
-		if value.ServiceUID == target.ServiceUID && value.TargetKind == string(target.Kind) && value.TargetID == targetID {
+		if value.ServiceUID == target.ServiceUID && value.TargetKind == string(target.Kind) && value.TargetID == target.UID {
 			return value, true
 		}
 	}

@@ -71,6 +71,20 @@ v0.0.1.post1
 
 已经发布的版本不可覆盖。不得重新构建并覆盖 PyPI 或 OCI registry 中已经存在的版本；应根据实际情况递增 Development、预发布、post-release 或 patch 序号。
 
+## Release 描述
+
+创建 GitHub Release 时使用[《Release 描述模板》](release-template_zh.md)。Release 描述面向使用者，说明本次实际发布的产物组合，不是提交记录的复制。凡是会影响安装或运行的内容，都应在适用时保留：
+
+- 三到五项主要亮点，以及按用户领域归类的变更；
+- Python、Kubernetes、NVIDIA、沐曦、API 和配置的兼容性；
+- 破坏性变更、弃用项和明确的升级动作；
+- 本次发布的 package、各 OCI 镜像变体、Helm Chart 和带版本 tag 的示例；
+- 会改变用户操作的已知限制、事实性致谢，以及指向完整历史的 compare 链接。
+
+删除不适用的章节。相关 PR 能帮助读者追溯变更时再添加链接；没有实际确认的支持范围不得写入 Release 描述。
+
+[英文模板](release-template.md)与本模板遵循同一发布契约，但应分别面向各自语言的读者自然编写。
+
 ## 构建与推送发布产物
 
 准备兼容的 NVIDIA 和沐曦推理运行时镜像，然后将下面的仓库前缀和镜像名称替换为实际值：
