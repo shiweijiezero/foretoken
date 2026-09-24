@@ -31,6 +31,6 @@ CLI 默认保留目录 PV。Namespace 重建后，旧 claim 已不存在时，�
 
 运行时缓存挂载保存模型来源缓存以及 vLLM、TorchInductor 等引擎编译缓存。单节点服务的持久缓存写入检查失败时，model-server 会先停止失败的 EngineCore，再在 Pod 的 `/tmp` 下重试一次。多节点成员统一重启，不各自重试。Frontend 缺少 Hub 缓存时可使用临时 tokenizer 缓存。该回退不会切换已运行引擎的存储路径，也不会复制预先准备的本地 checkpoint。
 
-Triton JIT 产物则使用 Pod 本地的 `/tmp` 存储，Pod 删除后该缓存也会清除。
+Triton 的初始缓存使用 PVC 上的 `triton/<节点名>`，隔离不同节点的写入，同节点 Pod 重建后可复用。缓存位置通过 Group 滚动更新切换，旧 Group 在被替换前保持原环境。引擎自身的编译器子目录仍由 vLLM 管理。
 
-持久数据根目录包含 `models`、`vllm`、`torch` 和 `profiles`。自备模型从 `models` 解析；Hub 仓库保留上游的 `models/hub` 布局和 revision 缓存查找。诊断采集发布到 `profiles/runs`，临时缓存重试期间不可用。自备模型仍从原持久模型根目录解析。持久模型路径不额外拼接 namespace 或 Pod 身份。
+持久数据根目录包含 `models`、`vllm`、`torch`、`triton` 和 `profiles`。自备模型从 `models` 解析；Hub 仓库保留上游的 `models/hub` 布局和 revision 缓存查找。诊断采集发布到 `profiles/runs`，临时缓存重试期间不可用。自备模型仍从原持久模型根目录解析。持久模型路径不额外拼接 namespace 或 Pod 身份。
