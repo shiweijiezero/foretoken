@@ -20,4 +20,4 @@ GPU 温度和功耗规则只使用归属到所选 ModelService 的 ModelGroup �
 
 抓取恢复或目标退出服务发现时，`ForetokenMetricsTargetDown` 都会解除。
 
-通知接入见 [Lark](../integrations/lark/README_zh.md) 或 [Slack](../integrations/slack/README_zh.md) 集成。
+通知接入见 [Lark](../integrations/lark/README_zh.md)、[Slack](../integrations/slack/README_zh.md) 或 [钉钉](../integrations/dingtalk/README_zh.md) 集成。

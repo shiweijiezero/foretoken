@@ -110,7 +110,7 @@ foretoken deploy examples/observability --timeout 20m
 
 Remove a name, or use `rules: []`, and deploy again to remove the corresponding alerts. Metrics and the dashboard remain available. The CLI reports alert configuration failures separately from serving readiness; `deploy` does not install monitoring.
 
-Selecting the power alert also requires a positive `spec.observability.alerts.thresholds.nvidiaPowerWatts`, chosen for the GPU model. Setting a threshold alone does not enable a rule. Configure notifications with a [Lark](integrations/lark/README.md) or [Slack](integrations/slack/README.md) receiver.
+Selecting the power alert also requires a positive `spec.observability.alerts.thresholds.nvidiaPowerWatts`, chosen for the GPU model. Setting a threshold alone does not enable a rule. Configure notifications with a [Lark](integrations/lark/README.md), [Slack](integrations/slack/README.md), or [DingTalk](integrations/dingtalk/README.md) receiver.
 
 ## Metrics reference
 
