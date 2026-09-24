@@ -27,12 +27,10 @@
 
          lora_id: int | None = None
          lora_name: str | None = None
-@@ -309,7 +322,7 @@
-             block_size=group_config.tokens_per_block,
+@@ -310,5 +323,5 @@
              lora_id=lora_id,
              lora_name=lora_name,
 -            extra_keys=None,
 +            extra_keys=tuple(extra_keys),
              group_idx=group_config.group_idx,
              kv_cache_spec=group_config.kv_event_group_spec,
-         )

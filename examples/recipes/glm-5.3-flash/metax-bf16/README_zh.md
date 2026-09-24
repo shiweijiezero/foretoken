@@ -7,11 +7,9 @@
 
 通过 Foretoken 在两台各有 8 张 C500 64 GiB 的节点上运行一个模型执行组：attention TP8×DP2、专家 EP16、1,048,576 token 上下文和原生 MTP（5 个推测 token）。前端采用 KV-aware 路由；两个内存客户端向同一 Mooncake Store 各提供 1 TiB，不使用 SSD offload。
 
-使用支持 GLM-5.3-Flash、MTP 和混合注意力缓存的源码 MetaX vLLM 运行时。当前发布版的默认推理镜像不支持这一组合。
-
 ## 准备
 
-平台安装与自定义运行时镜像使用[沐曦平台指南](../../../../docs/development/metax-platform_zh.md)。节点需要发布 GPU 和共享 RDMA 资源，并允许运行时锁定 RDMA 所需内存。
+按[沐曦平台指南](../../../../docs/development/metax-platform_zh.md#从-sdk-构建推理运行时)从 MACA/PyTorch SDK 构建并安装平台。节点需要发布 GPU 和共享 RDMA 资源，并允许运行时锁定 RDMA 所需内存。
 
 在部署前完成三个环境选择：
 

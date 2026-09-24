@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Package the SDK's ABI-matched audio distribution for an isolated 0.26 runtime."""
+"""Package the SDK's ABI-matched audio distribution for an isolated MetaX runtime."""
 
 import json
 from email.parser import Parser
@@ -53,7 +53,7 @@ def prepare_sdk_audio(prefix: Path) -> None:
     content = requirements.read_text()
     original = "torchaudio==2.4.1+metax3.8.2.2"
     if content.count(original) != 1:
-        raise ValueError("MetaX 0.26 torchaudio requirement differs from the supported source")
+        raise ValueError("MetaX torchaudio requirement differs from the supported source")
     requirements.write_text(content.replace(original, f"torchaudio=={version}"))
     print(f"Using SDK torchaudio {version} from {sys._base_executable}")
 

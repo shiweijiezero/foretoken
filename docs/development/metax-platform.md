@@ -33,31 +33,17 @@ foretoken install -e .
 
 This uses the chart's MetaX inference runtime image as the base for the source-built model-server. For a cluster other than local kind or k3d, follow the [source deployment guide](../custom-deployment.md#2-build-images-and-install-the-platform-from-source) to sign in to a node-reachable registry and provide `--registry`; a private registry also needs image pull Secrets.
 
-### Use a custom MetaX SDK image
+### Build the inference runtime from an SDK
 
-If the inference runtime must be built against a different MACA SDK, provide a compatible Ubuntu 24.04 or Debian-based SDK image. It needs Python 3.12 and development headers. Match its SDK and driver using the [MetaX release matrix](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html).
+To build the inference engine as well, provide a Debian-based MACA/PyTorch SDK image with Python 3.12, PyTorch 2.10, matching torchaudio, and development headers. Match its SDK and driver using the [MetaX release matrix](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html).
 
-From the repository root, replace `<maca-sdk-image>` with that image and build the inference runtime:
-
-```bash
-METAX_SDK_IMAGE=<maca-sdk-image> \
-VLLM_METAX_IMAGE=foretoken-vllm-metax:custom \
-make image-vllm-metax
-```
-
-To select a different supported engine version, set `VLLM_METAX_VERSION` on the build command and use a compatible SDK image. Save this override as `metax-values.yaml`; if you already have a compatible inference runtime image, skip the build and put its reference here instead:
-
-```yaml
-runtime:
-  vllm:
-    image: foretoken-vllm-metax:custom
-```
+Replace `<maca-sdk-image>` with that image and run from the repository root:
 
 ```bash
-foretoken install -e . --values metax-values.yaml
+METAX_SDK_IMAGE=<maca-sdk-image> foretoken install -e .
 ```
 
-The source install builds the Foretoken model-server on the selected inference image, then distributes the Foretoken images and installs the platform. On a remote cluster, add `--registry` as described above. For manual image import or Helm operations instead, see the [source image lifecycle guide](source-image-lifecycle.md).
+The command builds the supported engine sources and applies their patches, including GLM-5.3 support, before packaging and installing Foretoken. Add `--registry` for a remote cluster. An explicit `runtime.vllm.image` in platform values selects an existing runtime instead of building from the SDK.
 
 ## Uninstall
 

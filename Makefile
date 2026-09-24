@@ -13,8 +13,7 @@ OCI_REGISTRY := $(patsubst %/,%,$(strip $(FORETOKEN_OCI_REGISTRY)))
 OCI_SOURCE ?= https://github.com/shiweijiezero/foretoken
 OCI_REVISION ?= $(shell git rev-parse HEAD)
 
-VLLM_METAX_VERSION ?= 0.24.0
-VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)
+VLLM_METAX_IMAGE ?= foretoken-vllm-metax:dev
 
 GIT = git $(if $(FORETOKEN_GITHUB_MIRROR),-c url.$(patsubst %/,%,$(FORETOKEN_GITHUB_MIRROR))/.insteadOf=https://github.com/,)
 
@@ -80,7 +79,6 @@ image-vllm-metax: mooncake-source
 		--build-arg FORETOKEN_GITHUB_MIRROR \
 		--build-arg UV_DEFAULT_INDEX \
 		--build-arg UV_EXTRA_INDEX_URL \
-		--build-arg VLLM_VERSION="$(VLLM_METAX_VERSION)" \
 		-f deploy/inference-engines/vllm-metax/Dockerfile \
 		-t "$(VLLM_METAX_IMAGE)" .
 

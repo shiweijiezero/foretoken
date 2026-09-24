@@ -7,11 +7,9 @@ English | [简体中文](README_zh.md)
 
 Run one Foretoken model group on two nodes with eight C500 64 GiB GPUs each: attention TP8×DP2, EP16, a 1,048,576-token context and native MTP with five speculative tokens. The frontend uses KV-aware routing. Two memory clients contribute 1 TiB each to one shared Mooncake Store, without SSD offload.
 
-Use a source-built MetaX vLLM runtime supporting GLM-5.3-Flash, MTP and hybrid attention caches. The current release's default inference image does not support this combination.
-
 ## Prepare
 
-Use the [MetaX platform guide](../../../../docs/development/metax-platform.md) to install the platform with a compatible runtime image. Nodes must advertise GPU and shared RDMA resources and allow the runtime to lock memory for RDMA.
+Build and install the platform from a MACA/PyTorch SDK as described in the [MetaX platform guide](../../../../docs/development/metax-platform.md#build-the-inference-runtime-from-an-sdk). Nodes must advertise GPU and shared RDMA resources and allow the runtime to lock memory for RDMA.
 
 Set the environment-specific inputs before deploying:
 

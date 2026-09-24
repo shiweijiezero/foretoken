@@ -1,36 +1,9 @@
-# GLM-5.3 on the vLLM 0.30 MetaX source pair
+# GLM-5.3 on the MetaX source runtime
 
-This directory contains the source-patch bundle for GLM-5.3-Flash BF16 on the vLLM 0.30 development core and MetaX 0.29 development plugin.
+The MetaX engine build applies this bundle automatically to the core and plugin revisions in [`source-environment.json`](source-environment.json). The manifest also defines patch targets and application order.
 
-Use the core and plugin revisions in [`source-environment.json`](source-environment.json). Apply this bundle when building that source pair; the generic MetaX installer does not apply it.
+The shared [compatibility patch](../metax-compatibility.patch) adapts the plugin's imports and dependencies to the core and preserves the core's automatic model-runner selection. The GLM patches cover typed KV layouts, sparse attention, sequence-parallel layers, MTP, and mHC normalization.
 
-## Patch order
+Source patches are applied before building the engine wheels. The DeepGEMM patch is applied after dependency installation because it modifies the installed kernel package. Update the source pair and its patches together.
 
-Apply these patches in order to the pinned source pair:
-
-1. `metax-glm53-typed-kv-layout.patch`
-   Aligns MetaX FlashAttention and sparse MLA with vLLM's typed `KVCacheLayout` contract and preserves HMA physical row strides.
-2. `metax-glm53-mla-prefill-fallback.patch`
-   Removes the MetaX platform override that forced an unsupported dense MLA prefill backend, allowing GLM's existing sparse MQA fallback.
-3. `metax-vllm030-fused-moe-all2all-api.patch`
-   Migrates the MetaX all-to-all helper from the removed boolean argument to vLLM 0.30's all-to-all manager contract.
-4. `metax030-glm-image-token-mtp.patch`
-   Routes `Glm5NextForConditionalGeneration` through the existing MTP `image_token_id` compatibility branch.
-5. `metax-sparse-mla-decode-metadata.patch`
-   Carries the maximum decode query length supplied by vLLM's sparse MLA metadata builder.
-6. `metax-sparse-mla-nope-query.patch`
-   Copies the NoPE query into the existing buffer when the RoPE component is empty, retaining the fused concatenation kernel for nonempty RoPE.
-7. `metax-glm53-sequence-parallel-dense-mlp.patch`
-   Passes the sequence-parallel flag to GLM5Next dense MLP layers so TP ranks do not reduce token rows from different sequence shards.
-8. `metax-glm53-sequence-parallel-moe-forward.patch`
-   Preserves the already-sharded sequence-parallel input when the GLM5Next non-mHC path invokes a MoE layer while retaining the full-input MTP path.
-9. `metax-glm53-mhc-native-norm.patch`
-   Applies the requested RMSNorm in MetaX's out-of-tree native mHC fallback before returning the layer input.
-10. `metax-paged-mqa-schedule.patch`
-   Builds the paged-MQA schedule with MetaX DeepGEMM instead of consuming the uninitialized buffer left by the upstream CUDA-only metadata path.
-
-The patches target the exact source pair recorded by the corresponding source-built runtime. Rebase or upgrade the source pair only after regenerating and validating the bundle; do not silently apply it to an unrelated release.
-
-## Runtime requirements
-
-MTP requires its full sparse indexer and separate MLA, compressed-indexer, and tail cache groups. Use the pinned core's Model Runner V2 (`VLLM_USE_V2_MODEL_RUNNER=1`) for multi-group draft attention; the legacy proposer assumes a single draft KV-cache group. Each proposal computes MTP-specific top-k indices in its first step and reuses those indices only in subsequent draft steps.
+MTP retains the complete sparse indexer and separate cache groups. The core selects Model Runner V2 when the execution configuration supports it, including the GLM-5.3 BF16 recipe.

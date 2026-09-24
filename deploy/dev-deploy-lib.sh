@@ -21,6 +21,13 @@ mirrored_image() {
 build_dev_images() {
   export DOCKER_BUILDKIT=1
 
+  if [[ "${FORETOKEN_BUILD_METAX_RUNTIME:-false}" == true ]]; then
+    local engine_image="${MODEL_SERVER_IMAGE}-engine"
+    printf 'Building MetaX inference runtime: %s\n' "$engine_image"
+    make image-vllm-metax VLLM_METAX_IMAGE="$engine_image"
+    export INFERENCE_ENGINE_IMAGE="$engine_image"
+  fi
+
   local -a go_args=() cargo_args=() model_args=()
   local name value
   for name in GOPROXY GOSUMDB; do
@@ -161,7 +168,7 @@ deployment_image() {
   kubectl get deployment \
     --namespace "$1" \
     --selector "$2" \
-    -o jsonpath='{.items[0].spec.template.spec.containers[0].image}'
+    -o go-template='{{if .items}}{{(index (index .items 0).spec.template.spec.containers 0).image}}{{end}}'
 }
 
 deployments_exist() {
