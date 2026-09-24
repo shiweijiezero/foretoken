@@ -8,19 +8,30 @@ use std::convert::Infallible;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Json;
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use foretoken_chat::{AssistantBlockKind, AssistantMessageExt as _, ChatEvent, FinishReason};
 use foretoken_engine_core_client::protocol::output::StopReason;
 use foretoken_text::output::decoded_text_event_stream;
 use foretoken_text::{DecodedLogprobs, DecodedPositionLogprobs};
 use foretoken_text::{DecodedTextEvent, TextOutputStreamExt};
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use serde::Serialize;
 use vllm_llm::FinishReason as VllmFinishReason;
 
 use crate::http::openai_error;
 use crate::runtime::{Generated, GeneratedChat, GenerationError};
+
+/// Builds protocol SSE responses with transport heartbeats during prefill or hidden reasoning.
+///
+/// Heartbeats keep client connections alive without resetting backend idle or request deadlines.
+pub(crate) fn sse_response(
+    events: impl Stream<Item = Result<Event, Infallible>> + Send + 'static,
+) -> Response {
+    Sse::new(events)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
 
 #[derive(Clone, Serialize)]
 struct ResponseMetadata {
@@ -623,7 +634,7 @@ pub(crate) fn chat_stream_with_options(
         }
         yield Ok(Event::default().data("[DONE]"));
     };
-    Sse::new(events).into_response()
+    sse_response(events)
 }
 
 pub(crate) struct CompletionResponseOptions {
@@ -794,7 +805,7 @@ pub(crate) fn text_stream_many(
         }
         yield Ok(Event::default().data("[DONE]"));
     };
-    Sse::new(events).into_response()
+    sse_response(events)
 }
 
 /// Collects one routed chat stream into the OpenAI JSON response used for non-streaming requests.

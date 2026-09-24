@@ -308,9 +308,10 @@ fn convert_assistant_message(
                 thinking,
                 signature,
             } => {
-                if signature.as_ref().is_some_and(|s| !s.is_empty()) {
+                // Plaintext is client-provided history; an opaque signature is not authenticated here.
+                if thinking.is_empty() && signature.as_ref().is_some_and(|s| !s.is_empty()) {
                     return Err(AnthropicApiError::invalid(
-                        "Signed thinking replay is not supported",
+                        "Thinking history requires plaintext; opaque signatures cannot be decoded",
                     ));
                 }
                 content.push(AssistantContentBlock::Reasoning { text: thinking });

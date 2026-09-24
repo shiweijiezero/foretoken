@@ -710,40 +710,61 @@ impl ResponseMessageContent {
 pub(crate) fn build_output_items(
     message: &foretoken_chat::AssistantMessage,
     include_reasoning: bool,
+    status: ResponseItemStatus,
+    tool_names: &ToolNames,
 ) -> Vec<ResponseOutputItem> {
+    let truncated = status == ResponseItemStatus::Incomplete;
     message
         .content
         .iter()
-        .filter_map(|block| match block {
-            AssistantContentBlock::Reasoning { text } if include_reasoning => {
-                Some(ResponseOutputItem::Reasoning {
-                    id: format!("rs_{}", Uuid::new_v4().simple()),
-                    summary: vec![],
-                    content: Some(vec![TextPart::reasoning_text(text.clone())]),
-                    status: Some(ResponseItemStatus::Completed),
-                })
+        .enumerate()
+        .filter_map(|(index, block)| {
+            let item_status = if truncated && index + 1 == message.content.len() {
+                ResponseItemStatus::Incomplete
+            } else {
+                ResponseItemStatus::Completed
+            };
+            match block {
+                AssistantContentBlock::Reasoning { text } if include_reasoning => {
+                    Some(ResponseOutputItem::Reasoning {
+                        id: format!("rs_{}", Uuid::new_v4().simple()),
+                        summary: vec![],
+                        content: Some(vec![TextPart::reasoning_text(text.clone())]),
+                        status: Some(item_status),
+                    })
+                }
+                AssistantContentBlock::Reasoning { .. } => None,
+                AssistantContentBlock::Text { text } if !text.is_empty() => {
+                    Some(ResponseOutputItem::Message {
+                        id: format!("msg_{}", Uuid::new_v4().simple()),
+                        role: AssistantRole,
+                        status: item_status,
+                        content: vec![ResponseOutputContentPart::OutputText {
+                            text: text.clone(),
+                            annotations: vec![],
+                            logprobs: None,
+                        }],
+                    })
+                }
+                AssistantContentBlock::Text { .. } => None,
+                AssistantContentBlock::ToolCall(call) => {
+                    let complete = tool_names.complete_arguments(&call.name, &call.arguments);
+                    if !complete && tool_names.get(&call.name).is_some_and(|tool| tool.custom) {
+                        return None;
+                    }
+                    Some(ResponseOutputItem::FunctionCall {
+                        id: format!("fc_{}", Uuid::new_v4().simple()),
+                        call_id: tool_call_id(call),
+                        name: call.name.clone(),
+                        arguments: call.arguments.clone(),
+                        status: Some(if truncated && !complete {
+                            ResponseItemStatus::Incomplete
+                        } else {
+                            ResponseItemStatus::Completed
+                        }),
+                    })
+                }
             }
-            AssistantContentBlock::Reasoning { .. } => None,
-            AssistantContentBlock::Text { text } if !text.is_empty() => {
-                Some(ResponseOutputItem::Message {
-                    id: format!("msg_{}", Uuid::new_v4().simple()),
-                    role: AssistantRole,
-                    status: ResponseItemStatus::Completed,
-                    content: vec![ResponseOutputContentPart::OutputText {
-                        text: text.clone(),
-                        annotations: vec![],
-                        logprobs: None,
-                    }],
-                })
-            }
-            AssistantContentBlock::Text { .. } => None,
-            AssistantContentBlock::ToolCall(call) => Some(ResponseOutputItem::FunctionCall {
-                id: format!("fc_{}", Uuid::new_v4().simple()),
-                call_id: tool_call_id(call),
-                name: call.name.clone(),
-                arguments: call.arguments.clone(),
-                status: Some(ResponseItemStatus::Completed),
-            }),
         })
         .collect()
 }

@@ -30,6 +30,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 强制工具选择和严格工具 schema 需要模型服务具备结构化输出能力。思考控制参数的效果取决于模型的对话模板。即使响应隐藏了思考，输出预算仍包含思考 token；Messages 使用 `max_tokens` 总预算，不接受独立的 `thinking.budget_tokens` 预算。
 
+输出预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `incomplete`。普通 JSON 响应会省略未完成的 Messages 工具调用和 Responses 自定义文本工具调用；未完成的 Responses 函数调用则保留部分参数，标记为 `incomplete`，且不发送表示工具调用完成的 SSE 事件。已经完整生成的工具调用仍会保留。
+
 ## 接口访问范围
 
 默认模式通过 `LoadBalancer` 类型的 Kubernetes `Service` 暴露前端。网关模式通过绑定平台 Gateway 的 `HTTPRoute` 暴露 `/v1`、`/tokenize` 和 `/detokenize`。域名解析、TLS、认证和其他入口策略需在 Gateway 部署中配置。默认模式下，运维接口的访问范围取决于 LoadBalancer 和集群网络策略。

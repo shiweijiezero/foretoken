@@ -30,6 +30,8 @@ All generation endpoints accept `stream: true` for SSE. Clients execute tools an
 
 Forced tool choice and strict tool schemas require a model service with structured-output support. Thinking controls depend on the model's chat template. Output budgets include reasoning tokens even when the response hides reasoning; Messages accepts a total `max_tokens` budget, not a separate `thinking.budget_tokens` allowance.
 
+When the output budget is exhausted, Messages reports `max_tokens` and Responses reports `incomplete`. Collected Messages and custom-text Responses omit unfinished tool calls; unfinished Responses function calls retain partial arguments with `status: incomplete` and are not emitted as completed tool calls in SSE. Complete tool calls remain available.
+
 ## Endpoint access
 
 The default mode exposes the frontend through a `LoadBalancer` Service. Gateway mode uses an `HTTPRoute` attached to a platform Gateway and exposes `/v1`, `/tokenize`, and `/detokenize`. Configure DNS, TLS, authentication, and other ingress policies for your Gateway deployment. Operator endpoint access in the default mode depends on the LoadBalancer and cluster network policy.

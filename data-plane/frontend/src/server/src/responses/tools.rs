@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use foretoken_chat::ChatTool;
+use foretoken_chat::{AssistantMessage, AssistantMessageExt as _, ChatTool};
 use serde_json::{Value, json};
 
 use super::error::ApiError;
@@ -105,6 +105,47 @@ impl ToolNames {
         Ok(())
     }
 
+    /// Defer possible truncation until Done; ordinary function validation remains client-owned.
+    pub fn complete_arguments(&self, name: &str, arguments: &str) -> bool {
+        if !self.get(name).is_some_and(|tool| tool.custom) {
+            return !serde_json::from_str::<Value>(arguments).is_err_and(|error| error.is_eof());
+        }
+        matches!(Self::custom_arguments_complete(arguments), Ok(true))
+    }
+
+    /// Distinguish a truncated custom wrapper from malformed JSON or a non-text payload.
+    fn custom_arguments_complete(arguments: &str) -> Result<bool, ApiError> {
+        let parsed: Value = match serde_json::from_str(arguments) {
+            Ok(parsed) => parsed,
+            Err(error) if error.is_eof() => return Ok(false),
+            Err(_) => return Err(ApiError::invalid_request("Invalid tool output", None)),
+        };
+        if !parsed.get("input").is_some_and(Value::is_string) {
+            return Err(ApiError::invalid_request(
+                "Custom tool output requires a text input",
+                None,
+            ));
+        }
+        Ok(true)
+    }
+
+    /// Preserve budget-truncated custom calls without weakening their existing wrapper validation.
+    pub fn validate_finished_tools(
+        &self,
+        message: &AssistantMessage,
+        truncated: bool,
+    ) -> Result<(), ApiError> {
+        for call in message.tool_calls() {
+            if self.get(&call.name).is_some_and(|tool| tool.custom)
+                && !Self::custom_arguments_complete(&call.arguments)?
+                && !truncated
+            {
+                return Err(ApiError::invalid_request("Incomplete tool output", None));
+            }
+        }
+        Ok(())
+    }
+
     /// Restore output tool identity; custom-text calls expose their raw input instead of JSON arguments.
     pub fn restore_item(&self, item: &mut Value) -> Result<(), ApiError> {
         if item.get("type").and_then(Value::as_str) != Some("function_call") {
@@ -126,13 +167,13 @@ impl ToolNames {
         }
         if tool.custom {
             object.insert("type".into(), json!("custom_tool_call"));
+            let in_progress =
+                object.remove("status").as_ref().and_then(Value::as_str) == Some("in_progress");
             let arguments = object
                 .remove("arguments")
                 .and_then(|v| v.as_str().map(str::to_owned))
                 .unwrap_or_default();
-            let input = if arguments.is_empty()
-                && object.get("status").and_then(Value::as_str) == Some("in_progress")
-            {
+            let input = if arguments.is_empty() && in_progress {
                 String::new()
             } else {
                 let parsed: Value = serde_json::from_str(&arguments)

@@ -8,7 +8,7 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use axum::Json;
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use foretoken_chat::{AssistantBlockKind, AssistantContentBlock, ChatEvent, FinishReason};
 use foretoken_engine_core_client::protocol::output::StopReason as EngineStopReason;
@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 use super::error::AnthropicApiError;
 use super::types::{AnthropicMessagesResponse, AnthropicUsage, ResponseContentBlock, StopReason};
-use crate::response::chat_events;
+use crate::response::{chat_events, sse_response};
 use crate::runtime::GeneratedChat;
 
 /// Collects the canonical chat stream into one Anthropic message.
@@ -49,6 +49,7 @@ pub(super) async fn collected(generated: GeneratedChat, idle: Duration) -> Respo
                 finish_reason,
                 ..
             }) => {
+                let truncated = matches!(finish_reason, FinishReason::Length);
                 let content = match message
                     .content
                     .into_iter()
@@ -56,7 +57,7 @@ pub(super) async fn collected(generated: GeneratedChat, idle: Duration) -> Respo
                         include_reasoning
                             || !matches!(block, AssistantContentBlock::Reasoning { .. })
                     })
-                    .map(content_block)
+                    .filter_map(|block| content_block(block, truncated).transpose())
                     .collect::<Result<Vec<_>, _>>()
                 {
                     Ok(content) => content,
@@ -162,16 +163,21 @@ pub(super) fn streaming(generated: GeneratedChat, idle: Duration) -> Response {
                 ChatEvent::ToolCallArgumentsDelta { index, delta } => {
                     blocks.delta((1,index), json!({"type":"input_json_delta", "partial_json":delta}))
                 }
-                ChatEvent::ToolCallEnd { index, call } => {
-                    if tool_input(&call.arguments).is_err() {
-                        Err(AnthropicApiError::stream())
-                    } else {
-                        blocks.end((1,index))
-                    }
-                }
+                ChatEvent::ToolCallEnd { index, .. } => blocks.end((1,index)),
                 ChatEvent::LogprobsDelta { .. } => Ok(None),
-                ChatEvent::Done { usage, finish_reason, .. } => {
-                    let terminal = stop(finish_reason, blocks.has_tools);
+                ChatEvent::Done { message, usage, finish_reason, .. } => {
+                    // Partial tool JSON is recoverable at the output limit, not a backend failure.
+                    // The terminal event owns this decision; parser recovery may emit intervening text.
+                    let truncated = matches!(finish_reason, FinishReason::Length);
+                    let valid_tools = message.content.iter().all(|block| match block {
+                        AssistantContentBlock::ToolCall(call) => tool_input(&call.arguments, truncated).is_ok(),
+                        _ => true,
+                    });
+                    let terminal = if valid_tools {
+                        stop(finish_reason, blocks.has_tools)
+                    } else {
+                        Err(AnthropicApiError::stream())
+                    };
                     match terminal {
                         Ok((reason, sequence)) if started && blocks.open.is_empty() => {
                             drop(stream);
@@ -199,7 +205,7 @@ pub(super) fn streaming(generated: GeneratedChat, idle: Duration) -> Response {
         drop(stream);
         yield Ok(sse("error", AnthropicApiError::stream().body()));
     };
-    Sse::new(stream).into_response()
+    sse_response(stream)
 }
 
 /// Maps the chat processor's independent text/tool indices into one Anthropic block sequence.
@@ -248,28 +254,37 @@ impl StreamBlocks {
     }
 }
 
-/// Converts a finalized block while preserving its semantic kind and tool identity.
-fn content_block(block: AssistantContentBlock) -> Result<ResponseContentBlock, AnthropicApiError> {
-    Ok(match block {
+/// Converts collected content, omitting incomplete tool calls when the output budget was exhausted.
+fn content_block(
+    block: AssistantContentBlock,
+    truncated: bool,
+) -> Result<Option<ResponseContentBlock>, AnthropicApiError> {
+    Ok(Some(match block {
         AssistantContentBlock::Text { text } => ResponseContentBlock::Text { text },
         AssistantContentBlock::Reasoning { text } => {
             ResponseContentBlock::Thinking { thinking: text }
         }
-        AssistantContentBlock::ToolCall(call) => ResponseContentBlock::ToolUse {
-            id: call.id,
-            name: call.name,
-            input: tool_input(&call.arguments)?,
-        },
-    })
+        AssistantContentBlock::ToolCall(call) => {
+            // Collected tool input must be an object; partial bytes remain available only in SSE.
+            let Some(input) = tool_input(&call.arguments, truncated)? else {
+                return Ok(None);
+            };
+            ResponseContentBlock::ToolUse {
+                id: call.id,
+                name: call.name,
+                input,
+            }
+        }
+    }))
 }
 
-/// Converts model-emitted tool arguments without replacing malformed JSON with an empty object.
-fn tool_input(arguments: &str) -> Result<Value, AnthropicApiError> {
-    let value: Value = serde_json::from_str(arguments).map_err(|_| AnthropicApiError::stream())?;
-    if !value.is_object() {
-        return Err(AnthropicApiError::stream());
+/// Parses tool input, distinguishing budget-truncated JSON from malformed or non-object input.
+fn tool_input(arguments: &str, truncated: bool) -> Result<Option<Value>, AnthropicApiError> {
+    match serde_json::from_str::<Value>(arguments) {
+        Ok(value) if value.is_object() => Ok(Some(value)),
+        Err(error) if truncated && error.is_eof() => Ok(None),
+        _ => Err(AnthropicApiError::stream()),
     }
-    Ok(value)
 }
 
 /// Maps successful terminal causes; aborted or invalid output is a protocol error.

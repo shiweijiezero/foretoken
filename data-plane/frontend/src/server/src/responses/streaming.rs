@@ -20,7 +20,6 @@ use super::tools::ToolNames;
 use super::types::{
     AssistantRole, ResponseItemStatus, ResponseOutputContentPart, ResponseOutputItem, TextPart,
 };
-use std::collections::BTreeSet;
 
 /// One Responses API SSE event.
 ///
@@ -119,12 +118,18 @@ impl OutputItemStreamer {
     }
 
     /// Process one chat event, returning the SSE events to emit.
-    pub(crate) fn on_event(&mut self, event: &ChatEvent) -> Vec<ResponseStreamEvent> {
+    pub(crate) fn on_event(
+        &mut self,
+        event: &ChatEvent,
+        names: &ToolNames,
+    ) -> Vec<ResponseStreamEvent> {
         match event {
             ChatEvent::Start { .. } | ChatEvent::LogprobsDelta { .. } | ChatEvent::Done { .. } => {
                 vec![]
             }
-            ChatEvent::BlockStart { .. } => vec![],
+            ChatEvent::BlockStart { .. } => {
+                self.close_current(None, ResponseItemStatus::Completed, names)
+            }
             ChatEvent::BlockDelta { kind, delta, .. } => {
                 if delta.is_empty()
                     || (*kind == AssistantBlockKind::Reasoning && !self.include_reasoning)
@@ -146,37 +151,69 @@ impl OutputItemStreamer {
                     AssistantBlockKind::ToolCall => vec![],
                 }
             }
-            ChatEvent::BlockEnd { block, .. } => match block.kind() {
-                AssistantBlockKind::Reasoning if self.include_reasoning => {
-                    self.close_reasoning(block_text(block))
+            ChatEvent::BlockEnd { block, .. } => {
+                // A block boundary alone does not distinguish a normal stop from budget exhaustion.
+                if let Some(OpenItem::Reasoning { text, .. } | OpenItem::Message { text, .. }) =
+                    self.current.as_mut()
+                    && let Some(final_text) = block_text(block)
+                {
+                    *text = final_text.to_owned();
                 }
-                AssistantBlockKind::Reasoning => vec![],
-                AssistantBlockKind::Text => self.close_message(block_text(block)),
-                // Tool-call blocks flow through the dedicated events.
-                AssistantBlockKind::ToolCall => vec![],
-            },
+                vec![]
+            }
             ChatEvent::ToolCallStart { id, name, .. } => {
-                let mut events = self.close_current(None);
-                events.push(self.open_function_call(id, name));
+                let mut events = self.close_current(None, ResponseItemStatus::Completed, names);
+                let added = self.open_function_call(id, name);
+                // Custom items have no incomplete status. Publish them only after their wrapper is complete.
+                if !names.get(name).is_some_and(|tool| tool.custom) {
+                    events.push(added);
+                }
                 events
             }
             ChatEvent::ToolCallArgumentsDelta { delta, .. } => {
                 if delta.is_empty() {
                     return vec![];
                 }
-                vec![self.function_call_delta(delta.clone())]
+                let event = self.function_call_delta(delta.clone());
+                if matches!(self.current.as_ref(), Some(OpenItem::FunctionCall { name, .. })
+                    if names.get(name).is_some_and(|tool| tool.custom))
+                {
+                    vec![]
+                } else {
+                    vec![event]
+                }
             }
-            ChatEvent::ToolCallEnd { call, .. } => self.close_current(Some(call)),
+            ChatEvent::ToolCallEnd { call, .. } => {
+                self.close_current(Some(call), ResponseItemStatus::Completed, names)
+            }
         }
     }
 
-    /// Close any still-open item, returning the close events. Defensive: the
-    /// chat event contract closes blocks and tool calls explicitly.
-    pub(crate) fn on_stream_end(&mut self) -> Vec<ResponseStreamEvent> {
-        self.close_current(None)
+    /// Resolve deferred function completion and the last text item using the actual termination.
+    pub(crate) fn finish(
+        &mut self,
+        status: ResponseItemStatus,
+        names: &ToolNames,
+    ) -> Vec<ResponseStreamEvent> {
+        let mut events = Vec::new();
+        if status == ResponseItemStatus::Completed {
+            for (index, item) in self.completed_items.iter_mut().enumerate() {
+                if let ResponseOutputItem::FunctionCall {
+                    status: Some(item_status),
+                    ..
+                } = item
+                    && *item_status == ResponseItemStatus::Incomplete
+                {
+                    *item_status = ResponseItemStatus::Completed;
+                    events.extend(function_call_done_events(index as u32, item));
+                }
+            }
+        }
+        events.extend(self.close_current(None, status, names));
+        events
     }
 
-    /// Return the exact finalized items already emitted, preserving order, IDs and arguments.
+    /// Return output with the same public order and IDs, including non-dispatchable partial calls.
     pub(crate) fn final_output_items(&self) -> Vec<ResponseOutputItem> {
         self.completed_items.clone()
     }
@@ -314,6 +351,8 @@ impl OutputItemStreamer {
     fn close_current(
         &mut self,
         final_call: Option<&AssistantToolCall>,
+        status: ResponseItemStatus,
+        names: &ToolNames,
     ) -> Vec<ResponseStreamEvent> {
         let Some(open) = self.current.take() else {
             return vec![];
@@ -326,7 +365,7 @@ impl OutputItemStreamer {
                     id: item_id.clone(),
                     summary: vec![],
                     content: Some(vec![part.clone()]),
-                    status: Some(ResponseItemStatus::Completed),
+                    status: Some(status),
                 };
                 self.completed_items.push(item.clone());
                 vec![
@@ -357,7 +396,7 @@ impl OutputItemStreamer {
                 let item = ResponseOutputItem::Message {
                     id: item_id.clone(),
                     role: AssistantRole,
-                    status: ResponseItemStatus::Completed,
+                    status,
                     content: vec![part.clone()],
                 };
                 self.completed_items.push(item.clone());
@@ -402,16 +441,44 @@ impl OutputItemStreamer {
                     ),
                     None => (call_id, name, arguments),
                 };
+                let custom = names.get(&name).is_some_and(|tool| tool.custom);
+                let complete = names.complete_arguments(&name, &arguments);
+                if custom && !complete {
+                    // Done retains the original call, so its finish reason can distinguish truncation from failure.
+                    return vec![];
+                }
                 let item = ResponseOutputItem::FunctionCall {
                     id: item_id.clone(),
-                    call_id,
+                    call_id: call_id.clone(),
                     name: name.clone(),
                     arguments: arguments.clone(),
-                    status: Some(ResponseItemStatus::Completed),
+                    status: Some(if complete {
+                        ResponseItemStatus::Completed
+                    } else {
+                        ResponseItemStatus::Incomplete
+                    }),
                 };
                 self.completed_items.push(item.clone());
+                if !complete {
+                    // Keep the raw partial arguments for the incomplete response, without a dispatchable done event.
+                    self.output_index += 1;
+                    return vec![];
+                }
                 let mut events = Vec::new();
-                if !saw_delta && !arguments.is_empty() {
+                if custom {
+                    events.push(output_item_event(
+                        "response.output_item.added",
+                        output_index,
+                        ResponseOutputItem::FunctionCall {
+                            id: item_id.clone(),
+                            call_id,
+                            name: name.clone(),
+                            arguments: String::new(),
+                            status: Some(ResponseItemStatus::InProgress),
+                        },
+                    ));
+                }
+                if !custom && !saw_delta && !arguments.is_empty() {
                     events.push(part_event(
                         "response.function_call_arguments.delta",
                         output_index,
@@ -419,56 +486,41 @@ impl OutputItemStreamer {
                         [("delta", Value::String(arguments.clone()))],
                     ));
                 }
-                events.push(part_event(
-                    "response.function_call_arguments.done",
-                    output_index,
-                    &item_id,
-                    [
-                        ("arguments", Value::String(arguments)),
-                        ("name", Value::String(name)),
-                    ],
-                ));
-                events.push(output_item_event(
-                    "response.output_item.done",
-                    output_index,
-                    item,
-                ));
+                events.extend(function_call_done_events(output_index, &item));
                 events
             }
         };
         self.output_index += 1;
         events
     }
+}
 
-    /// Close the reasoning item if it is currently open. The block text
-    /// assembled by the parser is authoritative over accumulated deltas.
-    fn close_reasoning(&mut self, final_text: Option<&str>) -> Vec<ResponseStreamEvent> {
-        if let Some(OpenItem::Reasoning { text, .. }) = self.current.as_mut()
-            && let Some(final_text) = final_text
-        {
-            *text = final_text.to_string();
-        }
-        if !matches!(self.current, Some(OpenItem::Reasoning { .. })) {
-            // Empty reasoning blocks never opened; nothing to close.
-            return vec![];
-        }
-        self.close_current(None)
-    }
-
-    /// Close the message item if it is currently open. The block text
-    /// assembled by the parser is authoritative over accumulated deltas.
-    fn close_message(&mut self, final_text: Option<&str>) -> Vec<ResponseStreamEvent> {
-        if let Some(OpenItem::Message { text, .. }) = self.current.as_mut()
-            && let Some(final_text) = final_text
-        {
-            *text = final_text.to_string();
-        }
-        if !matches!(self.current, Some(OpenItem::Message { .. })) {
-            // Empty text blocks never opened; nothing to close.
-            return vec![];
-        }
-        self.close_current(None)
-    }
+/// Complete a dispatchable function item without altering its streamed identity or arguments.
+fn function_call_done_events(
+    output_index: u32,
+    item: &ResponseOutputItem,
+) -> Vec<ResponseStreamEvent> {
+    let ResponseOutputItem::FunctionCall {
+        id,
+        name,
+        arguments,
+        ..
+    } = item
+    else {
+        unreachable!("function completion requires a function item");
+    };
+    vec![
+        part_event(
+            "response.function_call_arguments.done",
+            output_index,
+            id,
+            [
+                ("arguments", Value::String(arguments.clone())),
+                ("name", Value::String(name.clone())),
+            ],
+        ),
+        output_item_event("response.output_item.done", output_index, item.clone()),
+    ]
 }
 
 /// Extract the text of one text/reasoning block.
@@ -540,17 +592,8 @@ fn part_event<const N: usize>(
 pub(super) fn restore_tool_event(
     mut event: ResponseStreamEvent,
     names: &ToolNames,
-    custom_items: &mut BTreeSet<String>,
 ) -> Result<Vec<ResponseStreamEvent>, ApiError> {
     if let Some(item) = event.payload.get_mut("item") {
-        let is_custom = item
-            .get("name")
-            .and_then(Value::as_str)
-            .and_then(|name| names.get(name))
-            .is_some_and(|tool| tool.custom);
-        if is_custom && let Some(id) = item.get("id").and_then(Value::as_str) {
-            custom_items.insert(id.into());
-        }
         names.restore_item(item)?;
     }
     if let Some(response) = event.payload.get_mut("response") {
@@ -558,12 +601,10 @@ pub(super) fn restore_tool_event(
     }
     let custom = event
         .payload
-        .get("item_id")
+        .get("name")
         .and_then(Value::as_str)
-        .is_some_and(|id| custom_items.contains(id));
-    if custom && event.event_type == "response.function_call_arguments.delta" {
-        return Ok(vec![]);
-    }
+        .and_then(|name| names.get(name))
+        .is_some_and(|tool| tool.custom);
     if custom && event.event_type == "response.function_call_arguments.done" {
         let arguments = event
             .payload

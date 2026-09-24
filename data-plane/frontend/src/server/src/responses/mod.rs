@@ -11,14 +11,13 @@ mod streaming;
 mod tools;
 mod types;
 
-use std::collections::BTreeSet;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
@@ -116,7 +115,7 @@ async fn create(
         .unwrap_or_default()
         .as_secs();
     if stream_requested {
-        Sse::new(stream(events, meta, request_id, created_at)).into_response()
+        crate::response::sse_response(stream(events, meta, request_id, created_at))
     } else {
         collected(events, meta, request_id, created_at).await
     }
@@ -141,12 +140,20 @@ async fn collected(
                 if matches!(finish_reason, FinishReason::Error | FinishReason::Abort) {
                     return ApiError::generation(GenerationError::RequestFailed).into_response();
                 }
+                let status = response_status(&finish_reason);
+                if meta
+                    .tool_names
+                    .validate_finished_tools(&message, status == ResponseItemStatus::Incomplete)
+                    .is_err()
+                {
+                    return ApiError::generation(GenerationError::BackendProtocol).into_response();
+                }
                 let response = build_response(
                     &meta,
                     &request_id,
                     created_at,
-                    build_output_items(&message, meta.include_reasoning),
-                    response_status(&finish_reason),
+                    build_output_items(&message, meta.include_reasoning, status, &meta.tool_names),
+                    status,
                     Some(build_usage(&usage)),
                 );
                 let mut response = serde_json::to_value(response).expect("response serialization");
@@ -194,20 +201,22 @@ fn stream(
         let initial = build_response(&meta, &request_id, created_at, vec![], ResponseItemStatus::InProgress, None);
         yield sse(response_lifecycle_event("response.created", &initial), &mut sequence);
         yield sse(response_lifecycle_event("response.in_progress", &initial), &mut sequence);
-        let mut custom_items = BTreeSet::new();
         while let Some(event) = events.next().await {
             match event {
-                Ok(ChatEvent::Done { usage, finish_reason, .. }) => {
+                Ok(ChatEvent::Done { message, usage, finish_reason, .. }) => {
                     let status = response_status(&finish_reason);
                     if status == ResponseItemStatus::Failed { break; }
-                    let closing = items.on_stream_end().into_iter()
-                        .map(|event| restore_tool_event(event, &meta.tool_names, &mut custom_items))
+                    if meta.tool_names.validate_finished_tools(
+                        &message, status == ResponseItemStatus::Incomplete,
+                    ).is_err() { break; }
+                    let closing = items.finish(status, &meta.tool_names).into_iter()
+                        .map(|event| restore_tool_event(event, &meta.tool_names))
                         .collect::<Result<Vec<_>, _>>();
                     let Ok(closing) = closing else { break; };
                     let response = build_response(&meta, &request_id, created_at,
                         items.final_output_items(), status, Some(build_usage(&usage)));
                     let event_type = if status == ResponseItemStatus::Incomplete { "response.incomplete" } else { "response.completed" };
-                    let final_events = restore_tool_event(response_lifecycle_event(event_type, &response), &meta.tool_names, &mut custom_items);
+                    let final_events = restore_tool_event(response_lifecycle_event(event_type, &response), &meta.tool_names);
                     let Ok(final_events) = final_events else { break; };
                     // Release backend ownership before terminal output can block on a slow client.
                     drop(events);
@@ -216,8 +225,8 @@ fn stream(
                     return;
                 }
                 Ok(event) => {
-                    let converted = items.on_event(&event).into_iter()
-                        .map(|event| restore_tool_event(event, &meta.tool_names, &mut custom_items))
+                    let converted = items.on_event(&event, &meta.tool_names).into_iter()
+                        .map(|event| restore_tool_event(event, &meta.tool_names))
                         .collect::<Result<Vec<_>, _>>();
                     let Ok(converted) = converted else { break; };
                     for event in converted.into_iter().flatten() { yield sse(event, &mut sequence); }
