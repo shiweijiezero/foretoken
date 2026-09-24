@@ -22,7 +22,7 @@ If you only need to serve a single model on one GPU, using an inference engine s
 | Feature | Description | Status |
 |---|---|---|
 | [Evaluation](benchmarks/README.md) | Measure service performance and model quality | In development |
-| [Profiling](observability/profiling.md) | Capture PyTorch, NVIDIA Nsight Systems, or MetaX mcTracer timelines for a model service | In development |
+| [Profiling](benchmarks/docs/profile/README.md) | Capture PyTorch, NVIDIA Nsight Systems, or MetaX mcTracer timelines for a model service | In development |
 | Hardware support | Common interfaces for device capabilities, runtimes, communication, and metrics; see [MetaX deployment](docs/metax-deployment.md) | In development |
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
 | Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP parallelism | Research |
@@ -77,13 +77,39 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
-### 5. Measure the model service
+### 5. Evaluate and profile the service
+
+The examples save results locally and to W&B. Run `wandb login` once before using W&B.
+
+#### Performance: latency and throughput
 
 ```bash
-foretoken perf examples/quickstart --output local
+foretoken perf examples/quickstart --num-prompts 20 --output local,wandb
 ```
 
-See [Model Service Evaluation](benchmarks/README.md) for performance workloads, W&B output, and model-quality scoring with `foretoken eval`.
+Read request success, latency, and throughput in the summary. [Performance examples](benchmarks/docs/perf/README.md) cover other workloads and load settings.
+
+#### Quality: score model answers
+
+```bash
+foretoken eval examples/quickstart \
+  --evaluator lm-eval --tasks gsm8k --limit 100 --output local,wandb
+```
+
+This scores 100 GSM8K math problems. See [Quality evaluation](benchmarks/docs/eval/README.md) for EvalScope, task parameters, and saved scores.
+
+#### Profiling: inspect execution bottlenecks
+
+Use a source-installed CLI and platform for profiling, as described in the [profiling guide](benchmarks/docs/profile/README.md). The Quick Start already configures persistent capture storage.
+
+```bash
+foretoken perf examples/quickstart \
+  --profile --profile-engine pytorch --profile-duration 15s \
+  --num-prompts 2 --max-tokens 128 --output local,wandb
+foretoken profile view
+```
+
+Open the printed URL to inspect the capture. Press Ctrl+C to close the viewer; the model service remains running.
 
 ## Gateway Mode
 

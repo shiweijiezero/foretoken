@@ -137,13 +137,17 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 直接访问时，`--host` 返回主机名或 IP，以及 URL 中包含的端口；HTTP Gateway 模式下返回配置的路由域名。`foretoken endpoint` 等待 LoadBalancer 或 Gateway 分配地址；要等待服务就绪，请使用 `foretoken deploy`。
 
-## 评测模型服务
+## 性能评测：响应速度与吞吐量
 
-使用 `foretoken perf` 测量服务性能，使用 `foretoken eval` 调用 lm-evaluation-harness 或 EvalScope 评测模型质量。两者都接受 Kustomize 目录，或通过 `--url` 指定已有服务。命令和结果设置见[模型服务评测](../benchmarks/README_zh.md)。
+使用 `foretoken perf` 测量响应延迟、请求吞吐量和 token 生成速度。传入 Kustomize 目录，或用 `--url` 和 `--model` 指定已有服务。各类负载见[性能评测示例](../benchmarks/docs/perf/README_zh.md)。
 
-## 采集诊断 Profile
+## 质量评测：回答正确率
 
-在 `foretoken deploy` 或 `foretoken perf` 后加 `--profile` 采集性能数据，用 `foretoken profile view` 浏览结果。详见[性能剖析指南](../observability/profiling_zh.md)。
+使用 `foretoken eval`，通过 lm-evaluation-harness 或 EvalScope 为模型回答评分。服务选择方式与性能评测相同，任务和判分参数采用所选框架的写法。具体命令见[质量评测](../benchmarks/docs/eval/README_zh.md)。
+
+## 性能剖析：执行瓶颈
+
+在 `foretoken deploy` 或 `foretoken perf` 后加 `--profile`，记录 CPU/GPU 执行过程，再用 `foretoken profile view` 浏览结果。环境准备与采集命令见[性能剖析](../benchmarks/docs/profile/README_zh.md)。
 
 ## 清理
 

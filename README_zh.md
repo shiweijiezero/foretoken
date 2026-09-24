@@ -22,7 +22,7 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 | 功能 | 说明 | 状态 |
 |---|---|---|
 | [评测](benchmarks/README_zh.md) | 评测模型服务性能和模型质量 | 开发中 |
-| [性能剖析](observability/profiling_zh.md) | 采集模型服务的 PyTorch、NVIDIA Nsight Systems 或沐曦 mcTracer 执行时间线 | 开发中 |
+| [性能剖析](benchmarks/docs/profile/README_zh.md) | 采集模型服务的 PyTorch、NVIDIA Nsight Systems 或沐曦 mcTracer 执行时间线 | 开发中 |
 | 硬件适配 | 统一设备能力、运行时、通信和指标接口；参阅[沐曦部署指南](docs/metax-deployment_zh.md) | 开发中 |
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
 | 分布式推理 | 聚合部署、Prefill/Decode 分离和 WideEP 并行策略 | 研究中 |
@@ -77,13 +77,39 @@ curl --fail-with-body --no-buffer \
   -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"stream":true}'
 ```
 
-### 5. 测量模型服务性能
+### 5. 评测与性能剖析
+
+以下示例将结果保存到本地和 W&B。首次使用 W&B 前，执行一次 `wandb login`。
+
+#### 性能：测量延迟和吞吐量
 
 ```bash
-foretoken perf examples/quickstart --output local
+foretoken perf examples/quickstart --num-prompts 20 --output local,wandb
 ```
 
-更多性能负载、W&B 输出，以及使用 `foretoken eval` 评测模型质量的用法，见[模型服务评测](benchmarks/README_zh.md)。
+汇总结果展示请求成功率、延迟和吞吐量。其他数据集与负载设置见[性能评测示例](benchmarks/docs/perf/README_zh.md)。
+
+#### 质量：评估回答正确率
+
+```bash
+foretoken eval examples/quickstart \
+  --evaluator lm-eval --tasks gsm8k --limit 100 --output local,wandb
+```
+
+该命令对 100 道 GSM8K 数学题评分。EvalScope、任务参数与评分结果的用法见[质量评测](benchmarks/docs/eval/README_zh.md)。
+
+#### 性能剖析：定位执行瓶颈
+
+采集需使用源码安装的 CLI 和平台，见[性能剖析指南](benchmarks/docs/profile/README_zh.md)。快速开始示例已配置持久化采集存储。
+
+```bash
+foretoken perf examples/quickstart \
+  --profile --profile-engine pytorch --profile-duration 15s \
+  --num-prompts 2 --max-tokens 128 --output local,wandb
+foretoken profile view
+```
+
+打开打印的网址查看采集结果，按 Ctrl+C 关闭查看器；模型服务继续运行。
 
 ## 网关模式
 

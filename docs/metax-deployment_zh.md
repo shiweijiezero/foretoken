@@ -67,7 +67,7 @@ curl --fail-with-body "$FORETOKEN_FRONTEND_URL/v1/models" \
   -H "Host: $FORETOKEN_REQUEST_HOST"
 ```
 
-需要查看 CPU/GPU 执行时间线时，按[性能剖析指南](../observability/profiling_zh.md)采集，工具选择 `--profile-engine pytorch`。
+需要查看 CPU/GPU 执行时间线时，按[性能剖析指南](../benchmarks/docs/profile/README_zh.md)采集，工具选择 `--profile-engine pytorch`。
 
 ## 3. 查看状态或删除示例
 

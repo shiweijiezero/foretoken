@@ -1,6 +1,6 @@
 # 性能指标
 
-[English](metrics.md) | 简体中文 · [常用命令](docs/examples_zh.md)
+[English](metrics.md) | 简体中文 · [性能评测示例](docs/perf/README_zh.md)
 
 `metrics.json` 保存汇总指标，`raw_output.json` 保存逐请求记录。标准负载还保留 `benchmark_data.db` 和 `benchmark.log`。
 
@@ -42,7 +42,7 @@
 
 ## SLO 结果
 
-启用 `--slo-params` 后，使用延迟类条件的请求会在 `raw_output.json` 和 W&B 逐请求曲线中获得 `slo_met`。CLI、`metrics.json` 和 W&B Summary 同时记录同一条件下的 SLO 达标率、请求 goodput 和 token goodput。SLO 容量搜索仍按配置的聚合条件判断探测点，并搜索满足条件的最大并发。
+启用 `--slo-params` 后，使用延迟类条件的请求会在 `raw_output.json` 和 W&B 逐请求曲线中获得 `slo_met`。CLI、`metrics.json` 和 W&B Summary 同时记录同一条件下的 SLO 达标率、请求 goodput 和 token goodput。SLO 并发搜索仍按配置的聚合条件判断探测点，并搜索满足条件的最大并发。
 
 服务未报告 token 用量时，对应 token 数保持不可用。如果任一成功请求缺少输入或输出用量，需要完整 token 总数的汇总指标也保持不可用，不把缺失值当作零。缓存输入 token 保留服务报告的原值，包括明确报告的零；它不表示某个存储层或 KV store 的命中率。
 
