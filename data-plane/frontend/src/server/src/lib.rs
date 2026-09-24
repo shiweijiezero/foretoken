@@ -3,10 +3,8 @@
 
 //! OpenAI and Anthropic HTTP adapters over Foretoken's shared generation pipeline.
 
+mod api;
 mod http;
-mod messages;
-mod response;
-mod responses;
 mod runtime;
 
 pub use http::router;

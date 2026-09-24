@@ -12,8 +12,7 @@ mod tools;
 mod types;
 
 use std::convert::Infallible;
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
@@ -21,13 +20,14 @@ use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
-use foretoken_chat::{ChatEvent, FinishReason, ParserSelection};
-use foretoken_text::Prompt;
+use foretoken_chat::{ChatEvent, FinishReason};
 use futures::{Stream, StreamExt};
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::runtime::{Generation, GenerationError, GenerationRequest};
+use super::stream::{chat_events, sse_response};
+use super::{ApiState, RequestTiming};
+use crate::runtime::GenerationError;
 use convert::{ResponseMeta, build_output_items, build_response, build_usage};
 use error::ApiError;
 use streaming::{
@@ -35,32 +35,17 @@ use streaming::{
 };
 use types::{ResponseItemStatus, ResponsesRequest};
 
-#[derive(Clone)]
-struct ResponsesState {
-    generation: Arc<dyn Generation>,
-    stream_idle: Duration,
-}
-
-/// Add Responses routes to the frontend while sharing its generation and idle-timeout owners.
-pub(crate) fn router(generation: Arc<dyn Generation>, stream_idle: Duration) -> Router {
-    Router::new()
-        .route("/v1/responses", post(create))
-        .with_state(ResponsesState {
-            generation,
-            stream_idle,
-        })
+/// Registers stateless Responses generation on the shared frontend service.
+pub(super) fn router() -> Router<ApiState> {
+    Router::new().route("/v1/responses", post(create))
 }
 
 /// Lower a Responses request once, then expose the shared chat output as JSON or SSE.
 async fn create(
-    State(state): State<ResponsesState>,
+    State(state): State<ApiState>,
     body: Result<Json<ResponsesRequest>, JsonRejection>,
 ) -> Response {
-    let started_at = Instant::now();
-    let arrival_time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .ok()
-        .map(|v| v.as_secs_f64());
+    let timing = RequestTiming::now();
     let body = match body {
         Ok(Json(body)) => body,
         Err(error) => {
@@ -79,34 +64,14 @@ async fn create(
         Ok(prepared) => prepared,
         Err(error) => return error.into_response(),
     };
-    let request = GenerationRequest {
-        model: meta.model.clone(),
-        request_id: request_id.clone(),
-        prompt: Prompt::Text(String::new()),
-        sampling_params: chat.sampling_params.clone(),
-        decode_options: chat.decode_options.clone(),
-        intermediate: stream_requested,
-        priority: chat.priority,
-        cache_salt: chat.cache_salt.clone(),
-        session_id: chat.session_id.clone(),
-        arrival_time,
-        started_at,
-        tool_call_parser: if chat.tool_context.parsing_enabled() {
-            ParserSelection::Auto
-        } else {
-            ParserSelection::None
-        },
-        reasoning_parser: ParserSelection::Auto,
-    };
     let generated = match state
-        .generation
-        .generate_chat(request, chat, meta.include_reasoning)
+        .generate_chat(meta.model.clone(), chat, meta.include_reasoning, timing)
         .await
     {
         Ok(generated) => generated,
         Err(error) => return ApiError::generation(error).into_response(),
     };
-    let (_, events) = match crate::response::chat_events(generated, state.stream_idle) {
+    let (_, events) = match chat_events(generated, state.stream_idle) {
         Ok(events) => events,
         Err(_) => return ApiError::generation(GenerationError::Internal).into_response(),
     };
@@ -115,7 +80,7 @@ async fn create(
         .unwrap_or_default()
         .as_secs();
     if stream_requested {
-        crate::response::sse_response(stream(events, meta, request_id, created_at))
+        sse_response(stream(events, meta, request_id, created_at))
     } else {
         collected(events, meta, request_id, created_at).await
     }

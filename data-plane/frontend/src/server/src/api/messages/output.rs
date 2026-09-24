@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 use super::error::AnthropicApiError;
 use super::types::{AnthropicMessagesResponse, AnthropicUsage, ResponseContentBlock, StopReason};
-use crate::response::{chat_events, sse_response};
+use crate::api::stream::{chat_events, sse_response};
 use crate::runtime::GeneratedChat;
 
 /// Collects the canonical chat stream into one Anthropic message.
