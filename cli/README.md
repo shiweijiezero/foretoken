@@ -108,7 +108,7 @@ See the [multi-model example](../examples/multi-model-quickstart/README.md) for 
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-The command applies the configuration and shows service readiness alongside per-container startup observations: node placement, image-pull failures, restarts, and native engine loading and graph-capture progress. Each Pod and restart is tracked separately. Engine counters are shown when available; stages without counters show their status rather than an estimated percentage. Service readiness remains authoritative: the command exits when every service is Ready and its selected alerts are configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
+The command applies the configuration, shows service status, and streams Pod and container logs with source prefixes while waiting. It exits when every service reports Ready and its selected alerts are configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
 
 Inspect the same deployment without applying it:
 
@@ -116,7 +116,7 @@ Inspect the same deployment without applying it:
 foretoken status examples/multi-model-quickstart
 ```
 
-Inspect every Foretoken service in a namespace, or continue watching state changes:
+Inspect every Foretoken service in a namespace. With `--watch`, follow service state changes and Pod/container logs until Ctrl+C:
 
 ```bash
 foretoken status -n foretoken-multi-model-demo

@@ -7,7 +7,7 @@ English | [简体中文](README_zh.md)
 
 Run one Foretoken model group on two nodes with eight C500 64 GiB GPUs each: attention TP8×DP2, EP16, a 1,048,576-token context and native MTP with five speculative tokens. The frontend uses KV-aware routing. Two memory clients contribute 1 TiB each to one shared Mooncake Store, without SSD offload.
 
-This recipe is undergoing end-to-end validation; GLM generation has not passed acceptance yet. It requires a source-built MetaX vLLM runtime supporting GLM-5.3-Flash, MTP and hybrid attention caches, rather than the default inference image in the current release.
+Use a source-built MetaX vLLM runtime supporting GLM-5.3-Flash, MTP and hybrid attention caches. The current release's default inference image does not support this combination.
 
 ## Prepare
 
@@ -19,7 +19,7 @@ Set the environment-specific inputs before deploying:
 - Build and distribute the Store image as described in the [shared KV example](../../../shared-kv-store/README.md). Set both `image` fields in `kvservice.yaml` to its actual reference.
 - The example uses the platform-managed `rdma/foretoken_rdma` resource. When the platform reuses an external RDMA allocation, set `rdmaResourceName` in `kvservice.yaml` to that resource instead.
 
-The configuration requests 16 GPUs, 76 CPU cores and 3208 GiB of host memory in total. Each model member requests eight GPUs and 512 GiB of memory. These resource values are a starting point, not a throughput guarantee; adjust them to the available nodes.
+The configuration requests 16 GPUs, 76 CPU cores and 3208 GiB of host memory in total. Each model member requests eight GPUs and 512 GiB of memory. Adjust resource requests and limits to the available nodes.
 
 ## Deploy and request
 

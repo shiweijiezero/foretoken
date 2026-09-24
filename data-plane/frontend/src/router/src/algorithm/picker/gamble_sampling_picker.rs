@@ -7,9 +7,9 @@ use crate::{CandidateIndex, RoutePicker, RouterRequest, ScoredCandidate};
 
 /// Samples candidates by descending `RouteScore` rank instead of discarding non-best scores.
 #[derive(Default)]
-pub struct WeightedRandomPicker;
+pub struct GambleSamplingPicker;
 
-impl RoutePicker for WeightedRandomPicker {
+impl RoutePicker for GambleSamplingPicker {
     #[allow(unused_variables)]
     fn pick(
         &self,

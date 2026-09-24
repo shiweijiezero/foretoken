@@ -14,8 +14,8 @@ pub use routing_load::{RoutingLoadSnapshot, RoutingLoadState};
 mod selection;
 
 pub use algorithm::{
-    KvLeastLoadedScorer, PowerOfTwoChoicesPicker, RouteFilter, RoutePicker, RouteScorer,
-    WeightedRandomPicker,
+    GambleSamplingPicker, KvLeastLoadedScorer, PowerOfTwoChoicesPicker, RouteFilter, RoutePicker,
+    RouteScorer,
 };
 pub use inventory::{
     ModelRouteTable, RouteDecision, RouteInventory, RouteTarget, RouteTargetId, RouteTargetSet,

@@ -158,7 +158,7 @@ spec:
                   filter:
                     algorithm: allow_all
                   picker:
-                    algorithm: weighted_random
+                    algorithm: gamble_sampling
                   scorer:
                     algorithm: kv_least_loaded
                 description: RouterPipeline selects each independently composable
@@ -183,7 +183,7 @@ spec:
                     type: object
                   picker:
                     default:
-                      algorithm: weighted_random
+                      algorithm: gamble_sampling
                       parameters: {}
                     description: RouterStage selects one compiled algorithm and its
                       algorithm-owned parameters.

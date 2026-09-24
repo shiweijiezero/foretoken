@@ -139,7 +139,7 @@ macro_rules! algorithm_name_wrapper {
 
 algorithm_name_wrapper!(FilterAlgorithm, "allow_all");
 algorithm_name_wrapper!(ScorerAlgorithm, "kv_least_loaded");
-algorithm_name_wrapper!(PickerAlgorithm, "weighted_random");
+algorithm_name_wrapper!(PickerAlgorithm, "gamble_sampling");
 
 /// One Router pipeline stage with an algorithm and its algorithm-owned parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

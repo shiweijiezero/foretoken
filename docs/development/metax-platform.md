@@ -7,15 +7,13 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](metax-platform_zh.md)
 
-Install Foretoken on a MetaX GPU cluster or build custom runtime images. For model deployment, see [Deploy and call a model](../metax-deployment.md).
+Install the Foretoken platform on a MetaX GPU cluster. For model deployment and requests, continue with [Deploy a model on MetaX GPUs](../metax-deployment.md).
 
-## What the administrator provides
+## Before you start
 
-- Kubernetes 1.29 or later, MetaX drivers, and the MetaX device plugin publishing `metax-tech.com/gpu`.
-- A writable model directory on the target nodes, or a StorageClass for model-cache volumes. Configure the example's `cache.yaml` as described in [Model storage](../model-storage.md).
-- A reachable LoadBalancer or Gateway address.
+The cluster needs Kubernetes 1.29 or later, MetaX drivers, and a device plugin publishing `metax-tech.com/gpu`. Prepare a model directory visible to the target nodes or a StorageClass for the model cache; see [Model storage](../model-storage.md). The frontend also needs a reachable LoadBalancer address, or a Gateway when using Gateway mode.
 
-The build host needs the Foretoken checkout, Docker with BuildKit, and Make. Platform installation also needs kubectl, Helm, and cluster permissions. Source installation downloads from GitHub, PyPI, the MetaX package index, and the selected container registries.
+Install the [Foretoken CLI](../../cli/README.md#install-the-command-line-tool) and make sure `kubectl` points to the target cluster. The CLI needs Helm and cluster permissions to install the platform and its shared dependencies.
 
 ## Install release images
 
@@ -23,124 +21,50 @@ The build host needs the Foretoken checkout, Docker with BuildKit, and Make. Pla
 foretoken install
 ```
 
-The MetaX image is selected automatically. See [CLI installation](../../cli/README.md#install-the-kubernetes-platform) for Gateway and custom configuration.
+The CLI selects MetaX-compatible release images and installs the platform and required shared dependencies. It reports when the platform is ready. For Gateway access or custom settings, see [CLI installation](../../cli/README.md#install-the-kubernetes-platform).
 
-## Build the images
+## Install from source
 
-Use the following steps when a custom SDK or inference runtime is needed. Run commands from the Foretoken repository root.
+To build Foretoken's images from a checkout, follow the [source deployment guide](../custom-deployment.md) to prepare build tools and install the CLI from that checkout. Then run from the repository root:
 
-### 1. Build the MetaX model-server image
+```bash
+foretoken install -e .
+```
 
-Start with an Ubuntu 24.04 image containing the matching MACA SDK, or a Debian-based image with Python 3.12 and development headers. It does not need PyTorch or vLLM:
+This uses the chart's MetaX inference runtime image as the base for the source-built model-server. For a cluster other than local kind or k3d, follow the [source deployment guide](../custom-deployment.md#2-build-images-and-install-the-platform-from-source) to sign in to a node-reachable registry and provide `--registry`; a private registry also needs image pull Secrets.
+
+### Use a custom MetaX SDK image
+
+If the inference runtime must be built against a different MACA SDK, provide a compatible Ubuntu 24.04 or Debian-based SDK image. It needs Python 3.12 and development headers. Match its SDK and driver using the [MetaX release matrix](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html).
+
+From the repository root, replace `<maca-sdk-image>` with that image and build the inference runtime:
 
 ```bash
 METAX_SDK_IMAGE=<maca-sdk-image> \
-VLLM_METAX_VERSION=0.24.0 \
-make image-model-server-metax
+VLLM_METAX_IMAGE=foretoken-vllm-metax:custom \
+make image-vllm-metax
 ```
 
-This produces `foretoken-vllm-metax:0.24.0` and `foretoken-model-server:dev`. Select matching SDK and driver versions from the [MetaX release matrix](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html).
-
-For vLLM 0.26, set `VLLM_METAX_VERSION=0.26.0` and use a MACA/PyTorch SDK image containing its matching torchaudio package. The build automatically selects the SDK Python and installs the audio package into the isolated inference environment.
-
-If a compatible MetaX vLLM image is already available, use it instead of the source build:
-
-```bash
-INFERENCE_ENGINE_IMAGE=<metax-vllm-image> \
-FORETOKEN_VLLM_PYTHON=/opt/conda/bin/python \
-make image-model-server
-```
-
-### 2. Build the controller and frontend images
-
-```bash
-make image-frontend
-docker build -f control-plane/Dockerfile -t foretoken-control-plane:dev .
-```
-
-### 3. Push or import the images
-
-Replace `<registry>/<project>` with a registry reachable by every target node:
-
-```bash
-export REGISTRY=<registry>/<project>
-export MODEL_SERVER_IMAGE="$REGISTRY/foretoken-model-server:metax-v0.24.0"
-export FRONTEND_IMAGE="$REGISTRY/foretoken-frontend:metax-v0.24.0"
-export CONTROL_PLANE_IMAGE="$REGISTRY/foretoken-control-plane:metax-v0.24.0"
-
-docker tag foretoken-model-server:dev "$MODEL_SERVER_IMAGE"
-docker tag foretoken-frontend:dev "$FRONTEND_IMAGE"
-docker tag foretoken-control-plane:dev "$CONTROL_PLANE_IMAGE"
-docker push "$MODEL_SERVER_IMAGE"
-docker push "$FRONTEND_IMAGE"
-docker push "$CONTROL_PLANE_IMAGE"
-```
-
-For an offline cluster, import all three images into every node that may run a workload. See the [source image lifecycle guide](source-image-lifecycle.md#install-the-platform-with-helm).
-
-## Install the platform
-
-For manual Helm installation, prepare monitoring separately as described in [Observability](../../observability/README.md).
-
-Create `metax-values.yaml` using the image names that were pushed or imported:
+To select a different supported engine version, set `VLLM_METAX_VERSION` on the build command and use a compatible SDK image. Save this override as `metax-values.yaml`; if you already have a compatible inference runtime image, skip the build and put its reference here instead:
 
 ```yaml
-image:
-  repository: <registry>/<project>/foretoken-control-plane
-  tag: metax-v0.24.0
-frontend:
-  enabled: true
-  mode: gateway
-  gateway:
-    create: true
-  image: <registry>/<project>/foretoken-frontend:metax-v0.24.0
 runtime:
   vllm:
-    image: <registry>/<project>/foretoken-model-server:metax-v0.24.0
-    gpu:
-      resourceName: metax-tech.com/gpu
-      runtimeClassName: ""
+    image: foretoken-vllm-metax:custom
 ```
-
-If the registry is private, configure `imagePullSecrets` for the controller namespace and `workload.imagePullSecrets` for the model and frontend namespaces. The referenced Secrets must exist in their respective namespaces.
-
-Install Envoy Gateway once if the cluster does not already provide one:
 
 ```bash
-helm upgrade --install envoy-gateway \
-  oci://docker.io/envoyproxy/gateway-helm \
-  --namespace envoy-gateway-system \
-  --create-namespace \
-  --wait
+foretoken install -e . --values metax-values.yaml
 ```
 
-Install the chart from the same checkout as the three images:
-
-```bash
-helm upgrade --install foretoken ./deploy/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --values metax-values.yaml \
-  --wait
-
-kubectl get pods --namespace foretoken-platform
-kubectl get gateway --namespace foretoken-platform
-```
-
-The Gateway should have a reachable address and report `Programmed=True`. Continue with [Deploy and call a model](../metax-deployment.md).
-
-If Gateway is not needed, set `frontend.mode: local` and `frontend.gateway.create: false`, and ensure that the cluster provides a reachable LoadBalancer address.
+The source install builds the Foretoken model-server on the selected inference image, then distributes the Foretoken images and installs the platform. On a remote cluster, add `--registry` as described above. For manual image import or Helm operations instead, see the [source image lifecycle guide](source-image-lifecycle.md).
 
 ## Uninstall
 
-Delete model deployments first, then use the command matching the installation method:
+Delete model deployments first, then run:
 
 ```bash
-# CLI installation
 foretoken uninstall
-
-# Manual Helm installation
-helm uninstall foretoken --namespace foretoken-platform
 ```
 
-CRDs remain installed. Resources reused from the cluster are preserved.
+CRDs and reused cluster resources are retained.

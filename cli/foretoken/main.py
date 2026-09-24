@@ -89,13 +89,14 @@ def _deploy(
     DirectoryVolumes(kubectl).apply(deployment, timeout)
     print(f"Waiting up to {timeout} for Foretoken services")
     started = time.monotonic()
-    wait_for_resources(
-        deployment.service_refs(),
-        kubectl,
-        timeout,
-        report=_report_progress,
-        observe=StartupProgress(kubectl, lambda line: print(line, flush=True)).poll,
-    )
+    with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
+        wait_for_resources(
+            deployment.service_refs(),
+            kubectl,
+            timeout,
+            report=_report_progress,
+            observe=startup.poll,
+        )
     print(f"Foretoken deployment is ready in {time.monotonic() - started:.1f}s")
     if capture is not None:
         try:
@@ -138,17 +139,17 @@ def _status(kustomize_path: str | None, namespace: str | None, watch: bool) -> N
 
     started = time.monotonic()
     previous: dict[ResourceRef, tuple[str, str, str]] = {}
-    startup = StartupProgress(kubectl, lambda line: print(line, flush=True))
-    while True:
-        progress = selected_progress()
-        elapsed = time.monotonic() - started
-        for item in progress:
-            signature = (item.state, item.reason, item.message)
-            if previous.get(item.resource) != signature:
-                _report_progress(elapsed, item)
-                previous[item.resource] = signature
-        startup.poll((item.resource for item in progress), elapsed)
-        time.sleep(2)
+    with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
+        while True:
+            progress = selected_progress()
+            elapsed = time.monotonic() - started
+            for item in progress:
+                signature = (item.state, item.reason, item.message)
+                if previous.get(item.resource) != signature:
+                    _report_progress(elapsed, item)
+                    previous[item.resource] = signature
+            startup.poll((item.resource for item in progress), elapsed)
+            time.sleep(2)
 
 
 def _endpoint(kustomize_path: str, timeout: str, host: bool) -> None:

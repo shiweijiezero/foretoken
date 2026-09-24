@@ -2,7 +2,7 @@
 
 This directory contains the source-patch bundle for GLM-5.3-Flash BF16 on the vLLM 0.30 development core and MetaX 0.29 development plugin.
 
-The bundle is intentionally separate from the generic MetaX 0.26 installer. It is not selected by the 0.26 release path and does not claim that the public MetaX 0.26 release supports GLM-5.3.
+Use the core and plugin revisions in [`source-environment.json`](source-environment.json). Apply this bundle when building that source pair; the generic MetaX installer does not apply it.
 
 ## Patch order
 
@@ -31,8 +31,6 @@ Apply these patches in order to the pinned source pair:
 
 The patches target the exact source pair recorded by the corresponding source-built runtime. Rebase or upgrade the source pair only after regenerating and validating the bundle; do not silently apply it to an unrelated release.
 
-## Validation boundary
-
-The first patch bundle has passed C500 layout, HMA stride, BF16 prefill and six-token decode checks. The remaining patches have passed source-level and packaged import checks. Full two-node GLM weight loading, MTP initialization, KV transfer, and OpenAI-compatible generation remain the runtime acceptance boundary.
+## Runtime requirements
 
 MTP requires its full sparse indexer and separate MLA, compressed-indexer, and tail cache groups. Use the pinned core's Model Runner V2 (`VLLM_USE_V2_MODEL_RUNNER=1`) for multi-group draft attention; the legacy proposer assumes a single draft KV-cache group. Each proposal computes MTP-specific top-k indices in its first step and reuses those indices only in subsequent draft steps.

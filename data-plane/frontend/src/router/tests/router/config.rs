@@ -13,7 +13,7 @@ use foretoken_router::{
 fn every_compiled_builtin_name_parses_and_builds() {
     for (filter, scorer, picker) in [
         ("allow_all", "uniform", "max"),
-        ("allow_all", "kv_least_loaded", "weighted_random"),
+        ("allow_all", "kv_least_loaded", "gamble_sampling"),
         ("allow_all", "kv_least_loaded", "power_of_two_choices"),
         ("allow_all", "least_loaded", "max"),
         ("allow_all", "running_request", "max"),
@@ -57,7 +57,7 @@ fn empty_and_unknown_names_are_explicit_errors() {
             parameters: Default::default(),
         },
         picker: PickerStage {
-            algorithm: "weighted_random".parse().unwrap(),
+            algorithm: "gamble_sampling".parse().unwrap(),
             parameters: Default::default(),
         },
     };
