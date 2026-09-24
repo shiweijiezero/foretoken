@@ -17,9 +17,9 @@ foretoken perf examples/quickstart \
 
 This starts at concurrency limit 2 and searches up to 32, requiring p99 request latency at or below two seconds. Each probe keeps the same `--num-prompts` request budget and arrival process. `--num-runs` repeats each probe: SLO criteria use averaged metrics, while observed concurrency uses the highest request peak across repetitions. A passing probe requires every request to succeed and every required metric to be available.
 
-The search stops when increasing the limit no longer increases the observed number of simultaneous requests, when it reaches the upper bound, or after refining an SLO failure boundary. For example, a four-request budget may reach a peak of four at limits 4 and 8; the result then reports peak 4 at limit 4.
+The search stops at the SLO boundary or configured upper bound, or earlier if a higher limit produces no increase in simultaneous requests. For example, a four-request budget may reach a peak of four at limits 4 and 8; the result then reports peak 4 at limit 4.
 
-Generated, multi-turn, multi-dataset, and trace workloads are supported. For traces, use `--trace-max-concurrency` to set the initial limit; trace timestamps determine arrivals. For multi-turn workloads, the configured limit counts conversations, while the measured peak counts requests. Every conversation turn counts toward the request budget. A parameter sweep can also run a separate SLO search at each point.
+For traces, set the initial limit with `--trace-max-concurrency` instead of `--max-concurrency`; arrivals follow trace timestamps. For multi-turn workloads, the limit counts conversations, while the measured peak and request budget count individual requests.
 
 ## Set criteria
 
@@ -42,6 +42,6 @@ Timing thresholds use seconds. Supported metrics are:
 
 ## Read results
 
-The console and `slo_results.json` report each criterion group's highest passing request peak, its configured limit, the last measured peak and limit, and the stopping reason. These results describe the selected workload and arrival rate. Each probe has its own result directory. W&B includes a search summary and grouped probe runs identified by criteria group, concurrency limit, and repetition.
+The console and `slo_results.json` report each criterion group's highest passing request peak, its configured limit, the last measured peak and limit, and the stopping reason. Each probe has its own result directory. W&B includes a search summary and grouped probe runs identified by criteria group, concurrency limit, and repetition.
 
 If you explicitly deployed the Quick Start service, remove it with `foretoken delete examples/quickstart` when it is no longer needed.
