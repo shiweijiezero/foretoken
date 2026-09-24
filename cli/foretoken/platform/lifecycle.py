@@ -297,7 +297,7 @@ class PlatformLifecycle:
         )
 
         nvidia_metrics = NvidiaMetricsDiscovery(exporter_discovery).resolve(
-            managed_dcgm if managed_dcgm_exists else None
+            helm.dcgm_resource(managed_dcgm) if managed_dcgm_exists else None
         )
         managed_metax_exists = bool(metax_exporter.managed_resources())
         metax_metrics = MetaXMetricsDiscovery(exporter_discovery).resolve(
