@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import shutil
-from contextlib import ExitStack, contextmanager, redirect_stderr, redirect_stdout
+from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -27,7 +27,7 @@ from benchmarks.config.benchmark import (
     WandbRunConfig,
 )
 from benchmarks.model_service import ModelService
-from benchmarks.results.console import log_benchmark_summary
+from benchmarks.results.console import capture_run_logs, log_benchmark_summary
 from benchmarks.results.environment import client_environment, serving_environment
 from benchmarks.results.metrics import RequestMeasurement
 from benchmarks.results.prometheus import PrometheusObserver
@@ -109,7 +109,6 @@ class BenchmarkArtifactSink:
         self.config_path: Path | None = None
 
     def open(self, record: dict[str, Any]) -> None:
-        os.makedirs(self.output_dir, exist_ok=True)
         self.config_path = write_json(
             self.output_dir,
             "config.json",
@@ -202,16 +201,6 @@ class WandbSink:
         self.run_config = run_config
         self._run: Any | None = None
 
-    @contextmanager
-    def _sdk_console(self):
-        """Keep SDK progress in the run log when the caller selects quiet output."""
-        if not self.benchmark.outputs.includes("quiet"):
-            yield
-            return
-        with open(os.path.join(self.execution_dir, "wandb.log"), "a", encoding="utf-8") as log:
-            with redirect_stdout(log), redirect_stderr(log):
-                yield
-
     def open(self, record: dict[str, Any]) -> None:
         """Create the SDK run before requests so system metrics cover execution."""
         wandb_config = self.benchmark.wandb
@@ -232,8 +221,7 @@ class WandbSink:
         if wandb_config.entity:
             init_kwargs["entity"] = wandb_config.entity
         try:
-            with self._sdk_console():
-                self._run = wandb.init(**init_kwargs)
+            self._run = wandb.init(**init_kwargs)
         except wandb.errors.Error:
             logger.exception("W&B initialization failed")
             raise
@@ -251,8 +239,7 @@ class WandbSink:
         if self._run is None:
             raise RuntimeError("W&B sink is not open")
         try:
-            with self._sdk_console():
-                self.publisher(self._run, run)
+            self.publisher(self._run, run)
         except wandb.errors.Error:
             logger.exception("W&B publication failed")
             raise
@@ -264,8 +251,7 @@ class WandbSink:
         if run is None:
             return
         try:
-            with self._sdk_console():
-                run.finish(exit_code=exit_code)
+            run.finish(exit_code=exit_code)
         except wandb.errors.Error:
             logger.exception("W&B finalization failed")
             raise
@@ -347,7 +333,7 @@ def build_benchmark_run_record(
 
 
 class ResultOutputs:
-    """Open the sinks selected by ``--output`` around one run and own its execution directory.
+    """Own preparation logs, measurement observers, publication, and cleanup for one run.
 
     The execution directory is the local result directory when local output is
     enabled and a temporary directory otherwise; the engine writes its files
@@ -359,7 +345,6 @@ class ResultOutputs:
         self,
         benchmark: _ResultConfiguration,
         service: ModelService | None,
-        record: dict[str, Any],
         *,
         label: str = "",
         output_dir: Optional[str] = None,
@@ -369,7 +354,6 @@ class ResultOutputs:
     ) -> None:
         self.benchmark = benchmark
         self.service = service
-        self.record = record
         self.label = label.strip() or None
         self.output_dir = output_dir
         self.wandb_group = wandb_group
@@ -416,7 +400,7 @@ class ResultOutputs:
         )
 
     def __enter__(self) -> ResultOutputs:
-        """Acquire the execution directory and open every selected sink."""
+        """Acquire the execution directory and capture preparation through publication."""
         if self._execution_dir is not None:
             raise RuntimeError("result outputs are already active")
         outputs = self.benchmark.outputs
@@ -440,120 +424,121 @@ class ResultOutputs:
                     prefix="foretoken-benchmark-"
                 )
 
-        sinks: list[ResultSink] = []
         try:
-            if self.sink_factory is not None:
-                sinks = self.sink_factory(self._execution_dir)
-            else:
-                if not isinstance(self.benchmark, BenchmarkConfig):
-                    raise TypeError(
-                        "non-standard benchmark results require a sink factory"
-                    )
-                if self.service is None:
-                    raise TypeError(
-                        "standard benchmark results require a service"
-                    )
-                standard_benchmark = cast(BenchmarkConfig, self.benchmark)
-                if outputs.includes("local") or outputs.includes("wandb"):
-                    sinks.append(
-                        BenchmarkArtifactSink(
-                            standard_benchmark,
-                            self._execution_dir,
-                        )
-                    )
-                if not outputs.includes("quiet"):
-                    sinks.append(ConsoleSink())
-                if outputs.includes("local"):
-                    sinks.append(
-                        LocalDirectorySink(self._execution_dir)
-                    )
-                if outputs.includes("wandb"):
-                    base_name = (
-                        standard_benchmark.wandb.run_name.strip()
-                        or f"{self.service.model}_{wandb_run_timestamp()}"
-                    )
-                    run_name = (
-                        f"{base_name}_{self.label}" if self.label else base_name
-                    )
-                    group = (
-                        standard_benchmark.wandb.group.strip()
-                        or self.wandb_group
-                        or ""
-                    )
-                    run_config = standard_benchmark.to_dict()
-                    run_config["service"]["model"] = self.service.model
-                    run_config["model"] = self.service.model
-                    if self.service.model_service_refs:
-                        run_config["declared_gpu_count"] = self.service.gpu_count
-                    sinks.append(
-                        WandbSink(
-                            standard_benchmark,
-                            execution_dir=self._execution_dir,
-                            run_name=run_name,
-                            group=group,
-                            publisher=publish_http_wandb,
-                            run_config=run_config,
-                        )
-                    )
-            for sink in sinks:
-                self._resources.callback(self._close_sink, sink)
-                sink.open(self.record)
-            if outputs.includes("local") or outputs.includes("wandb"):
-                self._environment = {
-                    "client": client_environment(),
-                }
-                if self.service is not None:
-                    self._environment["before"] = serving_environment(
-                        self.service
-                    )
-                write_json(self.execution_dir, "environment.json", self._environment)
-            if (
-                self.service is not None
-                and self.service.model_service_refs
-                and (
-                    outputs.includes("local")
-                    or outputs.includes("wandb")
-                )
-            ):
-                try:
-                    observer = KubernetesReplicaObserver(
-                        self.service.model_service_refs,
-                        self.service.model,
-                    )
-                    observer.start()
-                except (DeploymentError, RuntimeError) as exc:
-                    logger.warning(
-                        "Replica observation unavailable; continuing with benchmark: %s",
-                        exc,
-                    )
-                else:
-                    self._replica_observer = observer
-                    self._resources.callback(self._close_replica_observer)
-                try:
-                    prometheus_observer = PrometheusObserver(self.service)
-                    prometheus_observer.start()
-                except (DeploymentError, RuntimeError) as exc:
-                    logger.warning(
-                        "Prometheus observation unavailable; continuing with benchmark: %s",
-                        exc,
-                    )
-                else:
-                    self._prometheus_observer = prometheus_observer
-                    self._resources.callback(self._close_prometheus_observer)
+            os.makedirs(self.execution_dir, exist_ok=True)
+            self._resources.enter_context(
+                capture_run_logs(self.execution_dir, quiet=outputs.includes("quiet"))
+            )
         except BaseException:
-            self._exit_code = 1
-            try:
-                self._resources.close()
-            except BaseException:
-                logger.exception("Result cleanup also failed")
-            finally:
-                self._release_execution_directory(
-                    preserve=outputs.includes("wandb")
-                )
-                self._execution_dir = None
+            self._release_execution_directory(preserve=outputs.includes("wandb"))
+            self._execution_dir = None
             raise
-        self._sinks = sinks
         return self
+
+    def open(self, record: dict[str, Any]) -> None:
+        """Start publication and measurement observers after workload preparation or warmup."""
+        directory = self.execution_dir
+        outputs = self.benchmark.outputs
+        sinks: list[ResultSink] = []
+        if self.sink_factory is not None:
+            sinks = self.sink_factory(directory)
+        else:
+            if not isinstance(self.benchmark, BenchmarkConfig):
+                raise TypeError(
+                    "non-standard benchmark results require a sink factory"
+                )
+            if self.service is None:
+                raise TypeError(
+                    "standard benchmark results require a service"
+                )
+            standard_benchmark = cast(BenchmarkConfig, self.benchmark)
+            if outputs.includes("local") or outputs.includes("wandb"):
+                sinks.append(
+                    BenchmarkArtifactSink(
+                        standard_benchmark,
+                        directory,
+                    )
+                )
+            if not outputs.includes("quiet"):
+                sinks.append(ConsoleSink())
+            if outputs.includes("local"):
+                sinks.append(
+                    LocalDirectorySink(directory)
+                )
+            if outputs.includes("wandb"):
+                base_name = (
+                    standard_benchmark.wandb.run_name.strip()
+                    or f"{self.service.model}_{wandb_run_timestamp()}"
+                )
+                run_name = (
+                    f"{base_name}_{self.label}" if self.label else base_name
+                )
+                group = (
+                    standard_benchmark.wandb.group.strip()
+                    or self.wandb_group
+                    or ""
+                )
+                run_config = standard_benchmark.to_dict()
+                run_config["service"]["model"] = self.service.model
+                run_config["model"] = self.service.model
+                if self.service.model_service_refs:
+                    run_config["declared_gpu_count"] = self.service.gpu_count
+                sinks.append(
+                    WandbSink(
+                        standard_benchmark,
+                        execution_dir=directory,
+                        run_name=run_name,
+                        group=group,
+                        publisher=publish_http_wandb,
+                        run_config=run_config,
+                    )
+                )
+        for sink in sinks:
+            self._resources.callback(self._close_sink, sink)
+            sink.open(record)
+        if outputs.includes("local") or outputs.includes("wandb"):
+            self._environment = {
+                "client": client_environment(),
+            }
+            if self.service is not None:
+                self._environment["before"] = serving_environment(
+                    self.service
+                )
+            write_json(self.execution_dir, "environment.json", self._environment)
+        if (
+            self.service is not None
+            and self.service.model_service_refs
+            and (
+                outputs.includes("local")
+                or outputs.includes("wandb")
+            )
+        ):
+            try:
+                observer = KubernetesReplicaObserver(
+                    self.service.model_service_refs,
+                    self.service.model,
+                )
+                observer.start()
+            except (DeploymentError, RuntimeError) as exc:
+                logger.warning(
+                    "Replica observation unavailable; continuing with benchmark: %s",
+                    exc,
+                )
+            else:
+                self._replica_observer = observer
+                self._resources.callback(self._close_replica_observer)
+            try:
+                prometheus_observer = PrometheusObserver(self.service)
+                prometheus_observer.start()
+            except (DeploymentError, RuntimeError) as exc:
+                logger.warning(
+                    "Prometheus observation unavailable; continuing with benchmark: %s",
+                    exc,
+                )
+            else:
+                self._prometheus_observer = prometheus_observer
+                self._resources.callback(self._close_prometheus_observer)
+        self._sinks = sinks
 
     def _close_sink(self, sink: ResultSink) -> None:
         """Close one sink with the exit status owned by this result lifecycle."""
@@ -615,6 +600,13 @@ class ResultOutputs:
             self._exit_code = run.exit_code
         elif int(run.metrics["success_num"]) == 0:
             self._exit_code = 1
+        if self.benchmark.outputs.includes("quiet"):
+            run.artifacts["console_log"] = Path(self.execution_dir) / "run.log"
+            if run.measurements is not None and run.metrics["failed_num"]:
+                logger.error(
+                    "%s/%s requests failed; see %s",
+                    run.metrics["failed_num"], run.metrics["request_num"], self.execution_dir,
+                )
         observer = self._replica_observer
         self._replica_observer = None
         if observer is not None:

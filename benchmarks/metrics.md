@@ -25,6 +25,8 @@ Warmup reuses the workload's starting rows and seed and must succeed before meas
 | Metric | Meaning |
 | --- | --- |
 | Success rate | Successful requests divided by attempted requests |
+| Concurrency limit (`max_concurrency`) | Configured limit: requests for single-turn and trace workloads, conversations for multi-turn workloads |
+| Observed request concurrency (`request_concurrency`) | `peak`: highest simultaneous active request count; `mean`: total request duration divided by measured run duration, including failed requests |
 | End-to-end latency (E2EL) | Request duration; successful streamed requests end at the last chunk with non-empty `choices` |
 | TTFT | Request start to the first chunk with non-empty `choices` |
 | TPOT | `(E2EL − TTFT) / (output tokens − 1)`; unavailable for fewer than two output tokens |
@@ -42,7 +44,7 @@ Request latency distributions use successful requests. `--no-stream` retains lat
 
 ## SLO results
 
-When `--slo-params` is enabled, each request with latency-based criteria receives `slo_met` in `raw_output.json` and the W&B request-index history. The CLI, `metrics.json`, and W&B Summary record SLO attainment, request goodput, and token goodput for the same criteria. Probe-level SLO concurrency search still evaluates the configured aggregate criteria and searches the largest satisfying concurrency.
+When `--slo-params` is enabled, each request with latency-based criteria receives `slo_met` in `raw_output.json` and the W&B request-index history. The CLI, `metrics.json`, and W&B Summary record SLO attainment, request goodput, and token goodput for the same criteria. [SLO concurrency search](docs/perf/slo.md) evaluates aggregate criteria and reports the highest observed passing request peak with its configured limit and stopping reason.
 
 Token counts remain unavailable when the service does not report them. If any successful request lacks input or output usage, aggregates that require the complete corresponding token total are unavailable rather than treating the missing value as zero. Cached input tokens preserve the service-reported value, including an explicit zero; they do not represent a storage-tier or KV-store hit rate.
 

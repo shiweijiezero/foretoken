@@ -116,10 +116,10 @@ def bind_arrival_trace_requests(
     ]
 
 
-def _request_measurement(record: dict[str, Any]) -> RequestMeasurement:
-    """Project one replay record onto the shared per-request measurement."""
+def _request_measurement(record: dict[str, Any], time_origin: float) -> RequestMeasurement:
+    """Project actual send/finish intervals onto the measurement clock, excluding replay waits."""
     return RequestMeasurement(
-        started_at=float(record["trace_offset_s"]) + float(record["replay_delay"]),
+        started_at=float(record["started_at"]) - time_origin,
         ttft=record["ttft"],
         latency=float(record["latency"]),
         tpot=record["tpot"],
@@ -286,71 +286,71 @@ class TraceReplayBenchmark:
 
     async def _replay(self) -> BenchmarkRun:
         """Read the trace window, bind requests, replay them, and publish the result."""
-        trace = self.benchmark.trace
-        reader = ArrivalTraceReader(trace.trace_selector)
-        trace_window_start, events = reader.read_window(
-            start_offset_seconds=trace.start_offset_seconds,
-            duration_seconds=trace.duration_seconds,
-        )
-        if self.benchmark.slo.params and self.benchmark.load.request_count is not None:
-            events = events[: self.benchmark.load.request_count]
-        trace_format = reader.trace_format
-        if trace_format is None:
-            raise RuntimeError("Trace format was not detected")
-        request_origin, events = bind_arrival_trace_requests(
-            self.benchmark,
-            self.service,
-            events,
-        )
-        warmup_count = min(self.benchmark.load.warmup_requests, len(events))
-        measured_events = events[warmup_count:]
-        if not measured_events:
-            raise ValueError("Trace warmup consumed every selected event")
-        request_count = len(measured_events)
-
-        max_concurrency = trace.max_concurrency
-        active_connection_limit = (
-            request_count
-            if max_concurrency is None
-            else min(max_concurrency, request_count)
-        )
-        reported_concurrency = (
-            -1 if max_concurrency is None else max_concurrency
-        )
-        reporting_load = {
-            "max_concurrency": reported_concurrency,
-            "num_prompts": request_count,
-            "request_rate": -1.0,
-            "duration": trace.duration_seconds,
-            "open_loop": False,
-        }
-        record = build_benchmark_run_record(
-            self.benchmark,
-            self.service,
-            "arrival_trace",
-            reporting_load,
-        )
-        record.update(
-            {
-                "dataset": f"trace={trace.trace_selector}",
-                "trace_path": trace.trace_selector,
-                "payload_dataset": self.benchmark.resolved_workload.dataset_selectors[0],
-                "trace_start": trace.start_offset_seconds,
-                "trace_duration": trace.duration_seconds,
-                "trace_max_concurrency": max_concurrency,
-                "trace_synthetic_prefix_reuse": trace.synthetic_prefix_reuse,
-                "trace_format": trace_format,
-                "payload_source": request_origin,
-            }
-        )
         with ResultOutputs(
             self.benchmark,
             self.service,
-            record,
             label=self.label,
             output_dir=self.output_dir,
             wandb_group=self.wandb_group,
         ) as outputs:
+            trace = self.benchmark.trace
+            reader = ArrivalTraceReader(trace.trace_selector)
+            trace_window_start, events = reader.read_window(
+                start_offset_seconds=trace.start_offset_seconds,
+                duration_seconds=trace.duration_seconds,
+            )
+            if self.benchmark.slo.params and self.benchmark.load.request_count is not None:
+                events = events[: self.benchmark.load.request_count]
+            trace_format = reader.trace_format
+            if trace_format is None:
+                raise RuntimeError("Trace format was not detected")
+            request_origin, events = bind_arrival_trace_requests(
+                self.benchmark,
+                self.service,
+                events,
+            )
+            warmup_count = min(self.benchmark.load.warmup_requests, len(events))
+            measured_events = events[warmup_count:]
+            if not measured_events:
+                raise ValueError("Trace warmup consumed every selected event")
+            request_count = len(measured_events)
+
+            max_concurrency = trace.max_concurrency
+            active_connection_limit = (
+                request_count
+                if max_concurrency is None
+                else min(max_concurrency, request_count)
+            )
+            reported_concurrency = (
+                -1 if max_concurrency is None else max_concurrency
+            )
+            reporting_load = {
+                "max_concurrency": reported_concurrency,
+                "num_prompts": request_count,
+                "request_rate": -1.0,
+                "duration": trace.duration_seconds,
+                "open_loop": False,
+            }
+            record = build_benchmark_run_record(
+                self.benchmark,
+                self.service,
+                "arrival_trace",
+                reporting_load,
+            )
+            record.update(
+                {
+                    "dataset": f"trace={trace.trace_selector}",
+                    "trace_path": trace.trace_selector,
+                    "payload_dataset": self.benchmark.resolved_workload.dataset_selectors[0],
+                    "trace_start": trace.start_offset_seconds,
+                    "trace_duration": trace.duration_seconds,
+                    "trace_max_concurrency": max_concurrency,
+                    "trace_synthetic_prefix_reuse": trace.synthetic_prefix_reuse,
+                    "trace_format": trace_format,
+                    "payload_source": request_origin,
+                }
+            )
+            outputs.open(record)
             profile = outputs.create_profile()
             warmup_events = events[:warmup_count]
             measured_trace_start = measured_events[0].timestamp_seconds
@@ -378,7 +378,7 @@ class TraceReplayBenchmark:
                         trace_origin=trace_window_start,
                         profile=profile,
                     )
-            measurements = [_request_measurement(item) for item in records]
+            measurements = [_request_measurement(item, time_origin) for item in records]
             metrics = summarize_measurements(
                 measurements,
                 total_time=total_time,

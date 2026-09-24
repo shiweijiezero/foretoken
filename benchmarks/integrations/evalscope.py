@@ -11,17 +11,10 @@ import logging
 import os
 import random
 import sqlite3
-import sys
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import (
-    ExitStack,
-    asynccontextmanager,
-    contextmanager,
-    redirect_stderr,
-    redirect_stdout,
-)
+from contextlib import asynccontextmanager, contextmanager
 from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -543,10 +536,8 @@ def _read_evalscope_request_measurements(
 
 
 @contextmanager
-def _evalscope_phase(
-    label: str, work_items: int, *, quiet: bool, output_dir: str
-) -> Iterator[None]:
-    """Scope native progress output to one phase while keeping errors visible."""
+def _evalscope_phase(label: str, work_items: int) -> Iterator[None]:
+    """Announce a native phase and omit its duplicate configuration and result summaries."""
     logger = get_logger()
     thread_id = threading.get_ident()
 
@@ -565,38 +556,12 @@ def _evalscope_phase(
             "summary_result",
         }
 
-    with ExitStack() as output:
-        console_handlers = []
-        error_handler = None
-        if quiet:
-            # EvalScope's progress bars write directly to stderr and retain
-            # console handlers created before this phase. Route both to a log,
-            # leaving the native file handler and request measurements unchanged.
-            progress = output.enter_context(
-                open(os.path.join(output_dir, "progress.log"), "a", encoding="utf-8")
-            )
-            for handler in logger.handlers:
-                if isinstance(handler, logging.StreamHandler) and not isinstance(
-                    handler, logging.FileHandler
-                ):
-                    console_handlers.append((handler, handler.stream))
-                    handler.setStream(progress)
-            error_handler = logging.StreamHandler(sys.stderr)
-            error_handler.setLevel(logging.ERROR)
-            logger.addHandler(error_handler)
-            output.enter_context(redirect_stdout(progress))
-            output.enter_context(redirect_stderr(progress))
-        logger.addFilter(include_record)
-        try:
-            logger.info("%s: %d work items", label, work_items)
-            yield
-        finally:
-            logger.removeFilter(include_record)
-            if error_handler is not None:
-                logger.removeHandler(error_handler)
-                error_handler.close()
-            for handler, stream in console_handlers:
-                handler.setStream(stream)
+    logger.addFilter(include_record)
+    try:
+        logger.info("%s: %d work items", label, work_items)
+        yield
+    finally:
+        logger.removeFilter(include_record)
 
 
 def run_evalscope_standard_load(
@@ -615,12 +580,7 @@ def run_evalscope_standard_load(
         False,
         os.path.join(output_dir, "benchmark.log"),
     )
-    with _evalscope_phase(
-        phase_label,
-        benchmark.load.request_count,
-        quiet=benchmark.outputs.includes("quiet"),
-        output_dir=output_dir,
-    ):
+    with _evalscope_phase(phase_label, benchmark.load.request_count):
         arguments = _evalscope_arguments(benchmark, service, output_dir)
         arguments.profile = profile
         seed_everything(benchmark.resolved_workload.random_seed)

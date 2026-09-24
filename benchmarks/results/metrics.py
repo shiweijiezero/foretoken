@@ -39,6 +39,25 @@ class RequestMeasurement:
     dataset: str | None = None
 
 
+def request_activity_events(
+    measurements: list[RequestMeasurement],
+) -> list[tuple[float, int]]:
+    """Return ordered request starts and finishes for aggregate and time-series concurrency.
+
+    Intervals are half-open: a request finishing at a timestamp leaves before
+    another starts there. Zero-duration observations have no active interval.
+    """
+    return sorted(
+        event
+        for item in measurements
+        if item.latency > 0
+        for event in (
+            (item.started_at, 1),
+            (item.started_at + item.latency, -1),
+        )
+    )
+
+
 def percentile_summary(values: list[float]) -> dict[str, float | None]:
     """Compute mean and nearest-rank percentiles, matching EvalScope's estimator."""
     if not values:
@@ -225,6 +244,10 @@ def summarize_measurements(
         "prompt_tokens_per_second": prompt_tokens_per_second,
         "total_tokens_per_second": total_tokens_per_second,
     }
+    active = peak_active_requests = 0
+    for _, change in request_activity_events(measurements):
+        active += change
+        peak_active_requests = max(peak_active_requests, active)
     average_active_requests = (
         sum(item.latency for item in measurements) / total_time
         if measurements and total_time > 0
@@ -270,5 +293,9 @@ def summarize_measurements(
         "request_rate": arrival_rate,
         "num_prompts": request_count,
         "max_concurrency": reported_concurrency,
+        "request_concurrency": {
+            "peak": peak_active_requests,
+            "mean": average_active_requests,
+        },
         "slo": slo,
     }

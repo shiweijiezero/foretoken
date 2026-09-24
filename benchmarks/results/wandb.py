@@ -44,7 +44,7 @@ _GENERATION_TOKENS_PER_CONFIGURED_CONCURRENCY = (
     "Output tok/s / user"
 )
 _GENERATION_TOKENS_PER_GPU = "Output token throughput per GPU (tokens/s)"
-_CONCURRENT_CONVERSATIONS = "Concurrent conversations"
+_CONCURRENT_CONVERSATIONS = "Conversation concurrency limit"
 _CONVERSATIONS = "Conversations attempted"
 _CONVERSATIONS_PER_SECOND = "Attempted conversations per second"
 _AVERAGE_TURNS_PER_CONVERSATION = "Mean turn requests per conversation"
@@ -82,6 +82,8 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
     message = {
         _TIME_TAKEN: round(float(metrics["benchmark_time"]), 4),
         _CONCURRENCY: int(metrics["max_concurrency"]),
+        "Peak in-flight requests": metrics["request_concurrency"]["peak"],
+        "Mean in-flight requests": metrics["request_concurrency"]["mean"],
         _REQUEST_RATE: float(metrics["request_rate"]),
         _TOTAL_REQUESTS: int(metrics["request_num"]),
         _SUCCEED_REQUESTS: int(metrics["success_num"]),
@@ -265,10 +267,47 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
             )
             sdk_run.log(message)
 
-    prometheus_path = run.artifacts.get("prometheus_observations")
-    if prometheus_path is not None:
+    observations = [
+        run.artifacts[name] for name in ("prometheus_observations", "console_log")
+        if name in run.artifacts
+    ]
+    if observations:
         artifact = wandb.Artifact("benchmark-observations", type="benchmark")
-        artifact.add_file(str(prometheus_path), name=prometheus_path.name)
+        for path in observations:
+            artifact.add_file(str(path), name=path.name)
         sdk_run.log_artifact(artifact)
 
     sdk_run.log(wandb_metric_fields(run.metrics))
+
+
+def publish_slo_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
+    """Publish configured limits, measured request peaks, and stop reasons for one search."""
+    search = run.metrics["slo_search"]
+    sdk_run.log({
+        "SLO/Probes": wandb.Table(
+            columns=[
+                "Group", f"Concurrency limit ({search['concurrency_limit_unit']})",
+                "Peak in-flight requests", "Peaks per repetition", "SLO met",
+            ],
+            data=[
+                [row["group"], row["max_concurrency"], row["peak_request_concurrency"],
+                 row["repeat_peak_request_concurrency"], row["satisfied"]]
+                for row in search["probes"]
+            ],
+        ),
+    })
+    for group in search["groups"]:
+        prefix = f"SLO/Group {group['group']}"
+        sdk_run.summary.update({
+            f"{prefix}/Best passing request peak": group["best_peak_request_concurrency"],
+            f"{prefix}/Configured limit at best": group["best_max_concurrency"],
+            f"{prefix}/Last request peak": group["last_peak_request_concurrency"],
+            f"{prefix}/Last configured limit": group["last_max_concurrency"],
+            f"{prefix}/Stop reason": group["stop_reason"],
+        })
+    artifact = wandb.Artifact(f"slo-search-{sdk_run.id}", type="benchmark")
+    for name in ("slo_results", "console_log"):
+        if name in run.artifacts:
+            path = run.artifacts[name]
+            artifact.add_file(str(path), name=path.name)
+    sdk_run.log_artifact(artifact)

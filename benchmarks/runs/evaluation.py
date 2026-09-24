@@ -82,10 +82,10 @@ def run_evaluation(config: EvaluationConfig, service: ModelService) -> None:
     with ResultOutputs(
         config,
         service,
-        record,
         directory_prefix="eval-",
         sink_factory=lambda directory: evaluation_sinks(config, record, directory),
     ) as outputs:
+        outputs.open(record)
         directory = Path(outputs.execution_dir).resolve()
         logger.info(
             "Evaluation: %s | model=%s | artifacts=%s",
@@ -108,8 +108,7 @@ def run_evaluation(config: EvaluationConfig, service: ModelService) -> None:
         )
         outputs.publish(run)
         if code:
-            print(
-                f"{config.evaluator} failed (exit {code}); see {directory / 'evaluator.log'}",
-                file=sys.stderr,
+            logger.error(
+                "%s failed (exit %s); see %s", config.evaluator, code, directory / "evaluator.log"
             )
             raise SystemExit(code if code > 0 else 128 - code)

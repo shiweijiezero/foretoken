@@ -124,7 +124,7 @@ def publish_video_wandb(
         name=f"{config.name}-{sdk_run.id}",
         type="video-generation-benchmark",
     )
-    for name in ("config", "raw_results", "metrics"):
+    for name in ("config", "raw_results", "metrics", "console_log"):
         path = run.artifacts.get(name)
         if path is not None and path.is_file():
             artifact.add_file(str(path), name=path.name)

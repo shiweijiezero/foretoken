@@ -10,7 +10,11 @@ from collections import defaultdict
 from collections.abc import Iterator
 from typing import Any
 
-from benchmarks.results.metrics import RequestMeasurement, percentile_summary
+from benchmarks.results.metrics import (
+    RequestMeasurement,
+    percentile_summary,
+    request_activity_events,
+)
 
 ELAPSED_TIME = "Elapsed time (s)"
 REQUEST_INDEX = "Request index (send order)"
@@ -138,13 +142,11 @@ def time_series(
     count = math.ceil(end)
     completed: dict[int, list[RequestMeasurement]] = defaultdict(list)
     arrivals: dict[int, int] = defaultdict(int)
-    events: list[tuple[float, int]] = []
+    events = request_activity_events(measurements)
     for item in measurements:
         stop = item.started_at + item.latency
         completed[min(int(stop), count - 1)].append(item)
         arrivals[min(int(item.started_at), count - 1)] += 1
-        events.extend(((item.started_at, 1), (stop, -1)))
-    events.sort()
     # Integrate concurrency between request starts and finishes, carrying active
     # requests across window boundaries rather than sampling only at each edge.
     event_index = active = 0

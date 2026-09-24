@@ -102,7 +102,6 @@ async def run_video_benchmark(
     with ResultOutputs(
         config,
         None,
-        record,
         output_dir=output_dir,
         directory_prefix=f"{config.name}_",
         sink_factory=partial(video_result_sinks, config),
@@ -120,6 +119,7 @@ async def run_video_benchmark(
             )
             if not warmup or any(not item.success for item in warmup):
                 raise ValueError("Warmup requests failed; measurement was not started")
+        outputs.open(record)
         results = await _run_requests(config, run_dir)
         run = create_video_benchmark_run(record, results, run_dir)
         outputs.publish(run)

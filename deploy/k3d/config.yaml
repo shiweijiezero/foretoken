@@ -23,6 +23,10 @@ options:
       - arg: --kubelet-arg=eviction-hard=memory.available<100Mi,nodefs.available<1%,nodefs.inodesFree<1%,imagefs.available<1%,imagefs.inodesFree<1%
         nodeFilters:
           - server:0
+      # Bound additional reclamation on large shared filesystems.
+      - arg: --kubelet-arg=eviction-minimum-reclaim=nodefs.available=1Gi,imagefs.available=1Gi
+        nodeFilters:
+          - server:0
       - arg: --kubelet-arg=image-gc-high-threshold=99
         nodeFilters:
           - server:0

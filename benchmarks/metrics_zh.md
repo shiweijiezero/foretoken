@@ -25,6 +25,8 @@
 | 指标 | 含义 |
 | --- | --- |
 | Success rate | 成功请求数除以尝试请求数 |
+| 并发限额（`max_concurrency`） | 配置的上限：单轮和 trace 负载约束请求数，多轮负载约束对话数 |
+| 实测请求并发（`request_concurrency`） | `peak` 为同时进行的请求数峰值；`mean` 为请求耗时总和除以测量时长，包含失败请求 |
 | End-to-end latency (E2EL) | 请求端到端耗时；成功的流式请求计时到最后一个 `choices` 非空分片 |
 | TTFT | 从发送请求到收到首个 `choices` 非空分片的时间 |
 | TPOT | `(E2EL − TTFT) / (输出 token 数 − 1)`；输出不足两个 token 时不可用 |
@@ -42,7 +44,7 @@
 
 ## SLO 结果
 
-启用 `--slo-params` 后，使用延迟类条件的请求会在 `raw_output.json` 和 W&B 逐请求曲线中获得 `slo_met`。CLI、`metrics.json` 和 W&B Summary 同时记录同一条件下的 SLO 达标率、请求 goodput 和 token goodput。SLO 并发搜索仍按配置的聚合条件判断探测点，并搜索满足条件的最大并发。
+启用 `--slo-params` 后，使用延迟类条件的请求会在 `raw_output.json` 和 W&B 逐请求曲线中获得 `slo_met`。CLI、`metrics.json` 和 W&B Summary 同时记录同一条件下的 SLO 达标率、请求 goodput 和 token goodput。[SLO 并发搜索](docs/perf/slo_zh.md) 按聚合条件判断探测点，报告实测最高达标请求峰值、对应配置限额和停止原因。
 
 服务未报告 token 用量时，对应 token 数保持不可用。如果任一成功请求缺少输入或输出用量，需要完整 token 总数的汇总指标也保持不可用，不把缺失值当作零。缓存输入 token 保留服务报告的原值，包括明确报告的零；它不表示某个存储层或 KV store 的命中率。
 
