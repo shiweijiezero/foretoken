@@ -120,7 +120,7 @@ func (reconciler *FrontendServiceReconciler) projectScalingModels(ctx context.Co
 	models := make([]servingSnapshotModel, 0, len(services.Items))
 	for index := range services.Items {
 		service := &services.Items[index]
-		if !modelServiceConfigured(service) {
+		if service.Spec.Backend != "vllm" || !modelServiceConfigured(service) {
 			continue
 		}
 		servicePools := ownedRoutingPools(service, pools.Items)
@@ -265,7 +265,7 @@ func (reconciler *FrontendServiceReconciler) projectableRouting(ctx context.Cont
 	var projectionErr error
 	for serviceIndex := range services.Items {
 		service := &services.Items[serviceIndex]
-		if !modelServiceReady(service) {
+		if service.Spec.Backend != "vllm" || !modelServiceReady(service) {
 			continue
 		}
 		servicePools := ownedRoutingPools(service, pools.Items)

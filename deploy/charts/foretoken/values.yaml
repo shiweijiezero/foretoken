@@ -87,6 +87,9 @@ observability:
 
 # The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
 runtime:
+  # Optional image built from a vLLM-Omni base and the Foretoken Omni adapter.
+  vllmOmni:
+    image: ""
   vllm:
     image: auto # Selects the release image for the configured GPU resource.
     # Optional source-built diagnostic image with Nsight Systems; used only by opted-in models.

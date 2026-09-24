@@ -209,7 +209,7 @@ type ModelServiceSpec struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Tokenizer string `json:"tokenizer,omitempty"`
 
-	// +kubebuilder:validation:Enum=vllm
+	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
 
 	// InternalGenerateRequestBodyLimitBytes is the maximum body size accepted by

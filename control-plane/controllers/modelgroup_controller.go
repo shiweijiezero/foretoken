@@ -19,6 +19,7 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
+	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllmomni"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -197,13 +198,33 @@ func modelGroupLabels(group *inferencev1alpha1.ModelGroup) map[string]string {
 
 // desiredDeployment builds the isolated model-server workload from a resolved ModelGroup contract.
 func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference) (*appsv1.Deployment, error) {
-	launchPlan, err := vllmconfig.BuildLaunchPlan(group.Spec)
-	if err != nil {
-		return nil, fmt.Errorf("build vLLM launch plan: %w", err)
-	}
-	launchJSON, err := launchPlan.JSON()
-	if err != nil {
-		return nil, fmt.Errorf("marshal vLLM launch plan: %w", err)
+	var launchJSON, launchEnv, command string
+	var startupSeconds, drainSeconds int64
+	switch group.Spec.Runtime.Backend {
+	case "vllm":
+		launchPlan, err := vllmconfig.BuildLaunchPlan(group.Spec)
+		if err != nil {
+			return nil, fmt.Errorf("build vLLM launch plan: %w", err)
+		}
+		launchJSON, err = launchPlan.JSON()
+		if err != nil {
+			return nil, fmt.Errorf("marshal vLLM launch plan: %w", err)
+		}
+		launchEnv, command = "FORETOKEN_VLLM_LAUNCH_PLAN", "foretoken-model-server"
+		startupSeconds, drainSeconds = launchPlan.Lifecycle.StartupSeconds, launchPlan.Lifecycle.DrainSeconds
+	case vllmomniconfig.Backend:
+		launchPlan, err := vllmomniconfig.BuildLaunchPlan(group.Spec)
+		if err != nil {
+			return nil, fmt.Errorf("build vLLM-Omni launch plan: %w", err)
+		}
+		launchJSON, err = launchPlan.JSON()
+		if err != nil {
+			return nil, fmt.Errorf("marshal vLLM-Omni launch plan: %w", err)
+		}
+		launchEnv, command = "FORETOKEN_OMNI_LAUNCH_PLAN", "foretoken-omni-model-server"
+		startupSeconds, drainSeconds = launchPlan.Lifecycle.StartupSeconds, launchPlan.Lifecycle.DrainSeconds
+	default:
+		return nil, fmt.Errorf("unsupported inference backend %q", group.Spec.Runtime.Backend)
 	}
 	labels := modelGroupLabels(group)
 	var annotations map[string]string
@@ -212,7 +233,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	}
 	replicas := int32(1)
 	revisionHistoryLimit := int32(10)
-	progressDeadlineSeconds := int32(launchPlan.Lifecycle.StartupSeconds)
+	progressDeadlineSeconds := int32(startupSeconds)
 	automountToken := false
 	enableServiceLinks := true
 	allowPrivilegeEscalation := false
@@ -223,15 +244,19 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		capabilities.Add = []corev1.Capability{"IPC_LOCK"}
 	}
 	// vLLM managed-engine reserves at least five seconds for process-group shutdown.
-	terminationGracePeriodSeconds := launchPlan.Lifecycle.DrainSeconds + 5
-	startupFailureThreshold := int32(math.Ceil(float64(launchPlan.Lifecycle.StartupSeconds) / 10))
+	terminationGracePeriodSeconds := drainSeconds + 5
+	startupFailureThreshold := int32(math.Ceil(float64(startupSeconds) / 10))
 	ports := []corev1.ContainerPort{{Name: "model-server", ContainerPort: group.Spec.Runtime.Port, Protocol: corev1.ProtocolTCP}}
 	env := []corev1.EnvVar{
-		{Name: "FORETOKEN_VLLM_LAUNCH_PLAN", Value: launchJSON},
+		{Name: launchEnv, Value: launchJSON},
 		{Name: "FORETOKEN_INTERNAL_LISTEN", Value: fmt.Sprintf("0.0.0.0:%d", group.Spec.Runtime.Port)},
-		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
-		{Name: "FORETOKEN_KV_SCOPE_ID", Value: kvScopeID(group)},
 		{Name: "FORETOKEN_MODEL_GROUP_UID", Value: string(group.UID)},
+	}
+	if group.Spec.Runtime.Backend == "vllm" {
+		env = append(env,
+			corev1.EnvVar{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
+			corev1.EnvVar{Name: "FORETOKEN_KV_SCOPE_ID", Value: kvScopeID(group)},
+		)
 	}
 	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
@@ -278,19 +303,26 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	volumes := []corev1.Volume{
 		{Name: "tmp", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}},
 		{Name: "dshm", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{Medium: corev1.StorageMediumMemory}}},
-		{Name: "kv-indexer", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: kvIndexerSecretName, Items: []corev1.KeyToPath{{Key: kvIndexerSecretKey, Path: "key"}}}}},
 	}
-	mounts := []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}, {Name: "dshm", MountPath: "/dev/shm"}, {Name: "kv-indexer", MountPath: "/etc/foretoken/kv-indexer", ReadOnly: true}}
+	mounts := []corev1.VolumeMount{{Name: "tmp", MountPath: "/tmp"}, {Name: "dshm", MountPath: "/dev/shm"}}
+	if group.Spec.Runtime.Backend == "vllm" {
+		volumes = append(volumes, corev1.Volume{Name: "kv-indexer", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: kvIndexerSecretName, Items: []corev1.KeyToPath{{Key: kvIndexerSecretKey, Path: "key"}}}}})
+		mounts = append(mounts, corev1.VolumeMount{Name: "kv-indexer", MountPath: "/etc/foretoken/kv-indexer", ReadOnly: true})
+	}
 	if cache := group.Spec.Artifacts.Cache; cache != nil {
 		volumes = append(volumes, corev1.Volume{Name: runtimeCacheVolumeName, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: cache.ClaimName}}})
 		mounts = append(mounts, corev1.VolumeMount{Name: runtimeCacheVolumeName, MountPath: cache.MountPath})
-		ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeCacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
 		env = append(env,
 			corev1.EnvVar{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
 			corev1.EnvVar{Name: runtimeCacheClaimEnv, Value: cache.ClaimName},
-			corev1.EnvVar{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(runtimeCacheObservationPort(group.Spec.Runtime.Port)))},
-			corev1.EnvVar{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		)
+		if group.Spec.Runtime.Backend == "vllm" {
+			ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeCacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
+			env = append(env,
+				corev1.EnvVar{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(runtimeCacheObservationPort(group.Spec.Runtime.Port)))},
+				corev1.EnvVar{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
+			)
+		}
 	}
 	if group.Spec.ECRuntime != nil {
 		volumes = append(volumes, corev1.Volume{Name: "ec-shared-storage", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: group.Spec.ECRuntime.SharedStorageClaim}}})
@@ -340,7 +372,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 						Name:            "model-server",
 						Image:           group.Spec.Runtime.Image,
 						ImagePullPolicy: corev1.PullIfNotPresent,
-						Command:         []string{"foretoken-model-server"},
+						Command:         []string{command},
 						Args:            []string{},
 						Ports:           ports,
 						Env:             env,

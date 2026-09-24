@@ -133,6 +133,7 @@ spec:
               backend:
                 enum:
                 - vllm
+                - vllm-omni
                 type: string
               ecProfile:
                 description: ECProfile selects the platform-maintained EC runtime
