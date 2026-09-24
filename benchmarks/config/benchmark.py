@@ -403,13 +403,7 @@ class BenchmarkConfig:
                 )
         low = self.slo.lower_bound
         high = self.slo.upper_bound
-        if configured is None or low >= configured:
-            if high is not None:
-                start = (low + high) // 2
-            else:
-                start = low
-        else:
-            start = configured
+        start = low if configured is None else max(low, configured)
         if start < low or (high is not None and start > high):
             bounds = (
                 f"[{low}, {high}]"

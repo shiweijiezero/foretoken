@@ -266,24 +266,29 @@ class TaskLoadBenchmark:
 
     def run(self) -> BenchmarkRun:
         """Run warmup before opening measured observers, then publish one measured result."""
-        if self.benchmark.load.warmup_requests:
-            warmup = TaskLoadBenchmark(
-                self._warmup_config(), self.service, tasks=self.tasks,
-                dataset_tasks=self.dataset_tasks,
-            )
-            warmup_measurements, _ = asyncio.run(warmup._run_requests(warmup=True))
-            if not warmup_measurements or any(not item.succeeded for item in warmup_measurements):
-                raise ValueError("Warmup requests failed; measurement was not started")
-        record = build_benchmark_run_record(
-            self.benchmark, self.service, "task_load", resolved_load_record(self.benchmark)
-        )
-        record["warmup_requests"] = self.benchmark.load.warmup_requests
-        if self.dataset_tasks is not None:
-            record["datasets"] = list(self.dataset_tasks)
         with ResultOutputs(
-            self.benchmark, self.service, record, label=self.label,
+            self.benchmark, self.service, label=self.label,
             output_dir=self.output_dir, wandb_group=self.wandb_group,
         ) as outputs:
+            if self.benchmark.resolved_workload.has_multiple_datasets and self.dataset_tasks is None:
+                grouped = load_multi_dataset_tasks(self.benchmark)
+                self.tasks = grouped.pop("__global__")
+                self.dataset_tasks = grouped
+            if self.benchmark.load.warmup_requests:
+                warmup = TaskLoadBenchmark(
+                    self._warmup_config(), self.service, tasks=self.tasks,
+                    dataset_tasks=self.dataset_tasks,
+                )
+                warmup_measurements, _ = asyncio.run(warmup._run_requests(warmup=True))
+                if not warmup_measurements or any(not item.succeeded for item in warmup_measurements):
+                    raise ValueError("Warmup requests failed; measurement was not started")
+            record = build_benchmark_run_record(
+                self.benchmark, self.service, "task_load", resolved_load_record(self.benchmark)
+            )
+            record["warmup_requests"] = self.benchmark.load.warmup_requests
+            if self.dataset_tasks is not None:
+                record["datasets"] = list(self.dataset_tasks)
+            outputs.open(record)
             profile = outputs.create_profile()
             with (profile if profile is not None else nullcontext()):
                 measurements, elapsed = asyncio.run(self._run_requests(profile=profile))

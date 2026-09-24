@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
-from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
@@ -48,34 +47,12 @@ class GeneratedLoadBenchmark:
         with ResultOutputs(
             self.benchmark,
             self.service,
-            record,
             label=self.label,
             output_dir=self.output_dir,
             wandb_group=self.wandb_group,
         ) as outputs:
+            outputs.open(record)
             profile = outputs.create_profile()
-            if profile is not None and self.benchmark.load.warmup_requests:
-                warmup = replace(
-                    self.benchmark,
-                    load=replace(
-                        self.benchmark.load,
-                        request_count=self.benchmark.load.warmup_requests,
-                        warmup_requests=0,
-                    ),
-                    profile=None,
-                    outputs=replace(
-                        self.benchmark.outputs,
-                        destinations=("local", "quiet")
-                        if self.benchmark.outputs.includes("local") else ("quiet",),
-                    ),
-                )
-                warmed = GeneratedLoadBenchmark(
-                    warmup,
-                    self.service,
-                    output_dir=str(Path(outputs.execution_dir) / "warmup"),
-                ).run(phase_label="Warmup")
-                if warmed.metrics["failed_num"] or not warmed.metrics["success_num"]:
-                    raise ValueError("Warmup requests failed; measurement was not started")
             with (profile if profile is not None else nullcontext()):
                 if profile is not None:
                     profile.start_sync()

@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from pathlib import Path
 from typing import Any
 
 from benchmarks.config.benchmark import BenchmarkConfig
@@ -24,6 +27,58 @@ def configure_logging(console_enabled: bool) -> None:
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+@contextmanager
+def capture_run_logs(directory: str, *, quiet: bool) -> Iterator[None]:
+    """Keep quiet-run output in its result directory while forwarding logging errors.
+
+    ResultOutputs owns this scope from preparation through sink cleanup. Existing
+    console handlers retain their formatter; raw progress and SDK output use the
+    same log. Nested runs restore their enclosing run's streams on exit.
+    """
+    if not quiet:
+        yield
+        return
+    root = logging.getLogger()
+    root_level = root.level
+    loggers = [root] + [
+        item for item in list(root.manager.loggerDict.values())
+        if isinstance(item, logging.Logger)
+    ]
+    handlers = {
+        handler for item in loggers for handler in item.handlers
+        if isinstance(handler, logging.StreamHandler)
+        and not isinstance(handler, logging.FileHandler)
+    }
+    restored = []
+    with (Path(directory) / "run.log").open("a", encoding="utf-8", buffering=1) as log:
+        try:
+            root.setLevel(logging.INFO)
+            for handler in handlers:
+                stream, level = handler.stream, handler.level
+
+                def capture(record: logging.LogRecord, *, handler=handler, stream=stream) -> bool:
+                    text = handler.format(record) + handler.terminator
+                    log.write(text)
+                    if record.levelno >= logging.ERROR:
+                        stream.write(text)
+                        stream.flush()
+                    return False
+
+                # Filtering also handles dynamic stderr handlers whose stream is
+                # read-only. An enclosing run retains shared logging records;
+                # nested runs capture their own raw progress below.
+                handler.addFilter(capture)
+                handler.setLevel(logging.DEBUG)
+                restored.append((handler, level, capture))
+            with redirect_stdout(log), redirect_stderr(log):
+                yield
+        finally:
+            for handler, level, capture in restored:
+                handler.removeFilter(capture)
+                handler.setLevel(level)
+            root.setLevel(root_level)
 
 
 def print_model_service(service: ModelService) -> None:
@@ -173,16 +228,16 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
 
     if run_record.get("trace_path"):
         trace_max = run_record.get("trace_max_concurrency")
-        concurrency_label = "Trace concurrency"
+        concurrency_label = "Trace concurrency limit"
         concurrency_value = (
             "no concurrency limit" if trace_max is None else str(trace_max)
         )
     elif int(parallel) < 0:
-        concurrency_label = "Concurrency"
+        concurrency_label = "Concurrency limit"
         concurrency_value = "no concurrency limit"
     else:
         concurrency_label = (
-            "Concurrent conversations" if multi_turn else "Concurrency"
+            "Conversation concurrency limit" if multi_turn else "Request concurrency limit"
         )
         concurrency_value = str(parallel)
 
@@ -251,6 +306,9 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
             f"  {success_label}: {metrics['success_num']}/"
             f"{metrics['request_num']} "
             f"({float(metrics['success_rate']) * 100:.2f}%)",
+            "  Observed in-flight requests: "
+            f"peak={metrics['request_concurrency']['peak']} "
+            f"mean={_format_metric(metrics['request_concurrency']['mean'], 2)}",
             *metric_lines,
         ]
     )
@@ -328,23 +386,31 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
 
 
 def log_slo_results(slo: dict[str, Any]) -> None:
-    """Print one row for each SLO probe and its satisfied search point."""
-    lines = ["========== SLO Capacity Search Results =========="]
-    if slo.get("probes"):
-        for row in slo["probes"]:
-            if "max_satisfied" in row:
-                lines.append(
-                    f"  Group {row.get('group')}: max concurrency="
-                    f"{row.get('max_satisfied')} criteria={row.get('criteria')}"
-                )
-            else:
-                lines.append(
-                    f"  Group {row.get('group')}: max concurrency={row['max_concurrency']} "
-                    f"satisfied={row.get('satisfied')} criteria={row.get('criteria')}"
-                )
-    else:
-        lines.append(f"  Max concurrency: {slo.get('max_satisfied', 'None')}")
-    lines.append("============================================")
+    """Show measured request peaks separately from configured limits and explain termination."""
+    reasons = {
+        "observed_concurrency_not_increasing": "observed request concurrency did not increase",
+        "upper_bound_reached": "configured upper bound reached",
+        "slo_boundary_found": "SLO boundary reached",
+    }
+    unit = slo["concurrency_limit_unit"]
+    lines = ["========== SLO Concurrency Search Results =========="]
+    for row in slo["probes"]:
+        lines.append(
+            f"  Group {row['group']}: {unit} limit={row['max_concurrency']} "
+            f"request peak={row['peak_request_concurrency']} "
+            f"repeat peaks={row['repeat_peak_request_concurrency']} "
+            f"satisfied={row['satisfied']}"
+        )
+    for group in slo["groups"]:
+        lines.extend([
+            f"  Group {group['group']}: best passing request peak="
+            f"{_format_metric(group['best_peak_request_concurrency'], 0)} "
+            f"at {unit} limit={_format_metric(group['best_max_concurrency'], 0)}",
+            f"  Stopped: {reasons[group['stop_reason']]}; "
+            f"last request peak={group['last_peak_request_concurrency']} "
+            f"at {unit} limit={group['last_max_concurrency']}",
+        ])
+    lines.append("===================================================")
     logger.info("\n%s", "\n".join(lines))
 
 

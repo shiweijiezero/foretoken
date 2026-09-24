@@ -10,7 +10,7 @@ from typing import TypeAlias
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
 from benchmarks.results.output import BenchmarkRun
-from benchmarks.runs.executor import TaskLoadBenchmark, load_multi_dataset_tasks
+from benchmarks.runs.executor import TaskLoadBenchmark
 from benchmarks.runs.http import GeneratedLoadBenchmark
 from benchmarks.runs.trace import TraceReplayBenchmark
 
@@ -33,19 +33,9 @@ def measurement_runner(
             benchmark, service, label=label, output_dir=output_dir, wandb_group=wandb_group
         )
     workload = benchmark.resolved_workload
-    if workload.has_multiple_datasets:
-        grouped = load_multi_dataset_tasks(benchmark)
-        return TaskLoadBenchmark(
-            benchmark,
-            service,
-            tasks=grouped.pop("__global__"),
-            dataset_tasks=grouped,
-            label=label,
-            output_dir=output_dir,
-            wandb_group=wandb_group,
-        )
     if (
-        benchmark.is_multi_turn
+        workload.has_multiple_datasets
+        or benchmark.is_multi_turn
         or benchmark.load.arrival_pattern != "poisson"
         or benchmark.load.duration_seconds is not None
         or benchmark.load.warmup_requests

@@ -17,7 +17,7 @@ pip install foretoken
 
 Run the examples from the repository checkout prepared by the [Quick Start](../README.md#quick-start). They save results locally and to W&B; run `wandb login` once before using W&B.
 
-Passing a Kustomize directory reuses its running services or deploys them when absent. Only resources created by the evaluation command are removed afterwards. A single-model deployment supplies the model name automatically; use `--model` to choose among multiple models. To measure an existing endpoint, replace the directory with `--url` and provide its model name.
+Pass a Kustomize directory to use its model service. A single-model deployment supplies the model name automatically; use `--model` to choose among multiple models. To measure an existing endpoint, replace the directory with `--url` and provide its model name.
 
 ## Measure performance
 
@@ -57,6 +57,8 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | `wandb` | Print results and upload to W&B |
 | `local,quiet` | Save local files without console summaries |
 | `local,wandb,quiet` | Save and upload results without console summaries |
+
+`quiet` saves preparation and execution logs in `run.log` instead of printing progress; errors remain visible. With W&B selected, this log is also uploaded as an artifact.
 
 Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs.
 
