@@ -9,6 +9,10 @@ import os
 from dataclasses import replace
 from typing import Any
 
+from evalscope.perf.sla import sla_run
+from evalscope.perf.sla.sla_run import check_sla, parse_sla_params
+from evalscope.perf.utils.perf_models import BenchmarkSummary
+
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.model_service import ModelService
 from benchmarks.results.console import log_slo_results
@@ -81,10 +85,6 @@ def _check_slo(
     metrics_list: list[dict[str, Any]],
 ) -> bool:
     """Reuse EvalScope ``check_sla`` for pass/fail and criterion comparison logs."""
-    from evalscope.perf.sla import sla_run
-    from evalscope.perf.sla.sla_run import check_sla, parse_sla_params
-    from evalscope.perf.utils.perf_models import BenchmarkSummary
-
     success = all(float(item["success_rate"]) >= 1.0 for item in metrics_list)
     total = max(int(metrics_list[-1].get("request_num") or 1), 1)
     results = {

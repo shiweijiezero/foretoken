@@ -164,7 +164,7 @@ foretoken deploy examples/observability --timeout 20m
 
 ## 性能剖析
 
-对已有诊断服务采集一段 CPU/GPU 执行时间线，见[性能剖析指南](profiling_zh.md)。该功能独立于指标采集。
+对已有诊断服务采集一段 CPU/GPU 执行时间线，见[性能剖析指南](../benchmarks/docs/profile/README_zh.md)。该功能独立于指标采集。
 
 ## 停止采集
 

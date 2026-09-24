@@ -164,7 +164,7 @@ Rules keep the namespace, Frontend service, model group, model role, model name,
 
 ## Profiling
 
-For a short CPU/GPU capture on an existing diagnostic service, see [Profiling](profiling.md). It is separate from metrics collection.
+For a short CPU/GPU capture on an existing diagnostic service, see [Profiling](../benchmarks/docs/profile/README.md). It is separate from metrics collection.
 
 ## Remove collection
 

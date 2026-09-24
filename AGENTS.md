@@ -107,7 +107,7 @@ Choose the smallest real validation that covers the changed responsibility, then
 - Go control plane and generated artifacts: `make -C control-plane verify`.
 - Python CLI: install the package from the repository root, verify the affected help surface, and execute the changed deploy, delete, status, or endpoint path against Kubernetes. Use a non-mutating validation command when validation must not change shared resources.
 - Helm baseline: `helm lint deploy/charts/foretoken --kube-version 1.36.3` and `helm template foretoken deploy/charts/foretoken --kube-version 1.36.3 > /tmp/foretoken.yaml`; render additional affected modes and values.
-- Benchmark changes have no generic smoke command. Follow `benchmarks/README.md` and run the changed `foretoken bench` path against a real Kustomize deployment or `--url` service source.
+- Benchmark changes have no generic smoke command. Follow `benchmarks/README.md` and run the changed `foretoken perf` or `foretoken eval` path against a real Kustomize deployment or `--url` service source.
 - Deployment or controller contracts also have no generic smoke command. Run the affected Kubernetes/OCI workflow described by the relevant deployment guide; compilation or template rendering alone is not end-to-end validation.
 
 Report only commands and environments that actually ran. State important skipped validation plainly.

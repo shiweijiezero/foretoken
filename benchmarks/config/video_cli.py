@@ -37,7 +37,7 @@ def parse_video_arguments(
 ) -> VideoBenchCommand:
     """Map the video CLI surface to its request and result configuration."""
     parser = argparse.ArgumentParser(
-        prog=f"foretoken bench {command_name}",
+        prog=f"foretoken perf {command_name}",
         description="Benchmark an existing synchronous video-generation endpoint",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )

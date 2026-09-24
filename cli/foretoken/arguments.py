@@ -71,15 +71,22 @@ class EndpointCommand:
 
 
 @dataclass(frozen=True)
-class BenchCommand:
-    """Forward benchmark arguments to the optional benchmark module."""
+class PerformanceCommand:
+    """Forward performance benchmark arguments to the benchmark module."""
+
+    arguments: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class EvaluationCommand:
+    """Forward model evaluation arguments to the benchmark module."""
 
     arguments: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class ProfileCommand:
-    """Describe one runtime-owned capture requested by deploy or bench."""
+    """Describe one runtime-owned capture requested by deploy or perf."""
 
     kustomize_path: str
     model: str | None
@@ -97,7 +104,7 @@ class ProfileViewCommand:
 
 
 def add_profile_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add the shared optional capture controls to deploy and bench."""
+    """Add the shared optional capture controls to deploy and perf."""
     parser.add_argument(
         "--profile", action="store_true",
         help="Capture a profile during this operation",
@@ -115,7 +122,7 @@ def add_profile_arguments(parser: argparse.ArgumentParser) -> None:
 def validate_profile_arguments(
     parser: argparse.ArgumentParser, arguments: argparse.Namespace
 ) -> None:
-    """Require a complete capture selection before executing deploy or bench."""
+    """Require a complete capture selection before executing deploy or perf."""
     if arguments.profile and not (arguments.profile_engine and arguments.profile_duration):
         parser.error("--profile requires --profile-engine and --profile-duration")
     if not arguments.profile and (arguments.profile_engine or arguments.profile_duration):
@@ -129,7 +136,8 @@ ParsedCommand = (
     | DeleteCommand
     | StatusCommand
     | EndpointCommand
-    | BenchCommand
+    | PerformanceCommand
+    | EvaluationCommand
     | ProfileViewCommand
 )
 
@@ -151,7 +159,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="foretoken",
         description=(
             "Install the Kubernetes control plane, deploy model services, "
-            "capture profiles, and run benchmarks"
+            "capture profiles, run performance benchmarks, and evaluate models"
         ),
     )
     parser.add_argument(
@@ -317,9 +325,14 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_wait_timeout_argument(view, "capture storage readiness")
 
     subparsers.add_parser(
-        "bench",
+        "perf",
         add_help=False,
-        help="Benchmark Foretoken or other OpenAI-compatible model services",
+        help="Measure Foretoken or other OpenAI-compatible model services",
+    )
+    subparsers.add_parser(
+        "eval",
+        add_help=False,
+        help="Evaluate a running model service with a supported evaluator",
     )
     return parser
 
@@ -327,8 +340,10 @@ def _build_parser() -> argparse.ArgumentParser:
 def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
     """Parse CLI arguments into the command consumed by the execution layer."""
     arguments = tuple(argv)
-    if arguments and arguments[0] == "bench":
-        return BenchCommand(arguments[1:])
+    if arguments and arguments[0] == "perf":
+        return PerformanceCommand(arguments[1:])
+    if arguments and arguments[0] == "eval":
+        return EvaluationCommand(arguments[1:])
 
     parser = _build_parser()
     parsed_args = parser.parse_args(arguments)

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Parse the ``foretoken bench`` command and build the benchmark configuration."""
+"""Parse the ``foretoken perf`` command and build the performance configuration."""
 
 from __future__ import annotations
 
@@ -548,9 +548,9 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
 def parse_benchmark_arguments(
     argv: Sequence[str] | None = None,
 ) -> BenchmarkConfig:
-    """Parse benchmark arguments after top-level ``foretoken bench``."""
+    """Parse performance arguments after top-level ``foretoken perf``."""
     parser = argparse.ArgumentParser(
-        prog="foretoken bench",
+        prog="foretoken perf",
         description=(
             "Measure HTTP latency and throughput for Foretoken and "
             "OpenAI-compatible inference services"

@@ -65,4 +65,4 @@ Add `storageClassName` to select a StorageClass. Add `maxSize` only when its dri
 
 To mount a PVC that is managed elsewhere, set `workload.cache.claimName` in platform values and create that claim in each workload namespace.
 
-Diagnostic captures use the same data root and store results below `profiles/`; see [Profiling](../observability/profiling.md).
+Diagnostic captures use the same data root and store results below `profiles/`; see [Profiling](../benchmarks/docs/profile/README.md).

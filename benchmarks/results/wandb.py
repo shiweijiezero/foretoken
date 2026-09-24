@@ -151,11 +151,13 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         message[_AVERAGE_TURNS_PER_CONVERSATION] = round(
             float(conversation["avg_turn_requests"]), 4
         )
-        for name, stats in (
-            (_CONVERSATION_LATENCY, conversation["latency"]),
-            (_FINAL_ANSWER_TTFT, conversation["time_to_final_answer_token"]),
+        for key, name in (
+            ("latency", _CONVERSATION_LATENCY),
+            ("time_to_final_answer_token", _FINAL_ANSWER_TTFT),
         ):
-            for percentile, value in stats.items():
+            if key not in conversation:
+                continue
+            for percentile, value in conversation[key].items():
                 if value is not None:
                     message[f"{name}/{percentile}"] = round(float(value), 4)
     return message

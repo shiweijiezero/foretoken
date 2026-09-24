@@ -65,4 +65,4 @@ spec:
 
 需要挂载其他系统管理的 PVC 时，在平台 values 中设置 `workload.cache.claimName`，并在每个工作负载命名空间创建该 PVC。
 
-诊断采集复用同一数据根目录，并将结果写入 `profiles/`；操作方法见[性能剖析指南](../observability/profiling_zh.md)。
+诊断采集复用同一数据根目录，并将结果写入 `profiles/`；操作方法见[性能剖析指南](../benchmarks/docs/profile/README_zh.md)。

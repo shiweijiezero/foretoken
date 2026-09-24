@@ -67,7 +67,7 @@ curl --fail-with-body "$FORETOKEN_FRONTEND_URL/v1/models" \
   -H "Host: $FORETOKEN_REQUEST_HOST"
 ```
 
-For CPU/GPU execution traces, use [PyTorch profiling](../observability/profiling.md) with `--profile-engine pytorch`.
+For CPU/GPU execution traces, use [PyTorch profiling](../benchmarks/docs/profile/README.md) with `--profile-engine pytorch`.
 
 ## 3. Inspect or remove the deployment
 
