@@ -39,6 +39,7 @@ pub(crate) async fn execute_workflow(
         }
         ModelServerRole::Encoder => {
             let (descriptor, cleanup) = execute_encoder(resolver, initial, request.clone()).await?;
+            session.stage_complete();
             let prefill = session.select_prefill().map_err(unavailable)?;
             execute_pd(
                 resolver,
@@ -123,9 +124,10 @@ async fn execute_pd(
     let bootstrap = resolver
         .bootstrap_endpoint(&prefill_decision)
         .ok_or(GenerationError::Internal)?;
-    let (mut prefill_request, decode_request) = pd_stage_requests(request, &bootstrap)
-        .await
-        .map_err(GenerationError::from)?;
+    let (mut prefill_request, decode_request) =
+        pd_stage_requests(request, &bootstrap, prefill_decision.data_parallel_rank)
+            .await
+            .map_err(GenerationError::from)?;
     if let Some(descriptor) = descriptor {
         inject_ec_transfer_params(&mut prefill_request, descriptor);
     }
@@ -139,6 +141,7 @@ async fn execute_pd(
 
     // Started Encoder/Prefill stages remain owned until Decode terminates. The guard covers fresh
     // Decode routing, resolution, admission, cancellation, and abnormal stream termination.
+    session.stage_complete();
     let decode = session.select_decode().map_err(unavailable)?;
     let decode_decision = decode;
     let decode_facade = resolver

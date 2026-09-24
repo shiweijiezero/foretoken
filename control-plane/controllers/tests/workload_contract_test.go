@@ -28,6 +28,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		group := modelGroup(pool, "model-r1-0", 0)
 		group.Spec.Accelerator.RuntimeClassName = "nvidia"
 		group.Spec.Artifacts.Cache = &inferencev1alpha1.RuntimeCacheBinding{ClaimName: "runtime-cache", MountPath: "/cache"}
+		group.Spec.Runtime.TritonCacheDirectory = "/cache/triton/$(FORETOKEN_CACHE_NODE_NAME)"
 		group.Spec.Artifacts.Source = inferencev1alpha1.ModelSourceModelScope
 		c := controllerClient(t, service, pool, group)
 		r := &controllers.ModelGroupReconciler{Client: c, ControlPlaneNamespace: "foretoken-system", ImagePullSecrets: []corev1.LocalObjectReference{{Name: "registry-auth"}}}
@@ -49,7 +50,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		for _, item := range pod.Containers[0].Env {
 			env[item.Name] = item
 		}
-		if env["FORETOKEN_MODEL_ROOT"].Value != "/cache/models" || env["HF_HOME"].Value != "/cache/models" || env["VLLM_CACHE_ROOT"].Value != "/cache/vllm" || env["TORCHINDUCTOR_CACHE_DIR"].Value != "/cache/torch" || env["TRITON_CACHE_DIR"].Value != "/tmp/foretoken-runtime-cache/triton" || env["FORETOKEN_CACHE_OBSERVATION_PORT"].Value != "9001" || env["HF_TOKEN"].ValueFrom != nil {
+		if env["FORETOKEN_MODEL_ROOT"].Value != "/cache/models" || env["HF_HOME"].Value != "/cache/models" || env["VLLM_CACHE_ROOT"].Value != "/cache/vllm" || env["TORCHINDUCTOR_CACHE_DIR"].Value != "/cache/torch" || env["TRITON_CACHE_DIR"].Value != "/cache/triton/$(FORETOKEN_CACHE_NODE_NAME)" || env["FORETOKEN_CACHE_OBSERVATION_PORT"].Value != "9001" || env["HF_TOKEN"].ValueFrom != nil {
 			t.Fatalf("runtime cache environment = %#v", env)
 		}
 		cacheMounted := false
@@ -127,6 +128,7 @@ func TestModelGroupWorkloadContract(t *testing.T) {
 		group := modelGroup(pool, "pd-r1-0", 0)
 		group.Spec.Role = inferencev1alpha1.ModelRolePrefill
 		group.Spec.PDRuntime = &inferencev1alpha1.ModelGroupPDRuntimeConfig{
+			ServiceUID:                 string(service.UID),
 			ProfileName:                "pd",
 			ProfileRevision:            "r1",
 			Connector:                  "MooncakeConnector",

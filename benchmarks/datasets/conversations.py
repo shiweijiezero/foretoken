@@ -243,13 +243,13 @@ def _conversation_task(
 
 def split_chat_conversation(
     messages: list[dict[str, Any]],
-) -> list[list[dict[str, Any]]]:
-    """Split answer turns while retaining recorded tool calls and their results as context.
+) -> list[tuple[list[dict[str, Any]], dict[str, Any] | None]]:
+    """Pair each request delta with its recorded answer for the conversation executor.
 
-    A recorded call/result block is prefilled history, not a tool invocation.
-    Ordinary reference answers are replaced by the benchmark engine's responses.
+    Recorded tool calls and results remain together in the request delta.
+    An unanswered final request has no reference answer.
     """
-    turns: list[list[dict[str, Any]]] = []
+    turns: list[tuple[list[dict[str, Any]], dict[str, Any] | None]] = []
     current: list[dict[str, Any]] = []
     pending_tools: set[str] = set()
     for index, message in enumerate(messages):
@@ -280,20 +280,20 @@ def split_chat_conversation(
                 raise ValueError("Recorded tool calls need matching results; tool execution requires a harness")
             if role == "assistant":
                 if current:
-                    turns.append(current)
+                    turns.append((current, message))
                     current = []
             else:
                 current.append(message)
     if pending_tools:
         raise ValueError("Recorded tool calls need matching results; tool execution requires a harness")
     if current:
-        turns.append(current)
+        turns.append((current, None))
     return turns
 
 
 def _load_dataset_tasks(
     dataset_selector: str,
-    requested_count: int,
+    requested_count: int | None,
     row_offset: int,
     normalize: Callable[[Any, Path, int, int], Task],
     kind: str,
@@ -306,9 +306,9 @@ def _load_dataset_tasks(
         if row_index < row_offset:
             continue
         tasks.append(normalize(row, dataset_path, line_number, row_index))
-        if len(tasks) >= requested_count:
+        if requested_count is not None and len(tasks) >= requested_count:
             break
-    if len(tasks) < requested_count:
+    if requested_count is not None and len(tasks) < requested_count:
         raise ValueError(
             f"Loaded {len(tasks)} {kind} from {dataset_selector!r} "
             f"(offset={row_offset}), need {requested_count}"
@@ -317,32 +317,45 @@ def _load_dataset_tasks(
 
 
 def load_conversation_tasks(benchmark: BenchmarkConfig) -> list[Task]:
-    """Read complete conversation scripts for EvalScope interactive multi-turn runs."""
+    """Read enough conversation scripts to cover the request budget."""
     workload = benchmark.resolved_workload
-    conversation_count = benchmark.load.request_count
+    request_budget = benchmark.load.request_count
     row_offset = int(workload.row_offset)
     if workload.fixed_prompt and not workload.dataset_selectors:
+        count = request_budget if request_budget is not None else 1
         return [
             Task(
                 id=f"prompt:{index}",
                 turns=(Turn(role="user", content=workload.fixed_prompt),),
             )
-            for index in range(conversation_count)
+            for index in range(count)
         ]
 
-    if len(workload.dataset_selectors) != 1:
-        raise ValueError(
-            "A conversation child run requires exactly one dataset source"
-        )
-    dataset_selector = workload.dataset_selectors[0]
-    if dataset_selector == "random":
+    if not workload.dataset_selectors:
+        raise ValueError("A conversation workload requires a dataset source")
+    if "random" in workload.dataset_selectors:
         raise ValueError("EvalScope owns standard random dataset generation")
-    return _load_dataset_tasks(
-        dataset_selector,
-        conversation_count,
-        row_offset,
-        _conversation_task,
-        "conversations",
+
+    tasks: list[Task] = []
+    request_count = 0
+    for dataset_selector in workload.dataset_selectors:
+        for dataset_path, line_number, row_index, row in iter_dataset_rows(
+            dataset_selector
+        ):
+            if row_index < row_offset:
+                continue
+            task = _conversation_task(row, dataset_path, line_number, row_index)
+            tasks.append(task)
+            turn_count = len(split_chat_conversation(task.messages()))
+            if workload.max_turns is not None and workload.max_turns > 0:
+                turn_count = min(turn_count, workload.max_turns)
+            request_count += turn_count
+            if request_budget is not None and request_count >= request_budget:
+                return tasks
+    if request_budget is None:
+        return tasks
+    raise ValueError(
+        f"Loaded {request_count} conversation requests, need {request_budget}"
     )
 
 
@@ -393,12 +406,13 @@ def load_request_tasks(
     row_offset = int(workload.row_offset)
 
     if workload.fixed_prompt and dataset_selector is None:
+        prompt_count = count if count is not None else 1
         return [
             Task(
                 id=f"prompt:{index}",
                 turns=(Turn(role="user", content=workload.fixed_prompt),),
             )
-            for index in range(count)
+            for index in range(prompt_count)
         ]
 
     if dataset_selector is None:

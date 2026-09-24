@@ -158,6 +158,10 @@ type NormalizedPoolTemplate struct {
 	// +optional
 	ECProfile string `json:"ecProfile,omitempty"`
 
+	// EncoderCacheGeneration isolates encoder outputs across service configuration updates.
+	// +optional
+	EncoderCacheGeneration int64 `json:"encoderCacheGeneration,omitempty"`
+
 	// EngineArgs contains the native backend options selected for this Pool.
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`

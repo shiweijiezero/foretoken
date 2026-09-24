@@ -20,37 +20,39 @@ type FrontendTimeouts struct {
 	StreamIdle Duration `json:"streamIdle"`
 }
 
-// RouterFilterAlgorithm names a Filter validated by the selected Frontend image.
-type RouterFilterAlgorithm string
-
-// RouterScorerAlgorithm names a Scorer validated by the selected Frontend image.
-type RouterScorerAlgorithm string
-
-// RouterPickerAlgorithm names a Picker validated by the selected Frontend image.
-type RouterPickerAlgorithm string
+// RouterAlgorithm names one compiled routing algorithm.
+type RouterAlgorithm string
 
 const (
 	// DefaultRouterFilter is applied by the API when a Filter is omitted.
-	DefaultRouterFilter RouterFilterAlgorithm = "allow_all"
+	DefaultRouterFilter RouterAlgorithm = "allow_all"
 	// DefaultRouterScorer is applied by the API when a Scorer is omitted.
-	DefaultRouterScorer RouterScorerAlgorithm = "kv_least_loaded"
+	DefaultRouterScorer RouterAlgorithm = "kv_least_loaded"
 	// DefaultRouterPicker is applied by the API when a Picker is omitted.
-	DefaultRouterPicker RouterPickerAlgorithm = "weighted_random"
+	DefaultRouterPicker RouterAlgorithm = "gamble_sampling"
 )
+
+// RouterStage selects one compiled algorithm and its algorithm-owned parameters.
+type RouterStage struct {
+	// +kubebuilder:validation:MinLength=1
+	Algorithm RouterAlgorithm `json:"algorithm"`
+
+	// +optional
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Parameters *runtime.RawExtension `json:"parameters,omitempty"`
+}
 
 // RouterPipeline selects each independently composable routing algorithm stage.
 type RouterPipeline struct {
-	// +optional
-	// +kubebuilder:default=allow_all
-	Filter RouterFilterAlgorithm `json:"filter,omitempty"`
+	// +kubebuilder:default={algorithm:allow_all,parameters:{}}
+	Filter RouterStage `json:"filter"`
 
-	// +optional
-	// +kubebuilder:default=kv_least_loaded
-	Scorer RouterScorerAlgorithm `json:"scorer,omitempty"`
+	// +kubebuilder:default={algorithm:kv_least_loaded,parameters:{}}
+	Scorer RouterStage `json:"scorer"`
 
-	// +optional
-	// +kubebuilder:default=weighted_random
-	Picker RouterPickerAlgorithm `json:"picker,omitempty"`
+	// +kubebuilder:default={algorithm:gamble_sampling,parameters:{}}
+	Picker RouterStage `json:"picker"`
 }
 
 // FrontendServiceSpec defines the desired state of a frontend service.
@@ -68,7 +70,7 @@ type FrontendServiceSpec struct {
 	Observability *FrontendObservability `json:"observability,omitempty"`
 
 	// +optional
-	// +kubebuilder:default={}
+	// +kubebuilder:default={filter:{algorithm:allow_all},scorer:{algorithm:kv_least_loaded},picker:{algorithm:gamble_sampling}}
 	RouterPipeline RouterPipeline `json:"routerPipeline,omitempty"`
 
 	// Hostname is required when the platform exposes frontends through a Gateway.

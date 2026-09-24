@@ -219,7 +219,7 @@ impl BackendRegistry {
                 .is_some_and(|metadata| self.metadata_matches_route(id, metadata));
             let bootstrap = match c.bootstrap() {
                 Some(endpoint) => {
-                    foretoken_llm_facade::bootstrap_engine_id(&self.health_client, endpoint)
+                    foretoken_llm_facade::bootstrap_engine_id(&self.health_client, endpoint, 0)
                         .await
                         .is_ok()
                 }

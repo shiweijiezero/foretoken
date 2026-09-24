@@ -1,0 +1,2 @@
+# Compare video generation settings and load controls.
+{"_benchmark_name":"ti2v","width":[512,1024],"num_inference_steps":[30,50],"max_concurrency":[1,2],"warmup_requests":1,"duration":120}

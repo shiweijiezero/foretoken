@@ -1,5 +1,5 @@
 diff --git a/rust/src/engine-core-client/src/client.rs b/rust/src/engine-core-client/src/client.rs
-index d1c20ad58..8a4c9b9df 100644
+index d1c20ad58..89a6cd8c3 100644
 --- a/rust/src/engine-core-client/src/client.rs
 +++ b/rust/src/engine-core-client/src/client.rs
 @@ -17,7 +17,7 @@ use crate::error::{Error, Result};
@@ -29,11 +29,11 @@ index d1c20ad58..8a4c9b9df 100644
 @@ -275,7 +283,7 @@ impl EngineCoreClient {
              }
          };
-
+ 
 -        Self::from_connected(config, connected).await
 +        Self::from_connected(config, connected, protocol).await
      }
-
+ 
      /// Create a new client instance from the connected transport state after
 @@ -283,6 +291,7 @@ impl EngineCoreClient {
      async fn from_connected(
@@ -87,7 +87,7 @@ index d1c20ad58..8a4c9b9df 100644
 +            .as_deref()
 +            .expect("EngineCore did not report vLLM version")
      }
-
+ 
      /// Return the total number of GPU blocks summed across all connected
 @@ -449,6 +469,7 @@ impl EngineCoreClient {
              .expect("engine core client requires at least one engine")
@@ -95,10 +95,10 @@ index d1c20ad58..8a4c9b9df 100644
              .world_size
 +            .expect("EngineCore did not report world size")
      }
-
+ 
      /// Get the model name associated with this client used for metrics
 diff --git a/rust/src/engine-core-client/src/client/imp.rs b/rust/src/engine-core-client/src/client/imp.rs
-index 9c539bf18..6eb8db4df 100644
+index 9c539bf18..1365cf663 100644
 --- a/rust/src/engine-core-client/src/client/imp.rs
 +++ b/rust/src/engine-core-client/src/client/imp.rs
 @@ -22,7 +22,7 @@ use crate::error::{client_closed, dispatcher_closed, unexpected_dispatcher_outpu
@@ -150,7 +150,7 @@ index 9c539bf18..6eb8db4df 100644
 +            EngineCoreProtocol::V0_28ToV0_30,
          )
      }
-
+ 
 diff --git a/rust/src/engine-core-client/src/lib.rs b/rust/src/engine-core-client/src/lib.rs
 index 7b6020619..f2666c0c8 100644
 --- a/rust/src/engine-core-client/src/lib.rs
@@ -161,7 +161,7 @@ index 7b6020619..f2666c0c8 100644
  pub use error::{Error, Result};
 +pub use protocol::request::EngineCoreProtocol;
  pub use transport::{ENGINE_CORE_DEAD_SENTINEL, EngineId};
-
+ 
  #[cfg(test)]
 diff --git a/rust/src/engine-core-client/src/mock_engine.rs b/rust/src/engine-core-client/src/mock_engine.rs
 index ee066635f..72ad1842e 100644
@@ -279,17 +279,18 @@ index a4e1cebde..fea142b73 100644
      /// KV-event publisher configuration, if configured.
      #[serde(default)]
 diff --git a/rust/src/engine-core-client/src/protocol/output.rs b/rust/src/engine-core-client/src/protocol/output.rs
+index a9695bd1c..ecbfa879e 100644
 --- a/rust/src/engine-core-client/src/protocol/output.rs
 +++ b/rust/src/engine-core-client/src/protocol/output.rs
-@@ -12,6 +12,7 @@
+@@ -12,6 +12,7 @@ use serde_tuple::{Deserialize_tuple, Serialize_tuple};
  use super::utility::UtilityOutput;
  use crate::error::{Error, Result, ext_value_decode};
  use crate::protocol::logprobs::MaybeWireLogprobs;
 +use crate::protocol::request::EngineCoreProtocol;
  use crate::protocol::stats::{PrefillStats, SchedulerStats};
  use crate::protocol::{OpaqueValue, decode_msgpack};
-
-@@ -125,6 +126,9 @@
+ 
+@@ -125,6 +126,9 @@ pub struct EngineCoreOutput {
      pub mm_cache_miss_hashes: Option<Vec<String>>,
      #[serde(default)]
      pub new_sampling_mask: Option<OpaqueValue>,
@@ -297,15 +298,17 @@ diff --git a/rust/src/engine-core-client/src/protocol/output.rs b/rust/src/engin
 +    #[serde(default)]
 +    pub spec_decode_metrics: Option<OpaqueValue>,
  }
-
+ 
  impl EngineCoreOutput {
-@@ -364,9 +368,42 @@
+@@ -364,9 +368,42 @@ pub fn decode_engine_core_outputs<Frame>(frames: &[Frame]) -> Result<EngineCoreO
  where
      Frame: AsRef<[u8]>,
  {
+-    let first_frame = frames.first().ok_or_else(|| ext_value_decode!("missing output frame"))?;
 +    decode_engine_core_outputs_for(frames, EngineCoreProtocol::V0_28ToV0_30)
 +}
-+
+ 
+-    let mut outputs: EngineCoreOutputs = decode_msgpack(first_frame.as_ref())?;
 +/// Decode a release-specific output layout while keeping tensor auxiliary-frame indices unchanged.
 +pub fn decode_engine_core_outputs_for<Frame>(
 +    frames: &[Frame],
@@ -314,9 +317,7 @@ diff --git a/rust/src/engine-core-client/src/protocol/output.rs b/rust/src/engin
 +where
 +    Frame: AsRef<[u8]>,
 +{
-     let first_frame = frames.first().ok_or_else(|| ext_value_decode!("missing output frame"))?;
--
--    let mut outputs: EngineCoreOutputs = decode_msgpack(first_frame.as_ref())?;
++    let first_frame = frames.first().ok_or_else(|| ext_value_decode!("missing output frame"))?;
 +    let mut outputs: EngineCoreOutputs = if matches!(
 +        protocol,
 +        EngineCoreProtocol::V0_20 | EngineCoreProtocol::V0_21ToV0_25
@@ -345,23 +346,23 @@ diff --git a/rust/src/engine-core-client/src/protocol/output.rs b/rust/src/engin
      Ok(outputs)
  }
 diff --git a/rust/src/engine-core-client/src/protocol/request.rs b/rust/src/engine-core-client/src/protocol/request.rs
-index 8118b770e..cab093d56 100644
+index 8118b770e..821bfc007 100644
 --- a/rust/src/engine-core-client/src/protocol/request.rs
 +++ b/rust/src/engine-core-client/src/protocol/request.rs
 @@ -4,7 +4,8 @@
  use std::collections::{BTreeMap, HashMap};
-
+ 
  use bytes::Bytes;
 -use serde::{Deserialize, Serialize};
 +use serde::ser::SerializeTuple;
 +use serde::{Deserialize, Serialize, Serializer};
  use serde_default::DefaultFromSerde;
  use serde_tuple::{Deserialize_tuple, Serialize_tuple};
-
+ 
 @@ -129,7 +130,100 @@ pub struct EngineCoreRequest {
      pub session_id: Option<String>,
  }
-
+ 
 +/// Selects the positional EngineCore wire layout used by one vLLM release family.
 +#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 +pub enum EngineCoreProtocol {
@@ -460,9 +461,10 @@ index 8118b770e..cab093d56 100644
      pub fn validate(&self) -> Result<()> {
          if self.prompt_embeds.is_some() {
 diff --git a/rust/src/engine-core-client/src/transport.rs b/rust/src/engine-core-client/src/transport.rs
+index 7aac8774c..63b33e475 100644
 --- a/rust/src/engine-core-client/src/transport.rs
 +++ b/rust/src/engine-core-client/src/transport.rs
-@@ -21,8 +21,9 @@
+@@ -21,8 +21,9 @@ use crate::error::{Error, Result, bail_unexpected_handshake_message};
  use crate::protocol::handshake::{
      EngineCoreReadyResponse, HandshakeAddresses, HandshakeInitMessage, ReadyMessage,
  };
@@ -471,15 +473,16 @@ diff --git a/rust/src/engine-core-client/src/transport.rs b/rust/src/engine-core
 +use crate::protocol::output::{EngineCoreOutputs, decode_engine_core_outputs_for};
 +use crate::protocol::request::EngineCoreProtocol;
 +use crate::protocol::{OpaqueValue, decode_msgpack, encode_msgpack};
-
+ 
  /// Dedicated single-frame sentinel emitted by Python `EngineCoreProc` when the
  /// engine dies.
-@@ -180,6 +181,35 @@
+@@ -180,6 +181,32 @@ pub async fn connect_handshake(
      let mut handshake_socket = RouterSocket::new();
      handshake_socket.bind(handshake_address).await?;
-
+ 
 +    // Independently launched Python engines pick different DP rendezvous ports.
 +    // Match Python's coordinated handshake by distributing one shared allocation.
++    // Preserve Python's dense-DP size=1 and its per-engine rank/index assignment.
 +    let parallel_config = if coordinator.is_some() && engine_count > 1 {
 +        let listeners = (0..5)
 +            .map(|_| std::net::TcpListener::bind((local_host, 0)))
@@ -499,18 +502,14 @@ diff --git a/rust/src/engine-core-client/src/transport.rs b/rust/src/engine-core
 +                "_data_parallel_master_port_list".into(),
 +                OpaqueValue::Array(ports),
 +            ),
-+            (
-+                "data_parallel_size".into(),
-+                OpaqueValue::from(engine_count as u64),
-+            ),
 +        ])
 +    } else {
 +        BTreeMap::new()
 +    };
      let mut engines = BTreeMap::new();
-
+ 
      // 3. Receive HELLO from every engine and send a matching INIT. When coordinator mode is
-@@ -213,6 +243,7 @@
+@@ -213,6 +240,7 @@ pub async fn connect_handshake(
                      &input_address,
                      &output_address,
                      coordinator.as_ref(),
@@ -518,7 +517,7 @@ diff --git a/rust/src/engine-core-client/src/transport.rs b/rust/src/engine-core
                  )
                  .await?;
                  debug!(handshake_address, ?engine_id, "sent INIT to engine");
-@@ -438,6 +469,7 @@
+@@ -438,6 +466,7 @@ async fn send_init_message(
      input_address: &str,
      output_address: &str,
      coordinator: Option<&CoordinatorBootstrap>,
@@ -526,7 +525,7 @@ diff --git a/rust/src/engine-core-client/src/transport.rs b/rust/src/engine-core
  ) -> Result<()> {
      let init_message = HandshakeInitMessage {
          addresses: HandshakeAddresses {
-@@ -447,7 +479,7 @@
+@@ -447,7 +476,7 @@ async fn send_init_message(
              coordinator_output: coordinator.map(|c| c.output_address.clone()),
              frontend_stats_publish_address: None,
          },
@@ -535,7 +534,7 @@ diff --git a/rust/src/engine-core-client/src/transport.rs b/rust/src/engine-core
      };
      let payload = encode_msgpack(&init_message)?;
      let message = ZmqMessage::try_from(vec![engine_id.to_frame(), Bytes::from(payload)])
-@@ -553,6 +585,7 @@
+@@ -553,6 +582,7 @@ pub async fn send_message(
  pub async fn run_output_loop(
      mut output_socket: PullSocket,
      tx: mpsc::Sender<Result<EngineCoreOutputs>>,
@@ -543,7 +542,7 @@ diff --git a/rust/src/engine-core-client/src/transport.rs b/rust/src/engine-core
  ) {
      loop {
          let message = match output_socket.recv().await {
-@@ -577,7 +610,7 @@
+@@ -577,7 +607,7 @@ pub async fn run_output_loop(
              let _ = tx.send(Err(Error::EngineCoreDead)).await;
              return;
          }
@@ -559,7 +558,7 @@ index 201d8ace9..7fd506571 100644
 @@ -26,20 +26,30 @@ impl ControlServiceImpl {
          self.state.engine_core_client().ready_response()
      }
-
+ 
 -    fn parallelism_info(&self) -> pb::ParallelismInfo {
 +    fn parallelism_info(&self) -> Result<pb::ParallelismInfo, Status> {
          let ready = self.ready();
@@ -584,9 +583,9 @@ index 201d8ace9..7fd506571 100644
 +        })
      }
  }
-
+ 
  const GRPC_API_VERSION: &str = "vllm";
-
+ 
 +fn required<T>(value: Option<T>, field: &'static str) -> Result<T, Status> {
 +    value.ok_or_else(|| Status::failed_precondition(format!("EngineCore did not report {field}")))
 +}
@@ -616,7 +615,7 @@ index 201d8ace9..7fd506571 100644
 +            max_batched_tokens: required(ready.max_num_batched_tokens, "max_num_batched_tokens")?,
          }))
      }
-
+ 
 @@ -125,7 +136,7 @@ pub(super) fn kv_event_source(response: &EngineCoreReadyResponse) -> Option<pb::
          endpoint: config.endpoint.clone(),
          topic: config.topic.clone(),
@@ -636,7 +635,7 @@ index 7eabd2701..4f5d2b1a3 100644
      ready_0.num_gpu_blocks = 10;
 -    ready_0.data_parallel_size = 2;
 +    ready_0.data_parallel_size = Some(2);
-
+ 
      let mut ready_1 = default_ready_response();
      ready_1.max_model_len = 4_096;
      ready_1.num_gpu_blocks = 20;
@@ -644,7 +643,7 @@ index 7eabd2701..4f5d2b1a3 100644
 -    ready_1.data_parallel_rank = 1;
 +    ready_1.data_parallel_size = Some(2);
 +    ready_1.data_parallel_rank = Some(1);
-
+ 
      let engine_tasks = [ready_0, ready_1].map(|ready| {
          let engine_id = EngineId::from_engine_index(
 -            ready.data_parallel_rank.try_into().expect("test rank fits engine identity"),

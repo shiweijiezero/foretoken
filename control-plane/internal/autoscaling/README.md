@@ -8,7 +8,7 @@ This package turns controller-owned observations into `ModelPool` capacity. User
 
 The `ModelService` controller owns scheduling, observation collection, target discovery, status publication, and writing capacity to `ModelPool`. Algorithms are side-effect-free: they only evaluate one complete observation and return a recommendation.
 
-An aggregate target scales one Pool. An E/P/D target scales one `EPDPipelineScope`, applying the same capacity to its encoder, prefill, and decode Pools.
+Every target scales one Pool. An E/P/D service has one encoder, one prefill, and one decode Pool; their capacities are evaluated independently, while the ModelService controller commits their prepared revisions as one complete serving cohort.
 
 ## Evaluation pipeline
 

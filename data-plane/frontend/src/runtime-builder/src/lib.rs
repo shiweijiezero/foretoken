@@ -30,6 +30,7 @@ pub enum KvIndexCredential {
 pub struct RuntimeBuilder {
     router_pipeline: RouterPipelineConfig,
     kv_credential: KvIndexCredential,
+    routing_load: foretoken_router::RoutingLoadState,
 }
 
 impl RuntimeBuilder {
@@ -41,6 +42,7 @@ impl RuntimeBuilder {
         Self {
             router_pipeline,
             kv_credential,
+            routing_load: Default::default(),
         }
     }
 
@@ -129,6 +131,7 @@ impl RuntimeBuilder {
                     .build()
                     .map_err(|error| RuntimeBuildError::RouterPipeline(error.to_string()))?,
             )
+            .with_load_state(self.routing_load.clone())
             .with_kv_prefix_indexer(kv_indexer)
             .with_route_target_stats_reader(registry.clone()),
         );

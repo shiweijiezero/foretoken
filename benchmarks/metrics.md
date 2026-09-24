@@ -1,6 +1,6 @@
-# Result metrics
+# Performance metrics
 
-English | [简体中文](metrics_zh.md) · [Common commands](docs/examples.md)
+English | [简体中文](metrics_zh.md) · [Performance examples](docs/perf/README.md)
 
 `metrics.json` contains aggregate results; `raw_output.json` contains per-request records. Standard workloads also retain `benchmark_data.db` and `benchmark.log`.
 
@@ -11,13 +11,14 @@ Local output includes:
 | File | Content |
 | --- | --- |
 | `environment.json` | Client versions and source state; Kustomize runs also include serving settings, image IDs and nodes before/after execution. Failed reads have an `error` field. |
+| `prometheus_observations.json` | Kustomize-run Prometheus samples for model-server, GPU, KV, routing, and queue metrics when a compatible Prometheus is available. |
 | `warmup/` | Warmup results, excluded from measured metrics and profiling |
 | `sweep_points.json` | Every sweep repetition |
 | `sweep_summary.json`, `sweep_summary.csv` | Per-point mean, median, sample standard deviation and range across repetitions |
 
 In sweep summaries, `runs` counts repetitions and `samples` counts available values. Missing timings are omitted; zero throughput and failure counts remain. `stddev` is unavailable for fewer than two samples. Timing metrics ending in `_seconds` use seconds. Summaries of run p95 values are not pooled request percentiles.
 
-Warmup reuses the workload's starting rows and seed and must succeed before measurement begins. Trace replay requires separate warmup.
+Warmup reuses the workload's starting rows and seed and must succeed before measurement begins. Trace replay warms selected leading events, then replays the measured trace from its original clock.
 
 ## Request metrics
 
@@ -32,12 +33,16 @@ Warmup reuses the workload's starting rows and seed and must succeed before meas
 | Request throughput (req/s) | Successful requests divided by run duration |
 | Input token throughput (tokens/s) | Successful requests' input tokens divided by run duration |
 | Output token throughput (tokens/s) | Successful requests' output tokens divided by run duration |
-| Output tok/s / user | Output throughput divided by `--parallel`; with `--parallel -1`, uses measured average active requests |
+| Output tok/s / user | Output throughput divided by `--max-concurrency`; with `--max-concurrency -1`, uses measured average active requests |
 | Output token throughput per GPU (tokens/s) | Output throughput divided by the model's declared GPU capacity |
 | Mean reported cached input tokens | Mean `usage.prompt_tokens_details.cached_tokens` among successful requests that report it |
 | Benchmark duration (s) | Duration of the whole benchmark run |
 
 Request latency distributions use successful requests. `--no-stream` retains latency and throughput but omits TTFT, TPOT, and ITL. Usage-only chunks do not advance streaming timing.
+
+## SLO results
+
+When `--slo-params` is enabled, each request with latency-based criteria receives `slo_met` in `raw_output.json` and the W&B request-index history. The CLI, `metrics.json`, and W&B Summary record SLO attainment, request goodput, and token goodput for the same criteria. Probe-level SLO concurrency search still evaluates the configured aggregate criteria and searches the largest satisfying concurrency.
 
 Token counts remain unavailable when the service does not report them. If any successful request lacks input or output usage, aggregates that require the complete corresponding token total are unavailable rather than treating the missing value as zero. Cached input tokens preserve the service-reported value, including an explicit zero; they do not represent a storage-tier or KV-store hit rate.
 
@@ -49,8 +54,8 @@ W&B records these views after each run:
 
 - Time series use elapsed seconds for one-second completion-window counts, throughput, failure rate, p95 timings, and mean in-flight requests. The last window uses its actual duration.
 - Cumulative series show completed-request totals, success rate, mean timings, and throughput since the run began.
-- Request series use request index in send order, starting at one, for individual timings, reported token counts, and success.
-- Kustomize runs also record controller-applied desired and Ready replicas for each model service and scaling target.
+- Request series use request index in send order, starting at one, for individual timings, reported token counts, success, and `slo_met` when SLO criteria are enabled.
+- Kustomize runs also record controller-applied desired and Ready replicas for each model service and scaling target; Prometheus observations are uploaded as a W&B benchmark artifact when available.
 
 Charts and console output use seconds for TTFT, E2EL, and conversation timings, and milliseconds for TPOT and ITL. Raw JSON timings remain in seconds.
 

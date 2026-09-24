@@ -704,29 +704,12 @@ spec:
                 has(pool.role) && pool.role == ''decode'') && self.modelPools.all(pool,
                 has(pool.role) && (pool.role == ''encoder'' || pool.role == ''prefill''
                 || pool.role == ''decode'')))'
-            - message: E/P/D modelPools must contain exactly one encoder, prefill,
-                and decode Pool
-              rule: '!has(self.modelPools) || !self.modelPools.exists(pool, has(pool.role)
-                && pool.role == ''encoder'') || (size(self.modelPools.filter(pool,
-                has(pool.role) && pool.role == ''encoder'')) == 1 && size(self.modelPools.filter(pool,
-                has(pool.role) && pool.role == ''prefill'')) == 1 && size(self.modelPools.filter(pool,
-                has(pool.role) && pool.role == ''decode'')) == 1)'
-            - message: E/P/D modelPools must have equal encoder, prefill, and decode
-                replica counts
-              rule: '!has(self.modelPools) || !self.modelPools.exists(pool, has(pool.role)
-                && pool.role == ''encoder'') || self.modelPools.filter(pool, has(pool.role)
-                && pool.role == ''encoder'').all(e, self.modelPools.filter(pool, has(pool.role)
-                && pool.role == ''prefill'').all(p, (has(e.replicas) ? e.replicas
-                : 1) == (has(p.replicas) ? p.replicas : 1)) && self.modelPools.filter(pool,
-                has(pool.role) && pool.role == ''decode'').all(d, (has(e.replicas)
-                ? e.replicas : 1) == (has(d.replicas) ? d.replicas : 1)))'
           status:
             description: ModelServiceStatus defines the observed state of a model
               service.
             properties:
               autoscaling:
-                description: Autoscaling contains the latest decision for each Pool
-                  or linked E/P/D processing unit.
+                description: Autoscaling contains the latest decision for each ModelPool.
                 items:
                   description: AutoscalingTargetStatus is the latest complete autoscaling
                     evaluation for one scaling target.
@@ -804,7 +787,6 @@ spec:
                     kind:
                       enum:
                       - Pool
-                      - EPDPipelineScope
                       type: string
                     observationEndAt:
                       description: |-
@@ -824,7 +806,6 @@ spec:
                       - Encoder
                       - Prefill
                       - Decode
-                      - EPD
                       type: string
                     routableReplicas:
                       format: int32

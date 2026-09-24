@@ -12,11 +12,12 @@ from collections.abc import Sequence
 from urllib.parse import urlsplit
 
 from foretoken.arguments import (
-    BenchCommand,
     DeleteCommand,
     DeployCommand,
     EndpointCommand,
+    EvaluationCommand,
     InstallCommand,
+    PerformanceCommand,
     ProfileCommand,
     ProfileViewCommand,
     StatusCommand,
@@ -35,6 +36,7 @@ from foretoken.kubernetes import (
 )
 from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.platform import PlatformLifecycle
+from foretoken.profiling import ProfileRun
 from foretoken.progress import StartupProgress
 from foretoken.storage import DirectoryVolumes
 
@@ -80,8 +82,6 @@ def _deploy(
     timeout_seconds(timeout)
     capture = None
     if profile is not None:
-        from foretoken.profiling import ProfileRun
-
         # Resolve the selected model before changing the deployment.
         capture = ProfileRun(profile, deployment=deployment)
     namespace = deployment.namespace or "<current>"
@@ -89,13 +89,14 @@ def _deploy(
     DirectoryVolumes(kubectl).apply(deployment, timeout)
     print(f"Waiting up to {timeout} for Foretoken services")
     started = time.monotonic()
-    wait_for_resources(
-        deployment.service_refs(),
-        kubectl,
-        timeout,
-        report=_report_progress,
-        observe=StartupProgress(kubectl, lambda line: print(line, flush=True)).poll,
-    )
+    with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
+        wait_for_resources(
+            deployment.service_refs(),
+            kubectl,
+            timeout,
+            report=_report_progress,
+            observe=startup.poll,
+        )
     print(f"Foretoken deployment is ready in {time.monotonic() - started:.1f}s")
     if capture is not None:
         try:
@@ -138,17 +139,17 @@ def _status(kustomize_path: str | None, namespace: str | None, watch: bool) -> N
 
     started = time.monotonic()
     previous: dict[ResourceRef, tuple[str, str, str]] = {}
-    startup = StartupProgress(kubectl, lambda line: print(line, flush=True))
-    while True:
-        progress = selected_progress()
-        elapsed = time.monotonic() - started
-        for item in progress:
-            signature = (item.state, item.reason, item.message)
-            if previous.get(item.resource) != signature:
-                _report_progress(elapsed, item)
-                previous[item.resource] = signature
-        startup.poll((item.resource for item in progress), elapsed)
-        time.sleep(2)
+    with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
+        while True:
+            progress = selected_progress()
+            elapsed = time.monotonic() - started
+            for item in progress:
+                signature = (item.state, item.reason, item.message)
+                if previous.get(item.resource) != signature:
+                    _report_progress(elapsed, item)
+                    previous[item.resource] = signature
+            startup.poll((item.resource for item in progress), elapsed)
+            time.sleep(2)
 
 
 def _endpoint(kustomize_path: str, timeout: str, host: bool) -> None:
@@ -161,20 +162,6 @@ def _endpoint(kustomize_path: str, timeout: str, host: bool) -> None:
         print(endpoint.routing_host or urlsplit(endpoint.url).netloc)
         return
     print(endpoint.url)
-
-
-def _bench(arguments: Sequence[str]) -> None:
-    """Load optional benchmark dependencies only when the bench command runs."""
-    try:
-        from benchmarks.main import main as benchmark_main
-    except ModuleNotFoundError as exc:
-        if exc.name and not exc.name.startswith(("benchmarks", "foretoken")):
-            raise SystemExit(
-                "foretoken bench requires benchmark dependencies; "
-                "install them with: pip install 'foretoken[bench]'"
-            ) from exc
-        raise
-    benchmark_main(arguments)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -200,8 +187,14 @@ def main(argv: Sequence[str] | None = None) -> None:
                 command.timeout,
                 command.host,
             )
-        elif isinstance(command, BenchCommand):
-            _bench(command.arguments)
+        elif isinstance(command, PerformanceCommand):
+            from benchmarks.main import main as benchmark_main
+
+            benchmark_main(command.arguments)
+        elif isinstance(command, EvaluationCommand):
+            from benchmarks.evaluation import main as evaluation_main
+
+            evaluation_main(command.arguments)
         elif isinstance(command, ProfileViewCommand):
             from foretoken.profiling.viewer import view
 

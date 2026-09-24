@@ -16,10 +16,7 @@ const (
 
 type TargetKind string
 
-const (
-	TargetPool             TargetKind = "Pool"
-	TargetEPDPipelineScope TargetKind = "EPDPipelineScope"
-)
+const TargetPool TargetKind = "Pool"
 
 type TargetRole string
 
@@ -28,7 +25,6 @@ const (
 	RoleEncoder   TargetRole = "Encoder"
 	RolePrefill   TargetRole = "Prefill"
 	RoleDecode    TargetRole = "Decode"
-	RoleEPD       TargetRole = "EPD"
 )
 
 type TargetID struct {

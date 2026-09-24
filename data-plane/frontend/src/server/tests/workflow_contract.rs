@@ -111,9 +111,17 @@ impl LlmFacade for StageFacade {
                 prompt_token_ids: vec![1].into(),
                 prompt_logprobs: None,
             }),
-            token_ids: vec![1],
+            token_ids: if self.stage == "encoder" {
+                vec![]
+            } else {
+                vec![1]
+            },
             logprobs: None,
-            finish_reason: Some(FinishReason::Length),
+            finish_reason: Some(if self.stage == "encoder" {
+                FinishReason::Stop(None)
+            } else {
+                FinishReason::Length
+            }),
             cached_token_count: 0,
             kv_transfer_params: None,
             ec_transfer_params: descriptor,
@@ -210,7 +218,7 @@ async fn bootstrap_endpoint() -> (String, tokio::task::JoinHandle<()>) {
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let app = Router::new().route(
         "/query",
-        get(|| async { Json(serde_json::json!({"0":{"engine_id":"engine-0"}})) }),
+        get(|| async { Json(serde_json::json!({"1":{"engine_id":"engine-1"}})) }),
     );
     (
         endpoint,
@@ -227,17 +235,22 @@ async fn runtime_workflow_aborts_every_started_stage_after_decode_admission_fail
     let facade = |stage: &'static str| -> Arc<dyn LlmFacade> {
         Arc::new(StageFacade {
             stage,
-            target_id: "workflow-service".into(),
+            target_id: format!("{stage}-pool"),
             calls: calls.clone(),
             aborts: aborts.clone(),
         })
     };
-    let targets = RouteTargetSet::new(vec![ScalingTarget {
-        service_uid: "workflow-service".into(),
-        name: "epd".into(),
-        uid: "workflow-service".into(),
-        kind: ScalingTargetKind::EPDPipelineScope,
-    }]);
+    let targets = RouteTargetSet::new(
+        ["encoder", "prefill", "decode"]
+            .into_iter()
+            .map(|name| ScalingTarget {
+                service_uid: "workflow-service".into(),
+                name: name.into(),
+                uid: format!("{name}-pool"),
+                kind: ScalingTargetKind::Pool,
+            })
+            .collect(),
+    );
     let encoder = decision("encoder", ModelServerRole::Encoder, 0, targets.clone());
     let prefill = decision("prefill", ModelServerRole::Prefill, 1, targets.clone());
     let decode = decision("decode", ModelServerRole::Decode, 2, targets.clone());
@@ -295,7 +308,7 @@ async fn runtime_workflow_aborts_every_started_stage_after_decode_admission_fail
             .targets
             .iter()
             .any(|target| {
-                target.target.target_id == "workflow-service"
+                target.target.target_id == "encoder-pool"
                     && target.runtime_queued_requests == 0
                     && target.dispatch_queued_requests == 0
             })

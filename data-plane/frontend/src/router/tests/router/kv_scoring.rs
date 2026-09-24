@@ -14,7 +14,7 @@ use foretoken_model_protocol::{KvCacheLocality, KvPlacement, KvStorageTier, Mode
 use foretoken_router::algorithm::LeastLoadedScorer;
 use foretoken_router::{
     KvLeastLoadedScorer, PipelineRouter, RouteCandidate, RouteScorer, RouteTargetId,
-    RouteTargetStats, Router, RoutingProgress, RoutingStage,
+    RouteTargetStats, Router, RouterPipelineConfig, RoutingProgress, RoutingStage,
 };
 
 use super::support::{inventory, request, route};
@@ -118,6 +118,7 @@ fn target_stats(running_requests: u64) -> Arc<RouteTargetStats> {
 fn candidate(id: &str, role: ModelServerRole, load: u64) -> RouteCandidate {
     let route = route(id, role);
     RouteCandidate {
+        local_load: Default::default(),
         route_target_id: route.route_target_id,
         target: route.target,
         admission_targets: route.admission_targets,
@@ -286,16 +287,19 @@ impl KvPrefixIndexer for RankFacts {
     }
 }
 
-// Protects data-parallel routing from collapsing rank-specific KV locality.
+// The middle rank's longer prefix must beat both neighbors, not win through tie-breaking.
+// Deterministic selection isolates this locality contract from sampling defaults.
 #[tokio::test]
 async fn data_parallel_kv_rank_winner_is_selected_from_an_exact_rank_query() {
-    let mut aggregate = route("dp-two", ModelServerRole::Aggregate);
-    aggregate.data_parallel_size = 2;
-    let router = PipelineRouter::new(inventory(vec![aggregate]))
+    let mut aggregate = route("dp-three", ModelServerRole::Aggregate);
+    aggregate.data_parallel_size = 3;
+    let mut config = RouterPipelineConfig::default();
+    config.picker.algorithm = "max".parse().unwrap();
+    let router = PipelineRouter::with_pipeline(inventory(vec![aggregate]), config.build().unwrap())
         .with_kv_prefix_indexer(std::sync::Arc::new(RankFacts));
 
     let selected = router.start(request()).await.select_initial().unwrap();
 
-    assert_eq!(selected.route_target_id, RouteTargetId::new("dp-two"));
+    assert_eq!(selected.route_target_id, RouteTargetId::new("dp-three"));
     assert_eq!(selected.data_parallel_rank, 1);
 }

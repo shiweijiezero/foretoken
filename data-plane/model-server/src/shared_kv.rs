@@ -14,7 +14,8 @@ pub fn lookup_endpoint(host: &str, dp_rank: u32) -> String {
     format!("tcp://{host}:{}", LOOKUP_BASE_PORT + dp_rank)
 }
 pub const LOOKUP_ENDPOINT_ENV: &str = "FORETOKEN_SHARED_KV_LOOKUP_ENDPOINT";
-pub const MOONCAKE_CONNECTOR_MODULE: &str = "foretoken_mooncake";
+pub const CONNECTOR_MODULE: &str = "foretoken_mooncake";
+pub const MOONCAKE_CONNECTOR_MODULE: &str = CONNECTOR_MODULE;
 pub const OFFLOADING_CONNECTOR_MODULE: &str =
     "vllm.distributed.kv_transfer.kv_connector.v1.offloading_connector";
 

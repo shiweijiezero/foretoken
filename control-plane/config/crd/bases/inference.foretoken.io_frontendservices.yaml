@@ -154,25 +154,71 @@ spec:
                   rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                     <= 0'
               routerPipeline:
-                default: {}
+                default:
+                  filter:
+                    algorithm: allow_all
+                  picker:
+                    algorithm: gamble_sampling
+                  scorer:
+                    algorithm: kv_least_loaded
                 description: RouterPipeline selects each independently composable
                   routing algorithm stage.
                 properties:
                   filter:
-                    default: allow_all
-                    description: RouterFilterAlgorithm names a Filter validated by
-                      the selected Frontend image.
-                    type: string
+                    default:
+                      algorithm: allow_all
+                      parameters: {}
+                    description: RouterStage selects one compiled algorithm and its
+                      algorithm-owned parameters.
+                    properties:
+                      algorithm:
+                        description: RouterAlgorithm names one compiled routing algorithm.
+                        minLength: 1
+                        type: string
+                      parameters:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    required:
+                    - algorithm
+                    type: object
                   picker:
-                    default: weighted_random
-                    description: RouterPickerAlgorithm names a Picker validated by
-                      the selected Frontend image.
-                    type: string
+                    default:
+                      algorithm: gamble_sampling
+                      parameters: {}
+                    description: RouterStage selects one compiled algorithm and its
+                      algorithm-owned parameters.
+                    properties:
+                      algorithm:
+                        description: RouterAlgorithm names one compiled routing algorithm.
+                        minLength: 1
+                        type: string
+                      parameters:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    required:
+                    - algorithm
+                    type: object
                   scorer:
-                    default: kv_least_loaded
-                    description: RouterScorerAlgorithm names a Scorer validated by
-                      the selected Frontend image.
-                    type: string
+                    default:
+                      algorithm: kv_least_loaded
+                      parameters: {}
+                    description: RouterStage selects one compiled algorithm and its
+                      algorithm-owned parameters.
+                    properties:
+                      algorithm:
+                        description: RouterAlgorithm names one compiled routing algorithm.
+                        minLength: 1
+                        type: string
+                      parameters:
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    required:
+                    - algorithm
+                    type: object
+                required:
+                - filter
+                - picker
+                - scorer
                 type: object
               timeouts:
                 description: FrontendTimeouts defines client-facing request budgets.

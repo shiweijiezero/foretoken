@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Publishes platform-selected native viewer images without starting a viewing session.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "foretoken.compactName" (printf "%s-profile-viewer" .Release.Name) }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" . | nindent 4 }}
+    foretoken.io/profile-viewer: configuration
+data:
+  proxyImage: {{ include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.profiling.viewerProxyImage) | quote }}
+  imagePullSecrets: {{ .Values.workload.imagePullSecrets | toJson | quote }}
+  {{- if .Values.profiling.nsightViewerImage }}
+  nsightImage: {{ include "foretoken.imageWithRegistry" (dict "registry" .Values.global.imageRegistry "image" .Values.profiling.nsightViewerImage) | quote }}
+  {{- else }}
+  nsightImage: ""
+  {{- end }}

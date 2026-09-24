@@ -242,7 +242,9 @@ pub(crate) fn project_registry(
                 component.route_target_id,
             ));
         }
-        if component.connector != "MooncakeConnector" || component.protocol != "rdma" {
+        if component.connector != "MooncakeConnector"
+            || !matches!(component.protocol.as_str(), "rdma" | "tcp")
+        {
             return Err(SnapshotError::UnsupportedPdTransport(
                 component.route_target_id,
             ));
@@ -404,15 +406,14 @@ pub(crate) fn project_registry(
         return Err(SnapshotError::InvalidEpdPipelineScope(String::new()));
     }
 
-    // Only structurally valid scopes are materialized into executable components and
-    // service-scoped admission targets.
+    // Only structurally valid scopes are materialized into executable components. Each
+    // route retains its Pool capacity owner while admission covers the complete stage set.
     for component in snapshot.epd_components {
-        let target = ScalingTarget {
-            uid: component.service_uid.clone(),
-            service_uid: component.service_uid.clone(),
-            name: "epd".into(),
-            kind: ScalingTargetKind::EPDPipelineScope,
-        };
+        let target = pool_target(
+            component.service_uid.clone(),
+            component.pool_uid.clone(),
+            component.pool_name.clone(),
+        );
         let route = RouteTarget {
             route_target_id: component.route_target_id.clone(),
             admission_targets: admission_targets(&target)?,

@@ -140,29 +140,63 @@ class Helm(HelmClient):
         """Return the Prometheus release managed with the platform."""
         return ReleaseRef(self._config.prometheus.release_name, self._config.namespace)
 
-    def prometheus_resource(self, release: ReleaseRef) -> ResourceRef:
-        """Read the Prometheus identity from the managed chart instead of reproducing its naming rules."""
+    def _managed_chart_resource(
+        self,
+        release: ReleaseRef,
+        *,
+        api_version: str,
+        kind: str,
+        chart_description: str,
+    ) -> ResourceRef:
+        """Read one uniquely identified Kubernetes resource from a Helm manifest."""
         rendered = self.run(
             ["get", "manifest", release.name, "--namespace", release.namespace]
         ).stdout
         try:
             resources = [
-                item for item in yaml.safe_load_all(rendered)
+                item
+                for item in yaml.safe_load_all(rendered)
                 if isinstance(item, dict)
-                and item.get("apiVersion") == "monitoring.coreos.com/v1"
-                and item.get("kind") == "Prometheus"
+                and item.get("apiVersion") == api_version
+                and item.get("kind") == kind
             ]
         except yaml.YAMLError as exc:
-            raise DeploymentError("managed monitoring chart returned invalid YAML") from exc
+            raise DeploymentError(
+                f"{chart_description} returned invalid YAML"
+            ) from exc
         if len(resources) != 1:
-            raise DeploymentError("managed monitoring chart must contain one Prometheus")
+            raise DeploymentError(
+                f"{chart_description} must contain one {kind}"
+            )
         metadata = resources[0]["metadata"]
-        return ResourceRef("Prometheus", metadata["name"], metadata.get("namespace") or release.namespace)
+        return ResourceRef(
+            kind,
+            metadata["name"],
+            metadata.get("namespace") or release.namespace,
+        )
+
+    def prometheus_resource(self, release: ReleaseRef) -> ResourceRef:
+        """Read the Prometheus identity from the managed chart."""
+        return self._managed_chart_resource(
+            release,
+            api_version="monitoring.coreos.com/v1",
+            kind="Prometheus",
+            chart_description="managed monitoring chart",
+        )
 
     def dcgm_release(self) -> ReleaseRef:
         """Return the NVIDIA exporter release managed with the platform."""
         return ReleaseRef(
             self._config.dcgm_exporter.release_name, self._config.namespace
+        )
+
+    def dcgm_resource(self, release: ReleaseRef) -> ResourceRef:
+        """Read the managed DCGM Exporter DaemonSet identity from Helm."""
+        return self._managed_chart_resource(
+            release,
+            api_version="apps/v1",
+            kind="DaemonSet",
+            chart_description="managed DCGM Exporter chart",
         )
 
     def envoy_gateway_release(self) -> ReleaseRef:
@@ -419,6 +453,18 @@ class Helm(HelmClient):
         """Resolve native platform defaults while preserving explicit image choices."""
         images: dict[str, str] = {}
         for document in self._render_chart(args, input_text=input_text):
+            if (
+                document["kind"] == "ConfigMap"
+                and document["metadata"].get("labels", {}).get("foretoken.io/profile-viewer")
+                == "configuration"
+                and document["data"]["nsightImage"]
+            ):
+                for key, path in (
+                    ("nsightImage", "profiling.nsightViewerImage"),
+                    ("proxyImage", "profiling.viewerProxyImage"),
+                ):
+                    if reference := document["data"][key]:
+                        images[path] = reference
             if document["kind"] not in {"Deployment", "DaemonSet"}:
                 continue
             for container in document["spec"]["template"]["spec"]["containers"]:
@@ -434,7 +480,9 @@ class Helm(HelmClient):
                             if argument.startswith(prefix):
                                 images[path] = argument.removeprefix(prefix)
         for path, reference in images.items():
-            if source_images is not None and path != "rdma.image":
+            if source_images is not None and path in {
+                "image.repository", "frontend.image", "runtime.vllm.image"
+            }:
                 continue
             try:
                 explicit = _value_at(overrides, path)

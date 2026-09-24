@@ -17,17 +17,23 @@ REQUEST_INDEX = "Request index (send order)"
 
 
 def request_series(
-    measurements: list[RequestMeasurement], *, stream: bool
+    measurements: list[RequestMeasurement],
+    *,
+    stream: bool,
+    slo_met: list[bool] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Yield each logical request in stable send order, including failures."""
-    for index, item in enumerate(
-        sorted(measurements, key=lambda item: item.started_at), 1
-    ):
+    ordered = sorted(
+        enumerate(measurements), key=lambda item: item[1].started_at
+    )
+    for index, (measurement_index, item) in enumerate(ordered, 1):
         row = {
             REQUEST_INDEX: index,
             "Requests/E2EL (s)": item.latency,
             "Requests/Success": int(item.succeeded),
         }
+        if slo_met is not None:
+            row["Requests/SLO met"] = int(slo_met[measurement_index])
         if item.input_tokens is not None:
             row["Requests/Input tokens"] = item.input_tokens
         if item.output_tokens is not None:

@@ -14,7 +14,10 @@ pub async fn consume_encoder(stream: TokenStream) -> Result<serde_json::Value, L
     let mut stream = Box::pin(stream);
     while let Some(event) = stream.next().await {
         let event = event?;
-        if event.finish_reason == Some(FinishReason::Length) {
+        if matches!(
+            event.finish_reason,
+            Some(FinishReason::Stop(_) | FinishReason::Length)
+        ) {
             return event.ec_transfer_params.ok_or(LlmFacadeError::Protocol);
         }
         if event.finish_reason.is_some() {
@@ -68,12 +71,14 @@ pub fn encoder_stage_request(
 pub async fn pd_stage_requests(
     request: GenerateRequest,
     bootstrap_endpoint: &str,
+    prefill_data_parallel_rank: u32,
 ) -> Result<(GenerateRequest, GenerateRequest), LlmFacadeError> {
     let client = reqwest::Client::builder()
         .timeout(MODEL_SERVER_REQUEST_START_TIMEOUT)
         .build()
         .map_err(|_| LlmFacadeError::Configuration)?;
-    let engine_id = bootstrap_engine_id(&client, bootstrap_endpoint).await?;
+    let engine_id =
+        bootstrap_engine_id(&client, bootstrap_endpoint, prefill_data_parallel_rank).await?;
     pd_requests_with_engine(request, bootstrap_endpoint, engine_id)
 }
 
@@ -88,8 +93,15 @@ fn pd_requests_with_engine(
     let transfer_id = format!("xfer-{}", request.request_id);
     let mut prefill = request.clone();
     prefill.request_id = format!("{}/prefill", request.request_id);
+    // Mooncake retains the produced KV only for a length-capped request, not EOS or stop tokens.
     prefill.sampling_params.max_tokens = 1;
-    prefill.sampling_params.min_tokens = 1;
+    prefill.sampling_params.min_tokens = 0;
+    prefill.sampling_params.eos_token_id = None;
+    prefill.sampling_params.stop_token_ids.clear();
+    prefill.sampling_params.all_stop_token_ids.clear();
+    prefill.sampling_params.structured_outputs = None;
+    prefill.sampling_params.repetition_detection = None;
+    prefill.sampling_params.thinking_token_budget = None;
     let mut prefill_args = prefill
         .sampling_params
         .extra_args

@@ -47,12 +47,16 @@ impl ModelRouteTable {
 /// Checks whether a route target's trusted capabilities cover the request's optional features.
 ///
 /// `PipelineRouter` consumes the boolean during candidate construction; neither input is retained.
-pub(crate) fn supports_request(capabilities: &BTreeSet<String>, request: &RouterRequest) -> bool {
+pub(crate) fn supports_request(
+    capabilities: &BTreeSet<String>,
+    request: &RouterRequest,
+    requires_encoder: bool,
+) -> bool {
     (request.generate_request.lora_request.is_none() || capabilities.contains("lora"))
         && (request.generate_request.reasoning_parser_kwargs.is_none()
             || capabilities.contains("reasoning"))
         && supports_structured_output(capabilities, request)
-        && supports_multimodal(capabilities, request)
+        && (!requires_encoder || supports_multimodal(capabilities, request))
 }
 
 fn supports_structured_output(capabilities: &BTreeSet<String>, request: &RouterRequest) -> bool {

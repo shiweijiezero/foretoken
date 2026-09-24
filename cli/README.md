@@ -108,7 +108,7 @@ See the [multi-model example](../examples/multi-model-quickstart/README.md) for 
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-The command applies the configuration and shows service readiness alongside per-container startup observations: node placement, image-pull failures, restarts, and native engine loading and graph-capture progress. Each Pod and restart is tracked separately. Engine counters are shown when available; stages without counters show their status rather than an estimated percentage. Service readiness remains authoritative: the command exits when every service is Ready and its selected alerts are configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
+The command applies the configuration, shows service status, and streams Pod and container logs with source prefixes while waiting. It exits when every service reports Ready and its selected alerts are configured. Without `--timeout`, it waits up to ten minutes. Configure service alerts in the Kustomize deployment; see [service observability](../examples/observability/README.md).
 
 Inspect the same deployment without applying it:
 
@@ -116,7 +116,7 @@ Inspect the same deployment without applying it:
 foretoken status examples/multi-model-quickstart
 ```
 
-Inspect every Foretoken service in a namespace, or continue watching state changes:
+Inspect every Foretoken service in a namespace. With `--watch`, follow service state changes and Pod/container logs until Ctrl+C:
 
 ```bash
 foretoken status -n foretoken-multi-model-demo
@@ -137,13 +137,17 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 `--host` returns the host and optional port for direct access, or the configured routing hostname for an HTTP Gateway. `foretoken endpoint` waits for the LoadBalancer or Gateway address; use `foretoken deploy` to wait for the services to become ready.
 
-## Benchmark model services
+## Measure serving performance
 
-Use `foretoken bench` to measure model-service performance. Commands and examples are in [Model Service Benchmarks](../benchmarks/README.md).
+Use `foretoken perf` to measure response latency and request or token throughput. Pass a Kustomize directory, or `--url` with `--model` for an existing endpoint. Choose a workload in [Performance examples](../benchmarks/docs/perf/README.md).
 
-## Capture a diagnostic profile
+## Evaluate answer quality
 
-Add `--profile` to `foretoken deploy` or `foretoken bench` to capture performance data. Use `foretoken profile view` to browse results. See [Profiling](../observability/profiling.md).
+Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalScope. It accepts the same service selection options; task and scoring parameters use the selected framework's syntax. See [Quality evaluation](../benchmarks/docs/eval/README.md).
+
+## Find execution bottlenecks
+
+Add `--profile` to `foretoken deploy` or `foretoken perf` to record CPU/GPU execution, then browse captures with `foretoken profile view`. Setup and commands are in [Profiling](../benchmarks/docs/profile/README.md).
 
 ## Clean up
 

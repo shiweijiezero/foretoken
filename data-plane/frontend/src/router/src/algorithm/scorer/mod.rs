@@ -15,6 +15,9 @@ use crate::{RouteCandidate, RouteScore, RouterRequest, RoutingProgress};
 // `kv_least_loaded_scorer.rs`, the `KvLeastLoadedScorer` type, and the user-facing name.
 declare_router_algorithms! {
     descriptor = ScorerDescriptor;
+    active_request_scorer => ActiveRequestScorer = "active_request",
+    token_load_scorer => TokenLoadScorer = "token_load",
+    prefix_scorer => PrefixScorer = "prefix",
     kv_cache_utilization_scorer => KvCacheUtilizationScorer = "kv_cache_utilization",
     kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded",
     least_loaded_scorer => LeastLoadedScorer = "least_loaded",
@@ -68,6 +71,18 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
     /// Requests live shared-prefix observations before the synchronous routing round.
     fn needs_kv_prefix(&self) -> bool {
         false
+    }
+
+    /// Applies algorithm-owned parameters once while building the configured pipeline.
+    fn configure(&mut self, parameters: serde_json::Value) -> Result<(), String> {
+        if parameters
+            .as_object()
+            .is_some_and(|parameters| parameters.is_empty())
+        {
+            Ok(())
+        } else {
+            Err("this scorer accepts no parameters".into())
+        }
     }
 
     fn score(

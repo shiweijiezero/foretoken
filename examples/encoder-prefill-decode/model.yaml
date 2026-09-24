@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: qwen-vl
+spec:
+  model: Qwen/Qwen2.5-VL-3B-Instruct
+  backend: vllm
+  ecProfile:
+    profile: shared-storage
+  timeouts:
+    startup: 15m
+    drain: 2m
+  engineArgs: &engine
+    max-model-len: 4096
+    enforce-eager: true
+    gpu-memory-utilization: 0.5
+    max-num-seqs: 8
+    dtype: bfloat16
+  modelPools:
+    - name: encoder
+      role: encoder
+      replicas: 1
+      features:
+        multimodal: [image]
+      resources: &single_gpu
+        requests:
+          cpu: "4"
+          memory: 32Gi
+          gpu:
+            count: 1
+    - name: prefill
+      role: prefill
+      replicas: 1
+      resources: *single_gpu
+    - name: decode
+      role: decode
+      replicas: 1
+      resources:
+        requests:
+          cpu: "8"
+          memory: 48Gi
+          gpu:
+            count: 2
+      # Pool options replace service options; the anchor keeps shared settings together.
+      engineArgs:
+        <<: *engine
+        tensor-parallel-size: 2

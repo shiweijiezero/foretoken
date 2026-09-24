@@ -165,6 +165,11 @@ spec:
                     enum:
                     - ECExampleConnector
                     type: string
+                  generation:
+                    description: Generation selects the owning service configuration's
+                      encoder cache directory.
+                    format: int64
+                    type: integer
                   profileName:
                     maxLength: 256
                     minLength: 1
@@ -179,6 +184,11 @@ spec:
                     enum:
                     - producer
                     - consumer
+                    type: string
+                  serviceUID:
+                    description: ServiceUID isolates encoder entries from other services
+                      sharing the volume.
+                    minLength: 1
                     type: string
                   sharedStorageClaim:
                     description: |-
@@ -195,9 +205,11 @@ spec:
                     type: string
                 required:
                 - connector
+                - generation
                 - profileName
                 - profileRevision
                 - role
+                - serviceUID
                 - sharedStorageClaim
                 - sharedStoragePath
                 type: object
@@ -421,11 +433,17 @@ spec:
                   protocol:
                     enum:
                     - rdma
+                    - tcp
                     type: string
                   rdmaDeviceName:
                     description: |-
                       RDMADeviceName optionally limits Mooncake to a comma-separated HCA list.
                       When omitted, Mooncake selects from the devices allocated to the Pod.
+                    type: string
+                  serviceUID:
+                    description: ServiceUID bounds transfer side channels to Pools
+                      owned by one ModelService.
+                    minLength: 1
                     type: string
                 required:
                 - abortRequestTimeoutSeconds
@@ -434,6 +452,7 @@ spec:
                 - profileName
                 - profileRevision
                 - protocol
+                - serviceUID
                 type: object
               rdma:
                 description: RDMA is shared by engine collectives and transfer connectors.
@@ -590,6 +609,10 @@ spec:
                     required:
                     - engine
                     type: object
+                  tritonCacheDirectory:
+                    description: TritonCacheDirectory is the initial worker cache
+                      path; Kubernetes expands its node reference.
+                    type: string
                 required:
                 - backend
                 - image

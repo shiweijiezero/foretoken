@@ -108,7 +108,7 @@ loadBalancer:
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-该命令会应用配置，同时显示服务就绪状态和各容器的启动进度，包括所在节点、镜像拉取失败、重启次数，以及引擎原生的权重加载和图捕获进度。不同 Pod 和重启尝试分别记录。有计数的阶段显示原生进度，没有计数的阶段显示状态，不估算百分比。所有服务就绪且所选告警配置完成后，命令才会退出。未指定 `--timeout` 时最多等待十分钟。告警配置放在服务的 Kustomize 部署中，见[服务可观测性示例](../examples/observability/README_zh.md)。
+命令会应用配置；等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。所有服务 Ready 且所选告警配置完成后退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
 
 不应用配置，直接查看同一部署的状态：
 
@@ -116,7 +116,7 @@ foretoken deploy examples/multi-model-quickstart --timeout 20m
 foretoken status examples/multi-model-quickstart
 ```
 
-查看一个命名空间中的全部 Foretoken 服务，或持续观察状态变化：
+查看命名空间中的全部 Foretoken 服务。添加 `--watch` 可持续查看状态变化及 Pod/容器日志，按 Ctrl+C 结束：
 
 ```bash
 foretoken status -n foretoken-multi-model-demo
@@ -137,13 +137,17 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 直接访问时，`--host` 返回主机名或 IP，以及 URL 中包含的端口；HTTP Gateway 模式下返回配置的路由域名。`foretoken endpoint` 等待 LoadBalancer 或 Gateway 分配地址；要等待服务就绪，请使用 `foretoken deploy`。
 
-## 评测模型服务
+## 性能评测：响应速度与吞吐量
 
-使用 `foretoken bench` 评测模型服务性能，命令和示例见[模型服务性能评测](../benchmarks/README_zh.md)。
+使用 `foretoken perf` 测量响应延迟、请求吞吐量和 token 生成速度。传入 Kustomize 目录，或用 `--url` 和 `--model` 指定已有服务。各类负载见[性能评测示例](../benchmarks/docs/perf/README_zh.md)。
 
-## 采集诊断 Profile
+## 质量评测：回答正确率
 
-在 `foretoken deploy` 或 `foretoken bench` 后加 `--profile` 采集性能数据，用 `foretoken profile view` 浏览结果。详见[性能剖析指南](../observability/profiling_zh.md)。
+使用 `foretoken eval`，通过 lm-evaluation-harness 或 EvalScope 为模型回答评分。服务选择方式与性能评测相同，任务和判分参数采用所选框架的写法。具体命令见[质量评测](../benchmarks/docs/eval/README_zh.md)。
+
+## 性能剖析：执行瓶颈
+
+在 `foretoken deploy` 或 `foretoken perf` 后加 `--profile`，记录 CPU/GPU 执行过程，再用 `foretoken profile view` 浏览结果。环境准备与采集命令见[性能剖析](../benchmarks/docs/profile/README_zh.md)。
 
 ## 清理
 

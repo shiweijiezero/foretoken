@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Read retained captures through temporary authenticated Kubernetes PVC readers."""
+"""Own temporary Kubernetes readers and native viewing sessions for retained captures."""
 
 from __future__ import annotations
 
@@ -12,10 +12,13 @@ import secrets
 import subprocess
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from importlib import resources
 from typing import Any, BinaryIO, Self
+from urllib.error import URLError
 from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from foretoken.kubernetes import Kubectl, timeout_seconds
@@ -39,7 +42,7 @@ class _Reader:
 
 
 class ProfileStorage:
-    """Own lazy per-PVC readers for one viewer; retain all capture and storage resources."""
+    """Own one viewer's readers and native sessions; preserve captures and storage."""
 
     def __init__(
         self, kubectl: Kubectl, timeout: str, image: str | None = None
@@ -55,6 +58,27 @@ class ProfileStorage:
         self.image = image or f"{registry}/library/python:3.12-slim"
         self._readers: dict[tuple[str, str], _Reader] = {}
         self._created: list[tuple[str, str, str, str]] = []
+        self._nsight_sessions: dict[tuple[str, str, str], str] = {}
+        configs = json.loads(
+            self.kubectl.run(
+                [
+                    "get",
+                    "configmaps",
+                    "--all-namespaces",
+                    "-l",
+                    "foretoken.io/profile-viewer=configuration",
+                    "-o",
+                    "json",
+                    f"--request-timeout={self.timeout}",
+                ],
+                timeout=self.seconds,
+            ).stdout
+        )["items"]
+        if len(configs) > 1:
+            raise DeploymentError(
+                "multiple platform profile-viewer configurations found"
+            )
+        self.viewer_config = configs[0]["data"] if configs else {}
 
     def __enter__(self) -> Self:
         return self
@@ -193,6 +217,7 @@ class ProfileStorage:
             pod_spec: dict[str, Any] = {
                 "automountServiceAccountToken": False,
                 "restartPolicy": "Never",
+                "terminationGracePeriodSeconds": 5,
                 "securityContext": {
                     "runAsNonRoot": True,
                     "runAsUser": 65532,
@@ -307,6 +332,293 @@ class ProfileStorage:
             raise
         self._readers[key] = reader
         return reader
+
+    def open_nsight(
+        self, namespace: str, claim_name: str, directory: str, filename: str
+    ) -> str:
+        """Start an authenticated official viewer for one retained report; close owns cleanup."""
+        image = self.viewer_config.get("nsightImage")
+        if not image:
+            raise DeploymentError(
+                "NVIDIA Nsight Viewer is not configured; update the platform or download the report"
+            )
+        reader = self._reader(namespace, claim_name)
+        report = f"{capture_path(directory)}/{filename}"
+        key = namespace, reader.claim_uid, report
+        if key in self._nsight_sessions:
+            return self._nsight_sessions[key]
+        # The reader already enforces PVC placement and verifies its identity. Co-locate
+        # the native viewer so an occupied RWO claim remains on the same node.
+        reader_pod = self._object("pod", reader.name, namespace)
+        if reader_pod is None:
+            raise DeploymentError("capture reader was removed; restart the viewer")
+        config = self._object("configmap", reader.name, namespace)
+        if config is None:
+            raise DeploymentError(
+                "capture reader configuration was removed; restart the viewer"
+            )
+        name = f"foretoken-nsight-{uuid4().hex[:16]}"
+        labels = {
+            "app.kubernetes.io/name": "foretoken-nsight-view",
+            "foretoken.io/view-session": name,
+        }
+        metadata = {
+            "name": name,
+            "namespace": namespace,
+            "labels": labels,
+            "ownerReferences": [
+                {
+                    "apiVersion": "v1",
+                    "kind": "ConfigMap",
+                    "name": reader.name,
+                    "uid": config["metadata"]["uid"],
+                }
+            ],
+        }
+        token = secrets.token_urlsafe(32)
+        # TURN credentials are separate from HTTP access; Pion accepts word characters.
+        turn_password = secrets.token_hex(32)
+        cookie = name.replace("-", "_")
+        # A session cookie protects HTTP and WebSocket traffic without putting Basic
+        # credentials in the URL, which prevents the official UI's relative fetches.
+        proxy_config = f"""server {{
+    listen 8081;
+    absolute_redirect off;
+    access_log off;
+    add_header Referrer-Policy no-referrer always;
+    location = /session/{token} {{
+        add_header Set-Cookie "{cookie}={token}; Path=/; HttpOnly; SameSite=Lax";
+        add_header Referrer-Policy no-referrer always;
+        return 302 /;
+    }}
+    location / {{
+        if ($cookie_{cookie} != "{token}") {{ return 403; }}
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 1d;
+    }}
+}}
+"""
+        start = len(self._created)
+        try:
+            self._create(
+                {
+                    "apiVersion": "v1",
+                    "kind": "Secret",
+                    "metadata": metadata,
+                    "stringData": {
+                        "turn-password": turn_password,
+                        "default.conf": proxy_config,
+                    },
+                },
+                "secrets",
+            )
+            service = self._create(
+                {
+                    "apiVersion": "v1",
+                    "kind": "Service",
+                    "metadata": metadata,
+                    "spec": {
+                        "type": "NodePort",
+                        "selector": labels,
+                        "ports": [
+                            {"name": "http", "port": 8080, "targetPort": "http"},
+                            {"name": "turn", "port": 3478, "targetPort": "turn"},
+                        ],
+                    },
+                },
+                "services",
+            )
+            # Reuse Kubernetes-assigned ports for the external service so k3s/k3d
+            # load balancers sharing a node IP can host several viewing sessions.
+            ports = service["spec"]["ports"]
+            for port in ports:
+                port["port"] = port["nodePort"]
+            self.kubectl.run(
+                [
+                    "patch",
+                    f"service/{name}",
+                    "-n",
+                    namespace,
+                    "--type=merge",
+                    "-p",
+                    json.dumps({"spec": {"type": "LoadBalancer", "ports": ports}}),
+                    f"--request-timeout={self.timeout}",
+                ],
+                timeout=self.seconds,
+            )
+            public_ports = {port["name"]: port["port"] for port in ports}
+            self.kubectl.run(
+                [
+                    "wait",
+                    f"service/{name}",
+                    "-n",
+                    namespace,
+                    "--for=jsonpath={.status.loadBalancer.ingress}",
+                    f"--timeout={self.timeout}",
+                    f"--request-timeout={self.timeout}",
+                ],
+                timeout=self.seconds + 1,
+            )
+            service = self._object("service", name, namespace)
+            if service is None:
+                raise DeploymentError("NVIDIA Nsight Viewer service was removed")
+            ingress = service["status"]["loadBalancer"]["ingress"][0]
+            host = ingress.get("ip") or ingress["hostname"]
+            credential = {"secretKeyRef": {"name": name, "key": "turn-password"}}
+            self._create(
+                {
+                    "apiVersion": "v1",
+                    "kind": "Pod",
+                    "metadata": metadata,
+                    "spec": {
+                        "affinity": {
+                            "nodeAffinity": {
+                                "requiredDuringSchedulingIgnoredDuringExecution": {
+                                    "nodeSelectorTerms": [
+                                        {
+                                            "matchFields": [
+                                                {
+                                                    "key": "metadata.name",
+                                                    "operator": "In",
+                                                    "values": [
+                                                        reader_pod["spec"]["nodeName"]
+                                                    ],
+                                                }
+                                            ]
+                                        }
+                                    ],
+                                }
+                            }
+                        },
+                        "automountServiceAccountToken": False,
+                        "restartPolicy": "Never",
+                        "imagePullSecrets": json.loads(
+                            self.viewer_config["imagePullSecrets"]
+                        ),
+                        "containers": [
+                            {
+                                "name": "viewer",
+                                "image": image,
+                                "env": [
+                                    {"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"},
+                                    {"name": "ENCODER", "value": "vp9enc"},
+                                    {
+                                        "name": "DEVTOOL_CMD",
+                                        "value": "host-linux-x64/nsys-ui --fullscreen /reports/selected.nsys-rep",
+                                    },
+                                    {
+                                        "name": "NSIGHT_PASSTHROUGH_ENV_VARS",
+                                        "value": "DEVTOOL_CMD,ENCODER",
+                                    },
+                                    {"name": "WEB_USERNAME", "value": ""},
+                                    {"name": "TURN_USERNAME", "value": "foretoken"},
+                                    {"name": "TURN_PASSWORD", "valueFrom": credential},
+                                    {"name": "CLIENT_TURN_HOST", "value": host},
+                                    {
+                                        "name": "CLIENT_TURN_PORT",
+                                        "value": str(public_ports["turn"]),
+                                    },
+                                    {
+                                        "name": "CLIENT_TURN_USERNAME",
+                                        "value": "foretoken",
+                                    },
+                                    {
+                                        "name": "CLIENT_TURN_PASSWORD",
+                                        "valueFrom": credential,
+                                    },
+                                ],
+                                "ports": [
+                                    {"name": "viewer", "containerPort": 8080},
+                                    {"name": "turn", "containerPort": 3478},
+                                ],
+                                "readinessProbe": {"tcpSocket": {"port": "viewer"}},
+                                "volumeMounts": [
+                                    {
+                                        "name": "report",
+                                        "mountPath": "/reports/selected.nsys-rep",
+                                        "subPath": report,
+                                        "readOnly": True,
+                                    },
+                                    {"name": "shm", "mountPath": "/dev/shm"},
+                                ],
+                            },
+                            {
+                                "name": "access",
+                                "image": self.viewer_config["proxyImage"],
+                                "ports": [{"name": "http", "containerPort": 8081}],
+                                "readinessProbe": {"tcpSocket": {"port": "http"}},
+                                "volumeMounts": [
+                                    {
+                                        "name": "access",
+                                        "mountPath": "/etc/nginx/conf.d",
+                                        "readOnly": True,
+                                    }
+                                ],
+                                "securityContext": {"allowPrivilegeEscalation": False},
+                            },
+                        ],
+                        "volumes": [
+                            {
+                                "name": "report",
+                                "persistentVolumeClaim": {
+                                    "claimName": claim_name,
+                                    "readOnly": True,
+                                },
+                            },
+                            {"name": "shm", "emptyDir": {"medium": "Memory"}},
+                            {
+                                "name": "access",
+                                "secret": {
+                                    "secretName": name,
+                                    "items": [
+                                        {"key": "default.conf", "path": "default.conf"}
+                                    ],
+                                },
+                            },
+                        ],
+                    },
+                },
+                "pods",
+            )
+            self.kubectl.run(
+                [
+                    "wait",
+                    f"pod/{name}",
+                    "-n",
+                    namespace,
+                    "--for=condition=Ready",
+                    f"--timeout={self.timeout}",
+                    f"--request-timeout={self.timeout}",
+                ],
+                timeout=self.seconds + 1,
+            )
+            authority = f"[{host}]" if ":" in host else host
+            origin = f"http://{authority}:{public_ports['http']}"
+            # Pod readiness can precede EndpointSlice and load-balancer propagation.
+            # Hand the browser a URL only after its authenticated HTTP route responds.
+            deadline = time.monotonic() + self.seconds
+            request = Request(origin + "/", headers={"Cookie": f"{cookie}={token}"})
+            while (remaining := deadline - time.monotonic()) > 0:
+                try:
+                    with urlopen(request, timeout=min(5, remaining)) as response:
+                        if response.status == 200:
+                            break
+                except (URLError, OSError):
+                    pass
+                time.sleep(min(0.2, max(0, deadline - time.monotonic())))
+            else:
+                raise DeploymentError(
+                    "NVIDIA viewer address is not reachable; check the cluster LoadBalancer route"
+                )
+            url = f"{origin}/session/{token}"
+            self._nsight_sessions[key] = url
+            return url
+        except BaseException:
+            self._cleanup(start)
+            raise
 
     def _path(
         self,
@@ -463,3 +775,4 @@ class ProfileStorage:
         """Release this viewer's temporary readers without deleting traces, claims or namespaces."""
         self._cleanup()
         self._readers.clear()
+        self._nsight_sessions.clear()

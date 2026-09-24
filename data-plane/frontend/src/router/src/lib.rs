@@ -4,15 +4,18 @@
 //! Composable selection of one routable ModelGroup per routing round.
 
 pub mod algorithm;
+mod cache;
 mod inventory;
 mod metrics;
 mod request;
 mod route_target_stats;
+mod routing_load;
+pub use routing_load::{RoutingLoadSnapshot, RoutingLoadState};
 mod selection;
 
 pub use algorithm::{
-    KvLeastLoadedScorer, PowerOfTwoChoicesPicker, RouteFilter, RoutePicker, RouteScorer,
-    WeightedRandomPicker,
+    GambleSamplingPicker, KvLeastLoadedScorer, PowerOfTwoChoicesPicker, RouteFilter, RoutePicker,
+    RouteScorer,
 };
 pub use inventory::{
     ModelRouteTable, RouteDecision, RouteInventory, RouteTarget, RouteTargetId, RouteTargetSet,
@@ -22,8 +25,8 @@ pub use metrics::render_metrics;
 pub use request::RouterRequest;
 pub use route_target_stats::{RouteTargetLatencyStats, RouteTargetStats, RouteTargetStatsReader};
 pub use selection::{
-    AlgorithmName, CandidateIndex, FilterAlgorithm, FilterDescriptor, PickerAlgorithm,
-    PickerDescriptor, PipelineRouter, RouteCandidate, RouteError, RouteScore, RouteSession, Router,
-    RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError, RoutingProgress, RoutingStage,
-    ScoredCandidate, ScorerAlgorithm, ScorerDescriptor,
+    AlgorithmName, CandidateIndex, FilterAlgorithm, FilterDescriptor, FilterStage, PickerAlgorithm,
+    PickerDescriptor, PickerStage, PipelineRouter, RouteCandidate, RouteError, RouteScore,
+    RouteSession, Router, RouterPipeline, RouterPipelineConfig, RouterPipelineConfigError,
+    RoutingProgress, RoutingStage, ScoredCandidate, ScorerAlgorithm, ScorerDescriptor, ScorerStage,
 };

@@ -3,34 +3,29 @@
 
 # Router
 
-Router 为每个推理请求选择兼容且健康的模型目标。
+Router 根据请求的模型、输入长度和能力要求，选择兼容且健康的目标；对于预填充/解码分离及编码/预填充/解码分离的服务，还会确保各阶段相互兼容。
 
-在 `FrontendService.spec.routerPipeline` 中配置路由策略：
+例如，要优先选择等待请求较少的目标，可在 `FrontendService` 中配置：
 
 ```yaml
 spec:
   routerPipeline:
-    filter: allow_all
-    scorer: kv_least_loaded
-    picker: weighted_random
+    scorer:
+      algorithm: queue_depth
 ```
 
-| 阶段 | 当前可选值 | 默认值 | 作用 |
-| --- | --- | --- | --- |
-| Filter | `allow_all` | `allow_all` | 保留全部兼容且健康的目标 |
-| Scorer | `kv_least_loaded`、`least_loaded`、`uniform`、`queue_depth`、`running_request`、`kv_cache_utilization` | `kv_least_loaded` | 按所选策略为目标评分 |
-| Picker | `weighted_random`、`max`、`power_of_two_choices` | `weighted_random` | 按路由分数从高到低的排名采样目标 |
+只有需要调整路由策略时才填写 `spec.routerPipeline`。默认保留全部兼容目标（`allow_all`），用 `kv_least_loaded` 评分，再由 `gamble_sampling` 选取目标。各阶段通过 `algorithm` 选择算法；评分算法的可调选项写在 `scorer.parameters` 下。
 
-`kv_least_loaded` 优先比较可复用的 KV 前缀长度，再比较已确认的缓存层级和本地性，最后比较当前及下游 Decode 负载。无法提供完整缓存身份的层级不会获得位置偏好。`HostPinned` 是用于 KV 卸载的页锁定主机内存。`least_loaded` 只比较负载，`uniform` 为所有候选赋予相同分数。
+| 阶段 | 算法 | 选择方式 |
+| --- | --- | --- |
+| Filter | `allow_all`（默认） | 保留所有兼容且健康的目标。 |
+| Scorer | `kv_least_loaded`（默认） | 优先考虑可复用的 KV 前缀、已确认的缓存位置，再比较当前及下游 Decode 负载。 |
+| Scorer | `least_loaded` · `uniform` | 优先选择低负载目标 · 为所有目标赋予相同分数。 |
+| Scorer | `queue_depth` · `running_request` · `kv_cache_utilization` | 分别优先选择等待请求少、运行请求少或实测 KV 缓存占用低的目标。 |
+| Scorer | `active_request` | 优先选择当前前端活跃请求较少的目标；可用 `idleThreshold`、`maxBusyScore` 调整。 |
+| Scorer | `token_load` | 优先选择在途 token 和当前请求未缓存 prompt token 负载较低的目标；可用 `queueThresholdTokens` 调整。 |
+| Scorer | `prefix` | 优先考虑可复用的 prompt 缓存块；可用 `matchLengthWeight`、`matchLengthScaleTokens` 调整匹配长度偏好。 |
+| Picker | `gamble_sampling`（默认） | 根据完整分数排名采样：排名越高，选中概率越大；同分概率相同，低排名目标仍有机会被选中。 |
+| Picker | `max` · `power_of_two_choices` | 选择最高分目标 · 随机抽取两个不同目标，选择分数较高者，同分时随机选取。 |
 
-`weighted_random` 根据完整分数的排名生成采样权重，同分候选权重相等；`max` 选择最高分候选；`power_of_two_choices` 随机抽取两个不同候选，选择分数更高者，同分时随机选择。只有两个候选时，P2C 会比较两者，不能阻止请求集中到分数更高的一方。
-
-将 `scorer` 设为 `queue_depth`，可优先选择调度器中等待请求较少的目标；设为 `running_request`，可优先选择运行请求较少的目标；设为 `kv_cache_utilization`，可优先选择实测 KV Cache 使用率较低的目标。Picker 按所选的采样或最高分规则进行选择。
-
-路由会区分同一模型执行组内的各个 DP rank。负载策略使用对应 rank 的当前调度器计数，使用率策略使用对应 rank 的 KV Cache 使用率；收到首个遥测响应即可评分，无需等满速率窗口。缺失观测不代表零负载：有实测值的候选优于未知候选，全部未知时仍由 Picker 选择。这三个纯指标策略不叠加前缀位置、待派发请求或下游阶段负载。
-
-只有模型、输入限制、请求能力和目标健康状态都兼容时，请求才会成为候选项。对于预填充/解码分离或编码/预填充/解码分离的服务，路由会确保选中的各阶段彼此兼容。
-
-KV 索引返回 `Unavailable` 时，目标仍可参与路由，但不获得 KV 前缀匹配优先权；路由仍会考虑其负载。位置查询和退化行为见 [KV 前缀索引](../kv-indexer/README_zh.md)。
-
-编译进二进制的路由算法，以及 Filter、Scorer 和 Picker 的精确维护契约见 [Router 维护指南](MAINTAINER_zh.md)。
+KV 索引不可用时，目标仍可参与路由，只是不享有 KV 前缀偏好。缓存位置的说明见 [KV 前缀索引](../kv-indexer/README_zh.md)。

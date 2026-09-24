@@ -57,6 +57,9 @@ pub struct KvPrefixMatch {
 }
 
 pub trait KvLocalityIndex: Send {
+    /// Returns one unambiguous observed block size for the source's matching runtime partition.
+    fn block_size(&self, source: &KvEventSourceId, query: &KvPrefixQuery<'_>) -> Option<u32>;
+
     /// Applies one source-scoped delta event to index-owned locality facts.
     fn apply(&mut self, source: KvEventSourceId, event: KvIndexEvent, now: Instant);
     /// Removes facts for one exact source epoch and data-parallel rank.
@@ -97,6 +100,13 @@ impl KvLocalityIndexes {
 }
 
 impl KvLocalityIndex for KvLocalityIndexes {
+    fn block_size(&self, source: &KvEventSourceId, query: &KvPrefixQuery<'_>) -> Option<u32> {
+        match self {
+            Self::PositionalHash(index) => index.block_size(source, query),
+            Self::RadixTree(index) => index.block_size(source, query),
+        }
+    }
+
     fn apply(&mut self, source: KvEventSourceId, event: KvIndexEvent, now: Instant) {
         match self {
             Self::PositionalHash(index) => index.apply(source, event, now),

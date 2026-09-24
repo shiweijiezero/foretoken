@@ -28,10 +28,7 @@ ENV MACA_PATH=${MACA_PATH} \
     LD_LIBRARY_PATH=${MACA_PATH}/lib64:${MACA_PATH}/lib:${MACA_PATH}/ompi/lib:${MACA_PATH}/mxgpu_llvm/lib:${LD_LIBRARY_PATH}
 
 # vLLM consumes only the TransferEngine and Store requester Python modules.
-RUN cmake -S /src/mooncake/extern/yalantinglibs -B /build/yalantinglibs \
-      -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARK=OFF -DBUILD_UNIT_TESTS=OFF \
-    && cmake --install /build/yalantinglibs \
-    && uv venv /opt/mooncake-build --python /usr/bin/python3 \
+RUN uv venv /opt/mooncake-build --python /usr/bin/python3 \
     && cmake -S /src/mooncake -B /build/mooncake -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
       -DUSE_MACA=ON -DMACA_ROOT="${MACA_PATH}" \
@@ -50,17 +47,14 @@ RUN install -Dm644 /src/mooncake/LICENSE-APACHE \
       /out/licenses/mooncake/LICENSE-APACHE \
     && install -Dm644 /src/mooncake/extern/pybind11/LICENSE \
       /out/licenses/pybind11/LICENSE \
-    && install -Dm644 /src/mooncake/extern/yalantinglibs/LICENSE \
-      /out/licenses/yalantinglibs/LICENSE \
-    && install -Dm644 /src/mooncake/extern/yalantinglibs/NOTICE \
-      /out/licenses/yalantinglibs/NOTICE \
+    && install -Dm644 /build/mooncake/_deps/yalantinglibs-src/LICENSE /out/licenses/yalantinglibs/LICENSE \
+    && install -Dm644 /build/mooncake/_deps/yalantinglibs-src/NOTICE /out/licenses/yalantinglibs/NOTICE \
     && install -Dm644 /usr/share/doc/libasio-dev/copyright /out/licenses/asio/copyright \
     && boost_package=$(dpkg-query -S /usr/include/boost/version.hpp) \
     && install -Dm644 "/usr/share/doc/${boost_package%%:*}/copyright" /out/licenses/boost/copyright
 
 FROM ${METAX_SDK_IMAGE}
 
-ARG VLLM_VERSION
 ARG MACA_PATH=/opt/maca
 ARG UV_PYTHON
 ARG FORETOKEN_GITHUB_MIRROR
@@ -76,16 +70,13 @@ RUN apt-get update \
 
 COPY --from=uv /uv /usr/local/bin/uv
 COPY deploy/inference-engines/vllm-metax/install.sh /usr/local/lib/foretoken/install-vllm-metax.sh
-COPY deploy/inference-engines/vllm-metax/xgrammar-0.24.patch \
-     deploy/inference-engines/vllm-metax/constraints-0.24.txt \
-     deploy/inference-engines/vllm-metax/dependencies-0.26.patch \
-     deploy/inference-engines/vllm-metax/sdk_audio.py \
-     /usr/local/lib/foretoken/
+COPY deploy/inference-engines/vllm-metax/sdk_audio.py /usr/local/lib/foretoken/
+COPY deploy/inference-engines/vllm-metax/patches/ /usr/local/lib/foretoken/patches/
 
 ENV MACA_PATH=${MACA_PATH} \
     UV_PYTHON=${UV_PYTHON}
 RUN bash /usr/local/lib/foretoken/install-vllm-metax.sh \
-    /opt/foretoken-vllm ${VLLM_VERSION}
+    /opt/foretoken-vllm
 
 COPY --from=mooncake-build /out/mooncake/ /opt/foretoken-mooncake/mooncake/
 COPY --from=mooncake-build /out/licenses/ /usr/local/share/licenses/

@@ -12,7 +12,8 @@ pub use foretoken_artifacts::ModelSource;
 pub use registry::BackendRegistry;
 pub use snapshot::{
     ModelIdentity, ServingSnapshot, SnapshotEpdComponent, SnapshotEpdPipelineScope, SnapshotError,
-    SnapshotGroup, SnapshotModel, SnapshotPdComponent, SnapshotPdPipelineScope,
+    SnapshotGroup, SnapshotModel, SnapshotParallelism, SnapshotPdComponent,
+    SnapshotPdPipelineScope,
 };
 
 use foretoken_kv_indexer::KvRuntimeConfig;

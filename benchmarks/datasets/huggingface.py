@@ -11,6 +11,14 @@ from functools import cache
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
+from datasets import (
+    get_dataset_config_names,
+    get_dataset_split_names,
+    load_dataset,
+    load_dataset_builder,
+)
+from huggingface_hub import hf_hub_download, snapshot_download
+
 logger = logging.getLogger(__name__)
 
 # Remote tokenizers download only files needed for tokenization and decoding.
@@ -56,8 +64,6 @@ def resolve_tokenizer_path(tokenizer_path: str) -> str:
             f"Tokenizer path does not exist locally: {tokenizer_path!r}; "
             "pass an existing directory or a Hugging Face repository ID"
         )
-
-    from huggingface_hub import snapshot_download
 
     cache_dir = _configured_hub_cache_dir()
     logger.info(
@@ -116,8 +122,6 @@ def parse_hf_file_uri(uri: str) -> tuple[str, Optional[str], str]:
 
 def resolve_hf_file_uri(uri: str) -> str:
     """Download a Hugging Face dataset file and return its local cache path."""
-    from huggingface_hub import hf_hub_download
-
     repo_id, revision, filename = parse_hf_file_uri(uri)
     return hf_hub_download(
         repo_id=repo_id,
@@ -159,8 +163,6 @@ def resolve_hf_dataset_spec(spec: str) -> tuple[str, str, str]:
     Dataset metadata, not a repository-name lookup table, owns the defaults.
     The resolved identity is also used when binding trace rows to dataset rows.
     """
-    from datasets import get_dataset_config_names, get_dataset_split_names, load_dataset_builder
-
     dataset_id, selection = parse_hf_dataset_spec(spec)
     configs = get_dataset_config_names(dataset_id)
     if selection in configs:
@@ -195,8 +197,6 @@ def same_dataset_source(left: str, right: str) -> bool:
 
 def iter_hf_rows(spec: str) -> Iterator[tuple[int, Any]]:
     """Stream rows from the selected Hugging Face configuration and split."""
-    from datasets import load_dataset
-
     dataset_id, config, split = resolve_hf_dataset_spec(spec)
     data = load_dataset(dataset_id, name=config, split=split, streaming=True)
     for row_index, row in enumerate(data):

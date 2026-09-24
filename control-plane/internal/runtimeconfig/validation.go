@@ -8,7 +8,6 @@ import "errors"
 
 const (
 	ecConnector = "ECExampleConnector"
-	pdProtocol  = "rdma"
 	maxInt32    = int64(1<<31 - 1)
 )
 
@@ -59,8 +58,8 @@ func (profiles Profiles) Validate() error {
 	if profiles.RDMA.ResourceName != "" && (profiles.RDMA.ResourceCount < 1 || int64(profiles.RDMA.ResourceCount) > maxInt32) {
 		return errors.New("RDMA resource count must be a positive int32")
 	}
-	if profiles.PD.Name != "" && profiles.RDMA.ResourceName == "" {
-		return errors.New("vLLM P/D requires an RDMA allocation")
+	if profiles.PD.Name != "" && profiles.PD.Protocol == "rdma" && profiles.RDMA.ResourceName == "" {
+		return errors.New("vLLM P/D with RDMA transport requires an RDMA allocation")
 	}
 	if err := validateEC(profiles.EC); err != nil {
 		return err
@@ -91,7 +90,7 @@ func validatePD(profile PDProfile) error {
 		}
 		return nil
 	}
-	if profile.Revision == "" || profile.Protocol != pdProtocol || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 || int64(profile.AbortRequestTimeoutSeconds) > maxInt32 {
+	if profile.Revision == "" || (profile.Protocol != "rdma" && profile.Protocol != "tcp") || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 || int64(profile.AbortRequestTimeoutSeconds) > maxInt32 {
 		return errors.New("vLLM P/D profile is incomplete or unsupported")
 	}
 	return nil

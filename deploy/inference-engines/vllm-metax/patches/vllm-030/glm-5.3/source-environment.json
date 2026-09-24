@@ -9,18 +9,23 @@
     "revision": "7e7ebd37d9ce8731a1636c5c9bc057255ce6b9c7",
     "version": "0.29.0.dev0"
   },
-  "model": "zai-org/GLM-5.3-Flash-BF16",
-  "patches": [
-    "metax-glm53-typed-kv-layout.patch",
-    "metax-glm53-mla-prefill-fallback.patch",
-    "metax-vllm030-fused-moe-all2all-api.patch",
-    "metax030-glm-image-token-mtp.patch",
-    "metax-sparse-mla-decode-metadata.patch",
-    "metax-sparse-mla-nope-query.patch",
-    "metax-glm53-sequence-parallel-dense-mlp.patch",
-    "metax-glm53-sequence-parallel-moe-forward.patch",
-    "metax-glm53-mhc-native-norm.patch",
-    "metax-paged-mqa-schedule.patch"
-  ],
-  "status": "source-pair-bundle; full GLM acceptance pending"
+  "patches": {
+    "metax": [
+      "../metax-compatibility.patch",
+      "metax-glm53-typed-kv-layout.patch",
+      "metax-glm53-mla-prefill-fallback.patch",
+      "metax-vllm030-fused-moe-all2all-api.patch",
+      "metax-sparse-mla-decode-metadata.patch",
+      "metax-sparse-mla-nope-query.patch"
+    ],
+    "core": [
+      "metax030-glm-image-token-mtp.patch",
+      "metax-glm53-sequence-parallel-dense-mlp.patch",
+      "metax-glm53-sequence-parallel-moe-forward.patch",
+      "metax-glm53-mhc-native-norm.patch"
+    ],
+    "installed": [
+      "metax-paged-mqa-schedule.patch"
+    ]
+  }
 }

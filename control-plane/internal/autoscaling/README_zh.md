@@ -8,7 +8,7 @@
 
 `ModelService` 控制器负责调度、观测采集、扩缩目标发现、状态发布，以及将容量写入 `ModelPool`。算法保持无副作用：只评估一个完整观测并返回容量建议。
 
-聚合目标扩缩一个 Pool。E/P/D 目标扩缩一个 `EPDPipelineScope`，将相同容量写入 encoder、prefill 和 decode Pool。
+每个扩缩目标对应一个 Pool。E/P/D 服务各有一个 encoder、prefill 和 decode Pool，三个 Pool 分别评估容量；ModelService 控制器仍将它们准备完成的 revision 作为一个完整服务代统一提交。
 
 ## 评估流水线
 

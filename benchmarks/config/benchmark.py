@@ -39,6 +39,7 @@ class ModelServiceSource:
 
     kustomize_path: str = ""
     url: str = ""
+    health_url: str = ""
     model: str = ""
     api_key: str = "EMPTY"
     timeout_seconds: int = 300
@@ -57,32 +58,56 @@ class ModelServiceSource:
 
 @dataclass
 class HttpLoadSchedule:
-    """Store the standard HTTP workload, concurrency limit, and arrival rate."""
+    """Store the HTTP request budget, concurrency, and arrival process."""
 
     max_concurrency: int = 1
-    request_count: int = 100
-    # -1 sends as fast as possible; positive values use a Poisson arrival rate.
+    request_count: int | None = 100
     arrival_rate: float = -1.0
+    arrival_pattern: str = "poisson"
+    burstiness: float = 1.0
     warmup_requests: int = 0
+    duration_seconds: float | None = None
 
     def validate(self) -> None:
         """Reject load coordinates that would block or cannot express the requested schedule."""
         if self.max_concurrency != -1 and self.max_concurrency < 1:
             raise ValueError(
-                f"--parallel must be -1 or >= 1; got {self.max_concurrency}"
+                f"--max-concurrency must be -1 or >= 1; got {self.max_concurrency}"
             )
         rate_value = float(self.arrival_rate)
         if not math.isfinite(rate_value) or (rate_value != -1 and rate_value <= 0):
             raise ValueError(
-                "--rate must be -1 (send as fast as possible) or > 0; "
+                "--request-rate must be -1 (send as fast as possible) or > 0; "
                 f"got {self.arrival_rate}"
             )
-        if self.request_count < 1:
+        if self.request_count is not None and self.request_count < 1:
             raise ValueError(
-                f"--number must be >= 1, got {self.request_count}"
+                f"--num-prompts must be >= 1, got {self.request_count}"
             )
+        if self.arrival_pattern not in {"constant", "poisson", "gamma"}:
+            raise ValueError(
+                "--arrival-pattern must be constant, poisson, or gamma"
+            )
+        if not math.isfinite(self.burstiness) or self.burstiness <= 0:
+            raise ValueError("--burstiness must be finite and > 0")
+        if self.arrival_pattern == "gamma" and rate_value == -1:
+            raise ValueError("gamma arrival requires --request-rate > 0")
+        if self.arrival_pattern == "constant" and rate_value == -1:
+            raise ValueError("constant arrival requires --request-rate > 0")
         if self.warmup_requests < 0:
             raise ValueError("--warmup-requests must be >= 0")
+        if self.duration_seconds is not None and (
+            not math.isfinite(self.duration_seconds) or self.duration_seconds <= 0
+        ):
+            raise ValueError("--duration must be > 0 seconds")
+        if (
+            self.duration_seconds is not None
+            and self.arrival_rate == -1
+            and self.max_concurrency == -1
+        ):
+            raise ValueError(
+                "--duration with an unrated workload requires --max-concurrency > 0"
+            )
 
 
 @dataclass
@@ -171,6 +196,7 @@ class ChatRequestDataset:
     fixed_prompt: str = ""
     # -1 means the complete conversation; positive values truncate turns.
     max_turns: Optional[int] = -1
+    conversation_history: str = "dataset"
 
     @property
     def has_multiple_datasets(self) -> bool:
@@ -187,6 +213,8 @@ class ChatRequestDataset:
             raise ValueError(
                 "--max-turns must be -1 (complete conversation) or >= 1"
             )
+        if self.conversation_history not in {"dataset", "generated"}:
+            raise ValueError("--conversation-history must be dataset or generated")
         if self.fixed_prompt and self.has_multiple_datasets:
             raise ValueError(
                 "--prompt cannot be combined with multiple --dataset values"
@@ -279,6 +307,44 @@ class ParameterSweepConfig:
 
 
 @dataclass
+class SloTuneConfig:
+    """Store SLO search criteria and concurrency bounds."""
+
+    params: list[dict[str, str]] | None = None
+    num_runs: int = 1
+    upper_bound: Optional[int] = None
+    lower_bound: int = 1
+
+    def validate(self) -> None:
+        """Validate SLO criteria and search bounds before starting a workload."""
+        if self.params is None:
+            return
+        if not self.params or any(
+            not isinstance(group, dict) or not group for group in self.params
+        ):
+            raise ValueError(
+                "--slo-params must be a non-empty JSON array of non-empty objects"
+            )
+        if any(
+            not all(
+                isinstance(metric, str) and isinstance(criterion, str)
+                for metric, criterion in group.items()
+            )
+            for group in self.params
+        ):
+            raise ValueError("--slo-params metric names and criteria must be strings")
+        if self.num_runs < 1:
+            raise ValueError("--num-runs must be >= 1")
+        if self.lower_bound < 1:
+            raise ValueError("--slo-lower-bound must be >= 1")
+        if (
+            self.upper_bound is not None
+            and self.upper_bound < self.lower_bound
+        ):
+            raise ValueError("--slo-upper-bound must be >= --slo-lower-bound")
+
+
+@dataclass
 class BenchmarkProfileConfig:
     """Select one runtime-owned capture accompanying a generated workload."""
 
@@ -300,6 +366,7 @@ class BenchmarkConfig:
     outputs: BenchmarkOutputConfig = field(default_factory=BenchmarkOutputConfig)
     wandb: WandbRunConfig = field(default_factory=WandbRunConfig)
     sweep: ParameterSweepConfig = field(default_factory=ParameterSweepConfig)
+    slo: SloTuneConfig = field(default_factory=SloTuneConfig)
     profile: BenchmarkProfileConfig | None = None
 
     @property
@@ -314,24 +381,53 @@ class BenchmarkConfig:
             return replace(workload, fixed_prompt="Hello")
         return workload
 
+    @property
+    def is_multi_turn(self) -> bool:
+        """Return whether the resolved workload is conversation-driven."""
+        workload = self.resolved_workload
+        return (
+            not self.trace.trace_selector
+            and bool(workload.dataset_selectors)
+            and workload.dataset_selectors != ["random"]
+        )
+
+    def slo_search_start(self) -> int:
+        """Resolve the first concurrency probe for an SLO binary search."""
+        if self.trace.trace_selector:
+            configured = self.trace.max_concurrency
+        else:
+            configured = self.load.max_concurrency
+            if configured == -1:
+                raise ValueError(
+                    "--slo-params requires --max-concurrency >= 1"
+                )
+        low = self.slo.lower_bound
+        high = self.slo.upper_bound
+        if configured is None or low >= configured:
+            if high is not None:
+                start = (low + high) // 2
+            else:
+                start = low
+        else:
+            start = configured
+        if start < low or (high is not None and start > high):
+            bounds = (
+                f"[{low}, {high}]"
+                if high is not None
+                else f">= {low}"
+            )
+            raise ValueError(
+                "SLO search start must be within "
+                f"[--slo-lower-bound, --slo-upper-bound]; got {start} not in "
+                f"{bounds}"
+            )
+        return start
+
     def validate(self) -> None:
         """Validate each section, then the rules that span sections, before acquiring resources."""
         self.service.validate()
-        if self.profile is not None:
-            if not self.service.kustomize_path:
-                raise ValueError("--profile requires a Foretoken Kustomize deployment")
-            if (
-                self.trace.trace_selector or self.sweep.path
-                or self.resolved_workload.has_multiple_datasets
-            ):
-                raise ValueError(
-                    "--profile supports one generated workload, not trace replay, "
-                    "sweeps or multiple datasets"
-                )
-            if self.load.arrival_rate != -1:
-                raise ValueError(
-                    "--profile requires --rate -1 so profiler startup does not distort request pacing"
-                )
+        if self.profile is not None and not self.service.kustomize_path:
+            raise ValueError("--profile requires a Foretoken Kustomize deployment")
         if self.sweep.path and not self.service.kustomize_path:
             raise ValueError("--sweep requires a Foretoken Kustomize deployment")
         self.load.validate()
@@ -339,12 +435,30 @@ class BenchmarkConfig:
         self.generation.validate()
         workload = self.resolved_workload
         workload.validate()
+        if workload.conversation_history == "generated" and not self.is_multi_turn:
+            raise ValueError("--conversation-history generated requires a conversation dataset without --trace")
         if self.generation.min_output_length is not None and workload.dataset_selectors != ["random"]:
             raise ValueError("output length control requires --dataset random")
+        if (
+            self.is_multi_turn
+            and self.load.arrival_pattern in {"constant", "gamma"}
+            and self.load.arrival_rate == -1
+        ):
+            raise ValueError(
+                "multi-turn constant and gamma arrivals require --request-rate > 0"
+            )
         self.trace.validate()
+        if self.trace.trace_selector and self.load.arrival_pattern != "poisson":
+            raise ValueError("--trace cannot be combined with generated arrival patterns")
+        self.slo.validate()
+
+        if self.slo.params:
+            self.slo_search_start()
 
         trace = self.trace
         has_trace = bool(trace.trace_selector)
+        if not has_trace and self.load.request_count is None and self.load.duration_seconds is None:
+            raise ValueError("--num-prompts is required unless --duration is set")
         if not has_trace:
             unsupported_body_fields = {"messages"} & self.generation.extra_body.keys()
             if unsupported_body_fields:
@@ -359,13 +473,7 @@ class BenchmarkConfig:
                     "(random | local JSONL | org/name[:split] | "
                     "hf://datasets/...)."
                 )
-        if self.sweep.path and workload.has_multiple_datasets:
-            raise ValueError(
-                "--sweep cannot be combined with multiple --dataset sources"
-            )
         if has_trace:
-            if self.load.warmup_requests:
-                raise ValueError("--warmup-requests is not supported with --trace; warm up separately")
             if workload.max_turns not in (None, -1):
                 raise ValueError(
                     "--max-turns cannot be combined with --trace; trace replay "
@@ -375,8 +483,6 @@ class BenchmarkConfig:
                 raise ValueError("--trace requires exactly one --dataset source")
             same_dataset = workload.dataset_selectors[0] == trace.trace_selector
 
-            if self.sweep.path:
-                raise ValueError("--trace cannot be combined with --sweep")
             if workload.fixed_prompt:
                 raise ValueError(
                     "--trace requires --dataset; fixed --prompt payloads are "
@@ -384,12 +490,23 @@ class BenchmarkConfig:
                 )
             if self.load.arrival_rate != -1:
                 raise ValueError(
-                    "--trace uses record timestamps; omit --rate"
+                    "--trace uses record timestamps; omit --request-rate"
                 )
-            if self.load != HttpLoadSchedule():
+            if (
+                not self.slo.params
+                and (
+                    self.load.max_concurrency != HttpLoadSchedule().max_concurrency
+                    or (
+                        self.load.request_count is not None
+                        and self.load.request_count != HttpLoadSchedule().request_count
+                    )
+                    or self.load.arrival_rate != HttpLoadSchedule().arrival_rate
+                    or self.load.duration_seconds is not None
+                )
+            ):
                 raise ValueError(
                     "--trace replays the selected trace window; use "
-                    "--trace-max-concurrency instead of --parallel/--number"
+                    "--trace-max-concurrency instead of --max-concurrency/--num-prompts"
                 )
             if same_dataset and workload.row_offset:
                 raise ValueError(
@@ -411,6 +528,7 @@ class BenchmarkConfig:
         service = {
             "kustomize_path": self.service.kustomize_path,
             "url": self.service.url,
+            "health_url": self.service.health_url,
             "model": self.service.model,
             "timeout": self.service.timeout_seconds,
             "max_retries": self.service.max_retries,
@@ -418,10 +536,13 @@ class BenchmarkConfig:
         }
 
         load = {
-            "parallel": self.load.max_concurrency,
-            "number": self.load.request_count,
-            "rate": self.load.arrival_rate,
+            "max_concurrency": self.load.max_concurrency,
+            "num_prompts": self.load.request_count,
+            "request_rate": self.load.arrival_rate,
+            "arrival_pattern": self.load.arrival_pattern,
+            "burstiness": self.load.burstiness,
             "warmup_requests": self.load.warmup_requests,
+            "duration": self.load.duration_seconds,
         }
         workload = self.resolved_workload
         dataset = {
@@ -442,6 +563,8 @@ class BenchmarkConfig:
         }
         if not self.trace.trace_selector:
             dataset["max_turns"] = workload.max_turns
+        if self.is_multi_turn:
+            dataset["conversation_history"] = workload.conversation_history
         return {
             "service": service,
             "load": load,
@@ -474,6 +597,12 @@ class BenchmarkConfig:
                 "path": self.sweep.path,
                 "num_runs": self.sweep.num_runs,
                 "experiment_name": self.sweep.experiment_name,
+            },
+            "slo": {
+                "params": self.slo.params,
+                "num_runs": self.slo.num_runs,
+                "upper_bound": self.slo.upper_bound,
+                "lower_bound": self.slo.lower_bound,
             },
             "profile": (
                 {"engine": self.profile.engine, "duration": self.profile.duration}

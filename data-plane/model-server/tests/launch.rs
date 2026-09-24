@@ -10,16 +10,15 @@ fn plan() -> LaunchPlanV1 {
     LaunchPlanV1::parse(r#"{"version":1,"nodeCount":1,"artifacts":{"source":"hf","model":"model","revision":"rev","tokenizer":"tokenizer","tokenizerRevision":"tokenizer-rev"},"parallelism":{"tp":2,"pp":1,"dp":1,"pcp":1,"dcp":1},"kv":{"kind":"none","events":true},"lifecycle":{"startupSeconds":30,"drainSeconds":7},"internalGenerateRequestBodyLimitBytes":67108864,"engineArgs":{"max-model-len":32768,"dtype":"bfloat16","quantization":"awq","kv-cache-dtype":"fp8","gpu-memory-utilization":0.8,"max-num-seqs":16,"max-num-batched-tokens":2048,"enforce-eager":false,"speculative-config":{"method":"eagle3","model":"draft/model","num_speculative_tokens":2},"compilation-config":{"mode":3}}}"#).unwrap()
 }
 
-// Protects launch from unsupported node and context-parallel topology combinations.
+// Protects launch from malformed topology values while vLLM owns legal combinations.
 #[test]
-fn rejects_invalid_topology() {
+fn rejects_malformed_topology() {
     let mut invalid = plan();
     invalid.node_count = 3;
     assert!(invalid.validate().is_err());
 
     let mut invalid = plan();
-    invalid.parallelism.pcp = 2;
-    invalid.parallelism.dp = 2;
+    invalid.parallelism.pcp = 0;
     assert!(invalid.validate().is_err());
 }
 

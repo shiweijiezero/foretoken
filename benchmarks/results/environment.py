@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 def client_environment() -> dict[str, Any]:
     """Describe the executing client; a source commit is recorded only for this package's checkout."""
     packages = {}
-    for name in ("foretoken", "evalscope", "httpx", "openai", "transformers", "datasets", "numpy"):
+    for name in ("foretoken", "evalscope", "lm_eval", "httpx", "openai", "transformers", "datasets", "numpy"):
         try:
             packages[name] = version(name)
         except PackageNotFoundError:

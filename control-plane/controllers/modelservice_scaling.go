@@ -82,24 +82,10 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 	if err := reconciler.List(ctx, &groupList, client.InNamespace(service.Namespace)); err != nil {
 		return nil, nil, fmt.Errorf("list ModelGroups: %w", err)
 	}
-	// Ordinary Pools scale independently. Encoder, prefill, and decode instead share one
-	// E/P/D pipeline-scope decision, which is applied back to all three Pool intents together.
+	// Autoscaling decisions are applied to each compiled Pool target independently.
 	evaluatedAt := metav1.Now()
 	snapshots := make([]core.ScalingSnapshot, 0, len(compiledPools))
-	epdIndexes := make([]int, 0, 3)
-	hasEPD := false
-	for index, compiled := range compiledPools {
-		if compiled.Template.Role == inferencev1alpha1.ModelRoleEncoder {
-			hasEPD = true
-		}
-		if isEPDRole(compiled.Template.Role) {
-			epdIndexes = append(epdIndexes, index)
-		}
-	}
 	for _, compiled := range compiledPools {
-		if hasEPD && isEPDRole(compiled.Template.Role) {
-			continue
-		}
 		pool := byPoolName[compiled.Name]
 		current := compiled.DesiredGroups
 		transitioning := false
@@ -129,13 +115,6 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 			replicaState.Transitioning = false
 		}
 		snapshots = append(snapshots, reconciler.scalingSnapshot(ctx, service, target, evaluatedAt, replicaState, scaling))
-	}
-	if hasEPD {
-		snapshot, err := reconciler.epdScalingSnapshot(ctx, service, compiledPools, epdIndexes, byPoolName, groupList.Items, evaluatedAt, scaling)
-		if err != nil {
-			return nil, nil, err
-		}
-		snapshots = append(snapshots, snapshot)
 	}
 	decisions, err := scaling.Autoscaler.Plan(snapshots)
 	if err != nil {
@@ -219,16 +198,11 @@ func (reconciler *ModelServiceReconciler) applyScaling(ctx context.Context, serv
 	resolved := append([]compiler.ModelPool(nil), compiledPools...)
 	for index := range resolved {
 		compiled := resolved[index]
-		var target core.TargetID
-		if hasEPD && isEPDRole(compiled.Template.Role) {
-			target = epdPipelineScopeTargetID(service)
-		} else {
-			poolUID := ""
-			if pool := byPoolName[compiled.Name]; pool != nil {
-				poolUID = string(pool.UID)
-			}
-			target = core.TargetID{ServiceNamespace: service.Namespace, ServiceName: service.Name, ServiceUID: string(service.UID), Name: compiled.Name, UID: poolUID, Kind: core.TargetPool, Role: autoscalingRole(compiled.Template.Role)}
+		poolUID := ""
+		if pool := byPoolName[compiled.Name]; pool != nil {
+			poolUID = string(pool.UID)
 		}
+		target := core.TargetID{ServiceNamespace: service.Namespace, ServiceName: service.Name, ServiceUID: string(service.UID), Name: compiled.Name, UID: poolUID, Kind: core.TargetPool, Role: autoscalingRole(compiled.Template.Role)}
 		desired, exists := byTarget[target]
 		if !exists {
 			return nil, nil, fmt.Errorf("autoscaler omitted target %q", target.Name)
@@ -274,58 +248,6 @@ func (reconciler *ModelServiceReconciler) metricsSnapshot(ctx context.Context, t
 	return metrics
 }
 
-// epdScalingSnapshot builds the shared autoscaling input for an E/P/D triplet.
-func (reconciler *ModelServiceReconciler) epdScalingSnapshot(ctx context.Context, service *inferencev1alpha1.ModelService, pools []compiler.ModelPool, indexes []int, owned map[string]*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup, evaluatedAt metav1.Time, scaling modelScalingConfig) (core.ScalingSnapshot, error) {
-	if len(indexes) != 3 {
-		return core.ScalingSnapshot{}, fmt.Errorf("E/P/D scaling requires exactly one encoder, prefill, and decode Pool")
-	}
-	seenRoles := make(map[inferencev1alpha1.ModelRole]struct{}, 3)
-	baseline := pools[indexes[0]].DesiredGroups
-	requested := int32(0)
-	hasRequested := false
-	transitioning := false
-	for _, index := range indexes {
-		pool := pools[index]
-		if _, exists := seenRoles[pool.Template.Role]; exists {
-			return core.ScalingSnapshot{}, fmt.Errorf("E/P/D scaling requires exactly one %s Pool", pool.Template.Role)
-		}
-		seenRoles[pool.Template.Role] = struct{}{}
-		if pool.DesiredGroups != baseline {
-			return core.ScalingSnapshot{}, fmt.Errorf("E/P/D scaling requires equal baseline capacity")
-		}
-		if existing := owned[pool.Name]; existing != nil {
-			// A failed multi-object write can temporarily leave E/P/D Pools at
-			// different desired counts. Use the highest request as the safe
-			// recovery baseline so scale-down never removes a partial triplet.
-			if !hasRequested || existing.Spec.DesiredGroups > requested {
-				requested = existing.Spec.DesiredGroups
-			}
-			hasRequested = true
-			transitioning = transitioning || modelPoolTransitioning(existing)
-		} else {
-			transitioning = true
-		}
-	}
-	if !hasRequested {
-		requested = baseline
-	}
-	for _, role := range []inferencev1alpha1.ModelRole{inferencev1alpha1.ModelRoleEncoder, inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode} {
-		if _, exists := seenRoles[role]; !exists {
-			return core.ScalingSnapshot{}, fmt.Errorf("E/P/D scaling requires a %s Pool", role)
-		}
-	}
-	replicaState := epdPipelineReplicaState(service, owned, groups, requested)
-	replicaState.BaselineReplicas = baseline
-	replicaState.RequestedReplicas = requested
-	replicaState.Transitioning = replicaState.Transitioning || transitioning
-	finalizeReplicaState(&replicaState)
-	return reconciler.scalingSnapshot(ctx, service, epdPipelineScopeTargetID(service), evaluatedAt, replicaState, scaling), nil
-}
-
-func epdPipelineScopeTargetID(service *inferencev1alpha1.ModelService) core.TargetID {
-	return core.TargetID{ServiceNamespace: service.Namespace, ServiceName: service.Name, ServiceUID: string(service.UID), Name: "epd", Kind: core.TargetEPDPipelineScope, Role: core.RoleEPD}
-}
-
 func autoscalingRole(role inferencev1alpha1.ModelRole) core.TargetRole {
 	switch role {
 	case inferencev1alpha1.ModelRoleEncoder:
@@ -336,14 +258,5 @@ func autoscalingRole(role inferencev1alpha1.ModelRole) core.TargetRole {
 		return core.RoleDecode
 	default:
 		return core.RoleAggregate
-	}
-}
-
-func isEPDRole(role inferencev1alpha1.ModelRole) bool {
-	switch role {
-	case inferencev1alpha1.ModelRoleEncoder, inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode:
-		return true
-	default:
-		return false
 	}
 }

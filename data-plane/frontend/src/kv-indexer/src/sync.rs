@@ -355,19 +355,17 @@ impl KvIndexer {
             spec_kind: &source.spec_kind,
             sliding_window: source.sliding_window,
         };
-        let mut matches =
-            state
-                .index
-                .lock()
-                .unwrap()
-                .query(&identity, &q, &state.key, Instant::now());
+        let mut index = state.index.lock().unwrap();
+        let mut matches = index.query(&identity, &q, &state.key, Instant::now());
+        let block_size = index.block_size(&identity, &q);
+        drop(index);
         matches.retain(|m| {
             m.placement.locality != foretoken_model_protocol::KvCacheLocality::Unspecified
                 && binding.readable_placements.contains(&m.placement)
                 && (m.placement.tier == foretoken_model_protocol::KvStorageTier::Device
                     || binding.can_restore_or_transfer)
         });
-        KvPrefixQueryResult::Matches(KvPrefixMatches::new(matches))
+        KvPrefixQueryResult::Matches(KvPrefixMatches::new(matches).with_block_size(block_size))
     }
     /// Refreshes every configured source and updates index-owned locality facts and health.
     ///
@@ -562,6 +560,11 @@ impl KvPrefixIndexer for KvIndexer {
                 .get(key)
                 .and_then(Option::as_ref)
                 .filter(|response| response.placement == key.3);
+            let block_size = match &local {
+                KvPrefixQueryResult::Matches(matches) => matches.block_size(),
+                KvPrefixQueryResult::Unavailable(_) => None,
+            }
+            .or_else(|| observation.and_then(|response| u32::try_from(response.block_size).ok()));
             let mut matches = match &local {
                 KvPrefixQueryResult::Matches(matches) => {
                     matches.clone().into_iter().collect::<Vec<_>>()
@@ -577,7 +580,9 @@ impl KvPrefixIndexer for KvIndexer {
             let result = if !matches.is_empty()
                 || (observation.is_some() && matches!(local, KvPrefixQueryResult::Matches(_)))
             {
-                KvPrefixQueryResult::Matches(KvPrefixMatches::new(matches))
+                KvPrefixQueryResult::Matches(
+                    KvPrefixMatches::new(matches).with_block_size(block_size),
+                )
             } else {
                 KvPrefixQueryResult::Unavailable(KvPrefixUnavailableReason::SourceUnhealthy)
             };

@@ -1,132 +1,63 @@
-# Model Service Benchmarks
+# Evaluation and profiling
 
 English | [简体中文](README_zh.md)
 
-Use `foretoken bench` to measure model-service performance.
+Measure service latency and throughput with `foretoken perf`, score model answers with `foretoken eval`, and inspect execution bottlenecks with profiling.
 
 ## Get started
 
-Python 3.11 or later is required:
+Install Foretoken with Python 3.11 or later:
 
 ```bash
-pip install 'foretoken[bench]'
+pip install foretoken
 
 # From a source checkout:
-# pip install -e '.[bench]'
-
-wandb login
+# pip install -e .
 ```
 
-Run the following commands from the repository root. Follow the [Quick Start](../README.md#quick-start) to prepare the cluster; skip installation if the platform is already installed:
+Run the examples from the repository checkout prepared by the [Quick Start](../README.md#quick-start). They save results locally and to W&B; run `wandb login` once before using W&B.
+
+Passing a Kustomize directory reuses its running services or deploys them when absent. Only resources created by the evaluation command are removed afterwards. A single-model deployment supplies the model name automatically; use `--model` to choose among multiple models. To measure an existing endpoint, replace the directory with `--url` and provide its model name.
+
+## Measure performance
 
 ```bash
-foretoken install
-foretoken bench examples/quickstart --number 10 --output local,wandb
-```
-
-The default prompt is `Hello`. Existing services are reused; resources deployed temporarily for the benchmark are removed afterwards. A single-model deployment supplies the model name automatically. Add `--model` for a multi-model deployment.
-
-## Common commands
-
-### Concurrent requests
-
-```bash
-foretoken bench examples/quickstart \
+foretoken perf examples/quickstart \
   --prompt "Explain what a token is in one sentence." \
-  --parallel 8 --number 100 \
-  --max-tokens 128 \
+  --max-concurrency 4 --num-prompts 20 --max-tokens 128 \
   --output local,wandb
 ```
 
-Add `--warmup-requests 16` to complete 16 warmup conversations before each measured run, excluding them from its metrics.
+The summary reports request success, latency, and throughput. Streamed requests also report time to first token (TTFT) and time per output token (TPOT).
 
-`--parallel` controls concurrency and `--rate` controls arrivals per second. Each accepts `-1` for no limit. The defaults are no rate limit and one concurrent request. To send at an average of five requests per second without a concurrency cap:
+[Performance examples](docs/perf/README.md) cover datasets, conversations, arrival rates, trace replay, parameter sweeps, SLO searches, and video generation. Definitions and units are in [Performance metrics](metrics.md).
 
-```bash
-foretoken bench examples/quickstart \
-  --rate 5 --parallel -1 --number 100 \
-  --output local,wandb
-```
-
-### Random workloads
+## Evaluate model quality
 
 ```bash
-foretoken bench examples/quickstart \
-  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
-  --min-prompt-length 128 --max-prompt-length 512 \
-  --min-output-length 64 --max-output-length 256 \
-  --parallel 8 --number 100 \
-  --output local,wandb
+foretoken eval examples/quickstart \
+  --evaluator lm-eval --model Qwen/Qwen3-0.6B \
+  --tasks gsm8k --limit 100 --output local,wandb
 ```
 
-Output-length control requires service support for `min_tokens` and `ignore_eos`. Requests that miss the sampled length count as failures. Without these output bounds, generation uses the ordinary `--max-tokens` limit, which defaults to 4096.
+This scores 100 GSM8K math problems and reports the task's metrics and sample counts. [Quality evaluation](docs/eval/README.md) covers lm-evaluation-harness, EvalScope, native task options, existing endpoints, and score reports.
 
-### Datasets and conversations
+## Profile execution
 
-```bash
-foretoken bench examples/quickstart \
-  --dataset r0b0tlab/qwen3.8-max-distillation-50k:train \
-  --parallel 4 --number 20 \
-  --output local,wandb
-```
+Capture CPU/GPU execution while a workload runs, then open the timeline with `foretoken profile view`. The [profiling guide](docs/profile/README.md) covers setup, capture, and viewing with PyTorch Profiler, NVIDIA Nsight Systems, and MetaX mcTracer.
 
-`--dataset` also accepts a local JSONL file. Each row is a conversation, and all turns run by default using the model's actual answers. Use `--max-turns 1` for the first turn only. Multi-turn conversations currently require `--rate -1`.
+## Read and save results
 
-### Capture while benchmarking
+`perf` and `eval` default to console output, local files, and W&B. Select destinations with `--output`:
 
-```bash
-foretoken bench examples/quickstart \
-  --profile --profile-engine pytorch --profile-duration 15s \
-  --number 2 --max-tokens 128 --output local
-```
+| Output selection | Result |
+| --- | --- |
+| Omit `--output` or use `local,wandb` | Print results, save local files, and upload to W&B |
+| `local` | Print results and save local files |
+| `wandb` | Print results and upload to W&B |
+| `local,quiet` | Save local files without console summaries |
+| `local,wandb,quiet` | Save and upload results without console summaries |
 
-See [Profiling](../observability/profiling.md) for setup and trace viewing.
+Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs.
 
-### Trace replay
-
-```bash
-foretoken bench examples/quickstart \
-  --trace benchmarks/examples/trace.jsonl \
-  --dataset benchmarks/examples/trace.jsonl \
-  --trace-max-concurrency 4 --max-tokens 128 \
-  --output local,wandb
-```
-
-The trace determines request count and arrival times. Each record is replayed independently.
-
-### Parameter sweeps
-
-```bash
-foretoken bench examples/quickstart \
-  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
-  --min-prompt-length 128 --max-prompt-length 256 --random-seed 0 \
-  --sweep benchmarks/examples/sweep.jsonl \
-  --warmup-requests 16 --num-runs 3 \
-  --output local,wandb
-```
-
-For parameter sweeps, pass a deployment configuration directory such as `examples/quickstart`; `--url` is currently unsupported. See [Parameter sweeps](docs/coomon_commands/sweep.md) to customize points and compare configurations.
-
-### An existing service URL
-
-For the Quick Start already deployed in the default mode, resolve its address first:
-
-```bash
-MODEL_SERVICE_URL="$(foretoken endpoint examples/quickstart)/v1/chat/completions"
-foretoken bench \
-  --url "$MODEL_SERVICE_URL" --model Qwen/Qwen3-0.6B \
-  --prompt "Hello" --number 20 \
-  --output local,wandb
-```
-
-For another service, use its actual Chat Completions URL and model name. In Gateway mode, pass the deployment configuration directory shown above so the CLI supplies routing headers.
-
-## Read results
-
-Local results are saved in a separate directory under `results/`, printed when the run finishes. `metrics.json` contains the summary and `raw_output.json` contains per-request records.
-
-Start with success rate, end-to-end latency (E2EL), and output token throughput. Streamed runs also report time to the first chunk (TTFT), average time per output token (TPOT), and inter-chunk intervals (ITL). `--no-stream` disables only these streaming metrics.
-
-The examples save results locally and upload them to W&B. Use `--output local` for local results only, and `--output-dir` to change the parent directory.
-
-See [Common commands](docs/examples.md) for individual guides and examples, or [Result metrics](metrics.md) for metric definitions. Run `foretoken bench --help` for all options.
+See [performance results](docs/perf/wandb.md) for latency and throughput charts, [quality results](docs/eval/README.md#read-scores) for task scores and native reports, and [profile viewing](docs/profile/README.md#inspect-results) for retained execution captures.

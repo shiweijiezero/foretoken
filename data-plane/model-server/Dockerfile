@@ -72,7 +72,6 @@ ENV FORETOKEN_VLLM_PYTHON=${FORETOKEN_VLLM_PYTHON}
 # A derived Foretoken image may already contain this exact backport.
 RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
     --mount=type=bind,source=data-plane/patches/vllm/vllm-python-profiling.patch,target=/tmp/vllm-profiling.patch \
-    --mount=type=bind,source=data-plane/patches/vllm/vllm-0.26-offloading-event-identity.patch,target=/tmp/vllm-0.26-offload-identity.patch \
     --mount=type=bind,source=data-plane/patches/vllm/vllm-offloading-event-identity.patch,target=/tmp/vllm-offload-identity.patch \
     vllm_site="$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
       'from importlib.metadata import distribution; print(distribution("vllm").locate_file(""))')" \
@@ -87,17 +86,16 @@ RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
       "$vllm_site/vllm/profiler/wrapper.py" "$vllm_site/vllm/v1/worker/gpu_worker.py" \
     && offload_events="$vllm_site/vllm/distributed/kv_transfer/kv_connector/v1/offloading/events.py" \
     && if [ -f "$offload_events" ]; then \
-         vllm_version="$(${FORETOKEN_VLLM_PYTHON:-python} -c 'from importlib.metadata import version; print(version("vllm"))')"; \
+         vllm_version="$("${FORETOKEN_VLLM_PYTHON:-python}" -c 'from importlib.metadata import version; print(version("vllm"))')" || exit $?; \
          case "$vllm_version" in \
-           0.26.*) offload_patch=/tmp/vllm-0.26-offload-identity.patch ;; \
            0.30.*) offload_patch=/tmp/vllm-offload-identity.patch ;; \
            *) offload_patch= ;; \
          esac; \
          if [ -n "$offload_patch" ]; then \
            if patch --force --reverse --dry-run --fuzz=0 --strip=1 --directory="$vllm_site" --input="$offload_patch" >/dev/null 2>&1; then \
-             printf '%s\\n' 'vLLM offloading identity backport already installed'; \
+             printf '%s\n' 'vLLM offloading identity backport already installed'; \
            else \
-             patch --batch --forward --fuzz=0 --no-backup-if-mismatch --strip=1 --directory="$vllm_site" --input="$offload_patch"; \
+             patch --batch --forward --fuzz=0 --no-backup-if-mismatch --strip=1 --directory="$vllm_site" --input="$offload_patch" || exit $?; \
            fi; \
            "${FORETOKEN_VLLM_PYTHON:-python}" -m compileall -q -f "$offload_events"; \
          fi; \
@@ -107,13 +105,13 @@ ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 # Engine images may provide a Python virtual environment without pip.
 # MACA also exposes torch.version.cuda, so select dependencies from the engine build.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
-    backend="$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
-      'import torch; print("maca" if getattr(torch.version, "maca", None) else "cuda" if torch.version.cuda else "other")')" \
+    python_path=$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
+      'import sys; print(sys.executable)') \
+    && backend=$("$python_path" -c \
+      'import torch; print("maca" if getattr(torch.version, "maca", None) else "cuda" if torch.version.cuda else "other")') \
     && set -- modelscope==1.35.3 \
-    && case "$backend" in \
-         cuda) set -- "$@" bitsandbytes==0.49.2 ;; \
-       esac \
-    && uv pip install --no-cache --python "${FORETOKEN_VLLM_PYTHON:-python}" \
+    && case "$backend" in cuda) set -- "$@" bitsandbytes==0.49.2 ;; esac \
+    && uv pip install --no-cache --python "$python_path" \
       --default-index "${UV_DEFAULT_INDEX}" "$@"
 
 FROM engine-runtime AS runtime

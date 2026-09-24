@@ -56,12 +56,20 @@ class ChatCompletionsLoadClient:
         await self._client.close()
 
     async def send(self, task: Task) -> dict[str, Any]:
-        """Send one independent request for ``task`` and return its raw observation record."""
+        """Send one independent request for ``task`` and return its observation."""
+        return await self.send_messages(task.messages(), task.metadata)
+
+    async def send_messages(
+        self,
+        messages: list[dict[str, Any]],
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Send one request and return timing, usage, and generated text for conversation drivers."""
         stream = self._generation.stream
         target_length = self._generation.sample_output_length()
         request_fields: dict[str, Any] = {
             "model": self._model,
-            "messages": task.messages(),
+            "messages": messages,
             "max_tokens": target_length if target_length is not None else self._generation.sample_max_tokens(),
             "stream": stream,
         }
@@ -72,14 +80,16 @@ class ChatCompletionsLoadClient:
         if stream:
             request_fields["stream_options"] = {"include_usage": True}
         for key in ("tools", "tool_choice", "parallel_tool_calls"):
-            if key in task.metadata and key not in self._request_overrides:
-                request_fields[key] = task.metadata[key]
+            if metadata and key in metadata and key not in self._request_overrides:
+                request_fields[key] = metadata[key]
 
         started_at = time.perf_counter()
         timing = ChatStreamTiming()
         input_tokens: int | None = None
         output_tokens: int | None = None
         cached_input_tokens: int | None = None
+        generated_parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
         status_code: Optional[int] = None
         error_message: Optional[str] = None
         success = True
@@ -95,19 +105,34 @@ class ChatCompletionsLoadClient:
             if stream:
                 async for chunk in response:
                     received_at = time.perf_counter()
-                    timing.observe(chunk.model_dump(exclude_none=True), received_at)
+                    payload = chunk.model_dump(exclude_none=True)
+                    timing.observe(payload, received_at)
+                    if chunk.choices:
+                        delta = chunk.choices[0].delta
+                        content = delta.content
+                        if content:
+                            generated_parts.append(content)
+                        if delta.tool_calls:
+                            tool_calls.extend(call.model_dump(exclude_none=True) for call in delta.tool_calls)
                     if chunk.usage is not None:
                         input_tokens = int(chunk.usage.prompt_tokens)
                         output_tokens = int(chunk.usage.completion_tokens)
                         details = chunk.usage.prompt_tokens_details
                         if details is not None and details.cached_tokens is not None:
                             cached_input_tokens = int(details.cached_tokens)
-            elif response.usage is not None:
-                input_tokens = int(response.usage.prompt_tokens)
-                output_tokens = int(response.usage.completion_tokens)
-                details = response.usage.prompt_tokens_details
-                if details is not None and details.cached_tokens is not None:
-                    cached_input_tokens = int(details.cached_tokens)
+            else:
+                message = response.choices[0].message if response.choices else None
+                if message is not None:
+                    if message.content:
+                        generated_parts.append(message.content)
+                    if message.tool_calls:
+                        tool_calls.extend(call.model_dump(exclude_none=True) for call in message.tool_calls)
+                if response.usage is not None:
+                    input_tokens = int(response.usage.prompt_tokens)
+                    output_tokens = int(response.usage.completion_tokens)
+                    details = response.usage.prompt_tokens_details
+                    if details is not None and details.cached_tokens is not None:
+                        cached_input_tokens = int(details.cached_tokens)
         except (APIError, httpx.HTTPError) as exc:
             success = False
             status_code = getattr(exc, "status_code", None)
@@ -131,6 +156,7 @@ class ChatCompletionsLoadClient:
         )
         return {
             "success": success,
+            "started_at": started_at,
             "status_code": status_code,
             "stream": stream,
             "latency": latency,
@@ -140,5 +166,7 @@ class ChatCompletionsLoadClient:
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "cached_input_tokens": cached_input_tokens,
+            "generated_text": "".join(generated_parts),
+            "tool_calls": tool_calls,
             "error": error_message,
         }

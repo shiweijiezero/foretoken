@@ -200,7 +200,15 @@ class ProfileHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(value).encode())
 
     def do_GET(self) -> None:
-        """Handle same-origin viewer requests and stream one selected trace."""
+        """Read capture inventory and stream one selected trace."""
+        self._request()
+
+    def do_POST(self) -> None:
+        """Open a native viewer only after an explicit browser action."""
+        self._request()
+
+    def _request(self) -> None:
+        """Authorize browser requests before entering the cluster resource lifecycle."""
         # Reject DNS rebinding and cross-origin requests before acquiring cluster resources.
         if self.headers.get("Host") != urlsplit(self.server.origin).netloc:
             self.send_error(403)
@@ -223,13 +231,24 @@ class ProfileHandler(BaseHTTPRequestHandler):
     def _serve(self, route: str, query_string: str) -> None:
         """Handle one authorized request with exclusive access to the capture inventory."""
         streaming = False
+        if self.command != ("POST" if route == "api/nsight" else "GET"):
+            self.send_error(405)
+            return
         try:
             if not route:
                 self._headers(200, "text/html; charset=utf-8")
                 self.wfile.write(self.server.page)
             elif route == "api/stores":
-                self._json(200, self.server.history.refresh())
-            elif route in {"api/files", "api/trace"}:
+                self._json(
+                    200,
+                    {
+                        **self.server.history.refresh(),
+                        "nsight": bool(
+                            self.server.storage.viewer_config.get("nsightImage")
+                        ),
+                    },
+                )
+            elif route in {"api/files", "api/trace", "api/nsight"}:
                 query = parse_qs(query_string)
                 store_id = query.get("store", [""])[0]
                 artifact = self.server.history.directory(store_id)
@@ -241,6 +260,13 @@ class ProfileHandler(BaseHTTPRequestHandler):
                 selected = next((item for item in files if item["name"] == name), None)
                 if selected is None:
                     raise FileNotFoundError("Trace file is no longer available.")
+                if route == "api/nsight":
+                    if selected["format"] != "nsight":
+                        self._json(400, {"error": "Select an Nsight Systems report."})
+                        return
+                    url = self.server.storage.open_nsight(*artifact, name)
+                    self._json(200, {"url": url})
+                    return
                 self._headers(200, "application/octet-stream", selected["size"])
                 streaming = True
                 self.server.storage.stream_file(*artifact, name, self.wfile)

@@ -17,8 +17,10 @@ logger = logging.getLogger(__name__)
 def configure_logging(console_enabled: bool) -> None:
     """Configure console logging and keep HTTP library logs from interfering with progress output."""
     logging.basicConfig(
-        level=logging.INFO if console_enabled else logging.WARNING,
+        level=logging.INFO if console_enabled else logging.ERROR,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        # Native evaluator imports may install handlers before CLI configuration.
+        force=True,
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
@@ -102,6 +104,17 @@ def format_benchmark_config(
         if dataset.dataset_selectors and not trace.trace_selector
         else ""
     )
+    slo = benchmark.slo
+    if slo.params:
+        params_label = str(slo.params)
+        slo_lines = (
+            f"  SLO params : {params_label}\n"
+            f"  SLO concurrency bounds="
+            f"[{slo.lower_bound}, {slo.upper_bound if slo.upper_bound is not None else 'none'}], "
+            f"num_runs={slo.num_runs}\n"
+        )
+    else:
+        slo_lines = ""
     return (
         "\n===== Foretoken Benchmark Configuration ====\n"
         f"  URL        : {service.chat_completions_url}\n"
@@ -113,6 +126,7 @@ def format_benchmark_config(
         f"  Dataset    : {dataset_label}\n"
         f"{max_turns_line}"
         f"{trace_lines}"
+        f"{slo_lines}"
         "============================================\n"
     )
 
@@ -150,7 +164,7 @@ def _percentile_row(
 def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -> None:
     """Print a summary of workload settings, success rate, latency, and throughput."""
     resolved = run_record["resolved"]
-    parallel = metrics["parallel"]
+    parallel = metrics["max_concurrency"]
     throughput = metrics["throughput"]
     generation_tokens_per_second = throughput[
         "generation_tokens_per_second"
@@ -172,7 +186,7 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
         )
         concurrency_value = str(parallel)
 
-    rate = resolved["rate"]
+    rate = resolved["request_rate"]
 
     lines = [
         "======== Foretoken Benchmark Result ========",
@@ -240,6 +254,18 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
             *metric_lines,
         ]
     )
+    slo = metrics.get("slo")
+    if isinstance(slo, dict) and slo.get("slo_attainment") is not None:
+        lines.extend(
+            [
+                "  SLO attainment (%): "
+                f"{_format_metric(float(slo['slo_attainment']) * 100)}",
+                "  SLO request goodput (req/s): "
+                f"{_format_metric(slo.get('request_goodput'))}",
+                "  SLO token goodput (tokens/s): "
+                f"{_format_metric(slo.get('token_goodput'))}",
+            ]
+        )
     if multi_turn:
         conversation = metrics["conversation"]
         if conversation.get("per_dataset"):
@@ -247,17 +273,14 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
                 "  Conversation distributions: see per-dataset child results"
             )
         else:
-            lines.extend(
-                [
-                    _percentile_row(
-                        "Conversation latency", conversation["latency"]
-                    ),
-                    _percentile_row(
-                        "Time to final-answer token (TTFAT)",
-                        conversation["time_to_final_answer_token"],
-                    ),
-                ]
-            )
+            # Task execution reports conversation counts; native trace summaries
+            # can additionally provide conversation-level timing distributions.
+            for key, label in (
+                ("latency", "Conversation latency"),
+                ("time_to_final_answer_token", "Time to final-answer token (TTFAT)"),
+            ):
+                if key in conversation:
+                    lines.append(_percentile_row(label, conversation[key]))
         lines.append(
             "  Conversations/s attempted: "
             f"{_format_metric(conversation['attempted_conversations_per_second'])}"
@@ -304,6 +327,27 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
     logger.info("\n%s", "\n".join(lines))
 
 
+def log_slo_results(slo: dict[str, Any]) -> None:
+    """Print one row for each SLO probe and its satisfied search point."""
+    lines = ["========== SLO Capacity Search Results =========="]
+    if slo.get("probes"):
+        for row in slo["probes"]:
+            if "max_satisfied" in row:
+                lines.append(
+                    f"  Group {row.get('group')}: max concurrency="
+                    f"{row.get('max_satisfied')} criteria={row.get('criteria')}"
+                )
+            else:
+                lines.append(
+                    f"  Group {row.get('group')}: max concurrency={row['max_concurrency']} "
+                    f"satisfied={row.get('satisfied')} criteria={row.get('criteria')}"
+                )
+    else:
+        lines.append(f"  Max concurrency: {slo.get('max_satisfied', 'None')}")
+    lines.append("============================================")
+    logger.info("\n%s", "\n".join(lines))
+
+
 def log_sweep_results(results: list[dict[str, Any]]) -> None:
     """Print one summary row for each parameter sweep result."""
     per_worker_name = "Output tokens/s/user"
@@ -317,11 +361,11 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
         header,
     ]
     for item in results:
-        parallel = item["parallel"]
+        parallel = item["max_concurrency"]
         parallel_label = (
             "unlimited" if int(parallel) < 0 else str(int(parallel))
         )
-        rate = float(item["rate"])
+        rate = float(item["request_rate"])
         rate_label = "no limit" if rate == -1 else f"{rate:g}"
         throughput = item["throughput"]
         generation_tokens_per_second = throughput[
