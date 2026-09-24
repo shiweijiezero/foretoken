@@ -42,6 +42,6 @@ foretoken perf examples/quickstart \
 
 ## 查看结果
 
-控制台与 `slo_results.json` 给出每组条件下的最高达标请求峰值及其配置限额、最后一次实测峰值与限额，以及停止原因。每个探测点有独立结果目录；W&B 提供搜索汇总，同组探测运行按条件组、并发限额和重复序号命名。
+控制台与 `slo_results.json` 给出每组条件下的最高达标请求峰值及其配置限额、最后一次实测峰值与限额，以及停止原因。
 
 显式部署的快速开始服务不再需要时，用 `foretoken delete examples/quickstart` 删除。

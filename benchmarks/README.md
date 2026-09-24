@@ -17,7 +17,7 @@ pip install foretoken
 
 Run the examples from the repository checkout prepared by the [Quick Start](../README.md#quick-start). They save results locally and to W&B; run `wandb login` once before using W&B.
 
-Passing a Kustomize directory reuses its running services or deploys them when absent. Only resources created by the evaluation command are removed afterwards. A single-model deployment supplies the model name automatically; use `--model` to choose among multiple models. To measure an existing endpoint, replace the directory with `--url` and provide its model name.
+Pass a Kustomize directory to use its model service. A single-model deployment supplies the model name automatically; use `--model` to choose among multiple models. To measure an existing endpoint, replace the directory with `--url` and provide its model name.
 
 ## Measure performance
 

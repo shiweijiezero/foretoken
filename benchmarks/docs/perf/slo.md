@@ -42,6 +42,6 @@ Timing thresholds use seconds. Supported metrics are:
 
 ## Read results
 
-The console and `slo_results.json` report each criterion group's highest passing request peak, its configured limit, the last measured peak and limit, and the stopping reason. Each probe has its own result directory. W&B includes a search summary and grouped probe runs identified by criteria group, concurrency limit, and repetition.
+The console and `slo_results.json` report each criterion group's highest passing request peak, its configured limit, the last measured peak and limit, and the stopping reason.
 
 If you explicitly deployed the Quick Start service, remove it with `foretoken delete examples/quickstart` when it is no longer needed.
