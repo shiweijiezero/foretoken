@@ -7,3 +7,5 @@ The shared [compatibility patch](../metax-compatibility.patch) adapts the plugin
 Source patches are applied before building the engine wheels. The DeepGEMM patch is applied after dependency installation because it modifies the installed kernel package. Update the source pair and its patches together.
 
 MTP retains the complete sparse indexer and separate cache groups. The core selects Model Runner V2 when the execution configuration supports it, including the GLM-5.3 BF16 recipe.
+
+The mHC patch applies input normalization in the native implementations; HIP fallbacks delegate to them without normalizing again. Related upstream work: [vLLM #56856](https://github.com/vllm-project/vllm/pull/56856).
