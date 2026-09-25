@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Present and publish paired next-token distribution fidelity measurements."""
+"""Present and publish paired next-token distribution comparisons."""
 
 from __future__ import annotations
 
@@ -44,8 +44,8 @@ _POINT_COLUMNS = (
     "median_kl",
     "p99_kl",
     "top1_agreement",
-    "reference_token_mean_delta_p",
-    "reference_token_rms_delta_p",
+    "corpus_token_mean_delta_p",
+    "corpus_token_rms_delta_p",
     "mean_centered_logit_rmse",
     "mean_total_variation",
 )
@@ -56,7 +56,7 @@ _POSITION_COLUMNS = (
     "scored_index",
     "kl",
     "top1_match",
-    "reference_token_delta_p",
+    "corpus_token_delta_p",
     "centered_logit_rmse",
     "total_variation",
 )
@@ -243,48 +243,48 @@ def _plot_position_curves(
         frameon=False,
     )
     axes[1].legend(title="Candidate", fontsize=8, frameon=False, ncol=2)
-    fig.suptitle("Fidelity across scored token positions", x=0.06, ha="left", fontsize=13, fontweight="bold")
+    fig.suptitle("Distribution differences across scored positions", x=0.06, ha="left", fontsize=13, fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     fig.savefig(path, dpi=160, bbox_inches="tight", facecolor="#fcfcfb")
     plt.close(fig)
     return True
 
 
-def write_fidelity_artifacts(directory: str | Path, metrics: dict[str, Any]) -> dict[str, Path]:
-    """Write fidelity tables and data-backed PNGs into a result directory."""
+def write_distribution_comparison_artifacts(directory: str | Path, metrics: dict[str, Any]) -> dict[str, Path]:
+    """Write distribution comparison tables and data-backed PNGs into a result directory."""
     out = Path(directory)
     out.mkdir(parents=True, exist_ok=True)
-    fidelity = metrics["fidelity"]
-    protocol = fidelity["protocol"]
-    points = fidelity["candidates"]
-    positions = fidelity["positions"]
+    comparison = metrics["distribution_comparison"]
+    protocol = comparison["protocol"]
+    points = comparison["candidates"]
+    positions = comparison["positions"]
     point_columns, _ = _columns(protocol)
-    candidate_path = out / "fidelity_candidates.csv"
-    token_path = out / "fidelity_tokens.jsonl"
+    candidate_path = out / "distribution_comparison_candidates.csv"
+    positions_path = out / "distribution_comparison_positions.jsonl"
     _write_csv(candidate_path, point_columns, points)
-    with token_path.open("w", encoding="utf-8") as stream:
+    with positions_path.open("w", encoding="utf-8") as stream:
         for row in positions:
             stream.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
-    artifacts = {"fidelity_candidates": candidate_path, "fidelity_tokens": token_path}
+    artifacts = {"distribution_comparison_candidates": candidate_path, "distribution_comparison_positions": positions_path}
     numeric_axes = [axis for axis in _COORDINATE_LABELS if any(point[axis] is not None for point in points)]
     if numeric_axes:
         for axis in numeric_axes:
-            path = out / f"fidelity_{axis}.png"
-            if _plot_candidate_panels(path, points, axis, f"Fidelity: {_COORDINATE_LABELS[axis]}"):
-                artifacts[f"fidelity_{axis}_plot"] = path
+            path = out / f"distribution_comparison_{axis}.png"
+            if _plot_candidate_panels(path, points, axis, f"Distribution comparison: {_COORDINATE_LABELS[axis]}"):
+                artifacts[f"distribution_comparison_{axis}_plot"] = path
     else:
-        path = out / "fidelity_candidates.png"
-        if _plot_candidate_panels(path, points, None, "Fidelity by candidate"):
-            artifacts["fidelity_candidates_plot"] = path
+        path = out / "distribution_comparison_candidates.png"
+        if _plot_candidate_panels(path, points, None, "Model distribution comparison"):
+            artifacts["distribution_comparison_candidates_plot"] = path
     if positions:
-        path = out / "fidelity_positions.png"
+        path = out / "distribution_comparison_positions.png"
         if _plot_position_curves(path, points, positions):
-            artifacts["fidelity_positions_plot"] = path
+            artifacts["distribution_comparison_positions_plot"] = path
     return artifacts
 
 
-class FidelityArtifactSink:
-    """Materialize fidelity tables and figures before downstream publishers consume artifacts."""
+class DistributionComparisonArtifactSink:
+    """Materialize comparison tables and figures before downstream publishers consume artifacts."""
 
     def __init__(self, directory: str) -> None:
         self.directory = directory
@@ -293,27 +293,27 @@ class FidelityArtifactSink:
         return None
 
     def publish(self, run: BenchmarkRun) -> None:
-        run.artifacts.update(write_fidelity_artifacts(self.directory, run.metrics))
+        run.artifacts.update(write_distribution_comparison_artifacts(self.directory, run.metrics))
 
     def close(self, *, exit_code: int = 0) -> None:
         return None
 
 
-class FidelityConsoleSink:
-    """Print one compact candidate table and protocol summary for a fidelity run."""
+class DistributionComparisonConsoleSink:
+    """Print one compact candidate table and protocol summary for a distribution comparison run."""
 
     def open(self, record: dict[str, Any]) -> None:
         return None
 
     def publish(self, run: BenchmarkRun) -> None:
-        fidelity = run.metrics["fidelity"]
-        protocol = fidelity["protocol"]
-        points = fidelity["candidates"]
+        comparison = run.metrics["distribution_comparison"]
+        protocol = comparison["protocol"]
+        points = comparison["candidates"]
         expected = protocol["num_windows"] * protocol["score_tokens"]
-        execution = run.metrics["execution"]["fidelity"]
+        execution = run.metrics["execution"]["distribution_comparison"]
         lines = [
-            "Foretoken model comparison",
-            f"Reference: {fidelity['reference_model']}    Scored positions/candidate: {expected}    Completed: {execution['succeeded']}/{execution['requested']}",
+            "Foretoken model distribution comparison",
+            f"Reference: {comparison['reference_model']}    Scored positions/candidate: {expected}    Completed: {execution['succeeded']}/{execution['requested']}",
             "Protocol: " + ", ".join(
                 f"{key}={protocol[key]}"
                 for key in ("context_length", "num_windows", "score_tokens", "top_k")
@@ -358,16 +358,16 @@ def _bits_label(point: dict[str, Any]) -> str:
     return f"{nominal:g}/{effective:g}"
 
 
-def publish_fidelity_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
-    """Publish existing quality output plus fidelity tables, indexed curves, and PNG artifacts."""
+def publish_distribution_comparison_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
+    """Publish existing quality output plus comparison tables, indexed curves, and PNG artifacts."""
     publish_quality_wandb(sdk_run, run)
-    fidelity = run.metrics["fidelity"]
-    protocol = fidelity["protocol"]
-    points = fidelity["candidates"]
-    positions = fidelity["positions"]
+    comparison = run.metrics["distribution_comparison"]
+    protocol = comparison["protocol"]
+    points = comparison["candidates"]
+    positions = comparison["positions"]
     point_columns, position_columns = _columns(protocol)
     sdk_run.log({
-        "Fidelity/Candidates": wandb.Table(
+        "Distribution Comparison/Candidates": wandb.Table(
             columns=list(point_columns),
             data=[[row[column] for column in point_columns] for row in points],
             allow_mixed_types=True,
@@ -375,7 +375,7 @@ def publish_fidelity_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
     })
     if positions:
         sdk_run.log({
-            "Fidelity/Tokens": wandb.Table(
+            "Distribution Comparison/Positions": wandb.Table(
                 columns=list(position_columns),
                 data=[[row[column] for column in position_columns] for row in positions],
                 allow_mixed_types=True,
@@ -393,7 +393,7 @@ def publish_fidelity_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                     series.append((label, [float(row["scored_index"]) for row in rows], [float(row[field]) for row in rows]))
             if series:
                 sdk_run.log({
-                    f"Fidelity/{title}": wandb.plot.line_series(
+                    f"Distribution Comparison/{title}": wandb.plot.line_series(
                         xs=[item[1] for item in series],
                         ys=[item[2] for item in series],
                         keys=[item[0] for item in series],
@@ -401,18 +401,25 @@ def publish_fidelity_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                         title=title,
                     ),
                 })
-    for key, path in run.artifacts.items():
-        if path.suffix.lower() == ".png":
-            sdk_run.log({f"Fidelity/{path.stem}": wandb.Image(str(path), caption=path.stem)})
+    plot_titles = {
+        **{f"distribution_comparison_{axis}_plot": label for axis, label in _COORDINATE_LABELS.items()},
+        "distribution_comparison_candidates_plot": "Candidates",
+        "distribution_comparison_positions_plot": "Scored positions",
+    }
+    for key, title in plot_titles.items():
+        if key in run.artifacts:
+            sdk_run.log({
+                f"Distribution Comparison/Plots/{title}": wandb.Image(str(run.artifacts[key]), caption=title),
+            })
 
 
-def fidelity_sinks(config: EvaluationConfig, record: dict[str, Any], directory: str) -> list[ResultSink]:
-    """Compose evaluation publication with fidelity-specific artifacts and presentation."""
+def distribution_comparison_sinks(config: EvaluationConfig, record: dict[str, Any], directory: str) -> list[ResultSink]:
+    """Compose evaluation publication with distribution comparison artifacts and presentation."""
     sinks = evaluation_sinks(
         config,
         record,
         directory,
-        console_sink=FidelityConsoleSink(),
-        publisher=publish_fidelity_wandb,
+        console_sink=DistributionComparisonConsoleSink(),
+        publisher=publish_distribution_comparison_wandb,
     )
-    return [sinks[0], FidelityArtifactSink(directory), *sinks[1:]]
+    return [sinks[0], DistributionComparisonArtifactSink(directory), *sinks[1:]]

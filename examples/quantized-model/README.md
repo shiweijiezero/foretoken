@@ -54,7 +54,7 @@ foretoken eval examples/quantized-model/bitsandbytes \
 
 To include the BF16 self-comparison in bit-width plots, replace the candidate directory with `--candidates examples/quantized-model/candidates.jsonl`. The AWQ example uses FP16 activations, so its comparison against BF16 includes that computation-precision difference.
 
-See [model distribution comparison](../../benchmarks/docs/eval/fidelity.md) for metrics, custom candidates, resuming a run, and updating existing deployments.
+See [model distribution comparison](../../benchmarks/docs/eval/distribution-comparison.md) for metrics, custom candidates, resuming a run, and updating existing deployments.
 
 ## Storage and requests
 

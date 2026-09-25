@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md) · [Evaluation and profiling](../../README.md)
 
-Score answers from a running model with lm-evaluation-harness or EvalScope. Complete the [setup](../../README.md#get-started), then choose a framework below. Add `--reference` for [reference/candidate distribution comparisons](fidelity.md), including KL, bit-width plots, and logit differences.
+Score answers from a running model with lm-evaluation-harness or EvalScope. Complete the [setup](../../README.md#get-started), then choose a framework below. Add `--reference` for [reference/candidate distribution comparisons](distribution-comparison.md), including KL, bit-width plots, and logit differences.
 
 ## lm-evaluation-harness
 
@@ -74,7 +74,7 @@ The resumed invocation writes a new result directory, reuses completed work, and
 | --- | --- |
 | lm-evaluation-harness | Completed generations for text-only tasks, including repeated sampling; only missing generations are requested |
 | EvalScope | Completed predictions and reviews for independent samples, with the same service URL and evaluation settings |
-| Reference comparison | Complete scoring windows; see [resuming a comparison](fidelity.md#resume-a-comparison) |
+| Distribution comparison | Complete scoring windows; see [resuming a comparison](distribution-comparison.md#resume-a-comparison) |
 
 Use `--resume` instead of native `--use_cache` or `--use-cache` for this workflow. Performance tests, trace replay, parameter sweeps, and SLO searches do not support this option.
 

@@ -94,7 +94,7 @@ class CompletionDistributionClient:
 def compare_logprobs(
     reference: np.ndarray,
     candidate: np.ndarray,
-    token_index: int,
+    corpus_token_id: int,
     top_k: Iterable[int],
 ) -> dict[str, float | bool]:
     """Compare aligned full-vocabulary distributions at one teacher-forced position."""
@@ -106,7 +106,7 @@ def compare_logprobs(
     values: dict[str, float | bool] = {
         "kl": max(0.0, float(np.dot(p, reference - candidate))),
         "top1_match": reference_top == candidate_top,
-        "reference_token_delta_p": float(q[token_index] - p[token_index]),
+        "corpus_token_delta_p": float(q[corpus_token_id] - p[corpus_token_id]),
         "centered_logit_rmse": float(np.sqrt(np.mean(centered_difference ** 2))),
         "total_variation": float(np.abs(p - q).sum() / 2),
     }

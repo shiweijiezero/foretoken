@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Compare served models on shared teacher-forced prefixes and publish fidelity results."""
+"""Compare served models on shared teacher-forced prefixes and publish their distribution differences."""
 
 from __future__ import annotations
 
@@ -17,20 +17,20 @@ from foretoken.manifest import DeploymentError
 
 from benchmarks.config.benchmark import ModelServiceSource
 from benchmarks.config.evaluation import EvaluationConfig
-from benchmarks.config.fidelity import FidelityConfig
+from benchmarks.config.distribution_comparison import DistributionComparisonConfig
 from benchmarks.datasets.conversations import iter_jsonl_rows
 from benchmarks.datasets.huggingface import resolve_tokenizer_path
 from benchmarks.integrations.distributions import CompletionDistributionClient, compare_logprobs
 from benchmarks.model_service import ModelService, resolve_model_service
 from benchmarks.results.environment import serving_environment
-from benchmarks.results.fidelity import fidelity_sinks
-from benchmarks.results.fidelity_checkpoint import FidelityCheckpoint
+from benchmarks.results.distribution_comparison import distribution_comparison_sinks
+from benchmarks.results.distribution_comparison_checkpoint import DistributionComparisonCheckpoint
 from benchmarks.results.output import BenchmarkRun, ResultOutputs, write_json
 
 logger = logging.getLogger(__name__)
 
 
-def _text_rows(config: FidelityConfig) -> Iterator[str]:
+def _text_rows(config: DistributionComparisonConfig) -> Iterator[str]:
     """Read the selected public corpus or local text without interpreting it as chat turns."""
     path = Path(config.dataset).expanduser()
     if path.is_file() and path.suffix != ".jsonl":
@@ -47,15 +47,15 @@ def _text_rows(config: FidelityConfig) -> Iterator[str]:
         ))
     for row in rows:
         if not isinstance(row, dict) or config.text_column not in row:
-            raise ValueError(f"Fidelity dataset rows require text column {config.text_column!r}")
+            raise ValueError(f"Comparison dataset rows require text column {config.text_column!r}")
         value = row[config.text_column]
         if not isinstance(value, str):
-            raise ValueError(f"Fidelity text column {config.text_column!r} must contain strings")
+            raise ValueError(f"Comparison text column {config.text_column!r} must contain strings")
         if value.strip():
             yield value + "\n"
 
 
-def _token_windows(config: FidelityConfig, tokenizer: Any) -> list[list[int]]:
+def _token_windows(config: DistributionComparisonConfig, tokenizer: Any) -> list[list[int]]:
     """Take complete, non-overlapping windows, adding the tokenizer's BOS per window when defined."""
     bos = [] if tokenizer.bos_token_id is None else [tokenizer.bos_token_id]
     buffer = list(bos)
@@ -76,7 +76,7 @@ def _token_windows(config: FidelityConfig, tokenizer: Any) -> list[list[int]]:
 def _candidate_summary(rows: list[dict[str, Any]], top_k: tuple[int, ...]) -> dict[str, Any]:
     """Aggregate equally weighted scored positions without averaging per-window means."""
     kl = np.asarray([row["kl"] for row in rows], dtype=np.float64)
-    delta = np.asarray([row["reference_token_delta_p"] for row in rows], dtype=np.float64)
+    delta = np.asarray([row["corpus_token_delta_p"] for row in rows], dtype=np.float64)
     return {
         "scored_positions": len(rows),
         "mean_kl": float(kl.mean()),
@@ -84,8 +84,8 @@ def _candidate_summary(rows: list[dict[str, Any]], top_k: tuple[int, ...]) -> di
         "p99_kl": float(np.percentile(kl, 99, method="inverted_cdf")),
         "top1_agreement": float(np.mean([row["top1_match"] for row in rows])),
         **{f"top{k}_overlap": float(np.mean([row[f"top{k}_overlap"] for row in rows])) for k in top_k},
-        "reference_token_mean_delta_p": float(delta.mean()),
-        "reference_token_rms_delta_p": float(np.sqrt(np.mean(delta ** 2))),
+        "corpus_token_mean_delta_p": float(delta.mean()),
+        "corpus_token_rms_delta_p": float(np.sqrt(np.mean(delta ** 2))),
         "mean_centered_logit_rmse": float(np.mean([row["centered_logit_rmse"] for row in rows])),
         "mean_total_variation": float(np.mean([row["total_variation"] for row in rows])),
     }
@@ -97,14 +97,14 @@ def _score_rows(points: list[dict[str, Any]], top_k: tuple[int, ...]) -> list[di
     names = [
         "mean_kl", "median_kl", "p99_kl", "top1_agreement",
         *(f"top{k}_overlap" for k in top_k),
-        "reference_token_mean_delta_p", "reference_token_rms_delta_p",
+        "corpus_token_mean_delta_p", "corpus_token_rms_delta_p",
         "mean_centered_logit_rmse", "mean_total_variation",
     ]
     return [{
         "task": point["label"], "level": "task", "subset": "", "filter": "teacher_forced",
         "metric": name, "value": point[name], "stderr": None,
         "samples": point["scored_positions"],
-        "direction": "higher" if name in higher else (None if name == "reference_token_mean_delta_p" else "lower"),
+        "direction": "higher" if name in higher else (None if name == "corpus_token_mean_delta_p" else "lower"),
         "display_multiplier": 100 if name in higher else 1,
         "display_unit": "%" if name in higher else "",
         "primary": name == "mean_kl",
@@ -143,19 +143,21 @@ def _reference_text_files(service: ModelService, override: str) -> tuple[str, st
 
 
 def _score_reference(
-    source: ModelServiceSource, fidelity: FidelityConfig, checkpoint: FidelityCheckpoint,
+    source: ModelServiceSource,
+    comparison: DistributionComparisonConfig,
+    checkpoint: DistributionComparisonCheckpoint,
 ) -> dict[str, Any]:
     """Prepare fixed corpus windows once and complete their reference probabilities before candidates."""
     from transformers import AutoConfig, AutoTokenizer
 
     saved = checkpoint.get("reference")
     completed = checkpoint.reference_done()
-    if len(completed) == fidelity.num_windows:
+    if len(completed) == comparison.num_windows:
         logger.info("Reusing all %d reference windows", len(completed))
         return saved
     with resolve_model_service(source) as reference:
         if saved is None:
-            tokenizer_path, model_path, tokenizer_id = _reference_text_files(reference, fidelity.tokenizer)
+            tokenizer_path, model_path, tokenizer_id = _reference_text_files(reference, comparison.tokenizer)
             tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
             # The output head may contain padding beyond the tokenizer vocabulary.
             model_config = AutoConfig.from_pretrained(model_path).to_dict()
@@ -164,9 +166,9 @@ def _score_reference(
                 raise ValueError("Tokenizer token IDs exceed the model configuration's vocabulary size")
             saved = {
                 "model": reference.model,
-                "windows": _token_windows(fidelity, tokenizer),
+                "windows": _token_windows(comparison, tokenizer),
                 "protocol": {
-                    **fidelity.protocol(), "tokenizer": tokenizer_id,
+                    **comparison.protocol(), "tokenizer": tokenizer_id,
                     "bos_token_id": tokenizer.bos_token_id,
                     "tokenizer_vocab_size": len(tokenizer), "model_vocab_size": vocabulary_size,
                 },
@@ -176,8 +178,8 @@ def _score_reference(
         elif reference.model != saved["model"]:
             raise ValueError("Reference model differs from the saved comparison")
         vocabulary_size = saved["protocol"]["model_vocab_size"]
-        score_positions = range(fidelity.context_length - fidelity.score_tokens, fidelity.context_length)
-        logger.info("Reference: %s | %d/%d windows already complete", reference.model, len(completed), fidelity.num_windows)
+        score_positions = range(comparison.context_length - comparison.score_tokens, comparison.context_length)
+        logger.info("Reference: %s | %d/%d windows already complete", reference.model, len(completed), comparison.num_windows)
         with CompletionDistributionClient(reference, timeout=source.timeout_seconds) as client:
             for index, tokens in enumerate(saved["windows"]):
                 if index in completed:
@@ -187,7 +189,9 @@ def _score_reference(
     return saved
 
 
-def run_fidelity(config: EvaluationConfig, fidelity: FidelityConfig) -> None:
+def run_distribution_comparison(
+    config: EvaluationConfig, comparison: DistributionComparisonConfig,
+) -> None:
     """Compare models sequentially, retaining complete windows for resume and rebuilding reports.
 
     Each invocation owns a new result directory. Resume snapshots the previous checkpoint
@@ -195,8 +199,8 @@ def run_fidelity(config: EvaluationConfig, fidelity: FidelityConfig) -> None:
     deployments retain the shared service lifecycle and are released between models.
     """
 
-    reference_source = fidelity.reference_source(config.service)
-    record = {"mode": "fidelity", "evaluator": "compare", "model": "model comparison"}
+    reference_source = comparison.reference_source(config.service)
+    record = {"mode": "distribution_comparison"}
     points: list[dict[str, Any]] = []
     positions: list[dict[str, Any]] = []
     environments: dict[str, Any] = {"candidates": []}
@@ -204,23 +208,25 @@ def run_fidelity(config: EvaluationConfig, fidelity: FidelityConfig) -> None:
     failure: BaseException | None = None
     started = time.monotonic()
     with ResultOutputs(
-        config, None, directory_prefix="fidelity-",
-        sink_factory=lambda directory: fidelity_sinks(config, record, directory),
+        config, None, directory_prefix="distribution-comparison-",
+        sink_factory=lambda directory: distribution_comparison_sinks(config, record, directory),
     ) as outputs:
         outputs.open(record)
         directory = Path(outputs.execution_dir)
-        protocol = fidelity.protocol()
+        protocol = comparison.protocol()
         try:
-            score_positions = range(fidelity.context_length - fidelity.score_tokens, fidelity.context_length)
-            with FidelityCheckpoint(directory, config.resume, fidelity.checkpoint_settings(config.service)) as checkpoint:
-                reference = _score_reference(reference_source, fidelity, checkpoint)
+            score_positions = range(comparison.context_length - comparison.score_tokens, comparison.context_length)
+            with DistributionComparisonCheckpoint(
+                directory, config.resume, comparison.checkpoint_settings(config.service),
+            ) as checkpoint:
+                reference = _score_reference(reference_source, comparison, checkpoint)
                 reference_model = reference["model"]
                 protocol = reference["protocol"]
                 windows = reference["windows"]
                 vocabulary_size = protocol["model_vocab_size"]
                 environments["reference"] = reference["environment"]
                 labels: set[str] = set()
-                for candidate_index, candidate in enumerate(fidelity.candidates):
+                for candidate_index, candidate in enumerate(comparison.candidates):
                     saved = checkpoint.get(f"candidate/{candidate_index}")
                     completed = checkpoint.candidate_windows(candidate_index)
                     if len(completed) < len(windows):
@@ -243,14 +249,14 @@ def run_fidelity(config: EvaluationConfig, fidelity: FidelityConfig) -> None:
                                 for window_index, tokens in enumerate(windows):
                                     if window_index in completed:
                                         continue
-                                    reference_values = checkpoint.reference(window_index, (fidelity.score_tokens, vocabulary_size))
+                                    reference_values = checkpoint.reference(window_index, (comparison.score_tokens, vocabulary_size))
                                     rows = []
                                     for score_index, position in enumerate(score_positions):
                                         values = client.logprobs(tokens[:position], vocabulary_size)
                                         rows.append({
                                             "candidate": metadata["label"], "window": window_index,
-                                            "position": position, "scored_index": window_index * fidelity.score_tokens + score_index,
-                                            **compare_logprobs(reference_values[score_index], values, tokens[position], fidelity.top_k),
+                                            "position": position, "scored_index": window_index * comparison.score_tokens + score_index,
+                                            **compare_logprobs(reference_values[score_index], values, tokens[position], comparison.top_k),
                                         })
                                     checkpoint.save_candidate(candidate_index, window_index, rows)
                                     completed[window_index] = rows
@@ -261,18 +267,18 @@ def run_fidelity(config: EvaluationConfig, fidelity: FidelityConfig) -> None:
                     environments["candidates"].append({"label": metadata["label"], **saved["environment"]})
                     candidate_rows = [row for index in sorted(completed) for row in completed[index]]
                     positions.extend(candidate_rows)
-                    points.append({**metadata, "vocab_size": vocabulary_size, **_candidate_summary(candidate_rows, fidelity.top_k)})
+                    points.append({**metadata, "vocab_size": vocabulary_size, **_candidate_summary(candidate_rows, comparison.top_k)})
         except (DeploymentError, ValueError, OSError, httpx.HTTPError, KeyboardInterrupt) as error:
             failure = error
-            logger.error("Fidelity evaluation stopped: %s", error)
+            logger.error("Distribution comparison stopped: %s", error)
         metrics = {
             "duration_seconds": time.monotonic() - started,
-            "scores": _score_rows(points, fidelity.top_k),
-            "execution": {"fidelity": {
-                "requested": len(fidelity.candidates), "succeeded": len(points),
+            "scores": _score_rows(points, comparison.top_k),
+            "execution": {"distribution_comparison": {
+                "requested": len(comparison.candidates), "succeeded": len(points),
                 "errored": int(failure is not None), "incomplete": failure is not None,
             }},
-            "fidelity": {
+            "distribution_comparison": {
                 "reference_model": reference_model, "protocol": protocol,
                 "candidates": points, "positions": positions,
             },

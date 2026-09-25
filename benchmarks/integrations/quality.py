@@ -245,8 +245,8 @@ def _run_evalscope(
                         shutil.copy2(source, target)
 
 
-def _restore_native_cache(evaluator: str, model: str, source: str, native: Path) -> None:
-    """Copy native progress into this invocation without modifying the previous evaluation."""
+def _restore_evaluation_progress(evaluator: str, model: str, source: str, native: Path) -> None:
+    """Restore framework-specific progress without modifying the previous evaluation."""
     previous_directory = Path(source).expanduser().resolve()
     previous = json.loads((previous_directory / "config.json").read_text(encoding="utf-8"))
     if previous.get("mode") != "evaluation" or previous.get("evaluator") != evaluator:
@@ -273,7 +273,7 @@ def main() -> None:
     """Receive one invocation through stdin so service credentials never enter argv."""
     invocation = json.load(sys.stdin)
     if invocation["resume"]:
-        _restore_native_cache(
+        _restore_evaluation_progress(
             invocation["evaluator"], invocation["service"]["model"],
             invocation["resume"], Path(invocation["directory"]),
         )

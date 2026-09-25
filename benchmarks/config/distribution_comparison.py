@@ -16,7 +16,7 @@ from benchmarks.datasets.conversations import iter_jsonl_rows
 
 
 @dataclass(frozen=True)
-class FidelityCandidate:
+class DistributionComparisonCandidate:
     """One served model and optional coordinates used to label comparison plots."""
 
     service: ModelServiceSource
@@ -39,7 +39,7 @@ class FidelityCandidate:
 
 
 @dataclass(frozen=True)
-class FidelityConfig:
+class DistributionComparisonConfig:
     """Own the reference, text windows, scoring positions, and candidate declarations."""
 
     reference_path: str
@@ -55,7 +55,7 @@ class FidelityConfig:
     num_windows: int
     score_tokens: int
     top_k: tuple[int, ...]
-    candidates: tuple[FidelityCandidate, ...]
+    candidates: tuple[DistributionComparisonCandidate, ...]
 
     def reference_source(self, default: ModelServiceSource) -> ModelServiceSource:
         """Resolve the reference connection, reusing the candidate connection when omitted."""
@@ -78,7 +78,7 @@ class FidelityConfig:
             }
 
         return {
-            "version": 1,
+            "version": 2,
             "protocol": self.protocol(),
             "reference": source_identity(self.reference_source(default)),
             "candidates": [
@@ -115,7 +115,7 @@ def _positive_coordinate(value: Any, name: str) -> float | None:
     return number
 
 
-def add_fidelity_arguments(parser: argparse.ArgumentParser) -> None:
+def add_distribution_comparison_arguments(parser: argparse.ArgumentParser) -> None:
     """Define reference comparison choices for parsing and the evaluation help page."""
     parser.add_argument("--reference", default="", metavar="PATH", help="reference Kustomize deployment")
     parser.add_argument("--reference-url", default="", help="reference Chat Completions URL")
@@ -138,13 +138,13 @@ def add_fidelity_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--model-size-gib", type=float, default=None, help="measured checkpoint size in GiB for plotting")
 
 
-def parse_fidelity_arguments(arguments: Sequence[str], service: ModelServiceSource) -> FidelityConfig:
+def parse_distribution_comparison_arguments(arguments: Sequence[str], service: ModelServiceSource) -> DistributionComparisonConfig:
     """Resolve comparison choices and candidate declarations before serving starts."""
     parser = argparse.ArgumentParser(
         prog="foretoken eval", allow_abbrev=False,
         description="Compare full next-token distributions on identical text prefixes.",
     )
-    add_fidelity_arguments(parser)
+    add_distribution_comparison_arguments(parser)
     options = parser.parse_args(arguments)
     if options.reference and options.reference_url:
         parser.error("use --reference or --reference-url, not both")
@@ -171,7 +171,7 @@ def parse_fidelity_arguments(arguments: Sequence[str], service: ModelServiceSour
                 model=str(row.get("model") or ("" if row.get("path") or row.get("url") else service.model)),
             )
             candidate_service.validate()
-            candidates.append(FidelityCandidate(
+            candidates.append(DistributionComparisonCandidate(
                 candidate_service,
                 label=str(row.get("label") or ""),
                 method=str(row.get("method") or ""),
@@ -181,7 +181,7 @@ def parse_fidelity_arguments(arguments: Sequence[str], service: ModelServiceSour
             ))
     else:
         service.validate()
-        candidates.append(FidelityCandidate(
+        candidates.append(DistributionComparisonCandidate(
             service,
             label=options.label,
             method=options.method,
@@ -194,7 +194,7 @@ def parse_fidelity_arguments(arguments: Sequence[str], service: ModelServiceSour
     dataset_config = options.dataset_config
     if dataset_config is None and options.dataset == "Salesforce/wikitext":
         dataset_config = "wikitext-2-raw-v1"
-    config = FidelityConfig(
+    config = DistributionComparisonConfig(
         reference_path=options.reference,
         reference_url=options.reference_url,
         reference_model=options.reference_model,

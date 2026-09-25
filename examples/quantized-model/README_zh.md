@@ -54,7 +54,7 @@ foretoken eval examples/quantized-model/bitsandbytes \
 
 若希望位宽图同时显示 BF16 自身的对照结果，将候选目录换成 `--candidates examples/quantized-model/candidates.jsonl`。AWQ 示例使用 FP16 激活值，与 BF16 比较时也包含计算精度差异。
 
-指标、自定义候选、恢复运行和更新已有部署的用法，见[模型概率分布对比](../../benchmarks/docs/eval/fidelity_zh.md)。
+指标、自定义候选、恢复运行和更新已有部署的用法，见[模型概率分布对比](../../benchmarks/docs/eval/distribution-comparison_zh.md)。
 
 ## 存储与请求
 

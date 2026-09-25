@@ -143,7 +143,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 ## 质量评测：回答评分与模型对比
 
-使用 `foretoken eval`，通过 lm-evaluation-harness 或 EvalScope 为模型回答评分。服务选择方式与性能评测相同，任务和判分参数采用所选框架的写法。具体命令见[质量评测](../benchmarks/docs/eval/README_zh.md)。添加 `--reference` 可[比较候选与参考模型的概率分布](../benchmarks/docs/eval/fidelity_zh.md)。
+使用 `foretoken eval`，通过 lm-evaluation-harness 或 EvalScope 为模型回答评分。服务选择方式与性能评测相同，任务和判分参数采用所选框架的写法。具体命令见[质量评测](../benchmarks/docs/eval/README_zh.md)。添加 `--reference` 可[比较候选与参考模型的概率分布](../benchmarks/docs/eval/distribution-comparison_zh.md)。
 
 ## 性能剖析：执行瓶颈
 

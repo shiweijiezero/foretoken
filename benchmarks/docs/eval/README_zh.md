@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文 · [评测与性能剖析](../../README_zh.md)
 
-使用 lm-evaluation-harness 或 EvalScope，为运行中的模型回答评分。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的框架运行。添加 `--reference` 可[比较参考与候选模型的概率分布](fidelity_zh.md)，查看 KL、位宽对比图和 logit 差异。
+使用 lm-evaluation-harness 或 EvalScope，为运行中的模型回答评分。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的框架运行。添加 `--reference` 可[比较参考与候选模型的概率分布](distribution-comparison_zh.md)，查看 KL、位宽对比图和 logit 差异。
 
 ## lm-evaluation-harness
 
@@ -74,7 +74,7 @@ foretoken eval examples/quickstart \
 | --- | --- |
 | lm-evaluation-harness | 纯文本任务已完成的生成结果，包括多次采样；只补足尚未完成的次数 |
 | EvalScope | 服务地址和评测设置不变时，复用独立样本已完成的预测和评分 |
-| Reference 对比 | 已完成的评分窗口，见[恢复模型对比](fidelity_zh.md#恢复模型对比) |
+| 模型概率分布对比 | 已完成的评分窗口，见[恢复模型对比](distribution-comparison_zh.md#恢复模型对比) |
 
 按上述方式恢复时，使用 `--resume`，不再指定原生 `--use_cache` 或 `--use-cache`。性能测试、trace 回放、参数扫描和 SLO 搜索暂不支持此选项。
 

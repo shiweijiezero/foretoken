@@ -286,7 +286,9 @@ def evaluation_sinks(
                 config,
                 execution_dir=directory,
                 run_name=config.wandb.run_name
-                or f"{record['model']}_{record['evaluator']}_{Path(directory).name}",
+                or "_".join(str(part) for part in (
+                    record.get("model"), record.get("evaluator"), Path(directory).name,
+                ) if part),
                 group=config.wandb.group,
                 publisher=publisher,
                 run_config={**config.to_dict(), **record},

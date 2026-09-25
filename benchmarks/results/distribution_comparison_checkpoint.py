@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 
-class FidelityCheckpoint:
+class DistributionComparisonCheckpoint:
     """Own atomic window checkpoints in one result directory; resume from a read-only snapshot."""
 
     def __init__(self, directory: Path, resume: str, settings: dict[str, Any]) -> None:
@@ -26,7 +26,10 @@ class FidelityCheckpoint:
                     raise ValueError("--resume requires a result directory containing comparison.sqlite")
                 with closing(sqlite3.connect(source.as_uri() + "?mode=ro", uri=True)) as previous:
                     previous.backup(self.connection)
-                if self.get("settings") != settings:
+                previous_settings = self.get("settings")
+                if previous_settings is None or previous_settings.get("version") != settings["version"]:
+                    raise ValueError("Saved comparison format is not supported; start a new run without --resume")
+                if previous_settings != settings:
                     raise ValueError("Resume requires the same reference, candidates, and scoring options")
             else:
                 self.connection.executescript("""
@@ -42,7 +45,7 @@ class FidelityCheckpoint:
             self.connection.close()
             raise
 
-    def __enter__(self) -> FidelityCheckpoint:
+    def __enter__(self) -> DistributionComparisonCheckpoint:
         return self
 
     def __exit__(self, *args: object) -> None:

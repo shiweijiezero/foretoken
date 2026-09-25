@@ -18,10 +18,10 @@ from benchmarks.config.benchmark import (
 
 @dataclass
 class EvaluationConfig:
-    """Keep service discovery and publication separate from task-specific options."""
+    """Share service and output options; evaluator is absent for reference comparisons."""
 
     service: ModelServiceSource
-    evaluator: str
+    evaluator: str | None
     arguments: tuple[str, ...]
     outputs: BenchmarkOutputConfig
     wandb: WandbRunConfig
@@ -30,8 +30,8 @@ class EvaluationConfig:
     def to_dict(self) -> dict:
         """Return publication settings without authentication or native secret-bearing arguments."""
         return {
-            "evaluator": self.evaluator,
-            "model": self.service.model,
+            **({"evaluator": self.evaluator} if self.evaluator is not None else {}),
+            **({"model": self.service.model} if self.service.model else {}),
             "output": {"destinations": self.outputs.destinations},
         }
 
@@ -117,7 +117,7 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
             api_key=options.api_key,
             wait_timeout=options.wait_timeout,
         ),
-        evaluator="compare" if comparison else options.evaluator or "lm-eval",
+        evaluator=None if comparison else options.evaluator or "lm-eval",
         resume=options.resume,
         arguments=tuple(native),
         outputs=BenchmarkOutputConfig(options.output, options.output_dir),
@@ -130,9 +130,9 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
     )
     if options.help:
         if comparison:
-            from benchmarks.config.fidelity import add_fidelity_arguments
+            from benchmarks.config.distribution_comparison import add_distribution_comparison_arguments
 
-            add_fidelity_arguments(parser)
+            add_distribution_comparison_arguments(parser)
         parser.print_help()
     else:
         if not comparison:
