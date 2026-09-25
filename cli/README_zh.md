@@ -48,7 +48,7 @@ foretoken install
 
 安装会自动选择 NVIDIA 或沐曦运行时，并复用或安装 LeaderWorkerSet 控制器和 RDMA 设备插件。`--values` 中显式指定的运行时配置优先。混合 GPU 集群通过 `runtime.vllm.gpu.resourceName` 选择资源，或通过 `runtime.vllm.gpu.nodeSelector` 限定节点范围。
 
-看板和告警的使用见[可观测性](../observability/README_zh.md)。
+安装也会准备服务日志的持久存储与采集，使用集群默认 StorageClass，或通过 `--values` 选择的日志存储。历史日志查询、存储选择、看板和告警见[可观测性](../observability/README_zh.md)。
 
 ### 网关模式
 

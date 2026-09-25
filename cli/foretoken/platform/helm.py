@@ -140,6 +140,41 @@ class Helm(HelmClient):
         """Return the Prometheus release managed with the platform."""
         return ReleaseRef(self._config.prometheus.release_name, self._config.namespace)
 
+    def loki_release(self) -> ReleaseRef:
+        """Return the platform log-storage release identity."""
+        return ReleaseRef(self._config.loki.release_name, self._config.namespace)
+
+    def log_collector_release(self) -> ReleaseRef:
+        """Return the node log-collector release identity."""
+        return ReleaseRef(self._config.log_collector.release_name, self._config.namespace)
+
+    def install_loki(
+        self, release: ReleaseRef, values: dict[str, Any], timeout: str
+    ) -> None:
+        """Install persistent Loki through its native chart and shared image selection."""
+        chart = self._config.loki
+        args = self._managed_chart_args(release, chart.source, chart.version, timeout)
+        self._add_chart_image_sources(args, ("loki.image",))
+        args.extend(["--values", "-"])
+        self.run(args, input_text=yaml.safe_dump(values))
+
+    def install_log_collector(
+        self, release: ReleaseRef, values: dict[str, Any], timeout: str
+    ) -> None:
+        """Install node collectors through the upstream Fluent Bit chart."""
+        chart = self._config.log_collector
+        args = self._managed_chart_args(release, chart.source, chart.version, timeout)
+        # cr.fluentbit.io fronts Docker Hub; use its canonical publication for source selection.
+        values["image"] = {"repository": "docker.io/fluent/fluent-bit"}
+        args.extend(["--values", "-"])
+        for document in self._render_chart(args, input_text=yaml.safe_dump(values)):
+            if document["kind"] == "DaemonSet":
+                image = document["spec"]["template"]["spec"]["containers"][0]["image"]
+                selected = platform_image_reference(image, self._config.image_registry)
+                repository, tag = _image_repository_tag(selected)
+                values["image"] = {"repository": repository, "tag": tag}
+        self.run(args, input_text=yaml.safe_dump(values))
+
     def _managed_chart_resource(
         self,
         release: ReleaseRef,
@@ -476,6 +511,7 @@ class Helm(HelmClient):
         observability_labels: tuple[tuple[str, str], ...],
         observability_prometheus: str,
         grafana_anonymous_access: bool | None,
+        log_endpoint: str,
         gpu_resource_name: str | None,
         rdma_resource_name: str | None,
         rdma_managed: bool,
@@ -517,6 +553,7 @@ class Helm(HelmClient):
             observability_labels,
         )
         args.extend(["--set-string", f"observability.prometheus={observability_prometheus}"])
+        args.extend(["--set-string", f"observability.logs.datasourceURL={log_endpoint}"])
         if grafana_anonymous_access is not None:
             args.extend([
                 "--set-json",
