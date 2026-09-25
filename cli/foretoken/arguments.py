@@ -26,6 +26,7 @@ class InstallCommand:
     gateway_namespace: str
     gateway_section_name: str
     timeout: str
+    grafana_auth: str | None = None
 
 
 @dataclass(frozen=True)
@@ -215,6 +216,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="existing compatible Prometheus when automatic discovery is ambiguous",
     )
     install.add_argument(
+        "--grafana-auth",
+        choices=("anonymous", "password"),
+        help="managed Grafana access; overrides values, new installations allow anonymous viewing",
+    )
+    install.add_argument(
         "--frontend-mode",
         choices=("local", "gateway"),
         help="frontend access mode; new releases default to local",
@@ -379,6 +385,7 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             parsed_args.gateway_namespace,
             parsed_args.gateway_section_name,
             parsed_args.timeout,
+            parsed_args.grafana_auth,
         )
     if parsed_args.command == "uninstall":
         return UninstallCommand(parsed_args.timeout)

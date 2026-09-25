@@ -279,6 +279,16 @@
         "prometheus": {
           "type": "string"
         },
+        "grafana": {
+          "type": "object",
+          "properties": {
+            "anonymousAccess": {
+              "type": "boolean",
+              "description": "Allow read-only access without login to CLI-managed Grafana."
+            }
+          },
+          "additionalProperties": false
+        },
         "notifications": {
           "type": "object",
           "properties": {

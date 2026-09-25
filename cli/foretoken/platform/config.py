@@ -253,6 +253,25 @@ def runtime_overrides_from_values(
     return RuntimeOverrides(image, resource_name, selector)
 
 
+def grafana_anonymous_access_from_values(
+    values: tuple[dict[str, Any], ...],
+) -> bool | None:
+    """Read the last explicit Grafana access choice for the managed monitoring release."""
+    anonymous_access = None
+    for item in values:
+        observability = item.get("observability", {})
+        if not isinstance(observability, dict):
+            raise DeploymentError("observability must be a mapping")
+        grafana = observability.get("grafana", {})
+        if not isinstance(grafana, dict):
+            raise DeploymentError("observability.grafana must be a mapping")
+        if "anonymousAccess" in grafana:
+            anonymous_access = grafana["anonymousAccess"]
+            if not isinstance(anonymous_access, bool):
+                raise DeploymentError("observability.grafana.anonymousAccess must be a boolean")
+    return anonymous_access
+
+
 def load_balancer_config_from_values(
     values: dict[str, Any],
 ) -> LoadBalancerConfig | None:

@@ -29,6 +29,7 @@ from foretoken.manifest import DeploymentError
 from foretoken.observability import PrometheusRef, select_prometheus
 from foretoken.platform.config import (
     default_platform_config,
+    grafana_anonymous_access_from_values,
     load_platform_values,
     resolve_load_balancer_config,
     runtime_overrides_from_values,
@@ -171,6 +172,11 @@ class PlatformLifecycle:
             (migrate_stored_rdma_values(helm.release_user_values(platform)),)
             if platform_exists else ()
         )
+        grafana_anonymous_access = grafana_anonymous_access_from_values(
+            (*stored_values, *values)
+        )
+        if command.grafana_auth is not None:
+            grafana_anonymous_access = command.grafana_auth == "anonymous"
         stored_runtime = runtime_overrides_from_values(stored_values)
         runtime_scope = RuntimeOverrides(
             gpu_resource_name=(
@@ -333,6 +339,11 @@ class PlatformLifecycle:
         install_managed_prometheus = (
             managed_prometheus_exists or selected_prometheus is None
         )
+        if not install_managed_prometheus and grafana_anonymous_access is not None:
+            raise DeploymentError(
+                "observability.grafana.anonymousAccess configures only Grafana installed "
+                "by foretoken; configure the reused monitoring stack through its owner"
+            )
         exporters = tuple(
             (name, exporter)
             for name, exporter in (
@@ -453,7 +464,9 @@ class PlatformLifecycle:
             helm.install_prometheus(
                 managed_prometheus,
                 tuple(sorted(monitor_namespaces)),
+                managed_prometheus_exists,
                 command.timeout,
+                anonymous_access=grafana_anonymous_access,
             )
             mark_managed_metrics_scraper_namespace(kubectl, managed_prometheus.namespace)
             resource = helm.prometheus_resource(managed_prometheus)
@@ -513,6 +526,7 @@ class PlatformLifecycle:
             gateway_controller_name=gateway_plan.controller_name,
             observability_labels=observability_labels,
             observability_prometheus=f"{selected_prometheus.namespace}/{selected_prometheus.name}",
+            grafana_anonymous_access=grafana_anonymous_access,
             gpu_resource_name=gpu_resource_name,
             rdma_resource_name=rdma.resource_name,
             rdma_managed=rdma.managed,

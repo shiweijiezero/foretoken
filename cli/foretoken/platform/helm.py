@@ -475,6 +475,7 @@ class Helm(HelmClient):
         gateway_controller_name: str,
         observability_labels: tuple[tuple[str, str], ...],
         observability_prometheus: str,
+        grafana_anonymous_access: bool | None,
         gpu_resource_name: str | None,
         rdma_resource_name: str | None,
         rdma_managed: bool,
@@ -516,6 +517,11 @@ class Helm(HelmClient):
             observability_labels,
         )
         args.extend(["--set-string", f"observability.prometheus={observability_prometheus}"])
+        if grafana_anonymous_access is not None:
+            args.extend([
+                "--set-json",
+                "observability.grafana.anonymousAccess=" + json.dumps(grafana_anonymous_access),
+            ])
         if gpu_resource_name is not None:
             args.extend(
                 [
@@ -662,9 +668,34 @@ class Helm(HelmClient):
         self,
         release: ReleaseRef,
         service_monitor_namespaces: tuple[str, ...],
+        reuse_values: bool,
         timeout: str,
+        *,
+        anonymous_access: bool | None = None,
     ) -> None:
-        """Install or upgrade the CLI-managed kube-prometheus-stack release."""
+        """Install managed monitoring with stored settings and the platform's Grafana access choice."""
+        # Preserve monitoring customizations; the platform access choice grants only viewing.
+        anonymous_settings = {"enabled": True, "org_role": "Viewer"}
+        values = {
+            "grafana": {
+                "defaultDashboardsEnabled": False,
+                "grafana.ini": {
+                    "auth.anonymous": anonymous_settings,
+                    "users": {"default_theme": "light"},
+                    # Bundled plugins follow image upgrades instead of live replacement.
+                    "plugins": {"preinstall_auto_update": False},
+                },
+            },
+        }
+        if reuse_values:
+            values = _merge_values(values, self.release_user_values(release))
+        if anonymous_access is not None:
+            values = _merge_values(
+                values,
+                {"grafana": {"grafana.ini": {"auth.anonymous": {
+                    **anonymous_settings, "enabled": anonymous_access,
+                }}}},
+            )
         selected_namespaces = tuple(sorted(set(service_monitor_namespaces)))
         if not selected_namespaces:
             raise DeploymentError("managed Prometheus requires a monitor namespace")
@@ -754,7 +785,8 @@ class Helm(HelmClient):
                 ),
             ]
         )
-        self.run(args)
+        args.extend(["--values", "-"])
+        self.run(args, input_text=yaml.safe_dump(values))
 
     def install_dcgm_exporter(
         self,

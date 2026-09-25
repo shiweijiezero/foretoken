@@ -16,26 +16,39 @@ foretoken install
 foretoken deploy examples/quickstart
 ```
 
-`foretoken install` 会复用集群中已有的 Prometheus，没有时安装一套由 CLI 管理的 kube-prometheus-stack。如果安装了监控栈，使用 CLI 管理的 Grafana 并获取自动生成的管理员凭据；如果复用已有监控栈，则使用该平台的 Grafana 和凭据：
-
-```bash
-GRAFANA_USER="$(kubectl get secret \
-  --namespace foretoken-platform \
-  foretoken-prometheus-grafana \
-  --output jsonpath='{.data.admin-user}' | base64 --decode)"
-GRAFANA_PASSWORD="$(kubectl get secret \
-  --namespace foretoken-platform \
-  foretoken-prometheus-grafana \
-  --output jsonpath='{.data.admin-password}' | base64 --decode)"
-printf 'Grafana user: %s\nGrafana password: %s\n' \
-  "$GRAFANA_USER" "$GRAFANA_PASSWORD"
-```
+`foretoken install` 会复用集群中已有的 Prometheus，没有时安装一套由 CLI 管理的 kube-prometheus-stack。Foretoken 安装的 Grafana 默认使用浅色主题，提供 Foretoken 中英文看板，允许免登录只读查看；编辑和管理仍需登录。复用已有监控栈时，沿用该平台的 Grafana 和访问设置。
 
 在 Grafana 中打开 Foretoken 系统概览，或英文版 Foretoken System Overview。先选命名空间和模型，再按模型实例、执行角色或引擎 rank 缩小范围。模型服务、缓存、GPU 和路由面板随之筛选。“路由决策”展示同一模型、同一角色内各后端的占比；一个后端对应一个模型实例和数据并行 rank。筛选后端时，分母仍保留该模型该角色的全部后端。
 
 “共享前端”展示所选前端的全部流量，不归属于单个模型。扩缩容按所选模型和服务查看，控制面诊断则反映整个平台。
 
 升级 Foretoken 后，再执行 `foretoken install`，更新控制器、前端、采集配置和看板。只导入看板 JSON 不会更新指标生产端。
+
+## 要求登录并获取密码
+
+要求登录后才能查看看板：
+
+```bash
+foretoken install --grafana-auth password
+```
+
+恢复免登录只读查看：
+
+```bash
+foretoken install --grafana-auth anonymous
+```
+
+源码安装在原安装命令上添加同一选项。后续安装会保留选择；该选项只配置 Foretoken 安装的 Grafana。使用配置文件时，可设置 `observability.grafana.anonymousAccess`；`--grafana-auth` 优先于文件中的设置。
+
+管理员登录使用安装时生成的账号和密码：
+
+```bash
+kubectl get secret --namespace foretoken-platform \
+  foretoken-prometheus-grafana --output json \
+  | python3 -c 'import base64,json,sys; d=json.load(sys.stdin)["data"]; print("User:",base64.b64decode(d["admin-user"]).decode()); print("Password:",base64.b64decode(d["admin-password"]).decode())'
+```
+
+首次安装的密码保存在该 Secret 中；如果已在 Grafana 中修改密码，使用修改后的密码。自定义账号、认证方式和持久化设置见 [Grafana Helm Chart](https://github.com/grafana/helm-charts/tree/main/charts/grafana)。
 
 ## 确认采集正常
 
