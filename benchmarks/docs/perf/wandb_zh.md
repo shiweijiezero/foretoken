@@ -14,7 +14,7 @@ foretoken perf examples/quickstart \
 
 `--wandb-entity` 选择账号或团队。group 和运行名分别设置。扫描、多数据集在未指定 group 时自动分组，各子运行会在名称后追加标识。单次评测默认不分组。
 
-W&B 页面会展示最终汇总指标、P50/P95/P99 百分位指标，以及按时间、累计结果和逐请求统计的曲线。Kustomize 评测还会展示副本数变化。可在 group 的 Workspace 中对比各次运行，Summary 保留最终值。窗口定义见[结果指标](../../metrics_zh.md#曲线)。
+W&B 页面会展示最终汇总指标、P50/P95/P99 百分位指标，以及按时间、累计结果和逐请求统计的曲线。混合负载另外展示共用时间轴的数据集、模型和请求类别汇总表与时间曲线，以及包含逐请求标签和目标/实际输出 token 数的请求表。Kustomize 评测还会展示副本数变化。可在 group 的 Workspace 中对比各次运行，Summary 保留最终值。窗口定义见[结果指标](../../metrics_zh.md#曲线)。
 
 ![逐请求耗时与 token 数](../imgs/request-order-wandb.png)
 

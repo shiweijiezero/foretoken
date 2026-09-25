@@ -226,6 +226,32 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 stream=bool(run.metrics["stream"]),
             ),
         ]
+        for field, group_name in (("dataset", "datasets"), ("model", "models"), ("request_class", "request_classes")):
+            groups = run.metrics.get(group_name) or {}
+            if not groups:
+                continue
+            labels = {name: f"{group_name}/{name}" for name in groups}
+            for name, label in labels.items():
+                subset = [item for item in run.measurements if getattr(item, field) == name]
+                for row in time_series(subset, duration=float(run.metrics["benchmark_time"]), stream=bool(run.metrics["stream"])):
+                    elapsed_rows.append({
+                        ELAPSED_TIME: row[ELAPSED_TIME],
+                        **{f"{label}/{key.removeprefix('Time/')}": value
+                           for key, value in row.items() if key != ELAPSED_TIME},
+                    })
+            sdk_run.log({f"Breakdown/{group_name}": wandb.Table(
+                columns=["Name", "Requests", "Success", "Request throughput (req/s)",
+                         "Output tokens/s", "P95 E2EL (s)", "SLO attainment (%)", "Goodput (req/s)"],
+                data=[[
+                    name, group["request_num"], group["success_num"],
+                    group["throughput"]["requests_per_second"],
+                    group["throughput"]["generation_tokens_per_second"],
+                    group["latency"]["p95"],
+                    (group.get("slo") or {}).get("slo_attainment") * 100
+                    if (group.get("slo") or {}).get("slo_attainment") is not None else None,
+                    (group.get("slo") or {}).get("request_goodput"),
+                ] for name, group in groups.items()],
+            )})
         if replica_observations:
             elapsed_rows.extend(replica_history_rows(replica_observations))
         elapsed_rows.sort(key=lambda row: float(row[ELAPSED_TIME]))
@@ -240,6 +266,20 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 ),
             ),
         )
+        if any(run.metrics.get(name) for name in ("datasets", "models", "request_classes")) or any(
+            item.target_output_tokens is not None for item in run.measurements
+        ):
+            request_slo_met = (run.metrics.get("slo") or {}).get("request_slo_met")
+            sdk_run.log({"Breakdown/Requests": wandb.Table(
+                columns=["Start (s)", "Dataset", "Model", "Request class", "Priority",
+                         "Target output tokens", "Actual output tokens", "E2EL (s)", "Success", "SLO met"],
+                data=[[
+                    item.started_at, item.dataset, item.model, item.request_class,
+                    item.priority, item.target_output_tokens, item.output_tokens,
+                    item.latency, item.succeeded,
+                    request_slo_met[index] if isinstance(request_slo_met, list) else None,
+                ] for index, item in enumerate(run.measurements)],
+            )})
         for axis, rows in series:
             defined = {axis}
             for row in rows:

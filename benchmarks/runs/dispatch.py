@@ -35,6 +35,7 @@ def measurement_runner(
     workload = benchmark.resolved_workload
     if (
         workload.has_multiple_datasets
+        or benchmark.slo.by_class is not None
         or benchmark.is_multi_turn
         or benchmark.load.arrival_pattern != "poisson"
         or benchmark.load.duration_seconds is not None

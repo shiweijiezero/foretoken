@@ -1,0 +1,23 @@
+diff --git a/rust/src/engine-core-client/src/protocol/handshake.rs b/rust/src/engine-core-client/src/protocol/handshake.rs
+--- a/rust/src/engine-core-client/src/protocol/handshake.rs
++++ b/rust/src/engine-core-client/src/protocol/handshake.rs
+@@ -100,6 +100,9 @@ pub struct EngineCoreReadyResponse {
+     /// KV-event publisher configuration, if configured.
+     #[serde(default)]
+     pub kv_events_config: Option<KvEventsConfig>,
++    /// Resolved logprob limit; -1 permits the complete model vocabulary.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub max_logprobs: Option<i32>,
+ }
+
+ /// Frontend-owned ZMQ addresses that are sent to the engine during startup
+diff --git a/rust/src/engine-core-client/src/mock_engine.rs b/rust/src/engine-core-client/src/mock_engine.rs
+--- a/rust/src/engine-core-client/src/mock_engine.rs
++++ b/rust/src/engine-core-client/src/mock_engine.rs
+@@ -67,5 +67,6 @@ pub fn default_ready_response() -> EngineCoreReadyResponse {
+         kv_cache_size_tokens: None,
+         kv_cache_max_concurrency: None,
+         kv_events_config: None,
++        max_logprobs: None,
+     }
+ }

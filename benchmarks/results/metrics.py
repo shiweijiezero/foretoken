@@ -37,6 +37,10 @@ class RequestMeasurement:
     status_code: int | None = None
     error_message: str | None = None
     dataset: str | None = None
+    model: str | None = None
+    priority: int | None = None
+    request_class: str | None = None
+    target_output_tokens: int | None = None
 
 
 def request_activity_events(
@@ -133,18 +137,37 @@ def request_slo_results(
     measurements: list[RequestMeasurement],
     criteria: dict[str, str] | None,
     total_time: float,
+    by_class: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any] | None:
-    """Evaluate request-level SLO diagnostics and goodput from measured requests."""
-    if not criteria:
+    """Evaluate each request against its class target or the global fallback."""
+    if not criteria and not by_class:
         return None
-    checks: list[tuple[str, Any, float]] = []
-    for name, expression in criteria.items():
-        metric_match = _SLO_CRITERION.fullmatch(name)
-        expression_match = _SLO_EXPRESSION.fullmatch(expression)
-        if metric_match is None or expression_match is None:
-            continue
-        checks.append((metric_match.group(1), _SLO_OPERATORS[expression_match.group(1)], float(expression_match.group(2))))
-    if not checks:
+
+    def checks_for(target: dict[str, str]) -> list[tuple[str, Any, float]]:
+        checks = []
+        for name, expression in target.items():
+            metric_match = _SLO_CRITERION.fullmatch(name)
+            expression_match = _SLO_EXPRESSION.fullmatch(expression)
+            if metric_match is None or expression_match is None:
+                raise ValueError(
+                    "Request-level SLO requires a latency/ttft/tpot/itl criterion, "
+                    f"got {name}={expression}"
+                )
+            checks.append((
+                metric_match.group(1),
+                _SLO_OPERATORS[expression_match.group(1)],
+                float(expression_match.group(2)),
+            ))
+        return checks
+
+    targets = {name: checks_for(target) for name, target in (by_class or {}).items()}
+    # Search criteria may also contain aggregate-only metrics such as rps.
+    supported = {
+        name: expression for name, expression in (criteria or {}).items()
+        if _SLO_CRITERION.fullmatch(name) and _SLO_EXPRESSION.fullmatch(expression)
+    }
+    global_checks = checks_for(supported) if supported else None
+    if not by_class and global_checks is None:
         return {
             "criteria": criteria,
             "request_slo_met": None,
@@ -154,6 +177,7 @@ def request_slo_results(
         }
 
     request_slo_met: list[bool] = []
+    applied_criteria: list[dict[str, str]] = []
     good_requests = 0
     good_tokens = 0
     for item in measurements:
@@ -163,6 +187,17 @@ def request_slo_results(
             "tpot": item.tpot,
             "itl": max(item.itl_samples) if item.itl_samples else None,
         }
+        if item.request_class in targets:
+            applied_criteria.append(by_class[item.request_class])
+            checks = targets[item.request_class]
+        elif global_checks is not None:
+            applied_criteria.append(supported)
+            checks = global_checks
+        else:
+            raise ValueError(
+                f"No SLO target for request_class {item.request_class!r}; "
+                "set --slo-by-class or --slo-params"
+            )
         met = item.succeeded
         for metric, operator, expected in checks:
             actual = values[metric]
@@ -175,11 +210,55 @@ def request_slo_results(
     duration = float(total_time)
     return {
         "criteria": criteria,
+        "by_class": by_class,
+        "applied_criteria": applied_criteria,
         "request_slo_met": request_slo_met,
         "slo_attainment": good_requests / len(measurements) if measurements else 0.0,
         "request_goodput": good_requests / duration if duration > 0 else None,
         "token_goodput": good_tokens / duration if duration > 0 else None,
     }
+
+
+def summarize_measurement_groups(
+    measurements: list[RequestMeasurement],
+    *,
+    total_time: float,
+    stream: bool,
+    arrival_rate: float,
+    reported_concurrency: int,
+    slo_criteria: dict[str, str] | None,
+    slo_by_class: dict[str, dict[str, str]] | None,
+    include_single_dataset: bool = False,
+) -> dict[str, dict[str, Any]]:
+    """Summarize labeled requests on their shared experiment clock without per-group GPU assumptions."""
+    result: dict[str, dict[str, Any]] = {}
+    dimensions = (
+        ("dataset", "datasets"),
+        ("model", "models"),
+        ("request_class", "request_classes"),
+    )
+    for field, group_name in dimensions:
+        names = sorted({
+            value for item in measurements
+            if (value := getattr(item, field)) is not None
+        })
+        if not names:
+            continue
+        if len(names) == 1 and field != "request_class" and not (
+            field == "dataset" and include_single_dataset
+        ):
+            continue
+        result[group_name] = {}
+        for name in names:
+            subset = [item for item in measurements if getattr(item, field) == name]
+            result[group_name][name] = summarize_measurements(
+                subset, total_time=total_time, stream=stream,
+                arrival_rate=arrival_rate, request_count=len(subset),
+                reported_concurrency=reported_concurrency, gpu_count=None,
+                include_normalized_throughput=False,
+                slo_criteria=slo_criteria, slo_by_class=slo_by_class,
+            )
+    return result
 
 
 def summarize_measurements(
@@ -193,6 +272,7 @@ def summarize_measurements(
     gpu_count: int | None,
     include_normalized_throughput: bool = True,
     slo_criteria: dict[str, str] | None = None,
+    slo_by_class: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Aggregate request measurements and workload coordinates into the published metrics.
 
@@ -262,7 +342,7 @@ def summarize_measurements(
                 gpu_count=gpu_count,
             )
         )
-    slo = request_slo_results(measurements, slo_criteria, total_time)
+    slo = request_slo_results(measurements, slo_criteria, total_time, slo_by_class)
     return {
         "request_num": request_num,
         "success_num": success_count,

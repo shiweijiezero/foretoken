@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmarks.datasets.conversations import Task, iter_dataset_rows, parse_message_turns
+from benchmarks.datasets.conversations import Task, iter_dataset_rows, parse_message_turns, request_row_metadata
 
 # Each Mooncake hash ID identifies one fixed-size input-token block.
 MOONCAKE_BLOCK_TOKENS = 512
@@ -31,6 +31,7 @@ class ArrivalTraceEvent:
     hash_ids: list[int] | None = None
     conversation_id: str | None = None
     request_origin: str = ""
+    metadata: dict[str, Any] | None = None
 
 
 def _parse_studychat_event(
@@ -86,7 +87,7 @@ def _parse_studychat_event(
         source_row_index=source_row_index,
         request=Task(
             id=f"{dataset_path}:{source_row_index}", turns=turns,
-            metadata={key: row[key] for key in ("tools", "tool_choice", "parallel_tool_calls") if key in row},
+            metadata=request_row_metadata(row, dataset_path, line_number),
         ),
         input_tokens=input_tokens,
         conversation_id=str(conversation_id),
@@ -136,6 +137,7 @@ def _parse_mooncake_event(
         source_row_index=source_row_index,
         input_tokens=input_tokens,
         hash_ids=hash_ids,
+        metadata=request_row_metadata(row, dataset_path, line_number),
         conversation_id=(
             str(conversation_id) if conversation_id is not None else None
         ),

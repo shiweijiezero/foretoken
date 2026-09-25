@@ -48,7 +48,7 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
         allow_abbrev=False,
         add_help=False,
         usage="%(prog)s [PATH | --url URL] [options] [evaluator options]",
-        description="Score a model service with lm-evaluation-harness or EvalScope.",
+        description="Score model answers or compare model output distributions.",
         epilog="PATH is a Kustomize directory placed immediately after eval. Native task options need no separator.",
     )
     parser.add_argument(
@@ -58,7 +58,7 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
         help="show Foretoken and selected evaluator options",
     )
     parser.add_argument(
-        "--evaluator", choices=("lm-eval", "evalscope"), default="lm-eval"
+        "--evaluator", choices=("lm-eval", "evalscope", "fidelity"), default="lm-eval"
     )
     parser.add_argument(
         "--url", default=source.url, help="existing Chat Completions URL"
@@ -113,6 +113,7 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
     if options.help:
         parser.print_help()
     else:
-        config.service.validate()
+        if config.evaluator != "fidelity":
+            config.service.validate()
         config.outputs.validate()
     return config, options.help

@@ -1,0 +1,29 @@
+diff --git a/rust/src/text/src/output/logprobs.rs b/rust/src/text/src/output/logprobs.rs
+--- a/rust/src/text/src/output/logprobs.rs
++++ b/rust/src/text/src/output/logprobs.rs
+@@ -117,13 +117,18 @@ fn decode_position_logprobs<T: Tokenizer + ?Sized>(
+             .entries
+             .iter()
+             .map(|entry| {
+-                tokenizer.decode(&[entry.token_id], skip_special_tokens).map(|token| {
+-                    DecodedTokenLogprob {
+-                        token_id: entry.token_id,
+-                        token,
+-                        logprob: entry.logprob,
+-                        rank: entry.rank,
+-                    }
++                // Model output heads can include padding outside the tokenizer vocabulary.
++                // Preserve those probability coordinates without decoding them as text.
++                let token = if entry.token_id as usize >= tokenizer.vocab_size() {
++                    Ok(format!("token_id:{}", entry.token_id))
++                } else {
++                    tokenizer.decode(&[entry.token_id], skip_special_tokens)
++                };
++                token.map(|token| DecodedTokenLogprob {
++                    token_id: entry.token_id,
++                    token,
++                    logprob: entry.logprob,
++                    rank: entry.rank,
+                 })
+             })
+             .try_collect()?,

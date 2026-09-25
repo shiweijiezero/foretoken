@@ -140,6 +140,7 @@ pub async fn load_snapshot_runtime(
     model_id: &str,
     revision: &str,
     max_model_len: u32,
+    max_logprobs: Option<i32>,
     model_dtype: Option<ModelDtype>,
 ) -> std::result::Result<SnapshotRuntime, TextBackendLoadError> {
     let text_backend = load_text_backend(source, model_id, revision).await?;
@@ -163,7 +164,9 @@ pub async fn load_snapshot_runtime(
         None => ChatRequestProcessor::render_only(chat_backend),
     };
     Ok(SnapshotRuntime {
-        text_processor: Arc::new(TextRequestProcessor::new(text_backend, max_model_len)),
+        text_processor: Arc::new(
+            TextRequestProcessor::new(text_backend, max_model_len).with_max_logprobs(max_logprobs),
+        ),
         tokenizer,
         chat_processor: Arc::new(chat_processor),
         supports_multimodal,

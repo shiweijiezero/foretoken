@@ -148,6 +148,9 @@ pub struct RuntimeMetadataResponse {
     #[serde(default)]
     pub model_dtype: Option<ModelDtype>,
     pub effective_max_model_len: u32,
+    /// Engine-configured logprob limit; -1 permits the complete model vocabulary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_logprobs: Option<i32>,
     pub ec_transfer: Option<RuntimeEcTransferMetadata>,
     #[serde(default)]
     pub capabilities: std::collections::BTreeSet<String>,

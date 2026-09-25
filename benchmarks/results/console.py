@@ -173,7 +173,7 @@ def format_benchmark_config(
     return (
         "\n===== Foretoken Benchmark Configuration ====\n"
         f"  URL        : {service.chat_completions_url}\n"
-        f"  Model      : {service.model}\n"
+        f"  Model      : {service.model or 'per dataset row'}\n"
         f"{concurrency_line}"
         f"  {count_name:<11}: {request_count_label}\n"
         f"  Arrival rate: {arrival_rate_label}\n"
@@ -371,6 +371,24 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
             "  Output token throughput per GPU (tokens/s): "
             f"{_format_metric(per_gpu)}"
         )
+    for dimension, title in (("datasets", "Dataset"), ("models", "Model"), ("request_classes", "Request class")):
+        groups = metrics.get(dimension)
+        if not groups:
+            continue
+        lines.append(f"  {title} breakdown (shared {metrics['benchmark_time']:.2f}s window):")
+        lines.append("    Name                         Success     Req/s   Out tok/s  P95 E2EL   SLO %  Good req/s")
+        for name, group in groups.items():
+            group_slo = group.get("slo") or {}
+            attainment = group_slo.get("slo_attainment")
+            display_name = Path(name).name if Path(name).is_absolute() else name
+            lines.append(
+                f"    {display_name[:28]:<28} {group['success_num']:>3}/{group['request_num']:<4} "
+                f"{_format_metric(group['throughput']['requests_per_second'], 2):>9} "
+                f"{_format_metric(group['throughput']['generation_tokens_per_second'], 2):>11} "
+                f"{_format_metric(group['latency']['p95'], 3):>9} "
+                f"{_format_metric(attainment * 100 if attainment is not None else None, 1):>7} "
+                f"{_format_metric(group_slo.get('request_goodput'), 2):>11}"
+            )
     if metrics.get("avg_cached_input_tokens") is not None:
         lines.append(
             "  Mean reported cached input tokens: "

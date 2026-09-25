@@ -116,11 +116,11 @@ def _select_model(models: Iterable[str], requested: str) -> str:
 def _model_service_refs(
     deployment: ForetokenDeployment, model: str
 ) -> tuple[ResourceRef, ...]:
-    """Return every ModelService identity that declares the selected model."""
+    """Return identities for the selected model, or the deployment's full mixed-model scope."""
     return tuple(
         ResourceRef("ModelService", name, deployment.namespace)
         for name, value in sorted(deployment.models.items())
-        if value == model
+        if not model or value == model
     )
 
 
@@ -187,11 +187,16 @@ def _discover_model_service(
     deployment: ForetokenDeployment,
     kubectl: Kubectl,
     source: ModelServiceSource,
+    *,
+    allow_multiple_models: bool = False,
 ) -> ModelService:
     """Wait for the rendered service to become ready and return its public model service."""
     wait_seconds = timeout_seconds(source.wait_timeout)
-    model = _select_model(deployment.models.values(), source.model)
-    gpu_count = _model_gpu_count(deployment, model)
+    model = (
+        "" if allow_multiple_models and not source.model and len(set(deployment.models.values())) > 1
+        else _select_model(deployment.models.values(), source.model)
+    )
+    gpu_count = _model_gpu_count(deployment, model) if model else None
     wait_for_resources(deployment.service_refs(), kubectl, source.wait_timeout)
     endpoint = resolve_frontend_endpoint(deployment, kubectl, source.wait_timeout)
     chat_completions_url = f"{endpoint.url}/v1/chat/completions"
@@ -276,7 +281,8 @@ def _created_deployment(
 
 @contextmanager
 def resolve_model_service(
-    source: ModelServiceSource, *, retain_runtime_cache: bool = False
+    source: ModelServiceSource, *, retain_runtime_cache: bool = False,
+    allow_multiple_models: bool = False,
 ) -> Iterator[ModelService]:
     """Yield the model service selected by the benchmark user.
 
@@ -319,7 +325,9 @@ def resolve_model_service(
             )
             logger.info("Deploying Foretoken service from %s", deployment.path)
             volumes.apply(created, source.wait_timeout)
-        service = _discover_model_service(deployment, kubectl, source)
+        service = _discover_model_service(
+            deployment, kubectl, source, allow_multiple_models=allow_multiple_models
+        )
         serving = True
         yield service
     except CaptureCleanupError:

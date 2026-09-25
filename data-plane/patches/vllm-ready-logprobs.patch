@@ -1,0 +1,22 @@
+diff --git a/vllm/v1/engine/__init__.py b/vllm/v1/engine/__init__.py
+--- a/vllm/v1/engine/__init__.py
++++ b/vllm/v1/engine/__init__.py
+@@ -88,6 +88,7 @@ class EngineCoreReadyResponse:
+     max_num_seqs: int
+     max_num_batched_tokens: int
+     instance_id: str
++    max_logprobs: int | None = None
+     # KV cache capacity (None for encoder-only/attention-free models).
+     kv_cache_size_tokens: int | None = None
+     kv_cache_max_concurrency: float | None = None
+diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -1617,6 +1617,7 @@
+         return EngineCoreReadyResponse(
+             max_model_len=self.vllm_config.model_config.max_model_len,
++            max_logprobs=self.vllm_config.model_config.max_logprobs,
+             num_gpu_blocks=self.vllm_config.cache_config.num_gpu_blocks or 0,
+             block_size=self.vllm_config.cache_config.block_size,
+             dp_stats_address=self.frontend_stats_publish_address,
+             dtype=str(self.vllm_config.model_config.dtype).removeprefix("torch."),

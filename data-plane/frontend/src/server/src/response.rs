@@ -287,10 +287,22 @@ fn selected_logprob(
         .find(|entry| entry.token_id == token_id)
 }
 
+fn logprob_token_name(
+    entry: &foretoken_text::DecodedTokenLogprob,
+    return_as_token_id: bool,
+) -> String {
+    if return_as_token_id {
+        format!("token_id:{}", entry.token_id)
+    } else {
+        entry.token.clone()
+    }
+}
+
 fn completion_logprobs(
     token_ids: &[u32],
     logprobs: Option<DecodedLogprobs>,
     initial_text_offset: usize,
+    return_as_token_id: bool,
 ) -> Option<CompletionLogprobs> {
     let logprobs = logprobs?;
     let mut text_offset = Vec::with_capacity(token_ids.len());
@@ -300,19 +312,29 @@ fn completion_logprobs(
     let mut offset = initial_text_offset;
 
     for (token_id, position) in token_ids.iter().copied().zip(logprobs.positions) {
-        let selected = selected_logprob(&position, token_id)
-            .map(|entry| (entry.token.clone(), entry.logprob.max(-9999.0)));
+        let selected_entry = selected_logprob(&position, token_id);
+        let selected = selected_entry.map(|entry| {
+            (
+                logprob_token_name(entry, return_as_token_id),
+                entry.logprob.max(-9999.0),
+            )
+        });
         let token = selected.as_ref().map_or_else(
             || format!("token_id:{token_id}"),
             |(token, _)| token.clone(),
         );
         let top = position
             .entries
-            .into_iter()
-            .map(|entry| (entry.token, entry.logprob.max(-9999.0)))
+            .iter()
+            .map(|entry| {
+                (
+                    logprob_token_name(entry, return_as_token_id),
+                    entry.logprob.max(-9999.0),
+                )
+            })
             .collect::<BTreeMap<_, _>>();
         text_offset.push(offset);
-        offset += token.len();
+        offset += selected_entry.map_or(token.len(), |entry| entry.token.len());
         token_logprobs.push(selected.map(|(_, logprob)| logprob));
         tokens.push(token);
         top_logprobs.push(Some(top));
@@ -627,6 +649,7 @@ pub(crate) struct CompletionResponseOptions {
     pub echo: bool,
     pub expose_logprobs: bool,
     pub return_token_ids: bool,
+    pub return_tokens_as_token_ids: bool,
     pub return_prompt_token_ids: bool,
 }
 
@@ -694,6 +717,7 @@ pub(crate) async fn text_collected_many(
                                     &output.token_ids,
                                     output.logprobs,
                                     prompt_text.len(),
+                                    options.return_tokens_as_token_ids,
                                 )
                             })
                             .flatten(),
@@ -735,6 +759,7 @@ pub(crate) fn text_stream_many(
     idle: Duration,
     include_usage: bool,
     return_token_ids: bool,
+    return_tokens_as_token_ids: bool,
     return_prompt_token_ids: bool,
 ) -> Response {
     let Some(first) = generated.first() else {
@@ -755,7 +780,12 @@ pub(crate) fn text_stream_many(
                 match event {
                     Ok(DecodedTextEvent::Start { .. }) => {}
                     Ok(DecodedTextEvent::TextDelta { delta, token_ids, logprobs, finished }) => {
-                        let logprobs = completion_logprobs(&token_ids, logprobs, text_offset);
+                        let logprobs = completion_logprobs(
+                            &token_ids,
+                            logprobs,
+                            text_offset,
+                            return_tokens_as_token_ids,
+                        );
                         text_offset += delta.len();
                         if !delta.is_empty() || logprobs.is_some() {
                             yield Ok::<_, Infallible>(Event::default().json_data(CompletionStreamResponse {

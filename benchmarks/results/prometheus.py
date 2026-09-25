@@ -34,7 +34,7 @@ class PrometheusObserver:
         self._prometheus: PrometheusRef | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self._samples: list[dict[str, Any]] = []
+        self._samples: list[tuple[float, dict[str, Any]]] = []
         self._errors = 0
         self._last_error: str | None = None
 
@@ -63,12 +63,13 @@ class PrometheusObserver:
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
+                sampled_at = time.perf_counter()
                 sample = self._read_sample()
             except (DeploymentError, KeyError, TypeError, ValueError) as exc:
                 self._errors += 1
                 self._last_error = str(exc)
             else:
-                self._samples.append(sample)
+                self._samples.append((sampled_at, sample))
             self._stop.wait(_SAMPLE_INTERVAL_SECONDS)
 
     def _read_sample(self) -> dict[str, Any]:
@@ -76,7 +77,7 @@ class PrometheusObserver:
             raise RuntimeError("Prometheus observer is not active")
         namespace = self._service.model_service_refs[0].namespace
         namespace_label = json.dumps(namespace)
-        model_label = json.dumps(self._service.model)
+        model_filter = f",model_name={json.dumps(self._service.model)}" if self._service.model else ""
         expressions = {
             "requests_running": (
                 f"foretoken:model_server_requests_running:sum{{namespace={namespace_label}}}"
@@ -110,8 +111,8 @@ class PrometheusObserver:
             ),
             "routing_share_rate": (
                 "sum by(model_name,model_role,route_target_id,data_parallel_rank) "
-                f"(rate(foretoken_router_target_selections_total{{namespace={namespace_label},"
-                f"model_name={model_label}}}[1m]))"
+                f"(rate(foretoken_router_target_selections_total{{namespace={namespace_label}"
+                f"{model_filter}}}[1m]))"
             ),
         }
         return {
@@ -133,16 +134,14 @@ class PrometheusObserver:
         }
 
     def finish(self, time_origin: float | None) -> dict[str, Any]:
-        """Stop sampling and return raw series with the benchmark time axis."""
+        """Align samples to a perf_counter origin while retaining wall-clock observed_at."""
         self.close()
         prometheus = self._prometheus
         rows = []
-        for sample in self._samples:
+        for sampled_at, sample in self._samples:
             row = dict(sample)
             if time_origin is not None:
-                row["elapsed_time_s"] = max(
-                    0.0, float(sample["observed_at"]) - time_origin
-                )
+                row["elapsed_time_s"] = max(0.0, sampled_at - time_origin)
             rows.append(row)
         return {
             "source": (

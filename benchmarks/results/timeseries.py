@@ -40,6 +40,8 @@ def request_series(
             row["Requests/SLO met"] = int(slo_met[measurement_index])
         if item.input_tokens is not None:
             row["Requests/Input tokens"] = item.input_tokens
+        if item.target_output_tokens is not None:
+            row["Requests/Target output tokens"] = item.target_output_tokens
         if item.output_tokens is not None:
             row["Requests/Output tokens"] = item.output_tokens
         if item.cached_input_tokens is not None:

@@ -74,8 +74,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         quiet = benchmark.outputs.includes("quiet")
         configure_logging(not quiet)
         with resolve_model_service(
-            benchmark.service, retain_runtime_cache=benchmark.profile is not None
+            benchmark.service, retain_runtime_cache=benchmark.profile is not None,
+            allow_multiple_models=bool(
+                benchmark.trace.trace_selector
+                or (
+                    benchmark.resolved_workload.dataset_selectors
+                    and benchmark.resolved_workload.dataset_selectors != ["random"]
+                )
+            ),
         ) as service:
+            if benchmark.profile is not None and not service.model:
+                raise ValueError("--profile requires --model for a multi-model deployment")
             if benchmark.service.health_url:
                 asyncio.run(require_health_endpoint(benchmark.service.health_url))
                 logger.info("Model service health check passed")

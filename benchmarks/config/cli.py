@@ -113,6 +113,12 @@ def _add_benchmark_arguments(
             "org/name[:split], or hf://datasets/...; --num-prompts is shared"
         ),
     )
+    if not video:
+        parser.add_argument(
+            "--dataset-weights", type=lambda value: [float(item) for item in value.split(",")],
+            default=_default(ChatRequestDataset, "dataset_weights"),
+            help="Comma-separated relative weights, one per dataset; defaults to equal shares",
+        )
     parser.add_argument(
         "--dataset-offset",
         type=int,
@@ -252,7 +258,7 @@ def _add_benchmark_arguments(
     parser.add_argument(
         "--min-output-length", type=int,
         default=_default(ChatCompletionsGeneration, "min_output_length"),
-        help="Minimum sampled output length for random workloads; requires --max-output-length",
+        help="Minimum sampled output length; row output_length overrides the sample; requires --max-output-length",
     )
     parser.add_argument(
         "--max-output-length", type=int,
@@ -445,6 +451,11 @@ def _add_benchmark_arguments(
         ),
     )
     parser.add_argument(
+        "--slo-by-class", type=_json_object,
+        default=_default(SloTuneConfig, "by_class"),
+        help="JSON request_class to request-level SLO criteria; scored locally",
+    )
+    parser.add_argument(
         "--slo-upper-bound",
         type=int,
         default=_default(SloTuneConfig, "upper_bound"),
@@ -509,6 +520,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             fixed_prompt=namespace.prompt,
             max_turns=namespace.max_turns,
             conversation_history=namespace.conversation_history,
+            dataset_weights=namespace.dataset_weights,
         ),
         trace=ArrivalTraceSchedule(
             trace_selector=namespace.trace_path,
@@ -534,6 +546,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
         ),
         slo=SloTuneConfig(
             params=namespace.slo_params,
+            by_class=namespace.slo_by_class,
             num_runs=namespace.num_runs,
             upper_bound=namespace.slo_upper_bound,
             lower_bound=namespace.slo_lower_bound,

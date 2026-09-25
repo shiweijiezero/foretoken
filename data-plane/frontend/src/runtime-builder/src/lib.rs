@@ -241,6 +241,10 @@ async fn model_runtimes(
             &identity.tokenizer,
             &identity.tokenizer_revision,
             max_model_len,
+            registry.effective_max_logprobs(
+                &model,
+                foretoken_text::backend::SamplingLimits::DEFAULT_MAX_LOGPROBS,
+            ),
             model_dtype,
         )
         .await

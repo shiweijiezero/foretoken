@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md) · [Evaluation and profiling](../../README.md)
 
-Score answers from a running model with lm-evaluation-harness or EvalScope. Complete the [setup](../../README.md#get-started), then choose a framework below.
+Score answers from a running model with lm-evaluation-harness or EvalScope. Complete the [setup](../../README.md#get-started), then choose a framework below. To compare quantization methods using full-vocabulary KL, bit-width plots, and logit differences, see [quantization fidelity](fidelity.md).
 
 ## lm-evaluation-harness
 
