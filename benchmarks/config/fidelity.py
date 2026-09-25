@@ -69,6 +69,24 @@ class FidelityConfig:
         source.validate()
         return source
 
+    def checkpoint_settings(self, default: ModelServiceSource) -> dict[str, Any]:
+        """Identify the comparison inputs without persisting credentials or temporary service addresses."""
+        def source_identity(source: ModelServiceSource) -> dict[str, str]:
+            return {
+                "path": str(Path(source.kustomize_path).expanduser().resolve()) if source.kustomize_path else "",
+                "model": source.model,
+            }
+
+        return {
+            "version": 1,
+            "protocol": self.protocol(),
+            "reference": source_identity(self.reference_source(default)),
+            "candidates": [
+                {"source": source_identity(candidate.service), **candidate.metadata(candidate.service.model)}
+                for candidate in self.candidates
+            ],
+        }
+
     def protocol(self) -> dict[str, Any]:
         """Publish the text-selection and scoring protocol shared by every candidate."""
         return {
@@ -98,7 +116,7 @@ def _positive_coordinate(value: Any, name: str) -> float | None:
 
 
 def add_fidelity_arguments(parser: argparse.ArgumentParser) -> None:
-    """Define comparison choices for parsing and the combined eval compare help page."""
+    """Define reference comparison choices for parsing and the evaluation help page."""
     parser.add_argument("--reference", default="", metavar="PATH", help="reference Kustomize deployment")
     parser.add_argument("--reference-url", default="", help="reference Chat Completions URL")
     parser.add_argument("--reference-model", default="", help="reference model ID; inferred for a single-model deployment")
@@ -123,7 +141,7 @@ def add_fidelity_arguments(parser: argparse.ArgumentParser) -> None:
 def parse_fidelity_arguments(arguments: Sequence[str], service: ModelServiceSource) -> FidelityConfig:
     """Resolve comparison choices and candidate declarations before serving starts."""
     parser = argparse.ArgumentParser(
-        prog="foretoken eval compare", allow_abbrev=False,
+        prog="foretoken eval", allow_abbrev=False,
         description="Compare full next-token distributions on identical text prefixes.",
     )
     add_fidelity_arguments(parser)

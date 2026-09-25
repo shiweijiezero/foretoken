@@ -7,14 +7,13 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](fidelity.md) | 简体中文 · [质量评测](README_zh.md)
 
-`foretoken eval compare` 比较候选模型与参考模型预测下一个 token 的概率差异，报告完整词表 KL、Top-1/Top-k 一致率和 logit 差异，并生成本地图表及 W&B 结果。它是内置的模型对比任务，与使用 lm-evaluation-harness、EvalScope 为答案评分的任务分开。
-
+给 `foretoken eval` 添加 `--reference`，即可比较候选模型与参考模型预测下一个 token 的概率差异，报告完整词表 KL、Top-1/Top-k 一致率和 logit 差异，并生成本地图表及 W&B 结果。
 ## 比较量化模型
 
 按[量化模型示例](../../../examples/quantized-model/README_zh.md)准备源码安装的平台及模型存储后，在仓库根目录运行：
 
 ```bash
-foretoken eval compare examples/quantized-model/bitsandbytes \
+foretoken eval examples/quantized-model/bitsandbytes \
   --reference examples/quantized-model/bf16 \
   --output local
 ```
@@ -28,7 +27,7 @@ foretoken eval compare examples/quantized-model/bitsandbytes \
 维护中的候选列表包含 BF16 和 bitsandbytes 两项，已标注方法与名义位宽：
 
 ```bash
-foretoken eval compare \
+foretoken eval \
   --reference examples/quantized-model/bf16 \
   --candidates examples/quantized-model/candidates.jsonl \
   --output local,wandb
@@ -58,7 +57,7 @@ foretoken eval compare \
 分别指定候选与参考服务的地址和模型 ID：
 
 ```bash
-foretoken eval compare \
+foretoken eval \
   --url http://127.0.0.1:8008/v1/chat/completions --model quantized \
   --reference-url http://127.0.0.1:8009/v1/chat/completions \
   --reference-model Qwen/Qwen3-0.6B \
@@ -74,6 +73,18 @@ foretoken eval compare \
 默认使用 [WikiText-2](https://huggingface.co/datasets/Salesforce/wikitext) 的 `wikitext-2-raw-v1` 配置、test 划分，取 4 个互不重叠的 512-token 窗口，分别比较最后 16 个位置，每个候选共 64 个位置。上下文始终来自原文，不拼入模型生成答案，这种方式称为 teacher forcing。
 
 本地文本使用 `--dataset corpus.txt`；包含 `text` 字段的 JSONL 使用 `--dataset corpus.jsonl`，字段名称可用 `--text-column` 修改。Hugging Face 数据集还可用 `--dataset-config`、`--split` 选择配置和划分。通过 `--context-length`、`--num-windows`、`--score-tokens` 调整比较规模。tokenizer 定义了句首 token 时，每个窗口会添加该 token。
+
+## 恢复模型对比
+
+在原比较命令中追加 `--resume`，指向该次运行的结果目录。将下面的 `results/previous-run` 换成中断时打印的实际目录：
+
+```bash
+foretoken eval examples/quantized-model/bitsandbytes \
+  --reference examples/quantized-model/bf16 \
+  --resume results/previous-run --output local
+```
+
+已完成的窗口直接复用，中断的窗口整体重算；语料使用原来保存的 token。参考或候选模型已全部算完时，无需再次部署或发送请求。保持模型及其权重、tokenizer、候选列表和评分设置不变。恢复结果写入新的目录，原运行保持不变。
 
 ## 理解结果
 
@@ -92,4 +103,4 @@ foretoken eval compare \
 
 ![64 个评分位置的 KL 与去均值 logit 差异](../imgs/fidelity-positions.png)
 
-命令打印的结果目录包含 `fidelity_candidates.csv`、`fidelity_tokens.jsonl` 和 PNG 图表；`metrics.json` 记录评分协议与完成情况。给 `--output` 加上 `wandb` 即可发布表格、曲线和图片。参考概率向量在本次运行内复用，结束后删除。答案正确率使用[任务质量评测](README_zh.md)，服务速度使用[性能评测](../perf/README_zh.md)。
+命令打印的结果目录包含 `fidelity_candidates.csv`、`fidelity_tokens.jsonl` 和 PNG 图表；`metrics.json` 记录评分协议与完成情况。给 `--output` 加上 `wandb` 即可发布表格、曲线和图片。需要续跑时保留完整的本地结果目录，其中保存了采样 token、参考概率和评分进度。答案正确率使用[任务质量评测](README_zh.md)，服务速度使用[性能评测](../perf/README_zh.md)。

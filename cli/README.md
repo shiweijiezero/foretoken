@@ -143,7 +143,7 @@ Use `foretoken perf` to measure response latency and request or token throughput
 
 ## Evaluate and compare models
 
-Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalScope. It accepts the same service selection options; task and scoring parameters use the selected framework's syntax. See [Quality evaluation](../benchmarks/docs/eval/README.md). Use `foretoken eval compare` to [compare a candidate's probabilities against a reference](../benchmarks/docs/eval/fidelity.md).
+Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalScope. It accepts the same service selection options; task and scoring parameters use the selected framework's syntax. See [Quality evaluation](../benchmarks/docs/eval/README.md). Add `--reference` to [compare a candidate's probabilities against a reference](../benchmarks/docs/eval/fidelity.md).
 
 ## Find execution bottlenecks
 

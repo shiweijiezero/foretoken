@@ -8,7 +8,6 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from typing import Any, Iterator
 
 import httpx
@@ -16,6 +15,7 @@ import numpy as np
 
 from foretoken.manifest import DeploymentError
 
+from benchmarks.config.benchmark import ModelServiceSource
 from benchmarks.config.evaluation import EvaluationConfig
 from benchmarks.config.fidelity import FidelityConfig
 from benchmarks.datasets.conversations import iter_jsonl_rows
@@ -24,6 +24,7 @@ from benchmarks.integrations.distributions import CompletionDistributionClient, 
 from benchmarks.model_service import ModelService, resolve_model_service
 from benchmarks.results.environment import serving_environment
 from benchmarks.results.fidelity import fidelity_sinks
+from benchmarks.results.fidelity_checkpoint import FidelityCheckpoint
 from benchmarks.results.output import BenchmarkRun, ResultOutputs, write_json
 
 logger = logging.getLogger(__name__)
@@ -141,15 +142,58 @@ def _reference_text_files(service: ModelService, override: str) -> tuple[str, st
     return tokenizer_path, model_path, tokenizer_id
 
 
-def run_fidelity(config: EvaluationConfig, fidelity: FidelityConfig) -> None:
-    """Score a reference once, compare each candidate, and retain scalar results and plots.
-
-    Full distributions live only in a temporary local cache. Reference and candidate
-    deployments are resolved sequentially through the existing service lifecycle;
-    a temporary reference deployment is released before the candidate is prepared.
-    Generation is a one-token probe: the next prefix always comes from corpus tokens.
-    """
+def _score_reference(
+    source: ModelServiceSource, fidelity: FidelityConfig, checkpoint: FidelityCheckpoint,
+) -> dict[str, Any]:
+    """Prepare fixed corpus windows once and complete their reference probabilities before candidates."""
     from transformers import AutoConfig, AutoTokenizer
+
+    saved = checkpoint.get("reference")
+    completed = checkpoint.reference_done()
+    if len(completed) == fidelity.num_windows:
+        logger.info("Reusing all %d reference windows", len(completed))
+        return saved
+    with resolve_model_service(source) as reference:
+        if saved is None:
+            tokenizer_path, model_path, tokenizer_id = _reference_text_files(reference, fidelity.tokenizer)
+            tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+            # The output head may contain padding beyond the tokenizer vocabulary.
+            model_config = AutoConfig.from_pretrained(model_path).to_dict()
+            vocabulary_size = model_config.get("text_config", model_config)["vocab_size"]
+            if max(tokenizer.get_vocab().values()) >= vocabulary_size:
+                raise ValueError("Tokenizer token IDs exceed the model configuration's vocabulary size")
+            saved = {
+                "model": reference.model,
+                "windows": _token_windows(fidelity, tokenizer),
+                "protocol": {
+                    **fidelity.protocol(), "tokenizer": tokenizer_id,
+                    "bos_token_id": tokenizer.bos_token_id,
+                    "tokenizer_vocab_size": len(tokenizer), "model_vocab_size": vocabulary_size,
+                },
+                "environment": serving_environment(reference),
+            }
+            checkpoint.put("reference", saved)
+        elif reference.model != saved["model"]:
+            raise ValueError("Reference model differs from the saved comparison")
+        vocabulary_size = saved["protocol"]["model_vocab_size"]
+        score_positions = range(fidelity.context_length - fidelity.score_tokens, fidelity.context_length)
+        logger.info("Reference: %s | %d/%d windows already complete", reference.model, len(completed), fidelity.num_windows)
+        with CompletionDistributionClient(reference, timeout=source.timeout_seconds) as client:
+            for index, tokens in enumerate(saved["windows"]):
+                if index in completed:
+                    continue
+                values = np.stack([client.logprobs(tokens[:position], vocabulary_size) for position in score_positions])
+                checkpoint.save_reference(index, values)
+    return saved
+
+
+def run_fidelity(config: EvaluationConfig, fidelity: FidelityConfig) -> None:
+    """Compare models sequentially, retaining complete windows for resume and rebuilding reports.
+
+    Each invocation owns a new result directory. Resume snapshots the previous checkpoint
+    without modifying it; only unfinished windows require model execution. Temporary
+    deployments retain the shared service lifecycle and are released between models.
+    """
 
     reference_source = fidelity.reference_source(config.service)
     record = {"mode": "fidelity", "evaluator": "compare", "model": "model comparison"}
@@ -168,62 +212,56 @@ def run_fidelity(config: EvaluationConfig, fidelity: FidelityConfig) -> None:
         protocol = fidelity.protocol()
         try:
             score_positions = range(fidelity.context_length - fidelity.score_tokens, fidelity.context_length)
-            with TemporaryDirectory(prefix=".reference-", dir=directory) as cache:
-                cache_dir = Path(cache)
-                with resolve_model_service(reference_source) as reference:
-                    reference_model = reference.model
-                    tokenizer_path, model_path, tokenizer_id = _reference_text_files(reference, fidelity.tokenizer)
-                    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
-                    # The output head may contain padding beyond the tokenizer vocabulary.
-                    model_config = AutoConfig.from_pretrained(model_path).to_dict()
-                    vocabulary_size = model_config.get("text_config", model_config)["vocab_size"]
-                    if max(tokenizer.get_vocab().values()) >= vocabulary_size:
-                        raise ValueError("Tokenizer token IDs exceed the model configuration's vocabulary size")
-                    windows = _token_windows(fidelity, tokenizer)
-                    protocol["tokenizer"] = tokenizer_id
-                    protocol["bos_token_id"] = tokenizer.bos_token_id
-                    protocol["tokenizer_vocab_size"] = len(tokenizer)
-                    protocol["model_vocab_size"] = vocabulary_size
-                    environments["reference"] = serving_environment(reference)
-                    with CompletionDistributionClient(reference, timeout=reference_source.timeout_seconds) as client:
-                        logger.info("Reference: %s | %d windows × %d scored positions", reference.model, len(windows), fidelity.score_tokens)
-                        for window_index, tokens in enumerate(windows):
-                            arrays = [
-                                client.logprobs(tokens[:position], vocabulary_size)
-                                for position in score_positions
-                            ]
-                            np.save(cache_dir / f"{window_index}.npy", np.stack(arrays))
+            with FidelityCheckpoint(directory, config.resume, fidelity.checkpoint_settings(config.service)) as checkpoint:
+                reference = _score_reference(reference_source, fidelity, checkpoint)
+                reference_model = reference["model"]
+                protocol = reference["protocol"]
+                windows = reference["windows"]
+                vocabulary_size = protocol["model_vocab_size"]
+                environments["reference"] = reference["environment"]
                 labels: set[str] = set()
-                for candidate in fidelity.candidates:
-                    with resolve_model_service(candidate.service) as service:
-                        metadata = candidate.metadata(service.model)
-                        if not candidate.method and service.deployment is not None:
-                            methods = set()
-                            for document in service.deployment.objects:
-                                if document["kind"] == "ModelService" and document["spec"]["model"] == service.model:
-                                    args = document["spec"].get("engineArgs", {})
-                                    methods.add(args.get("quantization") or args.get("dtype", "unspecified"))
-                            if len(methods) == 1:
-                                metadata["method"] = methods.pop()
-                        if metadata["label"] in labels:
-                            raise ValueError("Candidate labels must be distinct; set label in each --candidates row")
-                        labels.add(metadata["label"])
-                        environments["candidates"].append({"label": metadata["label"], **serving_environment(service)})
-                        candidate_rows = []
-                        logger.info("Candidate: %s | method=%s", metadata["label"], metadata["method"])
-                        with CompletionDistributionClient(service, timeout=candidate.service.timeout_seconds) as client:
-                            for window_index, tokens in enumerate(windows):
-                                reference_values = np.load(cache_dir / f"{window_index}.npy", allow_pickle=False)
-                                for score_index, position in enumerate(score_positions):
-                                    values = client.logprobs(tokens[:position], vocabulary_size)
-                                    row = {
-                                        "candidate": metadata["label"], "window": window_index,
-                                        "position": position, "scored_index": len(candidate_rows),
-                                        **compare_logprobs(reference_values[score_index], values, tokens[position], fidelity.top_k),
-                                    }
-                                    candidate_rows.append(row)
-                                    positions.append(row)
-                        points.append({**metadata, "vocab_size": vocabulary_size, **_candidate_summary(candidate_rows, fidelity.top_k)})
+                for candidate_index, candidate in enumerate(fidelity.candidates):
+                    saved = checkpoint.get(f"candidate/{candidate_index}")
+                    completed = checkpoint.candidate_windows(candidate_index)
+                    if len(completed) < len(windows):
+                        with resolve_model_service(candidate.service) as service:
+                            metadata = candidate.metadata(service.model)
+                            if not candidate.method and service.deployment is not None:
+                                methods = set()
+                                for document in service.deployment.objects:
+                                    if document["kind"] == "ModelService" and document["spec"]["model"] == service.model:
+                                        args = document["spec"].get("engineArgs", {})
+                                        methods.add(args.get("quantization") or args.get("dtype", "unspecified"))
+                                if len(methods) == 1:
+                                    metadata["method"] = methods.pop()
+                            if saved is not None and saved["metadata"] != metadata:
+                                raise ValueError("Candidate model or method differs from the saved comparison")
+                            saved = {"metadata": metadata, "environment": serving_environment(service)}
+                            checkpoint.put(f"candidate/{candidate_index}", saved)
+                            logger.info("Candidate: %s | %d/%d windows already complete", metadata["label"], len(completed), len(windows))
+                            with CompletionDistributionClient(service, timeout=candidate.service.timeout_seconds) as client:
+                                for window_index, tokens in enumerate(windows):
+                                    if window_index in completed:
+                                        continue
+                                    reference_values = checkpoint.reference(window_index, (fidelity.score_tokens, vocabulary_size))
+                                    rows = []
+                                    for score_index, position in enumerate(score_positions):
+                                        values = client.logprobs(tokens[:position], vocabulary_size)
+                                        rows.append({
+                                            "candidate": metadata["label"], "window": window_index,
+                                            "position": position, "scored_index": window_index * fidelity.score_tokens + score_index,
+                                            **compare_logprobs(reference_values[score_index], values, tokens[position], fidelity.top_k),
+                                        })
+                                    checkpoint.save_candidate(candidate_index, window_index, rows)
+                                    completed[window_index] = rows
+                    metadata = saved["metadata"]
+                    if metadata["label"] in labels:
+                        raise ValueError("Candidate labels must be distinct; set label in each --candidates row")
+                    labels.add(metadata["label"])
+                    environments["candidates"].append({"label": metadata["label"], **saved["environment"]})
+                    candidate_rows = [row for index in sorted(completed) for row in completed[index]]
+                    positions.extend(candidate_rows)
+                    points.append({**metadata, "vocab_size": vocabulary_size, **_candidate_summary(candidate_rows, fidelity.top_k)})
         except (DeploymentError, ValueError, OSError, httpx.HTTPError, KeyboardInterrupt) as error:
             failure = error
             logger.error("Fidelity evaluation stopped: %s", error)

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md) · [Evaluation and profiling](../../README.md)
 
-Score answers from a running model with lm-evaluation-harness or EvalScope. Complete the [setup](../../README.md#get-started), then choose a framework below. Use `foretoken eval compare` for [reference/candidate distribution comparisons](fidelity.md), including KL, bit-width plots, and logit differences.
+Score answers from a running model with lm-evaluation-harness or EvalScope. Complete the [setup](../../README.md#get-started), then choose a framework below. Add `--reference` for [reference/candidate distribution comparisons](fidelity.md), including KL, bit-width plots, and logit differences.
 
 ## lm-evaluation-harness
 
@@ -58,6 +58,26 @@ foretoken eval \
 
 This mode uses no Kubernetes resources. Add `--api-key` when authentication is required. For a Foretoken Gateway deployment, pass its Kustomize directory so the command discovers the address and routing headers.
 
+## Resume an evaluation
+
+Keep local output to retain progress. After an interruption, repeat the original command with `--resume` pointing to its printed result directory. Replace `results/previous-run` below with that directory:
+
+```bash
+foretoken eval examples/quickstart \
+  --evaluator lm-eval --tasks gsm8k --limit 100 \
+  --resume results/previous-run --output local
+```
+
+The resumed invocation writes a new result directory, reuses completed work, and reports the combined scores. The source directory remains unchanged; if interrupted again, resume from the newest directory. Keep model weights, task configuration, generation settings, and sample selection unchanged.
+
+| Evaluation | Reused work |
+| --- | --- |
+| lm-evaluation-harness | Completed generations for text-only tasks, including repeated sampling; only missing generations are requested |
+| EvalScope | Completed predictions and reviews for independent samples, with the same service URL and evaluation settings |
+| Reference comparison | Complete scoring windows; see [resuming a comparison](fidelity.md#resume-a-comparison) |
+
+Use `--resume` instead of native `--use_cache` or `--use-cache` for this workflow. Performance tests, trace replay, parameter sweeps, and SLO searches do not support this option.
+
 ## Read scores
 
 Open the result directory printed by the command:
@@ -68,6 +88,6 @@ Open the result directory printed by the command:
 | `native/` | The framework's reports and any generated sample records |
 | `evaluator.log` | The evaluator's execution log |
 
-W&B provides task metrics, a score table, and the saved evaluation files as a downloadable artifact. Common [output settings](../../README.md#read-and-save-results) select destinations and organize comparisons.
+W&B provides task metrics, a score table, and native reports as a downloadable artifact. Common [output settings](../../README.md#read-and-save-results) select destinations and organize comparisons.
 
 Compare scores using the same evaluator, task configuration, and sample selection.

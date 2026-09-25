@@ -7,14 +7,13 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](fidelity_zh.md) · [Quality evaluation](README.md)
 
-`foretoken eval compare` measures how a candidate model's next-token probabilities differ from a reference. It reports full-vocabulary KL divergence, Top-1/Top-k agreement, and logit differences, with local plots and W&B output. This is a built-in comparison task, separate from answer scoring with lm-evaluation-harness or EvalScope.
-
+Adding `--reference` to `foretoken eval` compares a candidate model's next-token probabilities with a reference. It reports full-vocabulary KL divergence, Top-1/Top-k agreement, and logit differences, with local plots and W&B output.
 ## Compare a quantized model
 
 Use the [quantized-model examples](../../../examples/quantized-model/README.md) with a source-installed Foretoken platform and their configured model storage. From the repository root:
 
 ```bash
-foretoken eval compare examples/quantized-model/bitsandbytes \
+foretoken eval examples/quantized-model/bitsandbytes \
   --reference examples/quantized-model/bf16 \
   --output local
 ```
@@ -28,7 +27,7 @@ The examples already allow full-vocabulary probability output. For an existing d
 The maintained list contains BF16 and bitsandbytes candidates with method and nominal bit-width labels:
 
 ```bash
-foretoken eval compare \
+foretoken eval \
   --reference examples/quantized-model/bf16 \
   --candidates examples/quantized-model/candidates.jsonl \
   --output local,wandb
@@ -58,7 +57,7 @@ Each supplied coordinate produces a separate comparison plot. Without size coord
 Pass the candidate and reference service addresses and their served model IDs:
 
 ```bash
-foretoken eval compare \
+foretoken eval \
   --url http://127.0.0.1:8008/v1/chat/completions --model quantized \
   --reference-url http://127.0.0.1:8009/v1/chat/completions \
   --reference-model Qwen/Qwen3-0.6B \
@@ -74,6 +73,18 @@ Both services must use the same token-ID mapping and model vocabulary. With a sh
 The default corpus is [WikiText-2](https://huggingface.co/datasets/Salesforce/wikitext), configuration `wikitext-2-raw-v1`, test split. Four non-overlapping 512-token windows are sampled, scoring the last 16 positions of each: 64 paired positions per candidate. Each prefix comes from the original corpus rather than generated answers; this is teacher forcing.
 
 Use `--dataset corpus.txt` for local text, or `--dataset corpus.jsonl` for records containing a `text` field. `--text-column` selects another field. Hugging Face datasets also accept `--dataset-config` and `--split`. Adjust sample size with `--context-length`, `--num-windows`, and `--score-tokens`. A tokenizer-defined beginning-of-sequence token is added to each window.
+
+## Resume a comparison
+
+Repeat the original comparison command with `--resume` pointing to its result directory. Replace `results/previous-run` with the directory printed by the interrupted run:
+
+```bash
+foretoken eval examples/quantized-model/bitsandbytes \
+  --reference examples/quantized-model/bf16 \
+  --resume results/previous-run --output local
+```
+
+Completed windows are reused; an interrupted window is recomputed in full. The saved corpus tokens are reused exactly. A completed reference or candidate needs no deployment or requests. Keep the same models, weights, tokenizer, candidates, and scoring settings. Results are written to a new directory, leaving the previous run unchanged.
 
 ## Read the results
 
@@ -92,4 +103,4 @@ The following plots compare Qwen3-0.6B BF16 and bitsandbytes 4-bit through exist
 
 ![KL and centered-logit RMSE across 64 scored positions](../imgs/fidelity-positions.png)
 
-The printed result directory contains `fidelity_candidates.csv`, `fidelity_tokens.jsonl`, and PNG plots; `metrics.json` records the protocol and completion status. Add `wandb` to `--output` to publish the tables, curves, and images. Reference probability vectors are reused within the run and removed afterward. Use [task evaluation](README.md) for answer quality and [performance evaluation](../perf/README.md) for serving speed.
+The printed result directory contains `fidelity_candidates.csv`, `fidelity_tokens.jsonl`, and PNG plots; `metrics.json` records the protocol and completion status. Add `wandb` to `--output` to publish the tables, curves, and images. Keep the complete local result directory to retain the sampled tokens, reference probabilities, and scoring progress for resume. Use [task evaluation](README.md) for answer quality and [performance evaluation](../perf/README.md) for serving speed.

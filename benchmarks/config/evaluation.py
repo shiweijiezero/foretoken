@@ -25,6 +25,7 @@ class EvaluationConfig:
     arguments: tuple[str, ...]
     outputs: BenchmarkOutputConfig
     wandb: WandbRunConfig
+    resume: str = ""
 
     def to_dict(self) -> dict:
         """Return publication settings without authentication or native secret-bearing arguments."""
@@ -38,16 +39,17 @@ class EvaluationConfig:
 def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, bool]:
     """Extract exact Foretoken options; leave task options and their values in original order."""
     arguments = list(argv)
-    comparison = arguments[:1] == ["compare"]
-    if comparison:
-        arguments.pop(0)
+    comparison = any(
+        argument.partition("=")[0] in ("--reference", "--reference-url", "--reference-model")
+        for argument in arguments
+    )
     # PATH is the first operand. A native option's value must never become PATH.
     path = arguments.pop(0) if arguments and not arguments[0].startswith("-") else ""
     source = ModelServiceSource()
     output = BenchmarkOutputConfig()
     tracking = WandbRunConfig()
     parser = argparse.ArgumentParser(
-        prog="foretoken eval compare" if comparison else "foretoken eval",
+        prog="foretoken eval",
         allow_abbrev=False,
         add_help=False,
         usage="%(prog)s [PATH | --url URL] [options]",
@@ -55,7 +57,7 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
         epilog=(
             "PATH selects the candidate deployment; --reference selects its reference."
             if comparison else
-            "Use 'foretoken eval compare --help' to compare model distributions. "
+            "Add --reference PATH to compare model distributions. "
             "PATH is a Kustomize directory. Native task options need no separator."
         ),
     )
@@ -65,12 +67,14 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
         action="store_true",
         help="show comparison options" if comparison else "show Foretoken and selected evaluator options",
     )
-    if comparison:
-        parser.set_defaults(evaluator="compare")
-    else:
-        parser.add_argument(
-            "--evaluator", choices=("lm-eval", "evalscope"), default="lm-eval"
-        )
+    parser.add_argument(
+        "--evaluator", choices=("lm-eval", "evalscope"), default=None,
+        help="answer-scoring framework (default: lm-eval); omit with a reference",
+    )
+    parser.add_argument(
+        "--resume", default="", metavar="RESULT_DIR",
+        help="reuse completed evaluation work from a previous result directory; repeat the original task options",
+    )
     parser.add_argument(
         "--url", default=source.url, help="existing Chat Completions URL"
     )
@@ -103,6 +107,8 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
     parser.add_argument("--wandb-run-name", default=tracking.run_name)
     parser.add_argument("--wandb-group", default=tracking.group)
     options, native = parser.parse_known_args(arguments)
+    if comparison and options.evaluator is not None:
+        parser.error("--evaluator cannot be combined with a reference")
     config = EvaluationConfig(
         service=ModelServiceSource(
             kustomize_path=path,
@@ -111,7 +117,8 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
             api_key=options.api_key,
             wait_timeout=options.wait_timeout,
         ),
-        evaluator=options.evaluator,
+        evaluator="compare" if comparison else options.evaluator or "lm-eval",
+        resume=options.resume,
         arguments=tuple(native),
         outputs=BenchmarkOutputConfig(options.output, options.output_dir),
         wandb=WandbRunConfig(

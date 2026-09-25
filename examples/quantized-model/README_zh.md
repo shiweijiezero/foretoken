@@ -48,13 +48,13 @@ foretoken delete examples/quantized-model/bitsandbytes
 在仓库根目录运行，将 bitsandbytes 与相同模型的非量化版本比较，两端均使用 BF16 计算精度：
 
 ```bash
-foretoken eval compare examples/quantized-model/bitsandbytes \
+foretoken eval examples/quantized-model/bitsandbytes \
   --reference examples/quantized-model/bf16 --output local
 ```
 
-命令从部署配置读取模型与 tokenizer，依次执行参考和候选模型。已有部署直接复用，临时部署在使用后删除。若希望位宽图同时显示 BF16 自身的对照结果，将候选目录换成 `--candidates examples/quantized-model/candidates.jsonl`。
+若希望位宽图同时显示 BF16 自身的对照结果，将候选目录换成 `--candidates examples/quantized-model/candidates.jsonl`。AWQ 示例使用 FP16 激活值，与 BF16 比较时也包含计算精度差异。
 
-示例已允许返回完整概率分布。若已有部署使用旧版示例配置，比较前先用 `foretoken deploy PATH` 应用新版文件。AWQ 示例使用 FP16 激活值，与 BF16 比较时也包含计算精度差异。指标和自定义候选见[模型概率分布对比](../../benchmarks/docs/eval/fidelity_zh.md)。
+指标、自定义候选、恢复运行和更新已有部署的用法，见[模型概率分布对比](../../benchmarks/docs/eval/fidelity_zh.md)。
 
 ## 存储与请求
 

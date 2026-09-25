@@ -48,13 +48,13 @@ foretoken delete examples/quantized-model/bitsandbytes
 From the repository root, compare bitsandbytes against the same unquantized model and BF16 computation:
 
 ```bash
-foretoken eval compare examples/quantized-model/bitsandbytes \
+foretoken eval examples/quantized-model/bitsandbytes \
   --reference examples/quantized-model/bf16 --output local
 ```
 
-The command reads model and tokenizer settings from the deployments and evaluates them sequentially. Existing deployments are reused; temporary deployments are removed after use. To include the BF16 self-comparison in bit-width plots, replace the candidate directory with `--candidates examples/quantized-model/candidates.jsonl`.
+To include the BF16 self-comparison in bit-width plots, replace the candidate directory with `--candidates examples/quantized-model/candidates.jsonl`. The AWQ example uses FP16 activations, so its comparison against BF16 includes that computation-precision difference.
 
-These examples allow complete probability output. If a deployment already exists from older example files, apply the updated files with `foretoken deploy PATH` before comparing. The AWQ example uses FP16 activations, so its comparison against BF16 includes that computation-precision difference. See [model distribution comparison](../../benchmarks/docs/eval/fidelity.md) for metrics and custom candidates.
+See [model distribution comparison](../../benchmarks/docs/eval/fidelity.md) for metrics, custom candidates, resuming a run, and updating existing deployments.
 
 ## Storage and requests
 

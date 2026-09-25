@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文 · [评测与性能剖析](../../README_zh.md)
 
-使用 lm-evaluation-harness 或 EvalScope，为运行中的模型回答评分。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的框架运行。用 `foretoken eval compare` 可[比较参考与候选模型的概率分布](fidelity_zh.md)，查看 KL、位宽对比图和 logit 差异。
+使用 lm-evaluation-harness 或 EvalScope，为运行中的模型回答评分。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的框架运行。添加 `--reference` 可[比较参考与候选模型的概率分布](fidelity_zh.md)，查看 KL、位宽对比图和 logit 差异。
 
 ## lm-evaluation-harness
 
@@ -58,6 +58,26 @@ foretoken eval \
 
 此模式不使用 Kubernetes 资源。需要认证时添加 `--api-key`。Foretoken Gateway 部署则传入 Kustomize 目录，由命令查找地址并配置路由请求头。
 
+## 恢复中断的评测
+
+保留本地输出即可保存进度。中断后，在原命令中追加 `--resume`，指向该次运行打印的结果目录。将下面的 `results/previous-run` 换成实际目录：
+
+```bash
+foretoken eval examples/quickstart \
+  --evaluator lm-eval --tasks gsm8k --limit 100 \
+  --resume results/previous-run --output local
+```
+
+恢复会创建新的结果目录，复用已完成工作，并汇总完整评分；原目录保持不变。如果再次中断，从最新目录继续恢复。模型权重、任务配置、生成参数和样本范围应保持不变。
+
+| 评测类型 | 复用的工作 |
+| --- | --- |
+| lm-evaluation-harness | 纯文本任务已完成的生成结果，包括多次采样；只补足尚未完成的次数 |
+| EvalScope | 服务地址和评测设置不变时，复用独立样本已完成的预测和评分 |
+| Reference 对比 | 已完成的评分窗口，见[恢复模型对比](fidelity_zh.md#恢复模型对比) |
+
+按上述方式恢复时，使用 `--resume`，不再指定原生 `--use_cache` 或 `--use-cache`。性能测试、trace 回放、参数扫描和 SLO 搜索暂不支持此选项。
+
 ## 查看评分
 
 打开命令打印的结果目录：
@@ -68,6 +88,6 @@ foretoken eval \
 | `native/` | 框架报告及其生成的逐样本记录 |
 | `evaluator.log` | 评测框架的运行日志 |
 
-W&B 提供任务指标、分数表，并将评测文件作为 artifact 供下载。输出位置与运行分组采用通用[结果设置](../../README_zh.md#查看和保存结果)。
+W&B 提供任务指标、分数表，并将框架报告作为 artifact 供下载。输出位置与运行分组采用通用[结果设置](../../README_zh.md#查看和保存结果)。
 
 比较分数时，使用相同的框架、任务配置和样本范围。
