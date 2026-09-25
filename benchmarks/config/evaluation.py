@@ -53,7 +53,7 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
         allow_abbrev=False,
         add_help=False,
         usage="%(prog)s [PATH | --url URL] [options]",
-        description="Compare model output distributions." if comparison else "Score model answers with an evaluation framework.",
+        description="Compare model output distributions." if comparison else "Evaluate model quality with an evaluation framework.",
         epilog=(
             "PATH selects the candidate deployment; --reference selects its reference."
             if comparison else
@@ -69,14 +69,14 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
     )
     parser.add_argument(
         "--evaluator", choices=("lm-eval", "evalscope"), default=None,
-        help="answer-scoring framework (default: lm-eval); omit with a reference",
+        help="evaluation framework (default: lm-eval); omit with a reference",
     )
     parser.add_argument(
         "--resume", default="", metavar="RESULT_DIR",
         help="reuse completed evaluation work from a previous result directory; repeat the original task options",
     )
     parser.add_argument(
-        "--url", default=source.url, help="existing Chat Completions URL"
+        "--url", default=source.url, help="existing Chat Completions or Completions URL"
     )
     parser.add_argument(
         "--model",

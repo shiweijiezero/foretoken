@@ -12,7 +12,7 @@ use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use foretoken_chat::{AssistantBlockKind, AssistantMessageExt as _, ChatEvent, FinishReason};
 use foretoken_engine_core_client::protocol::output::StopReason;
-use foretoken_text::{DecodedLogprobs, DecodedPositionLogprobs};
+use foretoken_text::{DecodedLogprobs, DecodedPositionLogprobs, DecodedPromptLogprobs};
 use foretoken_text::{DecodedTextEvent, TextOutputStreamExt};
 use futures::StreamExt;
 use serde::Serialize;
@@ -334,7 +334,10 @@ fn completion_logprobs(
             })
             .collect::<BTreeMap<_, _>>();
         text_offset.push(offset);
-        offset += selected_entry.map_or(token.len(), |entry| entry.token.len());
+        offset += selected_entry.map_or_else(
+            || token.chars().count(),
+            |entry| entry.token.chars().count(),
+        );
         token_logprobs.push(selected.map(|(_, logprob)| logprob));
         tokens.push(token);
         top_logprobs.push(Some(top));
@@ -346,6 +349,40 @@ fn completion_logprobs(
         tokens,
         top_logprobs,
     })
+}
+
+/// Encode echoed prompt positions, preserving the unscored first token as null.
+fn completion_prompt_logprobs(
+    token_ids: &[u32],
+    prompt: DecodedPromptLogprobs,
+    tokenizer: &foretoken_tokenizer::DynTokenizer,
+    return_as_token_id: bool,
+) -> Result<CompletionLogprobs, GenerationError> {
+    // Echo retains an initial BOS marker even when generation skips special tokens.
+    let first_token = tokenizer
+        .decode(&[prompt.first_token_id], false)
+        .map_err(|_| GenerationError::Internal)?;
+    let mut logprobs = completion_logprobs(
+        &token_ids[1..],
+        Some(DecodedLogprobs {
+            positions: prompt.scored_positions,
+        }),
+        first_token.chars().count(),
+        return_as_token_id,
+    )
+    .unwrap();
+    logprobs.text_offset.insert(0, 0);
+    logprobs.token_logprobs.insert(0, None);
+    logprobs.tokens.insert(
+        0,
+        if return_as_token_id {
+            format!("token_id:{}", prompt.first_token_id)
+        } else {
+            first_token
+        },
+    );
+    logprobs.top_logprobs.insert(0, None);
+    Ok(logprobs)
 }
 
 fn chat_logprobs(token_ids: &[u32], logprobs: Option<DecodedLogprobs>) -> Option<ChatLogprobs> {
@@ -581,6 +618,7 @@ pub(crate) struct CompletionResponseOptions {
     pub n: usize,
     pub candidates_per_prompt: usize,
     pub echo: bool,
+    pub echo_without_generation: bool,
     pub expose_logprobs: bool,
     pub return_token_ids: bool,
     pub return_tokens_as_token_ids: bool,
@@ -606,8 +644,9 @@ pub(crate) async fn text_collected_many(
 
     for (candidate_index, item) in generated.into_iter().enumerate() {
         let prompt_ids = item.routed.routed_request.request.prompt_token_ids.clone();
+        let tokenizer = item.tokenizer.clone();
         let prompt_text = if options.echo {
-            match item.tokenizer.decode(&prompt_ids, false) {
+            match tokenizer.decode(&prompt_ids, false) {
                 Ok(prompt) => prompt,
                 Err(_) => return openai_error(GenerationError::Internal),
             }
@@ -615,7 +654,7 @@ pub(crate) async fn text_collected_many(
             String::new()
         };
         match idle_timed(decoded(item), idle).collect_output().await {
-            Ok(output) => {
+            Ok(mut output) => {
                 let Ok(finish_reason) = completion_finish_reason(&output.finish_reason) else {
                     return openai_error(GenerationError::RequestFailed);
                 };
@@ -632,6 +671,43 @@ pub(crate) async fn text_collected_many(
                             })
                             .sum()
                     });
+                // A zero-output echo still runs one backend decode step to obtain prompt scores.
+                if options.echo_without_generation {
+                    output.text.clear();
+                    output.token_ids.clear();
+                    output.logprobs = None;
+                }
+                let mut logprobs = if options.expose_logprobs {
+                    completion_logprobs(
+                        &output.token_ids,
+                        output.logprobs,
+                        prompt_text.chars().count(),
+                        options.return_tokens_as_token_ids,
+                    )
+                } else {
+                    None
+                };
+                if options.echo && options.expose_logprobs {
+                    let Some(prompt) = output.prompt_logprobs else {
+                        return openai_error(GenerationError::BackendProtocol);
+                    };
+                    let mut echoed = match completion_prompt_logprobs(
+                        &prompt_ids,
+                        prompt,
+                        &tokenizer,
+                        options.return_tokens_as_token_ids,
+                    ) {
+                        Ok(logprobs) => logprobs,
+                        Err(error) => return openai_error(error),
+                    };
+                    if let Some(generated) = logprobs {
+                        echoed.text_offset.extend(generated.text_offset);
+                        echoed.token_logprobs.extend(generated.token_logprobs);
+                        echoed.tokens.extend(generated.tokens);
+                        echoed.top_logprobs.extend(generated.top_logprobs);
+                    }
+                    logprobs = Some(echoed);
+                }
                 total_prompt_tokens += output.usage.prompt_token_count;
                 total_completion_tokens += output.usage.output_token_count;
                 total_cached_tokens += output.usage.cached_token_count;
@@ -644,17 +720,7 @@ pub(crate) async fn text_collected_many(
                     CompletionChoice {
                         index: 0,
                         text: format!("{prompt_text}{}", output.text),
-                        logprobs: options
-                            .expose_logprobs
-                            .then(|| {
-                                completion_logprobs(
-                                    &output.token_ids,
-                                    output.logprobs,
-                                    prompt_text.len(),
-                                    options.return_tokens_as_token_ids,
-                                )
-                            })
-                            .flatten(),
+                        logprobs,
                         token_ids: options.return_token_ids.then_some(output.token_ids),
                         finish_reason: finish_reason.to_owned(),
                         stop_reason: openai_stop_reason(&output.finish_reason),
@@ -692,39 +758,79 @@ pub(crate) fn text_stream_many(
     generated: Vec<Generated>,
     idle: Duration,
     include_usage: bool,
-    return_token_ids: bool,
-    return_tokens_as_token_ids: bool,
-    return_prompt_token_ids: bool,
+    options: CompletionResponseOptions,
 ) -> Response {
     let Some(first) = generated.first() else {
         return openai_error(GenerationError::InvalidRequest);
     };
     let metadata = ResponseMetadata::from_generated(first);
     // The HTTP layer admits streaming only for one prompt, irrespective of `n`.
-    let prompt_token_ids = return_prompt_token_ids
+    let prompt_token_ids = options
+        .return_prompt_token_ids
         .then(|| vec![first.routed.routed_request.request.prompt_token_ids.clone()]);
     let events = async_stream::stream! {
         let mut total_prompt_tokens = 0;
         let mut total_completion_tokens = 0;
         let mut total_cached_tokens = 0;
         for (index, generated) in generated.into_iter().enumerate() {
+            let tokenizer = generated.tokenizer.clone();
+            let prompt_text = if options.echo {
+                match tokenizer.decode(
+                    &generated.routed.routed_request.request.prompt_token_ids,
+                    false,
+                ) {
+                    Ok(text) => text,
+                    Err(_) => {
+                        yield Ok::<_, Infallible>(Event::default().json_data(stream_backend_error()).unwrap());
+                        break;
+                    }
+                }
+            } else {
+                String::new()
+            };
             let mut stream = Box::pin(idle_timed(decoded(generated), idle));
             let mut text_offset = 0;
             while let Some(event) = stream.next().await {
                 match event {
-                    Ok(DecodedTextEvent::Start { .. }) => {}
+                    Ok(DecodedTextEvent::Start { prompt_token_ids: ids, prompt_logprobs }) => {
+                        if options.echo {
+                            let logprobs = if options.expose_logprobs {
+                                let Some(prompt) = prompt_logprobs else {
+                                    yield Ok(Event::default().json_data(stream_backend_error()).unwrap());
+                                    break;
+                                };
+                                match completion_prompt_logprobs(
+                                    &ids, prompt, &tokenizer, options.return_tokens_as_token_ids,
+                                ) {
+                                    Ok(logprobs) => Some(logprobs),
+                                    Err(_) => {
+                                        yield Ok(Event::default().json_data(stream_backend_error()).unwrap());
+                                        break;
+                                    }
+                                }
+                            } else {
+                                None
+                            };
+                            text_offset = prompt_text.chars().count();
+                            yield Ok(Event::default().json_data(CompletionStreamResponse {
+                                metadata: metadata.clone(), object: "text_completion",
+                                choices: vec![CompletionStreamChoice { index: index as u32, text: prompt_text.clone(), logprobs, finish_reason: None, ..Default::default() }], usage: None,
+                                prompt_token_ids: (index == 0).then(|| prompt_token_ids.clone()).flatten(),
+                            }).unwrap());
+                        }
+                    }
                     Ok(DecodedTextEvent::TextDelta { delta, token_ids, logprobs, finished }) => {
                         let logprobs = completion_logprobs(
                             &token_ids,
                             logprobs,
                             text_offset,
-                            return_tokens_as_token_ids,
+                            options.return_tokens_as_token_ids,
                         );
-                        text_offset += delta.len();
-                        if !delta.is_empty() || logprobs.is_some() {
+                        text_offset += delta.chars().count();
+                        if !options.echo_without_generation && (!delta.is_empty() || logprobs.is_some()) {
                             yield Ok::<_, Infallible>(Event::default().json_data(CompletionStreamResponse {
                                 metadata: metadata.clone(), object: "text_completion",
-                                choices: vec![CompletionStreamChoice { index: index as u32, text: delta, logprobs, token_ids: return_token_ids.then_some(token_ids), finish_reason: None, stop_reason: None }], usage: None,
+                                choices: vec![CompletionStreamChoice { index: index as u32, text: delta, logprobs, token_ids: options.return_token_ids.then_some(token_ids), finish_reason: None, stop_reason: None }], usage: None,
                                 prompt_token_ids: (index == 0).then(|| prompt_token_ids.clone()).flatten(),
                             }).unwrap());
                         }

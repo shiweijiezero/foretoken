@@ -27,7 +27,23 @@ The summary lists task scores, answer filters, sample counts, and standard error
 - `--log_samples` saves individual inputs and answers.
 - `--model_args num_concurrent=4` selects four concurrent API requests.
 
-Connection settings come from Foretoken. The Chat Completions interface supports generation-based tasks; select those rather than tasks requiring candidate-answer log-likelihoods.
+Foretoken selects Chat Completions for generated answers and Completions for likelihood requests from the task definition.
+
+### Candidate likelihood and perplexity
+
+Select a task that scores candidate answers by their token probabilities, or measures perplexity on a text corpus. Use a [source-built Foretoken platform](../../../docs/custom-deployment.md), or an existing service that returns prompt-token log probabilities through Completions with `echo=true`:
+
+```bash
+foretoken eval examples/quickstart \
+  --tasks piqa --limit 100 --output local
+
+foretoken eval examples/quickstart \
+  --tasks wikitext --limit 100 --output local
+```
+
+The tokenizer is inferred from the deployment, or from `--model` for an existing URL; override it with `--model_args tokenizer=MODEL_OR_LOCAL_DIRECTORY` when the served name is an alias or its files are only available on the server.
+
+Candidate likelihood uses raw text by default; add `--apply_chat_template` when its evaluation protocol calls for an instruction-model template. Generation tasks retain chat messages, while perplexity always scores the original corpus, including when these tasks run together.
 
 ## EvalScope
 
@@ -76,7 +92,7 @@ The resumed invocation writes a new result directory, reuses completed work, and
 | EvalScope | Completed predictions and reviews for independent samples, with the same service URL and evaluation settings |
 | Distribution comparison | Complete scoring windows; see [resuming a comparison](distribution-comparison.md#resume-a-comparison) |
 
-Use `--resume` instead of native `--use_cache` or `--use-cache` for this workflow. Performance tests, trace replay, parameter sweeps, and SLO searches do not support this option.
+Use `--resume` instead of native `--use_cache` or `--use-cache` for this workflow. Likelihood and perplexity tasks, performance tests, trace replay, parameter sweeps, and SLO searches do not support this option.
 
 ## Read scores
 

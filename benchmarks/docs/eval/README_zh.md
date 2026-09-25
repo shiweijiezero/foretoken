@@ -27,7 +27,23 @@ foretoken eval examples/quickstart \
 - `--log_samples` 保存逐题输入和回答。
 - `--model_args num_concurrent=4` 同时发送四个 API 请求。
 
-连接信息由 Foretoken 提供。Chat Completions 接口适用于根据生成答案评分的任务；需要候选答案对数似然的任务应改用相应的生成式变体。
+Foretoken 根据任务定义选择接口：生成答案使用 Chat Completions，似然评分使用 Completions。
+
+### 候选答案似然与困惑度
+
+选择相应任务，即可按候选答案各 token 的概率评分，或测量模型对文本语料的困惑度（PPL）。使用[源码安装的 Foretoken 平台](../../../docs/custom-deployment_zh.md)，或支持 Completions `echo=true` 返回输入 token 对数概率的已有服务：
+
+```bash
+foretoken eval examples/quickstart \
+  --tasks piqa --limit 100 --output local
+
+foretoken eval examples/quickstart \
+  --tasks wikitext --limit 100 --output local
+```
+
+分词器从部署配置读取；使用已有 URL 时默认采用 `--model`。若模型名是服务别名，或文件仅在服务器可见，可用 `--model_args tokenizer=MODEL_OR_LOCAL_DIRECTORY` 指定实际模型仓库或客户端本地分词器目录。
+
+候选答案似然默认使用原始文本；评测协议要求指令模型模板时，添加 `--apply_chat_template`。生成任务仍使用聊天消息，困惑度始终评测原始语料，混合运行这些任务时也各自保持相应格式。
 
 ## EvalScope
 
@@ -76,7 +92,7 @@ foretoken eval examples/quickstart \
 | EvalScope | 服务地址和评测设置不变时，复用独立样本已完成的预测和评分 |
 | 模型概率分布对比 | 已完成的评分窗口，见[恢复模型对比](distribution-comparison_zh.md#恢复模型对比) |
 
-按上述方式恢复时，使用 `--resume`，不再指定原生 `--use_cache` 或 `--use-cache`。性能测试、trace 回放、参数扫描和 SLO 搜索暂不支持此选项。
+按上述方式恢复时，使用 `--resume`，不再指定原生 `--use_cache` 或 `--use-cache`。似然和困惑度任务、性能测试、trace 回放、参数扫描和 SLO 搜索暂不支持此选项。
 
 ## 查看评分
 
