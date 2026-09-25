@@ -31,7 +31,7 @@ To build Foretoken's images from a checkout, follow the [source deployment guide
 foretoken install -e .
 ```
 
-The build prepares the MetaX inference runtime from public SDK packages and pinned sources, including GLM-5.3 support. For a cluster other than local kind or k3d, follow the [source deployment guide](../custom-deployment.md#2-build-images-and-install-the-platform-from-source) to sign in to a node-reachable registry and provide `--registry`; a private registry also needs image pull Secrets.
+The build prepares the MetaX inference runtime from public SDK packages and pinned sources, including GLM-5.3 support. See the [source deployment guide](../custom-deployment.md#2-build-images-and-install-the-platform-from-source) for importing images into the cluster or distributing them through a registry.
 
 To use your own SDK image, set `METAX_SDK_IMAGE` when running the command. To reuse an existing inference runtime instead of rebuilding it, set `runtime.vllm.image` in platform values supplied through `--values`.
 

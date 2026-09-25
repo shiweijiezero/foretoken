@@ -31,7 +31,7 @@ foretoken install
 foretoken install -e .
 ```
 
-构建会自动从公开 SDK 软件包和固定版本源码准备沐曦推理运行时，包含 GLM-5.3 支持。若目标不是本机 kind 或 k3d 集群，请按[源码部署指南](../custom-deployment_zh.md#2-从源码构建镜像并安装平台)登录节点可访问的镜像仓库，并提供 `--registry`；私有仓库还需要镜像拉取 Secret。
+构建会自动从公开 SDK 软件包和固定版本源码准备沐曦推理运行时，包含 GLM-5.3 支持。镜像如何导入集群或通过仓库分发，见[源码部署指南](../custom-deployment_zh.md#2-从源码构建镜像并安装平台)。
 
 需要使用自己的 SDK 镜像时，为命令设置 `METAX_SDK_IMAGE`。若要复用已有推理运行时而非重新构建，在通过 `--values` 传入的平台配置中设置 `runtime.vllm.image`。
 
