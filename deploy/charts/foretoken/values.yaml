@@ -74,6 +74,8 @@ observability:
   scrapeTimeout: 4s
   # Prometheus NAMESPACE/NAME; foretoken install resolves the selected instance.
   prometheus: ""
+  # foretoken install manages Grafana access; omit anonymousAccess to retain its current setting.
+  grafana: {}
   notifications:
     # Alertmanager namespace; empty uses the Foretoken release namespace.
     namespace: ""

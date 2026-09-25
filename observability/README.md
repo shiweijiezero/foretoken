@@ -16,26 +16,39 @@ foretoken install
 foretoken deploy examples/quickstart
 ```
 
-`foretoken install` reuses a Prometheus that already exists in the cluster or installs a CLI-managed kube-prometheus-stack. If it installs the monitoring stack, use the CLI-managed Grafana and retrieve its generated administrator credentials. If it reuses an existing stack, use that platform's Grafana and credentials:
-
-```bash
-GRAFANA_USER="$(kubectl get secret \
-  --namespace foretoken-platform \
-  foretoken-prometheus-grafana \
-  --output jsonpath='{.data.admin-user}' | base64 --decode)"
-GRAFANA_PASSWORD="$(kubectl get secret \
-  --namespace foretoken-platform \
-  foretoken-prometheus-grafana \
-  --output jsonpath='{.data.admin-password}' | base64 --decode)"
-printf 'Grafana user: %s\nGrafana password: %s\n' \
-  "$GRAFANA_USER" "$GRAFANA_PASSWORD"
-```
+`foretoken install` reuses an existing Prometheus or installs a CLI-managed kube-prometheus-stack. Grafana installed by Foretoken uses a light theme and provides the Foretoken dashboards in English and Chinese. Read-only access is anonymous by default; editing and administration still require login. Reused monitoring stacks keep their existing Grafana access settings.
 
 In Grafana, open Foretoken System Overview for English or Foretoken 系统概览 for Chinese. Select a namespace and model, then narrow to a model instance, execution role or engine rank. Model-serving, cache, GPU and routing panels follow that selection. Routing decisions show each backend's share within its model and role; a backend is one model instance and data-parallel rank. The selected backend lines keep the full model-and-role denominator.
 
 Shared frontend panels show all traffic through the selected frontend, not just one model. Autoscaling follows the selected model and service; control-plane diagnostics describe the platform.
 
 After upgrading Foretoken, run `foretoken install` again to update the controller, frontend, scrape configuration, and dashboards. Importing dashboard JSON alone does not update metric producers.
+
+## Require a login and retrieve credentials
+
+Require login before viewing dashboards:
+
+```bash
+foretoken install --grafana-auth password
+```
+
+Restore anonymous read-only access:
+
+```bash
+foretoken install --grafana-auth anonymous
+```
+
+For a source installation, add the same option to its original installation command. Later installations retain the choice. This option applies only to Grafana installed by Foretoken. Values files can also set `observability.grafana.anonymousAccess`; `--grafana-auth` takes precedence.
+
+Retrieve the administrator credentials generated during installation:
+
+```bash
+kubectl get secret --namespace foretoken-platform \
+  foretoken-prometheus-grafana --output json \
+  | python3 -c 'import base64,json,sys; d=json.load(sys.stdin)["data"]; print("User:",base64.b64decode(d["admin-user"]).decode()); print("Password:",base64.b64decode(d["admin-password"]).decode())'
+```
+
+The Secret contains the initial password; if it has been changed in Grafana, use the updated password. For custom credentials, authentication, and persistence settings, see the [Grafana Helm chart](https://github.com/grafana/helm-charts/tree/main/charts/grafana).
 
 ## Check that collection works
 

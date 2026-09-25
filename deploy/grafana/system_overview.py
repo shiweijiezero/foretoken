@@ -45,15 +45,16 @@ ZH = {
     "Model Serving": "模型服务",
     "Cache": "缓存",
     "Accelerators and Resources": "加速器与资源",
+    "NVIDIA power and temperature": "NVIDIA 功耗与温度",
     "Routing decisions": "路由决策",
     "Control plane": "控制面",
     "Autoscaling decisions": "扩缩容决策",
-    "Frontend scrape targets": "前端采集目标",
-    "Model scrape targets": "模型采集目标",
+    "Frontend scrape targets": "前端监控端点数",
+    "Model scrape targets": "模型监控端点数",
     "Frontend response starts / s": "前端响应开始速率",
     "Frontend HTTP 5xx ratio": "前端 HTTP 5xx 比例",
-    "Prompt tokens / s": "Prompt token / s",
-    "Output tokens / s": "输出 token / s",
+    "Prompt tokens / s": "输入吞吐量（TPS）",
+    "Output tokens / s": "输出吞吐量（TPS）",
     "Frontend queued requests": "前端排队请求",
     "Frontend responses by HTTP status": "前端 HTTP 响应状态",
     "Frontend responses by endpoint": "前端各端点响应速率",
@@ -68,22 +69,22 @@ ZH = {
     "Inter-token latency (ITL)": "Token 间延迟 (ITL)",
     "Request time by stage": "各阶段请求耗时",
     "Preemptions": "抢占",
-    "Prompt length": "Prompt 长度",
+    "Prompt length": "输入长度",
     "Output length": "输出长度",
     "KV Cache utilization": "KV Cache 使用率",
     "Prefix Cache hit ratio": "Prefix Cache 命中率",
     "Frontend cache-index health": "前端缓存索引健康度",
-    "Model-file storage usage": "模型文件存储使用率",
-    "Model-file storage free space": "模型文件存储可用空间",
+    "Storage usage": "存储使用率",
+    "Available storage": "存储可用空间",
     "GPU utilization by device": "各设备 GPU 使用率",
     "GPU memory by device": "各设备 GPU 显存使用率",
-    "GPU power by device": "各设备 GPU 功耗",
-    "GPU temperature by device": "各设备 GPU 温度",
+    "NVIDIA GPU power by device": "NVIDIA GPU 功耗",
+    "NVIDIA GPU temperature by device": "NVIDIA GPU 温度",
     "Serving CPU usage": "服务 CPU 使用量",
     "Serving memory usage": "服务内存使用量",
     "Routing outcomes": "路由结果",
     "Routing stage latency": "路由阶段延迟",
-    "Eligible instances and ranks": "候选实例与 rank 数量",
+    "Eligible instances and ranks": "路由候选数量（请求平均）",
     "Reconcile errors": "Reconcile 错误",
     "Reconcile latency": "Reconcile 延迟",
     "Controller workqueues": "控制器工作队列",
@@ -111,13 +112,13 @@ ZH = {
     "observation / {{modelservice}} / {{target_name}} / {{role}}": "观测 / {{modelservice}} / {{target_name}} / {{role}}",
     "evaluation / {{modelservice}} / {{target_name}} / {{role}}": "评估 / {{modelservice}} / {{target_name}} / {{role}}",
     "Prometheus targets currently reporting for the selected Frontend services.":
-        "当前正在上报所选 Frontend 服务指标的 Prometheus target 数量。",
+        "所选前端服务中，最近一次指标抓取成功的端点数量。",
     "Prometheus targets currently reporting for the selected model groups and roles.":
-        "当前正在上报所选模型组和角色指标的 Prometheus target 数量。",
+        "所选模型组中，最近一次指标抓取成功的端点数量。",
     "Frontend responses started per second over the selected rate window.": "选定速率窗口内每秒开始的 Frontend 响应数。",
     "HTTP responses that started with 5xx divided by all started responses. Streaming failures after headers are not included.":
         "开始时状态为 5xx 的 HTTP 响应占全部已开始响应的比例，不包含响应头发出后的流式失败。",
-    "Prompt tokens processed per second by the selected model servers.": "所选模型服务器每秒处理的 Prompt token 数。",
+    "Prompt tokens processed per second by the selected model servers.": "所选模型服务每秒处理的输入 token 数。",
     "Generated tokens produced per second by the selected model servers.": "所选模型服务器每秒生成的输出 token 数。",
     "Requests waiting for frontend admission to a scaling target.": "正在等待 Frontend 准入到扩缩容目标的请求数。",
     "Frontend response starts grouped by HTTP status class.": "按 HTTP 状态类别分组的 Frontend 响应开始速率。",
@@ -143,7 +144,7 @@ ZH = {
         "请求在等待调度器、Prefill 和 Decode 阶段的 P95 耗时，单位为秒。",
     "Scheduler preemptions per second by backend; sustained activity indicates KV-cache pressure.":
         "按后端统计每秒调度抢占次数；持续抢占表示 KV 缓存压力。",
-    "Distribution of prompt tokens per request over time.": "随时间变化的单请求 Prompt token 数分布。",
+    "Distribution of prompt tokens per request over time.": "各时间段内请求输入 token 数的分布。",
     "Distribution of generated tokens per request over time.": "随时间变化的单请求输出 token 数分布。",
     "KV-cache occupancy by model instance and engine rank.": "按模型实例和引擎 rank 展示 KV 缓存占用率。",
     "Cache hits divided by queried tokens across selected engines. Idle or unavailable caches have no ratio; local and external observations are separate.":
@@ -159,8 +160,8 @@ ZH = {
     "Temperature of each Foretoken-attributed NVIDIA GPU.": "每块可关联到 Foretoken 的 NVIDIA GPU 温度。",
     "CPU cores used by model-server Pods belonging to the selected model instances.": "所选模型实例的模型服务器 Pod 使用的 CPU 核数。",
     "Working-set memory of model-server Pods belonging to the selected model instances.": "所选模型实例的模型服务器 Pod 工作集内存。",
-    "Selection results by workflow round. A selection failure is not an HTTP status; a request can involve several rounds.":
-        "按工作流轮次统计的选择结果；选择失败不是 HTTP 状态，一个请求可能包含多轮选择。",
+    "Routing results observed within the selected time range, grouped by selection round.":
+        "仅展示所选时间范围内发生过的路由结果，按选择阶段分组。",
     "P99 filter, scorer and picker execution time, aggregated from histogram buckets across selected Frontend replicas.":
         "从所选 Frontend 副本直方图桶聚合得到的 Filter、Scorer 与 Picker P99 执行时间。",
     "Mean available, filtered and selectable candidate counts. Selectable counts include data-parallel ranks.":
@@ -186,14 +187,14 @@ ZH = {
     "Scheduler queued requests": "引擎排队请求",
     "Requests waiting in the selected model engines, not the shared frontend admission queue.":
         "所选模型引擎内等待调度的请求，不包含共享前端准入队列。",
-    "Output / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}":
-        "输出 / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}",
-    "Prompt / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}":
-        "输入 / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}",
-    "Running / {{model_group}} / {{model_role}} / rank {{engine}}":
-        "运行中 / {{model_group}} / {{model_role}} / rank {{engine}}",
-    "Waiting / {{model_group}} / {{model_role}} / rank {{engine}}":
-        "等待中 / {{model_group}} / {{model_role}} / rank {{engine}}",
+    "Output / {{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}}":
+        "输出 / {{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}}",
+    "Prompt / {{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}}":
+        "输入 / {{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}}",
+    "Running / {{model_group_display}} / {{model_role}} / rank {{engine}}":
+        "运行中 / {{model_group_display}} / {{model_role}} / rank {{engine}}",
+    "Waiting / {{model_group_display}} / {{model_role}} / rank {{engine}}":
+        "等待中 / {{model_group_display}} / {{model_role}} / rank {{engine}}",
 }
 
 AUTOSCALING_COLUMNS_ZH = {
@@ -230,7 +231,18 @@ AUTOSCALING_TARGET = "namespace,modelservice,target_kind,target_name,role"
 AUTOSCALING_LEGEND = "{{modelservice}} / {{target_name}} / {{role}}"
 DEVICE_LEGEND = "{{node}} / {{device_id}}"
 
+def instance_display(expr: str) -> str:
+    """Abbreviate long instance names for display while retaining full query identities."""
+    return (
+        f'label_replace(label_replace({expr}, "model_group_display", "$1", '
+        '"model_group", "(.+)"), "model_group_display", "$1…$2", '
+        '"model_group", "^(.{20}).{5,}(.{10})$")'
+    )
+
+
 def query(expr: str, legend: str | None = None, *, interval: str | None = None) -> prometheus.Dataquery:
+    if legend is not None and "{{model_group_display}}" in legend:
+        expr = instance_display(expr)
     target = prometheus.Dataquery().datasource(PROMETHEUS).expr(expr).range()
     if interval is not None:
         target.interval(interval)
@@ -334,6 +346,14 @@ def headline(
         .datasource(PROMETHEUS)
         .unit(unit)
         .no_value(no_value)
+        .mappings([
+            dashboard_models.SpecialValueMap(
+                options=dashboard_models.DashboardSpecialValueMapOptions(
+                    match=dashboard_models.SpecialValueMatch.NULL_AND_NAN,
+                    result=dashboard_models.ValueMappingResult(text=no_value, color="#808080"),
+                )
+            )
+        ])
         .color_mode(models.BigValueColorMode.VALUE)
         .graph_mode(models.BigValueGraphMode.AREA)
         .reduce_options(common.ReduceDataOptions().calcs(["lastNotNull"]))
@@ -428,7 +448,7 @@ def latency(
             mean_expr = f"{scale} * {mean_expr}"
         targets.append(foretoken_query(mean_expr, prefix + "mean"))
         colors = {**QUANTILE_COLORS, "mean": ORANGE}
-    return series(title, description, targets, unit=unit, span=span, colors=colors if not dimensions else None).decimals(2).height(10)
+    return series(title, description, targets, unit=unit, span=span, colors=colors if not dimensions else None).decimals(2)
 
 
 def distribution(title: str, description: str, metric: str) -> heatmap.Panel:
@@ -464,7 +484,7 @@ def by_device(title: str, description: str, rule: str, *, unit: str) -> timeseri
         description,
         [query(f"max by(vendor,node,device_id) ({scoped_group_metric(f'{rule}{{{GROUP}}}')})", "{{vendor}} / " + DEVICE_LEGEND)],
         unit=unit,
-        span=6,
+        span=12,
     )
 
 
@@ -499,7 +519,7 @@ def variable(name: str, label: str, query_text: str) -> dashboard.QueryVariable:
 
 def localize_dashboard(value: object) -> object:
     """Translate visible dashboard strings while leaving queries and metric identities unchanged."""
-    visible_keys = {"title", "description", "label", "legendFormat", "noValue"}
+    visible_keys = {"title", "description", "label", "legendFormat", "noValue", "text"}
     if isinstance(value, dict):
         localized = {
             key: ZH.get(item, item) if key in visible_keys and isinstance(item, str) else localize_dashboard(item)
@@ -526,6 +546,12 @@ def render(locale: str) -> str:
 
 
 def build() -> dashboard_models.Dashboard:
+    instances = (
+        'label_replace(max by(namespace,inference_foretoken_io_model_group) ('
+        'vllm:kv_cache_usage_perc{endpoint="model-server",namespace=~"$namespace",'
+        'model_name=~"$model_name"}), "model_group", "$1", '
+        '"inference_foretoken_io_model_group", "(.+)")'
+    )
     board = (
         dashboard.Dashboard("Foretoken System Overview")
         .uid("foretoken-system-overview")
@@ -564,8 +590,8 @@ def build() -> dashboard_models.Dashboard:
             variable(
                 "model_group",
                 "Model instance",
-                'label_values(vllm:kv_cache_usage_perc{endpoint="model-server",namespace=~"$namespace",model_name=~"$model_name"}, inference_foretoken_io_model_group)',
-            )
+                f"query_result({instance_display(instances)})",
+            ).regex('/model_group="(?<value>[^"]+)".*model_group_display="(?<text>[^"]+)"/')
         )
         .with_variable(
             variable(
@@ -610,7 +636,7 @@ def build() -> dashboard_models.Dashboard:
             "Prompt tokens / s",
             "Prompt tokens processed per second by the selected model servers.",
             f"sum({model_metric('vllm:prompt_tokens_total', rate=True)})",
-            unit="suffix: tok/s",
+            unit="suffix: token/s",
             interval="5s",
         )
     )
@@ -619,7 +645,7 @@ def build() -> dashboard_models.Dashboard:
             "Output tokens / s",
             "Generated tokens produced per second by the selected model servers.",
             f"sum({model_metric('vllm:generation_tokens_total', rate=True)})",
-            unit="suffix: tok/s",
+            unit="suffix: token/s",
             color=ORANGE,
             interval="5s",
         )
@@ -643,7 +669,7 @@ def build() -> dashboard_models.Dashboard:
             [
                 foretoken_query(
                     f"sum by(model_name,model_group,model_role,engine,finished_reason) ({model_metric('vllm:request_success_total', rate=True)})",
-                    "{{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}} / {{finished_reason}}",
+                    "{{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}} / {{finished_reason}}",
                 )
             ],
             unit="reqps",
@@ -656,10 +682,10 @@ def build() -> dashboard_models.Dashboard:
             "Token throughput",
             "Prompt and generated tokens per second by backend. A backend is one model instance and data-parallel rank.",
             [
-                foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:prompt_tokens_total', rate=True)})", "Prompt / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}"),
-                foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:generation_tokens_total', rate=True)})", "Output / {{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}"),
+                foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:prompt_tokens_total', rate=True)})", "Prompt / {{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}}"),
+                foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:generation_tokens_total', rate=True)})", "Output / {{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}}"),
             ],
-            unit="suffix: tok/s",
+            unit="suffix: token/s",
             span=8,
             colors={"Prompt": BLUE, "Output": ORANGE},
         )
@@ -669,8 +695,8 @@ def build() -> dashboard_models.Dashboard:
             "Scheduler state",
             "Requests running in vLLM execution batches or waiting in its scheduler.",
             [
-                foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:num_requests_running')})", "Running / {{model_group}} / {{model_role}} / rank {{engine}}"),
-                foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:num_requests_waiting')})", "Waiting / {{model_group}} / {{model_role}} / rank {{engine}}"),
+                foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:num_requests_running')})", "Running / {{model_group_display}} / {{model_role}} / rank {{engine}}"),
+                foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:num_requests_waiting')})", "Waiting / {{model_group_display}} / {{model_role}} / rank {{engine}}"),
             ],
             unit="short",
             span=8,
@@ -739,7 +765,7 @@ def build() -> dashboard_models.Dashboard:
         series(
             "Preemptions",
             "Scheduler preemptions per second by backend; sustained activity indicates KV-cache pressure.",
-            [foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:num_preemptions_total', rate=True)})", "{{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}")],
+            [foretoken_query(f"sum by(model_name,model_group,model_role,engine) ({model_metric('vllm:num_preemptions_total', rate=True)})", "{{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}}")],
             unit="ops",
             span=8,
         )
@@ -764,7 +790,7 @@ def build() -> dashboard_models.Dashboard:
         series(
             "KV Cache utilization",
             "KV-cache occupancy by model instance and engine rank.",
-            [query(f"max by(model_name,model_group,model_role,engine) ({model_metric('vllm:kv_cache_usage_perc')})", "{{model_name}} / {{model_group}} / {{model_role}} / rank {{engine}}")],
+            [query(f"max by(model_name,model_group,model_role,engine) ({model_metric('vllm:kv_cache_usage_perc')})", "{{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}}")],
             unit="percentunit",
             span=12,
         )
@@ -793,21 +819,21 @@ def build() -> dashboard_models.Dashboard:
     )
     board.with_panel(
         series(
-            "Model-file storage usage",
+            "Storage usage",
             "Mounted RuntimeCache filesystem utilization. Series are absent for model groups without a RuntimeCache.",
-            [query(scoped_group_metric(f"foretoken:model_server_runtime_cache_usage_ratio:max{{{GROUP}}}"), "{{model_group}} / {{model_role}}")],
+            [query(scoped_group_metric(f"foretoken:model_server_runtime_cache_usage_ratio:max{{{GROUP}}}"), "{{model_group_display}} / {{model_role}}")],
             unit="percentunit",
             span=12,
         )
     )
     board.with_panel(
         series(
-            "Model-file storage free space",
+            "Available storage",
             "Filesystem space available to model-server processes using a RuntimeCache.",
             [
                 query(
                     scoped_group_metric(f"foretoken:model_server_runtime_cache_available_bytes:min{{{GROUP}}}"),
-                    "{{model_group}} / {{model_role}}",
+                    "{{model_group_display}} / {{model_role}}",
                 )
             ],
             unit="bytes",
@@ -832,24 +858,12 @@ def build() -> dashboard_models.Dashboard:
             unit="percentunit",
         )
     )
-    board.with_panel(
-        by_device(
-            "GPU power by device",
-            "Power draw of each Foretoken-attributed NVIDIA GPU.",
-            "foretoken:accelerator_gpu_power_watts",
-            unit="watt",
-        )
-    )
-    board.with_panel(
-        by_device(
-            "GPU temperature by device",
-            "Temperature of each Foretoken-attributed NVIDIA GPU.",
-            "foretoken:accelerator_gpu_temperature_celsius",
-            unit="celsius",
-        )
-    )
     container = 'namespace=~"$namespace",container="model-server"'
-    selected_pods = f"max by(namespace,pod) (0 * ({model_metric('vllm:kv_cache_usage_perc')}) + 1)"
+    # Group membership includes workers that do not expose the head's engine metrics.
+    selected_pods = (
+        f"max by(namespace,pod) (foretoken:accelerator_workload_labels{{{GROUP}}} "
+        f"and on(namespace,model_group) ({selected_groups()}))"
+    )
     board.with_panel(
         series(
             "Serving CPU usage",
@@ -883,6 +897,22 @@ def build() -> dashboard_models.Dashboard:
         )
     )
 
+    board.with_row(
+        dashboard.Row("NVIDIA power and temperature")
+        .with_panel(by_device(
+            "NVIDIA GPU power by device",
+            "Power draw of each Foretoken-attributed NVIDIA GPU.",
+            "foretoken:accelerator_gpu_power_watts",
+            unit="watt",
+        ))
+        .with_panel(by_device(
+            "NVIDIA GPU temperature by device",
+            "Temperature of each Foretoken-attributed NVIDIA GPU.",
+            "foretoken:accelerator_gpu_temperature_celsius",
+            unit="celsius",
+        ))
+    )
+
     # Route distribution uses the smallest routable unit; controller internals remain diagnostic.
     board.with_row(dashboard.Row("Routing decisions"))
     selections = routing_target_rates()
@@ -901,7 +931,7 @@ def build() -> dashboard_models.Dashboard:
             "Share of routing selections within each model and execution role. Each backend is one model instance and data-parallel rank; all backends form the denominator. This counts choices, not completed requests.",
             [foretoken_query(
                 f"({shares}) and on(namespace,model_group,data_parallel_rank) ({selected_ranks})",
-                "{{model_name}} / {{model_role}} / {{model_group}} / rank {{data_parallel_rank}}",
+                "{{model_name}} / {{model_role}} / {{model_group_display}} / rank {{data_parallel_rank}}",
             )],
             unit="percentunit", span=24,
         ).height(10)
@@ -909,11 +939,12 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Routing outcomes",
-            "Selection results by workflow round. A selection failure is not an HTTP status; "
-            "a request can involve several rounds.",
+            "Routing results observed within the selected time range, grouped by selection round.",
             [
                 foretoken_query(
-                    f"sum by(model_name,round,outcome) (rate(foretoken_router_selections_total{{{ROUTER}}}[$__rate_interval]))",
+                    f"sum by(model_name,round,outcome) (rate(foretoken_router_selections_total{{{ROUTER}}}[$__rate_interval])) "
+                    f"and on(model_name,round,outcome) (sum by(model_name,round,outcome) "
+                    f"(increase(foretoken_router_selections_total{{{ROUTER}}}[$__range] @ end())) > 0)",
                     "{{model_name}} / {{round}} / {{outcome}}",
                 )
             ],
@@ -929,7 +960,7 @@ def build() -> dashboard_models.Dashboard:
             [
                 foretoken_query(
                     "histogram_quantile(0.99, sum by(model_name,round,stage,algorithm,le) "
-                    f"(rate(foretoken_router_stage_duration_seconds_bucket{{{ROUTER}}}[$__rate_interval])))",
+                    f"(rate(foretoken_router_stage_duration_seconds_bucket{{{ROUTER}}}[$__rate_interval]))) >= 0",
                     "{{model_name}} / {{round}} / {{stage}} / {{algorithm}}",
                 )
             ],
@@ -1018,7 +1049,7 @@ def build() -> dashboard_models.Dashboard:
         latency(
             frontend_metric(
                 "http_request_duration_seconds_bucket",
-                extra='handler=~"/v1/(chat/completions|completions|generate)"',
+                extra='handler=~"/v1/(chat/completions|completions|generate|messages|responses)"',
                 rate=True,
             ),
             "Frontend response-header latency",
