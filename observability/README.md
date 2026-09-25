@@ -18,7 +18,9 @@ foretoken deploy examples/quickstart
 
 `foretoken install` reuses an existing Prometheus or installs a CLI-managed kube-prometheus-stack. Grafana installed by Foretoken uses a light theme and provides the Foretoken dashboards in English and Chinese. Read-only access is anonymous by default; editing and administration still require login. Reused monitoring stacks keep their existing Grafana access settings.
 
-In Grafana, open Foretoken System Overview for English or Foretoken 系统概览 for Chinese. Select a namespace and model, then narrow to a model instance, execution role or engine rank. Model-serving, cache, GPU and routing panels follow that selection. Routing decisions show each backend's share within its model and role; a backend is one model instance and data-parallel rank. The selected backend lines keep the full model-and-role denominator.
+In Grafana, open Foretoken System Overview for English or Foretoken 系统概览 for Chinese. Select a namespace and model to see whole-model input and output throughput, completed requests, scheduler activity, latency, cache hit ratios and CPU/memory usage. Each model has separate totals and time-series curves.
+
+Use the instance, execution-role and engine-rank selectors to inspect backend details without changing model totals. Instances are named by service, Pool and replica number; creation time distinguishes repeated names during replacements. Routing decisions show each backend's share within its model and role; a backend is one model instance and data-parallel rank. Selected backend lines keep the full model-and-role denominator.
 
 Shared frontend panels show all traffic through the selected frontend, not just one model. Autoscaling follows the selected model and service; control-plane diagnostics describe the platform.
 
@@ -136,7 +138,7 @@ Selecting the power alert also requires a positive `spec.observability.alerts.th
 | mxExporter | MetaX utilization and memory |
 | kubelet/cAdvisor | Container CPU and memory |
 
-Dashboard latency metrics use seconds for TTFT and E2EL, and milliseconds for TPOT and ITL. The p50/p95/p99 percentiles combine request histograms across the selected instances, separately for each model and role. Request rates, token throughput and scheduler pressure are shown by backend, where a backend is one model instance and data-parallel rank; the same panels retain the model-level totals in their summary tiles. Prefix-cache hit ratios divide total hit tokens by total queried tokens; idle or missing observations have no ratio. Routing shares count selection decisions, not completed requests or cache hits.
+Dashboard latency metrics use seconds for TTFT and E2EL, and milliseconds for TPOT and ITL. Model-wide p50/p95/p99 percentiles combine request histogram buckets before calculating quantiles. In disaggregated serving, input throughput counts Aggregate/Prefill engines; output throughput, completions and generation latency count Aggregate/Decode engines. Scheduler and preemption totals count execution-stage requests and events across all roles. Prefix-cache hit ratios divide total hit tokens by total queried tokens. GPU percentages, temperatures and shared filesystem capacities remain per-device or per-mount observations rather than sums. Routing shares count selection decisions, not completed requests or cache hits.
 
 The following recording rules remain available for alerts and fixed-window queries. Model-serving rules are derived from vLLM metrics.
 

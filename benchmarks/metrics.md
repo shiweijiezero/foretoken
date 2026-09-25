@@ -26,6 +26,12 @@ Results include aggregate metrics and per-request records.
 
 Request latency distributions use successful requests. `--no-stream` retains latency and throughput but omits TTFT, TPOT, and ITL. Usage-only chunks do not advance streaming timing.
 
+## Curves
+
+W&B plots input and output throughput separately for the model measured by each run. `Time` curves use one-second completion windows: a successful request contributes all its tokens when it finishes, divided by the window duration. `Cumulative` curves divide completed successful requests' token totals by elapsed time. Both measure this benchmark's traffic; Grafana model totals include all traffic reaching the model.
+
+Time curves also show request throughput, in-flight requests, failure rate and latency percentiles. Per-request curves use send order. Compare runs in the same group, and use sweep Pareto charts to compare throughput and latency trade-offs.
+
 ## SLO results
 
 When `--slo-params` is enabled, each request with latency-based criteria receives `slo_met` in `raw_output.json` and the W&B request-index history. The CLI, `metrics.json`, and W&B Summary record SLO attainment, request goodput, and token goodput for the same criteria. [SLO concurrency search](docs/perf/slo.md) evaluates aggregate criteria and reports the highest observed passing request peak with its configured limit and stopping reason.
