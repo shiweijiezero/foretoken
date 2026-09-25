@@ -2,10 +2,37 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+ARG BASE_IMAGE_REGISTRY=docker.io
 ARG UV_IMAGE_REGISTRY=ghcr.io
 ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.9.10
-ARG METAX_SDK_IMAGE
+ARG METAX_SDK_IMAGE=metax-sdk
 FROM ${UV_IMAGE} AS uv
+
+FROM ${BASE_IMAGE_REGISTRY}/library/ubuntu:24.04 AS metax-sdk
+
+ARG BUILD_JOBS=2
+ARG FORETOKEN_GITHUB_MIRROR
+ARG UV_DEFAULT_INDEX
+ARG UV_EXTRA_INDEX_URL
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential ca-certificates cmake curl git gnupg ninja-build pkg-config \
+      python3-dev python3-venv libelf1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=uv /uv /usr/local/bin/uv
+COPY deploy/inference-engines/vllm-metax/prepare-sdk.sh \
+     deploy/inference-engines/vllm-metax/torch_cpu_config.py \
+     deploy/inference-engines/vllm-metax/source-environment.json \
+     /usr/local/lib/foretoken/
+
+ENV MACA_PATH=/opt/maca \
+    MACA_HOME=/opt/maca \
+    MACA_CLANG_PATH=/opt/maca/mxgpu_llvm/bin \
+    PATH=/opt/foretoken-sdk/.venv/bin:/opt/maca/bin:/opt/maca/mxgpu_llvm/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/maca/lib64:/opt/maca/lib:/opt/maca/ompi/lib:/opt/maca/mxgpu_llvm/lib
+RUN bash /usr/local/lib/foretoken/prepare-sdk.sh /opt/foretoken-sdk
 
 FROM ${METAX_SDK_IMAGE} AS mooncake-build
 
@@ -28,10 +55,7 @@ ENV MACA_PATH=${MACA_PATH} \
     LD_LIBRARY_PATH=${MACA_PATH}/lib64:${MACA_PATH}/lib:${MACA_PATH}/ompi/lib:${MACA_PATH}/mxgpu_llvm/lib:${LD_LIBRARY_PATH}
 
 # vLLM consumes only the TransferEngine and Store requester Python modules.
-RUN cmake -S /src/mooncake/extern/yalantinglibs -B /build/yalantinglibs \
-      -DBUILD_EXAMPLES=OFF -DBUILD_BENCHMARK=OFF -DBUILD_UNIT_TESTS=OFF \
-    && cmake --install /build/yalantinglibs \
-    && uv venv /opt/mooncake-build --python /usr/bin/python3 \
+RUN uv venv /opt/mooncake-build --python /usr/bin/python3 \
     && cmake -S /src/mooncake -B /build/mooncake -G Ninja \
       -DCMAKE_BUILD_TYPE=Release \
       -DUSE_MACA=ON -DMACA_ROOT="${MACA_PATH}" \
@@ -50,18 +74,16 @@ RUN install -Dm644 /src/mooncake/LICENSE-APACHE \
       /out/licenses/mooncake/LICENSE-APACHE \
     && install -Dm644 /src/mooncake/extern/pybind11/LICENSE \
       /out/licenses/pybind11/LICENSE \
-    && install -Dm644 /src/mooncake/extern/yalantinglibs/LICENSE \
-      /out/licenses/yalantinglibs/LICENSE \
-    && install -Dm644 /src/mooncake/extern/yalantinglibs/NOTICE \
-      /out/licenses/yalantinglibs/NOTICE \
+    && install -Dm644 /build/mooncake/_deps/yalantinglibs-src/LICENSE /out/licenses/yalantinglibs/LICENSE \
+    && install -Dm644 /build/mooncake/_deps/yalantinglibs-src/NOTICE /out/licenses/yalantinglibs/NOTICE \
     && install -Dm644 /usr/share/doc/libasio-dev/copyright /out/licenses/asio/copyright \
     && boost_package=$(dpkg-query -S /usr/include/boost/version.hpp) \
     && install -Dm644 "/usr/share/doc/${boost_package%%:*}/copyright" /out/licenses/boost/copyright
 
 FROM ${METAX_SDK_IMAGE}
 
-ARG VLLM_VERSION
 ARG MACA_PATH=/opt/maca
+ARG UV_PYTHON
 ARG FORETOKEN_GITHUB_MIRROR
 ARG UV_DEFAULT_INDEX
 ARG UV_EXTRA_INDEX_URL
@@ -75,14 +97,15 @@ RUN apt-get update \
 
 COPY --from=uv /uv /usr/local/bin/uv
 COPY deploy/inference-engines/vllm-metax/install.sh /usr/local/lib/foretoken/install-vllm-metax.sh
-COPY deploy/inference-engines/vllm-metax/xgrammar-0.24.patch \
-     deploy/inference-engines/vllm-metax/constraints-0.24.txt \
+COPY deploy/inference-engines/vllm-metax/sdk_audio.py \
+     deploy/inference-engines/vllm-metax/source-environment.json \
      /usr/local/lib/foretoken/
+COPY deploy/inference-engines/vllm-metax/patches/ /usr/local/lib/foretoken/patches/
 
 ENV MACA_PATH=${MACA_PATH} \
-    UV_PYTHON=/usr/bin/python3
+    UV_PYTHON=${UV_PYTHON}
 RUN bash /usr/local/lib/foretoken/install-vllm-metax.sh \
-    /opt/foretoken-vllm ${VLLM_VERSION}
+    /opt/foretoken-vllm
 
 COPY --from=mooncake-build /out/mooncake/ /opt/foretoken-mooncake/mooncake/
 COPY --from=mooncake-build /out/licenses/ /usr/local/share/licenses/

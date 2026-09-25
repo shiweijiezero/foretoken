@@ -255,8 +255,26 @@ func (reconciler *ModelPoolReconciler) reconcileGroups(ctx context.Context, pool
 	if targetReady {
 		preparedRevision = template.Revision
 	}
-	ready := pool.Spec.DesiredGroups > 0 && revisionServingReady(groups, servingRevision)
+	servingRevisionDraining := targetInsufficientCapacity && servingRevision != "" && servingRevision != template.Revision
+	ready := pool.Spec.DesiredGroups > 0 && revisionServingReady(groups, servingRevision) && !servingRevisionDraining
 	rolloutPending := preparedRevision != template.Revision || servingRevision != template.Revision || !targetReady
+
+	// Keep the old cohort for zero-downtime replacement while the target can
+	// schedule. If the target is explicitly unschedulable, retaining the old
+	// cohort prevents a full cluster from ever making progress; drain it so the
+	// target can acquire the same resources.
+	if targetInsufficientCapacity && servingRevision != "" && servingRevision != template.Revision {
+		for index := range groups {
+			group := &groups[index]
+			if group.Spec.Revision != servingRevision {
+				continue
+			}
+			rolloutPending = true
+			if err := reconciler.Delete(ctx, group); err != nil && !apierrors.IsNotFound(err) {
+				return groupState{}, fmt.Errorf("delete unschedulable serving ModelGroup %q: %w", group.Name, err)
+			}
+		}
+	}
 
 	// The Pool keeps both its target cohort and the service-selected serving cohort.
 	// Other revisions are no longer reachable and can enter their normal drain finalizer.
@@ -419,7 +437,7 @@ func rolloutReason(state groupState) string {
 
 func rolloutMessage(state groupState) string {
 	if state.InsufficientCapacity {
-		return "The target Group revision is Unschedulable; the active revision remains serving"
+		return "The target Group revision is Unschedulable; the serving revision is being drained"
 	}
 	if state.RolloutPending {
 		return "Requested Group capacity is converging or superseded Groups are being retired"

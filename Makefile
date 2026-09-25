@@ -13,8 +13,7 @@ OCI_REGISTRY := $(patsubst %/,%,$(strip $(FORETOKEN_OCI_REGISTRY)))
 OCI_SOURCE ?= https://github.com/shiweijiezero/foretoken
 OCI_REVISION ?= $(shell git rev-parse HEAD)
 
-VLLM_METAX_VERSION ?= 0.24.0
-VLLM_METAX_IMAGE ?= foretoken-vllm-metax:$(VLLM_METAX_VERSION)
+VLLM_METAX_IMAGE ?= foretoken-vllm-metax:dev
 
 GIT = git $(if $(FORETOKEN_GITHUB_MIRROR),-c url.$(patsubst %/,%,$(FORETOKEN_GITHUB_MIRROR))/.insteadOf=https://github.com/,)
 
@@ -72,18 +71,17 @@ image-frontend: vllm-source
 		-f data-plane/frontend/Dockerfile -t "$(FRONTEND_IMAGE)" .
 
 image-vllm-metax: mooncake-source
-	@test -n "$(METAX_SDK_IMAGE)" || \
-		(printf '%s\n' 'Set METAX_SDK_IMAGE to an Ubuntu/Debian image with the matching MACA SDK.' >&2; exit 1)
 	docker build \
-		--build-arg METAX_SDK_IMAGE="$(METAX_SDK_IMAGE)" \
+		$(if $(METAX_SDK_IMAGE),--build-arg METAX_SDK_IMAGE="$(METAX_SDK_IMAGE)",) \
+		$(if $(or $(FORETOKEN_DOCKER_IO_REGISTRY),$(OCI_REGISTRY)),--build-arg BASE_IMAGE_REGISTRY="$(or $(FORETOKEN_DOCKER_IO_REGISTRY),$(OCI_REGISTRY))",) \
 		--build-arg MACA_PATH \
+		$(if $(UV_PYTHON),--build-arg UV_PYTHON="$(UV_PYTHON)",) \
 		$(if $(BUILD_JOBS),--build-arg BUILD_JOBS="$(BUILD_JOBS)",) \
 		$(if $(OCI_REGISTRY),--build-arg UV_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \
 		$(if $(UV_IMAGE),--build-arg UV_IMAGE="$(UV_IMAGE)",) \
 		--build-arg FORETOKEN_GITHUB_MIRROR \
 		--build-arg UV_DEFAULT_INDEX \
 		--build-arg UV_EXTRA_INDEX_URL \
-		--build-arg VLLM_VERSION="$(VLLM_METAX_VERSION)" \
 		-f deploy/inference-engines/vllm-metax/Dockerfile \
 		-t "$(VLLM_METAX_IMAGE)" .
 

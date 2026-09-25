@@ -202,6 +202,10 @@ type ModelGroupRuntime struct {
 	// +optional
 	EngineArgs EngineArguments `json:"engineArgs,omitempty"`
 
+	// TritonCacheDirectory is the initial worker cache path; Kubernetes expands its node reference.
+	// +optional
+	TritonCacheDirectory string `json:"tritonCacheDirectory,omitempty"`
+
 	// Profiling fixes the instrumentation prepared at runtime startup.
 	// +optional
 	Profiling *ProfilingConfig `json:"profiling,omitempty"`

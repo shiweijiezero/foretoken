@@ -13,7 +13,10 @@ mod routing_load;
 pub use routing_load::{RoutingLoadSnapshot, RoutingLoadState};
 mod selection;
 
-pub use algorithm::{KvLeastLoadedScorer, RouteFilter, RoutePicker, RouteScorer};
+pub use algorithm::{
+    GambleSamplingPicker, KvLeastLoadedScorer, PowerOfTwoChoicesPicker, RouteFilter, RoutePicker,
+    RouteScorer,
+};
 pub use inventory::{
     ModelRouteTable, RouteDecision, RouteInventory, RouteTarget, RouteTargetId, RouteTargetSet,
     ScalingTarget, ScalingTargetKind,

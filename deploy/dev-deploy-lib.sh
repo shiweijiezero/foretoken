@@ -21,6 +21,13 @@ mirrored_image() {
 build_dev_images() {
   export DOCKER_BUILDKIT=1
 
+  if [[ "${FORETOKEN_BUILD_METAX_RUNTIME:-false}" == true ]]; then
+    local engine_image="${MODEL_SERVER_IMAGE}-engine"
+    printf 'Building MetaX inference runtime: %s\n' "$engine_image"
+    make image-vllm-metax VLLM_METAX_IMAGE="$engine_image"
+    export INFERENCE_ENGINE_IMAGE="$engine_image"
+  fi
+
   local -a go_args=() cargo_args=() model_args=()
   local name value
   for name in GOPROXY GOSUMDB; do
@@ -69,6 +76,7 @@ build_dev_images() {
     model_image_args=(--build-arg "UV_IMAGE=$UV_IMAGE")
   fi
 
+  printf 'Building control-plane image: %s\n' "$CONTROL_PLANE_IMAGE"
   docker build \
     "${control_plane_image_args[@]}" \
     "${go_args[@]}" \
@@ -76,8 +84,10 @@ build_dev_images() {
     -t "$CONTROL_PLANE_IMAGE" \
     .
 
+  printf 'Preparing pinned vLLM build source\n'
   make vllm-source
 
+  printf 'Building frontend image: %s\n' "$FRONTEND_IMAGE"
   docker build \
     "${data_plane_image_args[@]}" \
     "${cargo_args[@]}" \
@@ -85,6 +95,7 @@ build_dev_images() {
     -t "$FRONTEND_IMAGE" \
     .
 
+  printf 'Building model-server image: %s\n' "$MODEL_SERVER_IMAGE"
   docker build \
     "${data_plane_image_args[@]}" \
     "${model_image_args[@]}" \
@@ -157,7 +168,7 @@ deployment_image() {
   kubectl get deployment \
     --namespace "$1" \
     --selector "$2" \
-    -o jsonpath='{.items[0].spec.template.spec.containers[0].image}'
+    -o go-template='{{if .items}}{{(index (index .items 0).spec.template.spec.containers 0).image}}{{end}}'
 }
 
 deployments_exist() {

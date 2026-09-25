@@ -276,44 +276,6 @@ class Helm(HelmClient):
             section_name=str(gateway.get("sectionName") or ""),
         )
 
-    def platform_runtime_image(
-        self, source_root: Path, gpu_resource_name: str
-    ) -> str:
-        """Render the source chart's official runtime image for one GPU resource."""
-        chart = str(source_root / "deploy" / "charts" / "foretoken")
-        rendered = self.run(
-            [
-                "template",
-                "foretoken-runtime-image",
-                chart,
-                "--set",
-                "observability.mode=disabled",
-                "--set-string",
-                f"runtime.vllm.gpu.resourceName={gpu_resource_name}",
-            ]
-        ).stdout
-        try:
-            documents: Any = yaml.safe_load_all(rendered)
-            for document in documents:
-                if not isinstance(document, dict) or document.get("kind") != "Deployment":
-                    continue
-                pod_spec = ((document.get("spec") or {}).get("template") or {}).get(
-                    "spec"
-                ) or {}
-                for container in pod_spec.get("containers") or []:
-                    if not isinstance(container, dict) or container.get("name") != "manager":
-                        continue
-                    for argument in container.get("args") or []:
-                        if isinstance(argument, str) and argument.startswith(
-                            "--inference-engine-image="
-                        ):
-                            return argument.removeprefix("--inference-engine-image=")
-        except yaml.YAMLError as exc:
-            raise DeploymentError(
-                "platform chart rendered invalid runtime configuration"
-            ) from exc
-        raise DeploymentError("platform chart rendered no vLLM runtime image")
-
     def platform_image_references(
         self, release: ReleaseRef
     ) -> tuple[str, str, str]:

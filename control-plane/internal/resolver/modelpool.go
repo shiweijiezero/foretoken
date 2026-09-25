@@ -186,6 +186,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			Image:                                 image,
 			Port:                                  profile.ModelServerPort,
 			EngineArgs:                            effective.EngineArgs,
+			TritonCacheDirectory:                  vllmconfig.TritonCacheDirectory(template.RuntimeCache),
 			Profiling:                             template.Profiling.DeepCopy(),
 			InternalGenerateRequestBodyLimitBytes: template.InternalGenerateRequestBodyLimitBytes,
 		},

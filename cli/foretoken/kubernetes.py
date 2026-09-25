@@ -568,6 +568,7 @@ def wait_for_resources(
     timeout: str,
     *,
     report: Callable[[float, ResourceProgress], None] | None = None,
+    observe: Callable[[tuple[ResourceRef, ...], float, float], None] | None = None,
 ) -> tuple[ResourceProgress, ...]:
     """Wait until every service reports Ready for its current generation."""
     timeout_value = timeout_seconds(timeout)
@@ -601,6 +602,8 @@ def wait_for_resources(
             raise DeploymentError(
                 f"timed out after {timeout} waiting for Foretoken services: {pending}"
             )
+        if observe is not None:
+            observe(resources, elapsed, max(0.0, deadline - time.monotonic()))
         time.sleep(min(2.0, max(0.0, deadline - time.monotonic())))
 
 

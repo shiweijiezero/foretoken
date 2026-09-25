@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from foretoken.accelerators.config import (
@@ -254,6 +253,7 @@ class PlatformLifecycle:
             require_unused_managed_rdma(kubectl, (platform.name, platform.namespace))
 
         source_runtime_image: str | None = None
+        build_metax_runtime = False
         configured_runtime_image = (
             current_runtime.image
             if current_runtime.image is not None
@@ -263,10 +263,7 @@ class PlatformLifecycle:
             if current_runtime.image not in {None, "auto"}:
                 source_runtime_image = current_runtime.image or None
             elif runtime_selection is not None and runtime_selection.backend == "metax":
-                source_runtime_image = helm.platform_runtime_image(
-                    Path(command.editable).expanduser().resolve(),
-                    runtime_selection.resource_name,
-                )
+                build_metax_runtime = True
             elif (
                 runtime_selection is not None
                 and runtime_selection.backend == "custom"
@@ -443,6 +440,7 @@ class PlatformLifecycle:
                 platform.namespace,
                 command.timeout,
                 source_runtime_image,
+                build_metax_runtime=build_metax_runtime,
             )
             if command.editable is not None
             else None

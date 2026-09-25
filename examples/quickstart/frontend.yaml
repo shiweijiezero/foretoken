@@ -25,4 +25,4 @@ spec:
     scorer:
       algorithm: least_loaded
     picker:
-      algorithm: round_robin
+      algorithm: gamble_sampling

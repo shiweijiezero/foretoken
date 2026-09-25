@@ -17,13 +17,9 @@ import (
 	lwsv1 "sigs.k8s.io/lws/api/leaderworkerset/v1"
 )
 
-// modelGroupLeaderWorkerSetName leaves room for LWS's worker StatefulSet ordinal
-// and Kubernetes' ControllerRevision suffix in the 63-byte Pod label value.
+// modelGroupLeaderWorkerSetName reserves a separate headless Service name for LWS
+// and leaves room for worker ordinals and ControllerRevision label suffixes.
 func modelGroupLeaderWorkerSetName(group *inferencev1alpha1.ModelGroup) string {
-	const suffixLength = len("-0-") + 10
-	if len(group.Name) <= 63-suffixLength {
-		return group.Name
-	}
 	return "mg-" + string(group.UID)
 }
 

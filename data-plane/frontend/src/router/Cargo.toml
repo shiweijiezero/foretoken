@@ -9,6 +9,7 @@ license.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+fastrand.workspace = true
 foretoken-engine-core-client = { path = "../engine-core-client" }
 foretoken-kv-indexer = { path = "../kv-indexer" }
 foretoken-model-protocol.workspace = true
