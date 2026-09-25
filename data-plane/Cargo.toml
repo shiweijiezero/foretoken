@@ -35,6 +35,9 @@ vllm_patches = [
     "patches/vllm/vllm-http-latency-histogram-buckets.patch",
     "patches/vllm/vllm-latency-histogram-buckets.patch",
     "patches/vllm/vllm-managed-engine-command.patch",
+    "patches/vllm/vllm-ready-logprobs.patch",
+    "patches/vllm/vllm-rust-ready-logprobs.patch",
+    "patches/vllm/vllm-logprob-padding-tokens.patch",
     "patches/vllm/vllm-offloading-event-identity.patch",
 ]
 

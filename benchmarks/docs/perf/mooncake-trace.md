@@ -16,6 +16,6 @@ foretoken perf examples/quickstart \
 
 Inputs reuse the trace's 512-token blocks. Server-side tokenization may change those boundaries; inspect service metrics for actual cache hits. Do not combine this mode with `--prefix-length`.
 
-Omit `--trace-synthetic-prefix-reuse` to generate random inputs from the recorded lengths without shared-block reconstruction. General trace-window and concurrency rules are described in [StudyChat replay](studychat.md).
+Omit `--trace-synthetic-prefix-reuse` to generate random inputs from the recorded lengths without shared-block reconstruction. When a trace row has positive integer `output_length`, the request targets that exact output count, whether the payload comes from random generation, reconstructed prefixes, or a separate dataset. The recorded target and actual count appear in raw results. General trace-window and concurrency rules are described in [StudyChat replay](studychat.md).
 
 ![Random inputs and reconstructed prefixes in the same W&B group](../imgs/mooncake-wandb.png)

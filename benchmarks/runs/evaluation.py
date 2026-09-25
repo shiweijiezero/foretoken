@@ -30,6 +30,7 @@ def _execute(config: EvaluationConfig, service: ModelService, directory: Path) -
         "evaluator": config.evaluator,
         "arguments": config.arguments,
         "directory": str(native),
+        "resume": config.resume,
         "service": {
             "model": service.model,
             "api_key": service.api_key,

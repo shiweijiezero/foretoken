@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+apiVersion: inference.foretoken.io/v1alpha1
+kind: FrontendService
+metadata:
+  name: bf16-frontend
+spec:
+  replicas: 1
+  resources:
+    requests:
+      cpu: "1"
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  timeouts:
+    request: 2m
+    streamIdle: 1m
+  routerPipeline:
+    filter:
+      algorithm: allow_all
+    scorer:
+      algorithm: least_loaded
+    picker:
+      algorithm: gamble_sampling

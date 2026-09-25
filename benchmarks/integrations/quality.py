@@ -6,13 +6,17 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import closing, nullcontext
 from dataclasses import asdict
 import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import sys
 from typing import Any
+
+from benchmarks.integrations.lm_eval_responses import LmEvalResponses
 
 
 def native_arguments(evaluator: str, arguments: list[str]) -> argparse.Namespace:
@@ -76,16 +80,51 @@ def validate_model_transport(arguments: dict[str, Any]) -> None:
             )
 
 
-def _run_lm_eval(arguments: list[str], service: dict[str, Any], directory: str) -> None:
+def _run_lm_eval(
+    arguments: list[str], service: dict[str, Any], directory: str, *, resume: bool = False
+) -> None:
     """Use the harness CLI runner with a chat transport that owns service authentication."""
     from lm_eval.api.registry import register_model
     from lm_eval.config.evaluate_config import EvaluatorConfig
     from lm_eval.models.openai_completions import LocalChatCompletion
+    from lm_eval.models.api_models import LMEVAL_MODEL_NONE_ANSWER_PLACEHOLDER
     from lm_eval.utils import setup_logging, simple_parse_args_string
 
     @register_model("foretoken-chat-completions")
     class ForetokenChatCompletion(LocalChatCompletion):
         """Keep routing and credentials out of persisted harness model arguments."""
+
+        def generate_until(self, requests, disable_tqdm: bool = False):
+            """Reuse individual completed generations and let the native adapter produce missing draws."""
+            if responses is None:
+                return super().generate_until(requests, disable_tqdm=disable_tqdm)
+            if any(len(request.args) != 2 for request in requests):
+                if resume:
+                    raise ValueError("lm-eval resume supports text generation tasks")
+                return super().generate_until(requests, disable_tqdm=disable_tqdm)
+            slots = [responses.reserve(request.args) for request in requests]
+            missing = [request for request, slot in zip(requests, slots) if responses.get(slot) is None]
+            if missing:
+                previous_hook = self.cache_hook
+                self.set_cache_hook(responses)
+                try:
+                    super().generate_until(missing, disable_tqdm=disable_tqdm)
+                finally:
+                    self.set_cache_hook(previous_hook)
+            return [responses.get(slot) for slot in slots]
+
+        async def get_batched_requests(self, requests, cache_keys, **kwargs):
+            """Bind concurrent callbacks before upstream dispatch so retries keep the same sample slot."""
+            if responses is not None and self.cache_hook is responses:
+                cache_keys = [responses.claim(key) for key in cache_keys]
+            return await super().get_batched_requests(requests, cache_keys, **kwargs)
+
+        def parse_generations(self, outputs, **kwargs):
+            """Use the upstream null-answer value before either sync or async completion callbacks."""
+            values = super().parse_generations(outputs, **kwargs)
+            if responses is None:
+                return values
+            return [LMEVAL_MODEL_NONE_ANSWER_PLACEHOLDER if value is None else value for value in values]
 
         @property
         def api_key(self) -> str:
@@ -121,6 +160,8 @@ def _run_lm_eval(arguments: list[str], service: dict[str, Any], directory: str) 
         raise ValueError(
             "Use --output wandb and --wandb-project instead of native wandb_args"
         )
+    if resume and (args.use_cache is not None or config.use_cache is not None):
+        raise ValueError("Use --resume or native --use_cache, not both")
     config.config = None
     config.model = "foretoken-chat-completions"
     config.model_args.update(model=service["model"], base_url=service["chat_url"])
@@ -128,11 +169,14 @@ def _run_lm_eval(arguments: list[str], service: dict[str, Any], directory: str) 
         config.model_args.pop(key, None)
     config.output_path = directory
     config.apply_chat_template = config.apply_chat_template or True
-    args.func(argparse.Namespace(**asdict(config)))
+    # Completion records stay local, outside the native report directory uploaded to W&B.
+    progress = LmEvalResponses(Path(directory).parent) if config.use_cache is None else nullcontext(None)
+    with progress as responses:
+        args.func(argparse.Namespace(**asdict(config)))
 
 
 def _run_evalscope(
-    arguments: list[str], service: dict[str, Any], directory: str
+    arguments: list[str], service: dict[str, Any], directory: str, *, resume: bool = False
 ) -> None:
     """Use EvalScope's native configuration and runner for the selected HTTP service."""
     from evalscope.config import parse_task_config
@@ -154,6 +198,10 @@ def _run_evalscope(
         ],
     )
     config = parse_task_config(args)
+    if resume:
+        if config.use_cache is not None:
+            raise ValueError("Use --resume or native --use-cache, not both")
+        config.use_cache = directory
     validate_model_transport(config.model_args)
     config.model = service["model"]
     config.api_url = service["api_root"]
@@ -197,11 +245,43 @@ def _run_evalscope(
                         shutil.copy2(source, target)
 
 
+def _restore_evaluation_progress(evaluator: str, model: str, source: str, native: Path) -> None:
+    """Restore framework-specific progress without modifying the previous evaluation."""
+    previous_directory = Path(source).expanduser().resolve()
+    previous = json.loads((previous_directory / "config.json").read_text(encoding="utf-8"))
+    if previous.get("mode") != "evaluation" or previous.get("evaluator") != evaluator:
+        raise ValueError("--resume requires a quality evaluation using the same evaluator")
+    if previous.get("model") != model:
+        raise ValueError("--resume requires the same served model as the previous evaluation")
+    cache = previous_directory / "native"
+    if evaluator == "lm-eval":
+        database = previous_directory / LmEvalResponses.filename
+        if not database.is_file():
+            raise ValueError("The previous lm-eval run has no saved generation progress")
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as src:
+            with closing(sqlite3.connect(native.parent / LmEvalResponses.filename)) as dst:
+                src.backup(dst)
+    else:
+        if not (cache / "configs" / "task_config.yaml").is_file():
+            raise ValueError("The previous EvalScope run has no resumable task configuration")
+        for name in ("configs", "predictions", "reviews"):
+            if (cache / name).is_dir():
+                shutil.copytree(cache / name, native / name)
+
+
 def main() -> None:
     """Receive one invocation through stdin so service credentials never enter argv."""
     invocation = json.load(sys.stdin)
+    if invocation["resume"]:
+        _restore_evaluation_progress(
+            invocation["evaluator"], invocation["service"]["model"],
+            invocation["resume"], Path(invocation["directory"]),
+        )
     runner = _run_lm_eval if invocation["evaluator"] == "lm-eval" else _run_evalscope
-    runner(invocation["arguments"], invocation["service"], invocation["directory"])
+    runner(
+        invocation["arguments"], invocation["service"], invocation["directory"],
+        resume=bool(invocation["resume"]),
+    )
 
 
 if __name__ == "__main__":

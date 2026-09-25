@@ -19,6 +19,7 @@ from benchmarks.model_service import ModelService
 from benchmarks.results.metrics import (
     RequestMeasurement,
     percentile_summary,
+    summarize_measurement_groups,
     summarize_measurements,
 )
 from benchmarks.results.output import (
@@ -111,7 +112,11 @@ def bind_arrival_trace_requests(
         )
 
     return request_origin, [
-        replace(event, request=request, request_origin=request_origin)
+        replace(
+            event,
+            request=replace(request, metadata={**request.metadata, **(event.metadata or {})}),
+            request_origin=request_origin,
+        )
         for event, request in zip(events, requests)
     ]
 
@@ -132,6 +137,11 @@ def _request_measurement(record: dict[str, Any], time_origin: float) -> RequestM
         turn=None,
         status_code=record["status_code"],
         error_message=record["error"],
+        dataset=record.get("dataset"),
+        model=record.get("model"),
+        priority=record.get("priority"),
+        request_class=record.get("request_class"),
+        target_output_tokens=record.get("target_output_tokens"),
     )
 
 
@@ -178,6 +188,9 @@ class TraceReplayBenchmark:
             len(event.hash_ids) if event.hash_ids is not None else None
         )
         record["payload_source"] = event.request_origin
+        record["dataset"] = self.benchmark.resolved_workload.dataset_selectors[0]
+        record["priority"] = event.request.metadata.get("priority")
+        record["request_class"] = event.request.metadata.get("request_class")
         replay_delay = max(0.0, actual_send_at - scheduled_at)
         record["replay_delay"] = replay_delay
         record["trace_e2e_latency"] = replay_delay + float(record["latency"])
@@ -390,11 +403,18 @@ class TraceReplayBenchmark:
                 include_normalized_throughput=False,
                 slo_criteria=(self.benchmark.slo.params[0] if self.benchmark.slo.params else None),
             )
+            metrics.update(summarize_measurement_groups(
+                measurements, total_time=total_time, stream=self.benchmark.generation.stream,
+                arrival_rate=-1.0, reported_concurrency=reported_concurrency,
+                slo_criteria=(self.benchmark.slo.params[0] if self.benchmark.slo.params else None),
+            ))
             self._attach_replay_metrics(metrics, records)
-            slo_met = (metrics.get("slo") or {}).get("request_slo_met")
+            slo = metrics.get("slo") or {}
+            slo_met = slo.get("request_slo_met")
             if isinstance(slo_met, list):
-                for record, request_slo_met in zip(records, slo_met):
-                    record["slo_met"] = request_slo_met
+                for raw_record, request_slo_met in zip(records, slo_met):
+                    raw_record["slo_met"] = request_slo_met
+                    raw_record["slo_target"] = slo["request_criteria"]
             # The raw replay records carry trace timing that RequestMeasurement
             # does not; they are written as an artifact for the W&B trace charts.
             raw_output: Path = write_json(

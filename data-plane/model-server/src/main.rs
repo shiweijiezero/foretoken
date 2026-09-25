@@ -170,6 +170,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         model_dtype: client.reported_model_dtype(),
         effective_max_model_len: client.max_model_len(),
+        max_logprobs: client
+            .ready_responses()
+            .first()
+            .and_then(|ready| ready.max_logprobs),
         ec_transfer: config.launch.ec.runtime_metadata(),
         capabilities: if config.launch.ec.enabled() {
             ["ec_transfer".into()].into_iter().collect()

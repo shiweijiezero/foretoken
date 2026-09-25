@@ -27,7 +27,7 @@ from benchmarks.datasets.synthetic import (
 )
 from benchmarks.integrations.openai import ChatCompletionsLoadClient
 from benchmarks.model_service import ModelService
-from benchmarks.results.metrics import RequestMeasurement, summarize_measurements
+from benchmarks.results.metrics import RequestMeasurement, summarize_measurement_groups, summarize_measurements
 from benchmarks.results.output import (
     BenchmarkRun,
     ResultOutputs,
@@ -90,6 +90,14 @@ class TaskLoadBenchmark:
         budget = self.benchmark.load.request_count
         stream = iter(tasks)
         if budget is None:
+            if self.dataset_tasks is not None:
+                sources = [source for source, rows in self.dataset_tasks.items() if rows]
+                weights = self.benchmark.resolved_workload.dataset_weights
+                selected = self.benchmark.resolved_workload.dataset_selectors
+                relative = [weights[selected.index(source)] / max(weights) if weights else 1.0 for source in sources]
+                rng = random.Random(self.benchmark.resolved_workload.random_seed)
+                cycles = {source: itertools.cycle(self.dataset_tasks[source]) for source in sources}
+                return (next(cycles[rng.choices(sources, weights=relative)[0]]) for _ in itertools.count())
             return stream if hasattr(tasks, "__next__") else itertools.cycle(tasks)
         return itertools.islice(stream, budget)
 
@@ -126,7 +134,7 @@ class TaskLoadBenchmark:
         rng = random.Random(self.benchmark.resolved_workload.random_seed + (1 if warmup else 0))
         measurements: list[RequestMeasurement] = []
         lock = asyncio.Lock()
-        conversation_ids: set[str] = set()
+        attempted_conversations = 0
         completed_conversations = 0
         budget_lock = asyncio.Lock()
         remaining_requests = budget
@@ -136,13 +144,13 @@ class TaskLoadBenchmark:
             self.benchmark,
             self.service,
             max_connections=load.max_concurrency if load.max_concurrency > 0 else None,
-        ) as client:
+        ) as client, asyncio.TaskGroup() as request_tasks:
             if profile is not None:
                 await profile.before_request()
             started = time.perf_counter()
 
             async def run_task(task: Task, scheduled_at: float) -> None:
-                nonlocal remaining_requests, completed_conversations
+                nonlocal remaining_requests, attempted_conversations, completed_conversations
                 if deadline is not None:
                     remaining = deadline - (time.perf_counter() - started)
                     if remaining <= 0:
@@ -171,7 +179,7 @@ class TaskLoadBenchmark:
                         if max_turns is not None and max_turns > 0:
                             turns = turns[:max_turns]
                         async with lock:
-                            conversation_ids.add(task.id)
+                            attempted_conversations += 1
                     sent_turns = 0
                     conversation_succeeded = True
                     for turn_index, (turn, reference_answer) in enumerate(turns):
@@ -207,7 +215,11 @@ class TaskLoadBenchmark:
                             turn=turn_index if self.benchmark.is_multi_turn else None,
                             status_code=response["status_code"],
                             error_message=response["error"],
-                            dataset=task.metadata.get("_dataset"),
+                            dataset=task.metadata.get("_dataset") or (self.benchmark.resolved_workload.dataset_selectors[0] if self.benchmark.resolved_workload.dataset_selectors else None),
+                            model=response["model"],
+                            priority=task.metadata.get("priority"),
+                            request_class=task.metadata.get("request_class"),
+                            target_output_tokens=response["target_output_tokens"],
                         )
                         async with lock:
                             measurements.append(item)
@@ -247,14 +259,12 @@ class TaskLoadBenchmark:
                         break
                 elif deadline is not None and time.perf_counter() - started >= deadline:
                     break
-                pending = asyncio.create_task(run_task(task, next_at))
+                pending = request_tasks.create_task(run_task(task, next_at))
                 active.add(pending)
                 pending.add_done_callback(active.discard)
                 if load.max_concurrency > 0 and len(active) >= load.max_concurrency:
                     await asyncio.wait(active, return_when=asyncio.FIRST_COMPLETED)
-            if active:
-                await asyncio.gather(*active)
-        self._conversation_attempted = len(conversation_ids)
+        self._conversation_attempted = attempted_conversations
         self._conversation_completed = completed_conversations
         return measurements, time.perf_counter() - started
 
@@ -303,23 +313,16 @@ class TaskLoadBenchmark:
                 arrival_rate=self.benchmark.load.arrival_rate,
                 request_count=len(measurements) if self.benchmark.load.request_count is None else self.benchmark.load.request_count,
                 reported_concurrency=self.benchmark.load.max_concurrency,
-                gpu_count=self.service.gpu_count,
+                gpu_count=self.service.gpu_count if {item.model for item in measurements} == {self.service.model} else None,
                 slo_criteria=(self.benchmark.slo.params[0] if self.benchmark.slo.params else None),
             )
-            if self.dataset_tasks is not None:
-                metrics["datasets"] = {
-                    name: summarize_measurements(
-                        [item for item in measurements if item.dataset == name],
-                        total_time=elapsed,
-                        stream=self.benchmark.generation.stream,
-                        arrival_rate=self.benchmark.load.arrival_rate,
-                        request_count=len(self.dataset_tasks[name]),
-                        reported_concurrency=self.benchmark.load.max_concurrency,
-                        gpu_count=self.service.gpu_count,
-                        slo_criteria=None,
-                    )
-                    for name in self.dataset_tasks
-                }
+            metrics.update(summarize_measurement_groups(
+                measurements, total_time=elapsed, stream=self.benchmark.generation.stream,
+                arrival_rate=self.benchmark.load.arrival_rate,
+                reported_concurrency=self.benchmark.load.max_concurrency,
+                slo_criteria=(self.benchmark.slo.params[0] if self.benchmark.slo.params else None),
+                include_single_dataset=self.dataset_tasks is not None,
+            ))
             if self.benchmark.is_multi_turn:
                 metrics["multi_turn"] = True
                 metrics["conversation"] = {
@@ -351,19 +354,30 @@ def load_multi_dataset_tasks(benchmark: BenchmarkConfig) -> dict[str, list[Task]
     workload = benchmark.resolved_workload
     result: dict[str, list[Task]] = {}
     total = benchmark.load.request_count
-    base, remainder = divmod(total, len(workload.dataset_selectors)) if total is not None else (None, 0)
+    weights = workload.dataset_weights or [1.0] * len(workload.dataset_selectors)
+    if total is not None:
+        largest = max(weights)
+        scaled = [weight / largest for weight in weights]
+        shares = [total * weight / sum(scaled) for weight in scaled]
+        counts = [int(share) for share in shares]
+        for index in sorted(range(len(counts)), key=lambda i: (-(shares[i] - counts[i]), i))[:total - sum(counts)]:
+            counts[index] += 1
+    else:
+        counts = [None] * len(weights)
     for index, selector in enumerate(workload.dataset_selectors):
         child = replace(workload, dataset_selectors=[selector], fixed_prompt="")
         child_benchmark = replace(benchmark, workload=child)
-        count = None if total is None else base + (1 if index < remainder else 0)
+        count = counts[index]
         if count == 0:
             result[selector] = []
             continue
         child_benchmark = replace(child_benchmark, load=replace(benchmark.load, request_count=count))
         tasks = load_conversation_tasks(child_benchmark) if benchmark.is_multi_turn else load_request_tasks(child_benchmark, request_count=count)
         result[selector] = [replace(task, metadata={**task.metadata, "_dataset": selector}) for task in tasks]
-    # Round-robin ordering keeps one source from owning the global clock.
-    interleaved: list[Task] = []
-    for group in itertools.zip_longest(*result.values()):
-        interleaved.extend(task for task in group if task is not None)
-    return {"__global__": interleaved, **result}
+    # Spread each source across the complete run while preserving its row order.
+    # Equal shares remain round-robin; unequal shares do not leave a single-source tail.
+    scheduled = []
+    for tasks in result.values():
+        scheduled.extend(((index + 0.5) / len(tasks), task) for index, task in enumerate(tasks))
+    scheduled.sort(key=lambda item: item[0])
+    return {"__global__": [task for _, task in scheduled], **result}

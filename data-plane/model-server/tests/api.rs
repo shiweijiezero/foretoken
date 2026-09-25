@@ -109,6 +109,7 @@ fn metadata() -> RuntimeMetadataResponse {
         },
         model_dtype: Some(ModelDtype::BFloat16),
         effective_max_model_len: 32_768,
+        max_logprobs: None,
         ec_transfer: None,
         capabilities: Default::default(),
     }

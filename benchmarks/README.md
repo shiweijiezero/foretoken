@@ -40,7 +40,7 @@ foretoken eval examples/quickstart \
   --tasks gsm8k --limit 100 --output local,wandb
 ```
 
-This scores 100 GSM8K math problems and reports the task's metrics and sample counts. [Quality evaluation](docs/eval/README.md) covers lm-evaluation-harness, EvalScope, native task options, existing endpoints, and score reports.
+This scores 100 GSM8K math problems and reports the task's metrics and sample counts. [Quality evaluation](docs/eval/README.md) covers lm-evaluation-harness and EvalScope. Add `--reference` for [reference/candidate probability comparisons](docs/eval/distribution-comparison.md).
 
 ## Profile execution
 

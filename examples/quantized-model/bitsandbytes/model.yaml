@@ -26,3 +26,4 @@ spec:
     tensor-parallel-size: 1
     quantization: bitsandbytes
     dtype: bfloat16
+    max-logprobs: -1

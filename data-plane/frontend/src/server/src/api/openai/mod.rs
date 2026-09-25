@@ -325,6 +325,8 @@ struct CompletionRequest {
     #[serde(default)]
     return_token_ids: bool,
     #[serde(default)]
+    return_tokens_as_token_ids: bool,
+    #[serde(default)]
     return_prompt_token_ids: bool,
     #[serde(default, rename = "request_id")]
     _client_request_id: Option<String>,
@@ -751,6 +753,7 @@ async fn completions(
             state.stream_idle,
             include_usage,
             request.return_token_ids,
+            request.return_tokens_as_token_ids,
             request.return_prompt_token_ids,
         )
     } else {
@@ -763,6 +766,7 @@ async fn completions(
                 echo: request.echo,
                 expose_logprobs: public_logprobs,
                 return_token_ids: request.return_token_ids,
+                return_tokens_as_token_ids: request.return_tokens_as_token_ids,
                 return_prompt_token_ids: request.return_prompt_token_ids,
             },
         )

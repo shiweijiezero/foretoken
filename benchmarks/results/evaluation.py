@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import json
 import logging
 from pathlib import Path
@@ -268,12 +269,15 @@ def publish_quality_wandb(session: Any, run: BenchmarkRun) -> None:
 
 
 def evaluation_sinks(
-    config: EvaluationConfig, record: dict[str, Any], directory: str
+    config: EvaluationConfig, record: dict[str, Any], directory: str,
+    *,
+    console_sink: ResultSink | None = None,
+    publisher: Callable[[Any, BenchmarkRun], None] = publish_quality_wandb,
 ) -> list[ResultSink]:
     """Use the existing publication lifecycle with evaluation-specific presentation."""
     sinks: list[ResultSink] = [EvaluationArtifactSink(config, directory)]
     if not config.outputs.includes("quiet"):
-        sinks.append(EvaluationConsoleSink())
+        sinks.append(console_sink if console_sink is not None else EvaluationConsoleSink())
     if config.outputs.includes("local"):
         sinks.append(LocalDirectorySink(directory))
     if config.outputs.includes("wandb"):
@@ -282,9 +286,11 @@ def evaluation_sinks(
                 config,
                 execution_dir=directory,
                 run_name=config.wandb.run_name
-                or f"{record['model']}_{record['evaluator']}_{Path(directory).name}",
+                or "_".join(str(part) for part in (
+                    record.get("model"), record.get("evaluator"), Path(directory).name,
+                ) if part),
                 group=config.wandb.group,
-                publisher=publish_quality_wandb,
+                publisher=publisher,
                 run_config={**config.to_dict(), **record},
             )
         )

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from typing import Any, Optional
 
 import httpx
@@ -27,7 +28,7 @@ class ChatCompletionsLoadClient:
         benchmark: BenchmarkConfig,
         service: ModelService,
         *,
-        max_connections: int,
+        max_connections: int | None,
     ) -> None:
         self._generation = benchmark.generation
         self._request_overrides = benchmark.generation.request_overrides()
@@ -47,6 +48,7 @@ class ChatCompletionsLoadClient:
             ),
         )
         self._model = service.model
+        self._models = service.models if service.model_service_refs or service.deployment is not None else ()
         self._request_url = service.chat_completions_url
 
     async def __aenter__(self) -> ChatCompletionsLoadClient:
@@ -62,18 +64,28 @@ class ChatCompletionsLoadClient:
     async def send_messages(
         self,
         messages: list[dict[str, Any]],
-        metadata: dict[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Send one request and return timing, usage, and generated text for conversation drivers."""
         stream = self._generation.stream
-        target_length = self._generation.sample_output_length()
+        metadata = metadata or {}
+        target_length = metadata.get("output_length")
+        if target_length is None:
+            target_length = self._generation.sample_output_length()
+        model = metadata.get("model", self._request_overrides.get("model", self._model))
+        if not model:
+            raise ValueError("Dataset row must specify model when --model is omitted")
+        if self._models and model not in self._models:
+            raise ValueError(f"Dataset model {model!r} is not advertised by the deployment")
         request_fields: dict[str, Any] = {
-            "model": self._model,
+            "model": model,
             "messages": messages,
             "max_tokens": target_length if target_length is not None else self._generation.sample_max_tokens(),
             "stream": stream,
         }
-        request_fields.update(self._request_overrides)
+        request_fields.update(self._request_overrides, model=model)
+        if "priority" in metadata:
+            request_fields["priority"] = metadata["priority"]
         if target_length is not None:
             request_fields["max_tokens"] = target_length
             request_fields.update(min_tokens=target_length, ignore_eos=True)
@@ -165,6 +177,8 @@ class ChatCompletionsLoadClient:
             "inter_token_latencies": timing.intervals if stream else [],
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "target_output_tokens": target_length,
+            "model": model,
             "cached_input_tokens": cached_input_tokens,
             "generated_text": "".join(generated_parts),
             "tool_calls": tool_calls,

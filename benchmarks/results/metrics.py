@@ -37,6 +37,10 @@ class RequestMeasurement:
     status_code: int | None = None
     error_message: str | None = None
     dataset: str | None = None
+    model: str | None = None
+    priority: int | None = None
+    request_class: str | None = None
+    target_output_tokens: int | None = None
 
 
 def request_activity_events(
@@ -134,17 +138,16 @@ def request_slo_results(
     criteria: dict[str, str] | None,
     total_time: float,
 ) -> dict[str, Any] | None:
-    """Evaluate request-level SLO diagnostics and goodput from measured requests."""
+    """Score requests against the request-level subset of global search criteria."""
     if not criteria:
         return None
-    checks: list[tuple[str, Any, float]] = []
-    for name, expression in criteria.items():
-        metric_match = _SLO_CRITERION.fullmatch(name)
-        expression_match = _SLO_EXPRESSION.fullmatch(expression)
-        if metric_match is None or expression_match is None:
-            continue
-        checks.append((metric_match.group(1), _SLO_OPERATORS[expression_match.group(1)], float(expression_match.group(2))))
-    if not checks:
+
+    # Search criteria may also contain aggregate-only metrics such as rps.
+    supported = {
+        name: expression for name, expression in criteria.items()
+        if _SLO_CRITERION.fullmatch(name) and _SLO_EXPRESSION.fullmatch(expression)
+    }
+    if not supported:
         return {
             "criteria": criteria,
             "request_slo_met": None,
@@ -153,6 +156,14 @@ def request_slo_results(
             "token_goodput": None,
         }
 
+    checks = []
+    for name, expression in supported.items():
+        match = _SLO_EXPRESSION.fullmatch(expression)
+        checks.append((
+            _SLO_CRITERION.fullmatch(name).group(1),
+            _SLO_OPERATORS[match.group(1)],
+            float(match.group(2)),
+        ))
     request_slo_met: list[bool] = []
     good_requests = 0
     good_tokens = 0
@@ -175,11 +186,53 @@ def request_slo_results(
     duration = float(total_time)
     return {
         "criteria": criteria,
+        "request_criteria": supported,
         "request_slo_met": request_slo_met,
         "slo_attainment": good_requests / len(measurements) if measurements else 0.0,
         "request_goodput": good_requests / duration if duration > 0 else None,
         "token_goodput": good_tokens / duration if duration > 0 else None,
     }
+
+
+def summarize_measurement_groups(
+    measurements: list[RequestMeasurement],
+    *,
+    total_time: float,
+    stream: bool,
+    arrival_rate: float,
+    reported_concurrency: int,
+    slo_criteria: dict[str, str] | None,
+    include_single_dataset: bool = False,
+) -> dict[str, dict[str, Any]]:
+    """Summarize labeled requests on their shared experiment clock without per-group GPU assumptions."""
+    result: dict[str, dict[str, Any]] = {}
+    dimensions = (
+        ("dataset", "datasets"),
+        ("model", "models"),
+        ("request_class", "request_classes"),
+    )
+    for field, group_name in dimensions:
+        names = sorted({
+            value for item in measurements
+            if (value := getattr(item, field)) is not None
+        })
+        if not names:
+            continue
+        if len(names) == 1 and field != "request_class" and not (
+            field == "dataset" and include_single_dataset
+        ):
+            continue
+        result[group_name] = {}
+        for name in names:
+            subset = [item for item in measurements if getattr(item, field) == name]
+            result[group_name][name] = summarize_measurements(
+                subset, total_time=total_time, stream=stream,
+                arrival_rate=arrival_rate, request_count=len(subset),
+                reported_concurrency=reported_concurrency, gpu_count=None,
+                include_normalized_throughput=False,
+                slo_criteria=slo_criteria,
+            )
+    return result
 
 
 def summarize_measurements(

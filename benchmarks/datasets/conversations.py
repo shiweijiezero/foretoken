@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
 
@@ -96,27 +96,26 @@ def _extract_row_content(
     line_number: int,
     *,
     allow_sharegpt: bool = False,
-) -> tuple[Any, str | None, list[dict[str, Any]] | None]:
+) -> tuple[Any, str | None]:
     """Extract the common OpenAI, prompt, user, and optional ShareGPT fields."""
     if isinstance(row, list):
-        return row, None, None
+        return row, None
     if not isinstance(row, dict):
         raise ValueError(
             f"Expected object or messages list at {dataset_path}:{line_number}"
         )
 
-    tools = row.get("tools") or None
     if "messages" in row:
-        return row["messages"], None, tools
+        return row["messages"], None
     if "conversations" in row:
         if not allow_sharegpt:
             raise ValueError(
                 "Line must be messages list or contain 'messages'/'prompt'/'user' "
                 f"at {dataset_path}:{line_number}"
             )
-        return _sharegpt_messages(row, dataset_path, line_number), None, tools
+        return _sharegpt_messages(row, dataset_path, line_number), None
     if "prompt" in row:
-        return None, str(row["prompt"]), tools
+        return None, str(row["prompt"])
     if "user" in row:
         user_message = row["user"]
         if user_message is None or str(user_message) == "":
@@ -126,7 +125,7 @@ def _extract_row_content(
         if system_message is not None and str(system_message) != "":
             messages.append({"role": "system", "content": str(system_message)})
         messages.append({"role": "user", "content": str(user_message)})
-        return messages, None, tools
+        return messages, None
 
     raise ValueError(
         "Line must be messages list or contain 'messages'/'prompt'/'user' "
@@ -162,6 +161,30 @@ def parse_message_turns(
     return tuple(turns)
 
 
+def request_row_metadata(row: Any, dataset_path: Path, line_number: int) -> dict[str, Any]:
+    """Select supported request controls and benchmark labels from one dataset row."""
+    if not isinstance(row, dict):
+        return {}
+    metadata = {
+        key: row[key]
+        for key in ("tool_choice", "parallel_tool_calls", "model", "priority", "request_class")
+        if key in row
+    }
+    if row.get("tools"):
+        metadata["tools"] = row["tools"]
+    if "output_length" in row:
+        value = row["output_length"]
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"output_length must be a positive integer at {dataset_path}:{line_number}")
+        metadata["output_length"] = value
+    for key in ("model", "request_class"):
+        if key in metadata and (not isinstance(metadata[key], str) or not metadata[key].strip()):
+            raise ValueError(f"{key} must be a non-empty string at {dataset_path}:{line_number}")
+    if "priority" in metadata and (isinstance(metadata["priority"], bool) or not isinstance(metadata["priority"], int)):
+        raise ValueError(f"priority must be an integer at {dataset_path}:{line_number}")
+    return metadata
+
+
 def _request_task(
     row: Any,
     dataset_path: Path,
@@ -169,12 +192,8 @@ def _request_task(
     row_index: int,
 ) -> Task:
     """Read one row as an independent request whose tools, if any, travel in the task metadata."""
-    messages, prompt, tools = _extract_row_content(row, dataset_path, line_number)
-    metadata = {"tools": tools} if tools else {}
-    if isinstance(row, dict):
-        for key in ("tool_choice", "parallel_tool_calls"):
-            if key in row:
-                metadata[key] = row[key]
+    messages, prompt = _extract_row_content(row, dataset_path, line_number)
+    metadata = request_row_metadata(row, dataset_path, line_number)
     if prompt is not None:
         turns: tuple[Turn, ...] = (Turn(role="user", content=prompt),)
     else:
@@ -220,7 +239,7 @@ def _conversation_task(
     row_index: int,
 ) -> Task:
     """Read one OpenAI or ShareGPT record as a conversation the engine runs turn by turn."""
-    messages, prompt, tools = _extract_row_content(
+    messages, prompt = _extract_row_content(
         row,
         dataset_path,
         line_number,
@@ -232,11 +251,7 @@ def _conversation_task(
     turns = parse_message_turns(messages, dataset_path, line_number)
     if not any(turn.role == "user" for turn in turns):
         raise ValueError(f"Conversation has no user message at {dataset_path}:{line_number}")
-    fields = {"tools": tools} if tools else {}
-    if isinstance(row, dict):
-        for key in ("tool_choice", "parallel_tool_calls"):
-            if key in row:
-                fields[key] = row[key]
+    fields = request_row_metadata(row, dataset_path, line_number)
     task = Task(id=f"{dataset_path}:{row_index}", turns=turns, metadata=fields)
     return task
 
@@ -345,12 +360,20 @@ def load_conversation_tasks(benchmark: BenchmarkConfig) -> list[Task]:
             if row_index < row_offset:
                 continue
             task = _conversation_task(row, dataset_path, line_number, row_index)
-            tasks.append(task)
             turn_count = len(split_chat_conversation(task.messages()))
             if workload.max_turns is not None and workload.max_turns > 0:
                 turn_count = min(turn_count, workload.max_turns)
+            if request_budget is not None and request_count + turn_count > request_budget:
+                # The final conversation must not consume requests reserved for other sources.
+                keep = request_budget - request_count
+                if keep:
+                    scripts = split_chat_conversation(task.messages())[:keep]
+                    messages = [message for turn, answer in scripts for message in (turn + ([answer] if answer else []))]
+                    tasks.append(replace(task, turns=parse_message_turns(messages, dataset_path, line_number)))
+                return tasks
+            tasks.append(task)
             request_count += turn_count
-            if request_budget is not None and request_count >= request_budget:
+            if request_budget is not None and request_count == request_budget:
                 return tasks
     if request_budget is None:
         return tasks

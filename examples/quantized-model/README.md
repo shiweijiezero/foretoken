@@ -5,7 +5,7 @@
 
 English | [简体中文](README_zh.md)
 
-These examples serve Qwen2.5-0.5B-Instruct with a prequantized checkpoint or quantize ordinary weights while loading. Each directory is a complete Kustomize deployment with its own namespace, runtime cache, frontend, and model service. Both examples can be deployed and removed independently without resource-name conflicts.
+These examples serve Qwen2.5-0.5B-Instruct with a prequantized checkpoint or quantize ordinary weights while loading. Each directory is a complete Kustomize deployment with its own namespace, runtime cache, frontend, and model service. The deployments can be created and removed independently without resource-name conflicts. A matching BF16 reference is included for distribution comparisons.
 
 Build and install the [platform from this source checkout](../../docs/custom-deployment.md) before deploying an example:
 
@@ -42,6 +42,19 @@ When finished, remove only the BitsAndBytes deployment:
 ```bash
 foretoken delete examples/quantized-model/bitsandbytes
 ```
+
+## Compare with BF16
+
+From the repository root, compare bitsandbytes against the same unquantized model and BF16 computation:
+
+```bash
+foretoken eval examples/quantized-model/bitsandbytes \
+  --reference examples/quantized-model/bf16 --output local
+```
+
+To include the BF16 self-comparison in bit-width plots, replace the candidate directory with `--candidates examples/quantized-model/candidates.jsonl`. The AWQ example uses FP16 activations, so its comparison against BF16 includes that computation-precision difference.
+
+See [model distribution comparison](../../benchmarks/docs/eval/distribution-comparison.md) for metrics, custom candidates, resuming a run, and updating existing deployments.
 
 ## Storage and requests
 

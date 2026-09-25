@@ -54,17 +54,23 @@ def _configured_hub_cache_dir() -> str | None:
     return None
 
 
-def resolve_tokenizer_path(tokenizer_path: str) -> str:
-    """Return a local tokenizer path, downloading a Hub repository when needed."""
+def resolve_tokenizer_path(tokenizer_path: str, *, source: str = "hf") -> str:
+    """Resolve client-side text artifacts from a local directory or the selected model hub."""
     local = Path(tokenizer_path).expanduser()
     if local.exists():
         return str(local.resolve())
-    if local.is_absolute() or tokenizer_path.startswith(("./", "../", "~")):
+    if source == "local" or local.is_absolute() or tokenizer_path.startswith(("./", "../", "~")):
         raise ValueError(
             f"Tokenizer path does not exist locally: {tokenizer_path!r}; "
             "pass an existing directory or a Hugging Face repository ID"
         )
 
+    if source == "modelscope":
+        from modelscope.hub.snapshot_download import snapshot_download as modelscope_download
+
+        return modelscope_download(tokenizer_path, allow_file_pattern=list(_TOKENIZER_ALLOW_PATTERNS))
+    if source != "hf":
+        raise ValueError(f"Unsupported model source: {source!r}")
     cache_dir = _configured_hub_cache_dir()
     logger.info(
         "Resolving tokenizer from Hugging Face repo %r%s",

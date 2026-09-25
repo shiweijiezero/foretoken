@@ -134,7 +134,7 @@ class BenchmarkArtifactSink:
                     {
                         "success": item.succeeded,
                         **(
-                            {"slo_met": slo_met[index]}
+                            {"slo_met": slo_met[index], "slo_target": slo["request_criteria"]}
                             if isinstance(slo_met, list)
                             else {}
                         ),
@@ -155,6 +155,10 @@ class BenchmarkArtifactSink:
                         "conversation_id": item.conversation_id,
                         "turn": item.turn,
                         "dataset": item.dataset,
+                        "model": item.model,
+                        "priority": item.priority,
+                        "request_class": item.request_class,
+                        "target_output_tokens": item.target_output_tokens,
                     }
                     for index, item in enumerate(run.measurements)
                 ],
@@ -309,7 +313,7 @@ def build_benchmark_run_record(
     workload = benchmark.resolved_workload
     record = {
         "mode": mode,
-        "model": service.model,
+        "model": service.model or "per dataset row",
         "url": service.chat_completions_url,
         "max_concurrency": load_record["max_concurrency"],
         "num_prompts": load_record["num_prompts"],
@@ -468,7 +472,7 @@ class ResultOutputs:
             if outputs.includes("wandb"):
                 base_name = (
                     standard_benchmark.wandb.run_name.strip()
-                    or f"{self.service.model}_{wandb_run_timestamp()}"
+                    or f"{self.service.model or 'dataset-models'}_{wandb_run_timestamp()}"
                 )
                 run_name = (
                     f"{base_name}_{self.label}" if self.label else base_name

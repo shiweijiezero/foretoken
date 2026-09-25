@@ -134,6 +134,20 @@ impl BackendRegistry {
             .min()
     }
 
+    /// Returns the most restrictive logprob cap across healthy model components.
+    /// Runtime preparation supplies the upstream default for engines that do not report a cap.
+    pub fn effective_max_logprobs(&self, model: &str, default: i32) -> Option<i32> {
+        self.model_routes
+            .routes()
+            .iter()
+            .filter(|route| {
+                route.model == model && self.is_route_target_healthy(&route.route_target_id)
+            })
+            .filter_map(|route| self.metadata(&route.route_target_id))
+            .map(|metadata| metadata.max_logprobs.unwrap_or(default))
+            .min_by_key(|limit| if *limit == -1 { i32::MAX } else { *limit })
+    }
+
     /// Resolves runtime preparation's shared dtype, retaining text-only operation when it is unknown.
     /// Conflicting reported values are an invalid model configuration, not missing metadata.
     pub fn effective_model_dtype(&self, model: &str) -> Result<Option<ModelDtype>, String> {

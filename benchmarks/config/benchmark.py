@@ -46,13 +46,13 @@ class ModelServiceSource:
     max_retries: int = 0
     wait_timeout: str = "15m"
 
-    def validate(self) -> None:
-        """Require exactly one service source and an explicit model for a URL."""
+    def validate(self, *, require_model: bool = True) -> None:
+        """Require one service source and, normally, a model for an existing URL."""
         if bool(self.kustomize_path) == bool(self.url):
             raise ValueError("provide either PATH or --url")
         if self.max_retries < 0:
             raise ValueError("--max-retries must be >= 0")
-        if self.url and not self.model:
+        if require_model and self.url and not self.model:
             raise ValueError("--model is required with --url")
 
 
@@ -197,6 +197,7 @@ class ChatRequestDataset:
     # -1 means the complete conversation; positive values truncate turns.
     max_turns: Optional[int] = -1
     conversation_history: str = "dataset"
+    dataset_weights: list[float] = field(default_factory=list)
 
     @property
     def has_multiple_datasets(self) -> bool:
@@ -215,6 +216,13 @@ class ChatRequestDataset:
             )
         if self.conversation_history not in {"dataset", "generated"}:
             raise ValueError("--conversation-history must be dataset or generated")
+        if len(set(self.dataset_selectors)) != len(self.dataset_selectors):
+            raise ValueError("--dataset sources must be distinct")
+        if self.dataset_weights and (
+            len(self.dataset_weights) != len(self.dataset_selectors)
+            or any(not math.isfinite(weight) or weight <= 0 for weight in self.dataset_weights)
+        ):
+            raise ValueError("--dataset-weights requires one positive finite weight per --dataset source")
         if self.fixed_prompt and self.has_multiple_datasets:
             raise ValueError(
                 "--prompt cannot be combined with multiple --dataset values"
@@ -419,7 +427,7 @@ class BenchmarkConfig:
 
     def validate(self) -> None:
         """Validate each section, then the rules that span sections, before acquiring resources."""
-        self.service.validate()
+        self.service.validate(require_model=False)
         if self.profile is not None and not self.service.kustomize_path:
             raise ValueError("--profile requires a Foretoken Kustomize deployment")
         if self.sweep.path and not self.service.kustomize_path:
@@ -431,8 +439,11 @@ class BenchmarkConfig:
         workload.validate()
         if workload.conversation_history == "generated" and not self.is_multi_turn:
             raise ValueError("--conversation-history generated requires a conversation dataset without --trace")
-        if self.generation.min_output_length is not None and workload.dataset_selectors != ["random"]:
-            raise ValueError("output length control requires --dataset random")
+        if self.service.url and not self.service.model and (
+            not self.trace.trace_selector
+            and (not workload.dataset_selectors or workload.dataset_selectors == ["random"])
+        ):
+            raise ValueError("--model is required with --url unless dataset rows specify model")
         if (
             self.is_multi_turn
             and self.load.arrival_pattern in {"constant", "gamma"}
@@ -541,6 +552,7 @@ class BenchmarkConfig:
         workload = self.resolved_workload
         dataset = {
             "dataset": list(workload.dataset_selectors),
+            "dataset_weights": workload.dataset_weights,
             "dataset_offset": workload.row_offset,
             "tokenizer_path": workload.tokenizer,
             "random_seed": workload.random_seed,

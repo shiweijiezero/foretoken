@@ -1,0 +1,2 @@
+{"path":"examples/quantized-model/bf16","label":"BF16","method":"BF16","weight_bits":16}
+{"path":"examples/quantized-model/bitsandbytes","label":"bitsandbytes 4-bit","method":"bitsandbytes","weight_bits":4}

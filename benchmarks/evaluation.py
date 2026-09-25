@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Compose native quality evaluation with Foretoken service discovery and result destinations."""
+"""Dispatch answer scoring or distribution comparisons through shared service and result lifecycles."""
 
 from __future__ import annotations
 
@@ -16,11 +16,21 @@ from benchmarks.runs.evaluation import run_evaluation
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Parse native task options before resolving a service and running the selected evaluator."""
+    """Select distribution comparison or native answer scoring through shared service lifecycles."""
     try:
         config, help_requested = parse_evaluation_arguments(
             sys.argv[1:] if argv is None else argv
         )
+        if config.evaluator is None:
+            if help_requested:
+                return
+            from benchmarks.config.distribution_comparison import parse_distribution_comparison_arguments
+            from benchmarks.runs.distribution_comparison import run_distribution_comparison
+
+            comparison = parse_distribution_comparison_arguments(config.arguments, config.service)
+            configure_logging(not config.outputs.includes("quiet"))
+            run_distribution_comparison(config, comparison)
+            return
         native = native_arguments(
             config.evaluator,
             ["--help"] if help_requested else list(config.arguments),

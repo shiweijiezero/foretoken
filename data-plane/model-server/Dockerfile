@@ -73,32 +73,34 @@ ENV FORETOKEN_VLLM_PYTHON=${FORETOKEN_VLLM_PYTHON}
 RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
     --mount=type=bind,source=data-plane/patches/vllm/vllm-python-profiling.patch,target=/tmp/vllm-profiling.patch \
     --mount=type=bind,source=data-plane/patches/vllm/vllm-offloading-event-identity.patch,target=/tmp/vllm-offload-identity.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-ready-logprobs.patch,target=/tmp/vllm-ready-logprobs.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-0.26-ready-logprobs.patch,target=/tmp/vllm-0.26-ready-logprobs.patch \
     vllm_site="$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
       'from importlib.metadata import distribution; print(distribution("vllm").locate_file(""))')" \
-    && if patch --force --reverse --dry-run --fuzz=0 --strip=1 \
-         --directory="$vllm_site" --input=/tmp/vllm-profiling.patch >/dev/null 2>&1; then \
-         printf '%s\n' 'vLLM profiling backport already installed'; \
-       else \
-         patch --batch --forward --fuzz=0 --no-backup-if-mismatch --strip=1 \
-           --directory="$vllm_site" --input=/tmp/vllm-profiling.patch; \
-       fi \
+    && vllm_version="$("${FORETOKEN_VLLM_PYTHON:-python}" -c 'from importlib.metadata import version; print(version("vllm"))')" \
+    && ready_patch=/tmp/vllm-ready-logprobs.patch \
+    && offload_patch= \
+    && case "$vllm_version" in \
+         0.26.*) ready_patch=/tmp/vllm-0.26-ready-logprobs.patch ;; \
+         0.30.*) offload_patch=/tmp/vllm-offload-identity.patch ;; \
+       esac \
+    && offload_events="$vllm_site/vllm/distributed/kv_transfer/kv_connector/v1/offloading/events.py" \
+    && if [ ! -f "$offload_events" ]; then offload_patch=; fi \
+    && for engine_patch in /tmp/vllm-profiling.patch "$ready_patch" "$offload_patch"; do \
+         [ -n "$engine_patch" ] || continue; \
+         if patch --force --reverse --dry-run --fuzz=0 --strip=1 \
+              --directory="$vllm_site" --input="$engine_patch" >/dev/null 2>&1; then \
+           printf 'vLLM patch already installed: %s\n' "${engine_patch##*/}"; \
+         else \
+           patch --batch --forward --fuzz=0 --no-backup-if-mismatch --strip=1 \
+             --directory="$vllm_site" --input="$engine_patch" || exit 1; \
+         fi; \
+       done \
     && "${FORETOKEN_VLLM_PYTHON:-python}" -m compileall -q -f \
       "$vllm_site/vllm/profiler/wrapper.py" "$vllm_site/vllm/v1/worker/gpu_worker.py" \
-    && offload_events="$vllm_site/vllm/distributed/kv_transfer/kv_connector/v1/offloading/events.py" \
-    && if [ -f "$offload_events" ]; then \
-         vllm_version="$("${FORETOKEN_VLLM_PYTHON:-python}" -c 'from importlib.metadata import version; print(version("vllm"))')" || exit $?; \
-         case "$vllm_version" in \
-           0.30.*) offload_patch=/tmp/vllm-offload-identity.patch ;; \
-           *) offload_patch= ;; \
-         esac; \
-         if [ -n "$offload_patch" ]; then \
-           if patch --force --reverse --dry-run --fuzz=0 --strip=1 --directory="$vllm_site" --input="$offload_patch" >/dev/null 2>&1; then \
-             printf '%s\n' 'vLLM offloading identity backport already installed'; \
-           else \
-             patch --batch --forward --fuzz=0 --no-backup-if-mismatch --strip=1 --directory="$vllm_site" --input="$offload_patch" || exit $?; \
-           fi; \
-           "${FORETOKEN_VLLM_PYTHON:-python}" -m compileall -q -f "$offload_events"; \
-         fi; \
+      "$vllm_site/vllm/v1/engine/__init__.py" "$vllm_site/vllm/v1/engine/core.py" \
+    && if [ -n "$offload_patch" ]; then \
+         "${FORETOKEN_VLLM_PYTHON:-python}" -m compileall -q -f "$offload_events"; \
        fi
 
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
