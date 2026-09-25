@@ -20,6 +20,8 @@ const (
 	RecommendationReasonMetricsUnavailable RecommendationReason = "MetricsUnavailable"
 	RecommendationReasonMetricsStale       RecommendationReason = "MetricsStale"
 	RecommendationReasonMetricsIncomplete  RecommendationReason = "MetricsIncomplete"
+	RecommendationReasonLoadPressure       RecommendationReason = "LoadPressure"
+	RecommendationReasonLoadBelowTarget    RecommendationReason = "LoadBelowTarget"
 )
 
 // ReplicaRecommendation is the Decision stage output before stabilization and lifecycle constraints.

@@ -32,6 +32,7 @@ spec:
 | Decision | `queue` | `targetAverageQueuedRequests: 1` |
 | Decision | `queue_threshold` | `scaleUpQueuedRequests: 1`、`scaleDownQueuedRequests: 0` |
 | Decision | `aimd` | `additiveIncrease: 1`、`multiplicativeDecreasePercent: 50`、`scaleUpQueuedRequests: 0` |
+| Decision | `dynamo_load` | `mode: throughput`，prefill 队列阈值 `1/0`，decode KV cache 阈值 `0.8/0.6` |
 | Trigger | `periodic` | `interval: 5s` |
 | Adjustment | `step` | `scaleUpStabilizationWindow: 0s`、`scaleDownStabilizationWindow: 300s` |
 | Adjustment | `direct` | 不接受参数 |
@@ -50,6 +51,22 @@ adjustment:
 ```
 
 未知算法或无效参数会使 `ModelService` 出现 `ScalingFailed` condition。
+
+## Dynamo 反应式负载扩缩容
+
+使用 `dynamo_load` 选择兼容 Dynamo 的反应式策略：
+
+```yaml
+decision:
+  algorithm: dynamo_load
+  parameters:
+    mode: throughput
+```
+
+Aggregate、encoder 和 prefill Pool 使用排队请求数；decode Pool 在模型服务
+提供该指标时使用 KV cache 利用率。`latency` 模式使用更低的 decode 阈值（扩容
+`0.4`、缩容 `0.1`）。decode 所需指标不可用时算法会保持当前容量，不会把缺失
+指标解释为零。已有的触发器、step 调整、上下限和生命周期约束仍然生效。
 
 ## 使用 AIMD
 

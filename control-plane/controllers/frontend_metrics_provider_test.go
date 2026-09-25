@@ -109,7 +109,7 @@ func TestHTTPScalingMetricsProviderUsesSchedulerBacklog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metrics.WaitingRequests != 7 || metrics.RunningRequests != 2 || metrics.ActiveRequests != 3 || !metrics.Window.Complete || !metrics.Window.End.Equal(time.UnixMilli(900)) {
+	if metrics.WaitingRequests != 7 || metrics.RunningRequests != 2 || metrics.ActiveRequests != 3 || metrics.KVCacheUsage == nil || *metrics.KVCacheUsage != 0.5 || !metrics.Window.Complete || !metrics.Window.End.Equal(time.UnixMilli(900)) {
 		t.Fatalf("metrics = %#v", metrics)
 	}
 }

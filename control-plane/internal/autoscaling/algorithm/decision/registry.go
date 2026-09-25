@@ -8,6 +8,7 @@ import "github.com/shiweijiezero/foretoken/control-plane/internal/autoscaling/co
 func Descriptors() []core.DecisionDescriptor {
 	return []core.DecisionDescriptor{
 		aimdDescriptor,
+		dynamoLoadDescriptor,
 		manualDescriptor,
 		queueDescriptor,
 		queueThresholdDescriptor,

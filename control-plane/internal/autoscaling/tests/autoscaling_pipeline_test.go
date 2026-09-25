@@ -153,6 +153,85 @@ func TestScaleDownStabilizationRetainsRecentHigherRecommendation(t *testing.T) {
 	}
 }
 
+// TestDynamoLoadUsesRoleSpecificTelemetry protects the reactive path used by
+// prefill queues and decode KV-cache pressure without adding CRD-specific fields.
+func TestDynamoLoadUsesRoleSpecificTelemetry(t *testing.T) {
+	planner, err := autoscaling.New(autoscaling.Configuration{
+		Decision:   autoscaling.AlgorithmConfiguration{Algorithm: "dynamo_load"},
+		Adjustment: autoscaling.AlgorithmConfiguration{Algorithm: "direct"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	prefill := scalingSnapshot()
+	prefill.Target.Role = core.RolePrefill
+	prefill.Replicas.RequestedReplicas = 1
+	prefill.Metrics.WaitingRequests = 2
+	results, err := planner.Plan([]core.ScalingSnapshot{prefill})
+	if err != nil || results[0].Recommendation.Replicas != 2 || results[0].AppliedReplicas != 2 {
+		t.Fatalf("Dynamo prefill decision = %#v err=%v", results, err)
+	}
+
+	decode := scalingSnapshot()
+	decode.Target.Role = core.RoleDecode
+	decode.Replicas.RequestedReplicas = 1
+	usage := 0.9
+	decode.Metrics.KVCacheUsage = &usage
+	results, err = planner.Plan([]core.ScalingSnapshot{decode})
+	if err != nil || results[0].Recommendation.Replicas != 2 || results[0].AppliedReplicas != 2 {
+		t.Fatalf("Dynamo decode decision = %#v err=%v", results, err)
+	}
+}
+
+// TestDynamoLoadDoesNotTreatMissingKVAsIdle protects fail-closed decode scaling
+// when a model server cannot provide the metric required by the policy.
+func TestDynamoLoadDoesNotTreatMissingKVAsIdle(t *testing.T) {
+	planner, err := autoscaling.New(autoscaling.Configuration{
+		Decision:   autoscaling.AlgorithmConfiguration{Algorithm: "dynamo_load"},
+		Adjustment: autoscaling.AlgorithmConfiguration{Algorithm: "direct"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := scalingSnapshot()
+	snapshot.Target.Role = core.RoleDecode
+	snapshot.Replicas.RequestedReplicas = 2
+	results, err := planner.Plan([]core.ScalingSnapshot{snapshot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].Recommendation.State != core.RecommendationInsufficientData || results[0].AppliedReplicas != 2 {
+		t.Fatalf("missing decode telemetry = %#v", results[0])
+	}
+}
+
+// TestDynamoLoadLatencyDefaultsUseLowerDecodeThreshold protects the mode-owned
+// default so users can select latency behavior without copying internal values.
+func TestDynamoLoadLatencyDefaultsUseLowerDecodeThreshold(t *testing.T) {
+	planner, err := autoscaling.New(autoscaling.Configuration{
+		Decision: autoscaling.AlgorithmConfiguration{
+			Algorithm:  "dynamo_load",
+			Parameters: json.RawMessage(`{"mode":"latency"}`),
+		},
+		Adjustment: autoscaling.AlgorithmConfiguration{Algorithm: "direct"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot := scalingSnapshot()
+	snapshot.Target.Role = core.RoleDecode
+	usage := 0.5
+	snapshot.Metrics.KVCacheUsage = &usage
+	results, err := planner.Plan([]core.ScalingSnapshot{snapshot})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if results[0].Recommendation.Replicas != 3 {
+		t.Fatalf("latency decode threshold = %#v", results[0])
+	}
+}
+
 func scalingSnapshot() core.ScalingSnapshot {
 	return core.ScalingSnapshot{
 		Target:      core.TargetID{ServiceUID: "service", Name: "default", Kind: core.TargetPool, Role: core.RoleAggregate},

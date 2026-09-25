@@ -60,6 +60,8 @@ type MetricsSnapshot struct {
 	WaitingRequests int64
 	RunningRequests int64
 	ActiveRequests  int64
+	// KVCacheUsage is nil when the source did not report a complete value.
+	KVCacheUsage *float64
 }
 
 type ReplicaState struct {

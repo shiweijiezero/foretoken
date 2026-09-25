@@ -37,12 +37,13 @@ const (
 )
 
 type modelServerTelemetry struct {
-	Version                  uint8   `json:"version"`
-	CollectedAtUnixMS        uint64  `json:"collected_at_unix_ms"`
-	Accepting                bool    `json:"accepting"`
-	RunningRequests          uint64  `json:"running_requests"`
-	SchedulerRunningRequests *uint64 `json:"scheduler_running_requests"`
-	SchedulerWaitingRequests *uint64 `json:"scheduler_waiting_requests"`
+	Version                  uint8    `json:"version"`
+	CollectedAtUnixMS        uint64   `json:"collected_at_unix_ms"`
+	Accepting                bool     `json:"accepting"`
+	RunningRequests          uint64   `json:"running_requests"`
+	SchedulerRunningRequests *uint64  `json:"scheduler_running_requests"`
+	SchedulerWaitingRequests *uint64  `json:"scheduler_waiting_requests"`
+	KVCacheUsage             *float64 `json:"kv_cache_usage"`
 }
 
 type frontendDiagnostics struct {
