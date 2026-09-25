@@ -181,12 +181,12 @@
           "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:prompt_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "输入吞吐量",
+          "legendFormat": "输入吞吐量（TPS）",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "输入吞吐量",
+      "title": "输入吞吐量（TPS）",
       "transparent": false,
       "type": "stat"
     },
@@ -259,12 +259,12 @@
           "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "输出吞吐量",
+          "legendFormat": "输出吞吐量（TPS）",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "输出吞吐量",
+      "title": "输出吞吐量（TPS）",
       "transparent": false,
       "type": "stat"
     },
