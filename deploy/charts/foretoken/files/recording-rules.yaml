@@ -40,6 +40,16 @@ groups:
             foretoken:frontend_http_response_starts:rate5m
           ) > 0
 
+      # Service-owned identity remains available even when the engine scrape fails.
+      - record: foretoken:model_instance_info
+        expr: |
+          max by (namespace, model_group, modelservice, model_pool, model_instance, model_instance_created_at) (
+            label_replace(
+              0 * up{endpoint="model-server", inference_foretoken_io_model_group!="", modelservice!=""} + 1,
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            )
+          )
+
       - record: foretoken:model_server_prompt_tokens:rate5m
         expr: |
           sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name) (

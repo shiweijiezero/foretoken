@@ -101,7 +101,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum((foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "expr": "sum((foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
           "instant": false,
           "legendFormat": "模型监控端点数",
           "range": true,
@@ -117,7 +117,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "所选模型服务每秒处理的输入 token 数。",
+      "description": "每个模型全部实例和 rank 每秒处理的输入 token 总数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -178,10 +178,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:prompt_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:prompt_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|prefill\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "输入吞吐量（TPS）",
+          "legendFormat": "{{model_name}}",
           "range": true,
           "refId": "A"
         }
@@ -195,7 +195,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "所选模型服务器每秒生成的输出 token 数。",
+      "description": "每个模型全部实例和 rank 每秒生成的输出 token 总数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -256,10 +256,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "输出吞吐量（TPS）",
+          "legendFormat": "{{model_name}}",
           "range": true,
           "refId": "A"
         }
@@ -273,7 +273,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "所选模型引擎内等待调度的请求，不包含共享前端准入队列。",
+      "description": "每个模型全部实例、角色和 rank 中等待调度的执行请求总数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -337,10 +337,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(label_replace(label_replace(label_replace(vllm:num_requests_waiting{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(vllm:num_requests_waiting{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "引擎排队请求",
+          "legendFormat": "{{model_name}}",
           "range": true,
           "refId": "A"
         }
@@ -367,71 +367,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "按后端和结束原因展示已完成请求。一个后端对应一个模型实例和数据并行 rank；分离式请求会分别在各角色完成一次执行。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 24,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never",
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            }
-          },
-          "unit": "reqps"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 6
-      },
-      "options": {
-        "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "label_replace(label_replace(sum by(model_name,model_group,model_role,engine,finished_reason) (label_replace(label_replace(label_replace(rate(vllm:request_success_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")), \"model_group_display\", \"$1\", \"model_group\", \"(.+)\"), \"model_group_display\", \"$1…$2\", \"model_group\", \"^(.{20}).{5,}(.{10})$\")",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}} / {{finished_reason}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "完成请求速率",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "按后端展示输入与输出 token 吞吐量。一个后端对应一个模型实例和数据并行 rank。",
+      "description": "粗线展示每个模型全部实例和 rank 的总吞吐量，细线展示所选后端。模型总计不随实例、角色或 rank 筛选缩小。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -448,10 +384,14 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "Prompt"
+              "id": "byFrameRefID",
+              "options": "A"
             },
             "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 4
+              },
               {
                 "id": "color",
                 "value": {
@@ -460,28 +400,13 @@
                 }
               }
             ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "输出"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#eb6834",
-                  "mode": "fixed"
-                }
-              }
-            ]
           }
         ]
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
+        "h": 10,
+        "w": 12,
+        "x": 0,
         "y": 6
       },
       "options": {
@@ -505,10 +430,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "label_replace(label_replace(sum by(model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(rate(vllm:prompt_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")), \"model_group_display\", \"$1\", \"model_group\", \"(.+)\"), \"model_group_display\", \"$1…$2\", \"model_group\", \"^(.{20}).{5,}(.{10})$\")",
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:prompt_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|prefill\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "输入 / {{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}}",
+          "legendFormat": "模型总计 / {{model_name}}",
           "range": true,
           "refId": "A"
         },
@@ -517,15 +442,15 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "label_replace(label_replace(sum by(model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")), \"model_group_display\", \"$1\", \"model_group\", \"(.+)\"), \"model_group_display\", \"$1…$2\", \"model_group\", \"^(.{20}).{5,}(.{10})$\")",
+          "expr": "(sum by(namespace,model_group,engine) (label_replace(label_replace(label_replace(rate(vllm:prompt_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\",inference_foretoken_io_model_role=~\"aggregate|prefill\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "输出 / {{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}}",
+          "legendFormat": "{{model_group_display}} / rank {{engine}}",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "Token 吞吐量",
+      "title": "输入吞吐量（TPS）",
       "transparent": false,
       "type": "timeseries"
     },
@@ -534,7 +459,171 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "正在 vLLM 执行批次中运行或在调度器中等待的请求数。",
+      "description": "粗线展示每个模型全部实例和 rank 的总吞吐量，细线展示所选后端。模型总计不随实例、角色或 rank 筛选缩小。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "suffix: token/s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "custom.lineWidth",
+                "value": 4
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#eb6834",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "模型总计 / {{model_name}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(namespace,model_group,engine) (label_replace(label_replace(label_replace(rate(vllm:generation_tokens_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_group_display}} / rank {{engine}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "输出吞吐量（TPS）",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "模型总计统计聚合执行或 Decode 阶段的请求结束次数；后端明细按所选执行阶段和结束原因展示。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:request_success_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "模型总计 / {{model_name}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(namespace,model_name,model_group,model_role,engine,finished_reason) (label_replace(label_replace(label_replace(rate(vllm:request_success_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_group_display}} / rank {{engine}} / {{finished_reason}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "完成请求速率",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "每个模型全部执行角色的运行与排队总数，并展示所选后端明细。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -548,44 +637,13 @@
           },
           "unit": "short"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "运行中"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#2a78d6",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "等待中"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#eb6834",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 6
+        "w": 12,
+        "x": 12,
+        "y": 16
       },
       "options": {
         "legend": {
@@ -608,10 +666,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "label_replace(label_replace(sum by(model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(vllm:num_requests_running{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")), \"model_group_display\", \"$1\", \"model_group\", \"(.+)\"), \"model_group_display\", \"$1…$2\", \"model_group\", \"^(.{20}).{5,}(.{10})$\")",
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(vllm:num_requests_running{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "运行中 / {{model_group_display}} / {{model_role}} / rank {{engine}}",
+          "legendFormat": "运行总数 / {{model_name}}",
           "range": true,
           "refId": "A"
         },
@@ -620,12 +678,36 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "label_replace(label_replace(sum by(model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(vllm:num_requests_waiting{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")), \"model_group_display\", \"$1\", \"model_group\", \"(.+)\"), \"model_group_display\", \"$1…$2\", \"model_group\", \"^(.{20}).{5,}(.{10})$\")",
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(vllm:num_requests_waiting{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "等待中 / {{model_group_display}} / {{model_role}} / rank {{engine}}",
+          "legendFormat": "排队总数 / {{model_name}}",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(namespace,model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(vllm:num_requests_running{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "运行中 / {{model_group_display}} / rank {{engine}}",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(namespace,model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(vllm:num_requests_waiting{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "等待中 / {{model_group_display}} / rank {{engine}}",
+          "range": true,
+          "refId": "D"
         }
       ],
       "title": "调度器状态",
@@ -637,7 +719,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "将所选引擎的请求样本合并后统计：从前端处理开始到生成完成的耗时，不含下游客户端接收时间；节点时钟须同步。",
+      "description": "合并模型全部聚合执行和 Decode 阶段的请求样本后统计：从前端处理开始到生成完成的耗时，不含下游客户端接收时间；节点时钟须同步。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -658,7 +740,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 14
+        "y": 24
       },
       "options": {
         "legend": {
@@ -681,10 +763,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.5, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "histogram_quantile(0.5, sum by(model_name,le) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / p50",
+          "legendFormat": "{{model_name}} / p50",
           "range": true,
           "refId": "A"
         },
@@ -693,10 +775,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "histogram_quantile(0.95, sum by(model_name,le) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / p95",
+          "legendFormat": "{{model_name}} / p95",
           "range": true,
           "refId": "B"
         },
@@ -705,10 +787,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.99, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "histogram_quantile(0.99, sum by(model_name,le) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / p99",
+          "legendFormat": "{{model_name}} / p99",
           "range": true,
           "refId": "C"
         }
@@ -722,7 +804,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "将所选引擎的请求样本合并后统计：从前端处理开始到模型服务器收到首个 token 的耗时，不含下游客户端接收时间。",
+      "description": "合并模型全部聚合执行和 Decode 阶段的请求样本后统计：从前端处理开始到模型服务器收到首个 token 的耗时，不含下游客户端接收时间。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -743,7 +825,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 14
+        "y": 24
       },
       "options": {
         "legend": {
@@ -766,10 +848,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.5, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "histogram_quantile(0.5, sum by(model_name,le) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / p50",
+          "legendFormat": "{{model_name}} / p50",
           "range": true,
           "refId": "A"
         },
@@ -778,10 +860,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "histogram_quantile(0.95, sum by(model_name,le) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / p95",
+          "legendFormat": "{{model_name}} / p95",
           "range": true,
           "refId": "B"
         },
@@ -790,10 +872,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.99, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "histogram_quantile(0.99, sum by(model_name,le) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / p99",
+          "legendFormat": "{{model_name}} / p99",
           "range": true,
           "refId": "C"
         }
@@ -807,7 +889,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "所选引擎合并后的请求级 TPOT，单位毫秒；每个请求贡献一次平均输出 token 间隔。",
+      "description": "合并模型全部聚合执行和 Decode 阶段的请求直方图，计算整体 TPOT，单位毫秒；每个请求贡献一次平均输出 token 间隔。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -828,7 +910,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 14
+        "y": 24
       },
       "options": {
         "legend": {
@@ -851,10 +933,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "1000 * histogram_quantile(0.5, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "1000 * histogram_quantile(0.5, sum by(model_name,le) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / p50",
+          "legendFormat": "{{model_name}} / p50",
           "range": true,
           "refId": "A"
         },
@@ -863,10 +945,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "1000 * histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "1000 * histogram_quantile(0.95, sum by(model_name,le) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / p95",
+          "legendFormat": "{{model_name}} / p95",
           "range": true,
           "refId": "B"
         },
@@ -875,10 +957,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "1000 * histogram_quantile(0.99, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "1000 * histogram_quantile(0.99, sum by(model_name,le) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / p99",
+          "legendFormat": "{{model_name}} / p99",
           "range": true,
           "refId": "C"
         },
@@ -887,10 +969,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "1000 * sum by(model_name,model_role) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / (sum by(model_name,model_role) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) > 0)",
+          "expr": "1000 * sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / (sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) > 0)",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / mean",
+          "legendFormat": "{{model_name}} / mean",
           "range": true,
           "refId": "D"
         }
@@ -904,7 +986,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "所选引擎的输出 token 间隔分布，单位毫秒；每个间隔贡献一次观测。",
+      "description": "模型全部聚合执行和 Decode 引擎的输出 token 间隔分布，单位毫秒；每个间隔贡献一次观测。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -925,7 +1007,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 22
+        "y": 32
       },
       "options": {
         "legend": {
@@ -948,10 +1030,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "1000 * histogram_quantile(0.5, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "1000 * histogram_quantile(0.5, sum by(model_name,le) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / p50",
+          "legendFormat": "{{model_name}} / p50",
           "range": true,
           "refId": "A"
         },
@@ -960,10 +1042,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "1000 * histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "1000 * histogram_quantile(0.95, sum by(model_name,le) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / p95",
+          "legendFormat": "{{model_name}} / p95",
           "range": true,
           "refId": "B"
         },
@@ -972,10 +1054,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "1000 * histogram_quantile(0.99, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "1000 * histogram_quantile(0.99, sum by(model_name,le) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / p99",
+          "legendFormat": "{{model_name}} / p99",
           "range": true,
           "refId": "C"
         }
@@ -1055,7 +1137,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 22
+        "y": 32
       },
       "options": {
         "legend": {
@@ -1078,7 +1160,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_queue_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_queue_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
           "legendFormat": "{{model_name}} / {{model_role}} / queue",
@@ -1090,7 +1172,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_prefill_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_prefill_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
           "legendFormat": "{{model_name}} / {{model_role}} / prefill",
@@ -1102,7 +1184,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_decode_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
+          "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_decode_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
           "legendFormat": "{{model_name}} / {{model_role}} / decode",
@@ -1119,7 +1201,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "按后端统计每秒调度抢占次数；持续抢占表示 KV 缓存压力。",
+      "description": "每个模型全部引擎每秒发生的抢占事件总数，并展示所选后端明细。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1139,7 +1221,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 22
+        "y": 32
       },
       "options": {
         "legend": {
@@ -1162,12 +1244,24 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "label_replace(label_replace(sum by(model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(rate(vllm:num_preemptions_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")), \"model_group_display\", \"$1\", \"model_group\", \"(.+)\"), \"model_group_display\", \"$1…$2\", \"model_group\", \"^(.{20}).{5,}(.{10})$\")",
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:num_preemptions_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}}",
+          "legendFormat": "模型总计 / {{model_name}}",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(namespace,model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(rate(vllm:num_preemptions_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_group_display}} / rank {{engine}}",
+          "range": true,
+          "refId": "B"
         }
       ],
       "title": "抢占",
@@ -1184,7 +1278,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 30
+        "y": 40
       },
       "options": {
         "calculate": false,
@@ -1222,7 +1316,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(le) (label_replace(label_replace(label_replace(rate(vllm:request_prompt_tokens_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "expr": "sum by(le) (label_replace(label_replace(label_replace(rate(vllm:request_prompt_tokens_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "format": "heatmap",
           "instant": false,
           "interval": "5s",
@@ -1245,7 +1339,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 30
+        "y": 40
       },
       "options": {
         "calculate": false,
@@ -1283,7 +1377,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(le) (label_replace(label_replace(label_replace(rate(vllm:request_generation_tokens_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "expr": "sum by(le) (label_replace(label_replace(label_replace(rate(vllm:request_generation_tokens_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
           "format": "heatmap",
           "instant": false,
           "interval": "5s",
@@ -1302,7 +1396,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 38
+        "y": 48
       },
       "id": 0,
       "panels": [],
@@ -1336,7 +1430,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 49
       },
       "options": {
         "legend": {
@@ -1359,9 +1453,9 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "label_replace(label_replace(max by(model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")), \"model_group_display\", \"$1\", \"model_group\", \"(.+)\"), \"model_group_display\", \"$1…$2\", \"model_group\", \"^(.{20}).{5,}(.{10})$\")",
+          "expr": "(max by(namespace,model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
-          "legendFormat": "{{model_name}} / {{model_group_display}} / {{model_role}} / rank {{engine}}",
+          "legendFormat": "{{model_group_display}} / rank {{engine}}",
           "range": true,
           "refId": "A"
         }
@@ -1375,7 +1469,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "所选引擎的命中 token 数除以查询 token 数。没有查询或指标不可用时不显示比例；本地与外部缓存分别统计。",
+      "description": "每个模型全部引擎的命中 token 总数除以查询 token 总数。本地与外部缓存分别统计，没有查询时不显示比例。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1428,7 +1522,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 39
+        "y": 49
       },
       "options": {
         "legend": {
@@ -1451,10 +1545,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(model_name,model_role) (label_replace(label_replace(label_replace(rate(vllm:prefix_cache_hits_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / (sum by(model_name,model_role) (label_replace(label_replace(label_replace(rate(vllm:prefix_cache_queries_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) > 0)",
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:prefix_cache_hits_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / (sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:prefix_cache_queries_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) > 0)",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / local",
+          "legendFormat": "{{model_name}} / local",
           "range": true,
           "refId": "A"
         },
@@ -1463,10 +1557,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(model_name,model_role) (label_replace(label_replace(label_replace(rate(vllm:external_prefix_cache_hits_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / (sum by(model_name,model_role) (label_replace(label_replace(label_replace(rate(vllm:external_prefix_cache_queries_total{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) > 0)",
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:external_prefix_cache_hits_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / (sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:external_prefix_cache_queries_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) > 0)",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / external",
+          "legendFormat": "{{model_name}} / external",
           "range": true,
           "refId": "B"
         }
@@ -1502,7 +1596,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 47
+        "y": 57
       },
       "options": {
         "legend": {
@@ -1525,9 +1619,9 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "label_replace(label_replace((foretoken:model_server_runtime_cache_usage_ratio:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)), \"model_group_display\", \"$1\", \"model_group\", \"(.+)\"), \"model_group_display\", \"$1…$2\", \"model_group\", \"^(.{20}).{5,}(.{10})$\")",
+          "expr": "((foretoken:model_server_runtime_cache_usage_ratio:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
-          "legendFormat": "{{model_group_display}} / {{model_role}}",
+          "legendFormat": "{{model_group_display}}",
           "range": true,
           "refId": "A"
         }
@@ -1561,7 +1655,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 47
+        "y": 57
       },
       "options": {
         "legend": {
@@ -1584,9 +1678,9 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "label_replace(label_replace((foretoken:model_server_runtime_cache_available_bytes:min{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)), \"model_group_display\", \"$1\", \"model_group\", \"(.+)\"), \"model_group_display\", \"$1…$2\", \"model_group\", \"^(.{20}).{5,}(.{10})$\")",
+          "expr": "((foretoken:model_server_runtime_cache_available_bytes:min{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
-          "legendFormat": "{{model_group_display}} / {{model_role}}",
+          "legendFormat": "{{model_group_display}}",
           "range": true,
           "refId": "A"
         }
@@ -1601,7 +1695,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 65
       },
       "id": 0,
       "panels": [],
@@ -1635,7 +1729,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 56
+        "y": 66
       },
       "options": {
         "legend": {
@@ -1658,7 +1752,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_utilization_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_utilization_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
           "instant": false,
           "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
           "range": true,
@@ -1696,7 +1790,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 56
+        "y": 66
       },
       "options": {
         "legend": {
@@ -1719,7 +1813,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_memory_usage_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_memory_usage_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
           "instant": false,
           "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
           "range": true,
@@ -1735,7 +1829,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "所选模型实例的模型服务器 Pod 使用的 CPU 核数。",
+      "description": "每个模型全部模型服务器 Pod 使用的 CPU 核数，并展示所选实例和节点的明细。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1749,44 +1843,13 @@
           },
           "unit": "cores"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "frontend"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#2a78d6",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "model-server"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#eb6834",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 64
+        "y": 74
       },
       "options": {
         "legend": {
@@ -1809,12 +1872,24 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(namespace,pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container=\"model-server\"}[$__rate_interval])) and on(namespace,pod) (max by(namespace,pod) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"} and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))",
+          "expr": "sum by(model_name) ((sum by(namespace,pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container=\"model-server\"}[$__rate_interval]))) * on(namespace,pod) group_left(model_name) (max by(namespace,pod,model_group) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\"}) * on(namespace,model_group) group_left(model_name) (max by(namespace,model_group,model_name) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))",
           "instant": false,
           "interval": "30s",
-          "legendFormat": "{{namespace}} / {{pod}}",
+          "legendFormat": "模型总计 / {{model_name}}",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(namespace,pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container=\"model-server\"}[$__rate_interval])) * on(namespace,pod) group_left(model_group,node) (max by(namespace,pod,model_group,node) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"} and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "instant": false,
+          "interval": "30s",
+          "legendFormat": "{{model_group_display}} / {{node}}",
+          "range": true,
+          "refId": "B"
         }
       ],
       "title": "服务 CPU 使用量",
@@ -1826,7 +1901,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "所选模型实例的模型服务器 Pod 工作集内存。",
+      "description": "每个模型全部模型服务器 Pod 的工作集内存，并展示所选实例和节点的明细。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1840,44 +1915,13 @@
           },
           "unit": "bytes"
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "frontend"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#2a78d6",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "model-server"
-            },
-            "properties": [
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#eb6834",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 64
+        "y": 74
       },
       "options": {
         "legend": {
@@ -1900,12 +1944,24 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(namespace,pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"model-server\"}) and on(namespace,pod) (max by(namespace,pod) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"} and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))",
+          "expr": "sum by(model_name) ((sum by(namespace,pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"model-server\"})) * on(namespace,pod) group_left(model_name) (max by(namespace,pod,model_group) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\"}) * on(namespace,model_group) group_left(model_name) (max by(namespace,model_group,model_name) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))",
           "instant": false,
           "interval": "30s",
-          "legendFormat": "{{namespace}} / {{pod}}",
+          "legendFormat": "模型总计 / {{model_name}}",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(namespace,pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"model-server\"}) * on(namespace,pod) group_left(model_group,node) (max by(namespace,pod,model_group,node) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"} and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "instant": false,
+          "interval": "30s",
+          "legendFormat": "{{model_group_display}} / {{node}}",
+          "range": true,
+          "refId": "B"
         }
       ],
       "title": "服务内存使用量",
@@ -1918,7 +1974,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 72
+        "y": 82
       },
       "id": 0,
       "panels": [
@@ -1947,7 +2003,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 73
+            "y": 83
           },
           "options": {
             "legend": {
@@ -1970,7 +2026,7 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+              "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
               "instant": false,
               "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
               "range": true,
@@ -2006,7 +2062,7 @@
             "h": 8,
             "w": 12,
             "x": 12,
-            "y": 73
+            "y": 83
           },
           "options": {
             "legend": {
@@ -2029,7 +2085,7 @@
                 "type": "prometheus",
                 "uid": "${DS_PROMETHEUS}"
               },
-              "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+              "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
               "instant": false,
               "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
               "range": true,
@@ -2050,7 +2106,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 81
+        "y": 91
       },
       "id": 0,
       "panels": [],
@@ -2084,7 +2140,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 82
+        "y": 92
       },
       "options": {
         "legend": {
@@ -2107,10 +2163,10 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "label_replace(label_replace((((sum by(namespace,model_name,model_role,route_target_id,data_parallel_rank) (rate(foretoken_router_target_selections_total{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\",model_role=~\"$model_role\"}[$__rate_interval]))) * on(namespace,route_target_id) group_left(model_group) (0 * (max by(namespace,route_target_id,model_group) (label_replace(label_replace(up{endpoint=\"model-server\",inference_foretoken_io_model_group_uid!=\"\"}, \"route_target_id\", \"$1\", \"inference_foretoken_io_model_group_uid\", \"(.+)\"), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"))) + 1)) / on(namespace,model_name,model_role) group_left() (sum by(namespace,model_name,model_role) ((sum by(namespace,model_name,model_role,route_target_id,data_parallel_rank) (rate(foretoken_router_target_selections_total{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\",model_role=~\"$model_role\"}[$__rate_interval]))) * on(namespace,route_target_id) group_left(model_group) (0 * (max by(namespace,route_target_id,model_group) (label_replace(label_replace(up{endpoint=\"model-server\",inference_foretoken_io_model_group_uid!=\"\"}, \"route_target_id\", \"$1\", \"inference_foretoken_io_model_group_uid\", \"(.+)\"), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"))) + 1)) > 0)) and on(namespace,model_group,data_parallel_rank) (max by(namespace,model_group,data_parallel_rank) (label_replace(0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"$model_role\",model_name=~\"$model_name\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1, \"data_parallel_rank\", \"$1\", \"engine\", \"(.+)\"))), \"model_group_display\", \"$1\", \"model_group\", \"(.+)\"), \"model_group_display\", \"$1…$2\", \"model_group\", \"^(.{20}).{5,}(.{10})$\")",
+          "expr": "((((sum by(namespace,model_name,model_role,route_target_id,data_parallel_rank) (rate(foretoken_router_target_selections_total{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\",model_role=~\"$model_role\"}[$__rate_interval]))) * on(namespace,route_target_id) group_left(model_group) (0 * (max by(namespace,route_target_id,model_group) (label_replace(label_replace(up{endpoint=\"model-server\",inference_foretoken_io_model_group_uid!=\"\"}, \"route_target_id\", \"$1\", \"inference_foretoken_io_model_group_uid\", \"(.+)\"), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"))) + 1)) / on(namespace,model_name,model_role) group_left() (sum by(namespace,model_name,model_role) ((sum by(namespace,model_name,model_role,route_target_id,data_parallel_rank) (rate(foretoken_router_target_selections_total{namespace=~\"$namespace\",inference_foretoken_io_frontend_service=~\"$frontend_service\",model_name=~\"$model_name\",model_role=~\"$model_role\"}[$__rate_interval]))) * on(namespace,route_target_id) group_left(model_group) (0 * (max by(namespace,route_target_id,model_group) (label_replace(label_replace(up{endpoint=\"model-server\",inference_foretoken_io_model_group_uid!=\"\"}, \"route_target_id\", \"$1\", \"inference_foretoken_io_model_group_uid\", \"(.+)\"), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"))) + 1)) > 0)) and on(namespace,model_group,data_parallel_rank) (max by(namespace,model_group,data_parallel_rank) (label_replace(0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1, \"data_parallel_rank\", \"$1\", \"engine\", \"(.+)\")))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / {{model_group_display}} / rank {{data_parallel_rank}}",
+          "legendFormat": "{{model_group_display}} / rank {{data_parallel_rank}}",
           "range": true,
           "refId": "A"
         }
@@ -2144,7 +2200,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 92
+        "y": 102
       },
       "options": {
         "legend": {
@@ -2204,7 +2260,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 92
+        "y": 102
       },
       "options": {
         "legend": {
@@ -2264,7 +2320,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 92
+        "y": 102
       },
       "options": {
         "legend": {
@@ -2305,7 +2361,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 100
+        "y": 110
       },
       "id": 0,
       "panels": [],
@@ -2357,7 +2413,7 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 101
+        "y": 111
       },
       "options": {
         "colorMode": "value",
@@ -2434,7 +2490,7 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 101
+        "y": 111
       },
       "options": {
         "colorMode": "value",
@@ -2519,7 +2575,7 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 101
+        "y": 111
       },
       "options": {
         "colorMode": "value",
@@ -2600,7 +2656,7 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 101
+        "y": 111
       },
       "options": {
         "colorMode": "value",
@@ -2710,7 +2766,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 105
+        "y": 115
       },
       "options": {
         "legend": {
@@ -2774,7 +2830,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 105
+        "y": 115
       },
       "options": {
         "legend": {
@@ -2881,7 +2937,7 @@
         "h": 8,
         "w": 6,
         "x": 12,
-        "y": 105
+        "y": 115
       },
       "options": {
         "legend": {
@@ -2996,7 +3052,7 @@
         "h": 8,
         "w": 6,
         "x": 18,
-        "y": 105
+        "y": 115
       },
       "options": {
         "legend": {
@@ -3057,7 +3113,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 113
+        "y": 123
       },
       "options": {
         "legend": {
@@ -3097,7 +3153,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 121
+        "y": 131
       },
       "id": 0,
       "panels": [
@@ -3126,7 +3182,7 @@
             "h": 8,
             "w": 8,
             "x": 0,
-            "y": 122
+            "y": 132
           },
           "options": {
             "legend": {
@@ -3186,7 +3242,7 @@
             "h": 8,
             "w": 8,
             "x": 8,
-            "y": 122
+            "y": 132
           },
           "options": {
             "legend": {
@@ -3246,7 +3302,7 @@
             "h": 8,
             "w": 8,
             "x": 16,
-            "y": 122
+            "y": 132
           },
           "options": {
             "legend": {
@@ -3291,7 +3347,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 130
+        "y": 140
       },
       "id": 0,
       "panels": [],
@@ -3323,7 +3379,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 131
+        "y": 141
       },
       "options": {
         "legend": {
@@ -3404,7 +3460,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 131
+        "y": 141
       },
       "options": {
         "legend": {
@@ -3485,7 +3541,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 131
+        "y": 141
       },
       "options": {
         "legend": {
@@ -3540,7 +3596,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 139
+        "y": 149
       },
       "options": {
         "cellHeight": "sm",
@@ -3702,8 +3758,8 @@
         "label": "模型实例",
         "multi": true,
         "name": "model_group",
-        "query": "query_result(label_replace(label_replace(label_replace(max by(namespace,inference_foretoken_io_model_group) (vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\"}), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_group_display\", \"$1\", \"model_group\", \"(.+)\"), \"model_group_display\", \"$1…$2\", \"model_group\", \"^(.{20}).{5,}(.{10})$\"))",
-        "refresh": 1,
+        "query": "query_result((label_replace(max by(namespace,inference_foretoken_io_model_group) (max_over_time(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\"}[$__range] @ end())), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\")) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1)))))",
+        "refresh": 2,
         "regex": "/model_group=\"(?<value>[^\"]+)\".*model_group_display=\"(?<text>[^\"]+)\"/",
         "skipUrlSync": false,
         "sort": 1,

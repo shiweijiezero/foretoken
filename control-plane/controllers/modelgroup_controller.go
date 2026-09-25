@@ -99,7 +99,8 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if !group.DeletionTimestamp.IsZero() {
 		return reconciler.reconcileDelete(ctx, group)
 	}
-	if err := reconciler.validateModelPoolOwnership(ctx, group); err != nil {
+	pool, err := reconciler.owningModelPool(ctx, group)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := validateGroupProfile(group); err != nil {
@@ -124,7 +125,7 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := reconciler.reconcileService(ctx, group); err != nil {
+	if err := reconciler.reconcileService(ctx, group, pool); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := reconciler.reconcileNetworkPolicy(ctx, group); err != nil {
@@ -140,23 +141,23 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	return ctrl.Result{}, nil
 }
 
-// validateModelPoolOwnership verifies that the referenced ModelPool controls the ModelGroup.
-func (reconciler *ModelGroupReconciler) validateModelPoolOwnership(ctx context.Context, group *inferencev1alpha1.ModelGroup) error {
+// owningModelPool returns the verified owner for workload reconciliation and scrape identity.
+func (reconciler *ModelGroupReconciler) owningModelPool(ctx context.Context, group *inferencev1alpha1.ModelGroup) (*inferencev1alpha1.ModelPool, error) {
 	pool := new(inferencev1alpha1.ModelPool)
 	key := client.ObjectKey{Namespace: group.Namespace, Name: group.Spec.ModelPoolRef.Name}
 	if err := reconciler.Get(ctx, key, pool); err != nil {
-		return fmt.Errorf("get owning ModelPool: %w", err)
+		return nil, fmt.Errorf("get owning ModelPool: %w", err)
 	}
 	if group.Spec.ModelPoolRef.UID != string(pool.UID) || !metav1.IsControlledBy(group, pool) {
-		return fmt.Errorf("ModelGroup %q is not owned by its referenced ModelPool", group.Name)
+		return nil, fmt.Errorf("ModelGroup %q is not owned by its referenced ModelPool", group.Name)
 	}
 	if pd := group.Spec.PDRuntime; pd != nil && (pd.ServiceUID == "" || pd.ServiceUID != pool.Spec.ModelServiceRef.UID) {
-		return fmt.Errorf("ModelGroup P/D network scope does not match its owning ModelService")
+		return nil, fmt.Errorf("ModelGroup P/D network scope does not match its owning ModelService")
 	}
 	if ec := group.Spec.ECRuntime; ec != nil && (ec.ServiceUID == "" || ec.ServiceUID != pool.Spec.ModelServiceRef.UID) {
-		return fmt.Errorf("ModelGroup encoder cache scope does not match its owning ModelService")
+		return nil, fmt.Errorf("ModelGroup encoder cache scope does not match its owning ModelService")
 	}
-	return nil
+	return pool, nil
 }
 
 // Workload reconciliation and desired resources.
@@ -393,19 +394,27 @@ func modelGroupServiceName(group *inferencev1alpha1.ModelGroup) string {
 }
 
 // reconcileService applies the stable Service owned by the ModelGroup.
-func (reconciler *ModelGroupReconciler) reconcileService(ctx context.Context, group *inferencev1alpha1.ModelGroup) error {
+func (reconciler *ModelGroupReconciler) reconcileService(ctx context.Context, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) error {
 	labels := modelGroupLabels(group)
 	selector := maps.Clone(labels)
 	if group.Spec.NodeCount > 1 {
 		selector[lwsv1.WorkerIndexLabelKey] = "0"
 	}
-	// Scrape metadata links route-target identity to the readable Group name without
-	// changing workload selectors or forcing existing Deployments to be recreated.
+	// Scrape identity belongs on the Service, independently of workload selectors.
+	// Annotations preserve full resource names beyond the label-value length limit.
 	serviceLabels := maps.Clone(labels)
 	serviceLabels[modelGroupUIDLabel] = string(group.UID)
 	desired := &corev1.Service{
-		TypeMeta:   metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "Service"},
-		ObjectMeta: metav1.ObjectMeta{Name: modelGroupServiceName(group), Namespace: group.Namespace, Labels: serviceLabels},
+		TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "Service"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: modelGroupServiceName(group), Namespace: group.Namespace, Labels: serviceLabels,
+			Annotations: map[string]string{
+				"inference.foretoken.io/model-service":             pool.Spec.ModelServiceRef.Name,
+				"inference.foretoken.io/model-pool":                pool.Spec.PoolName,
+				"inference.foretoken.io/model-instance":            strconv.Itoa(int(group.Spec.Ordinal)),
+				"inference.foretoken.io/model-instance-created-at": group.CreationTimestamp.UTC().Format(time.RFC3339),
+			},
+		},
 		Spec: corev1.ServiceSpec{
 			Type:     corev1.ServiceTypeClusterIP,
 			Selector: selector,

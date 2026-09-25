@@ -72,6 +72,15 @@ spec:
   endpoints:
     - port: model-server
       path: /metrics
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_service_annotation_inference_foretoken_io_model_service]
+          targetLabel: modelservice
+        - sourceLabels: [__meta_kubernetes_service_annotation_inference_foretoken_io_model_pool]
+          targetLabel: model_pool
+        - sourceLabels: [__meta_kubernetes_service_annotation_inference_foretoken_io_model_instance]
+          targetLabel: model_instance
+        - sourceLabels: [__meta_kubernetes_service_annotation_inference_foretoken_io_model_instance_created_at]
+          targetLabel: model_instance_created_at
       {{- with $.Values.observability.interval }}
       interval: {{ . | quote }}
       {{- end }}
