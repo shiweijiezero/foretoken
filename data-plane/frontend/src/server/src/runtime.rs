@@ -20,6 +20,7 @@ use foretoken_text::{
     Prompt, SamplingParams, TextDecodeOptions, TextRequest, TextRequestProcessor,
 };
 use foretoken_tokenizer::DynTokenizer;
+use futures::StreamExt;
 use serde::Serialize;
 use thiserror::Error;
 
@@ -64,6 +65,8 @@ pub struct GenerationRequest {
     pub cache_salt: Option<String>,
     pub session_id: Option<String>,
     pub arrival_time: Option<f64>,
+    /// Monotonic HTTP entry time shared by every candidate and execution stage.
+    pub started_at: Instant,
     pub tool_call_parser: ParserSelection,
     pub reasoning_parser: ParserSelection,
 }
@@ -109,6 +112,8 @@ pub enum GenerationError {
     BackendRejected,
     #[error("backend protocol failed")]
     BackendProtocol,
+    #[error("request deadline exceeded")]
+    DeadlineExceeded,
     #[error("backend request failed")]
     RequestFailed,
     #[error("frontend internal error")]
@@ -459,7 +464,6 @@ impl RuntimeGeneration {
     async fn generation_slot(&self, model: &str) -> Result<Arc<RuntimeSlot>, GenerationError> {
         // A configured model without a prepared processor is admission-only: keep its targets
         // queued while waiting, then reload the complete slot across each generation boundary.
-        let deadline = Instant::now() + self.request_timeout;
         let mut publication_updates = self.publication_updates.subscribe();
         let mut queued = None;
         loop {
@@ -473,12 +477,7 @@ impl RuntimeGeneration {
             if queued.is_none() {
                 queued = Some(foretoken_metrics::QueueGuard::runtime_preparation(&targets));
             }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero()
-                || !matches!(
-                    tokio::time::timeout(remaining, publication_updates.changed()).await,
-                    Ok(Ok(()))
-                )
+            if publication_updates.changed().await.is_err()
                 || !self.accepting.load(Ordering::Acquire)
             {
                 return Err(GenerationError::Unavailable);
@@ -505,6 +504,10 @@ impl RuntimeGeneration {
                     GenerationError::Internal
                 }
             })?;
+        // Tokenization is synchronous; do not admit backend work if it exhausted the budget.
+        if Instant::now() >= request.started_at + self.request_timeout {
+            return Err(GenerationError::DeadlineExceeded);
+        }
         let generate_request = prepared.generate_request;
         let context = RouterRequest::new(request.model.clone(), Arc::new(generate_request.clone()));
         let mut session = slot.state.router.start(context).await;
@@ -551,29 +554,94 @@ impl RuntimeGeneration {
     }
 }
 
+/// Bounds preparation and workflow execution by the original HTTP request deadline.
+///
+/// Dropping a timed-out future releases every stage cleanup guard before returning to its caller.
+async fn before_deadline<T>(
+    deadline: tokio::time::Instant,
+    work: impl std::future::Future<Output = Result<T, GenerationError>>,
+) -> Result<T, GenerationError> {
+    tokio::select! {
+        biased;
+        _ = tokio::time::sleep_until(deadline) => Err(GenerationError::DeadlineExceeded),
+        result = work => {
+            // Synchronous tokenization can finish without yielding to the timer.
+            if tokio::time::Instant::now() >= deadline {
+                Err(GenerationError::DeadlineExceeded)
+            } else {
+                result
+            }
+        }
+    }
+}
+
+/// Transfers the same request deadline to the output stream owned by protocol adapters.
+///
+/// The task owns backend cleanup even while HTTP backpressure stops polling the returned stream.
+/// A bounded channel preserves backpressure; dropping its receiver cancels the task's backend work.
+fn deadline_stream(mut stream: TokenStream, deadline: tokio::time::Instant) -> TokenStream {
+    let (sender, mut receiver) = tokio::sync::mpsc::channel(1);
+    let (expiry_sender, expiry_receiver) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let expired = tokio::select! {
+            biased;
+            _ = sender.closed() => false,
+            _ = tokio::time::sleep_until(deadline) => true,
+            _ = async {
+                while let Some(item) = stream.next().await {
+                    let finished = item.as_ref().map_or(true, |output| output.finish_reason.is_some());
+                    if sender.send(item).await.is_err() || finished {
+                        break;
+                    }
+                }
+            } => false,
+        };
+        // Release backend work and finish without waiting for a stalled HTTP reader. Expiry has
+        // a separate terminal slot so the queued token remains ordered before the timeout error.
+        drop(stream);
+        if expired {
+            let _ = expiry_sender.send(());
+        }
+    });
+    Box::pin(async_stream::stream! {
+        while let Some(item) = receiver.recv().await {
+            yield item;
+        }
+        if expiry_receiver.await.is_ok() {
+            yield Err(LlmFacadeError::RequestFailed);
+        }
+    })
+}
+
 #[async_trait]
 impl Generation for RuntimeGeneration {
     async fn generate(&self, request: GenerationRequest) -> Result<Generated, GenerationError> {
-        let slot = self.generation_slot(&request.model).await?;
-        let runtime = slot.state.model(&request.model)?;
-        let text_request = TextRequest {
-            request_id: request.request_id.clone(),
-            prompt: request.prompt.clone(),
-            mm_features: None,
-            sampling_params: request.sampling_params.clone(),
-            decode_options: request.decode_options.clone(),
-            intermediate: request.intermediate,
-            priority: request.priority,
-            cache_salt: request.cache_salt.clone(),
-            add_special_tokens: false,
-            data_parallel_rank: None,
-            session_id: request.session_id.clone(),
-            reasoning_parser_kwargs: None,
-            lora_request: None,
-            arrival_time: request.arrival_time,
-        };
-        self.dispatch(slot.clone(), runtime, request, text_request)
-            .await
+        let deadline = tokio::time::Instant::from_std(request.started_at + self.request_timeout);
+        let mut generated = before_deadline(deadline, async {
+            let slot = self.generation_slot(&request.model).await?;
+            let runtime = slot.state.model(&request.model)?;
+            let text_request = TextRequest {
+                request_id: request.request_id.clone(),
+                prompt: request.prompt.clone(),
+                mm_features: None,
+                sampling_params: request.sampling_params.clone(),
+                decode_options: request.decode_options.clone(),
+                intermediate: request.intermediate,
+                priority: request.priority,
+                cache_salt: request.cache_salt.clone(),
+                add_special_tokens: false,
+                data_parallel_rank: None,
+                session_id: request.session_id.clone(),
+                reasoning_parser_kwargs: None,
+                lora_request: None,
+                arrival_time: request.arrival_time,
+            };
+            self.dispatch(slot.clone(), runtime, request, text_request)
+                .await
+        })
+        .await?;
+        generated.routed.stream = deadline_stream(generated.routed.stream, deadline);
+        Ok(generated)
     }
 
     async fn generate_chat(
@@ -582,37 +650,43 @@ impl Generation for RuntimeGeneration {
         chat: ChatRequest,
         include_reasoning: bool,
     ) -> Result<GeneratedChat, GenerationError> {
-        let slot = self.generation_slot(&request.model).await?;
-        let runtime = slot.state.model(&request.model)?;
-        let (mut text_request, output_processor) = runtime
-            .bundle
-            .chat_processor
-            .prepare_with_options(
-                chat,
-                NewChatOutputProcessorOptions {
-                    tool_call_parser: &request.tool_call_parser,
-                    reasoning_parser: &request.reasoning_parser,
-                },
-            )
-            .await
-            .map_err(|error| {
-                if error.is_request_validation_error() {
-                    GenerationError::InvalidRequest
-                } else {
-                    GenerationError::Internal
-                }
-            })?;
-        // The chat renderer stamps its own entry time after runtime admission. Preserve the
-        // HTTP handler's earlier origin so chat and text requests include the same wait.
-        text_request.arrival_time = request.arrival_time.or(text_request.arrival_time);
-        let generated = self
-            .dispatch(slot.clone(), runtime, request, text_request)
-            .await?;
-        Ok(GeneratedChat {
-            generated,
-            output_processor,
-            include_reasoning,
+        let deadline = tokio::time::Instant::from_std(request.started_at + self.request_timeout);
+        let mut chat = before_deadline(deadline, async {
+            let slot = self.generation_slot(&request.model).await?;
+            let runtime = slot.state.model(&request.model)?;
+            let (mut text_request, output_processor) = runtime
+                .bundle
+                .chat_processor
+                .prepare_with_options(
+                    chat,
+                    NewChatOutputProcessorOptions {
+                        tool_call_parser: &request.tool_call_parser,
+                        reasoning_parser: &request.reasoning_parser,
+                    },
+                )
+                .await
+                .map_err(|error| {
+                    if error.is_request_validation_error() {
+                        GenerationError::InvalidRequest
+                    } else {
+                        GenerationError::Internal
+                    }
+                })?;
+            // The chat renderer stamps its own entry time after runtime admission. Preserve the
+            // HTTP handler's earlier origin so chat and text requests include the same wait.
+            text_request.arrival_time = request.arrival_time.or(text_request.arrival_time);
+            let generated = self
+                .dispatch(slot.clone(), runtime, request, text_request)
+                .await?;
+            Ok(GeneratedChat {
+                generated,
+                output_processor,
+                include_reasoning,
+            })
         })
+        .await?;
+        chat.generated.routed.stream = deadline_stream(chat.generated.routed.stream, deadline);
+        Ok(chat)
     }
 
     async fn tokenize(

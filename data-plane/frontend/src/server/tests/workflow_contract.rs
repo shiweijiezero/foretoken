@@ -207,6 +207,7 @@ fn request() -> GenerationRequest {
         cache_salt: None,
         session_id: None,
         arrival_time: None,
+        started_at: std::time::Instant::now(),
         tool_call_parser: ParserSelection::None,
         reasoning_parser: ParserSelection::None,
     }

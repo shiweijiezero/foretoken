@@ -62,6 +62,7 @@ async fn logical_only_snapshot_publishes_a_ready_scale_from_zero_runtime() {
         cache_salt: None,
         session_id: None,
         arrival_time: None,
+        started_at: std::time::Instant::now(),
         tool_call_parser: Default::default(),
         reasoning_parser: Default::default(),
     };

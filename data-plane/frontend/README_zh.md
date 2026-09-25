@@ -5,27 +5,58 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Foretoken Frontend
 
-`foretoken-frontend` 接收推理请求并返回 OpenAI 兼容响应。通过维护中的示例或自己的服务配置声明 `FrontendService`，Foretoken 会自动创建并配置前端工作负载。
+前端在同一地址提供 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 接口，通过请求中的 `model` 选择已配置的模型。
 
-## 使用方式
+## 发送请求
 
-按照仓库[快速开始](../../README_zh.md)部署前端并发送请求。一个前端可以提供多个公开模型，客户端通过请求中的 `model` 选择模型；目标模型暂时不可用时，前端不会静默改为其他模型。
+按仓库[快速开始](../../README_zh.md#快速开始)完成部署，其中已有 Chat Completions 调用示例。从仓库根目录执行以下命令，即可通过同一部署调用 Responses 和 Messages：
 
-前端支持普通 JSON 和 SSE 流式响应、Completion、Chat Completion、分词、工具调用、reasoning、structured output 与受能力约束的图片输入。图片输入当前只接受大小受限的 base64 `data:` 内容，不接受远程媒体 URL。
+```bash
+FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
 
-通过 `ModelService` 配置聚合部署、预填充/解码分离（P/D）或编码/预填充/解码分离（E/P/D）。分离式推理需要平台支持所选运行时和传输方式。[E/P/D 示例](../../examples/encoder-prefill-decode/README_zh.md)展示独立图片编码和张量并行解码。
+# OpenAI Responses
+curl --fail-with-body "$FRONTEND_URL/v1/responses" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"Qwen/Qwen3-0.6B","input":"你好","max_output_tokens":512,"store":false}'
 
-## 接口访问范围
+# Anthropic Messages
+curl --fail-with-body "$FRONTEND_URL/v1/messages" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"你好"}],"max_tokens":512}'
+```
 
-默认模式通过 `LoadBalancer` 类型的 Kubernetes `Service` 暴露前端。网关模式通过绑定平台 Gateway 的 `HTTPRoute` 暴露 `/v1`、`/tokenize` 和 `/detokenize`。域名解析、TLS、认证和其他入口策略需在 Gateway 部署中配置。默认模式下，运维接口的访问范围取决于 LoadBalancer 和集群网络策略。
+以上请求返回 JSON。在请求中添加 `"stream": true` 可逐步接收服务端事件流（SSE）；为 `curl` 添加 `--no-buffer` 可实时显示输出。
 
-| 范围 | 接口 | 用途 |
+## 选择接口
+
+| API | POST 路径 | 对话输入 |
 | --- | --- | --- |
-| 客户端 | `/v1/*`、`/tokenize`、`/detokenize` | 发送推理请求和发现已配置模型 |
-| 平台运维 | `/healthz`、`/readyz`、`/statusz`、`/metrics` | 探针、运行状态诊断和 Prometheus 抓取 |
+| OpenAI Chat Completions | `/v1/chat/completions` | `messages` |
+| OpenAI Responses | `/v1/responses` | `input`；设置 `store: false`，每轮携带完整对话历史 |
+| Anthropic Messages | `/v1/messages` | `messages`，并用必填的 `max_tokens` 指定输出预算 |
+| Anthropic token 计数 | `/v1/messages/count_tokens` | `messages`，以及与生成请求一致的系统提示和工具定义 |
 
-`/v1/models` 返回前端当前生效配置中的模型。
+通过 `GET /v1/models` 查看模型标识。文本补全使用 `POST /v1/completions`；`/tokenize` 和 `/detokenize` 用于文本与 token ID 之间的转换。
 
-`/healthz` 表示前端进程正在运行。`/readyz` 表示服务配置已生效，前端可以接收新请求，但不保证每个已配置模型都有健康后端路径。`/statusz` 为平台运维者提供运行状态和 KV 索引诊断信息。`/metrics` 是 Prometheus 抓取端点。
+工具由客户端执行，再将结果传入下一轮请求。Responses 支持函数工具、带命名空间的函数和无语法约束的自定义文本工具；不支持服务端托管工具和后台生成任务。
 
-模型配置准备完成后，会在运行中的前端进程内更新；已经开始执行的请求保留其选定的配置。修改 `FrontendService.spec.routerPipeline` 则通过前端 Deployment 滚动更新生效。
+强制工具选择和严格工具 schema 需要模型服务支持结构化输出。思考控制参数由模型的对话模板支持。输出预算包含思考 token；Messages 使用 `max_tokens` 指定总预算，不接受独立的 `thinking.budget_tokens` 预算。
+
+输出预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `incomplete`。只执行完整的工具调用；中断的调用可能被省略，也可能包含未完成的参数。
+
+支持图片的模型服务接受 base64 编码的图片 `data:` URL，而非远程图片 URL。
+
+## 访问与运维
+
+默认通过 Kubernetes LoadBalancer 访问前端。使用域名访问时，参阅[网关模式](../../README_zh.md#网关模式)；TLS 和认证在集群入口配置。
+
+| 接口 | 用途 |
+| --- | --- |
+| `/healthz` | 检查前端进程是否存活 |
+| `/readyz` | 检查前端是否可以接收请求 |
+| `/statusz` | 查看服务和缓存索引状态 |
+| `/metrics` | 获取 Prometheus 指标 |
+
+运维接口的访问范围由集群网络策略控制；网关模式对外提供 `/v1`、`/tokenize` 和 `/detokenize` 客户端路径。
+
+修改服务配置后，用 `foretoken deploy` 重新应用；用 `foretoken status` 查看状态，用 `foretoken delete` 删除部署。这些命令均传入同一份配置目录。

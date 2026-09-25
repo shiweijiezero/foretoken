@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Adapts the decoded output stream into streaming and collected HTTP responses.
+//! Encodes shared generation events as OpenAI completion and chat responses.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::Json;
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::Event;
 use axum::response::{IntoResponse, Response};
 use foretoken_chat::{AssistantBlockKind, AssistantMessageExt as _, ChatEvent, FinishReason};
 use foretoken_engine_core_client::protocol::output::StopReason;
-use foretoken_text::output::decoded_text_event_stream;
 use foretoken_text::{DecodedLogprobs, DecodedPositionLogprobs};
 use foretoken_text::{DecodedTextEvent, TextOutputStreamExt};
 use futures::StreamExt;
 use serde::Serialize;
 use vllm_llm::FinishReason as VllmFinishReason;
 
-use crate::http::openai_error;
+use super::openai_error;
+use crate::api::stream::{chat_events, decoded, idle_timed, sse_response};
 use crate::runtime::{Generated, GeneratedChat, GenerationError};
 
 #[derive(Clone, Serialize)]
@@ -359,72 +359,6 @@ fn chat_logprobs(token_ids: &[u32], logprobs: Option<DecodedLogprobs>) -> Option
     Some(ChatLogprobs { content })
 }
 
-fn decoded(generated: Generated) -> impl foretoken_text::TextOutputStream {
-    let request_id = generated.routed.routed_request.request.request_id.clone();
-    let mut stream = generated.routed.stream;
-    let raw = async_stream::stream! {
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(output) => yield Ok(output),
-                Err(_) => break,
-            }
-        }
-    };
-    decoded_text_event_stream(
-        request_id,
-        generated.tokenizer,
-        Box::pin(raw),
-        generated.decode_options,
-        true,
-    )
-}
-
-/// Applies the HTTP stream-idle budget to decoded backend output.
-///
-/// Streaming and collected response adapters wrap their output with this function. It returns a
-/// stream that preserves decoded events until the idle budget expires, then yields one terminal
-/// error so dropping the wrapper cancels the underlying backend request.
-pub(crate) fn idle_timed(
-    stream: impl foretoken_text::TextOutputStream,
-    idle: Duration,
-) -> impl foretoken_text::TextOutputStream {
-    async_stream::stream! {
-        let mut stream = Box::pin(stream);
-        loop {
-            match tokio::time::timeout(idle, stream.next()).await {
-                Ok(Some(event)) => yield event,
-                Ok(None) => break,
-                Err(_) => {
-                    // Dropping the output stream after this item aborts the backend request.
-                    yield Err(foretoken_text::Error::StreamClosedBeforeTerminalOutput {
-                        request_id: "idle-timeout".into(),
-                    });
-                    break;
-                }
-            }
-        }
-    }
-}
-
-fn chat_events(
-    generated: GeneratedChat,
-    idle: Duration,
-) -> foretoken_chat::Result<(
-    bool,
-    impl futures::Stream<Item = foretoken_chat::Result<ChatEvent>> + Send,
-)> {
-    let GeneratedChat {
-        generated,
-        output_processor,
-        include_reasoning,
-    } = generated;
-    let decoded = idle_timed(decoded(generated), idle)
-        .map(|event| event.map_err(foretoken_chat::Error::from));
-    output_processor
-        .process(Box::pin(decoded))
-        .map(|stream| (include_reasoning, stream))
-}
-
 fn completion_finish_reason(finish_reason: &FinishReason) -> Result<&'static str, ()> {
     match finish_reason {
         FinishReason::Stop(_) => Ok("stop"),
@@ -618,7 +552,7 @@ pub(crate) fn chat_stream_with_options(
         }
         yield Ok(Event::default().data("[DONE]"));
     };
-    Sse::new(events).into_response()
+    sse_response(events)
 }
 
 pub(crate) struct CompletionResponseOptions {
@@ -789,7 +723,7 @@ pub(crate) fn text_stream_many(
         }
         yield Ok(Event::default().data("[DONE]"));
     };
-    Sse::new(events).into_response()
+    sse_response(events)
 }
 
 /// Collects one routed chat stream into the OpenAI JSON response used for non-streaming requests.
