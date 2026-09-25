@@ -40,7 +40,7 @@ foretoken eval examples/quickstart \
   --tasks gsm8k --limit 100 --output local,wandb
 ```
 
-该命令对 100 道 GSM8K 数学题评分，输出任务指标和样本数。[质量评测](docs/eval/README_zh.md)介绍 lm-evaluation-harness、EvalScope、原生任务参数、已有服务端点和评分报告。
+该命令对 100 道 GSM8K 数学题评分，输出任务指标和样本数。[质量评测](docs/eval/README_zh.md)介绍 lm-evaluation-harness 和 EvalScope。用 `foretoken eval compare` 可[比较参考与候选模型的概率分布](docs/eval/fidelity_zh.md)。
 
 ## 剖析执行过程
 

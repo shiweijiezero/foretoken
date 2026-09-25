@@ -332,7 +332,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "eval",
         add_help=False,
-        help="Evaluate a running model service with a supported evaluator",
+        help="Score model answers or compare reference and candidate distributions",
     )
     return parser
 

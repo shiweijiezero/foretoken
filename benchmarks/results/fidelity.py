@@ -312,7 +312,7 @@ class FidelityConsoleSink:
         expected = protocol["num_windows"] * protocol["score_tokens"]
         execution = run.metrics["execution"]["fidelity"]
         lines = [
-            "Foretoken fidelity",
+            "Foretoken model comparison",
             f"Reference: {fidelity['reference_model']}    Scored positions/candidate: {expected}    Completed: {execution['succeeded']}/{execution['requested']}",
             "Protocol: " + ", ".join(
                 f"{key}={protocol[key]}"

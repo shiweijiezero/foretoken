@@ -3,61 +3,77 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# 比较量化保真度
+# 比较模型概率分布
 
 [English](fidelity.md) | 简体中文 · [质量评测](README_zh.md)
 
-`foretoken eval --evaluator fidelity` 用于比较量化前后，模型预测下一个 token 的概率发生了多大变化。所有模型都接收同一段语料的 token ID；后续上下文继续使用原文，不拼入模型生成的答案。这种比较方式称为 teacher forcing。
+`foretoken eval compare` 比较候选模型与参考模型预测下一个 token 的概率差异，报告完整词表 KL、Top-1/Top-k 一致率和 logit 差异，并生成本地图表及 W&B 结果。它是内置的模型对比任务，与使用 lm-evaluation-harness、EvalScope 为答案评分的任务分开。
 
-## 比较一个候选模型
+## 比较量化模型
 
-参考模型和候选模型需要使用相同的 tokenizer。`--tokenizer-path` 指定共同基础模型的仓库或本地目录，其中包含 tokenizer 与 `config.json`。两端服务应通过 `/v1/completions` 返回以 token ID 为键的完整词表对数概率。使用 vLLM 时，启动两端服务都加上 `--max-logprobs -1`。使用 Foretoken 部署时，在模型的 `spec.engineArgs` 中加入 `max-logprobs: -1`，再用 `foretoken deploy PATH` 应用配置。
-
-下面假设 BF16 参考服务位于 8009 端口、bitsandbytes 4-bit 候选服务位于 8008 端口，两端都提供 `Qwen/Qwen3-0.6B`。请换成实际服务地址和模型 ID：
+按[量化模型示例](../../../examples/quantized-model/README_zh.md)准备源码安装的平台及模型存储后，在仓库根目录运行：
 
 ```bash
-foretoken eval --evaluator fidelity \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --reference-url http://127.0.0.1:8009/v1/chat/completions \
-  --reference-model Qwen/Qwen3-0.6B \
-  --tokenizer-path Qwen/Qwen3-0.6B \
-  --label "bitsandbytes 4-bit" --method bitsandbytes --weight-bits 4 \
+foretoken eval compare examples/quantized-model/bitsandbytes \
+  --reference examples/quantized-model/bf16 \
+  --output local
+```
+
+两端使用相同的 Qwen2.5-0.5B-Instruct 和 BF16 计算精度，候选模型以 4-bit 加载权重。命令直接读取参考部署中的模型与 tokenizer。已有部署会被复用；不存在的部署会临时创建，并在使用后删除。参考模型先于候选模型运行，因此两端都为临时部署时，一张可用 GPU 即可依次完成比较。
+
+示例已允许返回完整词表概率。如果之前用旧版示例创建了部署，先用 `foretoken deploy PATH` 应用更新后的配置。自定义部署需在模型的 `spec.engineArgs` 中设置 `max-logprobs: -1`；原生 vLLM 服务使用 `--max-logprobs -1`。
+
+## 一次比较多个候选
+
+维护中的候选列表包含 BF16 和 bitsandbytes 两项，已标注方法与名义位宽：
+
+```bash
+foretoken eval compare \
+  --reference examples/quantized-model/bf16 \
+  --candidates examples/quantized-model/candidates.jsonl \
   --output local,wandb
 ```
 
-终端会汇总 KL 散度、Top-1 一致率和去均值 logit 的均方根误差。结果目录保存对比图及逐位置指标，W&B 的 Fidelity 分区也会展示这些结果。只需要本地结果时，使用 `--output local`。
-
-也可以在 `eval` 后紧接一个 Kustomize 目录，替代候选服务的 `--url`；参考部署用 `--reference PATH` 指定。单模型部署会自动提供模型 ID。如果两个模型共用一个服务地址，只需用 `--reference-model` 选择参考模型，无需重复填写 `--reference-url`。
-
-## 比较多种方法与位宽
-
-将候选列表保存为 `candidates.jsonl`，每行一个模型。可以复用命令中的服务地址，只覆盖 `model`，也可以逐行指定 `url` 或 Kustomize `path`：
+自定义列表每行写一个 JSON 对象：
 
 ```jsonl
-{"model":"qwen-bf16","label":"BF16","method":"BF16","weight_bits":16}
-{"model":"qwen-bnb4","label":"bitsandbytes 4-bit","method":"bitsandbytes","weight_bits":4}
+{"path":"examples/quantized-model/bf16","label":"BF16","method":"BF16","weight_bits":16}
+{"path":"examples/quantized-model/bitsandbytes","label":"4-bit","method":"bitsandbytes","weight_bits":4}
 ```
 
-模型 ID 应填写服务实际提供的名称。将前面命令中的单候选选项 `--label`、`--method` 和 `--weight-bits` 换成 `--candidates candidates.jsonl` 即可。每个候选的 `label` 必须不同。
+相对路径以命令的工作目录为基准。每行可指定部署 `path`，或者服务 `url` 及其 `model`；两者都省略时复用命令中的候选服务。单模型部署会自动提供模型 ID。显示名称默认取部署目录名或模型 ID；名称相同时用 `label` 区分。
 
-图表按方法着色，并标注候选名称。位宽和模型大小分别作为横轴绘图：
+单候选命令中的 `--label`、`--method`、`--weight-bits` 都是可选的绘图标注。未指定方法时，部署对比会读取 `engineArgs` 中的量化方法。有效位宽和 checkpoint 大小是可选实测坐标，不是运行前提：
 
-| 候选字段 | 含义 |
+| 候选字段 / 命令选项 | 含义 |
 | --- | --- |
-| `weight_bits` | 名义权重精度，例如 4 位或 16 位 |
-| `bits_per_weight` | 包含量化开销在内，实测每个权重占用的有效位数 |
-| `model_size_gib` | 实测模型 checkpoint 大小，单位 GiB |
+| `weight_bits` / `--weight-bits` | 名义权重精度 |
+| `bits_per_weight` / `--bits-per-weight` | 包含量化开销在内，实测每个权重占用的位数 |
+| `model_size_gib` / `--model-size-gib` | 实测 checkpoint 大小，单位 GiB |
 
-有实测值时再填写有效位宽和大小；没有大小信息时，横轴使用候选名称。单候选命令对应使用 `--weight-bits`、`--bits-per-weight` 和 `--model-size-gib`。
+提供哪种坐标，就生成相应的对比图；没有大小信息时，横轴使用候选名称。
+
+## 比较已有服务
+
+分别指定候选与参考服务的地址和模型 ID：
+
+```bash
+foretoken eval compare \
+  --url http://127.0.0.1:8008/v1/chat/completions --model quantized \
+  --reference-url http://127.0.0.1:8009/v1/chat/completions \
+  --reference-model Qwen/Qwen3-0.6B \
+  --output local
+```
+
+将地址和模型 ID 换成实际服务。命令默认用参考模型 ID 获取 tokenizer 和模型配置；如果该 ID 只是服务别名，或者模型文件仅在集群节点上可见，用 `--tokenizer-path` 指定基础模型仓库，或客户端本地包含 tokenizer 文件与 `config.json` 的目录。Foretoken 部署则自动按配置的 Hugging Face、ModelScope 或客户端可访问的本地来源解析，也支持部署中单独指定的 tokenizer。
+
+两端需要使用相同的 token ID 映射与模型词表。若共用服务地址，可以省略 `--reference-url`。认证使用 `--api-key`；参考服务凭据不同则使用 `--reference-api-key`。
 
 ## 选择语料和评分位置
 
-默认使用 [WikiText-2](https://huggingface.co/datasets/Salesforce/wikitext) 的 `wikitext-2-raw-v1` 配置、test 划分。按顺序取 4 个互不重叠的 512-token 窗口，对每个窗口最后 16 个位置评分，每个候选共比较 64 个位置。
+默认使用 [WikiText-2](https://huggingface.co/datasets/Salesforce/wikitext) 的 `wikitext-2-raw-v1` 配置、test 划分，取 4 个互不重叠的 512-token 窗口，分别比较最后 16 个位置，每个候选共 64 个位置。上下文始终来自原文，不拼入模型生成答案，这种方式称为 teacher forcing。
 
-本地文本使用 `--dataset corpus.txt`；包含 `text` 字段的 JSONL 使用 `--dataset corpus.jsonl`，字段名称可通过 `--text-column` 修改。Hugging Face 数据集还可用 `--dataset-config` 和 `--split` 选择配置与划分。
-
-通过 `--context-length`、`--num-windows` 和 `--score-tokens` 调整比较规模。tokenizer 定义了句首 token 时，每个窗口会添加该 token。参考模型的概率只采集一次，供本次运行的所有候选复用。
+本地文本使用 `--dataset corpus.txt`；包含 `text` 字段的 JSONL 使用 `--dataset corpus.jsonl`，字段名称可用 `--text-column` 修改。Hugging Face 数据集还可用 `--dataset-config`、`--split` 选择配置和划分。通过 `--context-length`、`--num-windows`、`--score-tokens` 调整比较规模。tokenizer 定义了句首 token 时，每个窗口会添加该 token。
 
 ## 理解结果
 
@@ -70,12 +86,10 @@ foretoken eval --evaluator fidelity \
 | Centered-logit RMSE | 分别减去各自的平均对数概率，再计算均方根误差；整体 logit 平移不影响该指标 |
 | Total variation | 两个概率向量逐项差值的绝对值之和的一半 |
 
-位宽和大小对比图展示平均 KL、p99 KL、Centered-logit RMSE 与 Top-1 一致率。逐位置曲线帮助定位哪些文本位置的概率分布差异更大。答案正确率使用[任务质量评测](README_zh.md)，服务速度使用[性能评测](../perf/README_zh.md)。
+下图通过已有服务比较 Qwen3-0.6B BF16 与 bitsandbytes 4-bit：取两个 96-token WikiText-2 窗口，每个窗口比较最后 32 个位置。
 
-下面展示通过已有服务比较 Qwen3-0.6B BF16 与 bitsandbytes 4-bit 的结果：语料取两个 96-token WikiText-2 窗口，每个窗口比较最后 32 个位置。
-
-![按量化方法和名义位宽比较 KL、logit 均方根误差及 Top-1 一致率](../imgs/fidelity-weight-bits.png)
+![按名义位宽比较 KL、logit 均方根误差及 Top-1 一致率](../imgs/fidelity-weight-bits.png)
 
 ![64 个评分位置的 KL 与去均值 logit 差异](../imgs/fidelity-positions.png)
 
-结果目录中的 `fidelity_candidates.csv` 保存候选汇总，`fidelity_tokens.jsonl` 保存逐位置指标，PNG 文件可直接查看。`metrics.json` 记录语料选择、评分设置和完成情况。完整概率向量仅临时保存，比较结束后删除。
+命令打印的结果目录包含 `fidelity_candidates.csv`、`fidelity_tokens.jsonl` 和 PNG 图表；`metrics.json` 记录评分协议与完成情况。给 `--output` 加上 `wandb` 即可发布表格、曲线和图片。参考概率向量在本次运行内复用，结束后删除。答案正确率使用[任务质量评测](README_zh.md)，服务速度使用[性能评测](../perf/README_zh.md)。

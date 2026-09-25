@@ -3,63 +3,79 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Compare quantization fidelity
+# Compare model distributions
 
 English | [简体中文](fidelity_zh.md) · [Quality evaluation](README.md)
 
-Compare how quantization changes a model's next-token probabilities with `foretoken eval --evaluator fidelity`. Every model receives the same token IDs from a text corpus; later prefixes use the corpus rather than generated answers. This is called teacher forcing.
+`foretoken eval compare` measures how a candidate model's next-token probabilities differ from a reference. It reports full-vocabulary KL divergence, Top-1/Top-k agreement, and logit differences, with local plots and W&B output. This is a built-in comparison task, separate from answer scoring with lm-evaluation-harness or EvalScope.
 
-## Compare a candidate
+## Compare a quantized model
 
-Use a reference and candidate with the same tokenizer. `--tokenizer-path` selects their shared base-model repository or local directory, including its tokenizer and `config.json`. Both services must return full-vocabulary log probabilities with token-ID keys through `/v1/completions`. For vLLM, enable this when starting each service with `--max-logprobs -1`. For a Foretoken deployment, add `max-logprobs: -1` to the model's `spec.engineArgs` and apply it with `foretoken deploy PATH`.
-
-The example below assumes a BF16 reference at port 8009 and a bitsandbytes 4-bit candidate at port 8008, both serving `Qwen/Qwen3-0.6B`. Replace the addresses and model IDs with those of the services to compare:
+Use the [quantized-model examples](../../../examples/quantized-model/README.md) with a source-installed Foretoken platform and their configured model storage. From the repository root:
 
 ```bash
-foretoken eval --evaluator fidelity \
-  --url http://127.0.0.1:8008/v1/chat/completions \
-  --model Qwen/Qwen3-0.6B \
-  --reference-url http://127.0.0.1:8009/v1/chat/completions \
-  --reference-model Qwen/Qwen3-0.6B \
-  --tokenizer-path Qwen/Qwen3-0.6B \
-  --label "bitsandbytes 4-bit" --method bitsandbytes --weight-bits 4 \
+foretoken eval compare examples/quantized-model/bitsandbytes \
+  --reference examples/quantized-model/bf16 \
+  --output local
+```
+
+Both deployments use Qwen2.5-0.5B-Instruct with BF16 computation; the candidate loads its weights in 4-bit. The command reads the reference model and tokenizer from its deployment. It reuses existing deployments or creates and removes temporary ones, evaluating the reference before the candidate so a single available GPU is sufficient when both are temporary.
+
+The examples already allow full-vocabulary probability output. For an existing deployment created from older example files, apply the updated files with `foretoken deploy PATH` before comparing. For a custom deployment, set `max-logprobs: -1` in the model's `spec.engineArgs`; native vLLM services use `--max-logprobs -1`.
+
+## Compare several candidates
+
+The maintained list contains BF16 and bitsandbytes candidates with method and nominal bit-width labels:
+
+```bash
+foretoken eval compare \
+  --reference examples/quantized-model/bf16 \
+  --candidates examples/quantized-model/candidates.jsonl \
   --output local,wandb
 ```
 
-The summary reports KL divergence, Top-1 agreement, and centered-logit RMSE. Local results include comparison plots and per-position measurements; W&B shows them in the Fidelity section. For local results only, use `--output local`.
-
-A Kustomize directory immediately after `eval` can replace the candidate `--url`; `--reference PATH` selects a reference deployment. A single-model deployment supplies its model ID automatically. If both models share an endpoint, omit `--reference-url` and select the reference with `--reference-model`.
-
-## Compare methods and bit widths
-
-Save one candidate per line in `candidates.jsonl`. Rows can reuse the command's endpoint and override `model`, or specify their own `url` or Kustomize `path`:
+For a custom list, write one JSON object per line:
 
 ```jsonl
-{"model":"qwen-bf16","label":"BF16","method":"BF16","weight_bits":16}
-{"model":"qwen-bnb4","label":"bitsandbytes 4-bit","method":"bitsandbytes","weight_bits":4}
+{"path":"examples/quantized-model/bf16","label":"BF16","method":"BF16","weight_bits":16}
+{"path":"examples/quantized-model/bitsandbytes","label":"4-bit","method":"bitsandbytes","weight_bits":4}
 ```
 
-Use the IDs actually advertised by the service. Add `--candidates candidates.jsonl` to the comparison command, replacing the single-candidate `--label`, `--method`, and `--weight-bits` options. Each label must be distinct.
+Paths are relative to the command's working directory. Each row can select `path`, or `url` with its `model`. Rows without either reuse the command's candidate service. A single-model deployment supplies its own model ID. Labels default to deployment directory names or model IDs; set distinct `label` values when comparing otherwise identical names.
 
-Plots use method colors and candidate labels. Available size coordinates produce separate plots:
+For one candidate, `--label`, `--method`, and `--weight-bits` are optional plot annotations. Deployment comparisons read the quantization method from `engineArgs` when no method label is supplied. Effective bit width and checkpoint size are optional measured coordinates, not required inputs:
 
-| Candidate field | Meaning |
+| Candidate field / CLI option | Meaning |
 | --- | --- |
-| `weight_bits` | Nominal weight precision, such as 4 or 16 bits |
-| `bits_per_weight` | Measured effective bits per weight, including quantization overhead |
-| `model_size_gib` | Measured checkpoint size in GiB |
+| `weight_bits` / `--weight-bits` | Nominal weight precision |
+| `bits_per_weight` / `--bits-per-weight` | Measured bits per weight, including quantization overhead |
+| `model_size_gib` / `--model-size-gib` | Measured checkpoint size in GiB |
 
-Supply measured values only when available. Without size coordinates, the comparison uses candidate names on the horizontal axis. For a single candidate, the corresponding flags are `--weight-bits`, `--bits-per-weight`, and `--model-size-gib`.
+Each supplied coordinate produces a separate comparison plot. Without size coordinates, plots use candidate names.
 
-## Select text and scoring positions
+## Use existing endpoints
 
-The default corpus is [WikiText-2](https://huggingface.co/datasets/Salesforce/wikitext), configuration `wikitext-2-raw-v1`, test split. The evaluator takes four non-overlapping 512-token windows and scores the last 16 positions of each: 64 paired positions per candidate.
+Pass the candidate and reference service addresses and their served model IDs:
 
-Use `--dataset corpus.txt` for local text or `--dataset corpus.jsonl` for records containing a `text` field. `--text-column` selects another field. Hugging Face datasets also accept `--dataset-config` and `--split`.
+```bash
+foretoken eval compare \
+  --url http://127.0.0.1:8008/v1/chat/completions --model quantized \
+  --reference-url http://127.0.0.1:8009/v1/chat/completions \
+  --reference-model Qwen/Qwen3-0.6B \
+  --output local
+```
 
-Change the sample size with `--context-length`, `--num-windows`, and `--score-tokens`. The tokenizer's beginning-of-sequence token is added to each window when defined. Reference probabilities are collected once and reused for all candidates in the run.
+Replace these addresses and IDs with the actual services. The reference model ID is used to obtain its tokenizer and model configuration. If it is only a serving alias, or its files exist only on cluster nodes, use `--tokenizer-path` to select a base-model repository or client-local directory containing both tokenizer files and `config.json`. Foretoken deployments resolve their configured Hugging Face, ModelScope, or client-accessible local source automatically, including a separately configured tokenizer.
 
-## Read the comparisons
+Both services must use the same token-ID mapping and model vocabulary. With a shared endpoint, omit `--reference-url`. Authentication uses `--api-key`, with `--reference-api-key` for a different reference credential.
+
+## Choose the comparison sample
+
+The default corpus is [WikiText-2](https://huggingface.co/datasets/Salesforce/wikitext), configuration `wikitext-2-raw-v1`, test split. Four non-overlapping 512-token windows are sampled, scoring the last 16 positions of each: 64 paired positions per candidate. Each prefix comes from the original corpus rather than generated answers; this is teacher forcing.
+
+Use `--dataset corpus.txt` for local text, or `--dataset corpus.jsonl` for records containing a `text` field. `--text-column` selects another field. Hugging Face datasets also accept `--dataset-config` and `--split`. Adjust sample size with `--context-length`, `--num-windows`, and `--score-tokens`. A tokenizer-defined beginning-of-sequence token is added to each window.
+
+## Read the results
 
 | Metric | Interpretation |
 | --- | --- |
@@ -70,12 +86,10 @@ Change the sample size with `--context-length`, `--num-windows`, and `--score-to
 | Centered-logit RMSE | Root-mean-square difference after subtracting each vector's mean log probability; invariant to a common logit offset |
 | Total variation | Half the sum of absolute probability differences |
 
-The bit-width and size plots compare mean KL, p99 KL, centered-logit RMSE, and Top-1 agreement. Position curves show where KL and logit differences increase across the scored text. Use [task evaluation](README.md) to measure answer quality and [performance evaluation](../perf/README.md) to measure serving speed.
+The following plots compare Qwen3-0.6B BF16 and bitsandbytes 4-bit through existing endpoints, using two 96-token WikiText-2 windows and scoring their last 32 positions.
 
-The example below compares Qwen3-0.6B BF16 and bitsandbytes 4-bit through existing endpoints, using two 96-token WikiText-2 windows and scoring the last 32 positions of each.
+![Nominal weight precision compared by KL, logit RMSE, and Top-1 agreement](../imgs/fidelity-weight-bits.png)
 
-![Quantization methods and nominal weight bits compared by KL, logit RMSE, and Top-1 agreement](../imgs/fidelity-weight-bits.png)
+![KL and centered-logit RMSE across 64 scored positions](../imgs/fidelity-positions.png)
 
-![KL and centered-logit RMSE across the 64 scored positions](../imgs/fidelity-positions.png)
-
-The result directory contains `fidelity_candidates.csv` for candidate summaries, `fidelity_tokens.jsonl` for individual positions, and PNG plots. `metrics.json` records the corpus selection, scoring settings, and completed candidates. Full probability vectors are temporary and removed after the comparison.
+The printed result directory contains `fidelity_candidates.csv`, `fidelity_tokens.jsonl`, and PNG plots; `metrics.json` records the protocol and completion status. Add `wandb` to `--output` to publish the tables, curves, and images. Reference probability vectors are reused within the run and removed afterward. Use [task evaluation](README.md) for answer quality and [performance evaluation](../perf/README.md) for serving speed.

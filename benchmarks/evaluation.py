@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Compose native quality evaluation with Foretoken service discovery and result destinations."""
+"""Dispatch answer scoring or distribution comparisons through shared service and result lifecycles."""
 
 from __future__ import annotations
 
@@ -21,13 +21,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         config, help_requested = parse_evaluation_arguments(
             sys.argv[1:] if argv is None else argv
         )
-        if config.evaluator == "fidelity":
+        if config.evaluator == "compare":
+            if help_requested:
+                return
             from benchmarks.config.fidelity import parse_fidelity_arguments
             from benchmarks.runs.fidelity import run_fidelity
 
-            fidelity = parse_fidelity_arguments(
-                ["--help"] if help_requested else config.arguments, config.service
-            )
+            fidelity = parse_fidelity_arguments(config.arguments, config.service)
             configure_logging(not config.outputs.includes("quiet"))
             run_fidelity(config, fidelity)
             return

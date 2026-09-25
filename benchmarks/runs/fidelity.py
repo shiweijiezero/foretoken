@@ -21,7 +21,7 @@ from benchmarks.config.fidelity import FidelityConfig
 from benchmarks.datasets.conversations import iter_jsonl_rows
 from benchmarks.datasets.huggingface import resolve_tokenizer_path
 from benchmarks.integrations.distributions import CompletionDistributionClient, compare_logprobs
-from benchmarks.model_service import resolve_model_service
+from benchmarks.model_service import ModelService, resolve_model_service
 from benchmarks.results.environment import serving_environment
 from benchmarks.results.fidelity import fidelity_sinks
 from benchmarks.results.output import BenchmarkRun, ResultOutputs, write_json
@@ -110,6 +110,37 @@ def _score_rows(points: list[dict[str, Any]], top_k: tuple[int, ...]) -> list[di
     } for point in points for name in names]
 
 
+def _reference_text_files(service: ModelService, override: str) -> tuple[str, str, str]:
+    """Resolve the reference's tokenizer and output-head config independently on the client."""
+    source, tokenizer_id = "hf", service.model
+    if service.deployment is not None:
+        identities = {
+            (spec.get("source", "hf"), spec.get("tokenizer") or spec["model"])
+            for document in service.deployment.objects
+            if document["kind"] == "ModelService"
+            and (spec := document["spec"])["model"] == service.model
+        }
+        if len(identities) != 1:
+            raise ValueError("The reference deployment must select one model/tokenizer identity")
+        source, tokenizer_id = identities.pop()
+    if override:
+        path = resolve_tokenizer_path(override, source="hf" if source == "local" else source)
+        return path, path, override
+    try:
+        model_path = resolve_tokenizer_path(service.model, source=source)
+        tokenizer_path = (
+            model_path if tokenizer_id == service.model
+            else resolve_tokenizer_path(tokenizer_id, source=source)
+        )
+    except (OSError, ValueError) as error:
+        raise ValueError(
+            "Cannot load the reference model's text artifacts on this client. "
+            "Use --tokenizer-path with its base-model repository or a local directory "
+            "containing tokenizer files and config.json."
+        ) from error
+    return tokenizer_path, model_path, tokenizer_id
+
+
 def run_fidelity(config: EvaluationConfig, fidelity: FidelityConfig) -> None:
     """Score a reference once, compare each candidate, and retain scalar results and plots.
 
@@ -121,7 +152,7 @@ def run_fidelity(config: EvaluationConfig, fidelity: FidelityConfig) -> None:
     from transformers import AutoConfig, AutoTokenizer
 
     reference_source = fidelity.reference_source(config.service)
-    record = {"mode": "fidelity", "evaluator": "fidelity", "model": "model comparison"}
+    record = {"mode": "fidelity", "evaluator": "compare", "model": "model comparison"}
     points: list[dict[str, Any]] = []
     positions: list[dict[str, Any]] = []
     environments: dict[str, Any] = {"candidates": []}
@@ -136,67 +167,63 @@ def run_fidelity(config: EvaluationConfig, fidelity: FidelityConfig) -> None:
         directory = Path(outputs.execution_dir)
         protocol = fidelity.protocol()
         try:
-            model_path = resolve_tokenizer_path(fidelity.tokenizer)
-            tokenizer = AutoTokenizer.from_pretrained(model_path)
-            # The output head can contain more entries than the tokenizer map.
-            # Request its full size as a positive count for the public Completions API.
-            model_config = AutoConfig.from_pretrained(model_path).to_dict()
-            vocabulary_size = model_config.get("text_config", model_config)["vocab_size"]
-            if max(tokenizer.get_vocab().values()) >= vocabulary_size:
-                raise ValueError("Tokenizer token IDs exceed the model configuration's vocabulary size")
-            windows = _token_windows(fidelity, tokenizer)
-            protocol["bos_token_id"] = tokenizer.bos_token_id
-            protocol["tokenizer_vocab_size"] = len(tokenizer)
-            protocol["model_vocab_size"] = vocabulary_size
             score_positions = range(fidelity.context_length - fidelity.score_tokens, fidelity.context_length)
             with TemporaryDirectory(prefix=".reference-", dir=directory) as cache:
                 cache_dir = Path(cache)
                 with resolve_model_service(reference_source) as reference:
                     reference_model = reference.model
+                    tokenizer_path, model_path, tokenizer_id = _reference_text_files(reference, fidelity.tokenizer)
+                    tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+                    # The output head may contain padding beyond the tokenizer vocabulary.
+                    model_config = AutoConfig.from_pretrained(model_path).to_dict()
+                    vocabulary_size = model_config.get("text_config", model_config)["vocab_size"]
+                    if max(tokenizer.get_vocab().values()) >= vocabulary_size:
+                        raise ValueError("Tokenizer token IDs exceed the model configuration's vocabulary size")
+                    windows = _token_windows(fidelity, tokenizer)
+                    protocol["tokenizer"] = tokenizer_id
+                    protocol["bos_token_id"] = tokenizer.bos_token_id
+                    protocol["tokenizer_vocab_size"] = len(tokenizer)
+                    protocol["model_vocab_size"] = vocabulary_size
                     environments["reference"] = serving_environment(reference)
                     with CompletionDistributionClient(reference, timeout=reference_source.timeout_seconds) as client:
                         logger.info("Reference: %s | %d windows × %d scored positions", reference.model, len(windows), fidelity.score_tokens)
                         for window_index, tokens in enumerate(windows):
-                            arrays = []
-                            ids = None
-                            for position in score_positions:
-                                current_ids, values = client.logprobs(tokens[:position], vocabulary_size)
-                                if ids is not None and not np.array_equal(ids, current_ids):
-                                    raise ValueError("Reference vocabulary changed between scoring positions")
-                                ids = current_ids
-                                arrays.append(values)
-                            np.savez(cache_dir / f"{window_index}.npz", ids=ids, logprobs=np.stack(arrays))
+                            arrays = [
+                                client.logprobs(tokens[:position], vocabulary_size)
+                                for position in score_positions
+                            ]
+                            np.save(cache_dir / f"{window_index}.npy", np.stack(arrays))
                 labels: set[str] = set()
                 for candidate in fidelity.candidates:
                     with resolve_model_service(candidate.service) as service:
                         metadata = candidate.metadata(service.model)
+                        if not candidate.method and service.deployment is not None:
+                            methods = set()
+                            for document in service.deployment.objects:
+                                if document["kind"] == "ModelService" and document["spec"]["model"] == service.model:
+                                    args = document["spec"].get("engineArgs", {})
+                                    methods.add(args.get("quantization") or args.get("dtype", "unspecified"))
+                            if len(methods) == 1:
+                                metadata["method"] = methods.pop()
                         if metadata["label"] in labels:
                             raise ValueError("Candidate labels must be distinct; set label in each --candidates row")
                         labels.add(metadata["label"])
                         environments["candidates"].append({"label": metadata["label"], **serving_environment(service)})
                         candidate_rows = []
-                        vocab_size = 0
                         logger.info("Candidate: %s | method=%s", metadata["label"], metadata["method"])
                         with CompletionDistributionClient(service, timeout=candidate.service.timeout_seconds) as client:
                             for window_index, tokens in enumerate(windows):
-                                with np.load(cache_dir / f"{window_index}.npz", allow_pickle=False) as cached:
-                                    ids, reference_values = cached["ids"], cached["logprobs"]
-                                    vocab_size = len(ids)
-                                    for score_index, position in enumerate(score_positions):
-                                        candidate_ids, values = client.logprobs(tokens[:position], vocabulary_size)
-                                        if not np.array_equal(ids, candidate_ids):
-                                            raise ValueError("Reference and candidate must expose identical vocabulary token IDs")
-                                        token_index = int(np.searchsorted(ids, tokens[position]))
-                                        if token_index == len(ids) or ids[token_index] != tokens[position]:
-                                            raise ValueError("Reference text token is absent from the returned vocabulary")
-                                        row = {
-                                            "candidate": metadata["label"], "window": window_index,
-                                            "position": position, "scored_index": len(candidate_rows),
-                                            **compare_logprobs(reference_values[score_index], values, token_index, fidelity.top_k),
-                                        }
-                                        candidate_rows.append(row)
-                                        positions.append(row)
-                        points.append({**metadata, "vocab_size": vocab_size, **_candidate_summary(candidate_rows, fidelity.top_k)})
+                                reference_values = np.load(cache_dir / f"{window_index}.npy", allow_pickle=False)
+                                for score_index, position in enumerate(score_positions):
+                                    values = client.logprobs(tokens[:position], vocabulary_size)
+                                    row = {
+                                        "candidate": metadata["label"], "window": window_index,
+                                        "position": position, "scored_index": len(candidate_rows),
+                                        **compare_logprobs(reference_values[score_index], values, tokens[position], fidelity.top_k),
+                                    }
+                                    candidate_rows.append(row)
+                                    positions.append(row)
+                        points.append({**metadata, "vocab_size": vocabulary_size, **_candidate_summary(candidate_rows, fidelity.top_k)})
         except (DeploymentError, ValueError, OSError, httpx.HTTPError, KeyboardInterrupt) as error:
             failure = error
             logger.error("Fidelity evaluation stopped: %s", error)

@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import math
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any, Sequence
 
 from benchmarks.config.benchmark import ModelServiceSource
@@ -29,7 +30,7 @@ class FidelityCandidate:
         """Describe a candidate for reports without exposing connection credentials."""
         return {
             "model": model,
-            "label": self.label or model,
+            "label": self.label or (Path(self.service.kustomize_path).name if self.service.kustomize_path else model),
             "method": self.method or "unspecified",
             "weight_bits": self.weight_bits,
             "bits_per_weight": self.bits_per_weight,
@@ -96,18 +97,13 @@ def _positive_coordinate(value: Any, name: str) -> float | None:
     return number
 
 
-def parse_fidelity_arguments(arguments: Sequence[str], service: ModelServiceSource) -> FidelityConfig:
-    """Parse fidelity-specific options and resolve candidate declarations before serving starts."""
-    parser = argparse.ArgumentParser(
-        prog="foretoken eval --evaluator fidelity",
-        allow_abbrev=False,
-        description="Compare full next-token distributions on identical text prefixes.",
-    )
+def add_fidelity_arguments(parser: argparse.ArgumentParser) -> None:
+    """Define comparison choices for parsing and the combined eval compare help page."""
     parser.add_argument("--reference", default="", metavar="PATH", help="reference Kustomize deployment")
     parser.add_argument("--reference-url", default="", help="reference Chat Completions URL")
     parser.add_argument("--reference-model", default="", help="reference model ID; inferred for a single-model deployment")
     parser.add_argument("--reference-api-key", default=None, help="reference service API key (defaults to --api-key)")
-    parser.add_argument("--tokenizer-path", required=True, help="shared base-model repository or local directory containing tokenizer and config.json")
+    parser.add_argument("--tokenizer-path", default="", help="override reference text artifacts with a base-model repository or local directory containing tokenizer files and config.json")
     parser.add_argument("--dataset", default="Salesforce/wikitext", help="Hugging Face dataset or local text/JSONL file")
     parser.add_argument("--dataset-config", default=None, help="Hugging Face configuration; WikiText defaults to wikitext-2-raw-v1")
     parser.add_argument("--split", default="test", help="Hugging Face split (default: test)")
@@ -122,6 +118,15 @@ def parse_fidelity_arguments(arguments: Sequence[str], service: ModelServiceSour
     parser.add_argument("--weight-bits", type=float, default=None, help="nominal weight precision for plotting; not effective bits/weight")
     parser.add_argument("--bits-per-weight", type=float, default=None, help="measured effective bits per weight, including quantization overhead")
     parser.add_argument("--model-size-gib", type=float, default=None, help="measured checkpoint size in GiB for plotting")
+
+
+def parse_fidelity_arguments(arguments: Sequence[str], service: ModelServiceSource) -> FidelityConfig:
+    """Resolve comparison choices and candidate declarations before serving starts."""
+    parser = argparse.ArgumentParser(
+        prog="foretoken eval compare", allow_abbrev=False,
+        description="Compare full next-token distributions on identical text prefixes.",
+    )
+    add_fidelity_arguments(parser)
     options = parser.parse_args(arguments)
     if options.reference and options.reference_url:
         parser.error("use --reference or --reference-url, not both")
@@ -145,7 +150,7 @@ def parse_fidelity_arguments(arguments: Sequence[str], service: ModelServiceSour
                 service,
                 kustomize_path=str(row.get("path") or (service.kustomize_path if not row.get("url") else "")),
                 url=str(row.get("url") or (service.url if not row.get("path") else "")),
-                model=str(row.get("model") or service.model),
+                model=str(row.get("model") or ("" if row.get("path") or row.get("url") else service.model)),
             )
             candidate_service.validate()
             candidates.append(FidelityCandidate(

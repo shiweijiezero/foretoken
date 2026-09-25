@@ -33,8 +33,8 @@ class CompletionDistributionClient:
 
     def logprobs(
         self, prefix: list[int], vocabulary_size: int
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Return sorted vocabulary IDs and normalized log probabilities for the next position.
+    ) -> np.ndarray:
+        """Return normalized log probabilities indexed by token ID for the next position.
 
         Full-vocabulary output and token-ID keys are vLLM public API extensions.
         Checking vocabulary coverage prevents silently interpreting top-k output
@@ -88,7 +88,7 @@ class CompletionDistributionClient:
         # Renormalize floating-point serialization error only after full-vocabulary
         # coverage and mass have been established.
         values -= np.logaddexp.reduce(values)
-        return ids, values
+        return values
 
 
 def compare_logprobs(

@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文 · [评测与性能剖析](../../README_zh.md)
 
-使用 lm-evaluation-harness 或 EvalScope，为运行中的模型回答评分。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的框架运行。若要用完整词表 KL、位宽对比图和 logit 差异比较量化方法，参见[量化保真度](fidelity_zh.md)。
+使用 lm-evaluation-harness 或 EvalScope，为运行中的模型回答评分。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的框架运行。用 `foretoken eval compare` 可[比较参考与候选模型的概率分布](fidelity_zh.md)，查看 KL、位宽对比图和 logit 差异。
 
 ## lm-evaluation-harness
 

@@ -4,7 +4,7 @@
 apiVersion: inference.foretoken.io/v1alpha1
 kind: ModelService
 metadata:
-  name: bitsandbytes-qwen2.5-0.5b
+  name: bf16-qwen2.5-0.5b
 spec:
   model: Qwen/Qwen2.5-0.5B-Instruct
   source: hf
@@ -24,6 +24,5 @@ spec:
     drain: 2m
   engineArgs:
     tensor-parallel-size: 1
-    quantization: bitsandbytes
     dtype: bfloat16
     max-logprobs: -1

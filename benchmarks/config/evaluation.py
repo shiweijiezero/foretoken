@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Service and result options surrounding an upstream quality evaluation."""
+"""Shared service and result options for answer scoring and model comparisons."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from benchmarks.config.benchmark import (
 
 @dataclass
 class EvaluationConfig:
-    """Keep service discovery and publication separate from native evaluator options."""
+    """Keep service discovery and publication separate from task-specific options."""
 
     service: ModelServiceSource
     evaluator: str
@@ -38,28 +38,39 @@ class EvaluationConfig:
 def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, bool]:
     """Extract exact Foretoken options; leave task options and their values in original order."""
     arguments = list(argv)
+    comparison = arguments[:1] == ["compare"]
+    if comparison:
+        arguments.pop(0)
     # PATH is the first operand. A native option's value must never become PATH.
     path = arguments.pop(0) if arguments and not arguments[0].startswith("-") else ""
     source = ModelServiceSource()
     output = BenchmarkOutputConfig()
     tracking = WandbRunConfig()
     parser = argparse.ArgumentParser(
-        prog="foretoken eval",
+        prog="foretoken eval compare" if comparison else "foretoken eval",
         allow_abbrev=False,
         add_help=False,
-        usage="%(prog)s [PATH | --url URL] [options] [evaluator options]",
-        description="Score model answers or compare model output distributions.",
-        epilog="PATH is a Kustomize directory placed immediately after eval. Native task options need no separator.",
+        usage="%(prog)s [PATH | --url URL] [options]",
+        description="Compare model output distributions." if comparison else "Score model answers with an evaluation framework.",
+        epilog=(
+            "PATH selects the candidate deployment; --reference selects its reference."
+            if comparison else
+            "Use 'foretoken eval compare --help' to compare model distributions. "
+            "PATH is a Kustomize directory. Native task options need no separator."
+        ),
     )
     parser.add_argument(
         "-h",
         "--help",
         action="store_true",
-        help="show Foretoken and selected evaluator options",
+        help="show comparison options" if comparison else "show Foretoken and selected evaluator options",
     )
-    parser.add_argument(
-        "--evaluator", choices=("lm-eval", "evalscope", "fidelity"), default="lm-eval"
-    )
+    if comparison:
+        parser.set_defaults(evaluator="compare")
+    else:
+        parser.add_argument(
+            "--evaluator", choices=("lm-eval", "evalscope"), default="lm-eval"
+        )
     parser.add_argument(
         "--url", default=source.url, help="existing Chat Completions URL"
     )
@@ -111,9 +122,13 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
         ),
     )
     if options.help:
+        if comparison:
+            from benchmarks.config.fidelity import add_fidelity_arguments
+
+            add_fidelity_arguments(parser)
         parser.print_help()
     else:
-        if config.evaluator != "fidelity":
+        if not comparison:
             config.service.validate()
         config.outputs.validate()
     return config, options.help
