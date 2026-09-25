@@ -1,0 +1,18 @@
+diff --git a/vllm_metax/v1/attention/backends/mla/flashmla_sparse.py b/vllm_metax/v1/attention/backends/mla/flashmla_sparse.py
+--- a/vllm_metax/v1/attention/backends/mla/flashmla_sparse.py
++++ b/vllm_metax/v1/attention/backends/mla/flashmla_sparse.py
+@@ -1059,9 +1059,13 @@
+         # Concatenate q if it's a tuple (ql_nope, q_pe)
+         if isinstance(q, tuple):
+             ql_nope, q_pe = q
+             q = self.q_concat_buffer[: ql_nope.shape[0]]
+-            ops.concat_mla_q(ql_nope, q_pe, q)
++            if q_pe.shape[-1] == 0:
++                # The fused concatenation kernel requires a 64-wide RoPE part.
++                q.copy_(ql_nope)
++            else:
++                ops.concat_mla_q(ql_nope, q_pe, q)
+
+         num_actual_toks = q.shape[0]
+
+         # Get topk indices

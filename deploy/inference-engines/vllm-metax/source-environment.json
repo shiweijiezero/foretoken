@@ -1,0 +1,40 @@
+{
+  "sdk": {
+    "maca": "3.8.2.6",
+    "torch": "2.10.0+metax3.8.2.2",
+    "torchaudio": {
+      "repository": "pytorch/audio",
+      "revision": "27b7ebdebd2d2e4d34a2f5c05b0fb26efbd1da63",
+      "version": "2.10.0"
+    }
+  },
+  "core": {
+    "repository": "vllm-project/vllm",
+    "revision": "71fc70d3ae1df53300a23ec69f6d97b7207a109f",
+    "version": "0.30.0.dev0"
+  },
+  "metax": {
+    "repository": "MetaX-MACA/vLLM-metax",
+    "revision": "7e7ebd37d9ce8731a1636c5c9bc057255ce6b9c7",
+    "version": "0.29.0.dev0"
+  },
+  "patches": {
+    "metax": [
+      "patches/vllm-030/metax-compatibility.patch",
+      "patches/vllm-030/glm-5.3/metax-glm53-typed-kv-layout.patch",
+      "patches/vllm-030/glm-5.3/metax-glm53-mla-prefill-fallback.patch",
+      "patches/vllm-030/glm-5.3/metax-vllm030-fused-moe-all2all-api.patch",
+      "patches/vllm-030/glm-5.3/metax-sparse-mla-decode-metadata.patch",
+      "patches/vllm-030/glm-5.3/metax-sparse-mla-nope-query.patch"
+    ],
+    "core": [
+      "patches/vllm-030/glm-5.3/metax030-glm-image-token-mtp.patch",
+      "patches/vllm-030/glm-5.3/metax-glm53-sequence-parallel-dense-mlp.patch",
+      "patches/vllm-030/glm-5.3/metax-glm53-sequence-parallel-moe-forward.patch",
+      "patches/vllm-030/glm-5.3/metax-glm53-mhc-native-norm.patch"
+    ],
+    "installed": [
+      "patches/vllm-030/glm-5.3/metax-paged-mqa-schedule.patch"
+    ]
+  }
+}

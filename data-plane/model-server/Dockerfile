@@ -71,18 +71,17 @@ ENV FORETOKEN_VLLM_PYTHON=${FORETOKEN_VLLM_PYTHON}
 # Patch the installed Python engine, not the independent Rust build source.
 # A derived Foretoken image may already contain this exact backport.
 RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
-    --mount=type=bind,source=data-plane/patches/vllm-python-profiling.patch,target=/tmp/vllm-profiling.patch \
-    --mount=type=bind,source=data-plane/patches/vllm-0.26-offloading-event-identity.patch,target=/tmp/vllm-0.26-offload-identity.patch \
-    --mount=type=bind,source=data-plane/patches/vllm-offloading-event-identity.patch,target=/tmp/vllm-offload-identity.patch \
-    --mount=type=bind,source=data-plane/patches/vllm-ready-logprobs.patch,target=/tmp/vllm-ready-logprobs.patch \
-    --mount=type=bind,source=data-plane/patches/vllm-0.26-ready-logprobs.patch,target=/tmp/vllm-0.26-ready-logprobs.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-python-profiling.patch,target=/tmp/vllm-profiling.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-offloading-event-identity.patch,target=/tmp/vllm-offload-identity.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-ready-logprobs.patch,target=/tmp/vllm-ready-logprobs.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-0.26-ready-logprobs.patch,target=/tmp/vllm-0.26-ready-logprobs.patch \
     vllm_site="$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
       'from importlib.metadata import distribution; print(distribution("vllm").locate_file(""))')" \
     && vllm_version="$("${FORETOKEN_VLLM_PYTHON:-python}" -c 'from importlib.metadata import version; print(version("vllm"))')" \
     && ready_patch=/tmp/vllm-ready-logprobs.patch \
     && offload_patch= \
     && case "$vllm_version" in \
-         0.26.*) ready_patch=/tmp/vllm-0.26-ready-logprobs.patch; offload_patch=/tmp/vllm-0.26-offload-identity.patch ;; \
+         0.26.*) ready_patch=/tmp/vllm-0.26-ready-logprobs.patch ;; \
          0.30.*) offload_patch=/tmp/vllm-offload-identity.patch ;; \
        esac \
     && offload_events="$vllm_site/vllm/distributed/kv_transfer/kv_connector/v1/offloading/events.py" \

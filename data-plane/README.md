@@ -5,13 +5,10 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # Foretoken Data Plane
 
-The data plane receives inference traffic and executes requests against the model instances selected for each model. The control plane creates its workloads and publishes their serving configuration; clients use the frontend rather than starting data-plane processes directly.
+The data plane serves inference requests through OpenAI and Anthropic APIs, routes them to model replicas, and streams the generated output to clients.
 
-| Area | Responsibility | Does not own |
-| --- | --- | --- |
-| [Frontend](frontend/README.md) | OpenAI-compatible requests, streaming responses, request admission, and runtime diagnostics | DNS, TLS, ingress policy, or desired-state reconciliation |
-| Router | Selects a compatible, healthy model target | Model execution or cache storage |
-| KV prefix index | Supplies cache-locality observations for routing | Cache storage, cache movement, or cache-hit guarantees |
-| Model server | Executes inference through the configured backend | Public ingress and service lifecycle |
+Start with the repository [Quick Start](../README.md) to deploy and call a model service.
 
-Start with the repository [Quick Start](../README.md) to deploy and call a model service. Platform operators can use the [observability guide](../observability/README.md) to inspect the serving runtime. Changes to routing and KV indexing follow the maintainer notes in their component directories.
+- [Frontend APIs](frontend/README.md): send Chat Completions, Responses, and Messages requests.
+- [Request routing](frontend/src/router/README.md): select routing algorithms for model services.
+- [Observability](../observability/README.md): inspect service metrics, alerts, and dashboards.

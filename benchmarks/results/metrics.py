@@ -137,37 +137,17 @@ def request_slo_results(
     measurements: list[RequestMeasurement],
     criteria: dict[str, str] | None,
     total_time: float,
-    by_class: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any] | None:
-    """Evaluate each request against its class target or the global fallback."""
-    if not criteria and not by_class:
+    """Score requests against the request-level subset of global search criteria."""
+    if not criteria:
         return None
 
-    def checks_for(target: dict[str, str]) -> list[tuple[str, Any, float]]:
-        checks = []
-        for name, expression in target.items():
-            metric_match = _SLO_CRITERION.fullmatch(name)
-            expression_match = _SLO_EXPRESSION.fullmatch(expression)
-            if metric_match is None or expression_match is None:
-                raise ValueError(
-                    "Request-level SLO requires a latency/ttft/tpot/itl criterion, "
-                    f"got {name}={expression}"
-                )
-            checks.append((
-                metric_match.group(1),
-                _SLO_OPERATORS[expression_match.group(1)],
-                float(expression_match.group(2)),
-            ))
-        return checks
-
-    targets = {name: checks_for(target) for name, target in (by_class or {}).items()}
     # Search criteria may also contain aggregate-only metrics such as rps.
     supported = {
-        name: expression for name, expression in (criteria or {}).items()
+        name: expression for name, expression in criteria.items()
         if _SLO_CRITERION.fullmatch(name) and _SLO_EXPRESSION.fullmatch(expression)
     }
-    global_checks = checks_for(supported) if supported else None
-    if not by_class and global_checks is None:
+    if not supported:
         return {
             "criteria": criteria,
             "request_slo_met": None,
@@ -176,8 +156,15 @@ def request_slo_results(
             "token_goodput": None,
         }
 
+    checks = []
+    for name, expression in supported.items():
+        match = _SLO_EXPRESSION.fullmatch(expression)
+        checks.append((
+            _SLO_CRITERION.fullmatch(name).group(1),
+            _SLO_OPERATORS[match.group(1)],
+            float(match.group(2)),
+        ))
     request_slo_met: list[bool] = []
-    applied_criteria: list[dict[str, str]] = []
     good_requests = 0
     good_tokens = 0
     for item in measurements:
@@ -187,17 +174,6 @@ def request_slo_results(
             "tpot": item.tpot,
             "itl": max(item.itl_samples) if item.itl_samples else None,
         }
-        if item.request_class in targets:
-            applied_criteria.append(by_class[item.request_class])
-            checks = targets[item.request_class]
-        elif global_checks is not None:
-            applied_criteria.append(supported)
-            checks = global_checks
-        else:
-            raise ValueError(
-                f"No SLO target for request_class {item.request_class!r}; "
-                "set --slo-by-class or --slo-params"
-            )
         met = item.succeeded
         for metric, operator, expected in checks:
             actual = values[metric]
@@ -210,8 +186,7 @@ def request_slo_results(
     duration = float(total_time)
     return {
         "criteria": criteria,
-        "by_class": by_class,
-        "applied_criteria": applied_criteria,
+        "request_criteria": supported,
         "request_slo_met": request_slo_met,
         "slo_attainment": good_requests / len(measurements) if measurements else 0.0,
         "request_goodput": good_requests / duration if duration > 0 else None,
@@ -227,7 +202,6 @@ def summarize_measurement_groups(
     arrival_rate: float,
     reported_concurrency: int,
     slo_criteria: dict[str, str] | None,
-    slo_by_class: dict[str, dict[str, str]] | None,
     include_single_dataset: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """Summarize labeled requests on their shared experiment clock without per-group GPU assumptions."""
@@ -256,7 +230,7 @@ def summarize_measurement_groups(
                 arrival_rate=arrival_rate, request_count=len(subset),
                 reported_concurrency=reported_concurrency, gpu_count=None,
                 include_normalized_throughput=False,
-                slo_criteria=slo_criteria, slo_by_class=slo_by_class,
+                slo_criteria=slo_criteria,
             )
     return result
 
@@ -272,7 +246,6 @@ def summarize_measurements(
     gpu_count: int | None,
     include_normalized_throughput: bool = True,
     slo_criteria: dict[str, str] | None = None,
-    slo_by_class: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Aggregate request measurements and workload coordinates into the published metrics.
 
@@ -342,7 +315,7 @@ def summarize_measurements(
                 gpu_count=gpu_count,
             )
         )
-    slo = request_slo_results(measurements, slo_criteria, total_time, slo_by_class)
+    slo = request_slo_results(measurements, slo_criteria, total_time)
     return {
         "request_num": request_num,
         "success_num": success_count,

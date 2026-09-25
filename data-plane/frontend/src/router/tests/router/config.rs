@@ -13,13 +13,14 @@ use foretoken_router::{
 fn every_compiled_builtin_name_parses_and_builds() {
     for (filter, scorer, picker) in [
         ("allow_all", "uniform", "max"),
-        ("allow_all", "least_loaded", "round_robin"),
-        ("allow_all", "kv_least_loaded", "round_robin"),
-        ("allow_all", "running_request", "round_robin"),
-        ("allow_all", "kv_cache_utilization", "round_robin"),
-        ("allow_all", "queue_depth", "round_robin"),
-        ("allow_all", "token_load", "round_robin"),
-        ("allow_all", "prefix", "round_robin"),
+        ("allow_all", "kv_least_loaded", "gamble_sampling"),
+        ("allow_all", "kv_least_loaded", "power_of_two_choices"),
+        ("allow_all", "least_loaded", "max"),
+        ("allow_all", "running_request", "max"),
+        ("allow_all", "kv_cache_utilization", "max"),
+        ("allow_all", "queue_depth", "max"),
+        ("allow_all", "token_load", "max"),
+        ("allow_all", "prefix", "max"),
     ] {
         let config = RouterPipelineConfig {
             filter: FilterStage {
@@ -56,7 +57,7 @@ fn empty_and_unknown_names_are_explicit_errors() {
             parameters: Default::default(),
         },
         picker: PickerStage {
-            algorithm: "round_robin".parse().unwrap(),
+            algorithm: "gamble_sampling".parse().unwrap(),
             parameters: Default::default(),
         },
     };

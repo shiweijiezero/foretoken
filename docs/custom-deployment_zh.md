@@ -41,13 +41,7 @@ uv pip install -e .
 
 需要使用镜像站时，配置对应的 endpoint 或 proxy 地址。
 
-本地 kind 或 k3d 集群可以直接构建并导入镜像：
-
-```bash
-foretoken install -e .
-```
-
-其他集群需要使用所有目标节点都能访问的镜像仓库。将 `example` 替换为有推送权限的命名空间：
+通过镜像仓库向集群分发构建产物。仓库需对所有目标节点可访问；将 `example` 替换为有推送权限的命名空间：
 
 ```bash
 export REGISTRY=ghcr.io/example/foretoken
@@ -69,6 +63,12 @@ workload:
 foretoken install -e . \
   --registry "$REGISTRY" \
   --values platform-values.yaml
+```
+
+本机 kind 或 k3d 集群也可以省略 `--registry`，由命令直接导入镜像：
+
+```bash
+foretoken install -e .
 ```
 
 ## 3. 确认平台部署完成
@@ -113,16 +113,6 @@ printf '\n'
 
 ## 6. 修改源码后重新部署
 
-修改代码后再次执行同一条源码安装命令：
-
-```bash
-foretoken install -e .
-```
-
-远程集群继续使用同一个镜像仓库：
-
-```bash
-foretoken install -e . --registry "$REGISTRY"
-```
+修改代码后，重新执行安装时使用的同一条命令，保留 `--registry` 和 `--values` 等选项。
 
 BuildKit 会复用编译缓存。命令只导入或推送发生变化的镜像，保持源码安装模式，并滚动更新使用本地同名镜像且内容发生变化的工作负载。需要排查底层镜像或 Helm 操作时，参阅维护者[源码镜像手工生命周期](development/source-image-lifecycle_zh.md)。

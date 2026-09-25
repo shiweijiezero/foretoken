@@ -1,0 +1,196 @@
+diff --git a/vllm_metax/model_executor/layers/attention/mla_attention.py b/vllm_metax/model_executor/layers/attention/mla_attention.py
+--- a/vllm_metax/model_executor/layers/attention/mla_attention.py
++++ b/vllm_metax/model_executor/layers/attention/mla_attention.py
+@@ -629,6 +629,10 @@
+             compile_native=True,
+         )
+ 
++    def bind_kv_cache(self, kv_cache: torch.Tensor) -> None:
++        # [B, H=1, N, C] -> [B, N, C]
++        self.kv_cache = kv_cache.squeeze(1)
++
+     @property
+     def chunked_prefill_workspace_size(self) -> int:
+         if self._chunked_prefill_workspace_size is None:
+@@ -1259,27 +1263,6 @@
+     def get_builder_cls() -> type["MLACommonMetadataBuilder"]:
+         return MLACommonMetadataBuilder
+ 
+-    @staticmethod
+-    def get_kv_cache_shape(
+-        num_blocks: int,
+-        block_size: int,
+-        num_kv_heads: int,  # assumed to be 1 for MLA
+-        head_size: int,
+-        cache_dtype_str: str = "auto",
+-    ) -> tuple[int, ...]:
+-        return (num_blocks, block_size, head_size)
+-
+-    @staticmethod
+-    def get_kv_cache_stride_order(
+-        include_num_layers_dimension: bool = False,
+-    ) -> tuple[int, ...]:
+-        if include_num_layers_dimension:
+-            # Default to identity permutation to signal cross-layer allocation
+-            # is unsupported. Each MLA backend must opt in to support cross-layer
+-            # allocation by overriding this method.
+-            return (0, 1, 2, 3)
+-        return (0, 1, 2)
+-
+     @classmethod
+     def get_supported_head_sizes(cls) -> list[int]:
+         return [320, 576]
+diff --git a/vllm_metax/v1/attention/backends/flash_attn.py b/vllm_metax/v1/attention/backends/flash_attn.py
+--- a/vllm_metax/v1/attention/backends/flash_attn.py
++++ b/vllm_metax/v1/attention/backends/flash_attn.py
+@@ -71,7 +71,6 @@
+     CommonAttentionMetadata,
+ )
+ from vllm.v1.attention.backends.utils import (
+-    get_kv_cache_layout,
+     split_decodes_and_prefills,  # used for prefill decode split
+     reshape_attn_output_for_spec_decode,  # used for prefill decode split with mtp
+     reshape_query_for_spec_decode,  # used for prefill decode split with mtp
+@@ -152,43 +151,6 @@
+     def get_builder_cls() -> type["FlashAttentionMetadataBuilder"]:
+         return FlashAttentionMetadataBuilder
+ 
+-    @staticmethod
+-    def get_kv_cache_shape(
+-        num_blocks: int,
+-        block_size: int,
+-        num_kv_heads: int,
+-        head_size: int,
+-        cache_dtype_str: str = "auto",
+-    ) -> tuple[int, ...]:
+-        if block_size % 16 != 0:
+-            raise ValueError("Block size must be a multiple of 16.")
+-        # K and V are packed into the content dim: logical (B, H, N, 2*D).
+-        return (num_blocks, num_kv_heads, block_size, 2 * head_size)
+-
+-    @staticmethod
+-    def get_kv_cache_stride_order(
+-        include_num_layers_dimension: bool = False,
+-    ) -> tuple[int, ...]:
+-        # `stride_order` indicates the permutation that gets us from
+-        # `get_kv_cache_shape` (logical (B, H, N, 2*D)) to the actual memory
+-        # layout we want.
+-        cache_layout = get_kv_cache_layout()
+-        if cache_layout == "NHD" and include_num_layers_dimension:
+-            # (num_blocks, num_layers, block_size, num_kv_heads, 2*head_size)
+-            return (1, 0, 3, 2, 4)
+-        elif cache_layout == "NHD":
+-            # (num_blocks, block_size, num_kv_heads, 2*head_size)
+-            stride_order = (0, 2, 1, 3)
+-        elif cache_layout == "HND" and include_num_layers_dimension:
+-            # (num_blocks, num_kv_heads, num_layers, block_size, 2*head_size)
+-            return (1, 2, 0, 3, 4)
+-        elif cache_layout == "HND":
+-            # (num_blocks, num_kv_heads, block_size, 2*head_size)
+-            stride_order = (0, 1, 2, 3)
+-        else:
+-            raise ValueError(f"Unknown cache layout format {cache_layout}.")
+-        return stride_order
+-
+     @classmethod
+     def supports_head_size(cls, head_size: int) -> bool:
+         if head_size % 8 != 0:
+diff --git a/vllm_metax/v1/attention/backends/mla/flashmla_sparse.py b/vllm_metax/v1/attention/backends/mla/flashmla_sparse.py
+--- a/vllm_metax/v1/attention/backends/mla/flashmla_sparse.py
++++ b/vllm_metax/v1/attention/backends/mla/flashmla_sparse.py
+@@ -30,6 +30,7 @@
+     MultipleOf,
+ )
+ from vllm.v1.attention.backends.mla.sparse_utils import (
++    flat_kv_row_view,
+     triton_convert_req_index_to_global_index,
+ )
+ from vllm.v1.attention.backends.utils import (
+@@ -133,20 +134,6 @@
+     def supports_compute_capability(cls, capability: DeviceCapability) -> bool:
+         return True
+ 
+-    @staticmethod
+-    def get_kv_cache_shape(
+-        num_blocks: int,
+-        block_size: int,
+-        num_kv_heads: int,  # assumed to be 1 for MLA
+-        head_size: int,
+-        cache_dtype_str: str = "auto",
+-    ) -> tuple[int, ...]:
+-        if cache_dtype_str == "fp8_ds_mla":
+-            # V3.2 main MLA: 656-byte custom storage format. See module docstring.
+-            return (num_blocks, block_size, 656)
+-        else:
+-            return (num_blocks, block_size, head_size)
+-
+ 
+ @dataclass
+ class FlashMLASparseMetadata(AttentionMetadata):
+@@ -693,18 +680,22 @@
+         # Convert per-request indices to global slots (decode) or workspace
+         # offsets (prefill). req_id_per_token covers the whole batch; slice it
+         # to the MQA tokens (q may exclude prefill tokens routed to dense MHA).
++        kv_rows, block_stride_rows = flat_kv_row_view(
++            kv_c_and_k_pe_cache, attn_metadata.block_size
++        )
+         topk_indices, topk_length = triton_convert_req_index_to_global_index(
+             attn_metadata.req_id_per_token[: topk_indices.shape[0]],
+             attn_metadata.block_table,
+             topk_indices,
+             BLOCK_SIZE=attn_metadata.block_size,
++            BLOCK_STRIDE_ROWS=block_stride_rows,
+             NUM_TOPK_TOKENS=topk_indices.shape[1],
+             return_valid_counts=True,
+         )
+ 
+         return self._bf16_flash_mla_kernel(
+             q,
+-            kv_c_and_k_pe_cache,
++            kv_rows,
+             topk_indices,
+             topk_length,
+         )
+@@ -730,11 +721,15 @@
+ 
+         # Both BF16 kernels use global cache slots. Prefills routed to MHA are
+         # absent from q and topk_indices, so remap only the MQA token rows.
++        kv_rows, block_stride_rows = flat_kv_row_view(
++            kv_c_and_k_pe_cache, attn_metadata.block_size
++        )
+         topk_indices, topk_length = triton_convert_req_index_to_global_index(
+             attn_metadata.req_id_per_token[: topk_indices.shape[0]],
+             attn_metadata.block_table,
+             topk_indices,
+             BLOCK_SIZE=attn_metadata.block_size,
++            BLOCK_STRIDE_ROWS=block_stride_rows,
+             NUM_TOPK_TOKENS=topk_indices.shape[1],
+             return_valid_counts=True,
+         )
+@@ -751,7 +746,7 @@
+ 
+             attn_out, _ = self._bf16_flash_mla_kernel_with_kvcache(
+                 q=q,
+-                kv_c_and_k_pe_cache=kv_c_and_k_pe_cache,
++                kv_c_and_k_pe_cache=kv_rows,
+                 topk_indices=topk_indices,
+                 kernel_metadata=bf16_metadata.decode.kernel_metadata,
+             )
+@@ -780,7 +775,7 @@
+             if num_prefill_tokens > 0:
+                 attn_out[num_decode_tokens:] = self._bf16_flash_mla_kernel(
+                     q[num_decode_tokens:],
+-                    kv_c_and_k_pe_cache,
++                    kv_rows,
+                     topk_indices[num_decode_tokens:],
+                     topk_length=topk_length[num_decode_tokens:],
+                 )
+@@ -1037,7 +1032,7 @@
+ 
+         attn_out, lse = flash_mla_with_kvcache(
+             q=q,
+-            k_cache=kv_c_and_k_pe_cache.unsqueeze(-2),
++            k_cache=kv_c_and_k_pe_cache.view(-1, 1, 1, kv_c_and_k_pe_cache.shape[-1]),
+             block_table=kernel_metadata.dummy_block_table,
+             cache_seqlens=kernel_metadata.cache_lens,
+             head_dim_v=512,

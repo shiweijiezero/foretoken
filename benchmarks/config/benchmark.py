@@ -319,25 +319,12 @@ class SloTuneConfig:
     """Store SLO search criteria and concurrency bounds."""
 
     params: list[dict[str, str]] | None = None
-    by_class: dict[str, dict[str, str]] | None = None
     num_runs: int = 1
     upper_bound: Optional[int] = None
     lower_bound: int = 1
 
     def validate(self) -> None:
         """Validate SLO criteria and search bounds before starting a workload."""
-        if self.by_class is not None and (
-            not isinstance(self.by_class, dict)
-            or not self.by_class
-            or any(
-                not isinstance(name, str) or not name
-                or not isinstance(criteria, dict) or not criteria
-                or any(not isinstance(key, str) or not isinstance(value, str)
-                       for key, value in criteria.items())
-                for name, criteria in self.by_class.items()
-            )
-        ):
-            raise ValueError("--slo-by-class must map class names to non-empty criterion objects")
         if self.params is None:
             return
         if not self.params or any(
@@ -619,7 +606,6 @@ class BenchmarkConfig:
             },
             "slo": {
                 "params": self.slo.params,
-                "by_class": self.slo.by_class,
                 "num_runs": self.slo.num_runs,
                 "upper_bound": self.slo.upper_bound,
                 "lower_bound": self.slo.lower_bound,

@@ -451,11 +451,6 @@ def _add_benchmark_arguments(
         ),
     )
     parser.add_argument(
-        "--slo-by-class", type=_json_object,
-        default=_default(SloTuneConfig, "by_class"),
-        help="JSON request_class to request-level SLO criteria; scored locally",
-    )
-    parser.add_argument(
         "--slo-upper-bound",
         type=int,
         default=_default(SloTuneConfig, "upper_bound"),
@@ -546,7 +541,6 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
         ),
         slo=SloTuneConfig(
             params=namespace.slo_params,
-            by_class=namespace.slo_by_class,
             num_runs=namespace.num_runs,
             upper_bound=namespace.slo_upper_bound,
             lower_bound=namespace.slo_lower_bound,

@@ -227,11 +227,17 @@ if [[ "$IMAGE_MODE" == import ]]; then
   [[ "$FRONTEND_CHANGED" == true ]] && changed_images+=("$FRONTEND_IMAGE")
   [[ "$MODEL_SERVER_CHANGED" == true ]] && changed_images+=("$MODEL_SERVER_IMAGE")
   if ((${#changed_images[@]} > 0)); then
+    printf 'Importing %s images into %s; waiting for import and unpack to finish\n' "${#changed_images[@]}" "$LOCAL_CLUSTER"
+    printf '  %s\n' "${changed_images[@]}"
+    import_started=$SECONDS
     if [[ "$LOCAL_CLUSTER" == kind ]]; then
       kind load docker-image --name "$KIND_CLUSTER" "${changed_images[@]}"
     else
       k3d image import --cluster "$CLUSTER" "${changed_images[@]}"
     fi
+    printf 'Image import completed in %ss\n' "$((SECONDS - import_started))"
+  else
+    printf 'Images unchanged; no import required\n'
   fi
 else
   DEPLOY_HOST=$(hostname -s | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9_.-')

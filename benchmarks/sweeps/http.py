@@ -70,7 +70,6 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "extra_body": ("generation", "extra_body", dict),
     "dataset": ("workload", "dataset_selectors", _dataset_selectors),
     "dataset_weights": ("workload", "dataset_weights", lambda value: [float(item) for item in (value.split(",") if isinstance(value, str) else value)]),
-    "slo_by_class": ("slo", "by_class", dict),
     "dataset_offset": ("workload", "row_offset", int),
     "tokenizer_path": ("workload", "tokenizer", str),
     "random_seed": ("workload", "random_seed", int),

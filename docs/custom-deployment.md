@@ -41,13 +41,7 @@ uv pip install -e .
 
 Configure the corresponding endpoint or proxy address when a mirror is required.
 
-For a local kind or k3d cluster, build and import the images directly:
-
-```bash
-foretoken install -e .
-```
-
-For other clusters, use a registry reachable by every target node. Replace `example` with a namespace you can push to:
+Distribute the built images through a registry reachable by every target node. Replace `example` with a namespace you can push to:
 
 ```bash
 export REGISTRY=ghcr.io/example/foretoken
@@ -69,6 +63,12 @@ workload:
 foretoken install -e . \
   --registry "$REGISTRY" \
   --values platform-values.yaml
+```
+
+For a local kind or k3d cluster, you can omit `--registry` to import images directly:
+
+```bash
+foretoken install -e .
 ```
 
 ## 3. Confirm the platform deployment
@@ -113,16 +113,6 @@ printf '\n'
 
 ## 6. Redeploy source changes
 
-Run the same source installation command after changing the code:
-
-```bash
-foretoken install -e .
-```
-
-For a remote cluster, keep using the same registry:
-
-```bash
-foretoken install -e . --registry "$REGISTRY"
-```
+After changing the code, rerun the installation command with the same options, including any `--registry` and `--values` arguments.
 
 BuildKit reuses compilation caches. The command imports or pushes only changed images, preserves the source installation mode, and rolls out workloads whose local image content changed. For lower-level image and Helm diagnosis, see the maintainer [source image lifecycle guide](development/source-image-lifecycle.md).

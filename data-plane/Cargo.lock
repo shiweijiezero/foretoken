@@ -1324,6 +1324,7 @@ name = "foretoken-router"
 version = "0.0.1"
 dependencies = [
  "async-trait",
+ "fastrand",
  "foretoken-engine-core-client",
  "foretoken-kv-indexer",
  "foretoken-model-protocol",

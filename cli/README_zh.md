@@ -108,7 +108,7 @@ loadBalancer:
 foretoken deploy examples/multi-model-quickstart --timeout 20m
 ```
 
-该命令会应用配置、输出服务状态变化，并在所有服务就绪且所选告警配置完成后退出。未指定 `--timeout` 时最多等待十分钟。告警配置放在服务的 Kustomize 部署中，见[服务可观测性示例](../examples/observability/README_zh.md)。
+命令会应用配置；等待期间显示服务状态，并输出带 Pod/容器来源标识的日志。所有服务 Ready 且所选告警配置完成后退出。未指定 `--timeout` 时最多等待十分钟。告警配置见[服务可观测性示例](../examples/observability/README_zh.md)。
 
 不应用配置，直接查看同一部署的状态：
 
@@ -116,7 +116,7 @@ foretoken deploy examples/multi-model-quickstart --timeout 20m
 foretoken status examples/multi-model-quickstart
 ```
 
-查看一个命名空间中的全部 Foretoken 服务，或持续观察状态变化：
+查看命名空间中的全部 Foretoken 服务。添加 `--watch` 可持续查看状态变化及 Pod/容器日志，按 Ctrl+C 结束：
 
 ```bash
 foretoken status -n foretoken-multi-model-demo

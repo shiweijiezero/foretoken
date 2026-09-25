@@ -42,8 +42,10 @@ def prepare_source_images(
     namespace: str,
     timeout: str,
     inference_engine_image: str | None = None,
+    *,
+    build_metax_runtime: bool = False,
 ) -> SourceImages:
-    """Build and distribute source images on the selected inference runtime base."""
+    """Build and distribute source images with the selected inference runtime."""
     source_root = Path(source_path).expanduser().resolve()
     script = source_root / "deploy" / "dev-deploy"
     chart = source_root / "deploy" / "charts" / "foretoken" / "Chart.yaml"
@@ -66,6 +68,7 @@ def prepare_source_images(
             "WORKLOAD_NAMESPACE",
             "FRONTEND_MODE",
             "FORETOKEN_CLI_SOURCE",
+            "FORETOKEN_BUILD_METAX_RUNTIME",
             "DEV_TIMEOUT",
             "IMAGE_PULL_SECRET",
             "INFERENCE_ENGINE_IMAGE",
@@ -94,6 +97,8 @@ def prepare_source_images(
             print(f"Source mirror selected: {selection}", flush=True)
         if inference_engine_image is not None:
             environment["INFERENCE_ENGINE_IMAGE"] = inference_engine_image
+        if build_metax_runtime:
+            environment["FORETOKEN_BUILD_METAX_RUNTIME"] = "true"
         completed = subprocess.run(
             [str(script)],
             cwd=source_root,

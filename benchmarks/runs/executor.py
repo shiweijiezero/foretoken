@@ -315,14 +315,12 @@ class TaskLoadBenchmark:
                 reported_concurrency=self.benchmark.load.max_concurrency,
                 gpu_count=self.service.gpu_count if {item.model for item in measurements} == {self.service.model} else None,
                 slo_criteria=(self.benchmark.slo.params[0] if self.benchmark.slo.params else None),
-                slo_by_class=self.benchmark.slo.by_class,
             )
             metrics.update(summarize_measurement_groups(
                 measurements, total_time=elapsed, stream=self.benchmark.generation.stream,
                 arrival_rate=self.benchmark.load.arrival_rate,
                 reported_concurrency=self.benchmark.load.max_concurrency,
                 slo_criteria=(self.benchmark.slo.params[0] if self.benchmark.slo.params else None),
-                slo_by_class=self.benchmark.slo.by_class,
                 include_single_dataset=self.dataset_tasks is not None,
             ))
             if self.benchmark.is_multi_turn:

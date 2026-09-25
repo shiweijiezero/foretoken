@@ -4,7 +4,7 @@
 //! Executes aggregate, P/D, and E/P/D generation while retaining cross-stage cleanup ownership.
 
 use foretoken_llm_facade::{
-    LlmFacadeResolver, MultiStageCleanup, RouteStage, TokenStream, abort_on_drop, consume_encoder,
+    LlmFacadeResolver, MultiStageCleanup, RouteStage, TokenStream, consume_encoder,
     consume_prefill, encoder_stage_request, inject_ec_transfer_params, pd_stage_requests,
 };
 use foretoken_model_protocol::ModelServerRole;
@@ -79,9 +79,12 @@ async fn execute_aggregate(
     let facade = resolver
         .resolve_stage(&decision, RouteStage::Aggregate)
         .ok_or(GenerationError::Internal)?;
-    let request_id = request.request_id.clone();
-    let stream = admitted_generate(facade.clone(), request, decision.data_parallel_rank).await?;
-    Ok((decision, abort_on_drop(facade, request_id, stream)))
+    let mut cleanup = MultiStageCleanup::new();
+    // Admission can reach the backend before its response headers arrive. Register first so
+    // request expiry or disconnect while awaiting those headers still cancels the backend.
+    cleanup.register(facade.clone(), request.request_id.clone());
+    let stream = admitted_generate(facade, request, decision.data_parallel_rank).await?;
+    Ok((decision, cleanup.with_stream(stream)))
 }
 
 // Encoder is a completion barrier rather than a client-visible stream. Keep its cleanup guard

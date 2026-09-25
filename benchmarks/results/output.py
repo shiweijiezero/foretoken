@@ -134,7 +134,7 @@ class BenchmarkArtifactSink:
                     {
                         "success": item.succeeded,
                         **(
-                            {"slo_met": slo_met[index], "slo_target": slo["applied_criteria"][index]}
+                            {"slo_met": slo_met[index], "slo_target": slo["request_criteria"]}
                             if isinstance(slo_met, list)
                             else {}
                         ),

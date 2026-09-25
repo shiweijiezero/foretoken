@@ -609,6 +609,10 @@ spec:
                     required:
                     - engine
                     type: object
+                  tritonCacheDirectory:
+                    description: TritonCacheDirectory is the initial worker cache
+                      path; Kubernetes expands its node reference.
+                    type: string
                 required:
                 - backend
                 - image

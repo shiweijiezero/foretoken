@@ -14,7 +14,7 @@ RUN python3 -m pip install --no-cache-dir --only-binary=:all: \
     && ln -s /usr/bin/python3 /usr/local/bin/python
 
 RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
-    --mount=type=bind,source=data-plane/patches/vllm-mooncake-context-parallel.patch,target=/tmp/vllm-mooncake-context-parallel.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-mooncake-context-parallel.patch,target=/tmp/vllm-mooncake-context-parallel.patch \
     vllm_site="$(python3 -c \
       'from importlib.metadata import distribution; print(distribution("vllm").locate_file(""))')" \
     && patch --batch --forward --fuzz=0 --no-backup-if-mismatch --strip=1 \

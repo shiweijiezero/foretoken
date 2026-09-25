@@ -28,17 +28,17 @@ exclude = ["third_party/vllm"]
 [workspace.metadata.foretoken]
 vllm_source = "third_party/vllm"
 vllm_patches = [
-    "patches/vllm-chat-request-processor.patch",
-    "patches/vllm-engine-core-version-compatibility.patch",
-    "patches/vllm-mooncake-context-parallel.patch",
-    "patches/vllm-multinode-pcp-world-size.patch",
-    "patches/vllm-http-latency-histogram-buckets.patch",
-    "patches/vllm-latency-histogram-buckets.patch",
-    "patches/vllm-managed-engine-command.patch",
-    "patches/vllm-ready-logprobs.patch",
-    "patches/vllm-rust-ready-logprobs.patch",
-    "patches/vllm-logprob-padding-tokens.patch",
-    "patches/vllm-offloading-event-identity.patch",
+    "patches/vllm/vllm-chat-request-processor.patch",
+    "patches/vllm/vllm-engine-core-version-compatibility.patch",
+    "patches/vllm/vllm-mooncake-context-parallel.patch",
+    "patches/vllm/vllm-multinode-pcp-world-size.patch",
+    "patches/vllm/vllm-http-latency-histogram-buckets.patch",
+    "patches/vllm/vllm-latency-histogram-buckets.patch",
+    "patches/vllm/vllm-managed-engine-command.patch",
+    "patches/vllm/vllm-ready-logprobs.patch",
+    "patches/vllm/vllm-rust-ready-logprobs.patch",
+    "patches/vllm/vllm-logprob-padding-tokens.patch",
+    "patches/vllm/vllm-offloading-event-identity.patch",
 ]
 
 [workspace.package]
@@ -54,6 +54,7 @@ axum = "0.8.8"
 base64 = "0.22.1"
 blake3 = "1.8.2"
 bytes = "1.12.0"
+fastrand = "2.5.0"
 foretoken-artifacts = { path = "artifacts" }
 foretoken-model-protocol = { path = "model-protocol" }
 futures = "0.3.31"

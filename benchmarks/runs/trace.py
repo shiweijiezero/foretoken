@@ -402,21 +402,19 @@ class TraceReplayBenchmark:
                 gpu_count=self.service.gpu_count,
                 include_normalized_throughput=False,
                 slo_criteria=(self.benchmark.slo.params[0] if self.benchmark.slo.params else None),
-                slo_by_class=self.benchmark.slo.by_class,
             )
             metrics.update(summarize_measurement_groups(
                 measurements, total_time=total_time, stream=self.benchmark.generation.stream,
                 arrival_rate=-1.0, reported_concurrency=reported_concurrency,
                 slo_criteria=(self.benchmark.slo.params[0] if self.benchmark.slo.params else None),
-                slo_by_class=self.benchmark.slo.by_class,
             ))
             self._attach_replay_metrics(metrics, records)
             slo = metrics.get("slo") or {}
             slo_met = slo.get("request_slo_met")
             if isinstance(slo_met, list):
-                for index, (raw_record, request_slo_met) in enumerate(zip(records, slo_met)):
+                for raw_record, request_slo_met in zip(records, slo_met):
                     raw_record["slo_met"] = request_slo_met
-                    raw_record["slo_target"] = slo["applied_criteria"][index]
+                    raw_record["slo_target"] = slo["request_criteria"]
             # The raw replay records carry trace timing that RequestMeasurement
             # does not; they are written as an artifact for the W&B trace charts.
             raw_output: Path = write_json(
