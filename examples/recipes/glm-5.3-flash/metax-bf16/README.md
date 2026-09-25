@@ -9,7 +9,7 @@ Run one Foretoken model group on two nodes with eight C500 64 GiB GPUs each: att
 
 ## Prepare
 
-Build and install the platform from a MACA/PyTorch SDK as described in the [MetaX platform guide](../../../../docs/development/metax-platform.md#build-the-inference-runtime-from-an-sdk). Nodes must advertise GPU and shared RDMA resources and allow the runtime to lock memory for RDMA.
+Install the platform from source as described in the [MetaX platform guide](../../../../docs/development/metax-platform.md#install-from-source). Nodes must advertise GPU and shared RDMA resources and allow the runtime to lock memory for RDMA.
 
 Set the environment-specific inputs before deploying:
 

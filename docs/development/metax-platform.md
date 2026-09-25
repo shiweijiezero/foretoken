@@ -31,19 +31,9 @@ To build Foretoken's images from a checkout, follow the [source deployment guide
 foretoken install -e .
 ```
 
-This uses the chart's MetaX inference runtime image as the base for the source-built model-server. For a cluster other than local kind or k3d, follow the [source deployment guide](../custom-deployment.md#2-build-images-and-install-the-platform-from-source) to sign in to a node-reachable registry and provide `--registry`; a private registry also needs image pull Secrets.
+The build prepares the MetaX inference runtime from public SDK packages and pinned sources, including GLM-5.3 support. For a cluster other than local kind or k3d, follow the [source deployment guide](../custom-deployment.md#2-build-images-and-install-the-platform-from-source) to sign in to a node-reachable registry and provide `--registry`; a private registry also needs image pull Secrets.
 
-### Build the inference runtime from an SDK
-
-To build the inference engine as well, provide a Debian-based MACA/PyTorch SDK image with Python 3.12, PyTorch 2.10, matching torchaudio, and development headers. Match its SDK and driver using the [MetaX release matrix](https://vllm-metax.readthedocs.io/en/latest/getting_started/quickstart.html).
-
-Replace `<maca-sdk-image>` with that image and run from the repository root:
-
-```bash
-METAX_SDK_IMAGE=<maca-sdk-image> foretoken install -e .
-```
-
-The command builds the supported engine sources and applies their patches, including GLM-5.3 support, before packaging and installing Foretoken. Add `--registry` for a remote cluster. An explicit `runtime.vllm.image` in platform values selects an existing runtime instead of building from the SDK.
+To use your own SDK image, set `METAX_SDK_IMAGE` when running the command. To reuse an existing inference runtime instead of rebuilding it, set `runtime.vllm.image` in platform values supplied through `--values`.
 
 ## Uninstall
 

@@ -2,10 +2,37 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
+ARG BASE_IMAGE_REGISTRY=docker.io
 ARG UV_IMAGE_REGISTRY=ghcr.io
 ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.9.10
-ARG METAX_SDK_IMAGE
+ARG METAX_SDK_IMAGE=metax-sdk
 FROM ${UV_IMAGE} AS uv
+
+FROM ${BASE_IMAGE_REGISTRY}/library/ubuntu:24.04 AS metax-sdk
+
+ARG BUILD_JOBS=2
+ARG FORETOKEN_GITHUB_MIRROR
+ARG UV_DEFAULT_INDEX
+ARG UV_EXTRA_INDEX_URL
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential ca-certificates cmake curl git gnupg ninja-build pkg-config \
+      python3-dev python3-venv libelf1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=uv /uv /usr/local/bin/uv
+COPY deploy/inference-engines/vllm-metax/prepare-sdk.sh \
+     deploy/inference-engines/vllm-metax/torch_cpu_config.py \
+     deploy/inference-engines/vllm-metax/source-environment.json \
+     /usr/local/lib/foretoken/
+
+ENV MACA_PATH=/opt/maca \
+    MACA_HOME=/opt/maca \
+    MACA_CLANG_PATH=/opt/maca/mxgpu_llvm/bin \
+    PATH=/opt/foretoken-sdk/.venv/bin:/opt/maca/bin:/opt/maca/mxgpu_llvm/bin:${PATH} \
+    LD_LIBRARY_PATH=/opt/maca/lib64:/opt/maca/lib:/opt/maca/ompi/lib:/opt/maca/mxgpu_llvm/lib
+RUN bash /usr/local/lib/foretoken/prepare-sdk.sh /opt/foretoken-sdk
 
 FROM ${METAX_SDK_IMAGE} AS mooncake-build
 
@@ -70,7 +97,9 @@ RUN apt-get update \
 
 COPY --from=uv /uv /usr/local/bin/uv
 COPY deploy/inference-engines/vllm-metax/install.sh /usr/local/lib/foretoken/install-vllm-metax.sh
-COPY deploy/inference-engines/vllm-metax/sdk_audio.py /usr/local/lib/foretoken/
+COPY deploy/inference-engines/vllm-metax/sdk_audio.py \
+     deploy/inference-engines/vllm-metax/source-environment.json \
+     /usr/local/lib/foretoken/
 COPY deploy/inference-engines/vllm-metax/patches/ /usr/local/lib/foretoken/patches/
 
 ENV MACA_PATH=${MACA_PATH} \

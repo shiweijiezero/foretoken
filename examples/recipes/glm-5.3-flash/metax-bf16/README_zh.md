@@ -9,7 +9,7 @@
 
 ## 准备
 
-按[沐曦平台指南](../../../../docs/development/metax-platform_zh.md#从-sdk-构建推理运行时)从 MACA/PyTorch SDK 构建并安装平台。节点需要发布 GPU 和共享 RDMA 资源，并允许运行时锁定 RDMA 所需内存。
+按[沐曦平台指南](../../../../docs/development/metax-platform_zh.md#从源码安装)从源码安装平台。节点需要发布 GPU 和共享 RDMA 资源，并允许运行时锁定 RDMA 所需内存。
 
 在部署前完成三个环境选择：
 

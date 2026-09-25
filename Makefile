@@ -67,10 +67,9 @@ image-frontend: vllm-source
 		-f data-plane/frontend/Dockerfile -t "$(FRONTEND_IMAGE)" .
 
 image-vllm-metax: mooncake-source
-	@test -n "$(METAX_SDK_IMAGE)" || \
-		(printf '%s\n' 'Set METAX_SDK_IMAGE to an Ubuntu/Debian image with the matching MACA SDK.' >&2; exit 1)
 	docker build \
-		--build-arg METAX_SDK_IMAGE="$(METAX_SDK_IMAGE)" \
+		$(if $(METAX_SDK_IMAGE),--build-arg METAX_SDK_IMAGE="$(METAX_SDK_IMAGE)",) \
+		$(if $(or $(FORETOKEN_DOCKER_IO_REGISTRY),$(OCI_REGISTRY)),--build-arg BASE_IMAGE_REGISTRY="$(or $(FORETOKEN_DOCKER_IO_REGISTRY),$(OCI_REGISTRY))",) \
 		--build-arg MACA_PATH \
 		$(if $(UV_PYTHON),--build-arg UV_PYTHON="$(UV_PYTHON)",) \
 		$(if $(BUILD_JOBS),--build-arg BUILD_JOBS="$(BUILD_JOBS)",) \

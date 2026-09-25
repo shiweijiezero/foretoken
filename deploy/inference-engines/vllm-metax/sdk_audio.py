@@ -12,16 +12,17 @@ import sys
 from wheel.wheelfile import WheelFile
 
 
-def prepare_sdk_audio(prefix: Path) -> None:
-    """Retain the SDK package version and pin the plugin to the distribution installed below it.
+def prepare_sdk_audio(prefix: Path, sdk_python: str) -> None:
+    """Copy the installer's selected SDK audio distribution into a runtime-installable wheel.
 
-    The SDK interpreter supplies only torchaudio. Repacking its recorded files
+    The explicit SDK interpreter preserves its environment even when it is itself a venv.
+    It supplies only torchaudio. Repacking its recorded files
     into a wheel lets the normal resolver install and track it in the new venv;
     the runtime never adds the SDK's site-packages to its search path.
     """
     source = subprocess.check_output(
         [
-            sys._base_executable,
+            sdk_python,
             "-c",
             "import importlib.metadata as m, json; import torchaudio; "
             "d=m.distribution('torchaudio'); "
@@ -55,8 +56,8 @@ def prepare_sdk_audio(prefix: Path) -> None:
     if content.count(original) != 1:
         raise ValueError("MetaX torchaudio requirement differs from the supported source")
     requirements.write_text(content.replace(original, f"torchaudio=={version}"))
-    print(f"Using SDK torchaudio {version} from {sys._base_executable}")
+    print(f"Using SDK torchaudio {version} from {sdk_python}")
 
 
 if __name__ == "__main__":
-    prepare_sdk_audio(Path(sys.argv[1]))
+    prepare_sdk_audio(Path(sys.argv[1]), sys.argv[2])

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from foretoken.accelerators.config import (
@@ -265,10 +264,6 @@ class PlatformLifecycle:
                 source_runtime_image = current_runtime.image or None
             elif runtime_selection is not None and runtime_selection.backend == "metax":
                 build_metax_runtime = True
-                source_runtime_image = helm.platform_runtime_image(
-                    Path(command.editable).expanduser().resolve(),
-                    runtime_selection.resource_name,
-                )
             elif (
                 runtime_selection is not None
                 and runtime_selection.backend == "custom"

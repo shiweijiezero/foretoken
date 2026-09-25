@@ -13,7 +13,7 @@ fi
 prefix=$1
 maca_path=${MACA_PATH:-/opt/maca}
 installer_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-source_pair="$installer_dir/patches/vllm-030/glm-5.3/source-environment.json"
+source_pair="$installer_dir/source-environment.json"
 
 # Create a new installation directory without overwriting existing environments or source trees.
 mkdir -p "$(dirname "$prefix")"
@@ -24,7 +24,7 @@ sdk_python=${UV_PYTHON:-}
 if [[ -z "$sdk_python" ]]; then
   # SDK images may keep their Python outside PATH; reuse only the matching
   # distribution source, not its environment as the serving runtime.
-  for candidate in /opt/conda/bin/python /usr/local/bin/python3 /usr/bin/python3; do
+  for candidate in "$(command -v python3 || true)" /opt/conda/bin/python /usr/local/bin/python3 /usr/bin/python3; do
     if [[ -x "$candidate" ]] && "$candidate" -c \
       'from importlib.metadata import version; version("torch"); version("torchaudio")' \
       >/dev/null 2>&1; then
@@ -37,6 +37,7 @@ if [[ -z "$sdk_python" ]]; then
     exit 1
   fi
 fi
+sdk_python=$(uv python find "$sdk_python")
 uv venv "$prefix/.venv" --python "$sdk_python"
 python="$prefix/.venv/bin/python"
 
@@ -98,7 +99,7 @@ export UV_EXTRA_INDEX_URL=${UV_EXTRA_INDEX_URL:-https://repos.metax-tech.com/r/m
 export UV_INDEX_STRATEGY=unsafe-best-match
 uv pip install --python "$python" \
   -r "$prefix/third_party/vllm-metax/requirements/build.txt"
-"$python" "$installer_dir/sdk_audio.py" "$prefix"
+"$python" "$installer_dir/sdk_audio.py" "$prefix" "$sdk_python"
 
 # Build the MetaX plugin for the CUDA-compatible target; upstream supplies only the Python layer.
 # Build the plugin wheel first, then resolve it with upstream source to keep build environments separate.

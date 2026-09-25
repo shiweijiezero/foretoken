@@ -1,6 +1,6 @@
 # GLM-5.3 on the MetaX source runtime
 
-The MetaX engine build applies this bundle automatically to the core and plugin revisions in [`source-environment.json`](source-environment.json). The manifest also defines patch targets and application order.
+The MetaX engine build applies this bundle automatically to the core and plugin revisions in [`source-environment.json`](../../../source-environment.json). The manifest also defines patch targets and application order.
 
 The shared [compatibility patch](../metax-compatibility.patch) adapts the plugin's imports and dependencies to the core and preserves the core's automatic model-runner selection. The GLM patches cover typed KV layouts, sparse attention, sequence-parallel layers, MTP, and mHC normalization.
 
