@@ -19,8 +19,8 @@ from lm_eval.loggers import EvaluationTracker, TrackioLogger
 from lm_eval.utils import handle_non_serializable, setup_logging, simple_parse_args_string
 
 from benchmarks.config.evaluation import native_arguments, validate_model_transport
-from benchmarks.integrations.lm_eval_model import ServiceEvaluation
-from benchmarks.integrations.lm_eval_responses import LmEvalResponses
+from benchmarks.integrations.lm_eval.model import ServiceEvaluation
+from benchmarks.integrations.lm_eval.responses import LmEvalResponses
 
 logger = logging.getLogger(__name__)
 

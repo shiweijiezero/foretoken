@@ -50,6 +50,8 @@ packages = [
     "benchmarks.runs",
     "benchmarks.sweeps",
     "benchmarks.integrations",
+    "benchmarks.integrations.evalscope",
+    "benchmarks.integrations.lm_eval",
     "benchmarks.scoring",
     "benchmarks.profiling",
     "benchmarks.results",

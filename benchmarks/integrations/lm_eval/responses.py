@@ -6,10 +6,21 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from contextlib import closing
 import json
 import sqlite3
 from pathlib import Path
 from typing import Any, NamedTuple
+
+
+def restore_progress(source: Path, native: Path) -> None:
+    """Back up completed responses into the new run without writing to the previous database."""
+    database = source / LmEvalResponses.filename
+    if not database.is_file():
+        raise ValueError("The previous lm-eval run has no saved evaluation progress")
+    with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as src:
+        with closing(sqlite3.connect(native.parent / LmEvalResponses.filename)) as dst:
+            src.backup(dst)
 
 
 class ResponseSlot(NamedTuple):
