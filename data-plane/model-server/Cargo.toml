@@ -36,6 +36,3 @@ vllm-managed-engine.workspace = true
 vllm-metrics.workspace = true
 vllm-tracing.workspace = true
 
-[dev-dependencies]
-http-body-util = "0.1.3"
-tower = { version = "0.5.3", features = ["util"] }
