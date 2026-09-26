@@ -15,6 +15,7 @@ use foretoken_model_server::api::{AppState, RuntimeHealth, router};
 use foretoken_model_server::backend::VllmBackend;
 use foretoken_model_server::config::{MODEL_GROUP_UID_ENV, RuntimeConfig};
 use foretoken_model_server::kv_event_adapter::KvEventAdapter;
+use foretoken_model_server::launch::LaunchPlanV1;
 use foretoken_model_server::managed_engine::ManagedEngine;
 use foretoken_model_server::profiling;
 use foretoken_model_server::runtime_cache;
@@ -36,6 +37,11 @@ const TEMPORARY_MODEL_SOURCE_ROOT: &str = "/tmp/foretoken-model-source";
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     vllm_tracing::init_tracing("ForetokenModelServer");
+
+    if std::env::args().nth(1).as_deref() == Some("prepare") {
+        prepare_model().await?;
+        return Ok(());
+    }
 
     // Resolve the controller-owned launch plan before starting any engine or network task.
     let config = RuntimeConfig::from_env().map_err(std::io::Error::other)?;
@@ -730,6 +736,67 @@ fn kv_event_adapter(
         config.launch.artifacts.revision.clone(),
         config.launch.parallelism.dp.try_into()?,
     ))
+}
+
+/// Prepares a model source in the mounted cache before the engine container starts.
+///
+/// ModelGroup init containers invoke this mode with the same launch plan and cache mount as the
+/// serving process. The provider owns its cache layout and resumability; this process only selects
+/// the provider call and reports its exit status.
+async fn prepare_model() -> Result<(), Box<dyn std::error::Error>> {
+    let plan = LaunchPlanV1::parse(&required_env("FORETOKEN_VLLM_LAUNCH_PLAN")?)?;
+    let model_root = foretoken_artifacts::model_root()
+        .ok_or("FORETOKEN_MODEL_ROOT must be set for model preparation")?;
+    let python = std::env::var("FORETOKEN_VLLM_PYTHON")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "python".into());
+    let source = match plan.artifacts.source {
+        ModelSource::Hf => "hf",
+        ModelSource::ModelScope => "modelscope",
+        ModelSource::Local => return Ok(()),
+    };
+    let code = r#"
+import os
+
+source = os.environ["FORETOKEN_PREPARE_SOURCE"]
+model = (os.environ["FORETOKEN_PREPARE_MODEL"], os.environ["FORETOKEN_PREPARE_MODEL_REVISION"])
+tokenizer = (os.environ["FORETOKEN_PREPARE_TOKENIZER"], os.environ["FORETOKEN_PREPARE_TOKENIZER_REVISION"])
+artifacts = [model] if tokenizer == model else [model, tokenizer]
+if source == "hf":
+    from huggingface_hub import snapshot_download
+    for repository, revision in artifacts:
+        snapshot_download(repo_id=repository, revision=revision)
+elif source == "modelscope":
+    from modelscope import snapshot_download
+    for repository, revision in artifacts:
+        snapshot_download(model_id=repository, revision=revision, cache_dir=os.environ["MODELSCOPE_CACHE"])
+else:
+    raise RuntimeError(f"unsupported model preparation source: {source}")
+"#;
+    let mut command = tokio::process::Command::new(python);
+    command
+        .args(["-c", code])
+        .env("FORETOKEN_PREPARE_SOURCE", source)
+        .env("FORETOKEN_PREPARE_MODEL", &plan.artifacts.model)
+        .env("FORETOKEN_PREPARE_MODEL_REVISION", &plan.artifacts.revision)
+        .env("FORETOKEN_PREPARE_TOKENIZER", &plan.artifacts.tokenizer)
+        .env(
+            "FORETOKEN_PREPARE_TOKENIZER_REVISION",
+            &plan.artifacts.tokenizer_revision,
+        )
+        .env(foretoken_artifacts::MODEL_ROOT_ENV, &model_root)
+        .env("HF_HOME", &model_root)
+        .env("HF_HUB_CACHE", model_root.join("hub"))
+        .env(
+            foretoken_artifacts::MODELSCOPE_CACHE_ENV,
+            foretoken_artifacts::modelscope_cache_root(&model_root),
+        );
+    let status = command.status().await?;
+    if !status.success() {
+        return Err(format!("model preparation failed with status {status}").into());
+    }
+    Ok(())
 }
 
 fn required_env(name: &str) -> Result<String, Box<dyn std::error::Error>> {

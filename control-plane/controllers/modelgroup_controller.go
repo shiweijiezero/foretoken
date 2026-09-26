@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"path"
 	"reflect"
 	"slices"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -66,6 +68,7 @@ type ModelGroupReconciler struct {
 func (reconciler *ModelGroupReconciler) SetupWithManager(manager ctrl.Manager) error {
 	builder := ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelGroup{}).
+		Owns(&batchv1.Job{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Owns(&networkingv1.NetworkPolicy{}).
@@ -121,6 +124,14 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 		return ctrl.Result{Requeue: true}, nil
 	}
 
+	prepared, err := reconciler.reconcilePreparation(ctx, group)
+	if err != nil {
+		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupPreparationFailureState(err))
+	}
+	if !prepared {
+		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupPreparationState())
+	}
+
 	available, err := reconciler.reconcileWorkload(ctx, group)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -161,6 +172,99 @@ func (reconciler *ModelGroupReconciler) owningModelPool(ctx context.Context, gro
 }
 
 // Workload reconciliation and desired resources.
+
+// reconcilePreparation runs source acquisition before allocating ModelGroup accelerator Pods.
+func (reconciler *ModelGroupReconciler) reconcilePreparation(ctx context.Context, group *inferencev1alpha1.ModelGroup) (bool, error) {
+	if group.Spec.Artifacts.Cache == nil || group.Spec.Artifacts.Source == inferencev1alpha1.ModelSourceLocal {
+		return true, nil
+	}
+	desired, err := desiredPreparationJob(group, reconciler.ImagePullSecrets)
+	if err != nil {
+		return false, err
+	}
+	if err := controllerutil.SetControllerReference(group, desired, reconciler.Scheme()); err != nil {
+		return false, fmt.Errorf("set model preparation Job owner: %w", err)
+	}
+	current := new(batchv1.Job)
+	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); apierrors.IsNotFound(err) {
+		if err := reconciler.Create(ctx, desired); err != nil {
+			return false, fmt.Errorf("create model preparation Job: %w", err)
+		}
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("get model preparation Job: %w", err)
+	}
+	if !metav1.IsControlledBy(current, group) {
+		return false, fmt.Errorf("model preparation Job %q is not controlled by ModelGroup", current.Name)
+	}
+	for _, condition := range current.Status.Conditions {
+		if condition.Type == batchv1.JobFailed && condition.Status == corev1.ConditionTrue {
+			return false, fmt.Errorf("model preparation Job %q failed: %s", current.Name, condition.Message)
+		}
+		if condition.Type == batchv1.JobComplete && condition.Status == corev1.ConditionTrue {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// desiredPreparationJob builds a CPU/network/storage-only source preparation workload.
+func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference) (*batchv1.Job, error) {
+	launchPlan, err := vllmconfig.BuildLaunchPlan(group.Spec)
+	if err != nil {
+		return nil, fmt.Errorf("build model preparation launch plan: %w", err)
+	}
+	launchJSON, err := launchPlan.JSON()
+	if err != nil {
+		return nil, fmt.Errorf("marshal model preparation launch plan: %w", err)
+	}
+	cache := group.Spec.Artifacts.Cache
+	if cache == nil || group.Spec.Artifacts.Source == inferencev1alpha1.ModelSourceLocal {
+		return nil, fmt.Errorf("model preparation requires a remote source and RuntimeCache")
+	}
+	name := group.Name + "-prepare"
+	if len(name) > kubevalidation.DNS1123SubdomainMaxLength {
+		name = strings.TrimRight(name[:kubevalidation.DNS1123SubdomainMaxLength], "-")
+	}
+	env := []corev1.EnvVar{{Name: "FORETOKEN_VLLM_LAUNCH_PLAN", Value: launchJSON}}
+	env = append(env, vllmconfig.RuntimeCacheEnv(cache, "")...)
+	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
+	if group.Spec.Artifacts.Source == inferencev1alpha1.ModelSourceHF {
+		env = append(env, corev1.EnvVar{Name: "HF_XET_HIGH_PERFORMANCE", Value: "1"})
+	}
+	if group.Spec.Artifacts.Source == inferencev1alpha1.ModelSourceModelScope {
+		env = append(env, corev1.EnvVar{Name: "MODELSCOPE_CACHE", Value: path.Join(cache.MountPath, "modelscope")})
+	}
+	startupSeconds, err := durationSeconds(group.Spec.Timeouts.Startup)
+	if err != nil {
+		return nil, fmt.Errorf("parse model preparation timeout: %w", err)
+	}
+	backoffLimit := int32(0)
+	return &batchv1.Job{
+		TypeMeta:   metav1.TypeMeta{APIVersion: batchv1.SchemeGroupVersion.String(), Kind: "Job"},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: group.Namespace, Labels: modelGroupLabels(group)},
+		Spec: batchv1.JobSpec{
+			BackoffLimit:          &backoffLimit,
+			ActiveDeadlineSeconds: &startupSeconds,
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: modelGroupLabels(group)},
+				Spec: corev1.PodSpec{
+					RestartPolicy:    corev1.RestartPolicyNever,
+					ImagePullSecrets: slices.Clone(imagePullSecrets),
+					Volumes:          []corev1.Volume{{Name: runtimeCacheVolumeName, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: cache.ClaimName}}}},
+					Containers: []corev1.Container{{
+						Name:            "model-preparation",
+						Image:           group.Spec.Runtime.Image,
+						ImagePullPolicy: corev1.PullIfNotPresent,
+						Args:            []string{"prepare"},
+						Env:             env,
+						VolumeMounts:    []corev1.VolumeMount{{Name: runtimeCacheVolumeName, MountPath: cache.MountPath}},
+					}},
+				},
+			},
+		},
+	}, nil
+}
 
 // reconcileDeployment applies the ModelGroup Deployment and returns its persisted state.
 func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment, error) {
@@ -575,6 +679,22 @@ func modelGroupFailureState(err error) modelGroupStatusState {
 	return modelGroupStatusState{
 		phase:        inferencev1alpha1.ModelGroupPhaseFailed,
 		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "UnsupportedProfile", message: err.Error()},
+		scheduling:   schedulingNotEvaluated(),
+	}
+}
+
+func modelGroupPreparationState() modelGroupStatusState {
+	return modelGroupStatusState{
+		phase:        inferencev1alpha1.ModelGroupPhaseProvisioning,
+		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "PreparingModel", message: "Remote model artifacts are being prepared in the shared RuntimeCache"},
+		scheduling:   schedulingNotEvaluated(),
+	}
+}
+
+func modelGroupPreparationFailureState(err error) modelGroupStatusState {
+	return modelGroupStatusState{
+		phase:        inferencev1alpha1.ModelGroupPhaseFailed,
+		materialized: modelGroupConditionState{status: metav1.ConditionFalse, reason: "ModelPreparationFailed", message: err.Error()},
 		scheduling:   schedulingNotEvaluated(),
 	}
 }
