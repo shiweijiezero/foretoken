@@ -551,7 +551,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Whole-model completion totals count aggregate and decode executions once. Backend details include each selected execution stage and finish reason.",
+      "description": "Whole-model completion rate counts aggregate and decode executions once; backend lines retain execution stage and finish reason.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -719,7 +719,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Whole-model latency from frontend processing to generation completion, computed from aggregate and decode request histograms. Excludes downstream delivery; clocks must be synchronized.",
+      "description": "Whole-model latency from Frontend processing to generation completion, in seconds; aggregate and decode requests are combined.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -804,7 +804,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Whole-model time from frontend processing to the first output token, computed from aggregate and decode request histograms. Excludes downstream delivery.",
+      "description": "Whole-model time from Frontend processing to the first output token, in seconds; aggregate and decode requests are combined.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -889,7 +889,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Whole-model TPOT from aggregate and decode request histograms, in milliseconds. Each request contributes its average output-token interval.",
+      "description": "Whole-model time per output token, in milliseconds; each request contributes its average interval.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -986,7 +986,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Whole-model output-token intervals from aggregate and decode engines, in milliseconds. Each token interval is one observation.",
+      "description": "Output-token intervals across aggregate and decode engines, in milliseconds.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1273,7 +1273,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Distribution of prompt tokens per request over time.",
+      "description": "Distribution of prompt tokens per request across selected engines.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1334,7 +1334,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Distribution of generated tokens per request over time.",
+      "description": "Distribution of generated tokens per request across selected engines.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1469,7 +1469,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Whole-model cache hits divided by queried tokens across all engines. Local and external observations are separate; no queries yield no ratio.",
+      "description": "Whole-model cache hits divided by queried tokens. Local and external caches are separate; no queries produce no ratio.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1574,7 +1574,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Mounted RuntimeCache filesystem utilization. Series are absent for model groups without a RuntimeCache.",
+      "description": "Highest RuntimeCache filesystem usage by model instance.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1635,7 +1635,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Filesystem space available to model-server processes using a RuntimeCache.",
+      "description": "Lowest available RuntimeCache filesystem space by model instance.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1707,7 +1707,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Utilization of each Foretoken-attributed GPU.",
+      "description": "Utilization of each GPU used by the selected model.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1768,7 +1768,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Memory utilization of each Foretoken-attributed GPU.",
+      "description": "Memory utilization of each GPU used by the selected model.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1969,136 +1969,122 @@
       "type": "timeseries"
     },
     {
-      "collapsed": true,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Power draw of each GPU used by the selected model, in watts.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "watt"
+        },
+        "overrides": []
+      },
       "gridPos": {
-        "h": 1,
-        "w": 24,
+        "h": 8,
+        "w": 12,
         "x": 0,
         "y": 82
       },
-      "id": 0,
-      "panels": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "description": "Power draw of each Foretoken-attributed NVIDIA GPU.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic-by-name"
-              },
-              "custom": {
-                "fillOpacity": 8,
-                "lineWidth": 2,
-                "pointSize": 8,
-                "showPoints": "never"
-              },
-              "unit": "watt"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 83
-          },
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "repeatDirection": "h",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
-              "instant": false,
-              "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
-              "range": true,
-              "refId": "A"
-            }
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
           ],
-          "title": "NVIDIA GPU power by device",
-          "transparent": false,
-          "type": "timeseries"
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Temperature of each Foretoken-attributed NVIDIA GPU.",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic-by-name"
-              },
-              "custom": {
-                "fillOpacity": 8,
-                "lineWidth": 2,
-                "pointSize": 8,
-                "showPoints": "never"
-              },
-              "unit": "celsius"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 83
-          },
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "repeatDirection": "h",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
-              "instant": false,
-              "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "NVIDIA GPU temperature by device",
-          "transparent": false,
-          "type": "timeseries"
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
         }
       ],
-      "title": "NVIDIA power and temperature",
-      "type": "row"
+      "title": "GPU power by device",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Temperature reported by each GPU used by the selected model; MetaX uses the chip hotspot sensor.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 82
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "GPU temperature by device",
+      "transparent": false,
+      "type": "timeseries"
     },
     {
       "collapsed": false,
@@ -2106,7 +2092,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 91
+        "y": 90
       },
       "id": 0,
       "panels": [],
@@ -2118,7 +2104,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Share of routing selections within each model and execution role. Each backend is one model instance and data-parallel rank; all backends form the denominator. This counts choices, not completed requests.",
+      "description": "Routing selections by backend within each model and execution role. Each backend is one model instance and data-parallel rank; the denominator is all backends.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2140,7 +2126,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 92
+        "y": 91
       },
       "options": {
         "legend": {
@@ -2180,7 +2166,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Routing results observed within the selected time range, grouped by selection round.",
+      "description": "Routing selection rate by stage and outcome within the selected time range.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2200,7 +2186,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 102
+        "y": 101
       },
       "options": {
         "legend": {
@@ -2240,7 +2226,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "P99 filter, scorer and picker execution time, aggregated from histogram buckets across selected Frontend replicas.",
+      "description": "P99 filter, scorer, and picker time across selected Frontend replicas.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2260,7 +2246,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 102
+        "y": 101
       },
       "options": {
         "legend": {
@@ -2300,7 +2286,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Mean available, filtered and selectable candidate counts. Selectable counts include data-parallel ranks.",
+      "description": "Mean available, filtered, and selectable candidate counts per routing selection; selectable includes data-parallel ranks.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2320,7 +2306,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 102
+        "y": 101
       },
       "options": {
         "legend": {
@@ -2361,7 +2347,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 110
+        "y": 109
       },
       "id": 0,
       "panels": [],
@@ -2411,9 +2397,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 8,
         "x": 0,
-        "y": 111
+        "y": 110
       },
       "options": {
         "colorMode": "value",
@@ -2488,9 +2474,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 111
+        "w": 8,
+        "x": 8,
+        "y": 110
       },
       "options": {
         "colorMode": "value",
@@ -2531,92 +2517,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "HTTP responses that started with 5xx divided by all started responses. Streaming failures after headers are not included.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "match": "null+nan",
-                "result": {
-                  "color": "#808080",
-                  "text": "No data"
-                }
-              },
-              "type": "special"
-            }
-          ],
-          "noValue": "No data",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#0ca30c",
-                "value": null
-              },
-              {
-                "color": "#eda100",
-                "value": 0.01
-              },
-              {
-                "color": "#d03b3b",
-                "value": 0.05
-              }
-            ]
-          },
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 12,
-        "y": 111
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "(sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",status=\"5xx\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) or 0 * sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) / (sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) > 0)",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "Frontend HTTP 5xx ratio",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "Frontend HTTP 5xx ratio",
-      "transparent": false,
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Requests waiting for frontend admission to a scaling target.",
+      "description": "Requests waiting for frontend admission.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2654,9 +2555,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 111
+        "w": 8,
+        "x": 16,
+        "y": 110
       },
       "options": {
         "colorMode": "value",
@@ -2764,9 +2665,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
+        "w": 12,
         "x": 0,
-        "y": 115
+        "y": 114
       },
       "options": {
         "legend": {
@@ -2828,9 +2729,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 6,
-        "y": 115
+        "w": 12,
+        "x": 12,
+        "y": 114
       },
       "options": {
         "legend": {
@@ -2870,7 +2771,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Time, in seconds, until the Frontend handler produces HTTP response headers. This excludes SSE body delivery; it is neither TTFT nor full-stream duration.",
+      "description": "Time to HTTP response headers, in seconds; excludes SSE body delivery.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2935,9 +2836,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 12,
-        "y": 115
+        "w": 8,
+        "x": 0,
+        "y": 122
       },
       "options": {
         "legend": {
@@ -3050,9 +2951,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 18,
-        "y": 115
+        "w": 8,
+        "x": 8,
+        "y": 122
       },
       "options": {
         "legend": {
@@ -3091,7 +2992,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Healthy KV event sources divided by configured sources. Disabled or unavailable indexing reports zero.",
+      "description": "Healthy KV event sources divided by configured sources; disabled or unavailable indexing reports zero.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3112,8 +3013,8 @@
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 0,
-        "y": 123
+        "x": 16,
+        "y": 122
       },
       "options": {
         "legend": {
@@ -3153,7 +3054,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 131
+        "y": 130
       },
       "id": 0,
       "panels": [
@@ -3162,7 +3063,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Controller-runtime errors per second. This section observes the platform controller independently of workload namespace filters.",
+          "description": "Reconciliation errors per second by controller.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3182,7 +3083,7 @@
             "h": 8,
             "w": 8,
             "x": 0,
-            "y": 132
+            "y": 131
           },
           "options": {
             "legend": {
@@ -3222,7 +3123,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "P99 reconciliation time by controller; this is control-plane work, not inference request latency.",
+          "description": "P99 reconciliation time by controller.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3242,7 +3143,7 @@
             "h": 8,
             "w": 8,
             "x": 8,
-            "y": 132
+            "y": 131
           },
           "options": {
             "legend": {
@@ -3282,7 +3183,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "Queued reconciliations, deduplicated across controller replicas.",
+          "description": "Depth of each controller workqueue.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3302,7 +3203,7 @@
             "h": 8,
             "w": 8,
             "x": 16,
-            "y": 132
+            "y": 131
           },
           "options": {
             "legend": {
@@ -3347,7 +3248,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 140
+        "y": 139
       },
       "id": 0,
       "panels": [],
@@ -3359,7 +3260,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Latest published recommendation, adjusted target and applied desired capacity. A missing recommendation means the decision algorithm did not provide one.",
+      "description": "Published recommendation, adjusted target, and applied capacity.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3379,7 +3280,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 141
+        "y": 140
       },
       "options": {
         "legend": {
@@ -3440,7 +3341,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Ready and routable capacity published by the autoscaler, compared with applied desired replicas.",
+      "description": "Ready and routable capacity compared with applied desired replicas.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3460,7 +3361,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 141
+        "y": 140
       },
       "options": {
         "legend": {
@@ -3521,7 +3422,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Elapsed time since the last observation and evaluation; age keeps increasing if reconciliation stops. Missing observation series means no usable observation was published.",
+      "description": "Age in seconds since the latest observation and evaluation.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3541,7 +3442,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 141
+        "y": 140
       },
       "options": {
         "legend": {
@@ -3591,12 +3492,12 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Current trigger, decision and adjustment outcomes from ModelService status. Reasons are bounded status codes, not log messages.",
+      "description": "Latest trigger, decision, and adjustment outcomes for the selected model service.",
       "gridPos": {
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 149
+        "y": 148
       },
       "options": {
         "cellHeight": "sm",

@@ -89,7 +89,7 @@ kubectl label namespace monitoring \
 foretoken install --prometheus monitoring/prometheus
 ```
 
-GPU 面板和告警依靠 Foretoken 模型组和模型角色的 Pod 标签识别设备。CLI 管理的 DCGM Exporter 会输出这些标签；复用已有 exporter 时需要同样的标签，否则这些面板没有数据。
+GPU 面板和告警通过 exporter 的 Pod 和命名空间标签关联模型工作负载。复用 exporter 时需保留这些标签。
 
 使用服务告警时，复用的 Prometheus 需要通过 `ruleNamespaceSelector` 选择工作负载命名空间中的规则；CLI 管理的监控已配置这一范围。
 
@@ -135,10 +135,10 @@ foretoken deploy examples/observability --timeout 20m
 | model-server `/metrics` | 推理引擎指标和 RuntimeCache 文件系统状态 |
 | Controller `/metrics` | Reconcile、工作队列和已发布的扩缩容决策 |
 | DCGM Exporter | NVIDIA 利用率、显存、功耗、温度和 XID 错误 |
-| mxExporter | 沐曦利用率和显存 |
+| mxExporter | 沐曦利用率、显存、板卡功耗和芯片热点温度 |
 | kubelet/cAdvisor | 容器 CPU 和内存 |
 
-看板中的 TTFT 和 E2EL 使用秒，TPOT 和 ITL 使用毫秒。模型整体的 p50/p95/p99 先合并请求直方图桶，再计算分位数。分离式部署中，输入吞吐量统计 Aggregate／Prefill 引擎，输出吞吐量、完成请求和生成延迟统计 Aggregate／Decode 引擎。调度与抢占总计统计所有角色的执行阶段请求和事件；前缀缓存命中率使用命中 token 总数除以查询 token 总数。GPU 百分比、温度和共享文件系统容量按设备或挂载展示，不直接相加。路由份额统计选择次数，不代表请求完成率或缓存命中率。
+看板中的 TTFT 和 E2EL 使用秒，TPOT 和 ITL 使用毫秒。模型整体的 p50/p95/p99 先合并请求直方图桶，再计算分位数。分离式部署中，输入吞吐量统计 Aggregate／Prefill 引擎，输出吞吐量、完成请求和生成延迟统计 Aggregate／Decode 引擎。调度与抢占总计统计所有角色的执行阶段请求和事件；前缀缓存命中率使用命中 token 总数除以查询 token 总数。GPU 利用率、显存、功耗和温度按设备展示。缓存文件系统面板展示各模型实例的最高使用率和最少可用空间。路由份额统计选择次数，不代表请求完成率或缓存命中率。
 
 下列记录规则供告警和固定窗口查询使用。模型服务相关规则来自 vLLM 指标。
 
@@ -172,8 +172,8 @@ foretoken deploy examples/observability --timeout 20m
 | 缓存 | `foretoken:model_server_runtime_cache_temporary:max` | 是否有 model-server 在使用 Pod 内的临时缓存 |
 | 加速器 | `foretoken:accelerator_gpu_utilization_ratio` | 每块 NVIDIA 或沐曦设备的利用率 |
 | 加速器 | `foretoken:accelerator_gpu_memory_usage_ratio` | 每块 NVIDIA 或沐曦设备的显存使用率 |
-| 加速器 | `foretoken:accelerator_gpu_power_watts` | 每块 NVIDIA 设备的功耗 |
-| 加速器 | `foretoken:accelerator_gpu_temperature_celsius` | 每块 NVIDIA 设备的温度 |
+| 加速器 | `foretoken:accelerator_gpu_power_watts` | 每块 GPU 的功耗，单位 W |
+| 加速器 | `foretoken:accelerator_gpu_temperature_celsius` | 每块 GPU 的温度，单位 °C；沐曦使用芯片热点温度 |
 
 记录规则保留命名空间、Frontend 服务、模型组、模型角色、模型名称和 Prefill/Decode pipeline scope 标签。Frontend 延迟在响应头发出时结束，流式响应的 token 发送时间不计入；生成完成延迟和首 token 延迟都从 JSON 解码后的 Frontend handler 入口开始计时，跨进程测量要求节点时钟同步。流式响应可能先以 `2xx` 开始、之后再失败，因此 5xx 比例不是推理成功率。加速器规则只覆盖 Foretoken 工作负载使用的设备。
 

@@ -14,8 +14,10 @@ metadata:
   name: mx-exporter-metrics
 data:
   metrics: |
+    chip_hotspot_temp,Gauge,mx_chip_hotspot_temp,Chip hotspot temperature,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
     gpu_usage,Gauge,mx_gpu_usage,GPU usage in percent,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
     memory_usage,Gauge,mx_memory_usage,HBM and system memory usage in percent,deviceId,type,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
+    board_power,Gauge,mx_board_power,Board power in milliwatt,deviceId,uuid,exported_pod,exported_namespace,exported_container,Hostname,driver_version,bios_version,modelName
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -29,6 +31,8 @@ spec:
       app.kubernetes.io/name: mx-exporter
   template:
     metadata:
+      annotations:
+        foretoken.io/metrics-config-revision: "2"
       labels:
         app.kubernetes.io/name: mx-exporter
     spec:

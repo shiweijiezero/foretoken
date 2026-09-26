@@ -89,7 +89,7 @@ kubectl label namespace monitoring \
 foretoken install --prometheus monitoring/prometheus
 ```
 
-GPU panels and alerts identify devices by the Foretoken model-group and model-role Pod labels. The CLI-managed DCGM Exporter publishes them; a reused exporter needs the same labels, otherwise those panels stay empty.
+GPU panels and alerts associate devices with model workloads using the exporter's Pod and namespace labels. Reused exporters must expose those labels.
 
 For service alerts, a reused Prometheus must select rules in the workload namespaces through `ruleNamespaceSelector`; the CLI-managed stack already does this.
 
@@ -135,10 +135,10 @@ Selecting the power alert also requires a positive `spec.observability.alerts.th
 | model-server `/metrics` | Inference-engine metrics and RuntimeCache filesystem state |
 | Controller `/metrics` | Reconciliation, workqueues, and published autoscaling decisions |
 | DCGM Exporter | NVIDIA utilization, memory, power, temperature, and XID errors |
-| mxExporter | MetaX utilization and memory |
+| mxExporter | MetaX utilization, memory, board power, and chip hotspot temperature |
 | kubelet/cAdvisor | Container CPU and memory |
 
-Dashboard latency metrics use seconds for TTFT and E2EL, and milliseconds for TPOT and ITL. Model-wide p50/p95/p99 percentiles combine request histogram buckets before calculating quantiles. In disaggregated serving, input throughput counts Aggregate/Prefill engines; output throughput, completions and generation latency count Aggregate/Decode engines. Scheduler and preemption totals count execution-stage requests and events across all roles. Prefix-cache hit ratios divide total hit tokens by total queried tokens. GPU percentages, temperatures and shared filesystem capacities remain per-device or per-mount observations rather than sums. Routing shares count selection decisions, not completed requests or cache hits.
+Dashboard latency metrics use seconds for TTFT and E2EL, and milliseconds for TPOT and ITL. Model-wide p50/p95/p99 percentiles combine request histogram buckets before calculating quantiles. In disaggregated serving, input throughput counts Aggregate/Prefill engines; output throughput, completions and generation latency count Aggregate/Decode engines. Scheduler and preemption totals count execution-stage requests and events across all roles. Prefix-cache hit ratios divide total hit tokens by total queried tokens. GPU utilization, memory, power, and temperature are shown per device. Cache filesystem panels show each model instance's highest utilization and least available space. Routing shares count selection decisions, not completed requests or cache hits.
 
 The following recording rules remain available for alerts and fixed-window queries. Model-serving rules are derived from vLLM metrics.
 
@@ -172,8 +172,8 @@ The following recording rules remain available for alerts and fixed-window queri
 | Cache | `foretoken:model_server_runtime_cache_temporary:max` | Whether any model server uses temporary Pod-local cache storage |
 | Accelerator | `foretoken:accelerator_gpu_utilization_ratio` | Per-device NVIDIA or MetaX utilization |
 | Accelerator | `foretoken:accelerator_gpu_memory_usage_ratio` | Per-device NVIDIA or MetaX memory usage |
-| Accelerator | `foretoken:accelerator_gpu_power_watts` | Per-device NVIDIA power draw |
-| Accelerator | `foretoken:accelerator_gpu_temperature_celsius` | Per-device NVIDIA temperature |
+| Accelerator | `foretoken:accelerator_gpu_power_watts` | Per-device GPU power in watts |
+| Accelerator | `foretoken:accelerator_gpu_temperature_celsius` | Per-device GPU temperature in Celsius; MetaX uses chip hotspot temperature |
 
 Rules keep the namespace, Frontend service, model group, model role, model name, and Prefill/Decode pipeline scope labels. Frontend latency ends when response headers are sent, so for streaming responses it does not include token delivery; generation completion latency and TTFT start when the Frontend handler begins after JSON decoding. These cross-process measurements require synchronized node clocks. A streaming response can start with `2xx` and fail later, so the 5xx ratio is not an inference success rate. Accelerator rules cover only devices used by Foretoken workloads.
 
