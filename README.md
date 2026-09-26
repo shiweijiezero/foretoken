@@ -27,11 +27,11 @@ If you only need to serve a single model on one GPU, using an inference engine s
 | Request routing | Select instances based on load, queues, KV reuse, and service levels | Research |
 | Distributed inference | Aggregated serving, Prefill/Decode disaggregation, and WideEP parallelism | Research |
 | Control plane | Model services, replica management, autoscaling, updates, and failure recovery | In development |
-| [Observability](observability/README.md) | Collect service and accelerator metrics, evaluate alerts, and inspect the system Dashboard | In development |
+| [Observability](observability/README.md) | Collect metrics and persistent service logs, evaluate alerts, and inspect the system Dashboard | In development |
 
 ## Quick Start
 
-Start with a GPU-enabled Kubernetes cluster and Python 3.11+, `kubectl`, and Helm installed locally.
+Start with a GPU-enabled Kubernetes cluster with a default StorageClass for persistent storage, and Python 3.11+, `kubectl`, and Helm installed locally.
 
 ### 1. Get the examples and install the command-line tool
 
@@ -157,7 +157,7 @@ foretoken delete examples/quickstart
 foretoken uninstall
 ```
 
-The uninstall command preserves Foretoken CRDs and reused cluster components. It removes the platform and the monitoring or Gateway resources managed by the command-line tool.
+The uninstall command preserves Foretoken CRDs, log storage, and reused cluster components. It removes the platform and the monitoring or Gateway resources managed by the command-line tool.
 
 ## Deployment Guides
 

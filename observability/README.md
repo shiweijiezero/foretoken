@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Foretoken collects service and accelerator metrics with Prometheus and shows them in the Foretoken System Overview Grafana dashboard. Alert rules are optional and disabled by default.
+Foretoken provides service and accelerator metrics, persistent service logs, and Grafana views for investigation. Alert rules are optional and disabled by default.
 
 ## Get started
 
@@ -25,6 +25,26 @@ Use the instance, execution-role and engine-rank selectors to inspect backend de
 Shared frontend panels show all traffic through the selected frontend, not just one model. Autoscaling follows the selected model and service; control-plane diagnostics describe the platform.
 
 After upgrading Foretoken, run `foretoken install` again to update the controller, frontend, scrape configuration, and dashboards. Importing dashboard JSON alone does not update metric producers.
+
+## Query persistent logs
+
+`foretoken install` sets up persistent logs for model servers, frontends, KV services, and the controller, including inference-engine output. Logs remain available after a serving Pod or its namespace is deleted. The default retention is 14 days, using 50 GiB of storage from the cluster's default StorageClass.
+
+In Grafana, open Explore, select Foretoken Logs, and choose a time range. For example:
+
+```logql
+{job="foretoken", namespace="foretoken-demo"}
+```
+
+Filter further by `pod`, `container`, `node`, or `stream`. To find an error or a request identifier, add a text filter:
+
+```logql
+{job="foretoken"} |~ "(?i)error"
+```
+
+Logs use the same Grafana access settings as metrics. To require a login, use the authentication option below.
+
+The default installation uses the cluster's storage configuration. Platform administrators can change retention or connect an existing logging service through the platform installation configuration. These choices do not affect model deployment or request routing.
 
 ## Require a login and retrieve credentials
 
@@ -183,4 +203,4 @@ For a short CPU/GPU capture on an existing diagnostic service, see [Profiling](.
 
 ## Remove collection
 
-After all Foretoken services are deleted, `foretoken uninstall` removes CLI-managed Prometheus, DCGM Exporter, and MetaX mxExporter resources. Reused installations are left unchanged.
+After all Foretoken services are deleted, `foretoken uninstall` removes CLI-managed Prometheus, DCGM Exporter, MetaX mxExporter, log collectors, and Loki resources. Historical logs remain available for the platform's retention and storage lifecycle; reused installations are left unchanged.

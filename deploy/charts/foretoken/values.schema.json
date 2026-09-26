@@ -289,6 +289,18 @@
           },
           "additionalProperties": false
         },
+        "logs": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "endpoint": {"type": "string", "description": "Existing Loki HTTP(S) base URL; empty installs managed storage."},
+            "retention": {"type": "string", "description": "Managed Loki retention duration."},
+            "storageClass": {"type": "string"},
+            "storageSize": {"type": "string"},
+            "datasourceURL": {"type": "string", "description": "Loki query URL resolved by foretoken install."}
+          },
+          "additionalProperties": false
+        },
         "notifications": {
           "type": "object",
           "properties": {

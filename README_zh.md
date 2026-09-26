@@ -27,11 +27,11 @@ Foretoken 基于 vLLM、SGLang 等推理引擎，把多个生成实例组织成�
 | 请求路由 | 基于负载、队列、KV 复用和服务等级选择实例 | 研究中 |
 | 分布式推理 | 聚合部署、Prefill/Decode 分离和 WideEP 并行策略 | 研究中 |
 | 控制面 | 模型服务、副本管理、扩缩容、更新和故障恢复 | 开发中 |
-| [可观测性](observability/README_zh.md) | 采集服务和加速器指标、评估告警，并通过系统看板查看运行状态 | 开发中 |
+| [可观测性](observability/README_zh.md) | 采集指标、持久保存服务日志、评估告警，并通过系统看板查看运行状态 | 开发中 |
 
 ## 快速开始
 
-准备好 GPU Kubernetes 集群，并在本机安装 Python 3.11+、`kubectl` 和 Helm。
+准备好支持 GPU 和持久存储的 Kubernetes 集群，使用默认存储类（StorageClass）；在本机安装 Python 3.11+、`kubectl` 和 Helm。
 
 ### 1. 获取示例并安装命令行工具
 
@@ -157,7 +157,7 @@ foretoken delete examples/quickstart
 foretoken uninstall
 ```
 
-卸载时会保留 Foretoken CRD 和复用的集群组件，并删除平台以及由命令行工具管理的监控或 Gateway 资源。
+卸载时会保留 Foretoken CRD、日志存储和复用的集群组件，并删除平台以及由命令行工具管理的监控或 Gateway 资源。
 
 ## 部署指南
 

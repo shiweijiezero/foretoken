@@ -76,6 +76,8 @@ observability:
   prometheus: ""
   # foretoken install manages Grafana access; omit anonymousAccess to retain its current setting.
   grafana: {}
+  # foretoken install manages persistent container logs; settings are optional overrides.
+  logs: {}
   notifications:
     # Alertmanager namespace; empty uses the Foretoken release namespace.
     namespace: ""
