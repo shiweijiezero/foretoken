@@ -37,7 +37,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "所选模型组中，最近一次指标抓取成功的端点数量。",
+      "description": "所选模型组和执行角色中，最近一次指标抓取成功的端点数量。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -49,13 +49,13 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "无数据"
+                  "text": "No data"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "无数据",
+          "noValue": "No data",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -130,13 +130,13 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "无数据"
+                  "text": "No data"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "无数据",
+          "noValue": "No data",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -208,13 +208,13 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "无数据"
+                  "text": "No data"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "无数据",
+          "noValue": "No data",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -285,13 +285,13 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "无数据"
+                  "text": "No data"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "无数据",
+          "noValue": "No data",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -551,7 +551,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "模型总计统计聚合执行或 Decode 阶段的请求结束次数；后端明细按所选执行阶段和结束原因展示。",
+      "description": "模型总计只统计一次聚合或 Decode 阶段的完成请求；后端曲线保留执行阶段和结束原因。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -719,7 +719,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "合并模型全部聚合执行和 Decode 阶段的请求样本后统计：从前端处理开始到生成完成的耗时，不含下游客户端接收时间；节点时钟须同步。",
+      "description": "从前端开始处理请求到生成完成的耗时，按模型统计，单位为秒。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -804,7 +804,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "合并模型全部聚合执行和 Decode 阶段的请求样本后统计：从前端处理开始到模型服务器收到首个 token 的耗时，不含下游客户端接收时间。",
+      "description": "从前端开始处理请求到首个输出 token 的耗时，按模型统计，单位为秒。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -889,7 +889,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "合并模型全部聚合执行和 Decode 阶段的请求直方图，计算整体 TPOT，单位毫秒；每个请求贡献一次平均输出 token 间隔。",
+      "description": "每个请求的平均输出 token 间隔，按模型统计分位数和均值，单位为毫秒。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -986,7 +986,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "模型全部聚合执行和 Decode 引擎的输出 token 间隔分布，单位毫秒；每个间隔贡献一次观测。",
+      "description": "聚合和 Decode 引擎的输出 token 间隔，单位为毫秒。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1273,7 +1273,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "各时间段内请求输入 token 数的分布。",
+      "description": "所选引擎每次请求的输入 token 数分布。",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1334,7 +1334,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "随时间变化的单请求输出 token 数分布。",
+      "description": "所选引擎每次请求的输出 token 数分布。",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1469,7 +1469,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个模型全部引擎的命中 token 总数除以查询 token 总数。本地与外部缓存分别统计，没有查询时不显示比例。",
+      "description": "模型整体命中 token 数除以查询 token 数；本地和外部缓存分开统计，没有查询时不显示比例。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1574,7 +1574,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "已挂载 RuntimeCache 文件系统的使用率；未配置 RuntimeCache 的模型组不会产生序列。",
+      "description": "各模型实例缓存文件系统的最高使用率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1635,7 +1635,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "使用 RuntimeCache 的模型服务器进程可用文件系统空间。",
+      "description": "各模型实例缓存文件系统的最少可用空间。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1707,7 +1707,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每块可关联到 Foretoken 的 GPU 使用率。",
+      "description": "所选模型所在 GPU 的使用率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1768,7 +1768,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每块可关联到 Foretoken 的 GPU 显存使用率。",
+      "description": "所选模型所在 GPU 的显存使用率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1969,136 +1969,122 @@
       "type": "timeseries"
     },
     {
-      "collapsed": true,
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所选模型所在 GPU 的功耗，单位为 W。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "watt"
+        },
+        "overrides": []
+      },
       "gridPos": {
-        "h": 1,
-        "w": 24,
+        "h": 8,
+        "w": 12,
         "x": 0,
         "y": 82
       },
-      "id": 0,
-      "panels": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "description": "每块可关联到 Foretoken 的 NVIDIA GPU 功耗。",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic-by-name"
-              },
-              "custom": {
-                "fillOpacity": 8,
-                "lineWidth": 2,
-                "pointSize": 8,
-                "showPoints": "never"
-              },
-              "unit": "watt"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 83
-          },
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "repeatDirection": "h",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
-              "instant": false,
-              "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
-              "range": true,
-              "refId": "A"
-            }
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
           ],
-          "title": "NVIDIA GPU 功耗",
-          "transparent": false,
-          "type": "timeseries"
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
         },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
         {
           "datasource": {
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "每块可关联到 Foretoken 的 NVIDIA GPU 温度。",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic-by-name"
-              },
-              "custom": {
-                "fillOpacity": 8,
-                "lineWidth": 2,
-                "pointSize": 8,
-                "showPoints": "never"
-              },
-              "unit": "celsius"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 83
-          },
-          "options": {
-            "legend": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "repeatDirection": "h",
-          "targets": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${DS_PROMETHEUS}"
-              },
-              "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
-              "instant": false,
-              "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
-              "range": true,
-              "refId": "A"
-            }
-          ],
-          "title": "NVIDIA GPU 温度",
-          "transparent": false,
-          "type": "timeseries"
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
         }
       ],
-      "title": "NVIDIA 功耗与温度",
-      "type": "row"
+      "title": "各设备 GPU 功耗",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所选模型所在 GPU 报告的温度；沐曦使用芯片热点测点。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 82
+      },
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "各设备 GPU 温度",
+      "transparent": false,
+      "type": "timeseries"
     },
     {
       "collapsed": false,
@@ -2106,7 +2092,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 91
+        "y": 90
       },
       "id": 0,
       "panels": [],
@@ -2118,7 +2104,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个模型及执行角色内，各后端获得的路由选择比例。一个后端对应一个模型实例和数据并行 rank，分母为该模型该角色的全部后端；表示选择次数，不是完成请求数。",
+      "description": "每个模型及执行角色内各后端的路由选择比例。一个后端对应一个模型实例和数据并行 rank，分母为该模型该角色的全部后端。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2140,7 +2126,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 92
+        "y": 91
       },
       "options": {
         "legend": {
@@ -2180,7 +2166,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "仅展示所选时间范围内发生过的路由结果，按选择阶段分组。",
+      "description": "所选时间范围内每秒路由选择次数，按阶段和结果分组。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2200,7 +2186,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 102
+        "y": 101
       },
       "options": {
         "legend": {
@@ -2240,7 +2226,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "从所选 Frontend 副本直方图桶聚合得到的 Filter、Scorer 与 Picker P99 执行时间。",
+      "description": "所选 Frontend 副本的 Filter、Scorer 和 Picker P99 耗时。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2260,7 +2246,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 102
+        "y": 101
       },
       "options": {
         "legend": {
@@ -2300,7 +2286,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "可用、过滤后和可选择候选项的平均数量；可选择数量包含数据并行 rank。",
+      "description": "每次路由选择中可用、筛选后和可选候选的平均数量；可选候选包含数据并行 rank。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2320,7 +2306,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 102
+        "y": 101
       },
       "options": {
         "legend": {
@@ -2361,7 +2347,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 110
+        "y": 109
       },
       "id": 0,
       "panels": [],
@@ -2385,13 +2371,13 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "无数据"
+                  "text": "No data"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "无数据",
+          "noValue": "No data",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2411,9 +2397,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
+        "w": 8,
         "x": 0,
-        "y": 111
+        "y": 110
       },
       "options": {
         "colorMode": "value",
@@ -2466,13 +2452,13 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "无数据"
+                  "text": "No data"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "无数据",
+          "noValue": "No data",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2488,9 +2474,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 6,
-        "y": 111
+        "w": 8,
+        "x": 8,
+        "y": 110
       },
       "options": {
         "colorMode": "value",
@@ -2531,7 +2517,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "开始时状态为 5xx 的 HTTP 响应占全部已开始响应的比例，不包含响应头发出后的流式失败。",
+      "description": "等待前端准入的请求数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2543,98 +2529,13 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "无数据"
+                  "text": "No data"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "无数据",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#0ca30c",
-                "value": null
-              },
-              {
-                "color": "#eda100",
-                "value": 0.01
-              },
-              {
-                "color": "#d03b3b",
-                "value": 0.05
-              }
-            ]
-          },
-          "unit": "percentunit"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 6,
-        "x": 12,
-        "y": 111
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ]
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "(sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\",status=\"5xx\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) or 0 * sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))) / (sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\")) > 0)",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "前端 HTTP 5xx 比例",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "前端 HTTP 5xx 比例",
-      "transparent": false,
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "正在等待 Frontend 准入到扩缩容目标的请求数。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "match": "null+nan",
-                "result": {
-                  "color": "#808080",
-                  "text": "无数据"
-                }
-              },
-              "type": "special"
-            }
-          ],
-          "noValue": "无数据",
+          "noValue": "No data",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2654,9 +2555,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 6,
-        "x": 18,
-        "y": 111
+        "w": 8,
+        "x": 16,
+        "y": 110
       },
       "options": {
         "colorMode": "value",
@@ -2764,9 +2665,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
+        "w": 12,
         "x": 0,
-        "y": 115
+        "y": 114
       },
       "options": {
         "legend": {
@@ -2828,9 +2729,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 6,
-        "y": 115
+        "w": 12,
+        "x": 12,
+        "y": 114
       },
       "options": {
         "legend": {
@@ -2870,7 +2771,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Frontend handler 生成 HTTP 响应头所需的秒数，不包含 SSE 正文传输，也不等同于 TTFT 或完整流持续时间。",
+      "description": "到 HTTP 响应头的时间，单位为秒；不包含 SSE 正文传输。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2935,9 +2836,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 12,
-        "y": 115
+        "w": 8,
+        "x": 0,
+        "y": 122
       },
       "options": {
         "legend": {
@@ -3050,9 +2951,9 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 18,
-        "y": 115
+        "w": 8,
+        "x": 8,
+        "y": 122
       },
       "options": {
         "legend": {
@@ -3112,8 +3013,8 @@
       "gridPos": {
         "h": 8,
         "w": 8,
-        "x": 0,
-        "y": 123
+        "x": 16,
+        "y": 122
       },
       "options": {
         "legend": {
@@ -3153,7 +3054,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 131
+        "y": 130
       },
       "id": 0,
       "panels": [
@@ -3162,7 +3063,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "每秒 controller-runtime 错误数；本分区独立于工作负载命名空间筛选器观察平台控制器。",
+          "description": "各控制器每秒协调错误数。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3182,7 +3083,7 @@
             "h": 8,
             "w": 8,
             "x": 0,
-            "y": 132
+            "y": 131
           },
           "options": {
             "legend": {
@@ -3213,7 +3114,7 @@
               "refId": "A"
             }
           ],
-          "title": "Reconcile 错误",
+          "title": "协调错误",
           "transparent": false,
           "type": "timeseries"
         },
@@ -3222,7 +3123,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "按控制器统计的 P99 Reconcile 耗时，属于控制面工作而非推理请求延迟。",
+          "description": "各控制器协调耗时的 P99。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3242,7 +3143,7 @@
             "h": 8,
             "w": 8,
             "x": 8,
-            "y": 132
+            "y": 131
           },
           "options": {
             "legend": {
@@ -3273,7 +3174,7 @@
               "refId": "A"
             }
           ],
-          "title": "Reconcile 延迟",
+          "title": "协调耗时",
           "transparent": false,
           "type": "timeseries"
         },
@@ -3282,7 +3183,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "description": "待处理的协调任务数，跨控制器副本去重。",
+          "description": "各控制器工作队列深度。",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3302,7 +3203,7 @@
             "h": 8,
             "w": 8,
             "x": 16,
-            "y": 132
+            "y": 131
           },
           "options": {
             "legend": {
@@ -3347,7 +3248,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 140
+        "y": 139
       },
       "id": 0,
       "panels": [],
@@ -3359,7 +3260,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "最新发布的建议值、调整后目标和已应用期望容量；建议值缺失表示决策算法未提供建议。",
+      "description": "已发布的建议值、调整后目标和已应用容量。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3379,7 +3280,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 141
+        "y": 140
       },
       "options": {
         "legend": {
@@ -3440,7 +3341,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "扩缩容器发布的 Ready 与可路由容量，并与已应用的期望副本数比较。",
+      "description": "已就绪、可路由与期望副本数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3460,7 +3361,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 141
+        "y": 140
       },
       "options": {
         "legend": {
@@ -3521,7 +3422,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "距最近一次观测和评估的时间；Reconcile 停止后该时长会继续增加。观测序列缺失表示尚未发布可用观测。",
+      "description": "距最近一次观测和评估的秒数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3541,7 +3442,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 141
+        "y": 140
       },
       "options": {
         "legend": {
@@ -3591,12 +3492,12 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "ModelService status 中当前的触发、决策与调整结果；原因是有限状态码，而不是日志文本。",
+      "description": "所选模型服务最近一次扩缩容评估的触发、决策和调整结果。",
       "gridPos": {
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 149
+        "y": 148
       },
       "options": {
         "cellHeight": "sm",
@@ -3715,7 +3616,7 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "includeAll": true,
-        "label": "Frontend 服务",
+        "label": "前端服务",
         "multi": true,
         "name": "frontend_service",
         "query": "label_values(foretoken:frontend_up:sum{namespace=~\"$namespace\"}, frontend_service)",

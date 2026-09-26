@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from benchmarks.config.benchmark import BenchmarkConfig
-from benchmarks.integrations.evalscope import run_evalscope_standard_load
+from benchmarks.integrations.evalscope.performance import run_evalscope_standard_load
 from benchmarks.model_service import ModelService
 from benchmarks.results.output import (
     BenchmarkRun,

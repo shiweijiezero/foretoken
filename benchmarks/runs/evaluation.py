@@ -37,6 +37,7 @@ def _execute(config: EvaluationConfig, service: ModelService, directory: Path) -
             "chat_url": service.chat_completions_url,
             "api_root": service.api_root,
             "headers": service.request_headers,
+            **({"tokenizer_identity": service.tokenizer_identity} if config.evaluator == "lm-eval" else {}),
         },
     }
     with (directory / "evaluator.log").open("w", encoding="utf-8") as log:

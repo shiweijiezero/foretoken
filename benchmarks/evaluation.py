@@ -8,8 +8,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import sys
 
-from benchmarks.config.evaluation import parse_evaluation_arguments
-from benchmarks.integrations.quality import native_arguments
+from benchmarks.config.evaluation import native_arguments, parse_evaluation_arguments
 from benchmarks.model_service import resolve_model_service
 from benchmarks.results.console import configure_logging
 from benchmarks.runs.evaluation import run_evaluation

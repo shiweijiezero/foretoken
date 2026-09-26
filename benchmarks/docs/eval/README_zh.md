@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文 · [评测与性能剖析](../../README_zh.md)
 
-使用 lm-evaluation-harness 或 EvalScope，为运行中的模型回答评分。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的框架运行。添加 `--reference` 可[比较参考与候选模型的概率分布](distribution-comparison_zh.md)，查看 KL、位宽对比图和 logit 差异。
+使用 lm-evaluation-harness 或 EvalScope 评测运行中的模型。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的框架运行。添加 `--reference` 可[比较参考与候选模型的概率分布](distribution-comparison_zh.md)，查看 KL、位宽对比图和 logit 差异。
 
 ## lm-evaluation-harness
 
@@ -27,7 +27,21 @@ foretoken eval examples/quickstart \
 - `--log_samples` 保存逐题输入和回答。
 - `--model_args num_concurrent=4` 同时发送四个 API 请求。
 
-连接信息由 Foretoken 提供。Chat Completions 接口适用于根据生成答案评分的任务；需要候选答案对数似然的任务应改用相应的生成式变体。
+### 候选答案似然与困惑度
+
+PIQA 通过比较候选答案的概率选择答案。WikiText 测量文本困惑度（PPL），数值越低，表示原文越容易被模型预测。这两类任务需要[源码安装的 Foretoken 平台](../../../docs/custom-deployment_zh.md)，或能返回输入 token 对数概率的已有 Completions 服务：
+
+```bash
+foretoken eval examples/quickstart \
+  --tasks piqa --limit 100 --output local
+
+foretoken eval examples/quickstart \
+  --tasks wikitext --limit 100 --output local
+```
+
+分词器从部署配置读取；使用已有 URL 时默认采用 `--model`。若模型名是服务别名，或文件仅在服务器可见，可用 `--model_args tokenizer=MODEL_OR_LOCAL_DIRECTORY` 指定实际模型仓库或客户端本地分词器目录。
+
+候选答案评分默认使用原始文本，任务要求指令模型模板时添加 `--apply_chat_template`。困惑度评测使用原始语料，不套用聊天模板。
 
 ## EvalScope
 
@@ -72,11 +86,11 @@ foretoken eval examples/quickstart \
 
 | 评测类型 | 复用的工作 |
 | --- | --- |
-| lm-evaluation-harness | 纯文本任务已完成的生成结果，包括多次采样；只补足尚未完成的次数 |
+| lm-evaluation-harness | 已完成的文本生成结果（包括多次采样），以及候选答案和困惑度任务已完成的似然评分窗口 |
 | EvalScope | 服务地址和评测设置不变时，复用独立样本已完成的预测和评分 |
 | 模型概率分布对比 | 已完成的评分窗口，见[恢复模型对比](distribution-comparison_zh.md#恢复模型对比) |
 
-按上述方式恢复时，使用 `--resume`，不再指定原生 `--use_cache` 或 `--use-cache`。性能测试、trace 回放、参数扫描和 SLO 搜索暂不支持此选项。
+按上述方式恢复时，使用 `--resume`，不再指定原生 `--use_cache` 或 `--use-cache`。
 
 ## 查看评分
 

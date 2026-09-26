@@ -85,10 +85,25 @@ class ModelService:
 
     @property
     def api_root(self) -> str:
-        """Return the OpenAI client base URL derived from the Chat Completions endpoint."""
+        """Return the OpenAI client base URL from either completion endpoint."""
         return self.chat_completions_url.rstrip("/").removesuffix(
             "/chat/completions"
-        )
+        ).removesuffix("/completions")
+
+    @property
+    def tokenizer_identity(self) -> tuple[str, str]:
+        """Return the selected model's source and tokenizer for client-side evaluation."""
+        if self.deployment is None:
+            return "hf", self.model
+        identities = {
+            (spec.get("source", "hf"), spec.get("tokenizer") or spec["model"])
+            for document in self.deployment.objects
+            if document["kind"] == "ModelService"
+            and (spec := document["spec"])["model"] == self.model
+        }
+        if len(identities) != 1:
+            raise ValueError("The deployment must select one model/tokenizer identity")
+        return identities.pop()
 
     @property
     def request_headers(self) -> dict[str, str]:

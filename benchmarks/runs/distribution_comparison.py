@@ -113,17 +113,7 @@ def _score_rows(points: list[dict[str, Any]], top_k: tuple[int, ...]) -> list[di
 
 def _reference_text_files(service: ModelService, override: str) -> tuple[str, str, str]:
     """Resolve the reference's tokenizer and output-head config independently on the client."""
-    source, tokenizer_id = "hf", service.model
-    if service.deployment is not None:
-        identities = {
-            (spec.get("source", "hf"), spec.get("tokenizer") or spec["model"])
-            for document in service.deployment.objects
-            if document["kind"] == "ModelService"
-            and (spec := document["spec"])["model"] == service.model
-        }
-        if len(identities) != 1:
-            raise ValueError("The reference deployment must select one model/tokenizer identity")
-        source, tokenizer_id = identities.pop()
+    source, tokenizer_id = service.tokenizer_identity
     if override:
         path = resolve_tokenizer_path(override, source="hf" if source == "local" else source)
         return path, path, override

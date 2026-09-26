@@ -881,17 +881,29 @@ groups:
               foretoken:accelerator_workload_labels
           )
 
-      # Power and temperature exist only for NVIDIA devices.
+      # Normalize vendor-specific power and temperature metrics. MetaX board power is
+      # exported in milliwatts; its hotspot temperature is reported in Celsius.
       - record: foretoken:accelerator_gpu_power_watts
         expr: |
           max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
-            label_replace(label_replace(label_replace(label_replace(label_replace(
-              DCGM_FI_DEV_POWER_USAGE,
-              "namespace", "$1", "exported_namespace", "(.+)"
-            ), "pod", "$1", "exported_pod", "(.+)"
-            ), "container", "$1", "exported_container", "(.+)"
-            ), "vendor", "nvidia", "__name__", ".*"
-            ), "device_id", "$1", "UUID", "(.+)"
+            (
+              label_replace(label_replace(label_replace(label_replace(label_replace(
+                DCGM_FI_DEV_POWER_USAGE,
+                "namespace", "$1", "exported_namespace", "(.+)"
+              ), "pod", "$1", "exported_pod", "(.+)"
+              ), "container", "$1", "exported_container", "(.+)"
+              ), "vendor", "nvidia", "__name__", ".*"
+              ), "device_id", "$1", "UUID", "(.+)"
+              )
+              or
+              label_replace(label_replace(label_replace(label_replace(label_replace(
+                mx_board_power / 1000,
+                "namespace", "$1", "exported_namespace", "(.+)"
+              ), "pod", "$1", "exported_pod", "(.+)"
+              ), "container", "$1", "exported_container", "(.+)"
+              ), "vendor", "metax", "__name__", ".*"
+              ), "device_id", "$1", "uuid", "(.+)"
+              )
             )
             * on (namespace, pod)
               group_left(uid, model_group, model_role, pd_pipeline_scope, node)
@@ -901,13 +913,24 @@ groups:
       - record: foretoken:accelerator_gpu_temperature_celsius
         expr: |
           max by (namespace, pod, container, model_group, model_role, pd_pipeline_scope, vendor, node, device_id) (
-            label_replace(label_replace(label_replace(label_replace(label_replace(
-              DCGM_FI_DEV_GPU_TEMP,
-              "namespace", "$1", "exported_namespace", "(.+)"
-            ), "pod", "$1", "exported_pod", "(.+)"
-            ), "container", "$1", "exported_container", "(.+)"
-            ), "vendor", "nvidia", "__name__", ".*"
-            ), "device_id", "$1", "UUID", "(.+)"
+            (
+              label_replace(label_replace(label_replace(label_replace(label_replace(
+                DCGM_FI_DEV_GPU_TEMP,
+                "namespace", "$1", "exported_namespace", "(.+)"
+              ), "pod", "$1", "exported_pod", "(.+)"
+              ), "container", "$1", "exported_container", "(.+)"
+              ), "vendor", "nvidia", "__name__", ".*"
+              ), "device_id", "$1", "UUID", "(.+)"
+              )
+              or
+              label_replace(label_replace(label_replace(label_replace(label_replace(
+                mx_chip_hotspot_temp,
+                "namespace", "$1", "exported_namespace", "(.+)"
+              ), "pod", "$1", "exported_pod", "(.+)"
+              ), "container", "$1", "exported_container", "(.+)"
+              ), "vendor", "metax", "__name__", ".*"
+              ), "device_id", "$1", "uuid", "(.+)"
+              )
             )
             * on (namespace, pod)
               group_left(uid, model_group, model_role, pd_pipeline_scope, node)

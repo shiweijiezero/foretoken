@@ -1,15 +1,26 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Retain individual lm-eval generations without collapsing repeated sampling requests."""
+"""Retain individual lm-eval generations and completed token-likelihood scores."""
 
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from contextlib import closing
 import json
 import sqlite3
 from pathlib import Path
 from typing import Any, NamedTuple
+
+
+def restore_progress(source: Path, native: Path) -> None:
+    """Back up completed responses into the new run without writing to the previous database."""
+    database = source / LmEvalResponses.filename
+    if not database.is_file():
+        raise ValueError("The previous lm-eval run has no saved evaluation progress")
+    with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as src:
+        with closing(sqlite3.connect(native.parent / LmEvalResponses.filename)) as dst:
+            src.backup(dst)
 
 
 class ResponseSlot(NamedTuple):
@@ -34,6 +45,9 @@ class LmEvalResponses:
                 CREATE TABLE IF NOT EXISTS responses (
                     request INTEGER NOT NULL, sample INTEGER NOT NULL, response TEXT NOT NULL,
                     PRIMARY KEY (request, sample)
+                );
+                CREATE TABLE IF NOT EXISTS likelihoods (
+                    request TEXT PRIMARY KEY, loglikelihood REAL NOT NULL, is_greedy INTEGER NOT NULL
                 );
             """)
         except BaseException:
@@ -82,12 +96,22 @@ class LmEvalResponses:
         ).fetchone()
         return None if row is None else row[0]
 
-    def add_partial(self, attr: str, req: Any, res: str) -> None:
-        """Commit one actual completion through lm-eval's callback, retaining identical answers.
+    def get_likelihood(self, request: str) -> tuple[float, bool] | None:
+        """Read a completed token-window score by its explicit request and scoring settings."""
+        row = self.connection.execute(
+            "SELECT loglikelihood, is_greedy FROM likelihoods WHERE request = ?", (request,),
+        ).fetchone()
+        return None if row is None else (row[0], bool(row[1]))
 
-        Concurrent calls carry their bound slot through upstream retries. Serial callbacks
-        claim in execution order; neither path assigns sample order by response latency.
+    def add_partial(self, attr: str, req: Any, res: Any) -> None:
+        """Commit native callbacks to independent likelihood scores or ordered generation slots.
+
+        Likelihood calls carry a normalized scoring key. Generations retain their sample
+        slot through retries; identical sampled answers remain separate completions.
         """
-        slot = req if isinstance(req, ResponseSlot) else self.claim(req)
         with self.connection:
-            self.connection.execute("INSERT INTO responses VALUES (?, ?, ?)", (*slot, res))
+            if attr == "loglikelihood":
+                self.connection.execute("INSERT INTO likelihoods VALUES (?, ?, ?)", (req, *res))
+            else:
+                slot = req if isinstance(req, ResponseSlot) else self.claim(req)
+                self.connection.execute("INSERT INTO responses VALUES (?, ?, ?)", (*slot, res))
