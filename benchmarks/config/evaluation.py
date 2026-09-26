@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from benchmarks.config.benchmark import (
     BenchmarkOutputConfig,
@@ -139,3 +140,48 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
             config.service.validate()
         config.outputs.validate()
     return config, options.help
+
+
+def native_arguments(evaluator: str, arguments: list[str]) -> argparse.Namespace:
+    """Parse framework options with its installed CLI, loading only the selected evaluator."""
+    parser = argparse.ArgumentParser(
+        prog=f"foretoken eval --evaluator {evaluator}", allow_abbrev=False
+    )
+    if evaluator == "lm-eval":
+        from lm_eval._cli.run import Run
+
+        commands = parser.add_subparsers()
+        Run.create(commands)
+        task_parser = commands.choices["run"]
+        task_parser.allow_abbrev = False
+        if arguments == ["--help"]:
+            task_parser.prog = parser.prog
+            task_parser.usage = "%(prog)s [PATH | --url URL] [options]"
+            task_parser.epilog = "Connection and result options are listed above; remaining options use native lm-eval syntax."
+            for action in task_parser._actions:
+                if action.dest in {"model", "output_path", "wandb_args", "wandb_config_args"}:
+                    action.help = argparse.SUPPRESS
+        return parser.parse_args(["run", *arguments])
+    from evalscope.arguments import add_argument
+
+    add_argument(parser)
+    if arguments == ["--help"]:
+        for action in parser._actions:
+            if action.dest in {"model", "api_url", "api_key", "work_dir", "eval_type", "eval_backend"}:
+                action.help = argparse.SUPPRESS
+    return parser.parse_args(arguments)
+
+
+def validate_model_transport(arguments: dict[str, Any]) -> None:
+    """Reject service credentials in native options before upstream logs or persists them."""
+    for field in ("api_key", "auth_token"):
+        if arguments.get(field):
+            raise ValueError(
+                f"Model argument {field} is reserved; supply authentication using `--api-key`"
+            )
+    for field in ("header", "default_headers"):
+        headers = arguments.get(field) or {}
+        if any(name.lower() in ("authorization", "proxy-authorization") for name in headers):
+            raise ValueError(
+                "Authorization headers are reserved; supply authentication using `--api-key`"
+            )

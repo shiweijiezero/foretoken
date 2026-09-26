@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md) · [Evaluation and profiling](../../README.md)
 
-Score answers from a running model with lm-evaluation-harness or EvalScope. Complete the [setup](../../README.md#get-started), then choose a framework below. Add `--reference` for [reference/candidate distribution comparisons](distribution-comparison.md), including KL, bit-width plots, and logit differences.
+Evaluate a running model with lm-evaluation-harness or EvalScope. Complete the [setup](../../README.md#get-started), then choose a framework below. Add `--reference` for [reference/candidate distribution comparisons](distribution-comparison.md), including KL, bit-width plots, and logit differences.
 
 ## lm-evaluation-harness
 
@@ -27,11 +27,9 @@ The summary lists task scores, answer filters, sample counts, and standard error
 - `--log_samples` saves individual inputs and answers.
 - `--model_args num_concurrent=4` selects four concurrent API requests.
 
-Foretoken selects Chat Completions for generated answers and Completions for likelihood requests from the task definition.
-
 ### Candidate likelihood and perplexity
 
-Select a task that scores candidate answers by their token probabilities, or measures perplexity on a text corpus. Use a [source-built Foretoken platform](../../../docs/custom-deployment.md), or an existing service that returns prompt-token log probabilities through Completions with `echo=true`:
+PIQA selects answers by comparing their probabilities. WikiText measures perplexity: lower values mean the model predicts the text more readily. These tasks need a [source-built Foretoken platform](../../../docs/custom-deployment.md) or an existing Completions service that returns input-token log probabilities:
 
 ```bash
 foretoken eval examples/quickstart \
@@ -43,7 +41,7 @@ foretoken eval examples/quickstart \
 
 The tokenizer is inferred from the deployment, or from `--model` for an existing URL; override it with `--model_args tokenizer=MODEL_OR_LOCAL_DIRECTORY` when the served name is an alias or its files are only available on the server.
 
-Candidate likelihood uses raw text by default; add `--apply_chat_template` when its evaluation protocol calls for an instruction-model template. Generation tasks retain chat messages, while perplexity always scores the original corpus, including when these tasks run together.
+Candidate scoring uses raw text by default. Add `--apply_chat_template` when the task requires an instruction-model template. Perplexity uses the original corpus without a chat template.
 
 ## EvalScope
 
@@ -88,11 +86,11 @@ The resumed invocation writes a new result directory, reuses completed work, and
 
 | Evaluation | Reused work |
 | --- | --- |
-| lm-evaluation-harness | Completed generations for text-only tasks, including repeated sampling; only missing generations are requested |
+| lm-evaluation-harness | Completed text generations, including repeated sampling, and completed likelihood-scoring windows for candidate answers and perplexity |
 | EvalScope | Completed predictions and reviews for independent samples, with the same service URL and evaluation settings |
 | Distribution comparison | Complete scoring windows; see [resuming a comparison](distribution-comparison.md#resume-a-comparison) |
 
-Use `--resume` instead of native `--use_cache` or `--use-cache` for this workflow. Likelihood and perplexity tasks, performance tests, trace replay, parameter sweeps, and SLO searches do not support this option.
+Use `--resume` instead of native `--use_cache` or `--use-cache` for this workflow.
 
 ## Read scores
 
