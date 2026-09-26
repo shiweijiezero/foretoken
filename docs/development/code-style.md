@@ -108,30 +108,11 @@ Follow the surrounding code and the executable checks for each subtree.
 
 Generated files must identify or have a documented source. Change the source and regenerate the artifact; do not maintain generated output as a second implementation.
 
-## Testing
+## Testing and continuous integration
 
-Do not add tests by default. Before writing test code, a human contributor must review its motivation and identify the important behavior or concrete regression it protects, why existing integration or end-to-end validation is insufficient, and why the maintenance cost is justified. If those questions have no clear answer, do not add the test.
+The repository-wide testing and CI rules are maintained in [Testing Guidelines](testing.md) and [CI Guidelines](ci.md). They define the key-feature scope, real execution and no-mock boundary, test addition and review steps, CI ownership, trigger selection, artifact validation, cleanup, and merge-gate decisions.
 
-Test code is maintained code and can expand quickly. Use the smallest set that protects behavior maintainers and users actually rely on.
-
-- Prefer end-to-end, integration, and cross-module contract tests that cover substantial real behavior.
-- Give every retained non-trivial test a descriptive name and a short preceding comment that states the protected contract, concrete failure, or reason the test exists. Document the structure of large fixtures and multi-stage scenarios.
-- Extend an existing scenario, fixture, or contract test before creating a new test module.
-- Add focused tests for important algorithms, concurrency, state transitions, recovery paths, or regressions that have occurred and can recur.
-- Test stable observable outcomes such as API responses, CRD status, protocol events, metrics, resource lifecycle, and generated deployment behavior.
-- Do not test plain getters, field forwarding, constant mappings, branch-free thin wrappers, framework wiring, or behavior already owned by an upstream library.
-- Do not add a test merely because a function, branch, loader, state machine, or public method was added. Complexity and coverage numbers are not sufficient reasons.
-- Do not expand a public API only to make private implementation details testable.
-
-When a change affects model quality, serving performance, GPU behavior, or distributed deployment, code tests do not replace the relevant measurement or end-to-end execution.
-
-## Continuous integration
-
-Do not add permanent CI jobs, workflows, matrices, or merge gates by default. Before adding CI, a human contributor must review its motivation and identify the currently reachable failure it protects, why existing checks or direct execution cannot expose that failure, and who will maintain its runtime cost and failures.
-
-CI configuration also expands quickly and duplicates setup, build, and deployment lifecycles easily. Prefer extending an existing job, reusing the repository's owning command, or running a focused check within the relevant workflow. Do not turn a temporary incident, one-time migration, or hypothetical future regression into permanent CI. If necessity and long-term ownership are unclear, do not add the check.
-
-New CI must report actionable failures, remain proportionate to the change risk, and avoid repeating behavior already protected by another job or upstream project.
+This guide only establishes the code-style boundary: tests and CI must have a current owner, reuse the product's existing lifecycle, and avoid duplicate implementations, private-helper checks, speculative matrices, and tests or jobs with no current consumer.
 
 ## Documentation
 

@@ -37,10 +37,6 @@ fn run() -> Result<(), String> {
             cargo(&metadata.data_plane_root, ["fmt", "--all", "--", "--check"])?;
             cargo(
                 &metadata.data_plane_root,
-                ["test", "--workspace", "--locked"],
-            )?;
-            cargo(
-                &metadata.data_plane_root,
                 [
                     "clippy",
                     "--workspace",

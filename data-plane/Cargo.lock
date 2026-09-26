@@ -1171,7 +1171,6 @@ dependencies = [
 name = "foretoken-backend-registry"
 version = "0.0.1"
 dependencies = [
- "axum",
  "foretoken-artifacts",
  "foretoken-engine-core-client",
  "foretoken-kv-indexer",
@@ -1181,7 +1180,6 @@ dependencies = [
  "futures",
  "reqwest 0.12.28",
  "serde",
- "serde_json",
  "thiserror 2.0.20",
  "tokio",
 ]
@@ -1225,15 +1223,12 @@ name = "foretoken-kv-indexer"
 version = "0.0.1"
 dependencies = [
  "async-trait",
- "axum",
  "base64 0.22.1",
- "blake3",
  "foretoken-model-protocol",
  "futures",
  "patricia_tree",
  "reqwest 0.12.28",
  "serde",
- "serde_json",
  "tokio",
  "tracing",
 ]
@@ -1244,8 +1239,6 @@ version = "0.0.1"
 dependencies = [
  "async-stream",
  "async-trait",
- "axum",
- "foretoken-engine-core-client",
  "foretoken-model-protocol",
  "foretoken-router",
  "futures",
@@ -1293,7 +1286,6 @@ dependencies = [
  "foretoken-artifacts",
  "foretoken-model-protocol",
  "futures",
- "http-body-util",
  "rmp-serde",
  "rmpv",
  "rustix",
@@ -1301,7 +1293,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
- "tower",
  "tracing",
  "uuid",
  "vllm-engine-core-client",
@@ -1333,7 +1324,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
- "tokio",
  "tracing",
  "vllm-llm",
 ]
@@ -1346,7 +1336,6 @@ dependencies = [
  "foretoken-backend-registry",
  "foretoken-kv-indexer",
  "foretoken-llm-facade",
- "foretoken-metrics",
  "foretoken-router",
  "foretoken-server",
  "foretoken-text",
@@ -1364,10 +1353,8 @@ dependencies = [
  "async-stream",
  "async-trait",
  "axum",
- "foretoken-backend-registry",
  "foretoken-chat",
  "foretoken-engine-core-client",
- "foretoken-kv-indexer",
  "foretoken-llm-facade",
  "foretoken-metrics",
  "foretoken-model-protocol",
@@ -1379,7 +1366,6 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
- "tower",
  "uuid",
  "vllm-llm",
 ]

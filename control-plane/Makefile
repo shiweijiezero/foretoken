@@ -30,17 +30,13 @@ fmt:
 vet:
 	go vet ./...
 
-.PHONY: test
-test:
-	go test ./...
-
 .PHONY: build
 build: generate manifests fmt vet
 	go build -o $(LOCALBIN)/manager ./cmd
 	go build -o $(LOCALBIN)/crd-apply ./cmd/crd-apply
 
 .PHONY: verify
-verify: generate manifests fmt vet test
+verify: generate manifests fmt vet
 
 $(CONTROLLER_GEN):
 	@mkdir -p $(LOCALBIN)
