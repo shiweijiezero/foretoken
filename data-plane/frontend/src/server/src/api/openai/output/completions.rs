@@ -330,7 +330,8 @@ pub(crate) async fn text_collected_many(
 }
 
 /// Streams each bounded `n` candidate in request order. This preserves stable choice indexes
-/// without exposing backend request identities or transfer parameters.
+/// without exposing backend request identities or transfer parameters. Any candidate failure
+/// terminates the response and drops the remaining candidates without publishing partial usage.
 pub(crate) fn text_stream_many(
     generated: Vec<Generated>,
     idle: Duration,
@@ -359,7 +360,7 @@ pub(crate) fn text_stream_many(
                     Ok(text) => text,
                     Err(_) => {
                         yield Ok::<_, Infallible>(Event::default().json_data(stream_backend_error()).unwrap());
-                        break;
+                        return;
                     }
                 }
             } else {
@@ -374,7 +375,7 @@ pub(crate) fn text_stream_many(
                             let logprobs = if options.expose_logprobs {
                                 let Some(prompt) = prompt_logprobs else {
                                     yield Ok(Event::default().json_data(stream_backend_error()).unwrap());
-                                    break;
+                                    return;
                                 };
                                 match completion_prompt_logprobs(
                                     &ids, prompt, &tokenizer, options.return_tokens_as_token_ids,
@@ -382,7 +383,7 @@ pub(crate) fn text_stream_many(
                                     Ok(logprobs) => Some(logprobs),
                                     Err(_) => {
                                         yield Ok(Event::default().json_data(stream_backend_error()).unwrap());
-                                        break;
+                                        return;
                                     }
                                 }
                             } else {
@@ -414,7 +415,7 @@ pub(crate) fn text_stream_many(
                         if let Some(finished) = finished {
                             let Ok(finish_reason) = completion_finish_reason(&finished.finish_reason) else {
                                 yield Ok(Event::default().json_data(stream_backend_error()).unwrap());
-                                break;
+                                return;
                             };
                             total_prompt_tokens += finished.usage.prompt_token_count;
                             total_completion_tokens += finished.usage.output_token_count;
@@ -427,7 +428,7 @@ pub(crate) fn text_stream_many(
                             break;
                         }
                     }
-                    Err(_) => { yield Ok(Event::default().json_data(stream_backend_error()).unwrap()); break; }
+                    Err(_) => { yield Ok(Event::default().json_data(stream_backend_error()).unwrap()); return; }
                 }
             }
         }
