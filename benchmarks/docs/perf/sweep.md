@@ -38,13 +38,13 @@ foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-mode
   --temperature 0 --experiment-name methods --output local,wandb,plot
 ```
 
-Service paths are relative to the sweep file. An endpoint choice uses `name`, `url`, and `model`; `health_url` is optional. Authentication uses the command's `--api-key`.
+Service paths are relative to the repository root. An endpoint choice uses `name`, `url`, and `model`; `health_url` is optional. Authentication uses the command's `--api-key`.
 
 All points for one method run before the next method starts. Temporary deployments are removed between methods; existing services are reused unchanged. To measure a changed configuration on an existing service, apply it with `foretoken deploy` first.
 
 ## Read results and redraw
 
-The result directory contains `sweep_summary.csv`, individual run directories, and `plots/` with PDF, SVG, PNG, CSV, and LaTeX exports. Statistics retain each metric's sample count; error bars show the sample standard deviation across runs, including for per-run percentiles. A single repetition has no error estimate.
+The result directory contains `sweep_summary.csv`, individual run directories, and `plots/` with PDF, SVG, PNG, and CSV exports. Statistics retain each metric's sample count; error bars show the sample standard deviation across runs, including for per-run percentiles. A single repetition has no error estimate.
 
 W&B groups the individual runs and adds a comparison run with the same summary data and curves. With `plot` selected, it also receives the exported figures and tables.
 

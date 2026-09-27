@@ -38,13 +38,13 @@ foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-mode
   --temperature 0 --experiment-name methods --output local,wandb,plot
 ```
 
-服务路径相对于 sweep 文件解析。已有端点使用 `name`、`url`、`model`，可选 `health_url`；认证使用命令的 `--api-key`。
+服务路径相对于仓库根目录解析。已有端点使用 `name`、`url`、`model`，可选 `health_url`；认证使用命令的 `--api-key`。
 
 一个方法的全部参数点执行完毕后，再运行下一方法。临时部署在方法切换时删除；已有服务原样复用。修改已有服务的配置后，先用 `foretoken deploy` 应用，再评测。
 
 ## 查看结果与重新绘图
 
-结果目录包含 `sweep_summary.csv`、各次运行目录，以及 `plots/` 下的 PDF、SVG、PNG、CSV 和 LaTeX 文件。统计保留每个指标的有效样本数；误差线表示各轮结果的样本标准差，分位数指标也先逐轮计算、再汇总。只有一轮时不估计误差。
+结果目录包含 `sweep_summary.csv`、各次运行目录，以及 `plots/` 下的 PDF、SVG、PNG 和 CSV 文件。统计保留每个指标的有效样本数；误差线表示各轮结果的样本标准差，分位数指标也先逐轮计算、再汇总。只有一轮时不估计误差。
 
 W&B 将各次运行放在同一 group，并添加使用相同汇总数据与曲线的对比运行。选择 `plot` 时，也会上传导出的图表文件。
 

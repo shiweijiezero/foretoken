@@ -55,7 +55,7 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | Omit `--output` or use `local,wandb` | Print results, save local files, and upload to W&B |
 | `local` | Print results and save local files |
 | `wandb` | Print results and upload to W&B |
-| `plot` | Retain results and export PDF, SVG, PNG, CSV, and LaTeX |
+| `plot` | Retain results and export PDF, SVG, PNG, and CSV |
 | `local,wandb,plot` | Save results, export figures, and upload to W&B |
 | `local,quiet` | Save local files without console summaries |
 | `local,wandb,quiet` | Save and upload results without console summaries |

@@ -55,7 +55,7 @@ foretoken eval examples/quickstart \
 | 不传 `--output`，或使用 `local,wandb` | 打印结果、保存本地文件并上传 W&B |
 | `local` | 打印结果并保存本地文件 |
 | `wandb` | 打印结果并上传 W&B |
-| `plot` | 保存结果并导出 PDF、SVG、PNG、CSV 和 LaTeX |
+| `plot` | 保存结果并导出 PDF、SVG、PNG 和 CSV |
 | `local,wandb,plot` | 保存结果、导出图表，并上传 W&B |
 | `local,quiet` | 保存本地文件，不打印控制台汇总 |
 | `local,wandb,quiet` | 保存并上传结果，不打印控制台汇总 |

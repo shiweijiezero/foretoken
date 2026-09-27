@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-{"_benchmark_name":"short","service":[{"name":"BF16","path":"../../../examples/quantized-model/bf16"},{"name":"4-bit","path":"../../../examples/quantized-model/bitsandbytes"}],"min_prompt_length":128,"max_prompt_length":128,"min_output_length":128,"max_output_length":128,"max_concurrency":[1,4,8]}
+{"_benchmark_name":"quantization-comparison","service":[{"name":"BF16","path":"../../../examples/quantized-model/bf16"},{"name":"4-bit","path":"../../../examples/quantized-model/bitsandbytes"}],"min_prompt_length":128,"max_prompt_length":128,"min_output_length":128,"max_output_length":128,"max_concurrency":[1,4,8]}

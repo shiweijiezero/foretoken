@@ -41,13 +41,8 @@ _STYLES = ("-", "--", "-.", ":")
 _FORMATS = ("pdf", "svg", "png")
 
 
-def _table(
-    path: Path,
-    rows: list[dict[str, Any]],
-    *,
-    latex_columns: dict[str, str] | None = None,
-) -> tuple[Path, Path]:
-    """Export every original data field along with plot coordinates and uncertainty."""
+def _table(path: Path, rows: list[dict[str, Any]]) -> Path:
+    """Export complete scalar and structured table records as CSV."""
     columns = list(dict.fromkeys(key for row in rows for key in row))
     csv_path = path.with_name(path.name + ".csv")
     with csv_path.open("w", encoding="utf-8", newline="") as stream:
@@ -62,44 +57,7 @@ def _table(
             }
             for row in rows
         )
-    tex_path = path.with_name(path.name + ".tex")
-    # CSV keeps complete records; callers select the columns useful in a paper table.
-    labels = latex_columns or {
-        key: key.replace("_", " ")
-        for key in columns
-        if all(not isinstance(row.get(key), (dict, list, tuple)) for row in rows)
-    }
-    table_columns = [key for key in labels if key in columns]
-
-    def escape(value: Any) -> str:
-        if value is None or isinstance(value, float) and not math.isfinite(value):
-            return "--"
-        text = f"{value:.5g}" if isinstance(value, float) else str(value)
-        replacements = {
-            "\\": r"\textbackslash{}",
-            "~": r"\textasciitilde{}",
-            "^": r"\textasciicircum{}",
-        }
-        return "".join(
-            replacements.get(char, "\\" + char if char in "&%$#_{}" else char)
-            for char in text
-        )
-
-    with tex_path.open("w", encoding="utf-8") as stream:
-        if not table_columns:
-            stream.write("% No measurements.\n")
-            return csv_path, tex_path
-        stream.write("\\begin{tabular}{" + "l" * len(table_columns) + "}\n\\hline\n")
-        stream.write(
-            " & ".join(escape(labels[key]) for key in table_columns)
-            + " \\\\\n\\hline\n"
-        )
-        for row in rows:
-            stream.write(
-                " & ".join(escape(row.get(key)) for key in table_columns) + " \\\\\n"
-            )
-        stream.write("\\hline\n\\end{tabular}\n")
-    return csv_path, tex_path
+    return csv_path
 
 
 def _style(axis: Any, title: str, xlabel: str, ylabel: str) -> None:
@@ -273,20 +231,8 @@ def _charts(
                             **record,
                         }
                     )
-            for file in _table(
-                path,
-                rows,
-                latex_columns={
-                    "series": "Series",
-                    "x_label": chart.xlabel,
-                    "y": chart.ylabel,
-                    "error": "Error",
-                    "error_type": "Error type",
-                    "samples": "Samples",
-                    "failed_runs": "Failed runs",
-                },
-            ):
-                exported[file.name] = file
+            file = _table(path, rows)
+            exported[file.name] = file
     return exported
 
 
@@ -445,19 +391,8 @@ def _pareto(
                 axis.legend(fontsize=8, frameon=False)
             for extension, file in _save(figure, path).items():
                 exported[f"{base}.{extension}"] = file
-            for file in _table(
-                path,
-                plotted,
-                latex_columns={
-                    "method": "Method",
-                    "max_concurrency": "Concurrency",
-                    "per_user_tokens_per_second": "Output tok/s/user",
-                    "per_gpu_tokens_per_second": "Output tok/s/GPU",
-                    "per_user_stddev": "SD/user",
-                    "per_gpu_stddev": "SD/GPU",
-                },
-            ):
-                exported[file.name] = file
+            file = _table(path, plotted)
+            exported[file.name] = file
     return exported
 
 
@@ -510,27 +445,15 @@ def render_results(
                 if (not methods or _method(row) in methods)
                 and (not metrics or row["metric"] in metrics)
             ]
-            for file in _table(
-                out / "sweep-summary",
-                selected_summary,
-                latex_columns={
-                    "method": "Method",
-                    "combination": "Configuration",
-                    "metric": "Metric",
-                    "mean": "Mean",
-                    "stddev": "SD",
-                    "samples": "Runs",
-                    "failed_runs": "Failed runs",
-                },
-            ):
-                result[file.name] = file
+            file = _table(out / "sweep-summary", selected_summary)
+            result[file.name] = file
     elif (source / "slo_results.json").is_file():
         search = json.loads((source / "slo_results.json").read_text(encoding="utf-8"))
         charts = _slo_charts(search)
         out.mkdir(parents=True, exist_ok=True)
         result = {}
-        for file in _table(out / "slo-probes", search["probes"]):
-            result[file.name] = file
+        file = _table(out / "slo-probes", search["probes"])
+        result[file.name] = file
     elif (source / "metrics.json").is_file():
         run_metrics = json.loads((source / "metrics.json").read_text(encoding="utf-8"))
         if "distribution_comparison" in run_metrics:
@@ -567,28 +490,16 @@ def render_results(
         out.mkdir(parents=True, exist_ok=True)
         result = {}
         if "scores" in run_metrics:
-            for file in _table(
-                out / "quality-scores",
-                run_metrics["scores"],
-                latex_columns={
-                    "task": "Task",
-                    "subset": "Subset",
-                    "filter": "Filter",
-                    "metric": "Metric",
-                    "value": "Value",
-                    "stderr": "SE",
-                    "samples": "Samples",
-                },
-            ):
-                result[file.name] = file
+            file = _table(out / "quality-scores", run_metrics["scores"])
+            result[file.name] = file
         if "distribution_comparison" in run_metrics:
             comparison = run_metrics["distribution_comparison"]
             for name, rows in (
                 ("distribution-candidates", comparison["candidates"]),
                 ("distribution-positions", comparison["positions"]),
             ):
-                for file in _table(out / name, rows):
-                    result[file.name] = file
+                file = _table(out / name, rows)
+                result[file.name] = file
     else:
         raise FileNotFoundError(f"No saved metrics or sweep results in {source}")
     if not points_path.is_file():

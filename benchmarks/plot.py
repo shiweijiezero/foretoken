@@ -14,7 +14,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     """Parse the standalone plotting command and report the exported figure directory."""
     parser = argparse.ArgumentParser(
         prog="foretoken plot",
-        description="Export PDF, SVG, PNG, CSV, and LaTeX from a saved run or sweep.",
+        description="Export PDF, SVG, PNG, and CSV from a saved run or sweep.",
     )
     parser.add_argument(
         "source", type=Path, metavar="RESULT_DIR", help="Saved run or sweep directory"

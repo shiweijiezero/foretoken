@@ -127,7 +127,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
             choice = point["service"]
             path = choice.get("path", "")
             if path:
-                path = str(Path(config.sweep.path).expanduser().parent / Path(path).expanduser())
+                path = str((Path.cwd() / Path(path).expanduser()).resolve())
             updated = replace(updated, service=replace(
                 config.service, name=choice["name"], kustomize_path=path,
                 url=choice.get("url", ""), model=choice.get("model", config.service.model),
