@@ -141,9 +141,9 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 使用 `foretoken perf` 测量响应延迟、请求吞吐量和 token 生成速度。传入 Kustomize 目录，或用 `--url` 和 `--model` 指定已有服务。各类负载见[性能评测示例](../benchmarks/docs/perf/README_zh.md)。
 
-## 质量评测：回答评分与模型对比
+## 质量评测：文本、视频与模型对比
 
-使用 `foretoken eval`，通过 lm-evaluation-harness 或 EvalScope 为模型回答评分。服务选择方式与性能评测相同，任务和判分参数采用所选框架的写法。具体命令见[质量评测](../benchmarks/docs/eval/README_zh.md)。添加 `--reference` 可[比较候选与参考模型的概率分布](../benchmarks/docs/eval/distribution-comparison_zh.md)。
+使用 `foretoken eval`，通过 lm-evaluation-harness 或 EvalScope 为模型回答评分；使用 `foretoken eval video`，通过 VBench `custom_input` 为已有视频评分。文本评测沿用服务选择参数，视频评测接收视频目录和独立的 VBench 环境。具体命令见[质量评测](../benchmarks/docs/eval/README_zh.md)。添加 `--reference` 可[比较候选与参考模型的概率分布](../benchmarks/docs/eval/distribution-comparison_zh.md)。
 
 ## 性能剖析：执行瓶颈
 

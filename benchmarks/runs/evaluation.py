@@ -8,8 +8,6 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-import signal
-import subprocess
 import sys
 import time
 from typing import Any
@@ -18,6 +16,7 @@ from benchmarks.config.evaluation import EvaluationConfig
 from benchmarks.model_service import ModelService
 from benchmarks.results.evaluation import evaluation_sinks, read_quality_metrics
 from benchmarks.results.output import BenchmarkRun, ResultOutputs
+from benchmarks.runs.native import run_logged_process
 
 logger = logging.getLogger(__name__)
 
@@ -40,38 +39,19 @@ def _execute(config: EvaluationConfig, service: ModelService, directory: Path) -
             **({"tokenizer_identity": service.tokenizer_identity} if config.evaluator == "lm-eval" else {}),
         },
     }
-    with (directory / "evaluator.log").open("w", encoding="utf-8") as log:
-        # Keep the caller's cwd: upstream config, cache and task paths remain relative to it.
-        with subprocess.Popen(
-            [sys.executable, "-u", "-m", "benchmarks.integrations.quality"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-        ) as process:
-            try:
-                process.stdin.write(json.dumps(payload))
-                process.stdin.close()
-                for line in process.stdout:
-                    if service.api_key and service.api_key != "EMPTY":
-                        line = line.replace(service.api_key, "[redacted]")
-                    log.write(line)
-                    log.flush()
-                    if not config.outputs.includes("quiet"):
-                        print(line, end="", flush=True)
-                return process.wait()
-            except BaseException:
-                if process.poll() is None:
-                    process.send_signal(signal.SIGINT)
-                    try:
-                        process.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait()
-                raise
+    # Keep the caller's cwd: upstream config, cache and task paths remain relative to it.
+    redactions = (
+        (service.api_key,)
+        if service.api_key and service.api_key != "EMPTY"
+        else ()
+    )
+    return run_logged_process(
+        [sys.executable, "-u", "-m", "benchmarks.integrations.quality"],
+        directory / "evaluator.log",
+        quiet=config.outputs.includes("quiet"),
+        stdin_text=json.dumps(payload),
+        redactions=redactions,
+    )
 
 
 def run_evaluation(config: EvaluationConfig, service: ModelService) -> None:

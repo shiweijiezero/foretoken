@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文 · [评测与性能剖析](../../README_zh.md)
 
-使用 lm-evaluation-harness 或 EvalScope 评测运行中的模型。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的框架运行。添加 `--reference` 可[比较参考与候选模型的概率分布](distribution-comparison_zh.md)，查看 KL、位宽对比图和 logit 差异。
+使用 lm-evaluation-harness 或 EvalScope 评测生成文本，使用 VBench 评测生成视频。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的评测器运行。添加 `--reference` 可[比较参考与候选模型的概率分布](distribution-comparison_zh.md)，查看 KL、位宽对比图和 logit 差异。
 
 ## lm-evaluation-harness
 
@@ -56,6 +56,41 @@ foretoken eval examples/quickstart \
 汇总结果展示任务得分和已完成评分的样本数，各类别和子集的详细分数保存在报告与 W&B 中。通过 [EvalScope 原生参数](https://evalscope.readthedocs.io/zh-cn/latest/get_started/basic_usage.html)配置任务，例如 `--dataset-args` 和 `--generation-config`。
 
 两个框架都可去掉 `--limit`，运行完整的所选任务。提示词和判分规则由框架及任务定义。全部选项分别见 `foretoken eval --evaluator lm-eval --help` 和 `foretoken eval --evaluator evalscope --help`。
+
+## VBench custom_input 模式
+
+自动安装适用于 Linux x86_64、支持 CUDA 12.1 的 NVIDIA 驱动。先激活 Conda，准备好 `git`、`wget` 和 `unzip`，然后在项目目录执行一次初始化，即可评测已有 MP4 或 GIF 视频：
+
+```bash
+foretoken eval setup vbench
+foretoken eval video results/video-run \
+  --evaluator vbench \
+  --output local,wandb
+```
+
+setup 在 YAML 所在目录的 `.foretoken/evaluators/vbench` 下创建独立 Python 3.10 Conda 环境、经过验证的 VBench 源码和权重缓存，使用 CUDA 12.1 的 PyTorch 2.5.1 / torchvision 0.20.1，准备全部 10 个 custom_input 维度，但不运行 GPU 评测。它不会修改 Foretoken 的 Python 依赖。安装和下载需要联网及数 GB 磁盘空间；上游下载涉及 Hugging Face 等多个站点，不能仅靠 HF 镜像覆盖所有来源。
+
+准备成功后，setup 自动写入 `foretoken-evaluators.yaml`，之后评测直接复用，不安装依赖。两个命令都会从当前目录向上查找最近的配置；找不到时，setup 在当前目录生成文件。通过 `--config PATH` 指定其他 YAML，setup 的 `--directory PATH` 可以调整托管安装位置。失败时不会发布新的 YAML，保留安装文件，解决报错后重试即可。权重准备日志保存在托管目录的 `setup.log`。
+
+如果视频目录是 Foretoken `perf video` 的结果目录，命令会自动从 `raw_results.json` 读取每个视频的准确提示词。对于其他视频目录，VBench 会从文件名推断提示词，也可以通过 `--prompt-file` 传入 VBench JSON 映射。使用 `--dimension NAME [NAME ...]` 选择部分维度；默认运行 `custom_input` 支持的全部 10 个维度。该模式只评测已有视频，不会重新生成视频。
+
+新评测结果的 `config.json` 会记录 VBench Python、源码目录、Git commit、所选维度、提示词来源和视频数量。VBench 目录不是 Git 检出时，`vbench_commit` 为 `null`。Foretoken 视频生成阶段已在源目录保存自己的 `config.json` 和 `raw_results.json`。
+
+### 使用自行安装的环境
+
+如果已经安装 VBench，或自动安装不适合当前平台、网络，可以按[上游安装说明](https://github.com/Vchitect/VBench#installation)自行安装，手写下面的 YAML，将示例路径替换为实际路径：
+
+```yaml
+evaluators:
+  vbench:
+    python: /path/to/vbench-env/bin/python
+    root: /path/to/VBench
+    cache: /path/to/vbench-cache
+```
+
+随后直接运行 `foretoken eval video`，无需 setup。已有这份 YAML 时运行 setup，只检查指定的安装并准备缺失权重，不重新安装依赖，也不改写 VBench 配置。已有配置有误时需要自行修正。setup 新增 VBench 配置时会保留其他评测器的设置。
+
+VBench 使用配置的独立 Python 环境运行；`root` 包含 `evaluate.py`，`cache` 是已存在的权重目录。`cache` 可以省略，此时使用 VBench 默认缓存。YAML 中的相对路径以配置文件所在目录为基准。`--vbench-python`、`--vbench-root` 和 `--vbench-cache` 分别覆盖 YAML 中的路径；评测过程中，VBench 仍可能下载缺少的权重。
 
 ## 评测已有服务
 

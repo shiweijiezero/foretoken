@@ -2,7 +2,7 @@
 
 [English](README.md) | 简体中文
 
-用 `foretoken perf` 测量服务延迟和吞吐量，用 `foretoken eval` 评估回答质量，通过性能剖析定位执行瓶颈。
+用 `foretoken perf` 测量服务延迟和吞吐量，用 `foretoken eval` 评估生成文本或视频的质量，通过性能剖析定位执行瓶颈。
 
 ## 开始使用
 
@@ -40,7 +40,7 @@ foretoken eval examples/quickstart \
   --tasks gsm8k --limit 100 --output local,wandb
 ```
 
-该命令对 100 道 GSM8K 数学题评分，输出任务指标和样本数。[质量评测](docs/eval/README_zh.md)介绍 lm-evaluation-harness 和 EvalScope。添加 `--reference` 可[比较参考与候选模型的概率分布](docs/eval/distribution-comparison_zh.md)。
+该命令对 100 道 GSM8K 数学题评分，输出任务指标和样本数。`foretoken eval video` 使用 VBench `custom_input` 为已有视频评分。[质量评测](docs/eval/README_zh.md)介绍评测器的输入和评分报告。添加 `--reference` 可[比较参考与候选模型的概率分布](docs/eval/distribution-comparison_zh.md)。
 
 ## 剖析执行过程
 
