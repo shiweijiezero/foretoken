@@ -82,9 +82,14 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
 
 
 def _service_choice(value: Any) -> dict[str, str]:
-    """Parse one named service choice; credentials remain on the command line."""
+    """Normalize a Kustomize path or named endpoint choice for one sweep method."""
+    if isinstance(value, str):
+        path = value.strip()
+        if not path:
+            raise ValueError("sweep service paths cannot be empty")
+        return {"name": Path(path).name, "path": path}
     if not isinstance(value, dict):
-        raise ValueError("sweep service must be an object with name and path or url")
+        raise ValueError("sweep service must be a path or an object with name and path or url")
     unknown = set(value) - {"name", "path", "url", "model", "health_url"}
     if unknown:
         raise ValueError("Unsupported sweep service fields: " + ", ".join(sorted(unknown)))
@@ -124,7 +129,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
                 **{section: replace(getattr(updated, section), **updates)},
             )
         if "service" in point:
-            choice = point["service"]
+            choice = _service_choice(point["service"])
             path = choice.get("path", "")
             if path:
                 path = str((Path.cwd() / Path(path).expanduser()).resolve())
@@ -201,7 +206,18 @@ class ParameterSweepBenchmark:
         with ExitStack() as resources:
             adapter = _HttpSweepAdapter(resources)
             definition = SweepDefinition(sweep.path, sweep.num_runs, sweep.experiment_name)
-            combinations = load_core_sweep_points(definition, adapter)
+            if sweep.path:
+                combinations = load_core_sweep_points(definition, adapter)
+            else:
+                definition = SweepDefinition("", 1, sweep.experiment_name or "service-comparison")
+                combinations = [
+                    {
+                        _BENCHMARK_NAME: f"service-{choice['name']}",
+                        _PARAMETER_GROUP: "service-comparison",
+                        "service": choice,
+                    }
+                    for choice in self.benchmark.service_choices
+                ]
             # Complete all workloads for a method before releasing its temporary service.
             methods: dict[str, ModelServiceSource] = {}
             for point in combinations:

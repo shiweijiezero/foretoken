@@ -29,7 +29,7 @@ from benchmarks.config.benchmark import (
 from benchmarks.model_service import ModelService
 from benchmarks.results.console import capture_run_logs, log_benchmark_summary
 from benchmarks.results.environment import client_environment, serving_environment
-from benchmarks.results.metrics import RequestMeasurement
+from benchmarks.results.metrics import RequestMeasurement, summarize_measurements
 from benchmarks.results.prometheus import PrometheusObserver
 from benchmarks.results.replicas import KubernetesReplicaObserver
 from benchmarks.results.wandb import publish_http_wandb
@@ -269,6 +269,28 @@ class WandbSink:
             raise RuntimeError("W&B sink is not open")
         try:
             self.publisher(self._run, run)
+            if "warmup_metrics" in run.artifacts:
+                warmup = json.loads(run.artifacts["warmup_metrics"].read_text(encoding="utf-8"))
+                comparison = []
+                if "latency" in run.metrics:
+                    for key, unit in (("latency", "s"), ("ttft", "s"), ("tpot", "s")):
+                        for statistic in ("mean", "p50", "p95", "p99"):
+                            comparison.append([f"{key} {statistic} ({unit})", warmup[key][statistic], run.metrics[key][statistic]])
+                    comparison.append(["Request throughput (req/s)", warmup["throughput"]["requests_per_second"], run.metrics["throughput"]["requests_per_second"]])
+                else:
+                    for key in ("e2e_s", "queue_wait_s", "server_generation_s"):
+                        comparison.append([f"{key} (s)", warmup.get(key), run.metrics.get(key)])
+                comparison.extend((
+                    ["Requests", warmup["request_num"], run.metrics["request_num"]],
+                    ["Success rate (%)", warmup["success_rate"] * 100, run.metrics["success_rate"] * 100],
+                ))
+                self._run.log({"Phases/Warmup vs measurement": wandb.Table(
+                    columns=["Metric", "Warmup", "Measurement"], data=comparison,
+                )})
+                artifact = wandb.Artifact(f"warmup-{self._run.id}", type="benchmark-warmup")
+                for name in ("warmup_metrics", "warmup_raw_output"):
+                    artifact.add_file(str(run.artifacts[name]), name=run.artifacts[name].name)
+                self._run.log_artifact(artifact)
             if "plots" in run.artifacts:
                 directory = run.artifacts["plots"]
                 artifact = wandb.Artifact(f"plots-{self._run.id}", type="benchmark-plots")
@@ -633,8 +655,37 @@ class ResultOutputs:
             self._prometheus_observer = None
             self._exit_code = 0
 
+    def record_warmup(self, rows: list[dict[str, Any]], metrics: dict[str, Any]) -> None:
+        """Persist the completed warmup before measurement or a warmup failure."""
+        write_json(self.execution_dir, "warmup_raw_output.json", rows)
+        write_json(self.execution_dir, "warmup_metrics.json", metrics)
+
+    def record_http_warmup(
+        self,
+        measurements: list[RequestMeasurement],
+        *,
+        duration: float,
+        stream: bool,
+        arrival_rate: float,
+        concurrency: int,
+    ) -> None:
+        """Summarize and serialize HTTP warmup on its own clock, apart from measured results."""
+        metrics = summarize_measurements(
+            measurements, total_time=duration, stream=stream,
+            arrival_rate=arrival_rate, request_count=len(measurements),
+            reported_concurrency=concurrency, gpu_count=None,
+            include_normalized_throughput=False,
+        )
+        self.record_warmup(
+            [request_measurement_record(item, stream=stream) for item in measurements], metrics,
+        )
+
     def publish(self, run: BenchmarkRun) -> None:
         """Stop observations, record the run status, and publish every open sink."""
+        for name in ("warmup_raw_output", "warmup_metrics"):
+            path = Path(self.execution_dir) / f"{name}.json"
+            if path.is_file():
+                run.artifacts[name] = path
         if run.exit_code is not None:
             self._exit_code = run.exit_code
         elif int(run.metrics["success_num"]) == 0:

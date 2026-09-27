@@ -20,7 +20,8 @@ from benchmarks.results.plots.data import Chart, Series, _method, _numeric, swee
 from benchmarks.results.plots.measurements import (
     _http_charts,
     _prometheus_charts,
-    _video_charts,
+    _video_phase_charts,
+    phase_summary_charts,
     _quality_charts,
     _distribution_charts,
     _slo_charts,
@@ -456,6 +457,8 @@ def render_results(
         result[file.name] = file
     elif (source / "metrics.json").is_file():
         run_metrics = json.loads((source / "metrics.json").read_text(encoding="utf-8"))
+        warmup_metrics_path = source / "warmup_metrics.json"
+        warmup_metrics = json.loads(warmup_metrics_path.read_text(encoding="utf-8")) if warmup_metrics_path.is_file() else None
         if "distribution_comparison" in run_metrics:
             comparison = run_metrics["distribution_comparison"]
             identities = list(
@@ -484,9 +487,15 @@ def render_results(
             config.get("mode") == "video_generation"
             or (source / "raw_results.json").is_file()
         ):
-            charts = _video_charts(source, run_metrics)
+            charts = _video_phase_charts(source, run_metrics)
+            if warmup_metrics is not None:
+                charts += phase_summary_charts(run_metrics, warmup_metrics)
         else:
-            charts = _http_charts(source, run_metrics) + _prometheus_charts(source)
+            charts = _http_charts(source, run_metrics)
+            if warmup_metrics is not None:
+                charts += _http_charts(source, warmup_metrics, warmup=True)
+                charts += phase_summary_charts(run_metrics, warmup_metrics)
+            charts += _prometheus_charts(source)
         out.mkdir(parents=True, exist_ok=True)
         result = {}
         if "scores" in run_metrics:

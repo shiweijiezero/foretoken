@@ -69,7 +69,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         benchmark = parse_benchmark_arguments(arguments)
         quiet = benchmark.outputs.includes("quiet")
         configure_logging(not quiet)
-        if benchmark.sweep.path:
+        if benchmark.sweep.path or len(benchmark.service_choices) > 1:
             run = ParameterSweepBenchmark(benchmark).run()
         else:
             benchmark.validate()

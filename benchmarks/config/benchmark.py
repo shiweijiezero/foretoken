@@ -385,6 +385,7 @@ class BenchmarkConfig:
     sweep: ParameterSweepConfig = field(default_factory=ParameterSweepConfig)
     slo: SloTuneConfig = field(default_factory=SloTuneConfig)
     profile: BenchmarkProfileConfig | None = None
+    service_choices: tuple[dict[str, str], ...] = ()
 
     @property
     def resolved_workload(self) -> ChatRequestDataset:
@@ -581,6 +582,7 @@ class BenchmarkConfig:
             dataset["conversation_history"] = workload.conversation_history
         return {
             "service": service,
+            "service_choices": list(self.service_choices),
             "load": load,
             "generation": {
                 "max_tokens": self.generation.max_tokens,

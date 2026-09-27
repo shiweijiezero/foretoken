@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import wandb
 
 from benchmarks.results.metrics import percentile_summary
+from benchmarks.results.plots.measurements import load_http_measurements
 
 if TYPE_CHECKING:
     from benchmarks.results.output import BenchmarkRun
@@ -289,6 +290,19 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 sdk_run.log(row)
 
     raw_output = run.artifacts.get("raw_output")
+    warmup_raw = run.artifacts.get("warmup_raw_output")
+    warmup_metrics_path = run.artifacts.get("warmup_metrics")
+    if warmup_raw is not None:
+        raw = json.loads(warmup_raw.read_text(encoding="utf-8"))
+        warmup_measurements = load_http_measurements(raw)
+        duration = float(json.loads(warmup_metrics_path.read_text(encoding="utf-8"))["benchmark_time"]) if warmup_metrics_path is not None else max((item.started_at + item.latency for item in warmup_measurements), default=0.0)
+        sdk_run.log({"Warmup/Requests": wandb.Table(
+            columns=["Request index", "E2EL (s)", "TTFT (s)", "TPOT (ms)", "Success"],
+            data=[[index, item.latency, item.ttft, item.tpot * 1000 if item.tpot is not None else None, item.succeeded] for index, item in enumerate(warmup_measurements, 1)],
+        )})
+        for row in time_series(warmup_measurements, duration=duration, stream=bool(run.metrics["stream"])):
+            sdk_run.log({f"Warmup/{key}": value for key, value in row.items()})
+
     if raw_output is not None:
         rows = _trace_bucket_rows(
             json.loads(raw_output.read_text(encoding="utf-8"))

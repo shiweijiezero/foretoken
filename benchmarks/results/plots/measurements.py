@@ -60,13 +60,9 @@ def _rows_chart(
     return charts
 
 
-def _http_charts(source: Path, metrics: dict[str, Any]) -> list[Chart]:
-    """Restore measured HTTP requests and reuse the shared send-order and window algorithms."""
-    raw_path = source / "raw_output.json"
-    if not raw_path.is_file():
-        return []
-    raw = json.loads(raw_path.read_text(encoding="utf-8"))
-    measurements = [
+def load_http_measurements(raw: list[dict[str, Any]]) -> list[RequestMeasurement]:
+    """Restore saved HTTP requests for plotting and phase-specific W&B curves."""
+    return [
         RequestMeasurement(
             started_at=float(row["start_time"]),
             ttft=row.get("ttft"),
@@ -89,7 +85,18 @@ def _http_charts(source: Path, metrics: dict[str, Any]) -> list[Chart]:
         )
         for row in raw
     ]
+
+
+def _http_charts(source: Path, metrics: dict[str, Any], *, warmup: bool = False) -> list[Chart]:
+    """Plot each HTTP phase on its own elapsed clock and request index."""
+    raw_path = source / ("warmup_raw_output.json" if warmup else "raw_output.json")
+    if not raw_path.is_file():
+        return []
+    raw = json.loads(raw_path.read_text(encoding="utf-8"))
+    measurements = load_http_measurements(raw)
     stream = bool(metrics["stream"])
+    prefix = "warmup-" if warmup else ""
+    phase = "Warmup · " if warmup else ""
     failed = sum(not item.succeeded for item in measurements)
     charts = []
     for field, label, factor in (
@@ -116,8 +123,8 @@ def _http_charts(source: Path, metrics: dict[str, Any]) -> list[Chart]:
             )
             charts.append(
                 Chart(
-                    f"ecdf-{field}",
-                    f"Empirical latency distribution · {label}",
+                    f"{prefix}ecdf-{field}",
+                    f"{phase}Empirical latency distribution · {label}",
                     label,
                     "Fraction of successful requests",
                     (
@@ -155,8 +162,8 @@ def _http_charts(source: Path, metrics: dict[str, Any]) -> list[Chart]:
         )
     )
     charts += _rows_chart(
-        "requests",
-        "Requests in send order",
+        f"{prefix}requests",
+        f"{phase}Requests in send order",
         ordered,
         REQUEST_INDEX,
         (
@@ -170,8 +177,8 @@ def _http_charts(source: Path, metrics: dict[str, Any]) -> list[Chart]:
         ),
     )
     charts += _rows_chart(
-        "time",
-        "One-second completion windows",
+        f"{prefix}time",
+        f"{phase}One-second completion windows",
         windows,
         ELAPSED_TIME,
         (
@@ -184,6 +191,44 @@ def _http_charts(source: Path, metrics: dict[str, Any]) -> list[Chart]:
             "Time/Mean in-flight requests",
         ),
     )
+    return charts
+
+
+def phase_summary_charts(measured: dict[str, Any], warmup: dict[str, Any]) -> list[Chart]:
+    """Compare phase summaries with the same aggregate statistics used by reports."""
+    if "latency" in measured:
+        fields = (("latency", "E2EL (s)"), ("ttft", "TTFT (s)"), ("tpot", "TPOT (s)"))
+        values = [(name, measured[field].get("p95"), warmup.get(field, {}).get("p95")) for field, name in fields]
+    else:
+        fields = (("e2e_s", "E2E (s)"), ("queue_wait_s", "Queue wait (s)"), ("server_generation_s", "Server generation (s)"))
+        values = [(name, measured.get(field), warmup.get(field)) for field, name in fields]
+    rows = [item for item in values if item[1] is not None or item[2] is not None]
+    if not rows:
+        return []
+    return [Chart(
+        "phase-summary", "Warmup vs measurement", "Metric", "Value",
+        (Series("Warmup", tuple(float(index) for index, _ in enumerate(rows)), tuple(float(item[2]) if item[2] is not None else math.nan for item in rows), (None,) * len(rows), tuple({"phase": "warmup", "metric": item[0]} for item in rows)),
+         Series("Measurement", tuple(float(index) for index, _ in enumerate(rows)), tuple(float(item[1]) if item[1] is not None else math.nan for item in rows), (None,) * len(rows), tuple({"phase": "measurement", "metric": item[0]} for item in rows))),
+        tick_labels=tuple(item[0] for item in rows), kind="scatter", metric="phase-summary",
+    )]
+
+
+def _video_phase_charts(source: Path, metrics: dict[str, Any]) -> list[Chart]:
+    """Plot measured and warmup video timings as phase-labeled request series."""
+    paths = [(source / "raw_results.json", "Measurement")]
+    warmup = source / "warmup_raw_output.json"
+    if warmup.is_file():
+        paths.insert(0, (warmup, "Warmup"))
+    charts: list[Chart] = []
+    for field in ("e2e_s", "queue_wait_s", "server_generation_s"):
+        series = []
+        for path, label in paths:
+            rows = json.loads(path.read_text(encoding="utf-8"))
+            selected = [row for row in rows if row.get("success") and _numeric(row.get(field)) is not None]
+            if selected:
+                series.append(Series(label, tuple(float(row["index"]) for row in selected), tuple(float(row[field]) for row in selected), (None,) * len(selected), tuple(row for row in selected)))
+        if series:
+            charts.append(Chart(f"video-phase-{field}", f"Video phases · {field}", "Request index", f"{field} (s)", tuple(series), metric=field))
     return charts
 
 

@@ -30,7 +30,14 @@ Load, generation, and dataset options use their CLI names with underscores. For 
 
 ## Compare methods
 
-A row's `service` list runs the same workload for each named method. The [quantized-model sweep](../../scripts/common/quantized-models.jsonl) compares the [BF16 and 4-bit deployments](../../../examples/quantized-model/README.md):
+Multiple Kustomize examples can also be passed directly for a single workload:
+
+```bash
+foretoken perf examples/quickstart examples/quickstart3 \
+  --dataset random --num-prompts 100 --output local,wandb,plot
+```
+
+Multiple endpoints use one `--url` followed by several URLs; `--model` accepts one shared model or one model per URL. A row's `service` list provides the same choices inside a reusable sweep file. Kustomize examples can be written directly as paths; the [quantized-model sweep](../../scripts/common/quantized-models.jsonl) compares the [BF16 and 4-bit deployments](../../../examples/quantized-model/README.md):
 
 ```bash
 foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-models.jsonl \
