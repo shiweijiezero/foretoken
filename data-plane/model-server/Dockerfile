@@ -124,6 +124,7 @@ LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
 COPY --from=builder /out/foretoken-model-server /usr/local/bin/foretoken-model-server
 COPY data-plane/model-server/python/ /opt/foretoken/python/
+COPY data-plane/dt-plugin/src/foretoken_dt/ /opt/foretoken/python/foretoken_dt/
 
 # Preserve the inference engine image's runtime user and environment. The workload owns its
 # security context, cache environment, and writable volume mounts.

@@ -65,7 +65,8 @@ impl RuntimeBuilder {
         let version = snapshot.version;
         let has_physical_backends = !snapshot.groups.is_empty()
             || !snapshot.pd_components.is_empty()
-            || !snapshot.epd_components.is_empty();
+            || !snapshot.epd_components.is_empty()
+            || !snapshot.dt_components.is_empty();
         let identities = snapshot
             .model_identities()
             .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;

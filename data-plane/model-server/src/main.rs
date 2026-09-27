@@ -29,6 +29,8 @@ use vllm_engine_core_client::{
 use vllm_llm::Llm;
 use vllm_managed_engine::allocate_handshake_port;
 
+mod draft_target;
+
 const KV_KEY_PATH_ENV: &str = "FORETOKEN_KV_INDEX_KEY_PATH";
 const KV_SCOPE_ENV: &str = "FORETOKEN_KV_SCOPE_ID";
 const TEMPORARY_MODEL_SOURCE_ROOT: &str = "/tmp/foretoken-model-source";
@@ -66,6 +68,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
+    if config.launch.dt.is_some() {
+        return draft_target::run(
+            &config,
+            cache_config.as_ref(),
+            &mut cache_server,
+            cache_shutdown,
+        )
+        .await;
+    }
     if config
         .member
         .as_ref()

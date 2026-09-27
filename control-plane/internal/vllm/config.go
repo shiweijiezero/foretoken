@@ -34,6 +34,7 @@ type EffectiveConfig struct {
 // LaunchPlanV1 is the versioned, private Go-to-Rust launch contract. Rust is
 // the only component that renders this contract into vLLM command-line flags.
 type LaunchPlanV1 struct {
+	DT                                    *LaunchDTPlan                      `json:"dt,omitempty"`
 	Version                               int                                `json:"version"`
 	NodeCount                             int32                              `json:"nodeCount"`
 	Artifacts                             LaunchArtifacts                    `json:"artifacts"`
@@ -44,6 +45,11 @@ type LaunchPlanV1 struct {
 	InternalGenerateRequestBodyLimitBytes int64                              `json:"internalGenerateRequestBodyLimitBytes"`
 	EngineArgs                            inferencev1alpha1.EngineArguments  `json:"engineArgs,omitempty"`
 	Profiling                             *inferencev1alpha1.ProfilingConfig `json:"profiling,omitempty"`
+}
+
+// LaunchDTPlan selects the independently installed DT role application.
+type LaunchDTPlan struct {
+	Role inferencev1alpha1.ModelRole `json:"role"`
 }
 
 type LaunchArtifacts struct {
@@ -139,6 +145,17 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 	if capacity != ranks {
 		return EffectiveConfig{}, fmt.Errorf("vLLM topology requires %d workers but the Pool provides %d accelerators", ranks, capacity)
 	}
+	if template.Role == inferencev1alpha1.ModelRoleDraft || template.Role == inferencev1alpha1.ModelRoleTarget {
+		if template.NodeCount != 1 || ranks != 1 || effective.Parallelism.DCP != 1 || effective.Parallelism.EP != nil {
+			return EffectiveConfig{}, fmt.Errorf("DT currently requires one GPU per Group; scale Pool replicas for additional role instances")
+		}
+		if template.KVCache != nil || template.ECProfile != "" || template.Profiling != nil || len(template.Features.Multimodal) != 0 || len(template.Features.StructuredOutputs) != 0 {
+			return EffectiveConfig{}, fmt.Errorf("DT does not support KV/EC transfer, profiling, multimodal or structured output")
+		}
+		if _, exists := args["speculative-config"]; exists {
+			return EffectiveConfig{}, fmt.Errorf("DT owns speculative-config")
+		}
+	}
 	return effective, nil
 }
 
@@ -176,7 +193,12 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	if err != nil {
 		return LaunchPlanV1{}, err
 	}
-	return LaunchPlanV1{Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
+	var dt *LaunchDTPlan
+	if group.Role == inferencev1alpha1.ModelRoleDraft || group.Role == inferencev1alpha1.ModelRoleTarget {
+		dt = &LaunchDTPlan{Role: group.Role}
+		kv.Events = false
+	}
+	return LaunchPlanV1{DT: dt, Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
 }
 
 // JSON returns deterministic output because LaunchPlanV1 uses only ordered structs and slices.
@@ -369,7 +391,7 @@ var controllerOwnedArgs = []string{
 	"--enable-elastic-ep", "--enable-prefix-caching",
 	"--grpc", "--headless", "--hf-token", "--host", "--kv-events-config", "--kv-transfer-config",
 	"--master-addr", "--master-port", "--mm-device-do-normalize", "--model", "--nnodes", "--node-rank",
-	"--port", "--profiler-config", "--revision",
+	"--port", "--profiler-config", "--revision", "--role",
 	"--runner", "--served-model-name", "--tokenizer", "--tokenizer-revision", "--worker-cls",
 }
 

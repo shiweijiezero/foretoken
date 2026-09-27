@@ -22,7 +22,28 @@ pub struct ServingSnapshot {
     pub epd_components: Vec<SnapshotEpdComponent>,
     #[serde(default)]
     pub epd_pipeline_scopes: Vec<SnapshotEpdPipelineScope>,
+    #[serde(default)]
+    pub dt_components: Vec<SnapshotDtComponent>,
 }
+/// One independently routable DT role; `model` names the public Target service.
+/// Physical engine identity is separate because Draft may load different weights.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotDtComponent {
+    #[serde(default)]
+    pub max_input_tokens: Option<usize>,
+    pub service_uid: String,
+    pub pool_uid: String,
+    pub pool_name: String,
+    pub route_target_id: RouteTargetId,
+    pub pipeline_scope_id: String,
+    pub role: ModelServerRole,
+    pub model: String,
+    pub engine_model: String,
+    pub engine_revision: Option<String>,
+    pub endpoint: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SnapshotParallelism {
     pub tp: u32,
@@ -278,6 +299,8 @@ impl ServingSnapshot {
 pub enum SnapshotError {
     #[error("routing snapshot version must be greater than zero")]
     InvalidVersion,
+    #[error("routing snapshot has an invalid DT component or scope: {0}")]
+    InvalidDtComponent(String),
     #[error("routing snapshot has an incomplete model or tokenizer identity")]
     IncompleteModelIdentity,
     #[error("routing snapshot has an incomplete logical scaling model {0:?}")]

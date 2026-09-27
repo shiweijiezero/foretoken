@@ -92,7 +92,7 @@ type ModelGroupTemplate struct {
 
 // ResolveModelPool resolves one supported vLLM execution profile into a Group contract.
 func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
-	if template.Role != inferencev1alpha1.ModelRoleAggregate && template.Role != inferencev1alpha1.ModelRoleEncoder && template.Role != inferencev1alpha1.ModelRolePrefill && template.Role != inferencev1alpha1.ModelRoleDecode {
+	if template.Role != inferencev1alpha1.ModelRoleAggregate && template.Role != inferencev1alpha1.ModelRoleEncoder && template.Role != inferencev1alpha1.ModelRolePrefill && template.Role != inferencev1alpha1.ModelRoleDecode && template.Role != inferencev1alpha1.ModelRoleDraft && template.Role != inferencev1alpha1.ModelRoleTarget {
 		return ModelGroupTemplate{}, fmt.Errorf("ModelPool role %q is not supported", template.Role)
 	}
 	if template.NodeCount < 1 || template.MemberCount != template.NodeCount {
@@ -281,7 +281,7 @@ func resolveECRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile
 
 // resolvePDRuntime resolves the platform Mooncake P/D profile for split serving roles.
 func resolvePDRuntime(template inferencev1alpha1.NormalizedPoolTemplate, profile *MooncakePDProfile) (*inferencev1alpha1.ModelGroupPDRuntimeConfig, error) {
-	if template.Role == inferencev1alpha1.ModelRoleAggregate || template.Role == inferencev1alpha1.ModelRoleEncoder {
+	if template.Role != inferencev1alpha1.ModelRolePrefill && template.Role != inferencev1alpha1.ModelRoleDecode {
 		return nil, nil
 	}
 	if profile == nil || profile.Name == "" || profile.Revision == "" || profile.Protocol == "" || profile.BootstrapPort < 1 || profile.BootstrapPort > 65535 || profile.AbortRequestTimeoutSeconds < 1 {

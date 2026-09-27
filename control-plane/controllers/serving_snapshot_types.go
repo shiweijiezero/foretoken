@@ -10,6 +10,7 @@ import inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v
 const servingSnapshotKey = "serving.json"
 
 type servingSnapshot struct {
+	DTComponents      []servingSnapshotDTComponent      `json:"dt_components,omitempty"`
 	Version           uint64                            `json:"version"`
 	Models            []servingSnapshotModel            `json:"models"`
 	Groups            []servingSnapshotGroup            `json:"groups"`
@@ -126,4 +127,19 @@ type servingSnapshotEPDPipelineScope struct {
 	EncoderRouteTargetIDs []string `json:"encoder_route_target_ids"`
 	PrefillRouteTargetIDs []string `json:"prefill_route_target_ids"`
 	DecodeRouteTargetIDs  []string `json:"decode_route_target_ids"`
+}
+
+// servingSnapshotDTComponent exposes a role independently of its compatible peers.
+type servingSnapshotDTComponent struct {
+	ServiceUID      string                      `json:"service_uid"`
+	PoolUID         string                      `json:"pool_uid"`
+	PoolName        string                      `json:"pool_name"`
+	RouteTargetID   string                      `json:"route_target_id"`
+	PipelineScopeID string                      `json:"pipeline_scope_id"`
+	Role            inferencev1alpha1.ModelRole `json:"role"`
+	Model           string                      `json:"model"`
+	EngineModel     string                      `json:"engine_model"`
+	EngineRevision  *string                     `json:"engine_revision"`
+	MaxInputTokens  *int32                      `json:"max_input_tokens,omitempty"`
+	Endpoint        string                      `json:"endpoint"`
 }

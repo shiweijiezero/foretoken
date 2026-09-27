@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "foretoken-dt"
+version = "0.1.0.dev0"
+description = "Independent Draft/Target roles and cross-host tensor transport"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = ["torch", "fastapi", "uvicorn", "anyio", "pydantic>=2"]
+
+[project.scripts]
+foretoken-dt-role = "foretoken_dt.serve:main"
+foretoken-dt-transfer = "foretoken_dt.probe:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

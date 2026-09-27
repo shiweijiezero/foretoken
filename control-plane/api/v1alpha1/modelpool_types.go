@@ -21,7 +21,7 @@ type LocalObjectReference struct {
 
 // ModelRole identifies a ModelPool's role in the serving path.
 // +enum
-// +kubebuilder:validation:Enum=aggregate;encoder;prefill;decode
+// +kubebuilder:validation:Enum=aggregate;encoder;prefill;decode;draft;target
 type ModelRole string
 
 const (
@@ -29,6 +29,8 @@ const (
 	ModelRoleEncoder   ModelRole = "encoder"
 	ModelRolePrefill   ModelRole = "prefill"
 	ModelRoleDecode    ModelRole = "decode"
+	ModelRoleDraft     ModelRole = "draft"
+	ModelRoleTarget    ModelRole = "target"
 )
 
 // ManagedMooncakeStoreBinding pins a Ready Foretoken-owned KVService against ABA.

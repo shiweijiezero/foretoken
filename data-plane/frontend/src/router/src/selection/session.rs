@@ -11,15 +11,17 @@ use crate::{RouteDecision, RouterRequest};
 /// Identifies the selection round visible to routing algorithms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RoutingStage {
-    /// Selects the first route, which may be Aggregate, Prefill, or Encoder.
+    /// Selects the first route, which may be Aggregate, Prefill, Encoder, or Target.
     Initial,
     /// Selects Prefill after an Encoder when the selected topology requires it.
     Prefill,
     /// Selects Decode after Prefill.
     Decode,
+    /// Selects a Draft while retaining the selected Target reservation.
+    Draft,
 }
 
-/// Immutable E/P/D routing progress visible to algorithms for one selection round.
+/// Immutable split-workflow routing progress visible to algorithms for one selection round.
 ///
 /// `RouteSession` owns and constructs this view; Filter, Scorer, and Picker may read it but cannot
 /// mutate routing progress or treat it as client input.
@@ -34,7 +36,7 @@ pub struct RoutingProgress<'a> {
 }
 
 /// Holds request-local routing state for one generation request. Aggregate completes directly;
-/// P/D executes P→a fresh D choice, and E/P/D executes E→P→a fresh D choice within one E/P/D route set.
+/// P/D and E/P/D select sequential stages; DT retains Target while selecting a compatible Draft.
 pub trait RouteSession: Send {
     /// Releases prompt-token load when the first response reaches the frontend.
     fn response_started(&mut self) {}
@@ -42,7 +44,7 @@ pub trait RouteSession: Send {
     /// Releases the completed stage's load; dropping the session also releases outstanding stages.
     fn stage_complete(&mut self) {}
 
-    /// Selects one Aggregate, ordinary Prefill, or E/P/D Encoder from the current snapshot.
+    /// Selects one Aggregate, Prefill, Encoder, or Target from the current snapshot.
     fn select_initial(&mut self) -> Result<RouteDecision, RouteError>;
 
     /// Selects the Prefill in the Encoder-selected E/P/D route set.
@@ -50,6 +52,11 @@ pub trait RouteSession: Send {
 
     /// Selects one Decode model-server route from a fresh snapshot after Prefill completes.
     fn select_decode(&mut self) -> Result<RouteDecision, RouteError>;
+
+    /// Selects a compatible Draft without completing Target; both reservations live together.
+    fn select_draft(&mut self) -> Result<RouteDecision, RouteError> {
+        Err(RouteError::DraftBeforeTarget)
+    }
 }
 
 /// Creates isolated request-local routing state for tokenized generation requests.
@@ -95,4 +102,7 @@ pub enum RouteError {
     /// Decode selection was requested before a Prefill model-server route was selected.
     #[error("decode selection requires a selected prefill model server route")]
     DecodeBeforePrefill,
+    /// Draft selection requires a Target selected in this routing session.
+    #[error("draft selection requires a selected target model server route")]
+    DraftBeforeTarget,
 }

@@ -4,6 +4,7 @@
 //! OpenAI and Anthropic HTTP adapters over Foretoken's shared generation pipeline.
 
 mod api;
+pub mod draft_target;
 mod http;
 mod runtime;
 

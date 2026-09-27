@@ -72,18 +72,14 @@ impl HttpFacade {
         if !is_ndjson(response.headers().get(reqwest::header::CONTENT_TYPE)) {
             return Err(LlmFacadeError::Protocol);
         }
-        Ok(Box::pin(async_stream::stream! {
-            let mut body = Box::pin(response.bytes_stream()); let mut pending = Vec::new();
-            while let Some(chunk) = body.next().await {
-                match chunk { Ok(chunk) => pending.extend_from_slice(&chunk), Err(error) => { yield Err(classify_reqwest(error)); return; } }
-                while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
-                    let line: Vec<_> = pending.drain(..=newline).collect();
-                    match decode_event(&line[..line.len() - 1]) { Ok(output) => yield Ok(output), Err(error) => { yield Err(error); return; } }
-                }
+        Ok(Box::pin(async_stream::try_stream! {
+            let mut lines = ndjson_lines(response);
+            while let Some(line) = lines.next().await {
+                yield decode_event(&line?)?;
             }
-            if !pending.is_empty() { yield decode_event(&pending); }
         }))
     }
+
     /// Asks this model server to cancel admitted work after its consumer ends early.
     ///
     /// Stream cleanup guards call this best-effort operation. A successful result ends the HTTP
@@ -132,14 +128,14 @@ pub(crate) fn validate_endpoint(endpoint: String) -> Result<String, LlmFacadeErr
     }
     Ok(endpoint)
 }
-fn classify_reqwest(error: reqwest::Error) -> LlmFacadeError {
+pub(crate) fn classify_reqwest(error: reqwest::Error) -> LlmFacadeError {
     if error.is_timeout() || error.is_connect() {
         LlmFacadeError::Unavailable
     } else {
         LlmFacadeError::RequestFailed
     }
 }
-fn classify_status(status: reqwest::StatusCode) -> LlmFacadeError {
+pub(crate) fn classify_status(status: reqwest::StatusCode) -> LlmFacadeError {
     if status == reqwest::StatusCode::BAD_REQUEST {
         LlmFacadeError::InvalidRequest
     } else if status == reqwest::StatusCode::SERVICE_UNAVAILABLE || status.is_server_error() {
@@ -150,7 +146,7 @@ fn classify_status(status: reqwest::StatusCode) -> LlmFacadeError {
         LlmFacadeError::Protocol
     }
 }
-fn is_ndjson(value: Option<&reqwest::header::HeaderValue>) -> bool {
+pub(crate) fn is_ndjson(value: Option<&reqwest::header::HeaderValue>) -> bool {
     value.and_then(|v| v.to_str().ok()).is_some_and(|v| {
         v.split(';')
             .next()
@@ -188,6 +184,25 @@ pub async fn bootstrap_engine_id(
         .filter(|rank| !rank.engine_id.is_empty())
         .map(|rank| rank.engine_id.clone())
         .ok_or(LlmFacadeError::Protocol)
+}
+
+/// Splits streaming HTTP bodies for both model-server and role adapters without buffering a response.
+pub(crate) fn ndjson_lines(
+    response: reqwest::Response,
+) -> std::pin::Pin<Box<dyn futures::Stream<Item = Result<Vec<u8>, LlmFacadeError>> + Send>> {
+    Box::pin(async_stream::try_stream! {
+        let mut body = Box::pin(response.bytes_stream());
+        let mut pending = Vec::new();
+        while let Some(chunk) = body.next().await {
+            pending.extend_from_slice(&chunk.map_err(classify_reqwest)?);
+            while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
+                let mut line: Vec<_> = pending.drain(..=newline).collect();
+                line.pop();
+                yield line;
+            }
+        }
+        if !pending.is_empty() { yield pending; }
+    })
 }
 
 fn decode_event(line: &[u8]) -> Result<GenerateOutput, LlmFacadeError> {

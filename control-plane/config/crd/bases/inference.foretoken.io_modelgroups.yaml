@@ -562,6 +562,8 @@ spec:
                 - encoder
                 - prefill
                 - decode
+                - draft
+                - target
                 type: string
               runtime:
                 description: ModelGroupRuntime defines the resolved inference-engine
@@ -665,14 +667,13 @@ spec:
             - message: accelerator capacity must equal the compiled worker rank count
               rule: self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp
                 * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp
-            - message: aggregate, encoder, prefill, and decode ModelGroups require
-                their fixed runtime configurations
-              rule: 'self.role == ''aggregate'' ? !has(self.pdRuntime) && !has(self.ecRuntime)
-                : self.role == ''encoder'' ? !has(self.pdRuntime) && has(self.ecRuntime)
-                && self.ecRuntime.role == ''producer'' : self.role == ''prefill''
-                ? has(self.pdRuntime) && (!has(self.ecRuntime) || self.ecRuntime.role
-                == ''consumer'') : self.role == ''decode'' ? has(self.pdRuntime) &&
-                !has(self.ecRuntime) : false'
+            - message: ModelGroup roles require their fixed runtime configurations
+              rule: '(self.role == ''aggregate'' || self.role == ''draft'' || self.role
+                == ''target'') ? !has(self.pdRuntime) && !has(self.ecRuntime) : self.role
+                == ''encoder'' ? !has(self.pdRuntime) && has(self.ecRuntime) && self.ecRuntime.role
+                == ''producer'' : self.role == ''prefill'' ? has(self.pdRuntime) &&
+                (!has(self.ecRuntime) || self.ecRuntime.role == ''consumer'') : self.role
+                == ''decode'' ? has(self.pdRuntime) && !has(self.ecRuntime) : false'
           status:
             description: ModelGroupStatus defines the observed state of a ModelGroup.
             properties:

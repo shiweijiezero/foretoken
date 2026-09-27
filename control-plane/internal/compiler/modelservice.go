@@ -91,6 +91,23 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		if err != nil {
 			return nil, fmt.Errorf("modelPools %q: %w", entry.Name, err)
 		}
+		if entry.Model != "" {
+			if role != inferencev1alpha1.ModelRoleDraft {
+				return nil, fmt.Errorf("modelPools %q: model override is only valid for draft", entry.Name)
+			}
+			if source != inferencev1alpha1.ModelSourceLocal && path.IsAbs(entry.Model) {
+				return nil, fmt.Errorf("modelPools %q: absolute draft model paths require source local", entry.Name)
+			}
+			pool.Template.Model = entry.Model
+		}
+		if role == inferencev1alpha1.ModelRoleDraft && entry.Model == "" {
+			return nil, fmt.Errorf("modelPools %q: draft requires model", entry.Name)
+		}
+		if (role == inferencev1alpha1.ModelRoleDraft || role == inferencev1alpha1.ModelRoleTarget) && source == inferencev1alpha1.ModelSourceLocal {
+			if !path.IsAbs(pool.Template.Model) || !path.IsAbs(pool.Template.Tokenizer) {
+				return nil, fmt.Errorf("modelPools %q: local DT model and tokenizer require absolute container paths", entry.Name)
+			}
+		}
 		pools = append(pools, pool)
 	}
 
@@ -107,13 +124,21 @@ func validateModelPoolRoles(pools []inferencev1alpha1.ModelPoolTemplate) error {
 		switch pool.Role {
 		case "", inferencev1alpha1.ModelRoleAggregate:
 			aggregate = true
-		case inferencev1alpha1.ModelRoleEncoder, inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode:
+		case inferencev1alpha1.ModelRoleEncoder, inferencev1alpha1.ModelRolePrefill, inferencev1alpha1.ModelRoleDecode, inferencev1alpha1.ModelRoleDraft, inferencev1alpha1.ModelRoleTarget:
 			roleCounts[pool.Role]++
 		}
 	}
 	hasEncoder := roleCounts[inferencev1alpha1.ModelRoleEncoder] > 0
 	hasPrefill := roleCounts[inferencev1alpha1.ModelRolePrefill] > 0
 	hasDecode := roleCounts[inferencev1alpha1.ModelRoleDecode] > 0
+	hasDraft := roleCounts[inferencev1alpha1.ModelRoleDraft] > 0
+	hasTarget := roleCounts[inferencev1alpha1.ModelRoleTarget] > 0
+	if hasDraft || hasTarget {
+		if !hasDraft || !hasTarget || aggregate || hasEncoder || hasPrefill || hasDecode {
+			return fmt.Errorf("DT modelPools require draft and target roles without aggregate or E/P/D roles")
+		}
+		return nil
+	}
 	if aggregate && (hasEncoder || hasPrefill || hasDecode) {
 		return fmt.Errorf("modelPools cannot mix aggregate and split roles")
 	}

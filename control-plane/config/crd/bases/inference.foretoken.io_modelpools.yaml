@@ -359,6 +359,8 @@ spec:
                     - encoder
                     - prefill
                     - decode
+                    - draft
+                    - target
                     type: string
                   runtimeCache:
                     description: RuntimeCache is set by the ModelService controller

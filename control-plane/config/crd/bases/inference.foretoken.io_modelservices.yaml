@@ -357,6 +357,13 @@ spec:
                       format: int32
                       minimum: 1
                       type: integer
+                    model:
+                      description: |-
+                        Model selects Draft weights; only draft Pools may override the service model.
+                        The source and tokenizer remain those of the ModelService.
+                      maxLength: 1024
+                      minLength: 1
+                      type: string
                     name:
                       description: Name is the stable identity of this Pool within
                         one ModelService.
@@ -474,6 +481,8 @@ spec:
                       - encoder
                       - prefill
                       - decode
+                      - draft
+                      - target
                       type: string
                   required:
                   - name
@@ -685,8 +694,8 @@ spec:
             - message: modelPools name default is reserved for the Quick Start shorthand
               rule: '!has(self.modelPools) || self.modelPools.all(pool, pool.name
                 != ''default'')'
-            - message: modelPools must be aggregate-only, complete P/D, or complete
-                E/P/D without aggregate pools
+            - message: modelPools must be aggregate-only or complete P/D, E/P/D, or
+                D/T
               rule: '!has(self.modelPools) || self.modelPools.all(pool, !has(pool.role)
                 || pool.role == ''aggregate'') || (self.modelPools.exists(pool, has(pool.role)
                 && pool.role == ''prefill'') && self.modelPools.exists(pool, has(pool.role)
@@ -696,7 +705,10 @@ spec:
                 && self.modelPools.exists(pool, has(pool.role) && pool.role == ''prefill'')
                 && self.modelPools.exists(pool, has(pool.role) && pool.role == ''decode'')
                 && self.modelPools.all(pool, has(pool.role) && (pool.role == ''encoder''
-                || pool.role == ''prefill'' || pool.role == ''decode'')))'
+                || pool.role == ''prefill'' || pool.role == ''decode''))) || (self.modelPools.exists(pool,
+                has(pool.role) && pool.role == ''draft'') && self.modelPools.exists(pool,
+                has(pool.role) && pool.role == ''target'') && self.modelPools.all(pool,
+                has(pool.role) && (pool.role == ''draft'' || pool.role == ''target'')))'
             - message: ecProfile requires complete E/P/D modelPools
               rule: '!has(self.ecProfile) || (has(self.modelPools) && self.modelPools.exists(pool,
                 has(pool.role) && pool.role == ''encoder'') && self.modelPools.exists(pool,

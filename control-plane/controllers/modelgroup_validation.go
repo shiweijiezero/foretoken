@@ -81,6 +81,11 @@ func validateGroupRole(group *inferencev1alpha1.ModelGroup) error {
 	switch group.Spec.Role {
 	case inferencev1alpha1.ModelRoleAggregate:
 		return validateAggregateRole(group)
+	case inferencev1alpha1.ModelRoleDraft, inferencev1alpha1.ModelRoleTarget:
+		if group.Spec.NodeCount != 1 || group.Spec.KVRuntime != nil || group.Spec.Runtime.Profiling != nil {
+			return fmt.Errorf("DT Groups require one node without KV transfer or profiling")
+		}
+		return validateAggregateRole(group)
 	case inferencev1alpha1.ModelRoleEncoder:
 		return validateEncoderRole(group)
 	case inferencev1alpha1.ModelRolePrefill:

@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use foretoken_engine_core_client::protocol::dtype::ModelDtype;
+use foretoken_llm_facade::draft_target::{RoleClient, RoleStatus};
 use foretoken_llm_facade::{HttpFacade, LlmFacade, LlmFacadeResolver, RouteStage};
 use foretoken_model_protocol::{RuntimeMetadataResponse, TelemetryResponse};
 
@@ -33,6 +34,15 @@ pub struct BackendRegistry {
     health_client: reqwest::Client,
 }
 pub(crate) enum Component {
+    DraftTarget {
+        endpoint: String,
+        client: RoleClient,
+        role: ModelServerRole,
+        model: String,
+        revision: Option<String>,
+        tokenizer: String,
+        tokenizer_revision: Option<String>,
+    },
     Aggregate {
         endpoint: String,
         facade: Arc<HttpFacade>,
@@ -52,7 +62,8 @@ pub(crate) enum Component {
 impl Component {
     fn endpoint(&self) -> &str {
         match self {
-            Self::Aggregate { endpoint, .. }
+            Self::DraftTarget { endpoint, .. }
+            | Self::Aggregate { endpoint, .. }
             | Self::Encoder { endpoint, .. }
             | Self::Prefill { endpoint, .. }
             | Self::Decode { endpoint, .. } => endpoint,
@@ -62,7 +73,10 @@ impl Component {
     fn bootstrap(&self) -> Option<&str> {
         match self {
             Self::Prefill { bootstrap, .. } => Some(bootstrap),
-            Self::Aggregate { .. } | Self::Encoder { .. } | Self::Decode { .. } => None,
+            Self::Aggregate { .. }
+            | Self::Encoder { .. }
+            | Self::Decode { .. }
+            | Self::DraftTarget { .. } => None,
         }
     }
 }
@@ -186,6 +200,7 @@ impl BackendRegistry {
         // Aggregate routes are independently serviceable. A split scope is healthy only with
         // P+D, or E+P+D when that scope includes an encoder.
         let mut models = BTreeSet::new();
+        let mut dt_scopes = BTreeMap::<(String, String), (bool, bool)>::new();
         let mut pipeline_scopes = BTreeMap::<(String, String), (bool, bool, bool)>::new();
         for route in self.model_routes.routes() {
             if route.role == ModelServerRole::Aggregate
@@ -197,6 +212,19 @@ impl BackendRegistry {
             let Some(pipeline_scope_id) = &route.pipeline_scope_id else {
                 continue;
             };
+            if matches!(route.role, ModelServerRole::Draft | ModelServerRole::Target) {
+                let roles = dt_scopes
+                    .entry((route.model.clone(), pipeline_scope_id.clone()))
+                    .or_default();
+                if self.is_route_target_healthy(&route.route_target_id) {
+                    if route.role == ModelServerRole::Draft {
+                        roles.0 = true;
+                    } else {
+                        roles.1 = true;
+                    }
+                }
+                continue;
+            }
             let roles = pipeline_scopes
                 .entry((route.model.clone(), pipeline_scope_id.clone()))
                 .or_default();
@@ -205,7 +233,9 @@ impl BackendRegistry {
                     ModelServerRole::Encoder => roles.0 = true,
                     ModelServerRole::Prefill => roles.1 = true,
                     ModelServerRole::Decode => roles.2 = true,
-                    ModelServerRole::Aggregate => {}
+                    ModelServerRole::Aggregate
+                    | ModelServerRole::Draft
+                    | ModelServerRole::Target => {}
                 }
             }
         }
@@ -219,6 +249,11 @@ impl BackendRegistry {
                 models.insert(model);
             }
         }
+        for ((model, _), (draft, target)) in dt_scopes {
+            if draft && target {
+                models.insert(model);
+            }
+        }
         models.into_iter().collect()
     }
     /// Health, runtime metadata, and telemetry are per physical component.
@@ -226,6 +261,52 @@ impl BackendRegistry {
         // Probe components concurrently, but retain metadata and telemetry only for components
         // proven healthy in this pass so replaced backends cannot leave stale routing signals.
         let probes = self.components.iter().map(|(id, c)| async move {
+            if let Component::DraftTarget {
+                role,
+                model,
+                revision,
+                tokenizer,
+                tokenizer_revision,
+                ..
+            } = c
+            {
+                let status = role_status(&self.health_client, c.endpoint()).await;
+                let healthy = status.as_ref().is_some_and(|status| {
+                    status.accepting
+                        && status.token_budget > 0
+                        && status.max_model_len > 0
+                        && status.candidate_format == "greedy_token_ids"
+                        && status.role
+                            == if *role == ModelServerRole::Draft {
+                                "draft"
+                            } else {
+                                "target"
+                            }
+                        && status.model == *model
+                        && status.revision == *revision
+                        && status.tokenizer == *tokenizer
+                        && status.tokenizer_revision == *tokenizer_revision
+                });
+                let route = self
+                    .model_routes
+                    .routes()
+                    .iter()
+                    .find(|route| route.route_target_id == *id)
+                    .expect("component has a route");
+                let metadata = status.map(|status| RuntimeMetadataResponse {
+                    version: 1,
+                    model: foretoken_model_protocol::RuntimeModelIdentity {
+                        model: route.model.clone(),
+                        revision: route.revision.clone(),
+                    },
+                    model_dtype: None,
+                    effective_max_model_len: status.max_model_len,
+                    max_logprobs: Some(0),
+                    ec_transfer: None,
+                    capabilities: BTreeSet::new(),
+                });
+                return (id.clone(), healthy, metadata, None);
+            }
             let ready = ready(&self.health_client, c.endpoint()).await;
             let metadata = metadata(&self.health_client, c.endpoint()).await;
             let metadata_matches = metadata
@@ -289,6 +370,15 @@ impl LlmFacadeResolver for BackendRegistry {
             | (RouteStage::Prefill, Component::Prefill { endpoint, .. })
             | (RouteStage::Decode, Component::Decode { endpoint, .. }) => {
                 Some(Arc::new(HttpFacade::new(endpoint.clone()).ok()?))
+            }
+            _ => None,
+        }
+    }
+
+    fn resolve_draft_target(&self, decision: &RouteDecision) -> Option<RoleClient> {
+        match self.components.get(&decision.route_target_id)? {
+            Component::DraftTarget { client, role, .. } if *role == decision.role => {
+                Some(client.clone())
             }
             _ => None,
         }
@@ -382,4 +472,18 @@ async fn telemetry(client: &reqwest::Client, endpoint: &str) -> Option<Telemetry
 }
 async fn ready(client: &reqwest::Client, endpoint: &str) -> bool {
     matches!(client.get(format!("{}/readyz",endpoint.trim_end_matches('/'))).send().await,Ok(response) if response.status().is_success())
+}
+
+// Role readiness has a separate wire contract from the Rust model server. Use the registry's
+// bounded probe client; generation clients retain the caller-owned streaming deadline.
+async fn role_status(client: &reqwest::Client, endpoint: &str) -> Option<RoleStatus> {
+    let response = client
+        .get(format!("{}/status", endpoint.trim_end_matches('/')))
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    response.json().await.ok()
 }
