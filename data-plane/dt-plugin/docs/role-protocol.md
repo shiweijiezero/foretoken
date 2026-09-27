@@ -65,6 +65,9 @@ may be recomputed; it does not promise optimal Draft KV reuse.
 
 ## Transport and extension boundary
 
+See the [method payload contract](connector-contract.md) for the proposed
+probability, feature and tree boundaries; these are not enabled role APIs.
+
 Greedy candidates are short token-ID lists on the HTTP control plane. This path
 has no cross-model KV copy and no Mooncake payload reference. The independent
 Mooncake tensor API remains available for tensor-bearing methods but is not wired

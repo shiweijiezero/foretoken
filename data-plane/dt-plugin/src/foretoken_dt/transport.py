@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 from dataclasses import dataclass
 from typing import Any
 from uuid import uuid4
@@ -17,6 +18,20 @@ import torch
 # DMA completion requires terminating the owning process, never reusing its tensor.
 _live_transports: set[MooncakeTransport] = set()
 
+# Wire names are explicit: Python attribute lookup must not define the protocol.
+_TENSOR_DTYPES = {
+    "bool": torch.bool,
+    "uint8": torch.uint8,
+    "int8": torch.int8,
+    "int16": torch.int16,
+    "int32": torch.int32,
+    "int64": torch.int64,
+    "float16": torch.float16,
+    "bfloat16": torch.bfloat16,
+    "float32": torch.float32,
+    "float64": torch.float64,
+}
+
 
 @dataclass(frozen=True)
 class PayloadRef:
@@ -26,14 +41,31 @@ class PayloadRef:
     segment: str
     address: int
     nbytes: int
+    dtype: str
+    shape: tuple[int, ...]
 
-    def to_wire(self) -> dict[str, str | int]:
+    def __post_init__(self) -> None:
+        """Validate dense tensor layout before allocating or submitting a read."""
+        if self.dtype not in _TENSOR_DTYPES:
+            raise ValueError("unsupported tensor dtype")
+        if any(type(size) is not int or size <= 0 for size in self.shape):
+            raise ValueError("tensor dimensions must be positive integers")
+        expected = (
+            math.prod(self.shape)
+            * torch.empty((), dtype=_TENSOR_DTYPES[self.dtype]).element_size()
+        )
+        if self.nbytes != expected:
+            raise ValueError("tensor layout does not match payload byte size")
+
+    def to_wire(self) -> dict[str, Any]:
         """Encode only the explicitly supported transport descriptor fields."""
         return {
             "publication_id": self.publication_id,
             "segment": self.segment,
             "address": self.address,
             "nbytes": self.nbytes,
+            "dtype": self.dtype,
+            "shape": list(self.shape),
         }
 
     @classmethod
@@ -51,7 +83,11 @@ class PayloadRef:
             raise ValueError("address must be a positive integer")
         if type(nbytes) is not int or nbytes <= 0:
             raise ValueError("nbytes must be a positive integer")
-        return cls(publication_id, segment, address, nbytes)
+        dtype = value["dtype"]
+        shape = value["shape"]
+        if not isinstance(dtype, str) or not isinstance(shape, list):
+            raise TypeError("tensor layout requires a dtype name and shape array")
+        return cls(publication_id, segment, address, nbytes, dtype, tuple(shape))
 
 
 class RegisteredTensor:
@@ -83,6 +119,8 @@ class RegisteredTensor:
             self.owner.segment,
             self.tensor.data_ptr(),
             self.tensor.numel() * self.tensor.element_size(),
+            str(self.tensor.dtype).removeprefix("torch."),
+            tuple(self.tensor.shape),
         )
         return self.publication
 
@@ -109,8 +147,12 @@ class RegisteredTensor:
         self.owner.require_accepting()
         self._require_idle()
         nbytes = self.tensor.numel() * self.tensor.element_size()
-        if source.nbytes != nbytes:
-            raise ValueError("source and destination byte sizes must match")
+        if (
+            source.nbytes != nbytes
+            or _TENSOR_DTYPES[source.dtype] != self.tensor.dtype
+            or source.shape != tuple(self.tensor.shape)
+        ):
+            raise ValueError("source and destination tensor layouts must match")
         self.transfer = asyncio.create_task(self._read(source, ready_event))
         await asyncio.shield(self.transfer)
 
@@ -215,6 +257,8 @@ class MooncakeTransport:
         not the model's allocation or CUDA stream.
         """
         self.require_accepting()
+        if tensor.dtype not in _TENSOR_DTYPES.values():
+            raise ValueError("unsupported tensor dtype")
         if not tensor.is_contiguous() or tensor.numel() == 0:
             raise ValueError("transport requires a nonempty contiguous tensor")
         if tensor.device.type not in ("cpu", "cuda"):

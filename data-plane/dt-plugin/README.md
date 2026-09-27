@@ -92,6 +92,8 @@ Once it prints `listening`, run on the consumer:
 foretoken-dt-transfer read --host "$CONSUMER_IP" --peer "$PRODUCER_IP" --device cuda:0
 ```
 
+Both peers must use diagnostic protocol version 2, whose tensor descriptors carry
+dtype and shape as well as byte size.
 The producer publishes an int64 tensor; the consumer pulls it into local device
 storage, acknowledges the completed read, and checks every element. A successful
 consumer prints `verified: true`, the byte count, device, and transfer duration.
@@ -129,3 +131,5 @@ waits for those events before publication, overwrite, and unregister, without
 requiring unrelated streams to finish. Callers that omit an event retain the
 device-wide synchronization path.
 Successful tensor diagnostics do not validate speculative decoding or its performance.
+
+[Connector contract and remaining engine interfaces](docs/connector-contract.md)

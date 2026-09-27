@@ -66,7 +66,7 @@ async def _serve(args: argparse.Namespace) -> None:
                 await _send(
                     writer,
                     {
-                        "version": 1,
+                        "version": 2,
                         "iteration": iteration,
                         "iterations": args.iterations,
                         "payload": source.to_wire(),
@@ -109,15 +109,17 @@ async def _read(args: argparse.Namespace) -> None:
     reader, writer = await asyncio.open_connection(args.peer, args.port)
     try:
         message = await _receive(reader)
-        if message["version"] != 1:
+        if message["version"] != 2:
             raise ValueError("unsupported diagnostic protocol version")
         iterations = message["iterations"]
         if type(iterations) is not int or iterations <= 0:
             raise ValueError("iterations must be a positive integer")
         source = PayloadRef.from_wire(message["payload"])
-        if source.nbytes % 8:
-            raise ValueError("diagnostic payload must contain whole int64 elements")
-        elements = source.nbytes // 8
+        if source.dtype != "int64" or len(source.shape) != 1:
+            raise ValueError(
+                "diagnostic payload must be a one-dimensional int64 tensor"
+            )
+        elements = source.shape[0]
         tensor = torch.empty(elements, dtype=torch.int64, device=args.device)
         buffer = transport.register(tensor)
         expected = torch.arange(elements, dtype=torch.int64, device=args.device)

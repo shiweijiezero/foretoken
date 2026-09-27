@@ -77,6 +77,7 @@ foretoken-dt-transfer serve --host "$PRODUCER_IP" --device cuda:0
 foretoken-dt-transfer read --host "$CONSUMER_IP" --peer "$PRODUCER_IP" --device cuda:0
 ```
 
+两端须使用诊断协议第 2 版，张量描述符包含 dtype、shape 和字节数。
 生产端发布 int64 tensor；消费端拉取到本地设备，确认读取完成，再逐元素校验。
 成功后消费端输出 `verified: true`、字节数、设备和传输耗时，两个进程退出。
 命令接待一个消费者，使用 TCP 19090 交换描述和确认消息，Mooncake 采用 P2P
@@ -102,3 +103,5 @@ foretoken-dt-transfer read --host "$CONSUMER_IP" --peer "$PRODUCER_IP" --device 
 GPU 校验在本地 tensor 操作后记录 CUDA event，传输层在发布、覆盖和注销前等待
 对应 event，不要求无关 stream 完成。调用方不传 event 时仍同步整个设备。
 tensor 校验成功不代表投机解码正确或有性能收益。
+
+[Connector 契约与待补齐的引擎接口](docs/connector-contract_zh.md)
