@@ -145,6 +145,10 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 使用 `foretoken eval`，通过 lm-evaluation-harness 或 EvalScope 为模型回答评分。服务选择方式与性能评测相同，任务和判分参数采用所选框架的写法。具体命令见[质量评测](../benchmarks/docs/eval/README_zh.md)。添加 `--reference` 可[比较候选与参考模型的概率分布](../benchmarks/docs/eval/distribution-comparison_zh.md)。
 
+## 导出图表
+
+评测时使用 `--output local,wandb,plot`，或用 `foretoken plot RESULT_DIR` 从已保存的运行或 sweep 重新绘图，无需再次推理。导出选项与对比用法见[参数扫描](../benchmarks/docs/perf/sweep_zh.md)。
+
 ## 性能剖析：执行瓶颈
 
 在 `foretoken deploy` 或 `foretoken perf` 后加 `--profile`，记录 CPU/GPU 执行过程，再用 `foretoken profile view` 浏览结果。环境准备与采集命令见[性能剖析](../benchmarks/docs/profile/README_zh.md)。

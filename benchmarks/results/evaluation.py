@@ -259,6 +259,8 @@ def publish_quality_wandb(session: Any, run: BenchmarkRun) -> None:
     session.summary.update(summary)
     artifact = wandb.Artifact(f"evaluation-{session.id}", type="evaluation")
     for name, path in run.artifacts.items():
+        if name == "plots":
+            continue
         if path.is_dir():
             artifact.add_dir(str(path), name=name)
         else:
@@ -278,7 +280,7 @@ def evaluation_sinks(
     sinks: list[ResultSink] = [EvaluationArtifactSink(config, directory)]
     if not config.outputs.includes("quiet"):
         sinks.append(console_sink if console_sink is not None else EvaluationConsoleSink())
-    if config.outputs.includes("local"):
+    if config.outputs.saves_local:
         sinks.append(LocalDirectorySink(directory))
     if config.outputs.includes("wandb"):
         sinks.append(

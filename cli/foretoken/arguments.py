@@ -86,6 +86,13 @@ class EvaluationCommand:
 
 
 @dataclass(frozen=True)
+class PlotCommand:
+    """Forward saved-result plotting arguments without loading benchmark dependencies."""
+
+    arguments: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ProfileCommand:
     """Describe one runtime-owned capture requested by deploy or perf."""
 
@@ -139,6 +146,7 @@ ParsedCommand = (
     | EndpointCommand
     | PerformanceCommand
     | EvaluationCommand
+    | PlotCommand
     | ProfileViewCommand
 )
 
@@ -340,6 +348,10 @@ def _build_parser() -> argparse.ArgumentParser:
         add_help=False,
         help="Score model answers or compare reference and candidate distributions",
     )
+    subparsers.add_parser(
+        "plot", add_help=False,
+        help="Export publication figures and tables from saved benchmark results",
+    )
     return parser
 
 
@@ -350,6 +362,8 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
         return PerformanceCommand(arguments[1:])
     if arguments and arguments[0] == "eval":
         return EvaluationCommand(arguments[1:])
+    if arguments and arguments[0] == "plot":
+        return PlotCommand(arguments[1:])
 
     parser = _build_parser()
     parsed_args = parser.parse_args(arguments)

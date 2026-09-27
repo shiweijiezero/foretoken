@@ -123,6 +123,6 @@ async def run_video_benchmark(
         results = await _run_requests(config, run_dir)
         run = create_video_benchmark_run(record, results, run_dir)
         outputs.publish(run)
-        if config.outputs.includes("local"):
+        if config.outputs.saves_local:
             result_output_dir = outputs.execution_dir
     return {"metrics": run.metrics, "output_dir": result_output_dir}

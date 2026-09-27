@@ -123,6 +123,7 @@ class SloAutoTuneBenchmark:
         """Execute one repetition with the limit owned by its generated or trace scheduler."""
         probe_config = replace(
             self.benchmark,
+            outputs=self.benchmark.outputs.for_child_run(),
             slo=replace(self.benchmark.slo, params=[criteria]),
         )
         label = f"slo-group-{group_index}-concurrency-{value}-run-{run_index + 1}"
@@ -263,7 +264,7 @@ class SloAutoTuneBenchmark:
         def sinks(directory: str) -> list[ResultSink]:
             """Open summary destinations; resource observations belong to the individual probes."""
             selected: list[ResultSink] = []
-            if self.benchmark.outputs.includes("local"):
+            if self.benchmark.outputs.saves_local:
                 selected.append(LocalDirectorySink(directory))
             if self.benchmark.outputs.includes("wandb"):
                 selected.append(WandbSink(

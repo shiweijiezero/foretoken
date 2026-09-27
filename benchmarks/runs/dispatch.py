@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TypeAlias
 
 from benchmarks.config.benchmark import BenchmarkConfig
@@ -27,7 +28,16 @@ def measurement_runner(
     output_dir: str | None = None,
     wandb_group: str | None = None,
 ) -> MeasurementBenchmark:
-    """Select the executor for one workload measurement point."""
+    """Resolve synthetic tokenization and select the executor for one measurement point."""
+    workload = benchmark.resolved_workload
+    if workload.dataset_selectors == ["random"] and not workload.tokenizer:
+        from benchmarks.datasets.huggingface import resolve_tokenizer_path
+
+        source, tokenizer = service.tokenizer_identity
+        benchmark = replace(
+            benchmark,
+            workload=replace(workload, tokenizer=resolve_tokenizer_path(tokenizer, source=source)),
+        )
     if benchmark.trace.trace_selector:
         return TraceReplayBenchmark(
             benchmark, service, label=label, output_dir=output_dir, wandb_group=wandb_group

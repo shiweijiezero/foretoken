@@ -133,7 +133,7 @@ def _add_benchmark_arguments(
         "--output",
         type=_output_destinations,
         default=_default(BenchmarkOutputConfig, "destinations"),
-        help="Comma-separated outputs: local, wandb, and quiet",
+        help="Comma-separated outputs: local, wandb, plot, and quiet",
     )
     parser.add_argument(
         "--output-dir",
@@ -382,7 +382,7 @@ def _add_benchmark_arguments(
     parser.add_argument(
         "--tokenizer-path",
         default=_default(ChatRequestDataset, "tokenizer"),
-        help="Tokenizer path (required for --dataset random)",
+        help="Tokenizer override; random workloads infer it from the selected model service",
     )
     parser.add_argument(
         "--random-seed",
@@ -426,7 +426,7 @@ def _add_benchmark_arguments(
         metavar="PATH",
         default=_default(ParameterSweepConfig, "path"),
         help=(
-            "JSONL parameter combinations; execution fields may be lists and expand cartesian"
+            "JSONL workload combinations and named service choices; list values expand Cartesian products"
         ),
     )
     parser.add_argument(
@@ -539,9 +539,10 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             num_runs=namespace.num_runs,
             experiment_name=namespace.experiment_name,
         ),
+        # A sweep repeats the whole search; standalone SLO repeats each probe.
         slo=SloTuneConfig(
             params=namespace.slo_params,
-            num_runs=namespace.num_runs,
+            num_runs=1 if namespace.sweep else namespace.num_runs,
             upper_bound=namespace.slo_upper_bound,
             lower_bound=namespace.slo_lower_bound,
         ),

@@ -16,7 +16,7 @@ Use the [quantized-model examples](../../../examples/quantized-model/README.md) 
 ```bash
 foretoken eval examples/quantized-model/bitsandbytes \
   --reference examples/quantized-model/bf16 \
-  --output local
+  --output local,plot
 ```
 
 Both deployments use Qwen2.5-0.5B-Instruct with BF16 computation; the candidate loads its weights in 4-bit. Model and tokenizer settings come from the reference deployment. Existing deployments are reused; temporary deployments run sequentially and are removed after use, so one available GPU is sufficient when both are temporary.
@@ -36,7 +36,7 @@ The summary compares candidates using these metrics:
 | Centered-logit RMSE | Root-mean-square difference after subtracting each vector's mean log probability; invariant to a common logit offset |
 | Total variation | Half the sum of absolute probability differences |
 
-The result directory contains a candidate table (`distribution_comparison_candidates.csv`), per-position records (`distribution_comparison_positions.jsonl`), and PNG plots. `metrics.json` records the sample settings and completion status. Add `wandb` to `--output` to publish tables, curves, and images.
+The result directory contains a candidate table (`distribution_comparison_candidates.csv`), per-position records (`distribution_comparison_positions.jsonl`), and, with `plot` selected, PDF/SVG/PNG figures in `plots/`. `metrics.json` records the sample settings and completion status. Add `wandb` to `--output` to publish tables, curves, and images.
 
 These plots compare Qwen3-0.6B BF16 and bitsandbytes 4-bit through existing endpoints, using two 96-token WikiText-2 windows and scoring their last 32 positions:
 
@@ -60,7 +60,7 @@ The maintained [candidate list](../../../examples/quantized-model/candidates.jso
 foretoken eval \
   --reference examples/quantized-model/bf16 \
   --candidates examples/quantized-model/candidates.jsonl \
-  --output local,wandb
+  --output local,wandb,plot
 ```
 
 To customize the list, write one JSON object per candidate, following that file. Each row selects `path`, or `url` with its `model`; rows without either reuse the command's candidate service. Paths are relative to the command's working directory. Single-model deployments supply their model IDs. Labels default to deployment directory names or model IDs; use `label` to distinguish identical names.
@@ -82,7 +82,7 @@ foretoken eval \
   --url http://127.0.0.1:8008/v1/chat/completions --model quantized \
   --reference-url http://127.0.0.1:8009/v1/chat/completions \
   --reference-model Qwen/Qwen2.5-0.5B-Instruct \
-  --output local
+  --output local,plot
 ```
 
 The reference model ID identifies its tokenizer and model configuration. If it is a serving alias, or its files exist only on cluster nodes, use `--tokenizer-path` with a base-model repository or client-local directory containing tokenizer files and `config.json`. Foretoken deployments resolve their configured Hugging Face, ModelScope, or client-accessible local source automatically, including a separately configured tokenizer.
@@ -96,7 +96,7 @@ Keep the complete local result directory. After an interruption, repeat the orig
 ```bash
 foretoken eval examples/quantized-model/bitsandbytes \
   --reference examples/quantized-model/bf16 \
-  --resume results/previous-run --output local
+  --resume results/previous-run --output local,plot
 ```
 
 Completed windows and saved corpus tokens are reused; an interrupted window is recomputed in full. A completed reference or candidate needs no deployment or requests. Keep the same models, weights, tokenizer, candidates, and scoring settings. Results are written to a new directory, leaving the previous run unchanged.

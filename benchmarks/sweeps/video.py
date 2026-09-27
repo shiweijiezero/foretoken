@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from typing import Any, Callable
 
@@ -97,7 +98,7 @@ class _VideoSweepAdapter(SweepAdapter[VideoBenchmarkConfig]):
     def group_name(self, config: VideoBenchmarkConfig) -> str:
         return config.wandb.group.strip() or f"video_{wandb_run_timestamp()}"
 
-    async def execute_point(
+    def execute_point(
         self,
         config: VideoBenchmarkConfig,
         *,
@@ -111,11 +112,11 @@ class _VideoSweepAdapter(SweepAdapter[VideoBenchmarkConfig]):
             sweep=VideoParameterSweepConfig(),
             wandb=replace(config.wandb, group=wandb_group, run_name=label),
         )
-        result = await run_video_benchmark(
+        result = asyncio.run(run_video_benchmark(
             run_config,
             dry_run=dry_run,
             output_dir=output_dir,
-        )
+        ))
         return dict(result["metrics"])
 
 
@@ -139,14 +140,14 @@ def apply_video_sweep_point(
     return _VideoSweepAdapter().apply_point(config, point)
 
 
-async def run_video_sweep(
+def run_video_sweep(
     config: VideoBenchmarkConfig,
     *,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Run video repetitions through shared directories and scalar summaries."""
     sweep = config.sweep
-    execution = await run_sweep(
+    execution = run_sweep(
         config,
         SweepDefinition(sweep.path, sweep.num_runs, sweep.experiment_name),
         _VideoSweepAdapter(),
@@ -155,15 +156,8 @@ async def run_video_sweep(
     )
     return {
         "dry_run": dry_run,
-        "metrics": {
-            "request_num": sum(int(point.get("request_num", 0)) for point in execution.points),
-            "success_num": sum(int(point.get("success_num", 0)) for point in execution.points),
-            "failed_num": sum(
-                int(point.get("request_num", 0)) - int(point.get("success_num", 0))
-                for point in execution.points
-            ),
-        },
-        "output_dir": execution.experiment_dir if config.outputs.includes("local") else None,
+        "metrics": execution.run.metrics,
+        "output_dir": execution.experiment_dir if config.outputs.saves_local else None,
     }
 
 

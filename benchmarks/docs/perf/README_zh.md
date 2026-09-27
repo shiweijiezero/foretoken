@@ -16,7 +16,7 @@ export MODEL_SERVICE_URL="${MODEL_SERVICE_BASE_URL%/}/v1/chat/completions"
 export MODEL_ID=Qwen/Qwen3-0.6B
 ```
 
-其他服务使用其实际 Chat Completions URL 和模型名。Gateway 访问和 HTTP 参数扫描使用 Kustomize 目录；Foretoken 会从中查找 Gateway 路由请求头。
+其他服务使用其实际 Chat Completions URL 和模型名。Gateway 访问使用 Kustomize 目录；Foretoken 会从中查找 Gateway 路由请求头。
 
 ## 命令分类
 

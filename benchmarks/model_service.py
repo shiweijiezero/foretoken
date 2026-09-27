@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Iterable, Iterator
@@ -16,7 +17,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 import yaml
 
-from benchmarks.config.benchmark import ModelServiceSource
+from benchmarks.config.benchmark import BenchmarkConfig, ModelServiceSource
 from benchmarks.profiling import CaptureCleanupError
 from foretoken.kubernetes import (
     Kubectl,
@@ -93,6 +94,8 @@ class ModelService:
     @property
     def tokenizer_identity(self) -> tuple[str, str]:
         """Return the selected model's source and tokenizer for client-side evaluation."""
+        if not self.model:
+            raise ValueError("Automatic tokenizer resolution requires one selected model; pass --model or a tokenizer override")
         if self.deployment is None:
             return "hf", self.model
         identities = {
@@ -292,6 +295,26 @@ def _created_deployment(
         runtime_caches=runtime_caches,
         objects=objects,
     )
+
+
+@contextmanager
+def resolve_benchmark_service(benchmark: BenchmarkConfig) -> Iterator[ModelService]:
+    """Prepare a performance service for a point or a contiguous group of sweep points."""
+    workload = benchmark.resolved_workload
+    with resolve_model_service(
+        benchmark.service,
+        retain_runtime_cache=benchmark.profile is not None,
+        allow_multiple_models=bool(
+            benchmark.trace.trace_selector
+            or (workload.dataset_selectors and workload.dataset_selectors != ["random"])
+        ),
+    ) as service:
+        if benchmark.profile is not None and not service.model:
+            raise ValueError("--profile requires --model for a multi-model deployment")
+        if benchmark.service.health_url:
+            asyncio.run(require_health_endpoint(benchmark.service.health_url))
+            logger.info("Model service health check passed")
+        yield service
 
 
 @contextmanager

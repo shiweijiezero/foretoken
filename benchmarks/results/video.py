@@ -43,6 +43,7 @@ def aggregate_video_results(results: list[VideoSampleResult]) -> dict[str, Any]:
     metrics: dict[str, Any] = {
         "request_num": len(results),
         "success_num": len(successful),
+        "failed_num": len(results) - len(successful),
         "success_rate": len(successful) / len(results) if results else 0.0,
     }
     for name in _TIMING_FIELDS:
@@ -238,7 +239,7 @@ def video_result_sinks(
     sinks: list[ResultSink] = [VideoArtifactSink(config, run_dir)]
     if not config.outputs.includes("quiet"):
         sinks.append(VideoConsoleSink(config))
-    if config.outputs.includes("local"):
+    if config.outputs.saves_local:
         sinks.append(VideoLocalSink(run_dir))
     if config.outputs.includes("wandb"):
         sinks.append(

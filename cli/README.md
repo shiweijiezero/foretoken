@@ -145,6 +145,10 @@ Use `foretoken perf` to measure response latency and request or token throughput
 
 Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalScope. It accepts the same service selection options; task and scoring parameters use the selected framework's syntax. See [Quality evaluation](../benchmarks/docs/eval/README.md). Add `--reference` to [compare a candidate's probabilities against a reference](../benchmarks/docs/eval/distribution-comparison.md).
 
+## Export figures
+
+Use `--output local,wandb,plot` with a benchmark, or `foretoken plot RESULT_DIR` to redraw a saved run or sweep without running inference. Export options and comparisons are in [parameter sweeps](../benchmarks/docs/perf/sweep.md).
+
 ## Find execution bottlenecks
 
 Add `--profile` to `foretoken deploy` or `foretoken perf` to record CPU/GPU execution, then browse captures with `foretoken profile view`. Setup and commands are in [Profiling](../benchmarks/docs/profile/README.md).

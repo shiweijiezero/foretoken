@@ -320,6 +320,41 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
     sdk_run.log(wandb_metric_fields(run.metrics))
 
 
+def publish_sweep_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
+    """Publish the shared repeat statistics and data-backed comparison curves."""
+    from benchmarks.results.plots import sweep_charts
+
+    points = json.loads(run.artifacts["sweep_points"].read_text(encoding="utf-8"))
+    summary = json.loads(run.artifacts["sweep_summary"].read_text(encoding="utf-8"))
+    columns = ["method", "combination", "parameter_group", "bench", "metric", "requested_runs",
+               "runs", "failed_runs", "samples", "mean", "stddev", "median", "min", "max"]
+    sdk_run.log({"Sweep/Summary": wandb.Table(
+        columns=columns,
+        data=[[json.dumps(row[key], ensure_ascii=False) if key == "bench" else row[key] for key in columns] for row in summary],
+        allow_mixed_types=True,
+    )})
+    for chart in sweep_charts(points, summary):
+        if chart.tick_labels:
+            table = wandb.Table(columns=["Method / condition", chart.ylabel], data=[
+                [f"{series.name} / {chart.tick_labels[int(x)]}", y if math.isfinite(y) else None]
+                for series in chart.series for x, y in zip(series.x, series.y)
+            ])
+            plot = wandb.plot.bar(table, "Method / condition", chart.ylabel, title=chart.title)
+        else:
+            plot = wandb.plot.line_series(
+                xs=[list(series.x) for series in chart.series],
+                ys=[[y if math.isfinite(y) else None for y in series.y] for series in chart.series],
+                keys=[series.name for series in chart.series], xname=chart.xlabel,
+                title=f"{chart.title} — {chart.ylabel}",
+            )
+        sdk_run.log({f"Sweep/{chart.name}": plot})
+    artifact = wandb.Artifact(f"sweep-{sdk_run.id}", type="benchmark")
+    for name in ("config", "sweep_points", "sweep_summary", "sweep_summary_csv"):
+        path = run.artifacts[name]
+        artifact.add_file(str(path), name=path.name)
+    sdk_run.log_artifact(artifact)
+
+
 def publish_slo_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
     """Publish configured limits, measured request peaks, and stop reasons for one search."""
     search = run.metrics["slo_search"]

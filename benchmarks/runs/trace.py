@@ -26,6 +26,7 @@ from benchmarks.results.output import (
     BenchmarkRun,
     ResultOutputs,
     build_benchmark_run_record,
+    request_measurement_record,
     write_json,
 )
 from benchmarks.datasets.conversations import (
@@ -418,7 +419,13 @@ class TraceReplayBenchmark:
             # The raw replay records carry trace timing that RequestMeasurement
             # does not; they are written as an artifact for the W&B trace charts.
             raw_output: Path = write_json(
-                outputs.execution_dir, "raw_output.json", records
+                outputs.execution_dir, "raw_output.json", [
+                    {
+                        **{key: value for key, value in raw.items() if key != "started_at"},
+                        **request_measurement_record(measurement, stream=bool(metrics["stream"])),
+                    }
+                    for raw, measurement in zip(records, measurements)
+                ],
             )
             run = BenchmarkRun(
                 record=record,
