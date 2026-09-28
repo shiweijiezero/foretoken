@@ -51,8 +51,9 @@ Draft 和 Target。缩容先关闭准入，再撤销路由，等待已有会话�
 当前限制：文本输入、线性候选、每个角色实例一张 GPU、eager 执行、本地同步调度。
 不支持 P/D 组合、多模态、KV offload/传输、结构化输出、profiling 或 `min_p`。
 HTTP 传候选 ID 和描述符；完整提议分布由 Mooncake 在 GPU Worker 间传输。
-Draft 随机数独立于 Target seed。本示例不代表已完成 Kubernetes 生命周期验收、
-依赖指标的自动扩缩容、随机采样质量评估或性能测试。
+Draft 随机数独立于 Target seed。Kubernetes RDMA 网络、依赖指标的自动扩缩容、
+随机采样质量评估和公开 API 性能基准尚未验证。没有空闲 GPU 容量时，
+滚动更新可能导致服务短暂不可用。
 
 ```bash
 foretoken delete examples/draft-target

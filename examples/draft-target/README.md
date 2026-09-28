@@ -63,8 +63,9 @@ execution and synchronous local scheduling. There is no P/D composition,
 multimodal input, KV offload/transfer, structured output, profiling or `min_p`.
 Candidate IDs and descriptors use HTTP; full proposal distributions use Mooncake
 between GPU workers. Draft randomness is independent of Target's seed.
-Full Kubernetes lifecycle acceptance, metric-driven autoscaling, stochastic
-quality evaluation and performance measurements are not established by this example.
+Kubernetes RDMA networking, metric-driven autoscaling, stochastic quality
+evaluation and public-API performance benchmarks remain unverified. Rollouts
+without spare GPU capacity can temporarily make the service unavailable.
 
 ```bash
 foretoken delete examples/draft-target
