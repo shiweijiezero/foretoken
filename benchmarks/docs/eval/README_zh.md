@@ -63,7 +63,7 @@ foretoken eval examples/quickstart \
 
 ```bash
 foretoken eval setup vbench
-foretoken eval video results/video-run \
+foretoken eval --video results/video-run \
   --evaluator vbench \
   --output local,wandb
 ```
@@ -72,7 +72,7 @@ setup 在 YAML 所在目录的 `.foretoken/evaluators/vbench` 下创建独立 Py
 
 准备成功后，setup 自动写入 `foretoken-evaluators.yaml`，之后评测直接复用，不安装依赖。两个命令都会从当前目录向上查找最近的配置；找不到时，setup 在当前目录生成文件。通过 `--config PATH` 指定其他 YAML，setup 的 `--directory PATH` 可以调整托管安装位置。失败时不会发布新的 YAML，保留安装文件，解决报错后重试即可。权重准备日志保存在托管目录的 `setup.log`。
 
-如果视频目录是 Foretoken `perf video` 的结果目录，命令会自动从 `raw_results.json` 读取每个视频的准确提示词。对于其他视频目录，VBench 会从文件名推断提示词，也可以通过 `--prompt-file` 传入 VBench JSON 映射。使用 `--dimension NAME [NAME ...]` 选择部分维度；默认运行 `custom_input` 支持的全部 10 个维度。该模式只评测已有视频，不会重新生成视频。
+`foretoken perf video` 生成视频并测量服务性能，`foretoken eval --video` 只评测已有视频的质量，不会重新生成。如果视频目录是 Foretoken `perf video` 的结果目录，命令会自动从 `raw_results.json` 读取每个视频的准确提示词。对于其他视频目录，VBench 会从文件名推断提示词，也可以通过 `--prompt-file` 传入 VBench JSON 映射。使用 `--dimension NAME [NAME ...]` 选择部分维度；默认运行 `custom_input` 支持的全部 10 个维度。
 
 新评测结果的 `config.json` 会记录 VBench Python、源码目录、Git commit、所选维度、提示词来源和视频数量。VBench 目录不是 Git 检出时，`vbench_commit` 为 `null`。Foretoken 视频生成阶段已在源目录保存自己的 `config.json` 和 `raw_results.json`。
 
@@ -88,7 +88,7 @@ evaluators:
     cache: /path/to/vbench-cache
 ```
 
-随后直接运行 `foretoken eval video`，无需 setup。已有这份 YAML 时运行 setup，只检查指定的安装并准备缺失权重，不重新安装依赖，也不改写 VBench 配置。已有配置有误时需要自行修正。setup 新增 VBench 配置时会保留其他评测器的设置。
+随后直接运行 `foretoken eval --video VIDEO_DIR`，无需 setup。已有这份 YAML 时运行 setup，只检查指定的安装并准备缺失权重，不重新安装依赖，也不改写 VBench 配置。已有配置有误时需要自行修正。setup 新增 VBench 配置时会保留其他评测器的设置。
 
 VBench 使用配置的独立 Python 环境运行；`root` 包含 `evaluate.py`，`cache` 是已存在的权重目录。`cache` 可以省略，此时使用 VBench 默认缓存。YAML 中的相对路径以配置文件所在目录为基准。`--vbench-python`、`--vbench-root` 和 `--vbench-cache` 分别覆盖 YAML 中的路径；评测过程中，VBench 仍可能下载缺少的权重。
 

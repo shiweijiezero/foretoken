@@ -164,7 +164,7 @@ print('VBench custom_input dependencies and checkpoints are ready.')
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
     command = shlex.join([
-        "foretoken", "eval", "video", "VIDEO_DIR", "--evaluator", "vbench",
+        "foretoken", "eval", "--video", "VIDEO_DIR", "--evaluator", "vbench",
         "--config", str(path),
     ])
     print(f"VBench ready. Evaluator configuration: {path}\nRun: {command}", flush=True)

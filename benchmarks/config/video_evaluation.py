@@ -186,12 +186,14 @@ def parse_vbench_evaluation_arguments(argv: Sequence[str]) -> VBenchEvaluationCo
     output = BenchmarkOutputConfig()
     tracking = WandbRunConfig()
     parser = argparse.ArgumentParser(
-        prog="foretoken eval video",
+        prog="foretoken eval",
         allow_abbrev=False,
         description="Score generated videos with VBench custom_input dimensions.",
     )
     parser.add_argument(
-        "videos_path",
+        "--video",
+        required=True,
+        metavar="VIDEO_DIR",
         type=_resolved_path,
         help=(
             "directory containing MP4 or GIF videos "
@@ -263,7 +265,7 @@ def parse_vbench_evaluation_arguments(argv: Sequence[str]) -> VBenchEvaluationCo
             "in foretoken-evaluators.yaml or pass --vbench-root"
         )
     config = VBenchEvaluationConfig(
-        videos_path=options.videos_path,
+        videos_path=options.video,
         prompt_file=options.prompt_file,
         dimensions=tuple(options.dimension),
         vbench_python=options.vbench_python or settings.get("python") or sys.executable,

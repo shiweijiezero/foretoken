@@ -40,7 +40,7 @@ foretoken eval examples/quickstart \
   --tasks gsm8k --limit 100 --output local,wandb
 ```
 
-This scores 100 GSM8K math problems and reports the task's metrics and sample counts. `foretoken eval video` scores existing videos with VBench `custom_input`. [Quality evaluation](docs/eval/README.md) covers the evaluators, their inputs, and score reports. Add `--reference` for [reference/candidate probability comparisons](docs/eval/distribution-comparison.md).
+This scores 100 GSM8K math problems and reports the task's metrics and sample counts. [Quality evaluation](docs/eval/README.md) covers lm-evaluation-harness, EvalScope, and VBench inputs and score reports. Add `--reference` for [reference/candidate probability comparisons](docs/eval/distribution-comparison.md).
 
 ## Profile execution
 

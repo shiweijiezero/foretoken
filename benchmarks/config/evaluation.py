@@ -61,7 +61,7 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
             "Add --reference PATH to compare model distributions. "
             "PATH is a Kustomize directory. "
             "Native task options need no separator. For video quality, use "
-            "'foretoken eval setup vbench' then 'foretoken eval video --help'."
+            "'foretoken eval setup vbench' then 'foretoken eval --video VIDEO_DIR --help'."
         ),
     )
     parser.add_argument(

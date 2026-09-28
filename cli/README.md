@@ -143,7 +143,7 @@ Use `foretoken perf` to measure response latency and request or token throughput
 
 ## Evaluate output quality and compare models
 
-Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalScope, or `foretoken eval video` to score existing videos with VBench `custom_input`. Text evaluation accepts the same service selection options; video evaluation takes a video directory and a separate VBench environment. See [Quality evaluation](../benchmarks/docs/eval/README.md). Add `--reference` to [compare a candidate's probabilities against a reference](../benchmarks/docs/eval/distribution-comparison.md).
+Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalScope. To score existing videos with VBench, add `--video VIDEO_DIR`. See [Quality evaluation](../benchmarks/docs/eval/README.md). Add `--reference` to [compare a candidate's probabilities against a reference](../benchmarks/docs/eval/distribution-comparison.md).
 
 ## Find execution bottlenecks
 

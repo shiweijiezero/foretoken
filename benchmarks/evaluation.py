@@ -29,8 +29,8 @@ def main(argv: Sequence[str] | None = None) -> None:
 
             setup_vbench(parse_vbench_setup_arguments(arguments[1:]))
             return
-        if arguments[:1] == ("video",):
-            config = parse_vbench_evaluation_arguments(arguments[1:])
+        if any(argument.partition("=")[0] == "--video" for argument in arguments):
+            config = parse_vbench_evaluation_arguments(arguments)
             configure_logging(not config.outputs.includes("quiet"))
             run_video_evaluation(config, VBenchEvaluator(config))
             return

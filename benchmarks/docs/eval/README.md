@@ -63,7 +63,7 @@ On a Linux x86_64 machine with an NVIDIA driver supporting CUDA 12.1, activate C
 
 ```bash
 foretoken eval setup vbench
-foretoken eval video results/video-run \
+foretoken eval --video results/video-run \
   --evaluator vbench \
   --output local,wandb
 ```
@@ -72,7 +72,7 @@ Setup creates an independent Python 3.10 Conda environment, the verified VBench 
 
 After preparation succeeds, setup writes `foretoken-evaluators.yaml`; evaluation then reuses it without installing dependencies. Both commands search upward from the current directory for the nearest configuration. If none exists, setup creates it in the current directory. Use `--config PATH` for a file elsewhere and setup's `--directory PATH` to change the managed installation location. A failed setup does not publish new YAML; keep its files and retry after correcting the reported error. Checkpoint preparation logs are saved as `setup.log` in the managed directory.
 
-When the video directory is a Foretoken `perf video` result, the command derives exact prompts from `raw_results.json`. For another video directory, VBench infers prompts from file names, or you can pass a VBench JSON mapping with `--prompt-file`. Select a subset with `--dimension NAME [NAME ...]`; by default all 10 custom-input dimensions run. This mode scores existing videos and does not generate new ones.
+`foretoken perf video` generates videos and measures serving performance; `foretoken eval --video` only scores existing videos and does not regenerate them. When the video directory is a Foretoken `perf video` result, the command derives exact prompts from `raw_results.json`. For another video directory, VBench infers prompts from file names, or you can pass a VBench JSON mapping with `--prompt-file`. Select a subset with `--dimension NAME [NAME ...]`; by default all 10 custom-input dimensions run.
 
 The new evaluation result's `config.json` records the VBench Python, source root and Git commit, selected dimensions, prompt source, and number of videos. If the VBench directory is not a Git checkout, `vbench_commit` is `null`. Foretoken video generation already saves its own `config.json` and `raw_results.json` in the source directory.
 
@@ -88,7 +88,7 @@ evaluators:
     cache: /path/to/vbench-cache
 ```
 
-Then run `foretoken eval video` directly; setup is optional. If you run setup with this YAML, it checks the configured installation and prepares missing checkpoints, but does not reinstall packages or rewrite your VBench settings. An invalid existing configuration must be corrected manually. Other evaluators' settings are retained when setup adds VBench.
+Then run `foretoken eval --video VIDEO_DIR` directly; setup is optional. If you run setup with this YAML, it checks the configured installation and prepares missing checkpoints, but does not reinstall packages or rewrite your VBench settings. An invalid existing configuration must be corrected manually. Other evaluators' settings are retained when setup adds VBench.
 
 VBench runs in the configured Python environment; `root` contains `evaluate.py`, and `cache` is an existing checkpoint directory. `cache` is optional and otherwise uses VBench's default cache. Relative YAML paths resolve beside the file. CLI `--vbench-python`, `--vbench-root`, and `--vbench-cache` override individual YAML values. Missing checkpoints may still be downloaded by VBench during evaluation.
 
