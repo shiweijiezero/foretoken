@@ -53,6 +53,8 @@ pub struct LaunchPlanV1 {
 #[serde(deny_unknown_fields)]
 pub struct DraftTargetPlan {
     pub role: DraftTargetRole,
+    #[serde(default)]
+    pub rdma: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

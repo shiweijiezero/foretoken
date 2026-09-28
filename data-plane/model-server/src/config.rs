@@ -17,6 +17,8 @@ pub struct RuntimeConfig {
     pub launch: LaunchPlanV1,
     pub listen_address: SocketAddr,
     pub member: Option<MemberContext>,
+    /// Pod address advertised by the DT worker for Mooncake control handshakes.
+    pub dt_rdma_address: Option<std::net::IpAddr>,
 }
 
 /// Pod-local identity supplied by Kubernetes and LeaderWorkerSet for distributed startup.
@@ -69,10 +71,22 @@ impl RuntimeConfig {
         } else {
             None
         };
+        let dt_rdma_address = if launch.dt.as_ref().is_some_and(|dt| dt.rdma) {
+            let address = required_env("FORETOKEN_MEMBER_IP")?
+                .parse::<std::net::IpAddr>()
+                .map_err(|_| "FORETOKEN_MEMBER_IP must be a Pod IP address".to_string())?;
+            if address.is_unspecified() || address.is_loopback() {
+                return Err("DT RDMA requires a routable Pod IP address".into());
+            }
+            Some(address)
+        } else {
+            None
+        };
         Ok(Self {
             launch,
             listen_address,
             member,
+            dt_rdma_address,
         })
     }
 }

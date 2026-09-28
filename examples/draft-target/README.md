@@ -3,7 +3,7 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Experimental Draft/Target deployment
+# Draft/Target deployment
 
 [中文](README_zh.md)
 
@@ -12,7 +12,24 @@ frontend Router. This example needs two GPUs, a shared RuntimeCache, and a
 source-built platform with the [external-speculation engine extension](../../data-plane/dt-plugin/docs/mrv2-integration.md).
 The released and repository-pinned vLLM engines do not provide that extension.
 Set the platform's `runtime.vllm.image` to your model-server image containing it;
-installing the Python DT package alone does not add the engine APIs.
+installing the Python DT package alone does not add the engine APIs. Both roles
+need the extended engine for probability transfer.
+
+With the platform's existing `rdma.resourceName` and `rdma.resourceCount` configured,
+the controller allocates RDMA devices to each role and enables Mooncake GPU
+probability transfer. Workers advertise their Pod IP; networking must allow the
+HTTP and dynamic Mooncake handshake ports. The controller permits these channels
+between D/T Pods belonging to the same service. Mooncake selects among visible
+HCAs; resource allocation alone does not prove NIC isolation. The image also needs
+a compatible Mooncake wheel and GPU registration support.
+
+Without an RDMA allocation, this example accepts temperature zero only. With RDMA,
+requests may use `temperature`, `top_p`, `top_k` and a Target `seed`.
+
+The role launcher enables vLLM batch invariance by default on both roles. Use
+NVIDIA GPUs with compute capability 8.0 or newer and compatible engine backends;
+see [role startup requirements](../../data-plane/dt-plugin/README.md#start-two-roles)
+for the native environment override and numerical/performance limitations.
 
 From the repository root, after installing that platform:
 
@@ -32,14 +49,17 @@ absolute model and tokenizer paths visible inside the Pods.
 
 Change each Pool's `replicas` independently and deploy again. New requests choose
 one available Draft and one Target. Scaling down closes admission, withdraws the
-route, and waits for existing sessions within the configured drain deadline.
+route, and waits for existing sessions; the model-server supervisor also waits
+for retained transfer artifacts within the configured drain deadline.
 Multiple Draft replicas provide capacity; they do not jointly propose a tree.
 
-Current limits: text input, greedy sampling, one GPU per role instance, no P/D
-composition, multimodal input, KV offload/transfer, structured output, or profiling.
-Scheduler telemetry is not yet exposed by the DT role, so performance-based
-autoscaling policies have not been validated. Candidate tokens travel over HTTP;
-the separate Mooncake diagnostic is not part of this inference path.
+Current limits: text input, linear candidates, one GPU per role instance, eager
+execution and synchronous local scheduling. There is no P/D composition,
+multimodal input, KV offload/transfer, structured output, profiling or `min_p`.
+Candidate IDs and descriptors use HTTP; full proposal distributions use Mooncake
+between GPU workers. Draft randomness is independent of Target's seed.
+Full Kubernetes lifecycle acceptance, metric-driven autoscaling, stochastic
+quality evaluation and performance measurements are not established by this example.
 
 ```bash
 foretoken delete examples/draft-target

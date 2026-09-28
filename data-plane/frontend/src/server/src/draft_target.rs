@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Experimental greedy DT workflow for selected role endpoints; no placement policy lives here.
+//! DT workflow for selected role endpoints; no placement policy lives here.
 
 use std::pin::Pin;
 
 use foretoken_llm_facade::LlmFacadeError;
 use foretoken_llm_facade::draft_target::{
-    DraftTargetRequest, RoleClient, RoleSession, TargetCommit,
+    DraftTargetRequest, DraftTargetSampling, RoleClient, RoleSession, TargetCommit,
 };
 use futures::Stream;
 
@@ -15,7 +15,7 @@ use futures::Stream;
 pub type DraftTargetStream =
     Pin<Box<dyn Stream<Item = Result<TargetCommit, LlmFacadeError>> + Send>>;
 
-/// Runs one greedy request against caller-selected roles.
+/// Runs one request against caller-selected roles.
 ///
 /// Frontend callers own tokenization, compatible model selection and the request deadline.
 /// The returned stream owns round ordering and cancellation: dropping it closes both role
@@ -28,10 +28,17 @@ pub async fn generate_draft_target(
     let (draft_status, target_status) = tokio::try_join!(draft.status(), target.status())?;
     if draft_status.role != "draft"
         || target_status.role != "target"
-        || draft_status.candidate_format != "greedy_token_ids"
-        || target_status.candidate_format != "greedy_token_ids"
+        || draft_status.candidate_format != target_status.candidate_format
+        || !matches!(
+            draft_status.candidate_format.as_str(),
+            "greedy_token_ids" | "token_ids_log_probs"
+        )
     {
         return Err(LlmFacadeError::Configuration);
+    }
+    if request.sampling.temperature != 0.0 && draft_status.candidate_format != "token_ids_log_probs"
+    {
+        return Err(LlmFacadeError::InvalidRequest);
     }
     if !draft_status.accepting || !target_status.accepting {
         return Err(LlmFacadeError::Unavailable);
@@ -76,14 +83,14 @@ pub async fn generate_draft_target(
             } else {
                 let mut prefix = request.token_ids.clone();
                 prefix.extend_from_slice(&commit.token_ids);
-                draft_session = Some((draft.bind(&prefix, version).await?, version));
+                draft_session = Some((draft.bind(&prefix, version, &request.sampling).await?, version));
             }
             // Backpressure belongs to the caller. Do not spawn speculative work detached
             // from the output stream; cancellation must drop the session while a round awaits.
             yield commit;
             let (session, _) = draft_session.as_mut().ok_or(LlmFacadeError::Protocol)?;
             let candidates = session.propose(version, budget.min(remaining)).await?;
-            target.verify(version, &candidates).await?;
+            target.verify(version, &candidates, &draft).await?;
         }
     }))
 }
@@ -106,9 +113,11 @@ pub async fn generate_draft_target_tokens(
 
     let sampling = &request.sampling_params;
     // Explicit allowlist against upstream defaults: a newly added sampling option must not
-    // silently acquire support through serialization. Greedy seeds do not affect sampling.
+    // silently acquire support through serialization.
     let supported = EngineCoreSamplingParams {
-        temperature: 0.0,
+        temperature: sampling.temperature,
+        top_p: sampling.top_p,
+        top_k: sampling.top_k,
         seed: sampling.seed,
         max_tokens: sampling.max_tokens,
         min_tokens: sampling.min_tokens,
@@ -145,6 +154,12 @@ pub async fn generate_draft_target_tokens(
             stop_token_ids: stop_tokens,
             ignore_eos: true,
             stop: Vec::new(),
+            sampling: DraftTargetSampling {
+                temperature: sampling.temperature,
+                top_p: sampling.top_p,
+                top_k: sampling.top_k,
+                seed: sampling.seed,
+            },
         },
     )
     .await?;

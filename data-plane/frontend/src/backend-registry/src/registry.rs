@@ -275,7 +275,10 @@ impl BackendRegistry {
                     status.accepting
                         && status.token_budget > 0
                         && status.max_model_len > 0
-                        && status.candidate_format == "greedy_token_ids"
+                        && matches!(
+                            status.candidate_format.as_str(),
+                            "greedy_token_ids" | "token_ids_log_probs"
+                        )
                         && status.role
                             == if *role == ModelServerRole::Draft {
                                 "draft"

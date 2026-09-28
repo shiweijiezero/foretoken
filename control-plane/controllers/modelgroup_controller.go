@@ -121,14 +121,14 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	available, err := reconciler.reconcileWorkload(ctx, group)
+	available, err := reconciler.reconcileWorkload(ctx, group, pool)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := reconciler.reconcileService(ctx, group, pool); err != nil {
 		return ctrl.Result{}, err
 	}
-	if err := reconciler.reconcileNetworkPolicy(ctx, group); err != nil {
+	if err := reconciler.reconcileNetworkPolicy(ctx, group, pool); err != nil {
 		return ctrl.Result{}, err
 	}
 	scheduling, err := reconciler.schedulingCapacity(ctx, group)
@@ -163,8 +163,8 @@ func (reconciler *ModelGroupReconciler) owningModelPool(ctx context.Context, gro
 // Workload reconciliation and desired resources.
 
 // reconcileDeployment applies the ModelGroup Deployment and returns its persisted state.
-func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup) (*appsv1.Deployment, error) {
-	desired, err := desiredDeployment(group, reconciler.ImagePullSecrets)
+func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) (*appsv1.Deployment, error) {
+	desired, err := desiredDeployment(group, pool, reconciler.ImagePullSecrets)
 	if err != nil {
 		return nil, err
 	}
@@ -188,6 +188,8 @@ func (reconciler *ModelGroupReconciler) reconcileDeployment(ctx context.Context,
 	return current, nil
 }
 
+const modelGroupDTServiceLabel = "inference.foretoken.io/dt-service-uid"
+
 func modelGroupLabels(group *inferencev1alpha1.ModelGroup) map[string]string {
 	labels := map[string]string{modelGroupLabel: group.Name, modelGroupRoleLabel: string(group.Spec.Role)}
 	if group.Spec.PDRuntime != nil {
@@ -197,7 +199,7 @@ func modelGroupLabels(group *inferencev1alpha1.ModelGroup) map[string]string {
 }
 
 // desiredDeployment builds the isolated model-server workload from a resolved ModelGroup contract.
-func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []corev1.LocalObjectReference) (*appsv1.Deployment, error) {
+func desiredDeployment(group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool, imagePullSecrets []corev1.LocalObjectReference) (*appsv1.Deployment, error) {
 	launchPlan, err := vllmconfig.BuildLaunchPlan(group.Spec)
 	if err != nil {
 		return nil, fmt.Errorf("build vLLM launch plan: %w", err)
@@ -207,6 +209,10 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		return nil, fmt.Errorf("marshal vLLM launch plan: %w", err)
 	}
 	labels := modelGroupLabels(group)
+	podLabels := maps.Clone(labels)
+	if launchPlan.DT != nil && launchPlan.DT.RDMA {
+		podLabels[modelGroupDTServiceLabel] = pool.Spec.ModelServiceRef.UID
+	}
 	var annotations map[string]string
 	if group.Spec.Network != "" {
 		annotations = map[string]string{multusNetworksAnnotation: group.Spec.Network}
@@ -233,6 +239,9 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 		{Name: "FORETOKEN_KV_INDEX_KEY_PATH", Value: kvIndexerKeyPath},
 		{Name: "FORETOKEN_KV_SCOPE_ID", Value: kvScopeID(group)},
 		{Name: "FORETOKEN_MODEL_GROUP_UID", Value: string(group.UID)},
+	}
+	if launchPlan.DT != nil && launchPlan.DT.RDMA {
+		env = append(env, corev1.EnvVar{Name: "FORETOKEN_MEMBER_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}})
 	}
 	env = append(env, vllmconfig.RuntimeCacheEnv(group.Spec.Artifacts.Cache, group.Spec.Runtime.TritonCacheDirectory)...)
 	env = append(env, runtimeconfig.HuggingFaceEnv(group.Spec.Artifacts.HuggingFaceAccess)...)
@@ -322,7 +331,7 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 			Strategy:                appsv1.DeploymentStrategy{Type: appsv1.RecreateDeploymentStrategyType},
 			Selector:                &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels, Annotations: annotations},
+				ObjectMeta: metav1.ObjectMeta{Labels: podLabels, Annotations: annotations},
 				Spec: corev1.PodSpec{
 					AutomountServiceAccountToken:  &automountToken,
 					EnableServiceLinks:            &enableServiceLinks,
@@ -462,7 +471,7 @@ func modelServerProbe(path string, periodSeconds, failureThreshold int32) *corev
 }
 
 // reconcileNetworkPolicy allows the frontend, control plane, runtime peers, and trusted metrics-scraper namespaces to reach a ModelGroup.
-func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Context, group *inferencev1alpha1.ModelGroup) error {
+func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Context, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) error {
 	labels := modelGroupLabels(group)
 	protocol := corev1.ProtocolTCP
 	modelServerPort := intstr.FromString("model-server")
@@ -505,6 +514,13 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 			metricsScraperNamespaceLabel: metricsScraperNamespaceValue,
 		}},
 	})
+	if group.Spec.RDMA != nil && (group.Spec.Role == inferencev1alpha1.ModelRoleDraft || group.Spec.Role == inferencev1alpha1.ModelRoleTarget) {
+		// DT workers establish dynamic Mooncake channels and acknowledge reads over HTTP.
+		// Only roles belonging to the same verified service may reach these ports.
+		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{{
+			PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{modelGroupDTServiceLabel: pool.Spec.ModelServiceRef.UID}},
+		}}})
+	}
 	if group.Spec.PDRuntime != nil {
 		// Mooncake opens bidirectional runtime side channels on dynamic ports
 		// after bootstrap. Restrict them to the same controller-owned P/D linked processing unit.

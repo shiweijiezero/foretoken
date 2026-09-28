@@ -3,7 +3,7 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# 实验性 Draft/Target 部署
+# Draft/Target 部署
 
 [English](README.md)
 
@@ -11,6 +11,20 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 需要两张 GPU、共享 RuntimeCache，以及包含[独立 external-speculation 引擎扩展](../../data-plane/dt-plugin/docs/mrv2-integration.md)的源码构建平台。
 已发布和仓库固定版本的 vLLM 不包含该扩展。安装平台时，把 `runtime.vllm.image`
 设为包含该扩展的 model-server 镜像；只安装 Python DT 包不会增加引擎接口。
+通过 RDMA 传提议分布时，两端都需要扩展引擎。
+
+平台配置现有 `rdma.resourceName`、`rdma.resourceCount` 后，控制器会为每个角色分配
+RDMA 设备并启用 Mooncake GPU 概率传输。Worker 使用 Pod IP 建立握手；网络需允许
+HTTP 和 Mooncake 动态握手端口。控制器允许同一服务的 D/T Pod 互通这些端口。
+Mooncake 从可见 HCA 中选择，资源申请本身不能证明 NIC 隔离。镜像还需具备匹配的
+Mooncake wheel 和 GPU 内存注册支持。
+
+没有 RDMA 分配时，此示例只接受温度 0。启用 RDMA 后，请求可使用 `temperature`、
+`top_p`、`top_k` 和 Target 的 `seed`。
+
+角色启动器默认在两端启用 vLLM batch invariance。使用计算能力 8.0 及以上的 NVIDIA GPU
+和兼容的引擎后端；原生环境变量覆盖方式及数值、性能限制见
+[角色启动要求](../../data-plane/dt-plugin/README_zh.md#启动两个角色)。
 
 安装好上述平台后，在仓库根目录执行：
 
@@ -28,13 +42,15 @@ tokenizer。需要选择 token ID 含义兼容的模型，不能只根据名称�
 当前 `source: local` 部署要求模型、tokenizer 使用 Pod 内可见的绝对路径。
 
 分别修改各 Pool 的 `replicas` 后重新部署，即可独立调整副本数。新请求各选择一个
-Draft 和 Target。缩容先关闭准入，再撤销路由，并在 drain 时限内等待已有会话结束。
+Draft 和 Target。缩容先关闭准入，再撤销路由，等待已有会话结束；model-server 还会在关闭时限内
+等待持有的传输产物释放。
 多个 Draft 副本提供更多容量，当前不会共同生成候选树。
 
-当前限制：文本输入、贪心采样、每个角色实例一张 GPU；不支持与 P/D 组合、多模态、
-KV offload/传输、结构化输出或 profiling。DT 角色尚未提供 scheduler 指标，
-尚未验证依赖性能指标的自动扩缩容策略。候选 token 通过 HTTP 传递；独立 Mooncake
-诊断不在这条推理链路中。
+当前限制：文本输入、线性候选、每个角色实例一张 GPU、eager 执行、本地同步调度。
+不支持 P/D 组合、多模态、KV offload/传输、结构化输出、profiling 或 `min_p`。
+HTTP 传候选 ID 和描述符；完整提议分布由 Mooncake 在 GPU Worker 间传输。
+Draft 随机数独立于 Target seed。本示例不代表已完成 Kubernetes 生命周期验收、
+依赖指标的自动扩缩容、随机采样质量评估或性能测试。
 
 ```bash
 foretoken delete examples/draft-target

@@ -146,7 +146,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		}
 	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if template.NodeCount > 1 || effective.Parallelism.EP != nil || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
+	if template.NodeCount > 1 || effective.Parallelism.EP != nil || (pdRuntime != nil && pdRuntime.Protocol == "rdma") || template.Role == inferencev1alpha1.ModelRoleDraft || template.Role == inferencev1alpha1.ModelRoleTarget {
 		rdma = profile.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {

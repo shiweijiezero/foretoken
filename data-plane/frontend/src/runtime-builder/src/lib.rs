@@ -102,14 +102,19 @@ impl RuntimeBuilder {
                 .healthy_models()
                 .into_iter()
                 .collect::<BTreeSet<_>>();
-            model_runtimes(
-                identities
-                    .into_iter()
-                    .filter(|(model, _)| healthy_models.contains(model))
-                    .collect(),
-                &registry,
-            )
-            .await?
+            let identities = identities
+                .into_iter()
+                .filter(|(model, _)| healthy_models.contains(model))
+                .collect();
+            // Tokenizer construction performs substantial synchronous CPU work. Keep it
+            // off the async worker so HTTP connections and readiness probes keep progressing.
+            let registry = registry.clone();
+            let runtime = tokio::runtime::Handle::current();
+            tokio::task::spawn_blocking(move || {
+                runtime.block_on(model_runtimes(identities, &registry))
+            })
+            .await
+            .map_err(|error| RuntimeBuildError::ModelRuntime(error.to_string()))??
         } else {
             BTreeMap::new()
         };

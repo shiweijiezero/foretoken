@@ -3,7 +3,7 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Greedy role protocol
+# Draft/Target role protocol
 
 This internal protocol connects a frontend coordinator to independently deployed
 models. Role endpoints execute model work; the frontend owns placement, stage
@@ -14,16 +14,25 @@ length or a transport-buffer identity.
 ## One request
 
 1. Open Target `POST /generate` with `token_ids` and `max_tokens`, optionally
-   `stop` strings, `stop_token_ids`, `min_tokens` and `ignore_eos`. Read its NDJSON response. The first `opened` event supplies a
+   `stop` strings, `stop_token_ids`, `min_tokens`, `ignore_eos` and `sampling`.
+   `sampling` contains `temperature`, `top_p`, `top_k` and optional Target `seed`.
+   Read its NDJSON response. The first `opened` event supplies a
    `session_id`. Each `committed` event carries a token delta, text delta,
    `finished`, `finish_reason`, `stop_reason`, `cached_token_count` and the next
    `version` (null on termination).
 2. After the first nonterminal commit, open Draft `POST /sessions` with the
-   original prompt plus confirmed tokens and the Target's `version`. Read the
+   original prompt plus confirmed tokens, the Target's `version`, and the same
+   `sampling` settings. Draft uses independent random draws, ignoring the Target
+   seed. Read the
    `opened` event and **keep this response stream open** throughout the session.
 3. Call Draft `POST /sessions/{id}/propose` with that `version` and `max_tokens`
-   within the role budget. Its JSON result contains `version` and `token_ids`.
-4. Call Target `POST /sessions/{id}/verify` with that version and candidate IDs.
+   within the role budget. Its result contains `version`, `token_ids`, and
+   `artifact`: null without RDMA, otherwise `{artifact_id, payload}`. `payload`
+   is the GPU `PayloadRef` descriptor defined in the [Connector contract](connector-contract.md).
+4. Call Target `POST /sessions/{id}/verify` with that version, candidate IDs,
+   `artifact`, and the selected Draft HTTP `source_endpoint`. In RDMA mode Target
+   completes the GPU read and sends `POST /artifacts/{artifact_id}/release` to
+   Draft with the exact `publication_id`, then stages data and submits candidates.
    `accepted` means the engine admitted this candidate submission, not that its
    tokens were accepted by verification. An empty token list requests one ordinary
    Target step. Duplicate, stale and already-consumed tickets return false.
@@ -39,7 +48,7 @@ length or a transport-buffer identity.
 The initial Target prefill produces its first token without a Draft. The
 frontend must not re-tokenize display text to reconstruct commits: stop handling
 can make displayed text and internal token boundaries differ. This first adapter
-supports greedy text only and does not negotiate tokenizer compatibility; callers
+supports text and linear candidates and does not negotiate tokenizer compatibility; callers
 must select models with matching token-ID semantics.
 
 ## Concurrency and lifecycle
@@ -55,7 +64,8 @@ candidate format and token budget. A failed EngineCore makes status and new
 session admission return 503. `POST /drain` rejects new sessions with 503
 but allows existing proposals, commits and verification to finish. Drain is
 irreversible for that service process. Deployment automation must wait for zero
-active sessions, or cancel their owners, before terminating the role. There is no
+active sessions and zero `retained_artifacts` before terminating the role. Cancelling
+sessions does not prove transfer storage is released. There is no
 transparent session migration or replay after a process restart.
 
 A waiting Target stays in vLLM's request state but is not scheduled for model
@@ -65,21 +75,20 @@ may be recomputed; it does not promise optimal Draft KV reuse.
 
 ## Transport and extension boundary
 
-See the [method payload contract](connector-contract.md) for the proposed
-probability, feature and tree boundaries; these are not enabled role APIs.
+Both roles advertise `token_ids_log_probs` when started with RDMA, or
+`greedy_token_ids` without it. The selected pair must match. Random sampling
+requires RDMA. Tensor data moves directly between workers; frontend relays only
+candidate IDs and immutable descriptors. Each model retains its own KV cache.
 
-Greedy candidates are short token-ID lists on the HTTP control plane. This path
-has no cross-model KV copy and no Mooncake payload reference. The independent
-Mooncake tensor API remains available for tensor-bearing methods but is not wired
-into these messages. Adding stochastic proposals requires the corresponding
-proposal distributions and verifier semantics, not just an extra JSON field.
+The Target read/ACK task survives its HTTP caller's cancellation. Source
+publication remains registered until ACK; Target keeps its received tensor until
+verification output or request abort. A transfer failure may retain storage until
+process termination. See the [Connector contract](connector-contract.md).
 
-The Target requires the separate vLLM external-speculation extension. The adapter
-imports its public output ticket and submission API without modifying engine
-methods. The [Rust frontend workflow](frontend-workflow.md) consumes this protocol through
-both the token-input example and the normal Router/public API path when supplied
-with controller-generated DT serving snapshots. Role deployment and drain use
-the existing Group lifecycle. Metric-driven autoscaling has not been validated.
+RDMA execution requires the separate vLLM extension on both roles. Without RDMA,
+Target still needs the external-candidate extension. No role patches engine
+methods during installation. The [Rust frontend workflow](frontend-workflow.md)
+uses these endpoints for both direct token-input requests and public API dispatch.
 
 ## Discovery identity
 
@@ -100,3 +109,7 @@ same observation without changing admission. `running_requests` counts owned
 Draft and Target sessions, including sessions waiting between rounds. Native
 scheduler/KV gauges and token counters remain null; latency histograms have no
 observations. Controllers must not interpret those fields as measured zero load.
+
+`/status.retained_artifacts` reports Worker-owned proposal/transfer storage.
+It is separate from request telemetry and is consumed by the model-server
+supervisor during shutdown.

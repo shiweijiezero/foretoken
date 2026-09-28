@@ -9,7 +9,6 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use foretoken_model_protocol::TelemetryResponse;
 use foretoken_model_server::{
     config::RuntimeConfig, launch::PYTHON_MODULE_PATH, managed_engine::ManagedEngine, runtime_cache,
 };
@@ -61,6 +60,9 @@ pub(super) async fn run(
         .arg(format!("--host={}", config.listen_address.ip()))
         .arg(format!("--port={}", config.listen_address.port()))
         .args(config.launch.render_vllm_args(None)?);
+    if let Some(address) = config.dt_rdma_address {
+        command.arg(format!("--rdma-host={address}"));
+    }
     let engine = ManagedEngine::spawn(command, None).await?;
     let failure = tokio::select! {
         () = super::shutdown_signal() => None,
@@ -95,25 +97,30 @@ pub(super) async fn run(
     }
 }
 
-// The role owns session counts; the supervisor only waits within the shared shutdown deadline.
+// The role owns sessions and transfer storage; shutdown must wait for both.
 async fn drain(endpoint: &str) -> Result<(), reqwest::Error> {
     let client = reqwest::Client::new();
-    let mut telemetry: TelemetryResponse = client
+    client
         .post(format!("{endpoint}/v1/internal/admission/close"))
         .send()
         .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    while telemetry.running_requests != 0 {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        telemetry = client
-            .get(format!("{endpoint}/v1/internal/telemetry"))
+        .error_for_status()?;
+    #[derive(serde::Deserialize)]
+    struct RoleDrainStatus {
+        active_sessions: usize,
+        retained_artifacts: usize,
+    }
+    loop {
+        let status: RoleDrainStatus = client
+            .get(format!("{endpoint}/status"))
             .send()
             .await?
             .error_for_status()?
             .json()
             .await?;
+        if status.active_sessions == 0 && status.retained_artifacts == 0 {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    Ok(())
 }

@@ -3,108 +3,94 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# DT Connector: method payloads and engine boundaries
+# DT Connector: proposal distributions and ownership
 
 English | [简体中文](connector-contract_zh.md)
 
-This review proposal defines cross-role data, its producers and consumers, and
-required engine interfaces. The executable API remains the
-[greedy role protocol](role-protocol.md). HTTP greedy inference and a separate
-RDMA diagnostic do not establish a general DT Connector implementation.
+The Connector connects independent Draft and Target workers. HTTP carries
+request control, candidate IDs and immutable tensor descriptors. Mooncake reads
+the Draft's proposal distributions directly into Target GPU storage. The
+[role protocol](role-protocol.md) defines the control endpoints; the
+[engine contract](mrv2-integration.md) defines MRV2 integration.
 
-## Ownership and method requirements
+## What crosses the boundary
 
-Frontend selects roles, orders stages and owns request lifetimes. Connector moves
-control messages and data. Each engine owns execution, batching and KV. Only the
-final Target commits tokens; transport completion never means candidate acceptance.
-Control flows through frontend coordination; large tensors move directly between
-roles through Mooncake, with only descriptors passing through the frontend.
-
-| Method | Target → Draft | Draft → verifier | Missing integration |
-| --- | --- | --- | --- |
-| Independent greedy models | Confirmed context, round, budget, termination | Candidate tokens | HTTP works; no RDMA inference payload |
-| Independent stochastic proposals | Context and sampling contract | Candidates and actual proposal distribution q, aligned by position and vocabulary | Draft q export, Target consumption, Worker tensor lifecycle |
-| Feature-driven Draft | Method-specific hidden states/features, token and position alignment | Candidates and method-specific verification data | Target feature export, Draft feature input; matched model pair |
-| Tree/multiple branches | Confirmed base context | Tokens, parents, positions, required branch probabilities | Aggregation, tree attention, verification and selected-path cleanup |
-| Cascaded Draft/intermediate verifier | Prior-stage artifact and context dependency | Another candidate artifact | Stage orchestration and verification semantics; only final Target commits |
-
-The distribution q must describe actual proposal sampling, including temperature,
-truncation and penalties. A scalar probability for each selected token generally
-cannot support rejection correction. Raw logits and normalized probabilities need
-an explicit verifier contract. Deterministic proposals can use a point-mass
-proposal distribution; payload requirements do not follow Target temperature alone.
-
-Independent models usually own different KV. Copying it requires a separate
-model/layer, layout, position and ownership contract for sharing, offload or
-migration. Multimodal context delivery to Draft is also method-specific; it cannot
-universally be dismissed as a prefill-only concern.
-
-## Proposed control and data contract
-
-Preserve Open, Propose, Verify, Commit and Cancel responsibilities. Use explicit
-method-tagged artifacts, not arbitrary dictionaries or independent optional tensor
-fields. The following objects are proposed semantics, not enabled API fields:
-
-| Object | Required information | Authority |
+| Direction | Payload | Producer and consumer |
 | --- | --- | --- |
-| Session | Model pair, token semantics, method/version, sampling contract | Frontend binding and engine capability validation |
-| Task | Request/session, stage, round, base context version, artifact identity, budget | Frontend dependencies; Target verification ticket |
-| Candidate artifact | Method, chain/tree structure, method-required data references | Producing stage, without advancing committed context |
-| Context artifact | Token/position span, feature layers and semantics, data references | Target or designated upstream stage |
-| Tensor reference | Publication ID, segment, address, bytes, dtype, shape | Producing Worker/transport owner |
-| Commit | Exact token delta, termination; selected path for trees | Final Target |
-| Transfer completion | Read-complete acknowledgement for one publication | Receiver transport owner, separate from acceptance |
+| Frontend → Draft | Confirmed prefix, version, sampling settings, candidate budget | Frontend round coordinator → Draft role |
+| Draft → frontend → Target | Candidate IDs, version, artifact ID and `PayloadRef` | Draft role → Target role |
+| Draft GPU → Target GPU | Contiguous float32 `log(q)` with shape `[candidate_count, vocab_size]` | Draft sampler/Worker → Target Worker/native rejection sampler |
+| Target → Draft | Completed-read ACK identifying the source publication | Target role → Draft release endpoint |
+| Target → frontend → Draft | Exact confirmed token delta, next version or termination | Target output processing → Draft confirmed-prefix state |
 
-`PayloadRef` now checks dtype, shape and byte-size consistency for nonempty
-contiguous tensors. Destination layout must match exactly. Artifact semantics,
-positions and vocabulary mappings cannot be inferred from shape. The consumer
-chooses its local device, stream and address; a remote device ordinal does not
-control allocation.
+Each distribution row describes the actual draw for its candidate position after
+Draft temperature and supported truncation. It is not the probability of only
+the chosen token, nor unprocessed model logits. A greedy proposal uses log
+probability zero for its chosen token and negative infinity elsewhere.
+Both models must share vocabulary size and token-ID meanings.
 
-Advertise a method only when export, transport, import, verification and cleanup
-all support it. Currently only `greedy_token_ids` is available. Future protocol
-versions/methods must be rejected consistently by both roles and frontend when
-unsupported, never silently reduced to token-only execution.
+`PayloadRef` carries `publication_id`, `segment`, `address`, `nbytes`, `dtype` and
+`shape`. The descriptor identifies storage, not an inference acceptance decision.
+Target allocates its own destination device storage and checks layout. The
+frontend never reads tensor contents or serializes probabilities as JSON.
 
-## Engine integration and batching
+## Worker and engine responsibilities
 
-| Stage | Reuse or required extension |
-| --- | --- |
-| Export | Worker/Runner supplies real q/features and layout; publish after a recorded completion event. Public top-logprobs cannot reconstruct full q |
-| Transfer | Connector allocates/registers local storage, finishes RDMA and ACKs source reads outside the compute thread |
-| Readiness | Worker finishes device materialization and notifies Scheduler through EngineCore; descriptor arrival is insufficient |
-| Batching | Scheduler builds verification batches; Runner resolves current slots and position views, never using arrival order as batch row identity |
-| Verify | Reuse the applicable MRV2 sampler; external-token admission still needs a device-input lifecycle for probabilities/features |
-| Commit | Publish after existing output stop handling; frontend schedules dependent work |
+1. Draft's MRV2 sampler exposes processed logits. The worker extension captures
+   full `log(q)` rows on GPU and publishes them after the producer CUDA event.
+2. Target starts and polls the Mooncake read through worker RPCs. Transfer work
+   runs outside model execution; the affected request waits without scheduling
+   verification before its data is ready.
+3. After read completion, Target ACKs the source publication and binds the
+   destination artifact to the engine request ID and generation. Only then does
+   the role call `submit_external_draft_tokens`.
+4. Scheduler forms local batches. Runner resolves current request slots and
+   candidate positions, so transfer arrival order cannot define batch row order.
+5. The adapter supplies `log(q) * target_temperature` to the native rejection
+   sampler, which applies its own temperature division. Greedy rows use a unit
+   scale. This preserves the meaning of the already normalized proposal data.
+6. Target retains the artifact through the next committed output or request
+   abort. Releasing the source after DMA is independent of releasing the
+   destination after model consumption.
 
-Remote waits are per request. This differs from vLLM asynchronous local scheduling.
-Multi-GPU execution additionally requires shard/rank ownership, absent from the
-current single-Worker mode. Batched transfers must preserve per-artifact identity.
+The Target still owns verification, sampling and stopping. A successful
+submission means admission to verification; only Target output commits tokens.
+Draft randomness is independent of Target's RNG. The user seed controls Target
+sampling and does not promise output equality across proposal schedules.
 
-## Memory, failure and scaling
+## Memory, cancellation and drain
 
-1. Finish producer writes before publication; keep exported storage registered and immutable.
-2. Fence previous destination consumers before reading; consume and ACK only after read completion.
-3. ACK permits source reuse, not candidate acceptance or destination reuse.
-4. Fence the last local computation before reusing or unregistering destination storage.
-5. Cancellation/stale rounds invalidate inference work, not in-flight DMA; transport cleanup remains necessary.
-6. Disconnect or uncertain transfer status cannot justify releasing exports on timeout. Current quarantine may retain resources until process exit; reclaimable peer-failure handling remains to be designed.
+Published source storage remains registered and immutable until its exact
+publication is acknowledged. A cancelled HTTP request does not cancel DMA.
+The Target read/ACK task therefore survives its control caller's cancellation;
+stale tickets prevent later inference consumption, not required transfer cleanup.
+Successful release waits for ACK, DMA completion and the last local GPU use,
+then returns the buffer to a worker-owned pool keyed by exact matrix shape.
+Registration persists across rounds; the pool retains peak concurrent buffers
+for each shape until role shutdown. Idle buffers do not count as retained
+artifacts. The worker retains
+uncertain transfers and unacknowledged publications rather than reusing memory.
+Those resources may require process termination if a peer fails.
 
-Drain closes admission before completing/cancelling tasks and transfers. Scale
-roles independently. Migration requires a new session and state restoration;
-old addresses, publications and EngineCore tickets cannot be reused.
+`/status.retained_artifacts` reports transport-owned artifacts separately from
+`active_sessions`. Controller telemetry `running_requests` remains a session
+count. The model-server supervisor waits for both counts to reach zero within
+the existing shutdown deadline. It does not claim transparent migration or replay.
 
-## Delivery and acceptance
+## Supported scope and remaining methods
 
-First connect an actual model artifact through references, Mooncake and the
-consumer adapter across two hosts, checking output, in-flight cancellation,
-drain and registration release. A token transfer does not validate probability
-or feature methods. Next implement actual stochastic Draft q export and Target
-verification, evaluate the Target distribution and measure transfer costs.
-Feature methods, trees and cascades each require their models and algorithms;
-adding Connector fields alone cannot establish support.
+RDMA roles advertise `token_ids_log_probs`. Roles without RDMA advertise
+`greedy_token_ids` and accept temperature zero only. A selected pair must agree;
+there is no automatic reduction of a probability-bearing request to token-only
+execution. Each role currently uses one GPU worker, eager execution and local
+synchronous scheduling.
 
-References: [vLLM speculative decoding](https://docs.vllm.ai/en/latest/features/speculative_decoding/),
-[Mooncake Transfer Engine](https://kvcache-ai.github.io/Mooncake/design/transfer-engine/index.html).
-At inspected vLLM baseline `1be3628`, MRV2 `RejectionSampler` accepts
-`draft_logits`; the current external-candidate extension supplies tokens only.
+Hidden-state methods need Target feature export and a compatible Draft consumer.
+Trees need branch structure, tree attention and accepted-path cleanup. Cascaded
+verification needs stage dependencies and intermediate verifier semantics. KV
+sharing, offload and migration need model/layout compatibility and separate
+ownership. None of these methods is implemented by adding a tensor descriptor.
+
+Cross-host stochastic correctness, cancellation and resource-release validation
+must exercise the actual model chain. Performance and complete Kubernetes
+lifecycle acceptance are separate from the standalone tensor diagnostic.

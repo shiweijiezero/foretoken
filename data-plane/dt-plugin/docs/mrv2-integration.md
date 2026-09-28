@@ -6,7 +6,8 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 # MRV2 integration contract
 
 The DT role service requires the independent vLLM `feat/external-speculation`
-branch, based on `1be36283678a9a94fc8fdaad6c95c2896d6b4015`. The pinned
+branch ([PR #1](https://github.com/shiweijiezero/vllm/pull/1)), based on
+`1be36283678a9a94fc8fdaad6c95c2896d6b4015`. The pinned
 submodule is unchanged. Installing this package does not patch vLLM, replace
 engine methods, or register a `vllm serve` entry point.
 
@@ -23,7 +24,7 @@ tickets return false; an empty candidate list requests a Target-only step.
 | --- | --- |
 | Scheduler | Wait per request, admit ready candidates, account for verification work, invalidate tickets on preemption |
 | EngineCore | Receive submissions through the existing utility queue; sleep when only external waiters remain |
-| MRV2 | Resolve current request slots, fill GPU draft-token state before input preparation, reuse greedy rejection sampling |
+| MRV2 | Resolve current request slots, fill GPU draft-token state before input preparation, consume staged GPU proposal distributions through native rejection sampling |
 | OutputProcessor | Attach the next ticket after stop handling; never issue one on terminal output |
 | Foretoken frontend | Select role instances, order rounds, retain session lifetimes, stream confirmed output |
 | Role service | Translate session/version messages to engine requests and tickets; abort owned work on disconnect |
@@ -34,10 +35,19 @@ Scheduler's CPU candidates alone is insufficient: MRV2 input preparation reads
 updates. EngineCore distinguishes lifecycle ownership from schedulable work to
 avoid stepping continuously while remote candidates are outstanding.
 
-This engine mode supports greedy text, one worker, eager execution, synchronous
-local scheduling and output interval one. Remote waits are per request; other
-requests can still execute. Stochastic proposals, distributed execution, CUDA
-graphs, multimodal input and KV/EC transfer are not enabled by this extension.
+This mode supports text, one worker, eager execution, synchronous local scheduling
+and output interval one. `draft_sample_method="probabilistic"` consumes external
+proposal distributions; the token-only mode requires greedy sampling. RDMA Draft
+also needs the extension's processed-logit export. Remote waits are per request;
+other requests can still execute. Distributed model execution, CUDA graphs,
+multimodal input and KV/EC transfer are not enabled by this extension.
+
+The role CLI sets `VLLM_BATCH_INVARIANT=1` before importing vLLM unless the
+process environment already specifies a value. Native kernels own this numerical
+policy; the plugin does not replace their implementations. Target-only comparison
+runs must use the same setting. Model/backend support and hardware restrictions
+still apply, and independent Draft randomness prevents a general seeded-sequence
+equality claim. See the [role startup requirements](../README.md#start-two-roles).
 
 ## Frontend and role ownership
 
@@ -62,33 +72,30 @@ Frontend or role failure terminates the request; transparent migration and repla
 are not implemented. Multiple Draft replicas provide capacity, not collaborative
 candidate trees or intermediate verification.
 
-## Transport boundary
+## Worker and transport boundary
 
-Greedy candidates are token IDs transported by the internal HTTP control API.
-The Mooncake tensor transport is currently consumed by the diagnostic CLI, not
-the inference loop; this path does not transfer KV between models.
+`DraftTargetWorkerExtension` is installed through the native `worker_extension_cls`
+entry point. It connects MRV2 GPU I/O hooks to Mooncake. There is no Foretoken or
+Mooncake import in the generic engine extension.
 
-`MooncakeTransport` owns its native engine and persistent registrations.
-`RegisteredTensor.publish()` fences production and creates one immutable export;
-`read()` pulls into receiver-owned storage asynchronously. The control owner
-sends a completed-read acknowledgement, then `release_source()` permits reuse.
-`close()` fences local GPU consumption before unregistering.
+Draft marks each per-round request with `SamplingParams.extra_args["dt_artifact_id"]`.
+The sampler exposes processed logits, and the Worker captures complete float32
+`log(q)` rows without copying probabilities to the API process. Worker RPCs
+publish source buffers, start/poll destination reads, stage received artifacts
+against engine tickets, and return buffers to an exact-shape pool after their
+owners finish using them. Registrations remain until role shutdown; idle buffers
+are reusable and excluded from retained-artifact counts.
 
-`publish`, `read`, and buffer `close` accept a keyword-only `ready_event`. The
-Worker/Runner must record it on the tensor device after joining **all** local
-streams that use that storage. Publication waits for producer writes; a read waits
-for previous destination use; close waits for the final local consumer. The event
-must not be re-recorded during the operation. An unrecorded event is rejected.
-Omitting it retains the device-wide fence. The diagnostic exercises recorded
-events; integration with actual model streams remains outstanding. This follows
-[PyTorch event synchronization](https://docs.pytorch.org/docs/2.11/generated/torch.cuda.Event.html):
-the host waits for captured work, rather than enqueueing a CUDA stream wait and
-incorrectly assuming that a separately submitted NIC transfer will obey it.
+Target's role waits for read readiness, ACKs the source, stages the tensor and
+submits candidates through the existing EngineCore utility queue. MRV2 maps the
+staged distribution to current GPU request slots before native rejection sampling.
+Submission success is not consumption completion: the role retains Target storage
+until subsequent engine output or abort. See the
+[Connector contract](connector-contract.md) for scaling and temperature semantics.
 
-RDMA completion remains a separate boundary: await the native read result before
-submitting destination consumers. A producer event cannot establish RDMA
-completion, and source ACK cannot establish completion of destination compute.
-Failed/uncertain
-buffers remain retained until process termination. Buffer pooling, frontend
-messages, model/session state, and inference orchestration are not implemented by
-the diagnostic. Do not advertise it as a complete DT service.
+`MooncakeTransport` owns registrations; `RegisteredTensor` fences producer writes
+and the final local consumer with CUDA events. RDMA completion is independent of
+CUDA producer readiness. A completed-read ACK permits source release, not reuse
+of a destination still in use by model execution. Uncertain buffers remain
+retained until process termination. The standalone diagnostic exercises the
+transport separately and does not establish inference correctness or performance.

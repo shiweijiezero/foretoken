@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use crate::LlmFacadeError;
 use crate::http::{classify_reqwest, classify_status, is_ndjson, ndjson_lines, validate_endpoint};
 
-/// Token-input greedy request; the caller owns tokenization and model compatibility.
+/// Token-input generation request; the caller owns tokenization and model compatibility.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DraftTargetRequest {
@@ -25,6 +25,57 @@ pub struct DraftTargetRequest {
     pub min_tokens: u32,
     #[serde(default)]
     pub ignore_eos: bool,
+    #[serde(default)]
+    pub sampling: DraftTargetSampling,
+}
+
+/// Explicit sampling choices understood by both independent roles.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DraftTargetSampling {
+    pub temperature: f32,
+    pub top_p: f32,
+    pub top_k: u32,
+    pub seed: Option<i64>,
+}
+
+impl Default for DraftTargetSampling {
+    fn default() -> Self {
+        Self {
+            temperature: 0.0,
+            top_p: 1.0,
+            top_k: 0,
+            seed: None,
+        }
+    }
+}
+
+/// Descriptor for registered GPU storage; the frontend never reads tensor contents.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TensorPayload {
+    pub publication_id: String,
+    pub segment: String,
+    pub address: u64,
+    pub nbytes: u64,
+    pub dtype: String,
+    pub shape: Vec<u64>,
+}
+
+/// One immutable Draft distribution; the Target acknowledges its completed read directly.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProposalArtifact {
+    pub artifact_id: String,
+    pub payload: TensorPayload,
+}
+
+/// Candidates and their optional RDMA distribution descriptor for one confirmed prefix.
+#[derive(Deserialize)]
+pub struct DraftProposal {
+    pub version: u64,
+    pub token_ids: Vec<u32>,
+    pub artifact: Option<ProposalArtifact>,
 }
 
 /// Confirmed Target output and the next engine generation, never a Draft guess.
@@ -131,13 +182,14 @@ impl RoleClient {
         &self,
         token_ids: &[u32],
         version: u64,
+        sampling: &DraftTargetSampling,
     ) -> Result<RoleSession, LlmFacadeError> {
         RoleSession::open(
             self.clone(),
             self.post(
                 "/sessions",
                 &serde_json::json!({
-                    "token_ids": token_ids, "version": version
+                    "token_ids": token_ids, "version": version, "sampling": sampling
                 }),
             )
             .await?,
@@ -200,13 +252,8 @@ impl RoleSession {
         &mut self,
         version: u64,
         max_tokens: u32,
-    ) -> Result<Vec<u32>, LlmFacadeError> {
-        #[derive(Deserialize)]
-        struct Candidate {
-            version: u64,
-            token_ids: Vec<u32>,
-        }
-        let candidate: Candidate = self
+    ) -> Result<DraftProposal, LlmFacadeError> {
+        let candidate: DraftProposal = self
             .command(
                 "propose",
                 &serde_json::json!({
@@ -217,7 +264,7 @@ impl RoleSession {
         if candidate.version != version || candidate.token_ids.len() > max_tokens as usize {
             return Err(LlmFacadeError::Protocol);
         }
-        Ok(candidate.token_ids)
+        Ok(candidate)
     }
 
     /// Applies the Target's exact delta before the frontend requests another proposal.
@@ -246,7 +293,12 @@ impl RoleSession {
     }
 
     /// Submits candidates once; a rejected generation ends this non-replaying workflow.
-    pub async fn verify(&mut self, version: u64, token_ids: &[u32]) -> Result<(), LlmFacadeError> {
+    pub async fn verify(
+        &mut self,
+        version: u64,
+        proposal: &DraftProposal,
+        source: &RoleClient,
+    ) -> Result<(), LlmFacadeError> {
         #[derive(Deserialize)]
         struct Admission {
             accepted: bool,
@@ -255,7 +307,8 @@ impl RoleSession {
             .command(
                 "verify",
                 &serde_json::json!({
-                    "version": version, "token_ids": token_ids
+                    "version": version, "token_ids": proposal.token_ids,
+                    "artifact": proposal.artifact, "source_endpoint": source.endpoint
                 }),
             )
             .await?;

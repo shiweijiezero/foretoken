@@ -3,102 +3,75 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# DT Connector：方法载荷与引擎边界
+# DT Connector：提议分布与所有权
 
 [English](connector-contract.md) | 简体中文
 
-目的：确定分离后哪些信息跨角色传递、谁生产和消费，以及哪些引擎接口必须补齐。
-本文件是供评审的后续接口设计；当前可执行协议仍是 [greedy role protocol](role-protocol.md)。
-**现有 HTTP greedy 闭环与独立 RDMA 诊断，不等于通用 DT Connector 已交付。**
+Connector 连接独立的 Draft、Target Worker。HTTP 传递请求控制、候选 token 和不可变
+张量描述符；Mooncake 将 Draft 的提议分布读入 Target GPU。
+[角色协议](role-protocol.md)说明控制接口，[引擎契约](mrv2-integration.md)说明 MRV2 接入。
 
-## 交付边界
+## 跨角色传递什么
 
-Frontend 选择角色、安排阶段依赖、持有请求生命周期；Connector 传递控制信息和数据；
-各引擎负责模型执行、batch 和 KV。Target 是最终 token 提交者。连接器不负责判定
-接受概率，也不把 Draft 的阶段输出当作最终结果。
-
-控制消息经前端协调；大张量在生产和消费角色之间通过 Mooncake 直接传输。
-前端只转发描述符，不能把 logits 或 hidden states 读回后再通过 JSON 转发。
-Mooncake 解决字节传输，不定义张量的算法语义。
-
-## 各方法的数据要求
-
-| 方法 | Target → Draft | Draft → 验证者 | 当前缺口 |
-| --- | --- | --- | --- |
-| 独立模型，greedy 线性候选 | 已确认上下文、轮次、预算、停止结果 | 候选 token | 已有 HTTP 路径；尚无推理中的 RDMA 载荷 |
-| 独立模型，随机投机采样 | 上述上下文及采样契约 | 候选 token 与实际提议分布 q，按候选位置和词表对齐 | Draft 的 q 导出、Target 概率消费、Worker 张量接入 |
-| 特征驱动 Draft | 方法指定层的 hidden states/特征、对应 token/位置 | 候选及该方法的验证载荷 | Target 特征导出、Draft 特征输入；需要匹配的模型对 |
-| 多分支/tree | 分支所基于的确认上下文 | token、父节点、位置、方法要求的分支概率 | 聚合、tree attention、树验证与已选路径回收 |
-| 串联 Draft/中间验证者 | 上一阶段产物及其上下文依赖 | 新候选产物 | 阶段编排及中间验证语义；仅最终 Target 提交输出 |
-
-随机采样的 q 必须对应真正生成候选的分布，包含温度、截断、惩罚等变换的影响。
-仅候选 token 的标量概率一般不足以完成拒绝后的修正采样。传 raw logits 还是规范化
-概率必须与验证器约定，不能用同一个未注明语义的 `logits` 字段代替。
-确定性提议也可以对应点质量分布；载荷取决于提议方法，而非只看 Target 的温度。
-
-独立模型通常各有 KV，不能根据 token 一致就直接互拷。KV 共享、offload、迁移需要
-另行约定模型/层、缓存布局、位置及所有权，不属于所有 DT 方法的必传信息。
-多模态也不能统一视为“只影响 prefill”：Draft 如何获得已编码上下文仍取决于方法。
-
-## 拟定的控制与数据契约
-
-保留 Open、Propose、Verify、Commit、Cancel 的职责，采用方法标识的显式载荷类型，
-不增加任意 `dict` 或一组可随意组合的 nullable tensor 字段。以下是设计，不是已开放 API：
-
-| 对象 | 必须表达的信息 | 权威所有者 |
+| 方向 | 内容 | 生产者与消费者 |
 | --- | --- | --- |
-| Session | 模型对、tokenizer/token 语义、方法及版本、采样契约 | 前端绑定；双方引擎校验能力 |
-| Task | 请求/会话、阶段、轮次、base context version、产物身份、预算 | 前端安排依赖；Target 授予有效验证轮次 |
-| Candidate artifact | 方法类型、线性或树结构、该方法要求的数据引用 | 生产阶段；不能自行推进已确认上下文 |
-| Context artifact | token/位置范围、特征层和语义、数据引用 | Target 或指定上游阶段 |
-| Tensor reference | publication ID、segment、地址、字节数、dtype、shape | 生产 Worker/传输 owner |
-| Commit | 精确 token delta、终止结果；树方法还需选中路径 | 最终 Target |
-| Transfer completion | 精确 publication ID 对应的读取完成确认 | 接收端传输 owner；不同于候选接受结果 |
+| 前端 → Draft | 确认前缀、版本、采样参数、候选预算 | 前端轮次编排 → Draft 服务 |
+| Draft → 前端 → Target | 候选 ID、版本、artifact ID、`PayloadRef` | Draft 服务 → Target 服务 |
+| Draft GPU → Target GPU | 连续 float32 `log(q)`，形状为 `[候选数, 词表大小]` | Draft 采样器/Worker → Target Worker/原生拒绝采样器 |
+| Target → Draft | 携带 publication ID 的读取完成确认 | Target 服务 → Draft 释放接口 |
+| Target → 前端 → Draft | 精确确认的 token 增量、下一版本或终止结果 | Target 输出处理 → Draft 确认前缀 |
 
-当前 `PayloadRef` 已实现 dtype/shape/字节数一致性检查，仅接受非空连续张量；
-接收缓冲区布局必须完全匹配。方法语义、位置和词表映射属于 artifact，不能由 shape 推断。
-本地设备、stream、接收地址由消费者选择；生产者的设备编号不作为远端分配命令。
+每一行分布对应一个候选位置的真实随机抽样，已经包含 Draft 温度和所支持截断规则的
+影响。它既不是单个候选 token 的概率，也不是未处理的模型 logits。
+贪心提议在选中 token 上使用 log 概率 0，其余位置为负无穷。
+双方必须具有相同的词表大小和 token ID 含义。
 
-新方法只有在“生产者导出、传输、消费者导入、验证算法、清理”全部支持时才可公布能力。
-当前只有 `greedy_token_ids`；不提前宣称随机分布、特征或 tree 可用。协议升级时，双方和
-前端必须一致拒绝未知版本/方法，不能降级为 token-only 后继续运行。
+`PayloadRef` 包含 `publication_id`、`segment`、`address`、`nbytes`、`dtype`、`shape`。
+这些字段描述存储位置，不表达候选是否被接受。Target 自行分配本地 GPU 缓冲区并校验
+布局；前端不会读取张量内容，也不会把概率序列化成 JSON。
 
-## 引擎接入与 batch
+## Worker 与引擎如何衔接
 
-| 阶段 | 必须复用/补齐的边界 |
-| --- | --- |
-| 导出 | Worker/Runner 提供真实 q 或特征及布局；记录完成事件后才发布引用，不能从公开 top-logprobs 反推完整 q |
-| 传输 | Connector 分配/注册本地接收存储、完成 RDMA、确认源端读取完成；与计算线程分离 |
-| 就绪 | Worker 完成布局/设备物化，通过 EngineCore 事件通知 Scheduler；收到描述符不等于可执行 |
-| 批处理 | Scheduler 组验证 batch；Runner 在最新请求槽位上建立位置映射和张量视图，不使用传输到达顺序当作 batch 行号 |
-| 验证 | 复用 MRV2 对应采样器；当前外部 token 接口还需增加概率/特征的设备输入生命周期 |
-| 提交 | 沿用输出停止处理后再发布确认；前端据此安排下游任务 |
+1. Draft 的 MRV2 采样器提供处理后的 logits；Worker 扩展在 GPU 上保存完整 `log(q)`，
+   等待生产者 CUDA event 后发布描述符。
+2. Target 通过 Worker RPC 发起并轮询 Mooncake 读取。传输工作在模型执行之外进行；
+   数据尚未就绪时，对应请求不会进入验证调度。
+3. 读取完成后，Target 确认源 publication，并把目标 artifact 绑定到引擎请求 ID 和
+   generation；随后才调用 `submit_external_draft_tokens`。
+4. Scheduler 组织本地 batch；Runner 按当前请求槽位和候选位置映射分布，不能按传输
+   到达顺序推断 batch 行号。
+5. 适配器把 `log(q) * Target 温度` 交给原生拒绝采样器，抵消其内部的温度除法。
+   贪心行使用单位缩放，保持已规范化提议分布的含义。
+6. Target 保留 artifact，直到下一次确认输出或请求 abort。DMA 后源端可释放，与
+   模型消费后目标端可释放，是两个不同的时点。
 
-请求等待远端数据时不阻塞其他请求。异步远端等待与 vLLM 的 async scheduling 是两个
-维度，不能把打开后者当作已实现前者。多 GPU 还需要明确 shard 和执行 rank，目前单 Worker
-模式不提供该能力。批量传输可以优化多个 artifact，但不能合并它们的请求/轮次身份。
+验证、采样、停止由 Target 负责。候选提交成功只表示进入验证，最终 token 必须来自
+Target 输出。Draft 随机数与 Target 独立；用户 seed 控制 Target，不保证不同候选轮次
+安排会产生相同输出。
 
-## 内存与故障
+## 内存、取消与排空
 
-1. 生产者完成本地写入并发布；发布期间保持注册且不可覆写。
-2. 接收者等待接收缓冲区的旧消费者完成，再提交读取；读取完成后才能使用数据并 ACK。
-3. ACK 仅允许源缓冲区回收，不表示模型接受候选，也不表示接收端计算结束。
-4. 接收端最后一个计算消费者完成后，才可复用或注销接收缓冲区。
-5. 取消/旧轮次使 artifact 不再参与推理，但不会取消正在发生的 DMA；仍须完成传输清理。
-6. 连接中断或传输状态不确定时，不因超时释放已发布内存。当前隔离保留策略可能占用资源直至
-   进程退出；可回收的 peer-failure 协议仍需设计，不能宣称支持无损故障恢复。
+源端发布后保持内存注册且不可覆盖，直到收到精确 publication 的读取确认。
+HTTP 请求取消不会取消 DMA；因此 Target 的读取/确认任务会完成必要清理，即使原控制
+调用已取消。旧 ticket 阻止后续推理消费，不取消传输清理。
+成功释放需等待读取确认、DMA 和最后一次本地 GPU 使用完成，随后将缓冲区交还给按
+精确矩阵形状管理的 Worker 缓冲池。注册跨轮保留；每种形状的缓存数量达到该形状的
+并发高水位后保持到角色关闭。空闲缓冲区不计入 retained artifacts。
+状态不确定的传输和未确认发布不会提前回收；对端失败时，可能需要终止所属进程。
 
-排空先停止新会话，再完成/取消已有任务及传输。扩缩容作用于独立角色池；迁移到新实例
-意味着新会话和状态恢复，不能沿用旧地址、publication 或 EngineCore ticket。
+`/status.retained_artifacts` 单独统计传输持有的产物，`active_sessions` 统计会话。
+控制器遥测 `running_requests` 仍是会话数。model-server 在已有关闭时限内等待两者
+归零，不提供透明的会话迁移或失败重放。
 
-## 下一步验收顺序
+## 支持范围与未实现的方法
 
-先将真实模型产物经 artifact 引用、Mooncake、消费适配器接成一条两机路径，验证
-输出、在途取消、排空和注册释放；只传 token 的成功不能代替概率/特征方法验收。
-随后接入独立随机 Draft 的真实 q 导出和 Target 验证，比较 Target 分布并测量通信开销。
-特征型方法、tree 与串联验证分别需要相应模型及算法，不能靠增加 Connector 字段宣布完成。
+RDMA 角色公布 `token_ids_log_probs`。无 RDMA 的角色公布 `greedy_token_ids`，只接受
+温度 0。前端选中的两端必须一致，不会把需要概率张量的请求自动降级成仅传 token。
+当前每个角色使用单 GPU Worker、eager 执行、本地同步调度。
 
-参考：[vLLM 投机解码](https://docs.vllm.ai/en/latest/features/speculative_decoding/)、
-[Mooncake Transfer Engine](https://kvcache-ai.github.io/Mooncake/design/transfer-engine/index.html)。
-代码对照基线：vLLM `1be3628` 的 MRV2 `RejectionSampler` 接受 `draft_logits`，
-而当前外部候选扩展只提交 token，未接通该张量输入。
+Hidden-state 方法还需要 Target 特征导出和匹配的 Draft 消费者；候选树需要分支结构、
+tree attention、已选路径清理；串联验证需要阶段依赖及中间验证语义。KV 共享、卸载和
+迁移需要模型/布局兼容及独立所有权。仅增加描述符不能实现这些能力。
+
+两机随机采样正确性、取消及资源释放必须通过真实模型链路验证。
+性能和完整 Kubernetes 生命周期验收也不能由独立 tensor 诊断代替。

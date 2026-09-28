@@ -3,7 +3,7 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Frontend greedy DT execution
+# Frontend Draft/Target execution
 
 The Rust frontend owns the Draft/Target round loop. `foretoken-llm-facade` owns
 HTTP role sessions and response decoding; `foretoken-server::draft_target`
@@ -53,7 +53,9 @@ already resolved `ignore_eos`, and only its normalized stopping tokens apply.
 Stop strings remain with the frontend's decoder and are not sent through this
 normalized adapter.
 
-Greedy sampling is required. Non-default penalties, logprobs, structured output,
+Sampling forwards `temperature`, `top_p`, `top_k` and Target `seed`. Random
+sampling requires both roles to advertise `token_ids_log_probs`; `min_p` is not
+supported by the native speculative sampler. Non-default penalties, logprobs, structured output,
 multimodal features, LoRA, KV/EC transfer arguments, cache salt, priority, tracing
 headers and nonzero DP ranks are rejected before role admission. These are current
 implementation limits, not ignored options. The lower-level role API still
@@ -67,11 +69,17 @@ Frontend                                Target               Draft
    |<-- confirmed token + generation ------|                    |
    |-- bind(confirmed prefix, generation) --------------------->|
    |-- propose(generation, budget) ---------------------------->|
-   |<-- candidates --------------------------------------------|
-   |-- verify(generation, candidates) ---->|                    |
+   |<-- candidate IDs + distribution descriptor ----------------|
+   |-- verify(ticket, IDs, descriptor) --->|                    |
+   |                                      |<== Mooncake log(q) =|
+   |                                      |-- read ACK ------->|
    |<-- confirmed delta + next generation |                    |
    |-- commit(delta, next generation) ------------------------->|
 ```
+
+The frontend only relays descriptors, never probability arrays. Target admits
+verification after its Worker completes the read. Its read/ACK task retains
+transport ownership even if the frontend disconnects.
 
 The stream owns both HTTP response bodies through every await. Dropping the
 stream cancels the sessions even while a proposal is outstanding. Terminal output
@@ -81,7 +89,7 @@ The workflow never emits Draft guesses or rebuilds token state from display text
 
 ## Discovery and public API dispatch
 
-The normal frontend can consume an experimental `dt_components` array in its
+The normal frontend can consume a `dt_components` array in its
 serving snapshot. `models` retains the public Target identity, tokenizer and
 Pool admission set. Each DT component declares `service_uid`, `pool_uid`,
 `pool_name`, `route_target_id`, `pipeline_scope_id`, `role` (`draft` or `target`),
@@ -118,8 +126,10 @@ controller publishes `dt_components` only for ready committed replicas, preservi
 service model/tokenizer identity separately from each role's engine model. The
 model-server supervises the DT application using the existing launch argument
 renderer and process owner. Role `/healthz`, `/readyz`, telemetry and admission
-closure endpoints integrate with the existing bounded Group drain. See the
-[experimental deployment](../../../examples/draft-target/README.md).
+closure endpoints integrate with the existing bounded Group drain. The supervisor
+waits for both active sessions and retained transport artifacts. Existing platform
+RDMA allocation enables the Worker connector; Pod IP supplies its handshake address. See the
+[deployment example](../../../examples/draft-target/README.md).
 
 The role reports owned session counts, not inferred scheduler or KV metrics.
 Metric-driven autoscaling remains unvalidated. This path requires the independent

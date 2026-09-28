@@ -50,6 +50,7 @@ type LaunchPlanV1 struct {
 // LaunchDTPlan selects the independently installed DT role application.
 type LaunchDTPlan struct {
 	Role inferencev1alpha1.ModelRole `json:"role"`
+	RDMA bool                        `json:"rdma"`
 }
 
 type LaunchArtifacts struct {
@@ -152,8 +153,10 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 		if template.KVCache != nil || template.ECProfile != "" || template.Profiling != nil || len(template.Features.Multimodal) != 0 || len(template.Features.StructuredOutputs) != 0 {
 			return EffectiveConfig{}, fmt.Errorf("DT does not support KV/EC transfer, profiling, multimodal or structured output")
 		}
-		if _, exists := args["speculative-config"]; exists {
-			return EffectiveConfig{}, fmt.Errorf("DT owns speculative-config")
+		for _, option := range []string{"speculative-config", "worker-extension-cls"} {
+			if _, exists := args[option]; exists {
+				return EffectiveConfig{}, fmt.Errorf("DT owns %s", option)
+			}
 		}
 	}
 	return effective, nil
@@ -195,7 +198,7 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 	}
 	var dt *LaunchDTPlan
 	if group.Role == inferencev1alpha1.ModelRoleDraft || group.Role == inferencev1alpha1.ModelRoleTarget {
-		dt = &LaunchDTPlan{Role: group.Role}
+		dt = &LaunchDTPlan{Role: group.Role, RDMA: group.RDMA != nil}
 		kv.Events = false
 	}
 	return LaunchPlanV1{DT: dt, Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil
@@ -391,7 +394,7 @@ var controllerOwnedArgs = []string{
 	"--enable-elastic-ep", "--enable-prefix-caching",
 	"--grpc", "--headless", "--hf-token", "--host", "--kv-events-config", "--kv-transfer-config",
 	"--master-addr", "--master-port", "--mm-device-do-normalize", "--model", "--nnodes", "--node-rank",
-	"--port", "--profiler-config", "--revision", "--role",
+	"--port", "--profiler-config", "--rdma-host", "--rdma-nic", "--revision", "--role",
 	"--runner", "--served-model-name", "--tokenizer", "--tokenizer-revision", "--worker-cls",
 }
 

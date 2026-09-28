@@ -12,7 +12,7 @@ description = "Independent Draft/Target roles and cross-host tensor transport"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
-dependencies = ["torch", "fastapi", "uvicorn", "anyio", "pydantic>=2"]
+dependencies = ["torch", "fastapi", "uvicorn", "anyio", "pydantic>=2", "httpx"]
 
 [project.scripts]
 foretoken-dt-role = "foretoken_dt.serve:main"
