@@ -128,6 +128,18 @@ that owns both models' KV caches.
 One request binds one Draft and one verifier until completion. Multiple replicas
 serve different requests; they do not jointly construct a proposal for one request.
 The frontend owns this binding and its load reservations throughout the session.
+The controller publishes ready committed replicas as `dt_components` in its
+serving snapshot. The public `models` entry retains the main-model and tokenizer
+identity; each component separately identifies its loaded `engine_model`, engine
+revision, service, pool, route ID, pipeline scope and endpoint. A Draft can
+therefore load different weights without becoming another public model. A valid
+scope contains both responsibilities for the same service and public model.
+
+Router selection chooses the verifier first, then an eligible Draft in that scope.
+Both reservations survive until completion, cancellation or failure. Invalid
+snapshot updates leave the active serving generation intact. Drain excludes a
+replica after discovery refresh; it does not change an existing request binding.
+
 Native DT queue-depth and KV gauges are currently unavailable, so selection can
 use frontend reservations but must not interpret missing engine observations as
 zero load.
@@ -187,6 +199,31 @@ that frontier as `version`; it is not a Draft KV length or a buffer identifier.
 Candidate submission must match the live request's current waiting ticket.
 Stale, duplicate and already-consumed submissions cannot advance it.
 
+The engine interface is concrete:
+
+```python
+ExternalDraftRequest(request_id: str, generation: int)
+RequestOutput.external_draft_request: ExternalDraftRequest | None
+await ExternalAsyncLLM.submit_external_draft_tokens(ticket, token_ids) -> bool
+```
+
+`request_id` is vLLM's internal request ID, retained from its output collector;
+`generation` is the cumulative number of confirmed output tokens. The plugin
+attaches the ticket after native output/stop handling and issues none on terminal
+output. This avoids modifying the native cross-process output schema. The HTTP
+session maps its version back to this engine ticket.
+
+| Request transition | Owner and action | Effect on remote candidates |
+| --- | --- | --- |
+| Prefill or verification produces nonterminal output | Native output processing commits tokens; plugin Scheduler marks the request waiting | Next ticket identifies the new confirmed frontier |
+| Current candidate submission arrives | EngineCore utility handler checks live request, waiting state, generation, length and token IDs | Admit once and make the request runnable |
+| GPU batch executes | Runner maps request identity to current slots and consumes ready tensors | Verification determines the next committed delta |
+| Native KV preemption occurs | Scheduler clears waiting/eligibility state before native preemption and replay | Old waiting admission is invalidated; replay must advance the frontier before a new ticket is used |
+| Request finishes or aborts | Engine lifecycle removes the request; role releases owned work safely | Further submissions cannot reopen it |
+
+Tickets do not retain a KV allocation or promise that a request will never be
+preempted. A rejected submission is not silently retargeted to another generation.
+
 While waiting, the request remains in native scheduler state and remains
 preemptible, but is excluded from execution. Other ready requests continue to
 batch. Candidate arrival enters EngineCore through its utility queue, marks the
@@ -232,11 +269,22 @@ probability `p` and Draft probability `q`. Rejection also needs the residual
 distribution proportional to `max(p-q,0)`. Candidate IDs or their individual
 probabilities do not provide that full distribution.
 
+A `PayloadRef` contains `publication_id`, `segment`, `address`, `nbytes`, `dtype`
+and `shape`. The artifact ID identifies the proposal lifecycle; the publication
+ID identifies a particular immutable export of registered storage. Target checks
+the layout and allocates its own destination storage. The frontend passes this
+descriptor without dereferencing device addresses or serializing tensor values.
+
 The Draft adapter captures the actual distribution after its sampling
 transformations, including temperature and truncation, and publishes float32
 normalized log probabilities with shape `[candidate_count, vocabulary_size]`.
-The verifier adapts these rows to the native rejection sampler's logits/temperature
-convention. It does not infer `q` from the model's raw, unprocessed logits.
+For a greedy Draft draw, the row is zero at the chosen token and negative infinity
+elsewhere. The verifier supplies `log(q) * target_temperature` to the native
+sampler, whose own temperature division recovers `log(q)`; a greedy Target uses
+unit scaling. This preserves the already processed Draft distribution instead of
+applying Draft sampling transformations a second time. Draft random draws are
+independent of the Target RNG; a Target seed does not imply identical sequences
+across different proposal schedules.
 
 Without RDMA, the supported path uses greedy token candidates. With RDMA, both
 roles advertise `token_ids_log_probs`; random sampling requires that format on
@@ -260,8 +308,17 @@ These are different events:
 HTTP cancellation does not prove that an RDMA operation stopped. The read and ACK
 task must finish independently of its HTTP caller; source registration must not
 be freed early. Uncertain transfer failure can retain memory until process exit.
-Registered-buffer reuse and artifact release are separate: an idle reusable buffer
-is not an outstanding proposal. The [connector contract](../../data-plane/dt-plugin/docs/connector-contract.md)
+The Worker owns a background transport event loop for reads and release work;
+the model execution loop does not poll the network. Producer device events fence
+writes before publication. Read completion fences DMA, and the last local GPU-use
+event fences destination reuse. These three conditions cannot substitute for one
+another.
+
+Buffers return to a Worker-owned pool keyed by exact tensor shape. Registration
+persists across rounds to preserve remote registration keys, so peak concurrent
+buffers for each shape can remain allocated until shutdown. Registered-buffer
+reuse and artifact release are separate: an idle reusable buffer is not an
+outstanding proposal. The [connector contract](../../data-plane/dt-plugin/docs/connector-contract.md)
 defines descriptors and ownership in detail.
 
 ## Role interfaces and failure behavior
@@ -293,7 +350,48 @@ existing rounds. Shutdown waits for sessions and retained artifacts, subject to
 the configured drain timeout, before terminating the managed process group.
 Changing replicas does not migrate live model or connector state.
 
-The complete wire contract is in the [role protocol](../../data-plane/dt-plugin/docs/role-protocol.md).
+### Public request semantics
+
+The frontend adapter accepts the existing normalized `GenerateRequest` and returns
+the existing `TokenStream`. Text/chat decoding, public request identity, prompt
+metadata, finish reasons, deadlines and client backpressure stay with the normal
+frontend path. No separate public DT API is required.
+
+| Request behavior | Phase-one handling |
+| --- | --- |
+| Candidate count | Minimum of both roles' advertised budgets and the remaining output budget |
+| Context length | Prompt plus requested output must fit both models' reported context limits |
+| Temperature, top-p, top-k, Target seed | Forwarded; random sampling requires probability-bearing candidates on both roles |
+| EOS, stop tokens, min/max output length | Forward the frontend-normalized token policy; disable independent Python EOS inference |
+| Stop strings | Existing frontend decoder handles them; the lower-level standalone role API can separately accept Python-side stop strings |
+| Non-default penalties, min-p, logprobs, structured output | Reject before opening role sessions |
+| Multimodal input, LoRA, KV/EC transfer, cache salt, priority, tracing headers, nonzero DP rank | Not supported by this frontend DT path; reject instead of silently dropping fields |
+
+Validation applies after model generation defaults are resolved. For example,
+a model's inherited `repetition_penalty: 1.1` is unsupported even when the client
+omits the field. Requesting `1.0` disables that penalty and changes the sampling
+policy; it is not equivalent support for the original request.
+
+The returned stream owns both remote lifetime streams across every await. Dropping
+it cancels both sessions, including during a proposal. Terminal output releases
+those owners before being yielded, so retaining an exhausted stream cannot retain
+remote sessions. Backpressure does not spawn detached proposal work. EOF without
+a terminal commit is an error, not successful completion.
+
+### Health, admission and shutdown observations
+
+`/healthz` and `/readyz` report engine health and remain healthy during drain to
+keep Kubernetes routing available for existing sessions. New-request admission is
+separate: `/status.accepting` and registry refresh exclude drained instances.
+`POST /v1/internal/admission/close` integrates with the existing controller drain.
+`GET /v1/internal/telemetry` reports owned sessions as `running_requests`; native
+scheduler/KV gauges and token counters remain unknown, not zero.
+
+The supervisor additionally reads `retained_artifacts`. Zero sessions alone does
+not establish that remote reads or GPU consumers have released their memory.
+It waits for both counts within the shutdown deadline, then terminates the managed
+process group. This reuses the existing deployment lifecycle without pretending
+that request count measures GPU occupancy.
 
 ## Implementation changes
 
@@ -313,6 +411,22 @@ other engine versions is not implied.
 | Sampler | Native sampling and rejection algorithm | Capture Draft distributions and supply received distributions during verification |
 | Worker extension | Device-local execution | Own Mooncake registrations, proposal tensors, reads and releases |
 
+The verifier selects `method="external"` without loading local Draft weights or
+constructing a local speculator. Its Scheduler updates CPU candidate state, but
+that alone is insufficient: MRV2 input preparation reads
+`req_states.draft_tokens`. The plugin fills that persistent GPU state **after**
+request-slot updates and before input preparation, then makes the matching
+received distributions available during native rejection sampling.
+
+For RDMA Draft, the per-round request carries
+`SamplingParams.extra_args["dt_artifact_id"]`. The sampler uses its materialized
+processed-logit path so the Worker can capture the distribution actually used for
+sampling. `DraftTargetWorkerExtension`, selected through `worker_extension_cls`,
+publishes it without copying the full matrix into the HTTP process. On Target,
+Worker RPCs receive and stage the artifact against the engine request/generation;
+only then does the role submit token IDs through EngineCore's utility queue.
+Neither Scheduler nor EngineCore needs Mooncake-specific code.
+
 MRV2 is ModelRunner v2, below EngineCore/Executor/Worker. It is not a separate
 service or a second scheduler. The adapter uses native class-selection interfaces
 where available; missing Runner construction and EngineCore admission hooks need
@@ -320,9 +434,19 @@ small runtime substitutions. Factory bindings are restored after their scoped
 construction/loading operations. Upgrades therefore require checking these engine
 internals even though the delivered package is a plugin.
 
-See the [integration contract](../../data-plane/dt-plugin/docs/mrv2-integration.md)
-for the exact native interfaces. The normal model-server image installs this
-package and selects the supported CUDA engine runtime. Ordinary serving continues
+The normal model-server image installs the distribution into the engine's Python
+environment. The launcher extends an inherited `VLLM_PLUGINS` allowlist so spawned
+processes load it. Standalone operation requires the matching native engine,
+PyTorch and platform Mooncake environment; installation of `foretoken_dt` does not
+install an engine or register a `vllm serve` mode. Its entry point is
+`foretoken-dt-role --role draft|target`, with model/tokenizer options inherited from
+vLLM, candidate budget defaulting to three, and `--rdma-host` enabling transport.
+
+NVIDIA source builds select the supported CUDA engine runtime. The model-server
+image also retains existing profiling, readiness-metadata and offload backports;
+those are separate from DT's process-local hooks. Therefore an unchanged-wheel
+check in standalone validation does not imply an unpatched production image.
+Rust build sources and the installed Python runtime are independently pinned. Ordinary serving continues
 through its native execution path when no DT launch responsibility is configured.
 
 ### NVIDIA and MetaX support
