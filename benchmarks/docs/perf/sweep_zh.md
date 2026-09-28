@@ -28,6 +28,27 @@ foretoken perf examples/quickstart --dataset random \
 
 负载、生成和数据集字段沿用 CLI 名称，将连字符换成下划线。例如 `request_rate: [4, 8, 16]` 扫描到达率。[固定到达率配置](../../scripts/common/fixed-arrival.jsonl)和[容量配置](../../scripts/common/fixed-capacity.jsonl)可以直接使用。列表表示扫描维度；每次运行混合两个数据集时写作 `"dataset": [["first.jsonl", "second.jsonl"]]`。通过 `--slo-params` 添加 SLO 条件后，`--num-runs` 控制每个点的完整搜索重复次数，每次搜索的探测点测量一轮。
 
+## 数据驱动负载
+
+使用维护中的 [StudyChat 配置](../../scripts/common/studychat-first-turn.jsonl)运行真实数据集：
+
+```bash
+foretoken perf examples/quickstart \
+  --sweep benchmarks/scripts/common/studychat-first-turn.jsonl \
+  --num-runs 3 --warmup-requests 20 --num-prompts 1000 \
+  --output local,wandb,plot
+```
+
+使用维护中的 [Mooncake Conversation trace 配置](../../scripts/common/mooncake-conversation.jsonl)回放请求时序：
+
+```bash
+foretoken perf examples/quickstart \
+  --sweep benchmarks/scripts/common/mooncake-conversation.jsonl \
+  --num-runs 3 --output local,wandb,plot
+```
+
+数据集负载保留任务行和长度分布；trace 回放保留记录的到达时间、输出目标和共享前缀元数据。两者属于不同的负载协议。
+
 ## 比较多种方法
 
 单次负载也可以直接传入多个 Kustomize 示例：

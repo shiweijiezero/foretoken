@@ -28,6 +28,27 @@ This produces nine parameter points and 27 measured runs. Concurrency 1 supplies
 
 Load, generation, and dataset options use their CLI names with underscores. For example, `request_rate: [4, 8, 16]` scans arrival rates. The [fixed-arrival configuration](../../scripts/common/fixed-arrival.jsonl) and [capacity configuration](../../scripts/common/fixed-capacity.jsonl) are ready-to-run examples. Lists are sweep axes: to mix two datasets in each run, use `"dataset": [["first.jsonl", "second.jsonl"]]`. SLO criteria are supplied with `--slo-params`; `--num-runs` repeats the complete search for each point, with one measurement per probe.
 
+## Data-driven workloads
+
+Run a real dataset workload with the maintained [StudyChat configuration](../../scripts/common/studychat-first-turn.jsonl):
+
+```bash
+foretoken perf examples/quickstart \
+  --sweep benchmarks/scripts/common/studychat-first-turn.jsonl \
+  --num-runs 3 --warmup-requests 20 --num-prompts 1000 \
+  --output local,wandb,plot
+```
+
+Replay the maintained [Mooncake Conversation trace](../../scripts/common/mooncake-conversation.jsonl):
+
+```bash
+foretoken perf examples/quickstart \
+  --sweep benchmarks/scripts/common/mooncake-conversation.jsonl \
+  --num-runs 3 --output local,wandb,plot
+```
+
+The dataset run preserves task rows and length distributions. The trace run preserves recorded arrival times, output targets, and shared-prefix metadata. These are separate workload protocols.
+
 ## Compare methods
 
 Multiple Kustomize examples can also be passed directly for a single workload:
