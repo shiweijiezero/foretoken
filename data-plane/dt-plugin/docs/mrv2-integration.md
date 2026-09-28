@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 The DT role service requires the independent vLLM `feat/external-speculation`
 branch ([PR #1](https://github.com/shiweijiezero/vllm/pull/1)), based on
-`1be36283678a9a94fc8fdaad6c95c2896d6b4015`. The pinned
+`3b4566c5cf014605de6aeab6eb831b4f20511c17`. The pinned
 submodule is unchanged. Installing this package does not patch vLLM, replace
 engine methods, or register a `vllm serve` entry point.
 
