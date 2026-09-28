@@ -322,7 +322,7 @@ func normalizeModelFeatures(input *inferencev1alpha1.ModelFeatures) (inferencev1
 	output := inferencev1alpha1.ModelFeatures{Tools: input.Tools, Reasoning: input.Reasoning}
 	structured := make(map[inferencev1alpha1.StructuredOutputFormat]struct{}, len(input.StructuredOutputs))
 	for _, format := range input.StructuredOutputs {
-		if format != inferencev1alpha1.StructuredOutputFormatJSONObject && format != inferencev1alpha1.StructuredOutputFormatJSONSchema {
+		if format != inferencev1alpha1.StructuredOutputFormatJSONObject && format != inferencev1alpha1.StructuredOutputFormatJSONSchema && format != inferencev1alpha1.StructuredOutputFormatStructuralTag {
 			return inferencev1alpha1.ModelFeatures{}, fmt.Errorf("unsupported structured output format %q", format)
 		}
 		structured[format] = struct{}{}

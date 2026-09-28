@@ -59,7 +59,6 @@ pub(crate) fn supports_request(
         return false;
     }
     (text.lora_request.is_none() || capabilities.contains("lora"))
-        && (text.reasoning_parser_kwargs.is_none() || capabilities.contains("reasoning"))
         && supports_structured_output(capabilities, request)
         && (!requires_encoder || supports_multimodal(capabilities, request))
 }

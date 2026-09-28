@@ -31,12 +31,13 @@ type EngineArguments map[string]apiextensionsv1.JSON
 
 // StructuredOutputFormat identifies a structured response format supported by a model.
 // +enum
-// +kubebuilder:validation:Enum=jsonObject;jsonSchema
+// +kubebuilder:validation:Enum=jsonObject;jsonSchema;structuralTag
 type StructuredOutputFormat string
 
 const (
-	StructuredOutputFormatJSONObject StructuredOutputFormat = "jsonObject"
-	StructuredOutputFormatJSONSchema StructuredOutputFormat = "jsonSchema"
+	StructuredOutputFormatJSONObject    StructuredOutputFormat = "jsonObject"
+	StructuredOutputFormatJSONSchema    StructuredOutputFormat = "jsonSchema"
+	StructuredOutputFormatStructuralTag StructuredOutputFormat = "structuralTag"
 )
 
 // MultimodalModality identifies one non-text input modality supported by a model.
@@ -57,7 +58,7 @@ type ModelFeatures struct {
 
 	// +optional
 	// +listType=set
-	// +kubebuilder:validation:MaxItems=2
+	// +kubebuilder:validation:MaxItems=3
 	StructuredOutputs []StructuredOutputFormat `json:"structuredOutputs,omitempty"`
 
 	// +optional

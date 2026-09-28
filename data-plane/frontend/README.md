@@ -40,7 +40,17 @@ These requests return JSON. Add `"stream": true` to receive incremental server-s
 
 Tools run in the client, which sends their results in the next request. Responses supports function tools, namespaced functions, and unconstrained custom-text tools. Server-hosted tools and background responses are unsupported.
 
-Forced tool choice and strict tool schemas require structured-output support in the model service. Thinking controls depend on the model's chat template. Output budgets include reasoning tokens; Messages uses `max_tokens` for the total budget and does not accept a separate `thinking.budget_tokens` allowance.
+Some tool parsers use a structural-tag grammar to constrain forced or strict tool calls. If the model's parser and grammar backend support it, add `structuralTag` to the ModelService's existing structured-output formats:
+
+```yaml
+spec:
+  features:
+    structuredOutputs: [structuralTag]
+```
+
+For configurations with `spec.modelPools`, declare this capability in each applicable pool's `features.structuredOutputs` instead of the top-level `features`.
+
+Thinking controls depend on the model's chat template. Output budgets include reasoning tokens; Messages uses `max_tokens` for the total budget and does not accept a separate `thinking.budget_tokens` allowance.
 
 When the output budget is exhausted, Messages reports `max_tokens` and Responses reports `incomplete`. Execute only complete tool calls; interrupted calls may be omitted or contain partial arguments.
 

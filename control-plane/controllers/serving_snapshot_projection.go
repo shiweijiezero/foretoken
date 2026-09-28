@@ -696,6 +696,8 @@ func routingCapabilities(features inferencev1alpha1.ModelFeatures) []string {
 			optional["structured_output.json_object"] = struct{}{}
 		case inferencev1alpha1.StructuredOutputFormatJSONSchema:
 			optional["structured_output.json_schema"] = struct{}{}
+		case inferencev1alpha1.StructuredOutputFormatStructuralTag:
+			optional["structured_output.structural_tag"] = struct{}{}
 		}
 	}
 	for _, modality := range features.Multimodal {

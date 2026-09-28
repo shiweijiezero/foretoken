@@ -40,7 +40,17 @@ curl --fail-with-body "$FRONTEND_URL/v1/messages" \
 
 工具由客户端执行，再将结果传入下一轮请求。Responses 支持函数工具、带命名空间的函数和无语法约束的自定义文本工具；不支持服务端托管工具和后台生成任务。
 
-强制工具选择和严格工具 schema 需要模型服务支持结构化输出。思考控制参数由模型的对话模板支持。输出预算包含思考 token；Messages 使用 `max_tokens` 指定总预算，不接受独立的 `thinking.budget_tokens` 预算。
+部分工具解析器通过结构标签语法约束强制工具调用或严格工具的输出格式。模型的解析器和语法后端支持该能力时，在 ModelService 已有的结构化输出格式中加入 `structuralTag`：
+
+```yaml
+spec:
+  features:
+    structuredOutputs: [structuralTag]
+```
+
+使用 `spec.modelPools` 配置时，在适用池的 `features.structuredOutputs` 中声明该能力，不使用顶层 `features`。
+
+思考控制参数由模型的对话模板支持。输出预算包含思考 token；Messages 使用 `max_tokens` 指定总预算，不接受独立的 `thinking.budget_tokens` 预算。
 
 输出预算耗尽时，Messages 返回 `max_tokens`，Responses 返回 `incomplete`。只执行完整的工具调用；中断的调用可能被省略，也可能包含未完成的参数。
 

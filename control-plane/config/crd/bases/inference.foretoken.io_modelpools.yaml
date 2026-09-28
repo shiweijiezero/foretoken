@@ -133,8 +133,9 @@ spec:
                           enum:
                           - jsonObject
                           - jsonSchema
+                          - structuralTag
                           type: string
-                        maxItems: 2
+                        maxItems: 3
                         type: array
                         x-kubernetes-list-type: set
                       tools:
