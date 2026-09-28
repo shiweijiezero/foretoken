@@ -10,7 +10,7 @@ foretoken perf examples/quickstart \
   --trace-start 57 --trace-duration 5 \
   --dataset random \
   --random-seed 0 --trace-synthetic-prefix-reuse \
-  --trace-max-concurrency 16 --max-tokens 64 \
+  --max-concurrency 16 --max-tokens 64 \
   --output local,wandb
 ```
 

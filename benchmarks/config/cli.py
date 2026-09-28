@@ -366,15 +366,6 @@ def _add_benchmark_arguments(
         help="Trace window duration in seconds; omit to replay to the end",
     )
     parser.add_argument(
-        "--trace-max-concurrency",
-        type=int,
-        default=_default(ArrivalTraceSchedule, "max_concurrency"),
-        help=(
-            "Optional cap on active trace requests; timestamps still control "
-            "arrival times"
-        ),
-    )
-    parser.add_argument(
         "--trace-synthetic-prefix-reuse",
         action="store_true",
         default=_default(ArrivalTraceSchedule, "synthetic_prefix_reuse"),
@@ -545,7 +536,6 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             trace_selector=namespace.trace_path,
             start_offset_seconds=namespace.trace_start,
             duration_seconds=namespace.trace_duration,
-            max_concurrency=namespace.trace_max_concurrency,
             synthetic_prefix_reuse=namespace.trace_synthetic_prefix_reuse,
         ),
         outputs=BenchmarkOutputConfig(

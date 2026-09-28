@@ -253,7 +253,6 @@ class ArrivalTraceSchedule:
     trace_selector: str = ""
     start_offset_seconds: float = 0.0
     duration_seconds: Optional[float] = None
-    max_concurrency: Optional[int] = None
     synthetic_prefix_reuse: bool = False
 
     def validate(self) -> None:
@@ -266,8 +265,6 @@ class ArrivalTraceSchedule:
             raise ValueError("--trace-start must be >= 0")
         if self.duration_seconds is not None and (not math.isfinite(self.duration_seconds) or self.duration_seconds <= 0):
             raise ValueError("--trace-duration must be > 0")
-        if self.max_concurrency is not None and self.max_concurrency <= 0:
-            raise ValueError("--trace-max-concurrency must be > 0")
 
 
 @dataclass
@@ -411,14 +408,9 @@ class BenchmarkConfig:
 
     def slo_search_start(self) -> int:
         """Resolve the first concurrency probe for an SLO binary search."""
-        if self.trace.trace_selector:
-            configured = self.trace.max_concurrency
-        else:
-            configured = self.load.max_concurrency
-            if configured == -1:
-                raise ValueError(
-                    "--slo-params requires --max-concurrency >= 1"
-                )
+        configured = self.load.max_concurrency
+        if configured == -1:
+            raise ValueError("--slo-params requires --max-concurrency >= 1")
         low = self.slo.lower_bound
         high = self.slo.upper_bound
         start = low if configured is None else max(low, configured)
@@ -505,21 +497,15 @@ class BenchmarkConfig:
                 raise ValueError(
                     "--trace uses record timestamps; omit --request-rate"
                 )
-            if (
-                not self.slo.params
-                and (
-                    self.load.max_concurrency != HttpLoadSchedule().max_concurrency
-                    or (
-                        self.load.request_count is not None
-                        and self.load.request_count != HttpLoadSchedule().request_count
-                    )
-                    or self.load.arrival_rate != HttpLoadSchedule().arrival_rate
-                    or self.load.duration_seconds is not None
-                )
+            if not self.slo.params and (
+                self.load.request_count is not None
+                and self.load.request_count != HttpLoadSchedule().request_count
+                or self.load.arrival_rate != HttpLoadSchedule().arrival_rate
+                or self.load.duration_seconds is not None
             ):
                 raise ValueError(
                     "--trace replays the selected trace window; use "
-                    "--trace-max-concurrency instead of --max-concurrency/--num-prompts"
+                    "--trace-duration instead of --num-prompts/--request-rate/--duration"
                 )
             if same_dataset and workload.row_offset:
                 raise ValueError(
@@ -573,7 +559,6 @@ class BenchmarkConfig:
             "trace_path": self.trace.trace_selector,
             "trace_start": self.trace.start_offset_seconds,
             "trace_duration": self.trace.duration_seconds,
-            "trace_max_concurrency": self.trace.max_concurrency,
             "trace_synthetic_prefix_reuse": self.trace.synthetic_prefix_reuse,
         }
         if not self.trace.trace_selector:

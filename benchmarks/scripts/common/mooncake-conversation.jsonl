@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-{"_benchmark_name":"mooncake-conversation","trace":"valeriol29/mooncake-traces:conversation","trace_start":57,"trace_duration":5,"dataset":"random","trace_max_concurrency":16,"trace_synthetic_prefix_reuse":true,"max_tokens":64,"random_seed":0}
+{"_benchmark_name":"mooncake-conversation","trace":"valeriol29/mooncake-traces:conversation","trace_start":57,"trace_duration":5,"dataset":"random","max_concurrency":16,"trace_synthetic_prefix_reuse":true,"max_tokens":64,"random_seed":0}

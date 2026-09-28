@@ -70,7 +70,6 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "trace": ("trace", "trace_selector", str),
     "trace_start": ("trace", "start_offset_seconds", float),
     "trace_duration": ("trace", "duration_seconds", float),
-    "trace_max_concurrency": ("trace", "max_concurrency", int),
     "trace_synthetic_prefix_reuse": ("trace", "synthetic_prefix_reuse", _preserve_value),
     "dataset_weights": ("workload", "dataset_weights", lambda value: [float(item) for item in (value.split(",") if isinstance(value, str) else value)]),
     "dataset_offset": ("workload", "row_offset", int),

@@ -329,7 +329,7 @@ class TraceReplayBenchmark:
                 raise ValueError("Trace warmup consumed every selected event")
             request_count = len(measured_events)
 
-            max_concurrency = trace.max_concurrency
+            max_concurrency = self.benchmark.load.max_concurrency
             active_connection_limit = (
                 request_count
                 if max_concurrency is None
@@ -358,7 +358,6 @@ class TraceReplayBenchmark:
                     "payload_dataset": self.benchmark.resolved_workload.dataset_selectors[0],
                     "trace_start": trace.start_offset_seconds,
                     "trace_duration": trace.duration_seconds,
-                    "trace_max_concurrency": max_concurrency,
                     "trace_synthetic_prefix_reuse": trace.synthetic_prefix_reuse,
                     "trace_format": trace_format,
                     "payload_source": request_origin,

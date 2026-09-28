@@ -19,7 +19,7 @@ This starts at concurrency limit 2 and searches up to 32, requiring p99 request 
 
 The search stops at the SLO boundary or configured upper bound, or earlier if a higher limit produces no increase in simultaneous requests. For example, a four-request budget may reach a peak of four at limits 4 and 8; the result then reports peak 4 at limit 4.
 
-For traces, set the initial limit with `--trace-max-concurrency` instead of `--max-concurrency`; arrivals follow trace timestamps. For multi-turn workloads, the limit counts conversations, while the measured peak and request budget count individual requests.
+For traces, use `--max-concurrency` for the in-flight request limit; arrivals follow trace timestamps. For multi-turn workloads, the limit counts conversations, while the measured peak and request budget count individual requests.
 
 ## Set criteria
 

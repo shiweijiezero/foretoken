@@ -19,7 +19,7 @@ foretoken perf examples/quickstart \
 
 搜索会在 SLO 边界或配置上限处结束；若提高限额后实测并发不再增长，则提前停止。例如，请求预算为 4，在限额 4 和 8 时都测得峰值 4，结果就报告峰值 4、对应限额 4。
 
-使用 trace 时，以 `--trace-max-concurrency` 代替 `--max-concurrency` 设置初始限额，请求按 trace 时间戳到达。多轮负载的限额约束对话数，实测峰值和请求预算则按每轮请求统计。
+使用 trace 时，`--max-concurrency` 设置在途请求上限，请求按 trace 时间戳到达。多轮负载的限额约束对话数，实测峰值和请求预算则按每轮请求统计。
 
 ## 设置条件
 
