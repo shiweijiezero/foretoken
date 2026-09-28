@@ -313,6 +313,74 @@ ZH = {
     "Work rejection": "工作拒绝比例",
     "Work timeout": "工作超时比例",
     "Admitted wait p95": "获准等待 P95",
+    'Foretoken Video Generation Overview': 'Foretoken 视频生成概览',
+    'Video Generation': '视频生成',
+    'Frontend scrape targets': '前端监控端点数',
+    'Model scrape targets': '模型监控端点数',
+    'Prompt tokens / s': '输入吞吐量（TPS）',
+    'Output tokens / s': '输出吞吐量（TPS）',
+    'Frontend queued requests': '前端排队请求',
+    'Frontend admission queue': '前端准入队列',
+    'Input throughput (TPS)': '输入吞吐量（TPS）',
+    'Output throughput (TPS)': '输出吞吐量（TPS）',
+    'Request time by stage': '各阶段请求耗时',
+    'Preemptions': '抢占',
+    'Video requests': '视频请求数',
+    'Video completion rate': '视频请求完成速率',
+    'Video output rate': '视频输出速率',
+    'Video frame rate': '视频帧输出速率',
+    'Completed video serving calls per minute over the selected latency window, by task and outcome.': '所选延迟窗口内每分钟完成的视频服务调用数，按任务和结果分组。',
+    'Video outputs per minute over the selected latency window; outputs are counted after response encoding.': '所选延迟窗口内每分钟完成的视频输出数，在响应编码完成后计数。',
+    'Video frames per minute over the selected latency window; frames are counted after response encoding.': '所选延迟窗口内每分钟完成的视频帧数，在响应编码完成后计数。',
+    'In-flight video requests': '进行中的视频请求',
+    'Video generation latency': '视频生成延迟',
+    'Video stage latency': '视频阶段延迟',
+    'Denoise-step latency': '单步去噪延迟',
+    'Generated videos': '已生成视频',
+    'Generated frames': '已生成帧',
+    'Generated pixels': '已生成像素',
+    'Reference tokens': '参考媒体 token',
+    'Storage usage': '存储使用率',
+    'Available storage': '存储可用空间',
+    'Routing stage latency': '路由阶段延迟',
+    'Reconcile latency': '协调耗时',
+    'Video task': '视频任务',
+    'Latency window': '延迟窗口',
+    'window avg / {{model_group_display}} / {{task}}': '窗口平均 / {{model_group_display}} / {{task}}',
+    'last / {{model_group_display}} / {{task}}': '最近一次 / {{model_group_display}} / {{task}}',
+    'window avg / {{model_name}} / {{model_group_display}}': '窗口平均 / {{model_name}} / {{model_group_display}}',
+    'last / {{model_name}} / {{model_group_display}}': '最近一次 / {{model_name}} / {{model_group_display}}',
+    'window avg / {{model_group_display}} / {{task}} / {{stage}}': '窗口平均 / {{model_group_display}} / {{task}} / {{stage}}',
+    'last / {{model_group_display}} / {{task}} / {{stage}}': '最近一次 / {{model_group_display}} / {{task}} / {{stage}}',
+    'window avg / {{model_group_display}} / stage {{stage}} / replica {{replica}}': '窗口平均 / {{model_group_display}} / 阶段 {{stage}} / 副本 {{replica}}',
+    'last / {{model_group_display}} / stage {{stage}} / replica {{replica}}': '最近一次 / {{model_group_display}} / 阶段 {{stage}} / 副本 {{replica}}',
+    'window avg / {{model_group_display}} / stage {{stage}} / replica {{replica}} / preprocess': '窗口平均 / {{model_group_display}} / 阶段 {{stage}} / 副本 {{replica}} / 预处理',
+    'window avg / {{model_group_display}} / stage {{stage}} / replica {{replica}} / denoise': '窗口平均 / {{model_group_display}} / 阶段 {{stage}} / 副本 {{replica}} / 去噪',
+    'window avg / {{model_group_display}} / stage {{stage}} / replica {{replica}} / vae_decode': '窗口平均 / {{model_group_display}} / 阶段 {{stage}} / 副本 {{replica}} / VAE 解码',
+    'window avg / {{model_group_display}} / stage {{stage}} / replica {{replica}} / postprocess': '窗口平均 / {{model_group_display}} / 阶段 {{stage}} / 副本 {{replica}} / 后处理',
+    'last / {{model_group_display}} / stage {{stage}} / replica {{replica}} / preprocess': '最近一次 / {{model_group_display}} / 阶段 {{stage}} / 副本 {{replica}} / 预处理',
+    'last / {{model_group_display}} / stage {{stage}} / replica {{replica}} / denoise': '最近一次 / {{model_group_display}} / 阶段 {{stage}} / 副本 {{replica}} / 去噪',
+    'last / {{model_group_display}} / stage {{stage}} / replica {{replica}} / vae_decode': '最近一次 / {{model_group_display}} / 阶段 {{stage}} / 副本 {{replica}} / VAE 解码',
+    'last / {{model_group_display}} / stage {{stage}} / replica {{replica}} / postprocess': '最近一次 / {{model_group_display}} / 阶段 {{stage}} / 副本 {{replica}} / 后处理',
+    'Prometheus targets currently reporting for the selected Frontend services.': '所选前端服务中，最近一次指标抓取成功的端点数量。',
+    'Prometheus targets currently reporting for the selected model groups and roles.': '所选模型组和执行角色中，最近一次指标抓取成功的端点数量。',
+    'Requests waiting for frontend admission.': '等待前端准入的请求数。',
+    'Time to HTTP response headers, in seconds; excludes SSE body delivery.': '到 HTTP 响应头的时间，单位为秒；不包含 SSE 正文传输。',
+    'Whole-model completion rate counts aggregate and decode executions once; backend lines retain execution stage and finish reason.': '模型总计只统计一次聚合或 Decode 阶段的完成请求；后端曲线保留执行阶段和结束原因。',
+    'Output-token intervals across aggregate and decode engines, in milliseconds.': '聚合和 Decode 引擎的输出 token 间隔，单位为毫秒。',
+    'P95 time, in seconds, a request spends waiting for the scheduler, in prefill, and in decode.': '请求在等待调度器、Prefill 和 Decode 阶段的 P95 耗时，单位为秒。',
+    'Completed video serving calls since the current model-server process started, grouped by bounded task and outcome; success includes response encoding.': '当前模型服务器进程启动以来完成的视频服务请求数，按有限任务类型和结果分组；成功包含响应编码完成。',
+    'Video requests currently in flight in the API server, including work executing or waiting inside the serving pipeline.': 'API 服务器中当前尚未完成的视频请求数量，包括正在执行和在服务流水线内部等待的请求。',
+    'Window average and most recent completed pipeline duration. Model instance and role filters apply; the task filter applies only to video-specific signals.': '所选窗口内已完成流水线的平均耗时和最近一次耗时。按模型实例和角色筛选；任务筛选仅作用于视频专属信号。',
+    'Window average and last observation of engine-owned diffusion stages; text, media and response encoding are reported separately.': '引擎已有扩散阶段的窗口平均耗时和最近一次观测值；文本、媒体和响应编码分开上报。',
+    "Window average and most recent request's mean denoise-step duration: denoise duration divided by the request's configured inference-step count, not individual step measurements.": '所选窗口平均值与最近一次请求的单步平均去噪耗时：去噪总耗时除以请求配置的推理步数，并非逐步计时。',
+    'Generated video outputs since the current model-server process started.': '当前模型服务器进程启动以来生成的视频输出数量。',
+    'Generated video frames since the current model-server process started.': '当前模型服务器进程启动以来生成的视频帧数。',
+    'Generated pixels across all video frames since the current model-server process started.': '当前模型服务器进程启动以来生成的所有视频帧像素总数。',
+    'Window average and most recently observed reference visual-conditioning token count. H3 counts native visual spans, including their boundary tokens.': '所选窗口内参考视觉 conditioning token 的平均数和最近一次观测值。H3 按原生视觉区块计数，包含其边界 token。',
+    'Whole-model cache hits divided by queried tokens. Local and external caches are separate; no queries produce no ratio.': '模型整体命中 token 数除以查询 token 数；本地和外部缓存分开统计，没有查询时不显示比例。',
+    'Healthy KV event sources divided by configured sources; disabled or unavailable indexing reports zero.': '健康 KV 事件源数除以已配置源数；索引禁用或不可用时为 0。',
+    'Routing selections by backend within each model and execution role. Each backend is one model instance and data-parallel rank; the denominator is all backends.': '每个模型及执行角色内各后端的路由选择比例。一个后端对应一个模型实例和数据并行 rank，分母为该模型该角色的全部后端。',
 }
 
 TABLE_COLUMNS_ZH = {
@@ -342,11 +410,17 @@ RAW_MODEL = (
     RAW_MODEL_ALL + ',inference_foretoken_io_model_group=~"$model_group",'
     'inference_foretoken_io_model_role=~"$model_role",engine=~"$engine"'
 )
+RAW_VIDEO_MODEL = (
+    'endpoint="model-server",namespace=~"$namespace",inference_foretoken_io_model_group!="",'
+    'inference_foretoken_io_model_group=~"$model_group",inference_foretoken_io_model_role!="",'
+    'inference_foretoken_io_model_role=~"$model_role",model_name=~"$model_name"'
+)
 ROUTER = (
     'namespace=~"$namespace",inference_foretoken_io_frontend_service=~"$frontend_service",'
     'model_name=~"$model_name"'
 )
 SERVICE = 'namespace=~"$namespace",modelservice=~"$model_service",model_name=~"$model_name"'
+VIDEO_DIMENSIONS = "namespace,model_group,model_role,pd_pipeline_scope,model_name,task"
 CONTROLLER = 'job="foretoken-control-plane"'
 AUTOSCALING_TARGET = "namespace,modelservice,target_kind,target_name,role"
 AUTOSCALING_LEGEND = "{{modelservice}} / {{target_name}} / {{role}}"
@@ -411,12 +485,31 @@ def model_metric(metric: str, *, extra: str = "", rate: bool = False, whole_mode
     expr = _selector(metric, RAW_MODEL_ALL if whole_model else RAW_MODEL, extra)
     if rate:
         expr = f"rate({expr}[$__rate_interval])"
+    return _normalize_model_labels(expr)
+
+
+def _normalize_model_labels(expr: str) -> str:
+    """Normalize Kubernetes model labels shared by text and video metrics."""
     return (
         f'label_replace(label_replace(label_replace({expr}, '
         '"model_group", "$1", "inference_foretoken_io_model_group", "(.+)"), '
         '"model_role", "$1", "inference_foretoken_io_model_role", "(.+)"), '
         '"pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)")'
     )
+
+
+def video_model_metric(
+    metric: str,
+    *,
+    extra: str = "",
+    rate: bool = False,
+    rate_window: str = "$__rate_interval",
+) -> str:
+    """Return a video metric without requiring the text-engine rank label."""
+    expr = _selector(metric, RAW_VIDEO_MODEL, extra)
+    if rate:
+        expr = f"rate({expr}[{rate_window}])"
+    return _normalize_model_labels(expr)
 
 
 def model_total(metric: str, *, rate: bool = False, roles: str = "") -> str:
@@ -426,8 +519,12 @@ def model_total(metric: str, *, rate: bool = False, roles: str = "") -> str:
 
 
 def selected_groups() -> str:
-    """Resolve model identity from Service scrape targets even when engine metrics are absent."""
-    return 'max by(namespace,model_group) (foretoken:model_instance_info{namespace=~"$namespace",model_name=~"$model_name",model_group=~"$model_group"})'
+    """Resolve model identity from engine gauges, including idle model instances."""
+    identities = (
+        f"{model_metric('vllm:kv_cache_usage_perc')} or "
+        f"{video_model_metric('vllm_omni:num_requests_running')}"
+    )
+    return f"max by(namespace,model_group) (0 * ({identities}) + 1)"
 
 
 def scoped_group_metric(expr: str) -> str:
@@ -456,6 +553,25 @@ def model_rate_ratio(numerator_metric: str, denominator_metric: str) -> str:
     numerator = model_metric(numerator_metric, rate=True, whole_model=True)
     denominator = model_metric(denominator_metric, rate=True, whole_model=True)
     return f"sum by(model_name) ({numerator}) / (sum by(model_name) ({denominator}) > 0)"
+
+
+def model_histogram_window_mean(metric: str, dimensions: str, *, extra: str = "") -> str:
+    """Return the mean of histogram observations completed in the selected window."""
+    total_metric = video_model_metric(
+        metric + "_sum",
+        extra=extra,
+        rate=True,
+        rate_window="$video_latency_window",
+    )
+    sample_metric = video_model_metric(
+        metric + "_count",
+        extra=extra,
+        rate=True,
+        rate_window="$video_latency_window",
+    )
+    total = f"sum by({dimensions}) ({total_metric})"
+    samples = f"sum by({dimensions}) ({sample_metric})"
+    return f"{total} / ({samples} > 0)"
 
 
 def steps(*thresholds: tuple[float | None, str]) -> dashboard.ThresholdsConfig:
@@ -697,13 +813,51 @@ def localize_dashboard(value: object) -> object:
     return value
 
 
-def render(locale: str) -> str:
-    """Render one locale from the shared dashboard model and PromQL definitions."""
-    encoded = JSONEncoder(sort_keys=True, indent=2).encode(build())
-    if locale == "en":
-        return encoded
-    payload = localize_dashboard(json.loads(encoded))
-    payload["uid"] = "foretoken-system-overview-zh"
+def video_only_dashboard(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep the video row and its model-server variables for a focused dashboard."""
+    selected_panels: list[dict[str, Any]] = []
+    in_video_row = False
+    for panel in payload["panels"]:
+        if panel["type"] == "row":
+            if in_video_row:
+                break
+            in_video_row = panel["title"] == "Video Generation"
+        if in_video_row:
+            selected_panels.append(panel)
+
+    # The payload comes from build(), so its panel layout is owned by this module.
+    first_y = selected_panels[0]["gridPos"]["y"]
+    for panel in selected_panels:
+        panel["gridPos"]["y"] -= first_y
+
+    video_variables = {
+        "DS_PROMETHEUS",
+        "namespace",
+        "model_group",
+        "model_role",
+        "model_name",
+        "video_task",
+        "video_latency_window",
+    }
+    payload["templating"]["list"] = [
+        variable for variable in payload["templating"]["list"] if variable["name"] in video_variables
+    ]
+
+    payload["panels"] = selected_panels
+    payload["title"] = "Foretoken Video Generation Overview"
+    payload["uid"] = "foretoken-video-overview"
+    payload["tags"] = ["foretoken", "video", "inference", "operations"]
+    return payload
+
+
+def render(locale: str, view: str = "system") -> str:
+    """Render one localized system or video dashboard from shared definitions."""
+    payload = json.loads(JSONEncoder(sort_keys=True, indent=2).encode(build()))
+    if view == "video":
+        payload = video_only_dashboard(payload)
+    if locale == "zh":
+        payload = localize_dashboard(payload)
+        payload["uid"] += "-zh"
     return json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
 
 
@@ -1044,6 +1198,19 @@ def build() -> dashboard_models.Dashboard:
         )
         .with_variable(
             variable(
+                "video_task",
+                "Video task",
+                f'label_values(vllm_omni:video_generation_requests_total{{{RAW_VIDEO_MODEL}}}, task)',
+            )
+        )
+        .with_variable(
+            dashboard.CustomVariable("video_latency_window")
+            .label("Latency window")
+            .values("5m,15m,30m,1h")
+            .current(dashboard_models.VariableOption(selected=True, text="30m", value="30m"))
+        )
+        .with_variable(
+            variable(
                 "model_service",
                 "Autoscaling service",
                 'label_values(foretoken_autoscaling_applied_replicas{namespace=~"$namespace",model_name=~"$model_name"}, modelservice)',
@@ -1375,6 +1542,236 @@ def build() -> dashboard_models.Dashboard:
             span=24,
         )
     )
+
+    video_task = 'task=~"$video_task"'
+    board.with_row(dashboard.Row("Video Generation"))
+    board.with_panel(
+        series(
+            "Video requests",
+            "Completed video serving calls since the current model-server process started, grouped by bounded task and outcome; success includes response encoding.",
+            [
+                foretoken_query(
+                    f"sum by({VIDEO_DIMENSIONS},outcome) ({video_model_metric('vllm_omni:video_generation_requests_total', extra=video_task)})",
+                    "{{model_name}} / {{model_group_display}} / {{task}} / {{outcome}}",
+                )
+            ],
+            unit="short",
+            span=8,
+        )
+    )
+    board.with_panel(
+        series(
+            "In-flight video requests",
+            "Video requests currently in flight in the API server, including work executing or waiting inside the serving pipeline.",
+            [
+                foretoken_query(
+                    f"sum by({VIDEO_DIMENSIONS}) ({video_model_metric('vllm_omni:video_requests_running', extra=video_task)})",
+                    "{{model_name}} / {{model_group_display}} / {{task}}",
+                )
+            ],
+            unit="short",
+            span=8,
+        )
+    )
+    board.with_panel(
+        series(
+            "Video generation latency",
+            "Window average and most recent completed pipeline duration. Model instance and role filters apply; the task filter applies only to video-specific signals.",
+            [
+                foretoken_query(
+                    model_histogram_window_mean(
+                        "vllm_omni:e2e_request_latency_s",
+                        "namespace,model_group,model_role,model_name",
+                    ),
+                    "window avg / {{model_name}} / {{model_group_display}}",
+                ),
+                foretoken_query(
+                    "max by(namespace,model_group,model_role,model_name) ("
+                    f"{video_model_metric('vllm_omni:e2e_request_latency_last_s')})",
+                    "last / {{model_name}} / {{model_group_display}}",
+                ),
+            ],
+            unit="suffix: s",
+            span=8,
+        )
+    )
+    board.with_panel(
+        series(
+            "Video stage latency",
+            "Window average and last observation of engine-owned diffusion stages; text, media and response encoding are reported separately.",
+            [
+                *[
+                    foretoken_query(
+                        model_histogram_window_mean(
+                            metric,
+                            "namespace,model_group,model_role,model_name,stage,replica",
+                        ),
+                        "window avg / {{model_group_display}} / stage {{stage}} / replica {{replica}} / " + label,
+                    )
+                    for label, metric in (
+                        ("preprocess", "vllm_omni:diffusion_preprocess_s"),
+                        ("denoise", "vllm_omni:diffusion_forward_s"),
+                        ("vae_decode", "vllm_omni:vae_decode_s"),
+                        ("postprocess", "vllm_omni:diffusion_postprocess_s"),
+                    )
+                ],
+                *[
+                    foretoken_query(
+                        "max by(namespace,model_group,model_role,model_name,stage,replica) ("
+                        f"{video_model_metric(metric)})",
+                        "last / {{model_group_display}} / stage {{stage}} / replica {{replica}} / " + label,
+                    )
+                    for label, metric in (
+                        ("preprocess", "vllm_omni:diffusion_preprocess_last_s"),
+                        ("denoise", "vllm_omni:diffusion_forward_last_s"),
+                        ("vae_decode", "vllm_omni:vae_decode_last_s"),
+                        ("postprocess", "vllm_omni:diffusion_postprocess_last_s"),
+                    )
+                ],
+                foretoken_query(
+                    model_histogram_window_mean(
+                        "vllm_omni:video_stage_duration_s",
+                        VIDEO_DIMENSIONS + ",stage",
+                        extra=video_task,
+                    ),
+                    "window avg / {{model_group_display}} / {{task}} / {{stage}}",
+                ),
+                foretoken_query(
+                    f"max by({VIDEO_DIMENSIONS},stage) ("
+                    f"{video_model_metric('vllm_omni:video_stage_duration_last_s', extra=video_task)})",
+                    "last / {{model_group_display}} / {{task}} / {{stage}}",
+                ),
+            ],
+            unit="suffix: s",
+            span=8,
+        )
+    )
+    board.with_panel(
+        series(
+            "Denoise-step latency",
+            "Window average and most recent request's mean denoise-step duration: denoise duration divided by the request's configured inference-step count, not individual step measurements.",
+            [
+                foretoken_query(
+                    model_histogram_window_mean(
+                        "vllm_omni:denoise_step_latency_s",
+                        "namespace,model_group,model_role,model_name,stage,replica",
+                    ),
+                    "window avg / {{model_group_display}} / stage {{stage}} / replica {{replica}}",
+                ),
+                foretoken_query(
+                    "max by(namespace,model_group,model_role,model_name,stage,replica) ("
+                    f"{video_model_metric('vllm_omni:denoise_step_latency_last_s')})",
+                    "last / {{model_group_display}} / stage {{stage}} / replica {{replica}}",
+                ),
+            ],
+            unit="suffix: s",
+            span=8,
+        )
+    )
+    board.with_panel(
+        series(
+            "Generated videos",
+            "Generated video outputs since the current model-server process started.",
+            [
+                foretoken_query(
+                    f"sum by({VIDEO_DIMENSIONS}) ({video_model_metric('vllm_omni:video_outputs_total', extra=video_task)})",
+                    "{{model_name}} / {{model_group_display}} / {{task}}",
+                )
+            ],
+            unit="short",
+            span=8,
+        )
+    )
+    board.with_panel(
+        series(
+            "Generated frames",
+            "Generated video frames since the current model-server process started.",
+            [
+                foretoken_query(
+                    f"sum by({VIDEO_DIMENSIONS}) ({video_model_metric('vllm_omni:video_frames_total', extra=video_task)})",
+                    "{{model_name}} / {{model_group_display}} / {{task}}",
+                )
+            ],
+            unit="suffix: frames",
+            span=8,
+        )
+    )
+    board.with_panel(
+        series(
+            "Generated pixels",
+            "Generated pixels across all video frames since the current model-server process started.",
+            [
+                foretoken_query(
+                    f"sum by({VIDEO_DIMENSIONS}) ({video_model_metric('vllm_omni:video_pixels_total', extra=video_task)})",
+                    "{{model_name}} / {{model_group_display}} / {{task}}",
+                )
+            ],
+            unit="suffix: px",
+            span=8,
+        )
+    )
+    board.with_panel(
+        series(
+            "Reference tokens",
+            "Window average and most recently observed reference visual-conditioning token count. H3 counts native visual spans, including their boundary tokens.",
+            [
+                foretoken_query(
+                    model_histogram_window_mean(
+                        "vllm_omni:video_reference_tokens",
+                        VIDEO_DIMENSIONS,
+                        extra=video_task,
+                    ),
+                    "window avg / {{model_group_display}} / {{task}}",
+                ),
+                foretoken_query(
+                    f"max by({VIDEO_DIMENSIONS}) ("
+                    f"{video_model_metric('vllm_omni:video_reference_tokens_last', extra=video_task)})",
+                    "last / {{model_group_display}} / {{task}}",
+                ),
+            ],
+            unit="short",
+            span=8,
+        )
+    )
+
+    for title, description, metric, dimensions, legend, unit in (
+        (
+            "Video completion rate",
+            "Completed video serving calls per minute over the selected latency window, by task and outcome.",
+            "vllm_omni:video_generation_requests_total",
+            VIDEO_DIMENSIONS + ",outcome",
+            "{{model_name}} / {{model_group_display}} / {{task}} / {{outcome}}",
+            "suffix: req/min",
+        ),
+        (
+            "Video output rate",
+            "Video outputs per minute over the selected latency window; outputs are counted after response encoding.",
+            "vllm_omni:video_outputs_total",
+            VIDEO_DIMENSIONS,
+            "{{model_name}} / {{model_group_display}} / {{task}}",
+            "suffix: videos/min",
+        ),
+        (
+            "Video frame rate",
+            "Video frames per minute over the selected latency window; frames are counted after response encoding.",
+            "vllm_omni:video_frames_total",
+            VIDEO_DIMENSIONS,
+            "{{model_name}} / {{model_group_display}} / {{task}}",
+            "suffix: frames/min",
+        ),
+    ):
+        board.with_panel(
+            series(
+                title,
+                description,
+                [foretoken_query(
+                    f"60 * sum by({dimensions}) ({video_model_metric(metric, extra=video_task, rate=True, rate_window='$video_latency_window')})",
+                    legend,
+                )],
+                unit=unit,
+                span=8,
+            )
+        )
 
     board.with_row(dashboard.Row("Cache"))
     board.with_panel(
@@ -1781,4 +2178,6 @@ def build() -> dashboard_models.Dashboard:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate a localized Foretoken Grafana dashboard.")
     parser.add_argument("--locale", choices=("en", "zh"), default="en")
-    print(render(parser.parse_args().locale))
+    parser.add_argument("--view", choices=("system", "video"), default="system")
+    args = parser.parse_args()
+    print(render(args.locale, args.view))

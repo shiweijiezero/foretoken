@@ -48,6 +48,45 @@ Select rules in a `ModelService` or `FrontendService` and redeploy its configura
 
 To receive notifications, connect a [Lark](integrations/lark/README.md), [Slack](integrations/slack/README.md), or [DingTalk](integrations/dingtalk/README.md) receiver.
 
+## Video generation
+
+Deploy H3 using the [two-GPU recipe](../examples/recipes/minimax-h3/a100-bf16-tp2/README.md).
+Its Omni image build includes video metrics; the model-server forwards the engine's
+`/metrics` through the existing collection path. Importing a dashboard without
+updating that engine image does not add the new metrics.
+
+In Foretoken System Overview, open Video Generation and select the namespace,
+model and model instance. The row shows completed requests by outcome, in-flight
+requests, generation and stage latency, video/frame/pixel output counts, and
+reference visual tokens. These are time-series panels, not only end-of-run summaries.
+
+H3 reference-token counts follow its native visual-conditioning spans, including
+vision boundary tokens.
+
+Detailed model stages require the engine's optional pipeline profiler. Add this
+entry to `spec.engineArgs` in the recipe's `model.yaml`, then redeploy:
+
+```yaml
+enable-diffusion-pipeline-profiler: true
+```
+
+Latency panels show the most recent observation and a request-weighted average
+over the selected Latency window. The average uses histogram sums and counts;
+missing observations remain missing rather than becoming zero. Pipeline and
+diffusion timing follow model-instance and execution-role filters. The task filter
+applies to video-specific output, encoding and reference-token signals. Completed
+response-building calls are not proof of client receipt or visual quality;
+frontend HTTP status panels describe the public serving boundary.
+
+The focused Foretoken Video Generation Overview uses the same row and queries.
+
+After a video request, confirm its task and outcome metrics in Prometheus:
+
+```promql
+sum by (task, outcome) (vllm_omni:video_generation_requests_total)
+```
+
+
 ## Platform settings
 
 For a source installation, run platform updates from the checkout root with `-e .`, retaining registry settings and any `--engine-source` bindings. Reapply the original install command after upgrading Foretoken to update dashboards and telemetry together.

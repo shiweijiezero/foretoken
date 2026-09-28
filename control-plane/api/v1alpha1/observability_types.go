@@ -89,8 +89,8 @@ type ModelObservability struct {
 type ModelAlerts struct {
 	// +optional
 	// +listType=set
-	// +kubebuilder:validation:MaxItems=3
-	// +kubebuilder:validation:items:Enum=ForetokenMetricsTargetDown;ForetokenNVIDIAGPUTemperatureHigh;ForetokenNVIDIAGPUPowerUsageHigh
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:Enum=ForetokenMetricsTargetDown;ForetokenVideoGenerationFailureRatioHigh;ForetokenNVIDIAGPUTemperatureHigh;ForetokenNVIDIAGPUPowerUsageHigh
 	Rules []string `json:"rules,omitempty"`
 
 	// +optional

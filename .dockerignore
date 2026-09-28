@@ -5,6 +5,10 @@
 
 **
 !LICENSE
+!data-plane/
+!data-plane/patches/
+!data-plane/patches/vllm-omni/
+!data-plane/patches/vllm-omni/**
 !deploy/
 !deploy/inference-engines/
 !deploy/inference-engines/vllm-metax/

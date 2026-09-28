@@ -31,6 +31,7 @@ Connect a [Lark](../integrations/lark/README.md), [Slack](../integrations/slack/
 | --- | --- | --- |
 | [ForetokenMetricsTargetDown](#foretokenmetricstargetdown) | Frontend or model | A metrics endpoint cannot be scraped for 1 minute. |
 | [ForetokenFrontendHTTPResponseStart5xxRatioHigh](#foretokenfrontendhttpresponsestart5xxratiohigh) | Frontend | HTTP response-start 5xx exceeds 5% for 2 minutes, with at least 0.1 responses/s over a 5-minute window. |
+| [ForetokenVideoGenerationFailureRatioHigh](#foretokenvideogenerationfailureratiohigh) | Model | More than 20% of completed video serving calls have server-side errors, with at least 3 success/error outcomes in 30 minutes, sustained for 5 minutes. |
 | [ForetokenAdmissionCapacityRejectionRatioHigh](#foretokenadmissioncapacityrejectionratiohigh) | Frontend | Admission capacity rejections exceed the configured fraction. |
 | [ForetokenAdmissionTimeoutRatioHigh](#foretokenadmissiontimeoutratiohigh) | Frontend | Admission timeouts exceed the configured fraction. |
 | [ForetokenAdmissionAdmittedQueueP95High](#foretokenadmissionadmittedqueuep95high) | Frontend | Queue-wait p95 for requests that queued and were admitted exceeds the configured duration. |
@@ -73,6 +74,19 @@ Inspect the admitted-wait curve alongside queue occupancy and model capacity. Us
 ### ForetokenAdmissionTelemetryMissing
 
 Inspect the Admission replica table for incomplete reporting and compare Pod runtime versions. Check monitoring configuration if the issue persists after an upgrade completes.
+
+### ForetokenVideoGenerationFailureRatioHigh
+
+Server-side failures exceeded 20% for a bounded video task over the last 30 minutes, at least three success/error outcomes were observed, and the condition persisted for five minutes. Client errors and cancellations are excluded from both the ratio and minimum count.
+
+1. Filter the Video Generation dashboard row to the alert's namespace, model group, and task.
+2. Compare `error` with `client_error`; only server-side errors contribute to this alert.
+3. Inspect model-server logs for the failed request interval, then compare denoise, decode, GPU memory, and device-health signals.
+4. Check recent model, runtime, and generation-parameter changes before restarting or changing capacity.
+
+The request threshold prevents one isolated failure from alerting on sparse video traffic. This rule includes response encoding in the API server; it does not validate the visual quality of successfully encoded videos or confirm client receipt.
+
+For delivery, configure a [Lark](../integrations/lark/README.md), [Slack](../integrations/slack/README.md), or [DingTalk](../integrations/dingtalk/README.md) receiver.
 
 ### ForetokenNVIDIAGPUTemperatureHigh
 

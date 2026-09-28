@@ -1128,6 +1128,9 @@ class Helm(HelmClient):
         }
         if reuse_values:
             values = _merge_values(values, self.release_user_values(release))
+        # Service alerts live in workload namespaces, unlike platform monitors.
+        # Replace the stored selector on upgrades; ruleSelector still limits ownership.
+        values.setdefault("prometheus", {}).setdefault("prometheusSpec", {})["ruleNamespaceSelector"] = {}
         if anonymous_access is not None:
             values = _merge_values(
                 values,
@@ -1212,9 +1215,6 @@ class Helm(HelmClient):
                 "--set-json",
                 "prometheus.prometheusSpec.ruleSelector="
                 + json.dumps(rule_selector, separators=(",", ":")),
-                "--set-json",
-                "prometheus.prometheusSpec.ruleNamespaceSelector="
-                + json.dumps(namespace_selector, separators=(",", ":")),
                 # Receivers beside the managed Alertmanager route workload alerts;
                 # configurations in other namespaces retain namespace isolation.
                 "--set-string",

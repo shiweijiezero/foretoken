@@ -50,6 +50,60 @@ groups:
           description_zh: '前端 {{ $labels.frontend_service }} 的 HTTP 响应开始事件中，5xx 比例在每秒至少 0.1 个响应开始事件的流量下连续 2 分钟超过 5%。'
           runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenfrontendhttpresponsestart5xxratiohigh'
 
+      - alert: ForetokenVideoGenerationFailureRatioHigh
+        expr: |
+          (
+            sum by (namespace, model_group, task) (
+              label_replace(
+                increase(vllm_omni:video_generation_requests_total{
+                  endpoint="model-server",
+                  namespace="foretoken_alert_namespace",
+                  inference_foretoken_io_model_group=~"foretoken_alert_model_groups",
+                  outcome="error"
+                }[30m]),
+                "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+              )
+            )
+            /
+            clamp_min(
+              sum by (namespace, model_group, task) (
+                label_replace(
+                  increase(vllm_omni:video_generation_requests_total{
+                    endpoint="model-server",
+                    namespace="foretoken_alert_namespace",
+                    inference_foretoken_io_model_group=~"foretoken_alert_model_groups",
+                    outcome=~"success|error"
+                  }[30m]),
+                  "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+                )
+              ),
+              1
+            )
+          ) > 0.2
+          and on (namespace, model_group, task)
+          sum by (namespace, model_group, task) (
+            label_replace(
+              increase(vllm_omni:video_generation_requests_total{
+                endpoint="model-server",
+                namespace="foretoken_alert_namespace",
+                inference_foretoken_io_model_group=~"foretoken_alert_model_groups",
+                outcome=~"success|error"
+              }[30m]),
+              "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+            )
+          ) >= 3
+        for: 5m
+        labels:
+          service: foretoken
+          severity: warning
+        annotations:
+          alertname_zh: 'Foretoken 视频生成失败比例过高'
+          summary: 'Video generation failure ratio is high for {{ $labels.model_group }}'
+          summary_zh: '模型组 {{ $labels.model_group }} 的视频生成失败比例过高'
+          description: 'More than 20% of completed video serving calls for task {{ $labels.task }} had server-side errors in the last 30 minutes, with at least 3 success/error outcomes, and the condition persisted for 5 minutes. Client errors and cancellations are excluded.'
+          description_zh: '任务 {{ $labels.task }} 最近 30 分钟内至少有 3 次成功或服务端错误结果，服务端错误比例超过 20%，且持续 5 分钟；客户端错误和取消不计入。'
+          runbook_url: 'https://github.com/shiweijiezero/foretoken/blob/main/observability/runbooks/alerts.md#foretokenvideogenerationfailureratiohigh'
+
       - alert: ForetokenNVIDIAGPUTemperatureHigh
         expr: foretoken:accelerator_gpu_temperature_celsius{namespace="foretoken_alert_namespace", model_group=~"foretoken_alert_model_groups", vendor="nvidia"} >= foretoken_alert_threshold_nvidia_temperature_celsius
         for: 2m

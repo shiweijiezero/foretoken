@@ -1,0 +1,590 @@
+diff --git a/vllm_omni/diffusion/models/minimax_h3/pipeline_minimax_h3.py b/vllm_omni/diffusion/models/minimax_h3/pipeline_minimax_h3.py
+index 98722b9..10ca21b 100644
+--- a/vllm_omni/diffusion/models/minimax_h3/pipeline_minimax_h3.py
++++ b/vllm_omni/diffusion/models/minimax_h3/pipeline_minimax_h3.py
+@@ -359,9 +359,19 @@ def _minimax_h3_post_process(output, output_type: str = "np"):
+     frames on the accelerator, so there is nothing left to scale or transpose
+     here.
+     """
++    metadata = {}
++    if isinstance(output, dict) and isinstance(output.get("payload"), dict):
++        # Request-level scalars travel in the existing output envelope, alongside
++        # the unchanged joint media tuple, rather than in a postprocess closure.
++        metadata = dict(output.get("metadata") or {})
++        output = output["payload"].get("output")
+     if not isinstance(output, tuple) or len(output) != 2:
+         return output
+     video, audio = output
++    metadata.update(
++        audio={"sample_rate": MINIMAX_H3_AUDIO_SAMPLE_RATE},
++        video={"fps": MINIMAX_H3_FPS},
++    )
+     if isinstance(video, (bytes, bytearray, memoryview)):
+         video = [video]
+     if isinstance(video, list) and all(isinstance(item, (bytes, bytearray, memoryview)) for item in video):
+@@ -370,10 +380,8 @@ def _minimax_h3_post_process(output, output_type: str = "np"):
+         encoded_videos = None
+     if encoded_videos is not None:
+         return {
+-            "video": encoded_videos,
+-            "audio": [None] * len(encoded_videos),
+-            "audio_sample_rate": MINIMAX_H3_AUDIO_SAMPLE_RATE,
+-            "fps": MINIMAX_H3_FPS,
++            "payload": {"video": encoded_videos, "audio": [None] * len(encoded_videos)},
++            "metadata": metadata,
+         }
+     if video.dtype != torch.uint8 or video.ndim != 5 or video.shape[-1] not in (3, 4):
+         # Float or channel-first frames would reach the muxer as a black or
+@@ -388,10 +396,8 @@ def _minimax_h3_post_process(output, output_type: str = "np"):
+         audio = audio.detach().float().cpu().numpy()
+         video = [sample for sample in video]
+     return {
+-        "video": video,
+-        "audio": audio,
+-        "audio_sample_rate": MINIMAX_H3_AUDIO_SAMPLE_RATE,
+-        "fps": MINIMAX_H3_FPS,
++        "payload": {"video": video, "audio": audio},
++        "metadata": metadata,
+     }
+ 
+ 
+@@ -419,9 +425,8 @@ def _register_dlo_component_cache(cache: BoundedAllocatorCache, *components: Any
+             component.set_omni_component_cache(cache)
+ 
+ 
+-def get_minimax_h3_post_process_func(
+-    od_config: OmniDiffusionConfig,
+-):
++def get_minimax_h3_post_process_func(od_config: OmniDiffusionConfig):
++    """Return the transport-safe H3 postprocessor used by the diffusion engine."""
+     del od_config
+     return _minimax_h3_post_process
+ 
+@@ -2578,6 +2583,7 @@ class MiniMaxH3Pipeline(
+             "audio_t": conditioning.audio_t,
+             "text_embeddings": conditioning.hidden_states.to(device=self.device, dtype=torch.bfloat16),
+             "text_tags": conditioning.token_tags.to(device=self.device, dtype=torch.long),
++            "reference_tokens": int((conditioning.token_tags == 0).sum().item()),
+             "visual_condition": (
+                 conditioning.visual_condition.to(device=self.device)
+                 if conditioning.visual_condition is not None
+@@ -2685,7 +2691,10 @@ class MiniMaxH3Pipeline(
+             video = videos[0] if len(videos) == 1 else torch.cat(videos, dim=0)
+             audio = audios[0] if len(audios) == 1 else torch.cat(audios, dim=0)
+         return DiffusionOutput(
+-            output=(video, audio),
++            output={
++                "payload": {"output": (video, audio)},
++                "metadata": {"conditioning": {"reference_visual_tokens": context["reference_tokens"]}},
++            },
+             post_process_func=get_minimax_h3_post_process_func(self.od_config),
+             stage_durations=(self.stage_durations if hasattr(self, "_stage_durations") else {}),
+         )
+@@ -2801,6 +2810,7 @@ class MiniMaxH3Pipeline(
+                 _STEP_AUDIO_EDIT: inputs.get("audio_edit"),
+                 _STEP_SHAPE: {
+                     "height": context["height"],
++                    "reference_tokens": context["reference_tokens"],
+                     "width": context["width"],
+                     "latent_t": context["latent_t"],
+                     "latent_h": context["latent_h"],
+@@ -3048,7 +3058,10 @@ class MiniMaxH3Pipeline(
+             video = self._offload_model_cpu_stage_output(_prepare_minimax_h3_video_output(video))
+             self._release_stage_cache()
+         return DiffusionOutput(
+-            output=(video, audio),
++            output={
++                "payload": {"output": (video, audio)},
++                "metadata": {"conditioning": {"reference_visual_tokens": shape["reference_tokens"]}},
++            },
+             post_process_func=get_minimax_h3_post_process_func(self.od_config),
+             stage_durations=(self.stage_durations if hasattr(self, "_stage_durations") else {}),
+         )
+diff --git a/vllm_omni/entrypoints/openai/serving_video.py b/vllm_omni/entrypoints/openai/serving_video.py
+index c90a4d1..6e48e12 100644
+--- a/vllm_omni/entrypoints/openai/serving_video.py
++++ b/vllm_omni/entrypoints/openai/serving_video.py
+@@ -41,6 +41,7 @@ from vllm_omni.entrypoints.openai.video_api_utils import (
+ )
+ from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniTextPrompt
+ from vllm_omni.metrics import count_video_frames
++from vllm_omni.metrics.video import OmniVideoMetrics, normalize_video_task, observe_video_request
+ from vllm_omni.model_extras import get_video_generation_defaults, should_preserve_reference_image_size
+ from vllm_omni.model_extras.video_generation import VideoGenerationDefaults
+ from vllm_omni.outputs.output_metadata import (
+@@ -127,6 +128,8 @@ class VideoGenerationArtifacts:
+     stage_durations: dict[str, float]
+     peak_memory_mb: float
+     metrics: dict[str, object] | None = None
++    task: str = "text_to_video"
++    observation_metadata: dict[str, Any] | None = None
+ 
+ 
+ def _video_metadata_from_artifacts(artifacts: VideoGenerationArtifacts) -> dict[str, object]:
+@@ -165,6 +168,7 @@ class OmniOpenAIServingVideo:
+     ) -> None:
+         self._engine_client = engine_client
+         self._model_name = model_name
++        self._video_metrics = OmniVideoMetrics(model_name or "unknown")
+         self._stage_configs = stage_configs
+         self._video_frame_converter = _PlanarFrameConverter(max_workers=_VIDEO_RESPONSE_FRAME_CONVERSION_WORKERS)
+         logger.info(
+@@ -509,8 +513,18 @@ class OmniOpenAIServingVideo:
+             stage_durations=self._extract_stage_durations(result),
+             peak_memory_mb=self._extract_peak_memory_mb(result),
+             metrics=metrics,
++            task=normalize_video_task(
++                (request.extra_params or {}).get(
++                    "task", getattr(self._resolve_diffusion_od_config(), "task_type", None)
++                ),
++                has_image=reference_image is not None,
++                has_video=reference_video is not None,
++                has_audio=reference_audio is not None,
++            ),
++            observation_metadata=metadata if isinstance(metadata, dict) else None,
+         )
+ 
++    @observe_video_request
+     async def generate_videos(
+         self,
+         request: VideoGenerationRequest,
+@@ -557,13 +571,22 @@ class OmniOpenAIServingVideo:
+         ]
+         _t_encode_ms = (time.perf_counter() - _t_encode_start) * 1000
+         logger.info("Video response encoding (MP4+base64): %.2f ms", _t_encode_ms)
+-        return VideoGenerationResponse(
++        response = VideoGenerationResponse(
+             created=int(time.time()),
+             data=video_data,
+             stage_durations=artifacts.stage_durations,
+             peak_memory_mb=artifacts.peak_memory_mb,
+         )
++        self._video_metrics.observe_stage(artifacts.task, "response_encode", _t_encode_ms / 1000)
++        self._video_metrics.observe_outputs(
++            artifacts.task,
++            videos=artifacts.videos,
++            metadata=artifacts.observation_metadata or {},
++            stage_durations=artifacts.stage_durations,
++        )
++        return response
+ 
++    @observe_video_request
+     async def generate_video_bytes(
+         self,
+         request: VideoGenerationRequest,
+@@ -609,6 +632,13 @@ class OmniOpenAIServingVideo:
+             video_bytes = artifacts.videos[0]
+             _t_encode_ms = (time.perf_counter() - _t_encode_start) * 1000
+             logger.info("Video response received pre-encoded MP4 bytes: %.2f ms", _t_encode_ms)
++            self._video_metrics.observe_stage(artifacts.task, "response_encode", _t_encode_ms / 1000)
++            self._video_metrics.observe_outputs(
++                artifacts.task,
++                videos=artifacts.videos[:1],
++                metadata=artifacts.observation_metadata or {},
++                stage_durations=artifacts.stage_durations,
++            )
+             return (
+                 video_bytes,
+                 artifacts.stage_durations,
+@@ -625,6 +655,13 @@ class OmniOpenAIServingVideo:
+         )
+         _t_encode_ms = (time.perf_counter() - _t_encode_start) * 1000
+         logger.info("Video response encoding (MP4 bytes): %.2f ms", _t_encode_ms)
++        self._video_metrics.observe_stage(artifacts.task, "response_encode", _t_encode_ms / 1000)
++        self._video_metrics.observe_outputs(
++            artifacts.task,
++            videos=artifacts.videos[:1],
++            metadata=artifacts.observation_metadata or {},
++            stage_durations=artifacts.stage_durations,
++        )
+         return video_bytes, artifacts.stage_durations, artifacts.peak_memory_mb, artifacts.actions[0], video_metadata
+ 
+     @staticmethod
+diff --git a/vllm_omni/metrics/definitions.py b/vllm_omni/metrics/definitions.py
+index 1a7db54..3ea6d30 100644
+--- a/vllm_omni/metrics/definitions.py
++++ b/vllm_omni/metrics/definitions.py
+@@ -144,6 +144,21 @@ AUDIO_SAMPLE_RATE = "audio_sample_rate"
+ NUM_REQUESTS_RUNNING = METRIC_PREFIX + "num_requests_running"
+ NUM_REQUESTS_WAITING = METRIC_PREFIX + "num_requests_waiting"
+ E2E_REQUEST_LATENCY_S = METRIC_PREFIX + "e2e_request_latency_s"
++E2E_REQUEST_LATENCY_LAST_S = METRIC_PREFIX + "e2e_request_latency_last_s"
++
++# Video-only signals complement the existing pipeline and diffusion families.
++VIDEO_GENERATION_REQUESTS = METRIC_PREFIX + "video_generation_requests"
++VIDEO_REQUESTS_RUNNING = METRIC_PREFIX + "video_requests_running"
++VIDEO_OUTPUTS = METRIC_PREFIX + "video_outputs"
++VIDEO_FRAMES_METRIC = METRIC_PREFIX + "video_frames"
++VIDEO_PIXELS_METRIC = METRIC_PREFIX + "video_pixels"
++VIDEO_REFERENCE_TOKENS = METRIC_PREFIX + "video_reference_tokens"
++VIDEO_REFERENCE_TOKENS_LAST = METRIC_PREFIX + "video_reference_tokens_last"
++VIDEO_STAGE_DURATION_S = METRIC_PREFIX + "video_stage_duration_s"
++VIDEO_STAGE_DURATION_LAST_S = METRIC_PREFIX + "video_stage_duration_last_s"
++VIDEO_LABELS = ("model_name", "task")
++VIDEO_OUTCOME_LABELS = (*VIDEO_LABELS, "outcome")
++VIDEO_STAGE_LABELS = (*VIDEO_LABELS, "stage")
+ 
+ # Per-finished_reason Counter; finished_reason ∈ {stop, length, abort, ...}.
+ # Aborts include client disconnect / cancellation paths. Counter auto-suffixes
+@@ -211,7 +226,12 @@ DIFFUSION_EXEC_PER_STEP_S = METRIC_PREFIX + "diffusion_exec_per_step_s"
+ DIFFUSION_PREPROCESS_S = METRIC_PREFIX + "diffusion_preprocess_s"
+ DIFFUSION_POSTPROCESS_S = METRIC_PREFIX + "diffusion_postprocess_s"
+ VAE_DECODE_S = METRIC_PREFIX + "vae_decode_s"
++VAE_DECODE_LAST_S = METRIC_PREFIX + "vae_decode_last_s"
++DIFFUSION_FORWARD_LAST_S = METRIC_PREFIX + "diffusion_forward_last_s"
++DIFFUSION_PREPROCESS_LAST_S = METRIC_PREFIX + "diffusion_preprocess_last_s"
++DIFFUSION_POSTPROCESS_LAST_S = METRIC_PREFIX + "diffusion_postprocess_last_s"
+ DENOISE_STEP_LATENCY_S = METRIC_PREFIX + DENOISE_STEP_LATENCY + "_s"
++DENOISE_STEP_LATENCY_LAST_S = METRIC_PREFIX + "denoise_step_latency_last_s"
+ DIFFUSION_KV_LOAD_S = METRIC_PREFIX + "diffusion_kv_load_s"
+ IMAGE_TTFP_S = METRIC_PREFIX + "image_ttfp_s"
+ STAGE_IN_QUEUE_S = METRIC_PREFIX + "stage_in_queue_s"
+diff --git a/vllm_omni/metrics/modality.py b/vllm_omni/metrics/modality.py
+index bb7842e..7112305 100644
+--- a/vllm_omni/metrics/modality.py
++++ b/vllm_omni/metrics/modality.py
+@@ -27,7 +27,7 @@ from __future__ import annotations
+ 
+ from typing import Any
+ 
+-from prometheus_client import Counter, Histogram
++from prometheus_client import Counter, Gauge, Histogram
+ 
+ from vllm_omni.metrics import definitions as defs
+ from vllm_omni.metrics.utils import observe_audio_finalize, observe_diffusion_finalize
+@@ -154,6 +154,33 @@ _denoise_step_latency_family = Histogram(
+ )
+ 
+ 
++_diffusion_preprocess_last_family = Gauge(
++    defs.DIFFUSION_PREPROCESS_LAST_S,
++    "Most recently observed diffusion preprocessing latency in seconds.",
++    labelnames=_stage_labels,
++)
++_diffusion_postprocess_last_family = Gauge(
++    defs.DIFFUSION_POSTPROCESS_LAST_S,
++    "Most recently observed diffusion postprocessing latency in seconds.",
++    labelnames=_stage_labels,
++)
++_vae_decode_last_family = Gauge(
++    defs.VAE_DECODE_LAST_S,
++    "Most recently observed VAE decoding latency in seconds.",
++    labelnames=_stage_labels,
++)
++_diffusion_forward_last_family = Gauge(
++    defs.DIFFUSION_FORWARD_LAST_S,
++    "Most recently observed denoise-loop latency in seconds.",
++    labelnames=_stage_labels,
++)
++_denoise_step_latency_last_family = Gauge(
++    defs.DENOISE_STEP_LATENCY_LAST_S,
++    "Most recently observed request's mean denoise-step latency in seconds.",
++    labelnames=_stage_labels,
++)
++
++
+ class OmniModalityMetrics:
+     """Per-modality observe API. Stage/replica are passed at observe time
+     because a single OmniModalityMetrics instance per pipeline serves all
+@@ -247,6 +274,7 @@ class OmniModalityMetrics:
+         ).observe(seconds)
+ 
+     def observe_diffusion_preprocess(self, stage: str, replica: str, seconds: float) -> None:
++        """Publish a completed stage's preprocessing histogram and last observation."""
+         if not self._log_stats:
+             return
+         _diffusion_preprocess_family.labels(
+@@ -254,8 +282,10 @@ class OmniModalityMetrics:
+             stage=stage,
+             replica=replica,
+         ).observe(seconds)
++        _diffusion_preprocess_last_family.labels(model_name=self._model_name, stage=stage, replica=replica).set(seconds)
+ 
+     def observe_diffusion_postprocess(self, stage: str, replica: str, seconds: float) -> None:
++        """Publish a completed stage's postprocessing histogram and last observation."""
+         if not self._log_stats:
+             return
+         _diffusion_postprocess_family.labels(
+@@ -263,16 +293,23 @@ class OmniModalityMetrics:
+             stage=stage,
+             replica=replica,
+         ).observe(seconds)
++        _diffusion_postprocess_last_family.labels(model_name=self._model_name, stage=stage, replica=replica).set(
++            seconds
++        )
+ 
+     def observe_vae_decode(self, stage: str, replica: str, seconds: float) -> None:
++        """Publish the existing VAE timing and its most recent observation."""
+         if not self._log_stats or seconds < 0:
+             return
+         _vae_decode_family.labels(model_name=self._model_name, stage=stage, replica=replica).observe(seconds)
++        _vae_decode_last_family.labels(model_name=self._model_name, stage=stage, replica=replica).set(seconds)
+ 
+     def observe_diffusion_forward(self, stage: str, replica: str, seconds: float) -> None:
++        """Publish the existing denoise-loop timing and its most recent observation."""
+         if not self._log_stats or seconds < 0:
+             return
+         _diffusion_forward_family.labels(model_name=self._model_name, stage=stage, replica=replica).observe(seconds)
++        _diffusion_forward_last_family.labels(model_name=self._model_name, stage=stage, replica=replica).set(seconds)
+ 
+     def observe_diffusion_kv_load(self, stage: str, replica: str, seconds: float) -> None:
+         if not self._log_stats or seconds < 0:
+@@ -285,9 +322,11 @@ class OmniModalityMetrics:
+         _image_ttfp_family.labels(model_name=self._model_name, stage=stage, replica=replica).observe(seconds)
+ 
+     def observe_denoise_step_latency(self, stage: str, replica: str, seconds: float) -> None:
++        """Publish the existing per-request step average and its latest observation."""
+         if not self._log_stats or seconds <= 0:
+             return
+         _denoise_step_latency_family.labels(model_name=self._model_name, stage=stage, replica=replica).observe(seconds)
++        _denoise_step_latency_last_family.labels(model_name=self._model_name, stage=stage, replica=replica).set(seconds)
+ 
+ 
+ def observe_modality_at_finalize(
+diff --git a/vllm_omni/metrics/prometheus.py b/vllm_omni/metrics/prometheus.py
+index 2e68045..a75598b 100644
+--- a/vllm_omni/metrics/prometheus.py
++++ b/vllm_omni/metrics/prometheus.py
+@@ -35,6 +35,11 @@ _prompt_tokens_family = Counter(
+     "Total prompt (input) tokens processed across all pipeline stages.",
+     labelnames=_labelnames,
+ )
++_e2e_latency_last_family = Gauge(
++    defs.E2E_REQUEST_LATENCY_LAST_S,
++    "Most recently observed pipeline end-to-end request latency in seconds.",
++    labelnames=_labelnames,
++)
+ _generation_tokens_family = Counter(
+     defs.GENERATION_TOKENS,
+     "Total generation (output) tokens produced across all pipeline stages.",
+@@ -152,6 +157,7 @@ class OmniPrometheusMetrics:
+             finished_reason=finished_reason,
+         ).inc()
+         self._e2e_latency.observe(e2e_seconds)
++        _e2e_latency_last_family.labels(model_name=self._model_name).set(e2e_seconds)
+ 
+     def request_failed(self) -> None:
+         if not self._log_stats:
+diff --git a/vllm_omni/metrics/utils.py b/vllm_omni/metrics/utils.py
+index 6c9de80..3d01ef9 100644
+--- a/vllm_omni/metrics/utils.py
++++ b/vllm_omni/metrics/utils.py
+@@ -145,7 +145,7 @@ def observe_diffusion_finalize(
+         num_steps = int(
+             getattr(stage_metrics, "num_inference_steps", 0) or diff_metrics.get("num_inference_steps") or 0
+         )
+-        if num_steps > 0 and getattr(stage_metrics, "output_unit_type", None) == "image":
++        if num_steps > 0 and getattr(stage_metrics, "output_unit_type", None) in {"image", "video"}:
+             mod_metrics.observe_denoise_step_latency(stage_label, replica_label, float(forward_s) / num_steps)
+ 
+     kv_load_s = diff_metrics.get("kv_recv_time_s")
+@@ -189,6 +189,11 @@ def sum_diffusion_stage_durations_ms(output: Any, suffix: str) -> float | None:
+ 
+ 
+ def extract_diffusion_vae_decode_ms(output: Any) -> float | None:
++    """Extract VAE time without adding nested wrappers to decoder leaf timings."""
++    if isinstance(durations := getattr(output, "stage_durations", None), dict):
++        h3_decode = durations.get("MiniMaxH3Pipeline.decode")
++        if h3_decode is not None:
++            return float(h3_decode) * 1000.0
+     return sum_diffusion_stage_durations_ms(output, ".vae.decode")
+ 
+ 
+diff --git a/vllm_omni/metrics/video.py b/vllm_omni/metrics/video.py
+new file mode 100644
+index 0000000..8a32a69
+--- /dev/null
++++ b/vllm_omni/metrics/video.py
+@@ -0,0 +1,192 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
++
++"""Video-only observations; pipeline and diffusion timing remain with their existing owners."""
++
++from __future__ import annotations
++
++import asyncio
++import io
++from collections.abc import Iterator, Mapping, Sequence
++from contextlib import contextmanager
++from functools import wraps
++from numbers import Real
++from typing import Any
++
++from prometheus_client import Counter, Gauge, Histogram
++from vllm.logger import init_logger
++
++from vllm_omni.metrics import definitions as defs
++from vllm_omni.metrics.utils import count_video_frames
++
++logger = init_logger(__name__)
++
++_requests = Counter(
++    defs.VIDEO_GENERATION_REQUESTS,
++    "Video serving completions by outcome, including response encoding.",
++    defs.VIDEO_OUTCOME_LABELS,
++)
++_running = Gauge(
++    defs.VIDEO_REQUESTS_RUNNING,
++    "Video serving calls in flight, including internal waiting and response encoding.",
++    defs.VIDEO_LABELS,
++)
++_outputs = Counter(defs.VIDEO_OUTPUTS, "Video outputs prepared for a completed response.", defs.VIDEO_LABELS)
++_frames = Counter(defs.VIDEO_FRAMES_METRIC, "Frames prepared for completed video responses.", defs.VIDEO_LABELS)
++_pixels = Counter(
++    defs.VIDEO_PIXELS_METRIC, "Pixels across frames prepared for completed video responses.", defs.VIDEO_LABELS
++)
++_reference_tokens = Histogram(
++    defs.VIDEO_REFERENCE_TOKENS,
++    "Reference visual tokens consumed by a video request.",
++    defs.VIDEO_LABELS,
++    buckets=(0, 256, 512, 1024, 2048, 4096, 8192, 16384),
++)
++_reference_tokens_last = Gauge(
++    defs.VIDEO_REFERENCE_TOKENS_LAST,
++    "Reference visual tokens consumed by the most recently observed request.",
++    defs.VIDEO_LABELS,
++)
++_stage_duration = Histogram(
++    defs.VIDEO_STAGE_DURATION_S,
++    "Video encoding stages not covered by diffusion timing families, in seconds.",
++    defs.VIDEO_STAGE_LABELS,
++    buckets=defs.SECONDS_BUCKETS,
++)
++_stage_duration_last = Gauge(
++    defs.VIDEO_STAGE_DURATION_LAST_S, "Most recent video encoding stage duration in seconds.", defs.VIDEO_STAGE_LABELS
++)
++
++
++def normalize_video_task(raw_task: object, *, has_image: bool, has_video: bool, has_audio: bool) -> str:
++    """Bound video task labels to known tasks or reference-input categories."""
++    if isinstance(raw_task, str) and raw_task.lower() in {"fl2va", "ref2va", "t2v", "i2v", "v2v", "a2v"}:
++        return raw_task.lower()
++    if sum((has_image, has_video, has_audio)) > 1:
++        return "multimodal_to_video"
++    if has_video:
++        return "video_to_video"
++    if has_image:
++        return "image_to_video"
++    if has_audio:
++        return "audio_to_video"
++    return "text_to_video"
++
++
++def observe_video_request(method: Any) -> Any:
++    """Wrap the two video response formats with one request-metrics lifecycle."""
++
++    @wraps(method)
++    async def observed(serving: Any, request: Any, *args: Any, **kwargs: Any) -> Any:
++        config = serving._resolve_diffusion_od_config()
++        task = normalize_video_task(
++            (request.extra_params or {}).get("task", getattr(config, "task_type", None)),
++            has_image=kwargs.get("reference_image") is not None,
++            has_video=kwargs.get("reference_video") is not None,
++            has_audio=kwargs.get("reference_audio") is not None,
++        )
++        with serving._video_metrics.track_request(task):
++            return await method(serving, request, *args, **kwargs)
++
++    return observed
++
++
++def _video_dimensions(video: object) -> tuple[int, int] | None:
++    """Read returned frame or MP4 header dimensions without decoding or copying frames."""
++    if isinstance(video, (bytes, bytearray, memoryview)):
++        import av
++
++        try:
++            with av.open(io.BytesIO(video)) as container:
++                if not container.streams.video:
++                    return None
++                codec = container.streams.video[0].codec_context
++                return codec.height, codec.width
++        except av.error.FFmpegError as exc:
++            logger.warning("Video pixel-count metadata is unavailable: %s", exc)
++            return None
++    if isinstance(video, (list, tuple)) and video:
++        first = video[0]
++        if hasattr(first, "height") and hasattr(first, "width"):
++            return int(first.height), int(first.width)
++        if (shape := getattr(first, "shape", None)) is not None and len(shape) == 3:
++            return (int(shape[0]), int(shape[1])) if shape[-1] in (1, 3, 4) else (int(shape[1]), int(shape[2]))
++    shape = getattr(video, "shape", None)
++    if shape is not None and len(shape) == 4:
++        if shape[-1] in (1, 3, 4):
++            return int(shape[1]), int(shape[2])
++        return int(shape[2]), int(shape[3])
++    return None
++
++
++class OmniVideoMetrics:
++    """Publish video signals once in the API process, not once per GPU rank."""
++
++    def __init__(self, model_name: str) -> None:
++        self._model_name = model_name
++
++    @contextmanager
++    def track_request(self, task: str) -> Iterator[None]:
++        """Count one response-building attempt and restore its running gauge on every exit."""
++        labels = {"model_name": self._model_name, "task": task}
++        for outcome in ("success", "error", "cancelled", "client_error"):
++            _requests.labels(**labels, outcome=outcome)
++        for counter in (_outputs, _frames, _pixels):
++            counter.labels(**labels)
++        # Establish zero-count baselines before long requests so rate-based means
++        # include the first completion. Last-value gauges remain unbound until observed.
++        _reference_tokens.labels(**labels)
++        for stage in ("text_encode", "media_encode", "response_encode"):
++            _stage_duration.labels(**labels, stage=stage)
++        running = _running.labels(**labels)
++        running.inc()
++        outcome = "error"
++        try:
++            yield
++            outcome = "success"
++        except asyncio.CancelledError:
++            outcome = "cancelled"
++            raise
++        except Exception as exc:
++            status = getattr(exc, "status_code", None)
++            if isinstance(status, int) and 400 <= status < 500:
++                outcome = "client_error"
++            raise
++        finally:
++            running.dec()
++            _requests.labels(**labels, outcome=outcome).inc()
++
++    def observe_stage(self, task: str, stage: str, duration_s: float) -> None:
++        """Publish one of the bounded video encoding stages as histogram and last value."""
++        labels = {"model_name": self._model_name, "task": task, "stage": stage}
++        _stage_duration.labels(**labels).observe(duration_s)
++        _stage_duration_last.labels(**labels).set(duration_s)
++
++    def observe_outputs(
++        self, task: str, *, videos: Sequence[object], metadata: Mapping[str, Any], stage_durations: Mapping[str, float]
++    ) -> None:
++        """Observe actual returned media shapes and scalar conditioning metadata without copying tensors."""
++        labels = {"model_name": self._model_name, "task": task}
++        conditioning = metadata.get("conditioning", {})
++        reference_tokens = conditioning.get("reference_visual_tokens") if isinstance(conditioning, Mapping) else None
++        if isinstance(reference_tokens, Real) and reference_tokens >= 0:
++            _reference_tokens.labels(**labels).observe(reference_tokens)
++            _reference_tokens_last.labels(**labels).set(reference_tokens)
++        for stage, suffix in (("text_encode", ".encode_prompt"), ("media_encode", "._encode_local_media")):
++            durations = [value for name, value in stage_durations.items() if name.endswith(suffix)]
++            if durations:
++                self.observe_stage(task, stage, sum(durations))
++        for video in videos:
++            if isinstance(video, dict):
++                continue  # Action-only output is not a generated video.
++            _outputs.labels(**labels).inc()
++            frames = count_video_frames(video)
++            if frames is None and isinstance(video, (bytes, bytearray, memoryview)):
++                from vllm_omni.diffusion.utils.media_utils import count_mp4_frames
++
++                frames = count_mp4_frames(bytes(video))
++            if frames is not None:
++                _frames.labels(**labels).inc(frames)
++            dimensions = _video_dimensions(video)
++            if dimensions is not None and frames is not None:
++                _pixels.labels(**labels).inc(frames * dimensions[0] * dimensions[1])

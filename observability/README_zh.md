@@ -48,6 +48,40 @@ TTFT 是首 token 延迟，E2EL 是生成完成延迟。TPOT 是每个请求的�
 
 接收通知请配置 [Lark](integrations/lark/README_zh.md)、[Slack](integrations/slack/README_zh.md) 或[钉钉](integrations/dingtalk/README_zh.md)接收器。
 
+## 视频生成
+
+按照[双卡 H3 示例](../examples/recipes/minimax-h3/a100-bf16-tp2/README_zh.md)构建镜像并部署。
+示例的 Omni 镜像包含视频指标，model-server 通过现有采集链路透传引擎的
+`/metrics`。只导入 Dashboard、不更新引擎镜像，不会增加这些指标。
+
+在 Foretoken 系统概览中展开“视频生成”，选择命名空间、模型和模型实例。
+该分区展示按结果统计的完成请求数、处理中请求数、生成和阶段延迟、视频/帧/像素
+输出量及参考视觉 token。这些面板保留时间曲线，不只是评测结束后的汇总。
+
+H3 的参考 token 按原生视觉 conditioning 区块计数，包含视觉边界 token。
+
+模型内部详细阶段依赖引擎可选的流水线 profiler。在示例 `model.yaml` 的
+`spec.engineArgs` 中增加以下配置，再重新部署：
+
+```yaml
+enable-diffusion-pipeline-profiler: true
+```
+
+延迟面板同时显示最近一次观测值与所选“延迟窗口”内按请求加权的平均值。
+平均值由直方图的总耗时和观测次数计算；缺失观测不会伪装成零。
+流水线和扩散阶段耗时按模型实例、执行角色筛选；任务筛选作用于视频专属的
+输出量、编码和参考 token 信号。响应构建成功不代表客户端已收到响应，也不代表
+视频画面质量合格；公共服务边界的 HTTP 状态由前端面板展示。
+
+独立的 Foretoken 视频生成概览复用相同分区和查询。
+
+完成视频请求后，在 Prometheus 中确认其任务和结果指标：
+
+```promql
+sum by (task, outcome) (vllm_omni:video_generation_requests_total)
+```
+
+
 ## 平台设置
 
 源码安装时，从源码根目录以 `-e .` 更新平台，并保留镜像仓库设置和已有的 `--engine-source` 绑定。升级 Foretoken 后，重新执行原安装命令，让看板和指标采集一起更新。
