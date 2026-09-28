@@ -7,8 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 Status: proposed for maintainer review, 2026-09-28. The prototype is
 [Foretoken PR #199](https://github.com/shiweijiezero/foretoken/pull/199).
-The native-vLLM adapter described below has been validated locally but is not yet
-in that PR's published head. Implementation evidence does not imply design approval.
+Implementation evidence does not imply design approval.
 
 ## 1. Motivation and deliverable
 
