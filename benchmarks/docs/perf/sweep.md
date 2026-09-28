@@ -53,7 +53,7 @@ All points for one method run before the next method starts. Temporary deploymen
 
 The result directory contains `sweep_summary.csv`, individual run directories, and `plots/` with PDF, SVG, PNG, and CSV exports. Statistics retain each metric's sample count; error bars show the sample standard deviation across runs, including for per-run percentiles. A single repetition has no error estimate.
 
-W&B groups the individual runs and adds a comparison run with the same summary data and curves. With `plot` selected, it also receives the exported figures and tables.
+W&B groups the individual runs and adds a comparison run with the same summary data and curves. With `plot` selected, it also receives the exported figures and tables. Reusing the same `--experiment-name` replaces that experiment directory; omitting it creates a timestamped directory.
 
 Redraw the first example at double-column width without sending requests:
 

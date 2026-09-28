@@ -11,6 +11,7 @@ import json
 import logging
 import math
 import os
+import shutil
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -186,13 +187,11 @@ def run_sweep(
         adapter.validate_point(point_config)
     name = definition.experiment_name.strip().replace("/", "-")
     directory = os.path.join(config.outputs.output_dir, name) if name else None
-    if directory is not None and config.outputs.saves_local:
-        try:
-            os.makedirs(directory)
-        except FileExistsError as error:
-            raise ValueError(
-                f"Experiment directory already exists: {directory}; choose a new --experiment-name"
-            ) from error
+    if directory is not None:
+        # An explicit experiment name identifies a replaceable result set.
+        if os.path.exists(directory):
+            shutil.rmtree(directory)
+        os.makedirs(directory)
     plan = {
         "mode": mode,
         "sweep": definition.path,

@@ -53,7 +53,7 @@ foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-mode
 
 结果目录包含 `sweep_summary.csv`、各次运行目录，以及 `plots/` 下的 PDF、SVG、PNG 和 CSV 文件。统计保留每个指标的有效样本数；误差线表示各轮结果的样本标准差，分位数指标也先逐轮计算、再汇总。只有一轮时不估计误差。
 
-W&B 将各次运行放在同一 group，并添加使用相同汇总数据与曲线的对比运行。选择 `plot` 时，也会上传导出的图表文件。
+W&B 将各次运行放在同一 group，并添加使用相同汇总数据与曲线的对比运行。选择 `plot` 时，也会上传导出的图表文件。重复使用同一个 `--experiment-name` 会覆盖该实验目录；省略它时会创建带时间戳的新目录。
 
 将第一个示例重新绘制为论文双栏宽度，无需发送请求：
 
