@@ -30,11 +30,11 @@ foretoken perf examples/quickstart --dataset random \
 
 ## 数据驱动负载
 
-使用维护中的 [StudyChat 配置](../../scripts/common/studychat-first-turn.jsonl)运行真实数据集：
+使用维护中的 [StudyChat 配置](../../scripts/common/studychat-conversation.jsonl)运行真实数据集：
 
 ```bash
 foretoken perf examples/quickstart \
-  --sweep benchmarks/scripts/common/studychat-first-turn.jsonl \
+  --sweep benchmarks/scripts/common/studychat-conversation.jsonl \
   --num-runs 3 --warmup-requests 20 --num-prompts 1000 \
   --output local,wandb,plot
 ```

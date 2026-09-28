@@ -30,11 +30,11 @@ Load, generation, and dataset options use their CLI names with underscores. For 
 
 ## Data-driven workloads
 
-Run a real dataset workload with the maintained [StudyChat configuration](../../scripts/common/studychat-first-turn.jsonl):
+Run a real dataset workload with the maintained [StudyChat configuration](../../scripts/common/studychat-conversation.jsonl):
 
 ```bash
 foretoken perf examples/quickstart \
-  --sweep benchmarks/scripts/common/studychat-first-turn.jsonl \
+  --sweep benchmarks/scripts/common/studychat-conversation.jsonl \
   --num-runs 3 --warmup-requests 20 --num-prompts 1000 \
   --output local,wandb,plot
 ```
