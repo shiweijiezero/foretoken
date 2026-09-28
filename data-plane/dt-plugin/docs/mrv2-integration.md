@@ -11,9 +11,7 @@ describes the service architecture, role boundaries and acceptance sequence.
 The DT role service targets native vLLM `0.30.1rc1.dev194+g3b4566c5c`
 (commit `3b4566c5cf014605de6aeab6eb831b4f20511c17`). Foretoken owns the
 compatibility layer in `foretoken_dt.vllm`; it does not edit installed vLLM files
-or require a separate engine branch. The earlier
-[closed upstream-extension PR](https://github.com/shiweijiezero/vllm/pull/1) remains a
-reference for the missing extension points, not an installation prerequisite.
+or require a separate engine branch.
 
 Native `worker_cls` and `scheduler_cls` select plugin subclasses. The
 `vllm.general_plugins` entry point installs two process-local EngineCore hooks:

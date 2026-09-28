@@ -128,10 +128,9 @@ lookahead overlap or the reference author's reported performance.
 | vLLM plugin facilities | `general_plugins`, `worker_cls`, `scheduler_cls`, `worker_extension_cls`, utility queue | Plugin subclasses and narrow runtime hooks where no native factory/interface exists. |
 | Mooncake Transfer Engine | RDMA registration and transfer operations | Publication, completion and buffer ownership for DT artifacts; no Mooncake Store requirement. |
 
-The earlier [vLLM PR #1](https://github.com/shiweijiezero/vllm/pull/1) added generic
-external-candidate and distribution-I/O interfaces because native MRV2 did not
-expose them. Those capabilities remain necessary; an extra source branch is not
-the only way to supply them.
+Native MRV2 does not expose external-candidate admission and distribution-I/O
+interfaces. The Foretoken adapter supplies these capabilities through plugin
+classes and process-local hooks.
 
 **Proposed delivery: keep the adapter in Foretoken and use an unmodified, fixed
 native vLLM version.** The local prototype targets
@@ -145,8 +144,7 @@ native vLLM version.** The local prototype targets
 - A plugin AsyncLLM wrapper for tickets, without changing the native interprocess
   output schema or copying upstream scheduling/execution method bodies.
 
-This removes the fork dependency for the demonstrated scope, **not the dependence
-on engine internals**. Maintainers must accept version-specific adapter upkeep.
+The adapter depends on engine internals and requires version-specific upkeep.
 The Rust build submodule is independent of the installed Python engine. NVIDIA
 source builds select the supported native engine through the
 [CUDA runtime build](../../deploy/inference-engines/vllm-cuda/Dockerfile) and
@@ -156,7 +154,7 @@ installing a workload. Image and deployment acceptance remain separate from
 standalone validation. Details are in the
 [MRV2 integration contract](../../data-plane/dt-plugin/docs/mrv2-integration.md).
 
-Alternatives are to maintain the separate engine extension branch, wait for
+Alternatives are to maintain an engine extension branch, wait for
 upstream public hooks, or let a verifier-side proxy own Draft routing. The first
 adds a fork lifecycle; the second delays delivery; the third would duplicate
 Foretoken's participant selection and complicate later frontend pipelines. Small
