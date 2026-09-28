@@ -27,6 +27,47 @@ pub const HF_HUB_OFFLINE_ENV: &str = "HF_HUB_OFFLINE";
 pub const MODELSCOPE_CACHE_ENV: &str = "MODELSCOPE_CACHE";
 pub const MODELSCOPE_DOMAIN_ENV: &str = "MODELSCOPE_DOMAIN";
 pub const DEFAULT_MODELSCOPE_DOMAIN: &str = "www.modelscope.cn";
+/// Namespace/claim identity projected only when a workload mounts a persistent RuntimeCache.
+pub const RUNTIME_CACHE_BINDING_ENV: &str = "FORETOKEN_RUNTIME_CACHE_BINDING";
+
+/// Files consumed by frontend tokenizer, model config, and chat-template loading.
+pub const MODEL_METADATA_FILES: &[&str] = &[
+    "added_tokens.json",
+    "chat_template.json",
+    "config.json",
+    "generation_config.json",
+    "merges.txt",
+    "preprocessor_config.json",
+    "processor_config.json",
+    "sentencepiece.bpe.model",
+    "special_tokens_map.json",
+    "spiece.model",
+    "tekken.json",
+    "tiktoken.model",
+    "tokenizer.json",
+    "tokenizer.model",
+    "tokenizer_config.json",
+    "video_preprocessor_config.json",
+    "vocab.json",
+    "vocab.txt",
+];
+
+/// Resolves a controller-owned relative publication scope below the model root.
+/// Both model preparation and frontend metadata staging use this directory boundary.
+pub fn preparation_directory(model_root: &Path, scope: &str) -> io::Result<PathBuf> {
+    let relative = Path::new(scope);
+    if scope.is_empty()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid model preparation scope",
+        ));
+    }
+    Ok(model_root.join("prepared").join(relative))
+}
 
 /// Returns the controller-projected persistent model root.
 pub fn model_root() -> Option<PathBuf> {

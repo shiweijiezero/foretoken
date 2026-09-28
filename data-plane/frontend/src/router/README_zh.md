@@ -25,6 +25,8 @@ spec:
 | Scorer | `active_request` | 优先选择当前前端活跃请求较少的目标；可用 `idleThreshold`、`maxBusyScore` 调整。 |
 | Scorer | `token_load` | 优先选择在途 token 和当前请求未缓存 prompt token 负载较低的目标；可用 `queueThresholdTokens` 调整。 |
 | Scorer | `prefix` | 优先考虑可复用的 prompt 缓存块；可用 `matchLengthWeight`、`matchLengthScaleTokens` 调整匹配长度偏好。 |
+| Scorer | `no_hit_lru` | 优先选择尚未处理过冷请求的端点，其次选择最久未选中的端点；最多保留 `lruSize` 条记录。 |
+| Scorer | `load_aware` | 空等待队列记为 0.5 分，并随队列长度线性下降，在 `threshold` 处降至零。 |
 | Picker | `gamble_sampling`（默认） | 根据完整分数排名采样：排名越高，选中概率越大；同分概率相同，低排名目标仍有机会被选中。 |
 | Picker | `max` · `power_of_two_choices` | 选择最高分目标 · 随机抽取两个不同目标，选择分数较高者，同分时随机选取。 |
 

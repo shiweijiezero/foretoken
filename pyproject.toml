@@ -54,6 +54,7 @@ packages = [
     "benchmarks.scoring",
     "benchmarks.profiling",
     "benchmarks.results",
+    "benchmarks.results.plots",
 ]
 package-dir = { foretoken = "cli/foretoken", benchmarks = "benchmarks" }
 

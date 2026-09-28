@@ -64,6 +64,9 @@ func (reconciler *ModelGroupReconciler) reconcileWorkload(ctx context.Context, g
 			TopologyKey:   corev1.LabelHostname,
 		}},
 	}}
+	if err := placeRuntimeCache(ctx, reconciler.Client, group.Namespace, group.Spec.Artifacts.Cache, &member); err != nil {
+		return false, err
+	}
 	member.Spec.Containers[0].Env = append(member.Spec.Containers[0].Env,
 		corev1.EnvVar{Name: "FORETOKEN_MEMBER_IP", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
 	)
@@ -93,8 +96,11 @@ func (reconciler *ModelGroupReconciler) reconcileWorkload(ctx context.Context, g
 	} else if !apierrors.IsNotFound(err) {
 		return false, fmt.Errorf("get LeaderWorkerSet: %w", err)
 	}
-	if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
-		return false, fmt.Errorf("apply LeaderWorkerSet: %w", err)
+	// An older cohort keeps its original Pod template while the Pool rolls out the new contract.
+	if group.Spec.Runtime.PreparationVersion > 0 || current.ResourceVersion == "" {
+		if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(modelGroupFieldOwner), client.ForceOwnership); err != nil {
+			return false, fmt.Errorf("apply LeaderWorkerSet: %w", err)
+		}
 	}
 	if err := reconciler.Get(ctx, client.ObjectKeyFromObject(desired), current); err != nil {
 		return false, fmt.Errorf("get applied LeaderWorkerSet: %w", err)

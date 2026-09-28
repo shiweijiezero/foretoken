@@ -16,7 +16,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 ```bash
 foretoken eval examples/quantized-model/bitsandbytes \
   --reference examples/quantized-model/bf16 \
-  --output local
+  --output local,plot
 ```
 
 两端使用相同的 Qwen2.5-0.5B-Instruct 和 BF16 计算精度，候选模型以 4-bit 加载权重。模型与 tokenizer 设置从参考部署读取。已有部署直接复用；临时部署依次运行、用完删除，因此两端都为临时部署时，一张可用 GPU 即可完成比较。
@@ -36,7 +36,7 @@ foretoken eval examples/quantized-model/bitsandbytes \
 | Centered-logit RMSE | 分别减去各自的平均对数概率，再计算均方根误差；整体 logit 平移不影响该指标 |
 | Total variation | 两个概率向量逐项差值的绝对值之和的一半 |
 
-结果目录包含候选汇总表 `distribution_comparison_candidates.csv`、逐位置记录 `distribution_comparison_positions.jsonl` 和 PNG 图表。`metrics.json` 记录采样设置与完成情况。给 `--output` 加上 `wandb` 即可发布表格、曲线和图片。
+结果目录包含候选汇总表 `distribution_comparison_candidates.csv`、逐位置记录 `distribution_comparison_positions.jsonl`；选择 `plot` 时，还会在 `plots/` 下导出 PDF/SVG/PNG 图表。`metrics.json` 记录采样设置与完成情况。给 `--output` 加上 `wandb` 即可发布表格、曲线和图片。
 
 下图通过已有服务比较 Qwen3-0.6B BF16 与 bitsandbytes 4-bit：取两个 96-token WikiText-2 窗口，每个窗口比较最后 32 个位置。
 
@@ -60,7 +60,7 @@ foretoken eval examples/quantized-model/bitsandbytes \
 foretoken eval \
   --reference examples/quantized-model/bf16 \
   --candidates examples/quantized-model/candidates.jsonl \
-  --output local,wandb
+  --output local,wandb,plot
 ```
 
 自定义列表可参照该文件，每行用一个 JSON 对象描述候选。每行指定部署 `path`，或服务 `url` 及其 `model`；两者都省略时复用命令中的候选服务。相对路径以命令的工作目录为基准。单模型部署会自动提供模型 ID，显示名称默认取部署目录名或模型 ID，名称相同时用 `label` 区分。
@@ -82,7 +82,7 @@ foretoken eval \
   --url http://127.0.0.1:8008/v1/chat/completions --model quantized \
   --reference-url http://127.0.0.1:8009/v1/chat/completions \
   --reference-model Qwen/Qwen2.5-0.5B-Instruct \
-  --output local
+  --output local,plot
 ```
 
 命令默认用参考模型 ID 获取 tokenizer 和模型配置。如果该 ID 只是服务别名，或者模型文件仅在集群节点上可见，用 `--tokenizer-path` 指定基础模型仓库，或客户端本地包含 tokenizer 文件与 `config.json` 的目录。Foretoken 部署会自动按配置的 Hugging Face、ModelScope 或客户端可访问的本地来源解析，也支持单独指定的 tokenizer。
@@ -96,7 +96,7 @@ foretoken eval \
 ```bash
 foretoken eval examples/quantized-model/bitsandbytes \
   --reference examples/quantized-model/bf16 \
-  --resume results/previous-run --output local
+  --resume results/previous-run --output local,plot
 ```
 
 已完成的窗口和采样 token 直接复用，中断的窗口整体重算。参考或候选模型已全部算完时，无需再次部署或发送请求。保持模型及其权重、tokenizer、候选列表和评分设置不变。恢复结果写入新的目录，原运行保持不变。

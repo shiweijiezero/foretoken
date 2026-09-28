@@ -63,10 +63,10 @@ impl RoutingReservations {
         } else {
             uncached_tokens(request, candidate, kv)
         };
-        self.requests.entry(key).or_default().insert(
-            request.generate_request.request_id.as_str().to_owned(),
-            uncached_tokens,
-        );
+        self.requests
+            .entry(key)
+            .or_default()
+            .insert(request.request_id().to_owned(), uncached_tokens);
     }
 
     /// Releases prompt-token load when the first response reaches the frontend.

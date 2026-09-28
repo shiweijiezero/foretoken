@@ -110,6 +110,8 @@ type RoleStream = Pin<Box<dyn Stream<Item = Result<RoleEvent, LlmFacadeError>> +
 /// A role's current admission and candidate capabilities, queried before binding.
 #[derive(Clone, Deserialize)]
 pub struct RoleStatus {
+    #[serde(default)]
+    pub prepared_tokenizer: Option<foretoken_model_protocol::PreparedTokenizer>,
     pub role: String,
     pub model: String,
     pub revision: Option<String>,

@@ -18,6 +18,7 @@ from foretoken.arguments import (
     EvaluationCommand,
     InstallCommand,
     PerformanceCommand,
+    PlotCommand,
     ProfileCommand,
     ProfileViewCommand,
     StatusCommand,
@@ -195,6 +196,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             from benchmarks.evaluation import main as evaluation_main
 
             evaluation_main(command.arguments)
+        elif isinstance(command, PlotCommand):
+            from benchmarks.plot import main as plot_main
+
+            plot_main(command.arguments)
         elif isinstance(command, ProfileViewCommand):
             from foretoken.profiling.viewer import view
 

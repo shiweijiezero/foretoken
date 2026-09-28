@@ -9,11 +9,12 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use foretoken_artifacts::ModelSource;
+use foretoken_artifacts::{MODEL_METADATA_FILES as MODEL_FILES, ModelSource};
 use foretoken_chat::{
     ChatBackend, ChatRequestProcessor, DynChatBackend, HfChatBackend, LoadModelBackendsOptions,
 };
 use foretoken_engine_core_client::protocol::dtype::ModelDtype;
+use foretoken_model_protocol::PreparedTokenizer;
 use foretoken_tokenizer::DynTokenizer;
 use hf_hub::api::tokio::ApiBuilder;
 use hf_hub::{Cache, Repo, RepoType, api::Siblings};
@@ -29,27 +30,6 @@ pub struct SnapshotRuntime {
     pub chat_processor: Arc<ChatRequestProcessor>,
     pub supports_multimodal: bool,
 }
-
-const MODEL_FILES: &[&str] = &[
-    "added_tokens.json",
-    "chat_template.json",
-    "config.json",
-    "generation_config.json",
-    "merges.txt",
-    "preprocessor_config.json",
-    "processor_config.json",
-    "sentencepiece.bpe.model",
-    "special_tokens_map.json",
-    "spiece.model",
-    "tekken.json",
-    "tiktoken.model",
-    "tokenizer.json",
-    "tokenizer.model",
-    "tokenizer_config.json",
-    "video_preprocessor_config.json",
-    "vocab.json",
-    "vocab.txt",
-];
 
 /// Loads a local tokenizer directory or resolves it through the selected remote provider.
 pub async fn load_text_backend(
@@ -93,16 +73,7 @@ pub async fn load_text_backend(
         return Err(TextBackendLoadError::OfflineCacheMiss);
     }
 
-    let mut builder = ApiBuilder::from_env().with_progress(false);
-    if let Some(root) = foretoken_artifacts::temporary_model_root() {
-        builder = builder.with_cache_dir(root.join("hub"));
-    }
-    if let Ok(token) = std::env::var(foretoken_artifacts::HF_TOKEN_ENV)
-        && !token.is_empty()
-    {
-        builder = builder.with_token(Some(token));
-    }
-    let api = builder
+    let api = hf_api_builder()
         .build()
         .map_err(|_| TextBackendLoadError::HubClient)?;
     let repo = api.repo(Repo::with_revision(
@@ -142,8 +113,12 @@ pub async fn load_snapshot_runtime(
     max_model_len: u32,
     max_logprobs: Option<i32>,
     model_dtype: Option<ModelDtype>,
+    prepared: Option<&PreparedTokenizer>,
 ) -> std::result::Result<SnapshotRuntime, TextBackendLoadError> {
-    let text_backend = load_text_backend(source, model_id, revision).await?;
+    let text_backend = match prepared {
+        Some(prepared) => load_prepared_text_backend(source, model_id, revision, prepared).await?,
+        None => load_text_backend(source, model_id, revision).await?,
+    };
     let tokenizer = text_backend.tokenizer();
     let chat_backend = HfChatBackend::from_resolved_model_files(
         text_backend.resolved_model_files().clone(),
@@ -171,6 +146,101 @@ pub async fn load_snapshot_runtime(
         chat_processor: Arc::new(chat_processor),
         supports_multimodal,
     })
+}
+
+// Shared claims permit direct snapshot reads. Other frontends fetch only metadata,
+// using the file revisions captured by acquisition rather than the requested branch.
+async fn load_prepared_text_backend(
+    source: ModelSource,
+    model_id: &str,
+    revision: &str,
+    prepared: &PreparedTokenizer,
+) -> std::result::Result<HfTextBackend, TextBackendLoadError> {
+    if prepared.model != model_id || prepared.revision != revision || prepared.files.is_empty() {
+        return Err(TextBackendLoadError::PreparedIdentity);
+    }
+    let same_binding = prepared.cache_binding.as_ref().is_some_and(|binding| {
+        std::env::var(foretoken_artifacts::RUNTIME_CACHE_BINDING_ENV).as_ref() == Ok(binding)
+    });
+    if same_binding && let Some(root) = foretoken_artifacts::model_root() {
+        let directory = Path::new(&prepared.directory);
+        if !directory.is_absolute() || !directory.starts_with(&root) {
+            return Err(TextBackendLoadError::PreparedPath);
+        }
+        match std::fs::canonicalize(directory) {
+            Ok(directory) => {
+                let root =
+                    std::fs::canonicalize(root).map_err(TextBackendLoadError::LocalModelPath)?;
+                if !directory.starts_with(root) {
+                    return Err(TextBackendLoadError::PreparedPath);
+                }
+                if prepared
+                    .files
+                    .keys()
+                    .all(|file| directory.join(file).is_file())
+                {
+                    let directory = directory
+                        .to_str()
+                        .ok_or(TextBackendLoadError::NonUtf8CachePath)?;
+                    return HfTextBackend::from_model(directory)
+                        .await
+                        .map_err(|_| TextBackendLoadError::CachedModel);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(TextBackendLoadError::LocalModelPath(error)),
+        }
+    }
+    let offline =
+        std::env::var(foretoken_artifacts::HF_HUB_OFFLINE_ENV).is_ok_and(|value| value == "1");
+    let directory = match source {
+        ModelSource::ModelScope => modelscope::resolve_prepared_snapshot(prepared).await?,
+        ModelSource::Hf => {
+            let api = hf_api_builder()
+                .build()
+                .map_err(|_| TextBackendLoadError::HubClient)?;
+            let cache = foretoken_artifacts::temporary_model_root()
+                .map(|root| Cache::new(root.join("hub")))
+                .unwrap_or_else(Cache::from_env);
+            let mut snapshot = None;
+            for (file, file_revision) in &prepared.files {
+                let repo =
+                    Repo::with_revision(model_id.into(), RepoType::Model, file_revision.clone());
+                let path = match cache.repo(repo.clone()).get(file) {
+                    Some(path) => path,
+                    None if offline => return Err(TextBackendLoadError::OfflineCacheMiss),
+                    None => api
+                        .repo(repo)
+                        .get(file)
+                        .await
+                        .map_err(|_| TextBackendLoadError::Download { file: file.clone() })?,
+                };
+                snapshot = cache_snapshot_dir(&path);
+            }
+            snapshot.ok_or(TextBackendLoadError::NoTokenizerArtifact)?
+        }
+        ModelSource::Local => return Err(TextBackendLoadError::PreparedIdentity),
+    };
+    let directory = directory
+        .to_str()
+        .ok_or(TextBackendLoadError::NonUtf8CachePath)?;
+    HfTextBackend::from_model(directory)
+        .await
+        .map_err(|_| TextBackendLoadError::CachedModel)
+}
+
+// Both ordinary Hub loading and prepared metadata use the same credential/cache boundary.
+fn hf_api_builder() -> ApiBuilder {
+    let mut builder = ApiBuilder::from_env().with_progress(false);
+    if let Some(root) = foretoken_artifacts::temporary_model_root() {
+        builder = builder.with_cache_dir(root.join("hub"));
+    }
+    if let Ok(token) = std::env::var(foretoken_artifacts::HF_TOKEN_ENV)
+        && !token.is_empty()
+    {
+        builder = builder.with_token(Some(token));
+    }
+    builder
 }
 
 fn cached_model_snapshot(model_id: &str, revision: &str) -> Option<std::path::PathBuf> {
@@ -211,6 +281,10 @@ fn cache_snapshot_dir(path: &Path) -> Option<std::path::PathBuf> {
 /// Failures preparing tokenizer artifacts at the frontend boundary.
 #[derive(Debug, Error)]
 pub enum TextBackendLoadError {
+    #[error("prepared tokenizer does not match the serving snapshot")]
+    PreparedIdentity,
+    #[error("prepared tokenizer directory is outside the shared model root")]
+    PreparedPath,
     #[error("tokenizer model and revision must not be empty")]
     MissingModelOrRevision,
     #[error("could not load tokenizer files from the local model directory")]

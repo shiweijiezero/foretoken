@@ -33,7 +33,11 @@ pub struct PipelineRouter<C: Send + 'static = ()> {
 }
 impl<C: Send + 'static> PipelineRouter<C> {
     /// Creates a Router with no-op KV-prefix and route-target statistics readers.
-    pub fn with_pipeline(inventory: Arc<dyn RouteInventory>, pipeline: RouterPipeline<C>) -> Self {
+    pub fn with_pipeline(
+        inventory: Arc<dyn RouteInventory>,
+        pipeline: impl Into<Arc<RouterPipeline<C>>>,
+    ) -> Self {
+        let pipeline = pipeline.into();
         let metrics = Arc::new(crate::metrics::RouterMetricsScope::new(
             inventory.as_ref(),
             pipeline.algorithm_names,
@@ -42,7 +46,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
             inventory,
             kv_prefix_indexer: Arc::new(NoopKvPrefixIndexer),
             route_target_stats_reader: Arc::new(NoopRouteTargetStatsReader),
-            pipeline: Arc::new(pipeline),
+            pipeline,
             routing_load: Arc::new(Mutex::new(RoutingReservations::default())),
             metrics,
         }
@@ -181,7 +185,10 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 .collect::<Result<Vec<_>, _>>()?;
             metrics.candidates(&request.model, round, "filtered", filtered.len());
             let stage_started = Instant::now();
-            let scores = self.pipeline.scorer.score(
+            let crate::algorithm::ScoringOutcome {
+                scores,
+                on_selected,
+            } = self.pipeline.scorer.score_for_selection(
                 request,
                 &filtered,
                 self.kv_prefix_indexer.as_ref(),
@@ -247,12 +254,15 @@ impl<C: Send + 'static> PipelineRouter<C> {
                         |lookup| self.kv_prefix_indexer.prefix_matches(lookup),
                     );
                 tracing::debug!(
-                    request_id = %request.generate_request.request_id,
+                    request_id = %request.request_id(),
                     route_target_id = %candidate.route_target_id.as_str(),
                     data_parallel_rank = candidate.data_parallel_rank,
                     cache_observation = ?observation,
                     "KV routing observation"
                 );
+            }
+            if let Some(on_selected) = on_selected {
+                on_selected(&candidate);
             }
             reservations.reserve(request, &candidate, self.kv_prefix_indexer.as_ref());
             Ok(candidate)
@@ -413,7 +423,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             .lock()
             .expect("routing load lock poisoned");
         for key in &self.selected {
-            reservations.release_prompt_load(key, &self.request.generate_request.request_id);
+            reservations.release_prompt_load(key, self.request.request_id());
         }
     }
 
@@ -427,7 +437,7 @@ impl<C: Send + 'static> RouteSession for Session<C> {
             .lock()
             .expect("routing load lock poisoned");
         for key in self.selected.drain(..) {
-            reservations.release(&key, &self.request.generate_request.request_id);
+            reservations.release(&key, self.request.request_id());
         }
     }
 
@@ -576,7 +586,9 @@ impl<C: Send + 'static> Router for PipelineRouter<C> {
                     .filter(|candidate| {
                         matches!(
                             candidate.role,
-                            ModelServerRole::Aggregate | ModelServerRole::Prefill
+                            ModelServerRole::Aggregate
+                                | ModelServerRole::Prefill
+                                | ModelServerRole::Decode
                         )
                     })
                     .filter_map(|candidate| {

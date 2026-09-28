@@ -96,7 +96,10 @@ uses these endpoints for both direct token-input requests and public API dispatc
 nullable `tokenizer_revision` and `max_model_len` in addition to the role,
 admission state, active sessions, candidate format and token budget. Frontend
 registry probes compare these with discovery configuration before admitting the
-endpoint to routing. This is engine metadata, not a new caller-selected identity.
+endpoint to routing. When the model-server loads prepared snapshots, it preserves their configured
+source identity and supplies `prepared_tokenizer` metadata for frontend artifact
+preparation. Local snapshot paths do not replace the published source identity.
+Standalone launches report the engine identity directly.
 
 ## Controller lifecycle
 

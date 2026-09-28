@@ -19,6 +19,7 @@ _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 # Labels identify Foretoken workloads; ownership is resolved by UID, never by name prefix.
 _WORKLOAD_LABELS = (
     "inference.foretoken.io/model-group",
+    "inference.foretoken.io/model-preparation-group",
     "inference.foretoken.io/frontend-service",
     "inference.foretoken.io/kv-group",
     "inference.foretoken.io/kvservice",

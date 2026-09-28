@@ -45,6 +45,7 @@ class ModelServiceSource:
     timeout_seconds: int = 300
     max_retries: int = 0
     wait_timeout: str = "15m"
+    name: str = ""
 
     def validate(self, *, require_model: bool = True) -> None:
         """Require one service source and, normally, a model for an existing URL."""
@@ -231,10 +232,6 @@ class ChatRequestDataset:
             raise ValueError(
                 "--dataset random cannot be combined with other dataset sources"
             )
-        if self.dataset_selectors == ["random"] and not self.tokenizer:
-            raise ValueError(
-                "--tokenizer-path is required when --dataset random"
-            )
         if self.row_offset < 0:
             raise ValueError("--dataset-offset must be >= 0")
         if not 0 <= self.random_seed <= 0xFFFFFFFF:
@@ -284,11 +281,23 @@ class BenchmarkOutputConfig:
         """Return whether the specified output destination is enabled."""
         return destination in self.destinations
 
+    @property
+    def saves_local(self) -> bool:
+        """Keep plot inputs alongside exported figures so they can be redrawn."""
+        return self.includes("local") or self.includes("plot")
+
+    def for_child_run(self) -> BenchmarkOutputConfig:
+        """Retain child measurements while the enclosing sweep or search exports comparison plots."""
+        return replace(self, destinations=tuple(dict.fromkeys(
+            "local" if destination == "plot" else destination
+            for destination in self.destinations
+        )))
+
     def validate(self) -> None:
         """Validate the selected HTTP benchmark output destinations."""
         if not self.destinations:
             raise ValueError("--output must select at least one output option")
-        allowed = {"local", "wandb", "quiet"}
+        allowed = {"local", "wandb", "plot", "quiet"}
         unknown = set(self.destinations) - allowed
         if unknown:
             names = ", ".join(sorted(unknown))
@@ -376,6 +385,7 @@ class BenchmarkConfig:
     sweep: ParameterSweepConfig = field(default_factory=ParameterSweepConfig)
     slo: SloTuneConfig = field(default_factory=SloTuneConfig)
     profile: BenchmarkProfileConfig | None = None
+    service_choices: tuple[dict[str, str], ...] = ()
 
     @property
     def resolved_workload(self) -> ChatRequestDataset:
@@ -430,8 +440,6 @@ class BenchmarkConfig:
         self.service.validate(require_model=False)
         if self.profile is not None and not self.service.kustomize_path:
             raise ValueError("--profile requires a Foretoken Kustomize deployment")
-        if self.sweep.path and not self.service.kustomize_path:
-            raise ValueError("--sweep requires a Foretoken Kustomize deployment")
         self.load.validate()
         self.outputs.validate()
         self.generation.validate()
@@ -531,6 +539,7 @@ class BenchmarkConfig:
     def to_dict(self) -> dict[str, Any]:
         """Serialize only user configuration for result and W&B snapshots."""
         service = {
+            "name": self.service.name,
             "kustomize_path": self.service.kustomize_path,
             "url": self.service.url,
             "health_url": self.service.health_url,
@@ -573,6 +582,7 @@ class BenchmarkConfig:
             dataset["conversation_history"] = workload.conversation_history
         return {
             "service": service,
+            "service_choices": list(self.service_choices),
             "load": load,
             "generation": {
                 "max_tokens": self.generation.max_tokens,

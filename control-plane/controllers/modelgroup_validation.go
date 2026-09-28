@@ -23,8 +23,23 @@ func validateGroupProfile(group *inferencev1alpha1.ModelGroup) error {
 }
 
 func validateGroupRuntime(group *inferencev1alpha1.ModelGroup) error {
-	if group.Spec.NodeCount < 1 || group.Spec.MemberCount != group.Spec.NodeCount || group.Spec.Runtime.Backend != "vllm" {
-		return fmt.Errorf("vLLM Groups require one member per node")
+	if group.Spec.NodeCount < 1 || group.Spec.MemberCount != group.Spec.NodeCount {
+		return fmt.Errorf("model Groups require one member per node")
+	}
+	if group.Spec.Runtime.Backend == "vllm-omni" {
+		if group.Spec.NodeCount != 1 || group.Spec.Role != inferencev1alpha1.ModelRoleAggregate {
+			return fmt.Errorf("vLLM-Omni initially supports one aggregate member on one node")
+		}
+		if group.Spec.Runtime.Port > 65533 {
+			return fmt.Errorf("vLLM-Omni model-server port must leave room for its upstream port")
+		}
+		if group.Spec.PDRuntime != nil || group.Spec.ECRuntime != nil || group.Spec.KVRuntime != nil || group.Spec.RDMA != nil {
+			return fmt.Errorf("vLLM-Omni does not yet support split, KV, or RDMA runtime configuration")
+		}
+		return nil
+	}
+	if group.Spec.Runtime.Backend != "vllm" {
+		return fmt.Errorf("inference backend %q is not supported", group.Spec.Runtime.Backend)
 	}
 	if rdma := group.Spec.RDMA; rdma != nil && (rdma.ResourceName == "" || rdma.ResourceCount < 1) {
 		return fmt.Errorf("RDMA allocation requires a resource name and positive count")

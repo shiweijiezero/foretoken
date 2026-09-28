@@ -7,6 +7,7 @@
     "imagePullSecrets",
     "controller",
     "workload",
+    "modelDistribution",
     "loadBalancer",
     "rdma",
     "frontend",
@@ -176,6 +177,41 @@
       },
       "additionalProperties": false
     },
+    "modelDistribution": {
+      "type": "object",
+      "required": ["dragonfly", "modelexpress"],
+      "additionalProperties": false,
+      "properties": {
+        "modelexpress": {
+          "type": "object",
+          "required": ["enabled"],
+          "additionalProperties": false,
+          "properties": {"enabled": {"type": "boolean"}}
+        },
+        "dragonfly": {
+          "type": "object",
+          "required": ["enabled", "existingRelease", "socketPath"],
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "existingRelease": {
+              "type": "object",
+              "required": ["name", "namespace"],
+              "additionalProperties": false,
+              "properties": {
+                "name": {"type": "string"},
+                "namespace": {"type": "string"}
+              }
+            },
+            "socketPath": {"type": "string"}
+          },
+          "allOf": [{
+            "if": {"properties": {"enabled": {"const": true}}},
+            "then": {"properties": {"socketPath": {"minLength": 1, "pattern": "^/"}}}
+          }]
+        }
+      }
+    },
     "loadBalancer": {
       "type": "object",
       "required": [
@@ -333,6 +369,14 @@
         "vllm"
       ],
       "properties": {
+        "vllmOmni": {
+          "type": "object",
+          "required": ["image"],
+          "properties": {
+            "image": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
         "vllm": {
           "type": "object",
           "required": [

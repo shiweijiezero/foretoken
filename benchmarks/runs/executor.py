@@ -284,14 +284,6 @@ class TaskLoadBenchmark:
                 grouped = load_multi_dataset_tasks(self.benchmark)
                 self.tasks = grouped.pop("__global__")
                 self.dataset_tasks = grouped
-            if self.benchmark.load.warmup_requests:
-                warmup = TaskLoadBenchmark(
-                    self._warmup_config(), self.service, tasks=self.tasks,
-                    dataset_tasks=self.dataset_tasks,
-                )
-                warmup_measurements, _ = asyncio.run(warmup._run_requests(warmup=True))
-                if not warmup_measurements or any(not item.succeeded for item in warmup_measurements):
-                    raise ValueError("Warmup requests failed; measurement was not started")
             record = build_benchmark_run_record(
                 self.benchmark, self.service, "task_load", resolved_load_record(self.benchmark)
             )
@@ -299,6 +291,20 @@ class TaskLoadBenchmark:
             if self.dataset_tasks is not None:
                 record["datasets"] = list(self.dataset_tasks)
             outputs.open(record)
+            if self.benchmark.load.warmup_requests:
+                warmup = TaskLoadBenchmark(
+                    self._warmup_config(), self.service, tasks=self.tasks,
+                    dataset_tasks=self.dataset_tasks,
+                )
+                warmup_measurements, warmup_duration = asyncio.run(warmup._run_requests(warmup=True))
+                outputs.record_http_warmup(
+                    warmup_measurements, duration=warmup_duration,
+                    stream=self.benchmark.generation.stream,
+                    arrival_rate=self.benchmark.load.arrival_rate,
+                    concurrency=self.benchmark.load.max_concurrency,
+                )
+                if not warmup_measurements or any(not item.succeeded for item in warmup_measurements):
+                    raise ValueError("Warmup requests failed; measurement was not started")
             profile = outputs.create_profile()
             with (profile if profile is not None else nullcontext()):
                 measurements, elapsed = asyncio.run(self._run_requests(profile=profile))

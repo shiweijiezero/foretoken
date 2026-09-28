@@ -16,7 +16,7 @@ use axum::{Json, Router};
 use crate::api::{self, ApiState};
 use crate::runtime::Generation;
 
-const MAX_HTTP_BODY_BYTES: usize = 48 * 1024 * 1024;
+pub(crate) const MAX_HTTP_BODY_BYTES: usize = 48 * 1024 * 1024;
 
 /// Creates the frontend HTTP router with shared generation services, body limits, and metrics.
 pub fn router(
@@ -27,6 +27,7 @@ pub fn router(
     Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .route("/health", get(readyz))
         .route("/statusz", get(statusz))
         .route("/metrics", get(metrics))
         .route(

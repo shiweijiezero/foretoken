@@ -19,18 +19,6 @@ from benchmarks.results.output import BenchmarkRun, ResultSink
 
 logger = logging.getLogger(__name__)
 
-_PALETTE = ("#2a78d6", "#eb6834", "#1baf7a")
-_COORDINATE_LABELS = {
-    "weight_bits": "Nominal weight precision (bits)",
-    "bits_per_weight": "Effective bits per weight",
-    "model_size_gib": "Checkpoint size (GiB)",
-}
-_METRIC_COLUMNS = (
-    ("mean_kl", "Mean KL (nats)"),
-    ("p99_kl", "p99 KL (nats)"),
-    ("mean_centered_logit_rmse", "Centered-logit RMSE"),
-    ("top1_agreement", "Top-1 agreement (%)"),
-)
 _POINT_COLUMNS = (
     "model",
     "label",
@@ -79,179 +67,8 @@ def _write_csv(path: Path, columns: tuple[str, ...], rows: list[dict[str, Any]])
             writer.writerow({column: row[column] for column in columns})
 
 
-def _method_colors(points: list[dict[str, Any]]) -> tuple[dict[str, str], list[str]]:
-    """Assign the validated first three method slots and collapse later methods to Other."""
-    methods = list(dict.fromkeys(point["method"] for point in points))
-    colors = {
-        method: _PALETTE[index] if index < len(_PALETTE) else "#898781"
-        for index, method in enumerate(methods)
-    }
-    legend_methods = methods[: len(_PALETTE)]
-    if len(methods) > len(_PALETTE):
-        legend_methods.append("Other methods")
-    return colors, legend_methods
-
-
-def _method_handles(methods: list[str], colors: dict[str, str]) -> list[Any]:
-    """Build the method legend handles used by every candidate comparison figure."""
-    from matplotlib.patches import Patch
-
-    return [
-        Patch(facecolor=colors.get(method, "#898781"), label=method)
-        for method in methods
-    ]
-
-
-def _plot_candidate_panels(
-    path: Path,
-    points: list[dict[str, Any]],
-    x_field: str | None,
-    title: str,
-) -> bool:
-    """Render four candidate comparisons against one explicitly named coordinate."""
-    import matplotlib.pyplot as plt
-
-    rows = [point for point in points if point[x_field] is not None] if x_field else points
-    fields = [
-        (field, name)
-        for field, name in _METRIC_COLUMNS
-        if any(point[field] is not None for point in rows)
-    ]
-    if not rows or not fields:
-        return False
-    fig, axes = plt.subplots(2, 2, figsize=(11, 7), sharex=True)
-    colors, methods = _method_colors(points)
-    for index, axis in enumerate(axes.flat):
-        if index >= len(fields):
-            axis.axis("off")
-            continue
-        field, metric_name = fields[index]
-        plotted = [point for point in rows if point[field] is not None]
-        xs = (
-            [float(point[x_field]) for point in plotted]
-            if x_field
-            else list(range(len(plotted)))
-        )
-        if x_field:
-            axis.set_xlabel(_COORDINATE_LABELS[x_field])
-        else:
-            axis.set_xlabel("Candidate")
-            axis.set_xticks(xs, [point["label"] for point in plotted], rotation=25, ha="right")
-        for point, x in zip(plotted, xs):
-            value = float(point[field]) * 100 if field == "top1_agreement" else float(point[field])
-            axis.scatter(
-                x,
-                value,
-                s=58,
-                color=colors[point["method"]],
-                edgecolors="#fcfcfb",
-                linewidths=2,
-                zorder=3,
-            )
-            axis.annotate(
-                point["label"],
-                (x, value),
-                xytext=(-6 if x == max(xs) else 6, 6),
-                ha="right" if x == max(xs) else "left",
-                textcoords="offset points",
-                fontsize=8,
-            )
-        if field in {"mean_kl", "p99_kl"}:
-            axis.set_yscale("symlog", linthresh=1e-6)
-        axis.set_ylabel(metric_name)
-        axis.grid(True, color="#e1e0d9", linewidth=0.7)
-        axis.spines[["top", "right"]].set_visible(False)
-    if x_field:
-        _plot_frontier(axes.flat[0], rows, x_field)
-    axes.flat[0].legend(
-        handles=_method_handles(methods, colors) + axes.flat[0].get_legend_handles_labels()[0],
-        fontsize=8,
-        frameon=False,
-    )
-    fig.suptitle(title, x=0.06, ha="left", fontsize=13, fontweight="bold")
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
-    fig.savefig(path, dpi=160, bbox_inches="tight", facecolor="#fcfcfb")
-    plt.close(fig)
-    return True
-
-
-def _plot_frontier(axis: Any, rows: list[dict[str, Any]], x_field: str) -> None:
-    """Overlay the lower-cost/lower-KL frontier without changing plotted measurements."""
-    eligible = [
-        row for row in rows
-        if row[x_field] is not None and row["mean_kl"] is not None
-    ]
-    frontier: list[dict[str, Any]] = []
-    for row in sorted(eligible, key=lambda item: (float(item[x_field]), float(item["mean_kl"]))):
-        if not frontier or float(row["mean_kl"]) < float(frontier[-1]["mean_kl"]):
-            frontier.append(row)
-    if len(frontier) >= 2:
-        axis.plot(
-            [float(row[x_field]) for row in frontier],
-            [float(row["mean_kl"]) for row in frontier],
-            color="#52514e",
-            linestyle="--",
-            linewidth=1.3,
-            marker="o",
-            markersize=4,
-            label="min-cost / min-KL frontier",
-            zorder=2,
-        )
-
-
-def _plot_position_curves(
-    path: Path,
-    points: list[dict[str, Any]],
-    positions: list[dict[str, Any]],
-) -> bool:
-    """Plot KL and centered-logit RMSE by scored position index, never by elapsed time."""
-    import matplotlib.pyplot as plt
-
-    point_by_label = {point["label"]: point for point in points}
-    candidates = list(point_by_label)
-    if not positions:
-        return False
-    fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True)
-    colors, methods = _method_colors(points)
-    for candidate in candidates:
-        rows = [row for row in positions if row["candidate"] == candidate]
-        for axis, field in (
-            (axes[0], "kl"),
-            (axes[1], "centered_logit_rmse"),
-        ):
-            plotted = [row for row in rows if row[field] is not None]
-            if plotted:
-                axis.plot(
-                    [float(row["scored_index"]) for row in plotted],
-                    [float(row[field]) for row in plotted],
-                    color=colors[point_by_label[candidate]["method"]],
-                    linewidth=2,
-                    label=candidate,
-                )
-    axes[0].set_yscale("symlog", linthresh=1e-6)
-    axes[0].set_ylabel("KL divergence (nats)")
-    axes[1].set_ylabel("Centered-logit RMSE")
-    axes[1].set_xlabel("Scored position index (not time)")
-    for axis in axes:
-        axis.grid(True, color="#e1e0d9", linewidth=0.7)
-        axis.spines[["top", "right"]].set_visible(False)
-    axes[0].legend(
-        handles=_method_handles(methods, colors),
-        title="Method",
-        fontsize=8,
-        title_fontsize=8,
-        frameon=False,
-    )
-    axes[1].legend(title="Candidate", fontsize=8, frameon=False, ncol=2)
-    fig.suptitle("Distribution differences across scored positions", x=0.06, ha="left", fontsize=13, fontweight="bold")
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
-    fig.savefig(path, dpi=160, bbox_inches="tight", facecolor="#fcfcfb")
-    plt.close(fig)
-    return True
-
-
 def write_distribution_comparison_artifacts(directory: str | Path, metrics: dict[str, Any]) -> dict[str, Path]:
-    """Write distribution comparison tables and data-backed PNGs into a result directory."""
+    """Save candidate statistics and scored positions for all result destinations."""
     out = Path(directory)
     out.mkdir(parents=True, exist_ok=True)
     comparison = metrics["distribution_comparison"]
@@ -266,25 +83,11 @@ def write_distribution_comparison_artifacts(directory: str | Path, metrics: dict
         for row in positions:
             stream.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
     artifacts = {"distribution_comparison_candidates": candidate_path, "distribution_comparison_positions": positions_path}
-    numeric_axes = [axis for axis in _COORDINATE_LABELS if any(point[axis] is not None for point in points)]
-    if numeric_axes:
-        for axis in numeric_axes:
-            path = out / f"distribution_comparison_{axis}.png"
-            if _plot_candidate_panels(path, points, axis, f"Distribution comparison: {_COORDINATE_LABELS[axis]}"):
-                artifacts[f"distribution_comparison_{axis}_plot"] = path
-    else:
-        path = out / "distribution_comparison_candidates.png"
-        if _plot_candidate_panels(path, points, None, "Model distribution comparison"):
-            artifacts["distribution_comparison_candidates_plot"] = path
-    if positions:
-        path = out / "distribution_comparison_positions.png"
-        if _plot_position_curves(path, points, positions):
-            artifacts["distribution_comparison_positions_plot"] = path
     return artifacts
 
 
 class DistributionComparisonArtifactSink:
-    """Materialize comparison tables and figures before downstream publishers consume artifacts."""
+    """Materialize comparison records before downstream publishers consume artifacts."""
 
     def __init__(self, directory: str) -> None:
         self.directory = directory
@@ -359,7 +162,7 @@ def _bits_label(point: dict[str, Any]) -> str:
 
 
 def publish_distribution_comparison_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
-    """Publish existing quality output plus comparison tables, indexed curves, and PNG artifacts."""
+    """Publish native quality scores, candidate tables, and position-indexed curves."""
     publish_quality_wandb(sdk_run, run)
     comparison = run.metrics["distribution_comparison"]
     protocol = comparison["protocol"]
@@ -401,16 +204,6 @@ def publish_distribution_comparison_wandb(sdk_run: Any, run: BenchmarkRun) -> No
                         title=title,
                     ),
                 })
-    plot_titles = {
-        **{f"distribution_comparison_{axis}_plot": label for axis, label in _COORDINATE_LABELS.items()},
-        "distribution_comparison_candidates_plot": "Candidates",
-        "distribution_comparison_positions_plot": "Scored positions",
-    }
-    for key, title in plot_titles.items():
-        if key in run.artifacts:
-            sdk_run.log({
-                f"Distribution Comparison/Plots/{title}": wandb.Image(str(run.artifacts[key]), caption=title),
-            })
 
 
 def distribution_comparison_sinks(config: EvaluationConfig, record: dict[str, Any], directory: str) -> list[ResultSink]:

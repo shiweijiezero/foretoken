@@ -18,7 +18,7 @@ data:
         "resourcePrefix": "rdma",
         "resourceName": {{ include "foretoken.rdmaResourceName" . | trimPrefix "rdma/" | quote }},
         "rdmaHcaMax": 1000,
-        "selectors": {"linkTypes": ["infiniband"]}
+        "selectors": {"linkTypes": ["infiniband", "ether"]}
       }]
     }
 ---

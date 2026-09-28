@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def configure_logging(console_enabled: bool) -> None:
-    """Configure console logging and keep HTTP library logs from interfering with progress output."""
+    """Configure benchmark progress while retaining only warnings from transport and font libraries."""
     logging.basicConfig(
         level=logging.INFO if console_enabled else logging.ERROR,
         format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
@@ -27,6 +27,7 @@ def configure_logging(console_enabled: bool) -> None:
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("fontTools").setLevel(logging.WARNING)
 
 
 @contextmanager
@@ -436,7 +437,8 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
     """Print one summary row for each parameter sweep result."""
     per_worker_name = "Output tokens/s/user"
     header = (
-        f"{'Concurrency':>12} {'Arrival rate':>12} {'Work items':>10} "
+        f"{'Method / group / run':<32} "
+        f"{'Concurrency':>12} {'Arrival rate':>12} {'Requests':>10} "
         f"{'Output tokens/s':>15} {per_worker_name:>32} "
         f"{'Output tokens/s/GPU':>19} {'P99 E2EL (s)':>12}"
     )
@@ -445,6 +447,8 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
         header,
     ]
     for item in results:
+        method = item["bench"].get("service", {}).get("name", "default")
+        identity = f"{method} / {item['parameter_group']} / {item['run_number'] + 1}"
         parallel = item["max_concurrency"]
         parallel_label = (
             "unlimited" if int(parallel) < 0 else str(int(parallel))
@@ -462,7 +466,7 @@ def log_sweep_results(results: list[dict[str, Any]]) -> None:
             "generation_tokens_per_second_per_gpu"
         )
         lines.append(
-            f"{parallel_label:>12} {rate_label:>12} {int(item['number']):>10} "
+            f"{identity:<32} {parallel_label:>12} {rate_label:>12} {int(item['request_num']):>10} "
             f"{_format_metric(generation_tokens_per_second, 2):>15} "
             f"{_format_metric(generation_tokens_per_second_per_concurrency, 2):>32} "
             f"{_format_metric(generation_tokens_per_second_per_gpu_value, 2):>19} "

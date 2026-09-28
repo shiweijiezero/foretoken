@@ -11,6 +11,10 @@ Chinese template: PULL_REQUEST_TEMPLATE_zh.md -->
 
 <!-- Describe the problem and change. For a new feature, start with the user goal and expected outcome. -->
 
+## Purpose
+
+<!-- State why this change is needed, who benefits, and the concrete outcome it should provide. Keep the motivation separate from the implementation summary. -->
+
 ## Design
 
 <!-- For design-oriented features: explain the core flow, responsibilities and key trade-offs.

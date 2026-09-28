@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass, field
@@ -490,6 +491,9 @@ def create_app(
     """Build an internal role API; its lifespan exclusively owns the vLLM engine."""
     from .vllm.engine import ExternalAsyncLLM as AsyncLLM
 
+    # The managed launcher preserves provider identity when loading local snapshots.
+    metadata = json.loads(os.environ.get("FORETOKEN_DT_MODEL_METADATA", "{}"))
+
     @asynccontextmanager
     async def lifespan(app):
         engine = AsyncLLM.from_engine_args(engine_args)
@@ -526,10 +530,15 @@ def create_app(
         transport = await service.worker("dt_status") if service.rdma else None
         return {
             "role": role,
-            "model": service.engine.model_config.model,
-            "revision": service.engine.model_config.revision,
-            "tokenizer": service.engine.model_config.tokenizer,
-            "tokenizer_revision": service.engine.model_config.tokenizer_revision,
+            "model": metadata.get("model", service.engine.model_config.model),
+            "revision": metadata.get("revision", service.engine.model_config.revision),
+            "tokenizer": metadata.get(
+                "tokenizer", service.engine.model_config.tokenizer
+            ),
+            "tokenizer_revision": metadata.get(
+                "tokenizer_revision", service.engine.model_config.tokenizer_revision
+            ),
+            "prepared_tokenizer": metadata.get("prepared_tokenizer"),
             "max_model_len": service.engine.model_config.max_model_len,
             "accepting": service.accepting,
             "active_sessions": len(service.drafts) + len(service.targets),

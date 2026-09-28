@@ -123,6 +123,27 @@ rules:
       - update
       - patch
       - delete
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - roles
+      - rolebindings
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
   # Kubernetes cannot name-restrict create; reconciliation creates only foretoken-kv-indexer.
   - apiGroups:
       - ""
@@ -288,6 +309,23 @@ rules:
       - update
       - patch
       - delete
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - list
+      - watch
   - apiGroups:
       - ""
     resources:

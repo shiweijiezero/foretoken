@@ -6,7 +6,7 @@
 
 ```bash
 foretoken perf examples/quickstart \
-  --dataset random --tokenizer-path Qwen/Qwen3-0.6B \
+  --dataset random \
   --min-prompt-length 128 --max-prompt-length 512 \
   --num-prompts 100 --max-concurrency 2 \
   --slo-params '[{"p99_latency":"<=2"}]' \

@@ -8,8 +8,10 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
+from pathlib import Path
 from dataclasses import MISSING, fields
 from typing import Any
+from urllib.parse import urlsplit
 
 from foretoken.arguments import add_profile_arguments, validate_profile_arguments
 
@@ -58,12 +60,15 @@ def _add_benchmark_arguments(
 ) -> None:
     """Register the shared benchmark surface and mode-specific options once."""
     # Every HTTP benchmark consumes these service, load, dataset, and output options.
-    parser.add_argument(
-        "--url",
-        required=video,
-        default=None if video else _default(ModelServiceSource, "url"),
-        help="Model service request endpoint URL",
-    )
+    if video:
+        parser.add_argument(
+            "--url", required=True, help="Model service request endpoint URL"
+        )
+    else:
+        parser.add_argument(
+            "--url", nargs="+", default=[],
+            help="Model service endpoint URLs; pass multiple values for multiple methods",
+        )
     parser.add_argument(
         "--health-url",
         default=_default(ModelServiceSource, "health_url"),
@@ -133,7 +138,7 @@ def _add_benchmark_arguments(
         "--output",
         type=_output_destinations,
         default=_default(BenchmarkOutputConfig, "destinations"),
-        help="Comma-separated outputs: local, wandb, and quiet",
+        help="Comma-separated outputs: local, wandb, plot, and quiet",
     )
     parser.add_argument(
         "--output-dir",
@@ -183,15 +188,14 @@ def _add_benchmark_arguments(
 
     # Chat Completions service and orchestration options.
     parser.add_argument(
-        "kustomize_path",
-        nargs="?",
+        "kustomize_paths",
+        nargs="*",
         metavar="PATH",
-        help="Kustomize directory to deploy or reuse",
+        help="Kustomize directories to deploy or reuse sequentially with the same workload",
     )
     parser.add_argument(
-        "--model",
-        default=_default(ModelServiceSource, "model"),
-        help="Model name; inferred when the deployment contains one model",
+        "--model", nargs="+", default=[],
+        help="Model names; one shared value or one per service, inferred for single-model deployments",
     )
     parser.add_argument(
         "--api-key",
@@ -382,7 +386,7 @@ def _add_benchmark_arguments(
     parser.add_argument(
         "--tokenizer-path",
         default=_default(ChatRequestDataset, "tokenizer"),
-        help="Tokenizer path (required for --dataset random)",
+        help="Tokenizer override; random workloads infer it from the selected model service",
     )
     parser.add_argument(
         "--random-seed",
@@ -426,7 +430,7 @@ def _add_benchmark_arguments(
         metavar="PATH",
         default=_default(ParameterSweepConfig, "path"),
         help=(
-            "JSONL parameter combinations; execution fields may be lists and expand cartesian"
+            "JSONL workload combinations and named service choices; list values expand Cartesian products"
         ),
     )
     parser.add_argument(
@@ -465,12 +469,32 @@ def _add_benchmark_arguments(
 
 
 def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
+    paths = tuple(namespace.kustomize_paths or ())
+    urls = tuple(namespace.url or ())
+    models = tuple(namespace.model or ())
+    if paths and urls:
+        raise ValueError("provide Kustomize paths or --url values, not both")
+    if urls and len(models) not in (1, len(urls)):
+        raise ValueError("--model accepts one shared value or one value per --url")
+    service_choices = (
+        tuple({"name": Path(path).name, "path": path} for path in paths)
+        if paths
+        else tuple(
+            {
+                "name": urlsplit(url).netloc or f"url-{index + 1}",
+                "url": url,
+                "model": models[0] if len(models) == 1 else models[index],
+            }
+            for index, url in enumerate(urls)
+        )
+    )
+    first_choice = service_choices[0] if service_choices else {}
     return BenchmarkConfig(
         service=ModelServiceSource(
-            kustomize_path=namespace.kustomize_path or "",
-            url=namespace.url,
+            kustomize_path=first_choice.get("path", ""),
+            url=first_choice.get("url", ""),
             health_url=namespace.health_url,
-            model=namespace.model,
+            model=first_choice.get("model", ""),
             api_key=namespace.api_key,
             timeout_seconds=namespace.timeout,
             max_retries=namespace.max_retries,
@@ -539,9 +563,10 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             num_runs=namespace.num_runs,
             experiment_name=namespace.experiment_name,
         ),
+        # A sweep repeats the whole search; standalone SLO repeats each probe.
         slo=SloTuneConfig(
             params=namespace.slo_params,
-            num_runs=namespace.num_runs,
+            num_runs=1 if namespace.sweep else namespace.num_runs,
             upper_bound=namespace.slo_upper_bound,
             lower_bound=namespace.slo_lower_bound,
         ),
@@ -549,6 +574,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             BenchmarkProfileConfig(namespace.profile_engine, namespace.profile_duration)
             if namespace.profile else None
         ),
+        service_choices=service_choices,
     )
 
 

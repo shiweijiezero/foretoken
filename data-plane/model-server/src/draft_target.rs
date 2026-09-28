@@ -10,7 +10,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use foretoken_model_server::{
-    config::RuntimeConfig, launch::PYTHON_MODULE_PATH, managed_engine::ManagedEngine, runtime_cache,
+    config::RuntimeConfig, launch::PYTHON_MODULE_PATH, managed_engine::ManagedEngine, preparation,
+    runtime_cache,
 };
 use tokio::sync::Notify;
 use tracing::warn;
@@ -34,7 +35,58 @@ pub(super) async fn run(
         .map(|cache| cache.model_root(mode))
         .or_else(foretoken_artifacts::model_root)
         .unwrap_or_else(|| PathBuf::from(super::TEMPORARY_MODEL_SOURCE_ROOT));
-    environment.extend(config.launch.source_environment(&model_root));
+    let artifacts = &config.launch.artifacts;
+    let mut model = artifacts.model.clone();
+    let mut arguments = config.launch.render_vllm_args(None)?;
+    let mut prepared_tokenizer = None;
+    let scope = std::env::var(preparation::PREPARATION_SCOPE_ENV).ok();
+    let legacy_modelscope =
+        scope.is_none() && artifacts.source == foretoken_artifacts::ModelSource::ModelScope;
+    environment.push(("VLLM_USE_MODELSCOPE".into(), legacy_modelscope.to_string()));
+    if legacy_modelscope {
+        environment.push((
+            foretoken_artifacts::MODELSCOPE_CACHE_ENV.into(),
+            foretoken_artifacts::modelscope_cache_root(&model_root)
+                .display()
+                .to_string(),
+        ));
+    }
+    let tokenizer = if artifacts.source == foretoken_artifacts::ModelSource::Local {
+        model = super::local_artifact_path(&artifacts.model)?;
+        Some(super::local_artifact_path(&artifacts.tokenizer)?)
+    } else if let Some(scope) = scope {
+        let prepared = tokio::time::timeout(
+            config.launch.startup_timeout(),
+            preparation::prepare(&config.launch, &model_root, &scope, true, None),
+        )
+        .await??;
+        model = prepared.model.display().to_string();
+        let binding = cache
+            .filter(|cache| prepared.tokenizer.starts_with(cache.model_root(mode)))
+            .and_then(|_| std::env::var(foretoken_artifacts::RUNTIME_CACHE_BINDING_ENV).ok());
+        prepared_tokenizer = Some(prepared.tokenizer_metadata(&scope, binding));
+        Some(prepared.tokenizer.display().to_string())
+    } else {
+        None
+    };
+    if let Some(tokenizer) = tokenizer {
+        arguments.retain(|arg| {
+            !arg.starts_with("--revision=") && !arg.starts_with("--tokenizer-revision=")
+        });
+        for argument in &mut arguments {
+            if argument.starts_with("--tokenizer=") {
+                *argument = format!("--tokenizer={tokenizer}");
+            }
+        }
+    }
+    // Engine paths are materialized snapshots; discovery retains the configured source identity.
+    environment.push(("FORETOKEN_DT_MODEL_METADATA".into(), serde_json::json!({
+        "model": artifacts.model,
+        "revision": (artifacts.source != foretoken_artifacts::ModelSource::Local).then_some(&artifacts.revision),
+        "tokenizer": artifacts.tokenizer,
+        "tokenizer_revision": (artifacts.source != foretoken_artifacts::ModelSource::Local).then_some(&artifacts.tokenizer_revision),
+        "prepared_tokenizer": prepared_tokenizer,
+    }).to_string()));
     let mut paths = vec![PathBuf::from(PYTHON_MODULE_PATH)];
     if let Some(existing) = std::env::var_os("PYTHONPATH") {
         paths.extend(std::env::split_paths(&existing));
@@ -56,10 +108,10 @@ pub(super) async fn run(
                 .role
                 .as_str(),
         ])
-        .arg(format!("--model={}", config.launch.artifacts.model))
+        .arg(format!("--model={model}"))
         .arg(format!("--host={}", config.listen_address.ip()))
         .arg(format!("--port={}", config.listen_address.port()))
-        .args(config.launch.render_vllm_args(None)?);
+        .args(arguments);
     if let Some(address) = config.dt_rdma_address {
         command.arg(format!("--rdma-host={address}"));
     }

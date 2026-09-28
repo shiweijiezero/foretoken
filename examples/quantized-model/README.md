@@ -49,7 +49,7 @@ From the repository root, compare bitsandbytes against the same unquantized mode
 
 ```bash
 foretoken eval examples/quantized-model/bitsandbytes \
-  --reference examples/quantized-model/bf16 --output local
+  --reference examples/quantized-model/bf16 --output local,plot
 ```
 
 To include the BF16 self-comparison in bit-width plots, replace the candidate directory with `--candidates examples/quantized-model/candidates.jsonl`. The AWQ example uses FP16 activations, so its comparison against BF16 includes that computation-precision difference.

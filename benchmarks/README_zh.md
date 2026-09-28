@@ -55,6 +55,8 @@ foretoken eval examples/quickstart \
 | 不传 `--output`，或使用 `local,wandb` | 打印结果、保存本地文件并上传 W&B |
 | `local` | 打印结果并保存本地文件 |
 | `wandb` | 打印结果并上传 W&B |
+| `plot` | 保存结果并导出 PDF、SVG、PNG 和 CSV |
+| `local,wandb,plot` | 保存结果、导出图表，并上传 W&B |
 | `local,quiet` | 保存本地文件，不打印控制台汇总 |
 | `local,wandb,quiet` | 保存并上传结果，不打印控制台汇总 |
 
@@ -63,3 +65,5 @@ foretoken eval examples/quickstart \
 每次运行在 `results/` 下保存到独立目录；`--output-dir` 修改结果父目录。通过 `--wandb-project`、`--wandb-entity`、`--wandb-group` 和 `--wandb-run-name` 组织运行。
 
 延迟和吞吐量图表见[性能结果](docs/perf/wandb_zh.md)，任务得分与框架原始报告见[质量结果](docs/eval/README_zh.md#查看评分)，执行时间线见[查看采集结果](docs/profile/README_zh.md#查看结果)。
+
+已有结果可用 `foretoken plot RESULT_DIR` 重新绘图；`RESULT_DIR` 是运行时打印的结果目录。`--columns 2` 使用双栏宽度。多方法与参数扫描见[参数扫描](docs/perf/sweep_zh.md)。

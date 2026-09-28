@@ -3,7 +3,7 @@
 
 //! Owns immutable model runtimes and request dispatch.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -15,7 +15,7 @@ use foretoken_chat::{
     ParserSelection,
 };
 use foretoken_llm_facade::{LlmFacadeError, LlmFacadeResolver, TokenStream};
-use foretoken_router::{RouteDecision, RouteTargetSet, Router, RouterRequest};
+use foretoken_router::{RouteDecision, RouteInventory, RouteTargetSet, Router, RouterRequest};
 use foretoken_text::{
     Prompt, SamplingParams, TextDecodeOptions, TextRequest, TextRequestProcessor,
 };
@@ -185,6 +185,14 @@ pub trait RuntimeControl: Send + Sync {
 
 #[async_trait]
 pub trait Generation: Send + Sync {
+    /// Dispatches a video request without text preprocessing; response ownership retains the route.
+    async fn generate_video(
+        &self,
+        _request: crate::VideoRequest,
+    ) -> Result<axum::response::Response, GenerationError> {
+        Err(GenerationError::InvalidRequest)
+    }
+
     /// Lowers and dispatches one completion request for HTTP completion handlers.
     ///
     /// Returns the routed backend stream and decoding inputs while the request remains owned by
@@ -293,10 +301,13 @@ impl AdmissionTargets {
 
 /// All request-processing objects derived from one routing snapshot.
 ///
-/// The Router and LLM facade resolver are shared across models, while every model owns its
-/// immutable vLLM request processors.
+/// Models share the Router. Text models own immutable request processors; video models
+/// delegate preprocessing to their selected HTTP backend.
 pub struct RuntimeState {
     models: BTreeMap<String, ModelRuntime>,
+    video_models: BTreeSet<String>,
+    video_inventory: Option<Arc<dyn RouteInventory>>,
+    video_client: Option<reqwest::Client>,
     admission_targets: BTreeMap<String, AdmissionTargets>,
     router: Arc<dyn Router>,
     resolver: Arc<dyn LlmFacadeResolver>,
@@ -314,10 +325,26 @@ impl RuntimeState {
     ) -> Self {
         Self {
             models,
+            video_models: BTreeSet::new(),
+            video_inventory: None,
+            video_client: None,
             admission_targets: BTreeMap::new(),
             router,
             resolver,
         }
+    }
+
+    /// Registers video models whose engine owns preprocessing, using the same route inventory.
+    pub fn with_video_models(
+        mut self,
+        models: BTreeSet<String>,
+        inventory: Arc<dyn RouteInventory>,
+        client: reqwest::Client,
+    ) -> Self {
+        self.video_models = models;
+        self.video_inventory = Some(inventory);
+        self.video_client = Some(client);
+        self
     }
 
     /// Attaches the controller-selected admission target sets for one model.
@@ -468,7 +495,9 @@ impl RuntimeGeneration {
         let mut queued = None;
         loop {
             let slot = self.ready_state()?;
-            if slot.state.model(model).is_ok() && slot.control.model_ready(model) {
+            if (slot.state.models.contains_key(model) || slot.state.video_models.contains(model))
+                && slot.control.model_ready(model)
+            {
                 return Ok(slot);
             }
             let Some(targets) = slot.state.select_admission_targets(model) else {
@@ -615,6 +644,34 @@ fn deadline_stream(mut stream: TokenStream, deadline: tokio::time::Instant) -> T
 
 #[async_trait]
 impl Generation for RuntimeGeneration {
+    async fn generate_video(
+        &self,
+        request: crate::VideoRequest,
+    ) -> Result<axum::response::Response, GenerationError> {
+        let slot = self.generation_slot(&request.model).await?;
+        if !slot.state.video_models.contains(&request.model) {
+            return Err(GenerationError::InvalidRequest);
+        }
+        let context = RouterRequest::video(request.model.clone(), request.request_id.clone());
+        let mut session = slot.state.router.start(context).await;
+        let decision = session
+            .select_initial()
+            .map_err(|_| GenerationError::Unavailable)?;
+        let endpoint = slot
+            .state
+            .video_inventory
+            .as_ref()
+            .and_then(|inventory| inventory.http_endpoint(&decision))
+            .ok_or(GenerationError::Unavailable)?;
+        let client = slot
+            .state
+            .video_client
+            .as_ref()
+            .ok_or(GenerationError::Internal)?;
+        let _queue = foretoken_metrics::QueueGuard::backend_dispatch(&decision.admission_targets);
+        crate::video::forward(client, &endpoint, request, session, self.request_timeout).await
+    }
+
     async fn generate(&self, request: GenerationRequest) -> Result<Generated, GenerationError> {
         let deadline = tokio::time::Instant::from_std(request.started_at + self.request_timeout);
         let mut generated = before_deadline(deadline, async {

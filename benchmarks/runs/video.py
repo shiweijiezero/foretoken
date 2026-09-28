@@ -19,6 +19,7 @@ from benchmarks.integrations.video import VideoGenerationClient, VideoSampleResu
 from benchmarks.model_service import require_health_endpoint
 from benchmarks.results.output import ResultOutputs
 from benchmarks.results.video import (
+    aggregate_video_results,
     create_video_benchmark_run,
     video_result_sinks,
     video_run_record,
@@ -107,9 +108,11 @@ async def run_video_benchmark(
         sink_factory=partial(video_result_sinks, config),
     ) as outputs:
         run_dir = Path(outputs.execution_dir)
+        outputs.open(record)
         if config.warmup_requests:
             warmup_dir = run_dir / "warmup"
             warmup_dir.mkdir(parents=True, exist_ok=True)
+            warmup_started = time.perf_counter()
             warmup = await _run_requests(
                 config,
                 warmup_dir,
@@ -117,12 +120,15 @@ async def run_video_benchmark(
                 duration_s=None,
                 respect_config_duration=False,
             )
+            outputs.record_warmup(
+                [item.to_dict() for item in warmup],
+                {**aggregate_video_results(warmup), "benchmark_time": time.perf_counter() - warmup_started},
+            )
             if not warmup or any(not item.success for item in warmup):
                 raise ValueError("Warmup requests failed; measurement was not started")
-        outputs.open(record)
         results = await _run_requests(config, run_dir)
         run = create_video_benchmark_run(record, results, run_dir)
         outputs.publish(run)
-        if config.outputs.includes("local"):
+        if config.outputs.saves_local:
             result_output_dir = outputs.execution_dir
     return {"metrics": run.metrics, "output_dir": result_output_dir}

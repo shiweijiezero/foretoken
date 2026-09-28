@@ -186,7 +186,14 @@ type ModelGroupKVRuntimeConfig struct {
 
 // ModelGroupRuntime defines the resolved inference-engine runtime.
 type ModelGroupRuntime struct {
-	// +kubebuilder:validation:Enum=vllm
+	// PreparationVersion selects the source-publication contract for this immutable cohort.
+	// Omitted on cohorts created before source preparation was introduced.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1
+	PreparationVersion int32 `json:"preparationVersion,omitempty"`
+
+	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
 
 	// +kubebuilder:validation:MinLength=1

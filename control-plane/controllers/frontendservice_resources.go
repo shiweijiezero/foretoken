@@ -8,6 +8,7 @@ package controllers
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"time"
@@ -88,6 +89,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 	cacheVolume := corev1.Volume{Name: "runtime-cache", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
 	if profile.RuntimeCache != nil {
 		frontendEnv = append(frontendEnv,
+			corev1.EnvVar{Name: runtimeconfig.RuntimeCacheBindingEnv, Value: frontend.Namespace + "/" + profile.RuntimeCache.ClaimName},
 			corev1.EnvVar{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cacheMountPath},
 			corev1.EnvVar{Name: runtimeconfig.TemporaryModelRootEnv, Value: runtimeconfig.ModelDirectory("/tmp/foretoken-runtime-cache")},
 		)
@@ -115,7 +117,7 @@ func frontendDesiredResources(frontend *inferencev1alpha1.FrontendService, profi
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				ObjectMeta: metav1.ObjectMeta{Labels: maps.Clone(labels)},
 				Spec: corev1.PodSpec{
 					AutomountServiceAccountToken:  &automountToken,
 					EnableServiceLinks:            &enableServiceLinks,

@@ -4,10 +4,9 @@
 //! Private versioned launch contract and the sole vLLM argv renderer.
 
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use vllm_managed_engine::ManagedEngineConfig;
 
@@ -19,7 +18,6 @@ use foretoken_model_protocol::{
 use crate::runtime_transport::{KV_EVENT_TOPIC, LOOPBACK_HOST, kv_event_endpoint};
 
 const VLLM_PYTHON_ENV: &str = "FORETOKEN_VLLM_PYTHON";
-const VLLM_USE_MODELSCOPE_ENV: &str = "VLLM_USE_MODELSCOPE";
 const DEFAULT_VLLM_PYTHON: &str = "python";
 
 /// Python adapters bundled with the model-server image for its managed engine.
@@ -49,7 +47,7 @@ pub struct LaunchPlanV1 {
 }
 
 /// Selects the independent role application while retaining the shared engine argument renderer.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DraftTargetPlan {
     pub role: DraftTargetRole,
@@ -57,7 +55,7 @@ pub struct DraftTargetPlan {
     pub rdma: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DraftTargetRole {
     Draft,
@@ -74,7 +72,7 @@ impl DraftTargetRole {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Artifacts {
     pub model: String,
@@ -378,27 +376,6 @@ impl LaunchPlanV1 {
         Duration::from_secs(self.lifecycle.drain_seconds)
     }
 
-    /// Returns provider environment for the managed vLLM child process.
-    pub fn source_environment(&self, model_root: &Path) -> Vec<(String, String)> {
-        let use_modelscope = self.artifacts.source == ModelSource::ModelScope;
-        let mut environment = vec![(VLLM_USE_MODELSCOPE_ENV.into(), use_modelscope.to_string())];
-        if use_modelscope {
-            environment.extend([
-                (
-                    foretoken_artifacts::MODELSCOPE_CACHE_ENV.into(),
-                    foretoken_artifacts::modelscope_cache_root(model_root)
-                        .display()
-                        .to_string(),
-                ),
-                (
-                    foretoken_artifacts::MODELSCOPE_DOMAIN_ENV.into(),
-                    foretoken_artifacts::DEFAULT_MODELSCOPE_DOMAIN.into(),
-                ),
-            ]);
-        }
-        environment
-    }
-
     /// Builds the owned managed-engine configuration consumed by model-server startup.
     ///
     /// The model-server image selects Python through `FORETOKEN_VLLM_PYTHON`; the process handle
@@ -473,32 +450,7 @@ impl LaunchPlanV1 {
             {
                 continue;
             }
-            match value {
-                serde_json::Value::Null => {}
-                serde_json::Value::Bool(enabled) => args.push(if *enabled {
-                    format!("--{name}")
-                } else {
-                    format!("--no-{name}")
-                }),
-                serde_json::Value::String(value) => args.push(format!("--{name}={value}")),
-                serde_json::Value::Array(values) => {
-                    args.push(format!("--{name}"));
-                    for value in values {
-                        let value = match value {
-                            serde_json::Value::String(value) => value.clone(),
-                            value => value.to_string(),
-                        };
-                        // A list item must not become a separate CLI option.
-                        if value.starts_with('-') && value.parse::<f64>().is_err() {
-                            return Err(format!(
-                                "engineArgs.{name} contains an option-like list value"
-                            ));
-                        }
-                        args.push(value);
-                    }
-                }
-                value => args.push(format!("--{name}={value}")),
-            }
+            append_engine_arg(&mut args, name, value)?;
         }
         if matches!(self.ec.role, Some(EcRole::Producer)) {
             args.extend([
@@ -521,6 +473,41 @@ impl LaunchPlanV1 {
         }
         Ok(args)
     }
+}
+
+/// Appends one controller-normalized engine option to a shell-free command line.
+pub fn append_engine_arg(
+    args: &mut Vec<String>,
+    name: &str,
+    value: &serde_json::Value,
+) -> Result<(), String> {
+    match value {
+        serde_json::Value::Null => {}
+        serde_json::Value::Bool(enabled) => args.push(if *enabled {
+            format!("--{name}")
+        } else {
+            format!("--no-{name}")
+        }),
+        serde_json::Value::String(value) => args.push(format!("--{name}={value}")),
+        serde_json::Value::Array(values) => {
+            args.push(format!("--{name}"));
+            for value in values {
+                let value = match value {
+                    serde_json::Value::String(value) => value.clone(),
+                    value => value.to_string(),
+                };
+                // A list item must not become a separate CLI option.
+                if value.starts_with('-') && value.parse::<f64>().is_err() {
+                    return Err(format!(
+                        "engineArgs.{name} contains an option-like list value"
+                    ));
+                }
+                args.push(value);
+            }
+        }
+        value => args.push(format!("--{name}={value}")),
+    }
+    Ok(())
 }
 
 impl LaunchPlanV1 {

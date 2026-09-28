@@ -29,7 +29,7 @@ from benchmarks.config.benchmark import (
 from benchmarks.model_service import ModelService
 from benchmarks.results.console import capture_run_logs, log_benchmark_summary
 from benchmarks.results.environment import client_environment, serving_environment
-from benchmarks.results.metrics import RequestMeasurement
+from benchmarks.results.metrics import RequestMeasurement, summarize_measurements
 from benchmarks.results.prometheus import PrometheusObserver
 from benchmarks.results.replicas import KubernetesReplicaObserver
 from benchmarks.results.wandb import publish_http_wandb
@@ -100,6 +100,32 @@ class ConsoleSink:
         return None
 
 
+def request_measurement_record(item: RequestMeasurement, *, stream: bool) -> dict[str, Any]:
+    """Serialize a request on the elapsed measurement clock for HTTP and trace result readers."""
+    return {
+        "success": item.succeeded,
+        "status_code": item.status_code,
+        "error": item.error_message,
+        "stream": stream,
+        "start_time": item.started_at,
+        "end_time": item.started_at + item.latency,
+        "latency": item.latency,
+        "ttft": item.ttft if stream else None,
+        "tpot": item.tpot if stream else None,
+        "input_tokens": item.input_tokens,
+        "output_tokens": item.output_tokens,
+        "cached_input_tokens": item.cached_input_tokens,
+        "inter_token_latencies": list(item.itl_samples) if stream else [],
+        "conversation_id": item.conversation_id,
+        "turn": item.turn,
+        "dataset": item.dataset,
+        "model": item.model,
+        "priority": item.priority,
+        "request_class": item.request_class,
+        "target_output_tokens": item.target_output_tokens,
+    }
+
+
 class BenchmarkArtifactSink:
     """Materialize HTTP configuration, metrics, and per-request records in the execution directory."""
 
@@ -132,33 +158,11 @@ class BenchmarkArtifactSink:
                 "raw_output.json",
                 [
                     {
-                        "success": item.succeeded,
+                        **request_measurement_record(item, stream=bool(run.metrics["stream"])),
                         **(
                             {"slo_met": slo_met[index], "slo_target": slo["request_criteria"]}
-                            if isinstance(slo_met, list)
-                            else {}
+                            if isinstance(slo_met, list) else {}
                         ),
-                        "status_code": item.status_code,
-                        "error": item.error_message,
-                        "stream": bool(run.metrics["stream"]),
-                        "start_time": item.started_at,
-                        "end_time": item.started_at + item.latency,
-                        "latency": item.latency,
-                        "ttft": item.ttft if run.metrics["stream"] else None,
-                        "tpot": item.tpot if run.metrics["stream"] else None,
-                        "input_tokens": item.input_tokens,
-                        "output_tokens": item.output_tokens,
-                        "cached_input_tokens": item.cached_input_tokens,
-                        "inter_token_latencies": list(item.itl_samples)
-                        if run.metrics["stream"]
-                        else [],
-                        "conversation_id": item.conversation_id,
-                        "turn": item.turn,
-                        "dataset": item.dataset,
-                        "model": item.model,
-                        "priority": item.priority,
-                        "request_class": item.request_class,
-                        "target_output_tokens": item.target_output_tokens,
                     }
                     for index, item in enumerate(run.measurements)
                 ],
@@ -179,6 +183,27 @@ class LocalDirectorySink:
 
     def publish(self, run: BenchmarkRun) -> None:
         logger.info("Results saved: %s", self.output_dir)
+
+    def close(self, *, exit_code: int = 0) -> None:
+        return None
+
+
+class PlotSink:
+    """Export figures from the same saved records used by independent redraws."""
+
+    def __init__(self, directory: str) -> None:
+        self.directory = Path(directory)
+
+    def open(self, record: dict[str, Any]) -> None:
+        return None
+
+    def publish(self, run: BenchmarkRun) -> None:
+        """Render after artifact sinks finish and expose the figure directory to publishers."""
+        from benchmarks.results.plots import render_results
+
+        render_results(self.directory)
+        run.artifacts["plots"] = self.directory / "plots"
+        logger.info("Plots saved: %s", run.artifacts["plots"])
 
     def close(self, *, exit_code: int = 0) -> None:
         return None
@@ -244,6 +269,35 @@ class WandbSink:
             raise RuntimeError("W&B sink is not open")
         try:
             self.publisher(self._run, run)
+            if "warmup_metrics" in run.artifacts:
+                warmup = json.loads(run.artifacts["warmup_metrics"].read_text(encoding="utf-8"))
+                comparison = []
+                if "latency" in run.metrics:
+                    for key, unit in (("latency", "s"), ("ttft", "s"), ("tpot", "s")):
+                        for statistic in ("mean", "p50", "p95", "p99"):
+                            comparison.append([f"{key} {statistic} ({unit})", warmup[key][statistic], run.metrics[key][statistic]])
+                    comparison.append(["Request throughput (req/s)", warmup["throughput"]["requests_per_second"], run.metrics["throughput"]["requests_per_second"]])
+                else:
+                    for key in ("e2e_s", "queue_wait_s", "server_generation_s"):
+                        comparison.append([f"{key} (s)", warmup.get(key), run.metrics.get(key)])
+                comparison.extend((
+                    ["Requests", warmup["request_num"], run.metrics["request_num"]],
+                    ["Success rate (%)", warmup["success_rate"] * 100, run.metrics["success_rate"] * 100],
+                ))
+                self._run.log({"Phases/Warmup vs measurement": wandb.Table(
+                    columns=["Metric", "Warmup", "Measurement"], data=comparison,
+                )})
+                artifact = wandb.Artifact(f"warmup-{self._run.id}", type="benchmark-warmup")
+                for name in ("warmup_metrics", "warmup_raw_output"):
+                    artifact.add_file(str(run.artifacts[name]), name=run.artifacts[name].name)
+                self._run.log_artifact(artifact)
+            if "plots" in run.artifacts:
+                directory = run.artifacts["plots"]
+                artifact = wandb.Artifact(f"plots-{self._run.id}", type="benchmark-plots")
+                artifact.add_dir(str(directory))
+                self._run.log_artifact(artifact)
+                for image in sorted(directory.glob("*.png")):
+                    self._run.log({f"Plots/{image.stem}": wandb.Image(str(image))})
         except wandb.errors.Error:
             logger.exception("W&B publication failed")
             raise
@@ -270,7 +324,7 @@ def result_directory_path(
     if output_dir is not None:
         return output_dir
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if benchmark.outputs.includes("local"):
+    if benchmark.outputs.saves_local:
         os.makedirs(benchmark.outputs.output_dir, exist_ok=True)
         return mkdtemp(
             prefix=f"{directory_prefix}{timestamp}-",
@@ -408,7 +462,7 @@ class ResultOutputs:
         if self._execution_dir is not None:
             raise RuntimeError("result outputs are already active")
         outputs = self.benchmark.outputs
-        if outputs.includes("local"):
+        if outputs.saves_local:
             self._execution_dir = result_directory_path(
                 self.benchmark,
                 self.output_dir,
@@ -456,7 +510,7 @@ class ResultOutputs:
                     "standard benchmark results require a service"
                 )
             standard_benchmark = cast(BenchmarkConfig, self.benchmark)
-            if outputs.includes("local") or outputs.includes("wandb"):
+            if outputs.saves_local or outputs.includes("wandb"):
                 sinks.append(
                     BenchmarkArtifactSink(
                         standard_benchmark,
@@ -465,7 +519,7 @@ class ResultOutputs:
                 )
             if not outputs.includes("quiet"):
                 sinks.append(ConsoleSink())
-            if outputs.includes("local"):
+            if outputs.saves_local:
                 sinks.append(
                     LocalDirectorySink(directory)
                 )
@@ -497,10 +551,13 @@ class ResultOutputs:
                         run_config=run_config,
                     )
                 )
+        if outputs.includes("plot"):
+            index = next((index for index, sink in enumerate(sinks) if isinstance(sink, WandbSink)), len(sinks))
+            sinks.insert(index, PlotSink(directory))
         for sink in sinks:
             self._resources.callback(self._close_sink, sink)
             sink.open(record)
-        if outputs.includes("local") or outputs.includes("wandb"):
+        if outputs.saves_local or outputs.includes("wandb"):
             self._environment = {
                 "client": client_environment(),
             }
@@ -513,7 +570,7 @@ class ResultOutputs:
             self.service is not None
             and self.service.model_service_refs
             and (
-                outputs.includes("local")
+                outputs.saves_local
                 or outputs.includes("wandb")
             )
         ):
@@ -598,8 +655,37 @@ class ResultOutputs:
             self._prometheus_observer = None
             self._exit_code = 0
 
+    def record_warmup(self, rows: list[dict[str, Any]], metrics: dict[str, Any]) -> None:
+        """Persist the completed warmup before measurement or a warmup failure."""
+        write_json(self.execution_dir, "warmup_raw_output.json", rows)
+        write_json(self.execution_dir, "warmup_metrics.json", metrics)
+
+    def record_http_warmup(
+        self,
+        measurements: list[RequestMeasurement],
+        *,
+        duration: float,
+        stream: bool,
+        arrival_rate: float,
+        concurrency: int,
+    ) -> None:
+        """Summarize and serialize HTTP warmup on its own clock, apart from measured results."""
+        metrics = summarize_measurements(
+            measurements, total_time=duration, stream=stream,
+            arrival_rate=arrival_rate, request_count=len(measurements),
+            reported_concurrency=concurrency, gpu_count=None,
+            include_normalized_throughput=False,
+        )
+        self.record_warmup(
+            [request_measurement_record(item, stream=stream) for item in measurements], metrics,
+        )
+
     def publish(self, run: BenchmarkRun) -> None:
         """Stop observations, record the run status, and publish every open sink."""
+        for name in ("warmup_raw_output", "warmup_metrics"):
+            path = Path(self.execution_dir) / f"{name}.json"
+            if path.is_file():
+                run.artifacts[name] = path
         if run.exit_code is not None:
             self._exit_code = run.exit_code
         elif int(run.metrics["success_num"]) == 0:

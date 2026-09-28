@@ -18,16 +18,30 @@ ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.9.10
 FROM ${UV_IMAGE} AS uv
 
 # Keep the build-time patch utility out of the inference image.
-FROM docker.io/library/debian:bookworm-slim AS patch-tool
+FROM ${BASE_IMAGE_REGISTRY}/library/debian:bookworm-slim AS patch-tool
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends patch \
+    && apt-get install -y --no-install-recommends patch ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
+
+# The upstream musl binary also runs in inference images with older glibc.
+FROM patch-tool AS dragonfly-client
+ARG TARGETARCH
+ARG DRAGONFLY_CLIENT_VERSION=1.5.5
+ARG FORETOKEN_GITHUB_MIRROR
+RUN case "$TARGETARCH" in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; *) exit 1 ;; esac \
+    && package="dragonfly-client-v${DRAGONFLY_CLIENT_VERSION}-${arch}-unknown-linux-musl" \
+    && origin="${FORETOKEN_GITHUB_MIRROR:-https://github.com}" \
+    && curl --fail --location "${origin%/}/dragonflyoss/client/releases/download/v${DRAGONFLY_CLIENT_VERSION}/${package}.tar.gz" --output /tmp/client.tar.gz \
+    && mkdir /out \
+    && tar -xzf /tmp/client.tar.gz --strip-components=1 -C /out "$package/dfget" "$package/LICENSE" \
+    && chmod 755 /out/dfget
 
 FROM ${RUST_BUILDER_IMAGE} AS builder
 
 ARG FORETOKEN_GITHUB_MIRROR
 ARG FORETOKEN_CARGO_REGISTRY
 ARG CARGO_NET_GIT_FETCH_WITH_CLI
+ARG FORETOKEN_MODEL_SERVER_BINARY=foretoken-model-server
 
 RUN if [ "${CARGO_NET_GIT_FETCH_WITH_CLI}" = true ]; then \
       apt-get update \
@@ -57,10 +71,26 @@ RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/regis
     fi \
     && cargo build --locked --release \
       --manifest-path data-plane/Cargo.toml \
-      --package foretoken-model-server \
+      --package foretoken-model-server --bin "${FORETOKEN_MODEL_SERVER_BINARY}" \
     && install -Dm755 \
-      data-plane/target/release/foretoken-model-server \
-      /out/foretoken-model-server
+      "data-plane/target/release/${FORETOKEN_MODEL_SERVER_BINARY}" \
+      /out/model-server
+
+# vLLM-Omni images already contain their Python runtime and model plugins. This
+# target only adds the thin Foretoken lifecycle/proxy adapter and deliberately
+# skips the standard vLLM patch and dependency stages below.
+FROM ${INFERENCE_ENGINE_IMAGE} AS omni-runtime
+
+ARG OMNI_VIDEO_SYNC_TIMEOUT=4000
+ENV VLLM_OMNI_VIDEO_SYNC_TIMEOUT=${OMNI_VIDEO_SYNC_TIMEOUT} \
+    VLLM_OMNI_DLO_DP_WAVE_TIMEOUT=${OMNI_VIDEO_SYNC_TIMEOUT}
+
+ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
+ARG OCI_REVISION
+LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
+      org.opencontainers.image.revision="${OCI_REVISION}"
+COPY --from=builder /out/model-server /usr/local/bin/foretoken-omni-model-server
+ENTRYPOINT ["foretoken-omni-model-server"]
 
 FROM ${INFERENCE_ENGINE_IMAGE} AS engine-runtime
 
@@ -115,13 +145,17 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
       'import sys; print(sys.executable)') \
     && backend=$("$python_path" -c \
       'import torch; print("maca" if getattr(torch.version, "maca", None) else "cuda" if torch.version.cuda else "other")') \
-    && set -- modelscope==1.35.3 \
-    && case "$backend" in cuda) set -- "$@" bitsandbytes==0.49.2 ;; esac \
+    && set -- modelscope==1.35.3 tzdata \
+    && case "$backend" in cuda) set -- "$@" bitsandbytes==0.49.2 modelexpress==0.6.0 nixl==1.4.1 ;; esac \
+    && "$python_path" -c 'from importlib.metadata import version; print("torch==" + version("torch")); print("vllm==" + version("vllm"))' > /tmp/foretoken-engine-constraints.txt \
     && uv pip install --no-cache --python "$python_path" \
+      --constraint /tmp/foretoken-engine-constraints.txt \
       --default-index "${UV_DEFAULT_INDEX}" "$@" \
     && rm -rf /opt/foretoken/python/foretoken_dt \
     && uv pip install --no-cache --no-deps --python "$python_path" \
-      --default-index "${UV_DEFAULT_INDEX}" /tmp/dt-plugin
+      --default-index "${UV_DEFAULT_INDEX}" /tmp/dt-plugin \
+    && uv pip check --python "$python_path" \
+    && rm /tmp/foretoken-engine-constraints.txt
 
 FROM engine-runtime AS runtime
 
@@ -129,7 +163,9 @@ ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
 ARG OCI_REVISION
 LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
-COPY --from=builder /out/foretoken-model-server /usr/local/bin/foretoken-model-server
+COPY --from=builder /out/model-server /usr/local/bin/foretoken-model-server
+COPY --from=dragonfly-client /out/dfget /usr/local/bin/dfget
+COPY --from=dragonfly-client /out/LICENSE /usr/share/licenses/dragonfly-client/LICENSE
 COPY data-plane/model-server/python/ /opt/foretoken/python/
 
 # Preserve the inference engine image's runtime user and environment. The workload owns its

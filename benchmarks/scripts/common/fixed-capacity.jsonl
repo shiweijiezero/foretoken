@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+{"_benchmark_name":"context-16384in-256out","min_prompt_length":16384,"max_prompt_length":16384,"min_output_length":256,"max_output_length":256,"max_concurrency":[1,8]}
+{"_benchmark_name":"context-24576in-256out","min_prompt_length":24576,"max_prompt_length":24576,"min_output_length":256,"max_output_length":256,"max_concurrency":[1,8]}

@@ -21,6 +21,11 @@ pub trait RouteInventory: Send + Sync {
     /// Reports whether one route target may receive new work.
     fn is_route_target_healthy(&self, route_target_id: &RouteTargetId) -> bool;
 
+    /// Resolves the HTTP endpoint of a selected aggregate route; selection stays with the Router.
+    fn http_endpoint(&self, _decision: &RouteDecision) -> Option<String> {
+        None
+    }
+
     /// Returns the capabilities currently trusted for one route target.
     fn effective_capabilities(&self, route_target_id: &RouteTargetId) -> BTreeSet<String> {
         self.model_routes()

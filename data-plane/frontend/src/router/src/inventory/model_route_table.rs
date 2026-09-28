@@ -52,15 +52,24 @@ pub(crate) fn supports_request(
     request: &RouterRequest,
     requires_encoder: bool,
 ) -> bool {
-    (request.generate_request.lora_request.is_none() || capabilities.contains("lora"))
-        && (request.generate_request.reasoning_parser_kwargs.is_none()
-            || capabilities.contains("reasoning"))
+    let Some(text) = &request.generate_request else {
+        return capabilities.contains("video");
+    };
+    if capabilities.contains("video") {
+        return false;
+    }
+    (text.lora_request.is_none() || capabilities.contains("lora"))
+        && (text.reasoning_parser_kwargs.is_none() || capabilities.contains("reasoning"))
         && supports_structured_output(capabilities, request)
         && (!requires_encoder || supports_multimodal(capabilities, request))
 }
 
 fn supports_structured_output(capabilities: &BTreeSet<String>, request: &RouterRequest) -> bool {
-    let Some(output) = &request.generate_request.sampling_params.structured_outputs else {
+    let Some(output) = request
+        .generate_request
+        .as_ref()
+        .and_then(|text| text.sampling_params.structured_outputs.as_ref())
+    else {
         return true;
     };
     let capability = match output.constraint {
@@ -75,7 +84,11 @@ fn supports_structured_output(capabilities: &BTreeSet<String>, request: &RouterR
 }
 
 fn supports_multimodal(capabilities: &BTreeSet<String>, request: &RouterRequest) -> bool {
-    let Some(features) = &request.generate_request.mm_features else {
+    let Some(features) = request
+        .generate_request
+        .as_ref()
+        .and_then(|text| text.mm_features.as_ref())
+    else {
         return true;
     };
     capabilities.contains("multimodal")

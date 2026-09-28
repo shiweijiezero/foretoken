@@ -87,6 +87,13 @@ def publish_video_wandb(
         run.artifacts["raw_results"].read_text(encoding="utf-8")
     )
     sdk_run.log(video_metrics_to_wandb(run.metrics))
+    warmup_path = run.artifacts.get("warmup_raw_output")
+    if warmup_path is not None:
+        warmup_rows = json.loads(warmup_path.read_text(encoding="utf-8"))
+        sdk_run.log({"Warmup/video_requests": wandb.Table(
+            columns=list(_SAMPLE_FIELDS),
+            data=[[result.get(field_name) for field_name in _SAMPLE_FIELDS] for result in warmup_rows],
+        )})
 
     rows = [
         [result.get(field_name) for field_name in _SAMPLE_FIELDS]

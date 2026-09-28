@@ -30,6 +30,20 @@ workload:
     claimName: ""
     mountPath: /var/cache/foretoken
 
+# Optional peer distribution for model files and loaded weights.
+modelDistribution:
+  # Requires a compatible CUDA runtime and allocated RDMA devices.
+  modelexpress:
+    enabled: false
+  dragonfly:
+    enabled: false
+    # Leave empty to let foretoken install manage the Dragonfly release.
+    existingRelease:
+      name: ""
+      namespace: ""
+    # Resolved from the installed daemon by foretoken install; also supports direct Helm use.
+    socketPath: /var/run/dragonfly/dfdaemon.sock
+
 # Unused node-network IP addresses for services when the cluster assigns none.
 # Consumed by foretoken install, which then manages MetalLB in Layer 2 mode.
 loadBalancer:
@@ -89,6 +103,9 @@ observability:
 
 # The runtime image must contain Foretoken model-server, its Python launcher, and a compatible vLLM runtime.
 runtime:
+  # Optional image built from a vLLM-Omni base and the Foretoken Omni adapter.
+  vllmOmni:
+    image: ""
   vllm:
     image: auto # Selects the release image for the configured GPU resource.
     # Optional source-built diagnostic image with Nsight Systems; used only by opted-in models.

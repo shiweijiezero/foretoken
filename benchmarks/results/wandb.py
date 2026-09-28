@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import wandb
 
 from benchmarks.results.metrics import percentile_summary
+from benchmarks.results.plots.measurements import load_http_measurements
 
 if TYPE_CHECKING:
     from benchmarks.results.output import BenchmarkRun
@@ -289,6 +290,19 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 sdk_run.log(row)
 
     raw_output = run.artifacts.get("raw_output")
+    warmup_raw = run.artifacts.get("warmup_raw_output")
+    warmup_metrics_path = run.artifacts.get("warmup_metrics")
+    if warmup_raw is not None:
+        raw = json.loads(warmup_raw.read_text(encoding="utf-8"))
+        warmup_measurements = load_http_measurements(raw)
+        duration = float(json.loads(warmup_metrics_path.read_text(encoding="utf-8"))["benchmark_time"]) if warmup_metrics_path is not None else max((item.started_at + item.latency for item in warmup_measurements), default=0.0)
+        sdk_run.log({"Warmup/Requests": wandb.Table(
+            columns=["Request index", "E2EL (s)", "TTFT (s)", "TPOT (ms)", "Success"],
+            data=[[index, item.latency, item.ttft, item.tpot * 1000 if item.tpot is not None else None, item.succeeded] for index, item in enumerate(warmup_measurements, 1)],
+        )})
+        for row in time_series(warmup_measurements, duration=duration, stream=bool(run.metrics["stream"])):
+            sdk_run.log({f"Warmup/{key}": value for key, value in row.items()})
+
     if raw_output is not None:
         rows = _trace_bucket_rows(
             json.loads(raw_output.read_text(encoding="utf-8"))
@@ -318,6 +332,41 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
         sdk_run.log_artifact(artifact)
 
     sdk_run.log(wandb_metric_fields(run.metrics))
+
+
+def publish_sweep_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
+    """Publish the shared repeat statistics and data-backed comparison curves."""
+    from benchmarks.results.plots import sweep_charts
+
+    points = json.loads(run.artifacts["sweep_points"].read_text(encoding="utf-8"))
+    summary = json.loads(run.artifacts["sweep_summary"].read_text(encoding="utf-8"))
+    columns = ["method", "combination", "parameter_group", "bench", "metric", "requested_runs",
+               "runs", "failed_runs", "samples", "mean", "stddev", "median", "min", "max"]
+    sdk_run.log({"Sweep/Summary": wandb.Table(
+        columns=columns,
+        data=[[json.dumps(row[key], ensure_ascii=False) if key == "bench" else row[key] for key in columns] for row in summary],
+        allow_mixed_types=True,
+    )})
+    for chart in sweep_charts(points, summary):
+        if chart.tick_labels:
+            table = wandb.Table(columns=["Method / condition", chart.ylabel], data=[
+                [f"{series.name} / {chart.tick_labels[int(x)]}", y if math.isfinite(y) else None]
+                for series in chart.series for x, y in zip(series.x, series.y)
+            ])
+            plot = wandb.plot.bar(table, "Method / condition", chart.ylabel, title=chart.title)
+        else:
+            plot = wandb.plot.line_series(
+                xs=[list(series.x) for series in chart.series],
+                ys=[[y if math.isfinite(y) else None for y in series.y] for series in chart.series],
+                keys=[series.name for series in chart.series], xname=chart.xlabel,
+                title=f"{chart.title} — {chart.ylabel}",
+            )
+        sdk_run.log({f"Sweep/{chart.name}": plot})
+    artifact = wandb.Artifact(f"sweep-{sdk_run.id}", type="benchmark")
+    for name in ("config", "sweep_points", "sweep_summary", "sweep_summary_csv"):
+        path = run.artifacts[name]
+        artifact.add_file(str(path), name=path.name)
+    sdk_run.log_artifact(artifact)
 
 
 def publish_slo_wandb(sdk_run: Any, run: BenchmarkRun) -> None:

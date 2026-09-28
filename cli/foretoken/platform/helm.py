@@ -232,6 +232,47 @@ class Helm(HelmClient):
         self._finish_upgrade(args, timeout)
         self.run(args)
 
+    def dragonfly_release(self) -> ReleaseRef:
+        """Return the optional file-distribution release owned by platform installation."""
+        return ReleaseRef(self._config.dragonfly.release_name, self._config.namespace)
+
+    def dragonfly_daemonset(self, release: ReleaseRef) -> ResourceRef:
+        """Read the actual node client identity from the selected Dragonfly release."""
+        return self._managed_chart_resource(
+            release,
+            api_version="apps/v1",
+            kind="DaemonSet",
+            chart_description="Dragonfly chart",
+        )
+
+    def install_dragonfly(
+        self, release: ReleaseRef, accelerator_resource: str,
+        image_pull_secrets: tuple[dict[str, str], ...], timeout: str,
+    ) -> None:
+        """Install standalone scheduling and node peers without databases or runtime rewrites."""
+        chart = self._config.dragonfly
+        args = self._upgrade_install_args(release, chart.source, chart.version)
+        args.extend([
+            "--set", "manager.enable=false",
+            "--set", "mysql.enable=false",
+            "--set", "redis.enable=false",
+            "--set", "seedClient.enable=false",
+            "--set", "client.hostNetwork=false",
+            "--set", "client.hostPID=false",
+            "--set", "client.hostIPC=false",
+            "--set", "client.dfinit.enable=false",
+            "--set-json", "global.imagePullSecrets=" + json.dumps(image_pull_secrets),
+        ])
+        if accelerator_resource:
+            args.extend([
+                "--set-json", "client.tolerations=" + json.dumps([
+                    {"key": accelerator_resource, "operator": "Exists", "effect": "NoSchedule"},
+                ]),
+            ])
+        self._add_chart_image_sources(args, ("scheduler.image", "client.image", "client.initContainer.image"))
+        self._finish_upgrade(args, timeout)
+        self.run(args)
+
     @property
     def platform_selector_labels(self) -> tuple[tuple[str, str], ...]:
         """Return labels shared by resources in the platform release."""
@@ -480,6 +521,7 @@ class Helm(HelmClient):
         rdma_resource_name: str | None,
         rdma_managed: bool,
         rdma_node_names: tuple[str, ...],
+        dragonfly_socket_path: str,
         stored_values: dict[str, Any] | None,
         timeout: str,
     ) -> None:
@@ -529,6 +571,10 @@ class Helm(HelmClient):
                     f"runtime.vllm.gpu.resourceName={gpu_resource_name}",
                 ]
             )
+        args.extend([
+            "--set-string",
+            f"modelDistribution.dragonfly.socketPath={dragonfly_socket_path}",
+        ])
         if rdma_managed:
             args.extend(
                 [

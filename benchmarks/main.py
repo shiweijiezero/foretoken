@@ -16,11 +16,7 @@ from foretoken.manifest import DeploymentError
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.config.cli import parse_benchmark_arguments
 from benchmarks.config.video_cli import parse_video_arguments
-from benchmarks.model_service import (
-    ModelService,
-    require_health_endpoint,
-    resolve_model_service,
-)
+from benchmarks.model_service import ModelService, resolve_benchmark_service
 from benchmarks.results.console import (
     configure_logging,
     format_benchmark_config,
@@ -40,9 +36,7 @@ def run_benchmark(
     benchmark: BenchmarkConfig,
     service: ModelService,
 ) -> BenchmarkRun:
-    """Execute the configured sweep, SLO search, or measurement point."""
-    if benchmark.sweep.path:
-        return ParameterSweepBenchmark(benchmark, service).run()
+    """Execute an SLO search or measurement on a prepared service."""
     if benchmark.slo.params:
         return SloAutoTuneBenchmark(benchmark, service).run()
     return measurement_runner(benchmark, service).run()
@@ -54,8 +48,11 @@ def _run_video(arguments: Sequence[str], *, command_name: str) -> None:
         command = parse_video_arguments(arguments, command_name=command_name)
         config = command.config
         configure_logging(not config.outputs.includes("quiet"))
-        runner = run_video_sweep if config.sweep.path else run_video_benchmark
-        result = asyncio.run(runner(config, dry_run=command.dry_run))
+        result = (
+            run_video_sweep(config, dry_run=command.dry_run)
+            if config.sweep.path
+            else asyncio.run(run_video_benchmark(config, dry_run=command.dry_run))
+        )
     except (ValueError, wandb.errors.Error) as exc:
         raise SystemExit(str(exc)) from exc
     if not result.get("dry_run") and result["metrics"]["success_num"] == 0:
@@ -70,31 +67,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         return
     try:
         benchmark = parse_benchmark_arguments(arguments)
-        benchmark.validate()
         quiet = benchmark.outputs.includes("quiet")
         configure_logging(not quiet)
-        with resolve_model_service(
-            benchmark.service, retain_runtime_cache=benchmark.profile is not None,
-            allow_multiple_models=bool(
-                benchmark.trace.trace_selector
-                or (
-                    benchmark.resolved_workload.dataset_selectors
-                    and benchmark.resolved_workload.dataset_selectors != ["random"]
-                )
-            ),
-        ) as service:
-            if benchmark.profile is not None and not service.model:
-                raise ValueError("--profile requires --model for a multi-model deployment")
-            if benchmark.service.health_url:
-                asyncio.run(require_health_endpoint(benchmark.service.health_url))
-                logger.info("Model service health check passed")
-            if benchmark.service.kustomize_path and not quiet:
-                print_model_service(service)
-
-            logger.info("%s", format_benchmark_config(benchmark, service))
-            run = run_benchmark(benchmark, service)
-            if run.metrics["success_num"] == 0:
-                raise SystemExit(1)
+        if benchmark.sweep.path or len(benchmark.service_choices) > 1:
+            run = ParameterSweepBenchmark(benchmark).run()
+        else:
+            benchmark.validate()
+            with resolve_benchmark_service(benchmark) as service:
+                if benchmark.service.kustomize_path and not quiet:
+                    print_model_service(service)
+                logger.info("%s", format_benchmark_config(benchmark, service))
+                run = run_benchmark(benchmark, service)
+        if run.metrics["success_num"] == 0:
+            raise SystemExit(1)
     except (DeploymentError, ValueError, wandb.errors.Error) as exc:
         raise SystemExit(str(exc)) from exc
 

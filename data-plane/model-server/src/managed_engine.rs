@@ -41,6 +41,11 @@ impl ManagedEngine {
         self.handle.wait_for_exit().await
     }
 
+    /// Polls the managed process during adapter startup without taking process ownership.
+    pub async fn try_wait(&self) -> Option<ExitStatus> {
+        self.handle.try_wait().await
+    }
+
     /// Stops the actual engine after request drain, then reaps the launcher or reports failure.
     pub async fn shutdown(&self, timeout: Duration) -> Result<(), String> {
         let deadline = Instant::now() + timeout;

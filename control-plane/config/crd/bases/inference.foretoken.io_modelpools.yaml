@@ -93,6 +93,7 @@ spec:
                   backend:
                     enum:
                     - vllm
+                    - vllm-omni
                     type: string
                   ecProfile:
                     description: ECProfile is the controller-owned platform EC profile

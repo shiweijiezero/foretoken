@@ -26,6 +26,7 @@ from benchmarks.results.output import (
     BenchmarkRun,
     ResultOutputs,
     build_benchmark_run_record,
+    request_measurement_record,
     write_json,
 )
 from benchmarks.datasets.conversations import (
@@ -374,13 +375,20 @@ class TraceReplayBenchmark:
                     max_connections=active_connection_limit,
                 ) as client:
                     if warmup_events:
-                        await self._replay_events(
+                        warmup_records, warmup_duration, warmup_origin = await self._replay_events(
                             client,
                             warmup_events,
                             max_concurrency=max_concurrency,
                             trace_window_start=warmup_events[0].timestamp_seconds,
                             trace_origin=trace_window_start,
                         )
+                        outputs.record_http_warmup(
+                            [_request_measurement(item, warmup_origin) for item in warmup_records],
+                            duration=warmup_duration, stream=self.benchmark.generation.stream,
+                            arrival_rate=-1.0, concurrency=reported_concurrency,
+                        )
+                        if any(not item["success"] for item in warmup_records):
+                            raise ValueError("Warmup requests failed; measurement was not started")
                     if profile is not None:
                         await profile.before_request()
                     records, total_time, time_origin = await self._replay_events(
@@ -418,7 +426,13 @@ class TraceReplayBenchmark:
             # The raw replay records carry trace timing that RequestMeasurement
             # does not; they are written as an artifact for the W&B trace charts.
             raw_output: Path = write_json(
-                outputs.execution_dir, "raw_output.json", records
+                outputs.execution_dir, "raw_output.json", [
+                    {
+                        **{key: value for key, value in raw.items() if key != "started_at"},
+                        **request_measurement_record(measurement, stream=bool(metrics["stream"])),
+                    }
+                    for raw, measurement in zip(records, measurements)
+                ],
             )
             run = BenchmarkRun(
                 record=record,

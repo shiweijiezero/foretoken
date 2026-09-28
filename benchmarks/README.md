@@ -55,6 +55,8 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 | Omit `--output` or use `local,wandb` | Print results, save local files, and upload to W&B |
 | `local` | Print results and save local files |
 | `wandb` | Print results and upload to W&B |
+| `plot` | Retain results and export PDF, SVG, PNG, and CSV |
+| `local,wandb,plot` | Save results, export figures, and upload to W&B |
 | `local,quiet` | Save local files without console summaries |
 | `local,wandb,quiet` | Save and upload results without console summaries |
 
@@ -63,3 +65,5 @@ Capture CPU/GPU execution while a workload runs, then open the timeline with `fo
 Local results use a separate directory under `results/` for each run; `--output-dir` changes the parent. Use `--wandb-project`, `--wandb-entity`, `--wandb-group`, and `--wandb-run-name` to organize runs.
 
 See [performance results](docs/perf/wandb.md) for latency and throughput charts, [quality results](docs/eval/README.md#read-scores) for task scores and native reports, and [profile viewing](docs/profile/README.md#inspect-results) for retained execution captures.
+
+Redraw saved results with `foretoken plot RESULT_DIR`, using the result directory printed by the run. `--columns 2` selects double-column width. See [parameter sweeps](docs/perf/sweep.md) for multi-method comparisons.

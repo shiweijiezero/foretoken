@@ -96,7 +96,7 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
         "--output",
         default=output.destinations,
         type=lambda value: tuple(value.split(",")),
-        help="local,wandb,quiet (default: local,wandb)",
+        help="local,wandb,plot,quiet (default: local,wandb)",
     )
     parser.add_argument(
         "--output-dir",

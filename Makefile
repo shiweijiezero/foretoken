@@ -6,6 +6,8 @@
 CONTROL_PLANE_IMAGE ?= foretoken-control-plane:dev
 FRONTEND_IMAGE ?= foretoken-frontend:dev
 MODEL_SERVER_IMAGE ?= foretoken-model-server:dev
+OMNI_MODEL_SERVER_IMAGE ?= foretoken-omni-model-server:dev
+VLLM_OMNI_IMAGE ?= foretoken-vllm-omni:dev
 MOONCAKE_IMAGE ?= foretoken-mooncake
 MOONCAKE_VERSION ?=
 
@@ -19,8 +21,8 @@ VLLM_CUDA_IMAGE ?= foretoken-vllm-cuda:dev
 GIT = git $(if $(FORETOKEN_GITHUB_MIRROR),-c url.$(patsubst %/,%,$(FORETOKEN_GITHUB_MIRROR))/.insteadOf=https://github.com/,)
 
 .PHONY: vllm-source build-data-plane format verify-data-plane dev-build dev-deploy \
-	image-control-plane image-frontend image-vllm-cuda image-vllm-metax image-model-server \
-	image-model-server-metax image-benchmark dashboard alert-receivers
+	image-control-plane image-frontend image-vllm-cuda image-vllm-metax image-model-server image-model-server-omni \
+	image-model-server-metax image-vllm-omni image-benchmark dashboard alert-receivers
 
 # Regenerates the localized Grafana dashboards shipped by the chart; needs the `dev` extra installed.
 dashboard:
@@ -109,6 +111,29 @@ image-model-server: vllm-source
 		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
 		-f data-plane/model-server/Dockerfile -t "$(MODEL_SERVER_IMAGE)" .
+
+image-vllm-omni:
+	docker build \
+		$(if $(VLLM_OMNI_REVISION),--build-arg VLLM_OMNI_REVISION="$(VLLM_OMNI_REVISION)",) \
+		$(if $(VLLM_OMNI_BASE_IMAGE),--build-arg BASE_IMAGE="$(VLLM_OMNI_BASE_IMAGE)",) \
+		$(if $(FORETOKEN_GITHUB_MIRROR),--build-arg FORETOKEN_GITHUB_MIRROR="$(FORETOKEN_GITHUB_MIRROR)",) \
+		--build-arg UV_DEFAULT_INDEX \
+		-f deploy/inference-engines/vllm-omni/Dockerfile -t "$(VLLM_OMNI_IMAGE)" .
+
+image-model-server-omni: vllm-source
+	@test -n "$(INFERENCE_ENGINE_IMAGE)" || \
+		(printf '%s\n' 'Set INFERENCE_ENGINE_IMAGE to a compatible vLLM-Omni image.' >&2; exit 1)
+	docker build --target omni-runtime \
+		--build-arg INFERENCE_ENGINE_IMAGE="$(INFERENCE_ENGINE_IMAGE)" \
+		--build-arg FORETOKEN_MODEL_SERVER_BINARY=foretoken-omni-model-server \
+		$(if $(OMNI_VIDEO_SYNC_TIMEOUT),--build-arg OMNI_VIDEO_SYNC_TIMEOUT="$(OMNI_VIDEO_SYNC_TIMEOUT)",) \
+		$(if $(OCI_REGISTRY),--build-arg BASE_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \
+		--build-arg FORETOKEN_GITHUB_MIRROR \
+		--build-arg FORETOKEN_CARGO_REGISTRY \
+		--build-arg CARGO_NET_GIT_FETCH_WITH_CLI \
+		--build-arg OCI_SOURCE="$(OCI_SOURCE)" \
+		--build-arg OCI_REVISION="$(OCI_REVISION)" \
+		-f data-plane/model-server/Dockerfile -t "$(OMNI_MODEL_SERVER_IMAGE)" .
 
 image-model-server-metax: image-vllm-metax
 	$(MAKE) image-model-server \

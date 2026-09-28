@@ -13,6 +13,7 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	"github.com/shiweijiezero/foretoken/control-plane/internal/resolver"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,6 +49,7 @@ func (reconciler *ModelPoolReconciler) SetupWithManager(manager ctrl.Manager) er
 	return ctrl.NewControllerManagedBy(manager).
 		For(&inferencev1alpha1.ModelPool{}).
 		Owns(&inferencev1alpha1.ModelGroup{}).
+		Owns(&corev1.Service{}).
 		Watches(&inferencev1alpha1.ModelService{}, handler.EnqueueRequestsFromMapFunc(reconciler.poolsForService)).
 		Complete(reconciler)
 }
@@ -100,12 +102,18 @@ func (reconciler *ModelPoolReconciler) Reconcile(ctx context.Context, request ct
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := reconciler.reconcileWeightSources(ctx, pool, template); err != nil {
+		return ctrl.Result{}, err
+	}
 	state, err := reconciler.reconcileGroups(ctx, pool, template, servingRevision)
 	if err != nil {
 		active, stateErr := reconciler.currentActiveState(ctx, pool, serviceServingRevision(service, pool))
 		active.Reason, active.Message = "ApplyFailed", "ModelGroups were not fully materialized"
 		statusErr := reconciler.updateStatus(ctx, pool, metav1.ConditionTrue, "Resolved", "Pool execution config was resolved", active)
 		return ctrl.Result{}, errors.Join(err, stateErr, statusErr)
+	}
+	if err := reconciler.cleanupPreparationSources(ctx, pool); err != nil {
+		return ctrl.Result{}, err
 	}
 	if err := reconciler.updateStatus(ctx, pool, metav1.ConditionTrue, "Resolved", "Pool execution config was resolved", state); err != nil {
 		return ctrl.Result{}, err

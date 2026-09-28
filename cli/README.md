@@ -86,6 +86,34 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 Registry login authorizes the local image push. Private registries also need `imagePullSecrets` and `workload.imagePullSecrets` through `--values` so nodes can pull the images; see [Deploy Foretoken from Source](../docs/custom-deployment.md).
 
+### Model distribution
+
+To share public model downloads between nodes through Dragonfly, save this in `platform-values.yaml`:
+
+```yaml
+modelDistribution:
+  dragonfly:
+    enabled: true
+```
+
+```bash
+foretoken install --values platform-values.yaml
+```
+
+Installation prepares Dragonfly or reuses an existing installation. Models that require authentication and custom model endpoints download directly from their provider. To select a particular Dragonfly Helm release, set `existingRelease: {name: dragonfly, namespace: dragonfly-system}` under `modelDistribution.dragonfly`.
+
+On NVIDIA clusters with RDMA, ModelExpress can load weights from running replicas. Add this alongside `dragonfly` to enable it:
+
+```yaml
+modelDistribution:
+  modelexpress:
+    enabled: true
+```
+
+Automatic weight transfer uses remote models with a persistent cache, data parallelism of one, and fixed expert placement. An explicit `load-format` remains unchanged. Each GPU worker selects a nearby available RDMA interface; replicas without a compatible source load the prepared files.
+
+Reapply the installation command after changing either setting. Set `enabled: false` to disable it. `foretoken uninstall` removes managed Dragonfly resources once no workloads use them; reused installations are retained.
+
 ### Installation options
 
 Use `--values` only to override platform image, runtime, or hardware settings. Without an override, installation compares supported public sources for default platform images and OCI charts. Use `--oci-registry` to select a registry explicitly; image references supplied through values remain unchanged. Source selection runs on the CLI host, so the selected registry must also be reachable from the cluster nodes.
@@ -144,6 +172,10 @@ Use `foretoken perf` to measure response latency and request or token throughput
 ## Evaluate and compare models
 
 Use `foretoken eval` to score model answers with lm-evaluation-harness or EvalScope. It accepts the same service selection options; task and scoring parameters use the selected framework's syntax. See [Quality evaluation](../benchmarks/docs/eval/README.md). Add `--reference` to [compare a candidate's probabilities against a reference](../benchmarks/docs/eval/distribution-comparison.md).
+
+## Export figures
+
+Use `--output local,wandb,plot` with a benchmark, or `foretoken plot RESULT_DIR` to redraw a saved run or sweep without running inference. Export options and comparisons are in [parameter sweeps](../benchmarks/docs/perf/sweep.md).
 
 ## Find execution bottlenecks
 
