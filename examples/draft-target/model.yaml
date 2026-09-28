@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Requires the independent external-speculation vLLM engine extension.
+# Requires the DT plugin and its supported native vLLM version.
 apiVersion: inference.foretoken.io/v1alpha1
 kind: ModelService
 metadata:

@@ -85,9 +85,9 @@ publication remains registered until ACK; Target keeps its received tensor until
 verification output or request abort. A transfer failure may retain storage until
 process termination. See the [Connector contract](connector-contract.md).
 
-RDMA execution requires the separate vLLM extension on both roles. Without RDMA,
-Target still needs the external-candidate extension. No role patches engine
-methods during installation. The [Rust frontend workflow](frontend-workflow.md)
+Both roles use the plugin's native-vLLM adapter described in the
+[integration contract](mrv2-integration.md). Its runtime patches do not modify
+installed vLLM files. The [Rust frontend workflow](frontend-workflow.md)
 uses these endpoints for both direct token-input requests and public API dispatch.
 
 ## Discovery identity

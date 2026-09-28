@@ -5,16 +5,45 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 # MRV2 integration contract
 
-The DT role service requires the independent vLLM `feat/external-speculation`
-branch ([PR #1](https://github.com/shiweijiezero/vllm/pull/1)), based on
-`3b4566c5cf014605de6aeab6eb831b4f20511c17`. The pinned
-submodule is unchanged. Installing this package does not patch vLLM, replace
-engine methods, or register a `vllm serve` entry point.
+The [DT Proposal](../../../docs/proposals/draft-target-disaggregation.md)
+describes the service architecture, role boundaries and acceptance sequence.
+
+The DT role service targets native vLLM `0.30.1rc1.dev194+g3b4566c5c`
+(commit `3b4566c5cf014605de6aeab6eb831b4f20511c17`). Foretoken owns the
+compatibility layer in `foretoken_dt.vllm`; it does not edit installed vLLM files
+or require a separate engine branch. The earlier
+[closed upstream-extension PR](https://github.com/shiweijiezero/vllm/pull/1) remains a
+reference for the missing extension points, not an installation prerequisite.
+
+Native `worker_cls` and `scheduler_cls` select plugin subclasses. The
+`vllm.general_plugins` entry point installs two process-local EngineCore hooks:
+candidate submission through the existing utility queue, and readiness while
+requests wait for remote candidates. Worker initialization temporarily replaces
+the Runner, speculator and sampler factories, restoring each binding afterward.
+No upstream scheduling or model-execution method body is copied. These internal
+boundaries are version-sensitive, so role startup rejects other vLLM versions.
+
+## Image ownership
+
+The [NVIDIA runtime build](../../../deploy/inference-engines/vllm-cuda/Dockerfile)
+installs pinned upstream wheels. Normal source builds use it unless an engine
+image is explicitly supplied; MetaX retains its own runtime build. The
+[model-server image](../../model-server/Dockerfile) installs the DT distribution
+with its `vllm.general_plugins` entry point in the engine's Python environment.
+The DT launcher extends an inherited plugin allowlist before creating subprocesses.
+No validation-directory mounts or source overlays are needed at runtime.
+
+The model-server image still applies Foretoken's existing profiling, ready-metadata
+and offload-identity backports. The native 3b4566c5c engine uses the matching
+ready-metadata patch because its required LoRA fields precede optional fields.
+These ordinary engine-integration backports are separate from the DT runtime
+adapter; the standalone original-wheel hash check does not describe this patched
+model-server image. Rust build sources remain pinned independently.
 
 ## Engine boundary
 
-The extension adds `method="external"` and
-`AsyncLLM.submit_external_draft_tokens(ticket, token_ids)`. A nonterminal
+The plugin configures `method="external"` and exposes
+`ExternalAsyncLLM.submit_external_draft_tokens(ticket, token_ids)`. A nonterminal
 `RequestOutput.external_draft_request` carries an immutable request/generation
 ticket after normal output stop handling. Submission returns whether the ticket
 was admitted, not whether verification accepted the candidates. Stale or consumed
@@ -25,22 +54,28 @@ tickets return false; an empty candidate list requests a Target-only step.
 | Scheduler | Wait per request, admit ready candidates, account for verification work, invalidate tickets on preemption |
 | EngineCore | Receive submissions through the existing utility queue; sleep when only external waiters remain |
 | MRV2 | Resolve current request slots, fill GPU draft-token state before input preparation, consume staged GPU proposal distributions through native rejection sampling |
-| OutputProcessor | Attach the next ticket after stop handling; never issue one on terminal output |
+| Plugin AsyncLLM | Attach the next ticket after native output stop handling; never issue one on terminal output |
 | Foretoken frontend | Select role instances, order rounds, retain session lifetimes, stream confirmed output |
 | Role service | Translate session/version messages to engine requests and tickets; abort owned work on disconnect |
 
 No local Draft model or speculator is constructed by the Target engine. Updating
 Scheduler's CPU candidates alone is insufficient: MRV2 input preparation reads
-`req_states.draft_tokens`, so the extension fills that state after request-slot
+`req_states.draft_tokens`, so the plugin fills that state after request-slot
 updates. EngineCore distinguishes lifecycle ownership from schedulable work to
 avoid stepping continuously while remote candidates are outstanding.
+
+Tickets pair vLLM's unique internal request ID with its cumulative confirmed output
+token count. The client retains the internal ID from the native output collector;
+no cross-process output schema is changed. Waiting requests remain in the native
+running queue and remain eligible for KV preemption. Preemption removes their
+waiting state; replay advances the output frontier before a new ticket is issued.
 
 This mode supports text, one worker, eager execution, synchronous local scheduling
 and output interval one. `draft_sample_method="probabilistic"` consumes external
 proposal distributions; the token-only mode requires greedy sampling. RDMA Draft
-also needs the extension's processed-logit export. Remote waits are per request;
+also uses the plugin sampler's processed-logit export. Remote waits are per request;
 other requests can still execute. Distributed model execution, CUDA graphs,
-multimodal input and KV/EC transfer are not enabled by this extension.
+multimodal input and KV/EC transfer are not enabled by this adapter.
 
 The role CLI sets `VLLM_BATCH_INVARIANT=1` before importing vLLM unless the
 process environment already specifies a value. Native kernels own this numerical
@@ -75,8 +110,8 @@ candidate trees or intermediate verification.
 ## Worker and transport boundary
 
 `DraftTargetWorkerExtension` is installed through the native `worker_extension_cls`
-entry point. It connects MRV2 GPU I/O hooks to Mooncake. There is no Foretoken or
-Mooncake import in the generic engine extension.
+entry point. It connects the plugin Runner's GPU I/O hooks to Mooncake; the
+EngineCore and scheduler adapters contain no Mooncake-specific behavior.
 
 Draft marks each per-round request with `SamplingParams.extra_args["dt_artifact_id"]`.
 The sampler exposes processed logits, and the Worker captures complete float32

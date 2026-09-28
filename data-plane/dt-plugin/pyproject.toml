@@ -18,5 +18,8 @@ dependencies = ["torch", "fastapi", "uvicorn", "anyio", "pydantic>=2", "httpx"]
 foretoken-dt-role = "foretoken_dt.serve:main"
 foretoken-dt-transfer = "foretoken_dt.probe:main"
 
+[project.entry-points."vllm.general_plugins"]
+foretoken_dt = "foretoken_dt.vllm:register"
+
 [tool.setuptools.packages.find]
 where = ["src"]

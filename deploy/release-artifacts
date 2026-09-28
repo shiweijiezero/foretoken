@@ -36,7 +36,7 @@ Options:
   -h, --help                Show this help.
 
 Build inputs:
-  INFERENCE_ENGINE_IMAGE        Compatible NVIDIA inference runtime image.
+  INFERENCE_ENGINE_IMAGE        Optional NVIDIA runtime override; defaults to the pinned source build.
   METAX_INFERENCE_ENGINE_IMAGE  Compatible MetaX inference runtime image.
 
 Optional inputs such as FORETOKEN_VLLM_PYTHON, METAX_VLLM_PYTHON, registry
@@ -266,21 +266,10 @@ if [[ "$MODE" == build ]]; then
       "OCI_REVISION=$OCI_REVISION"
   fi
   if selected model-server; then
-    if [[ "$DRY_RUN" == true ]]; then
-      build_model_server \
-        "$MODEL_SERVER_IMAGE" \
-        "${INFERENCE_ENGINE_IMAGE:-INFERENCE_ENGINE_IMAGE}" \
-        "${FORETOKEN_VLLM_PYTHON:-}"
-    else
-      [[ -n "${INFERENCE_ENGINE_IMAGE:-}" ]] || {
-        printf '%s\n' 'INFERENCE_ENGINE_IMAGE is required for model-server' >&2
-        exit 2
-      }
-      build_model_server \
-        "$MODEL_SERVER_IMAGE" \
-        "$INFERENCE_ENGINE_IMAGE" \
-        "${FORETOKEN_VLLM_PYTHON:-}"
-    fi
+    build_model_server \
+      "$MODEL_SERVER_IMAGE" \
+      "${INFERENCE_ENGINE_IMAGE:-}" \
+      "${FORETOKEN_VLLM_PYTHON:-}"
   fi
   if selected model-server-metax; then
     if [[ "$DRY_RUN" == true ]]; then

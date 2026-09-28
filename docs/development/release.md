@@ -87,17 +87,21 @@ The [Chinese template](release-template_zh.md) follows the same release contract
 
 ## Build and push the release artifacts
 
-Prepare compatible NVIDIA and MetaX inference-runtime images, then replace the registry prefix and runtime image names below with your own:
+The NVIDIA runtime is built from pinned upstream vLLM and Mooncake CUDA 13 wheels.
+Prepare a compatible MetaX inference-runtime image and replace the registry prefix
+and MetaX image below with your own:
 
 ```bash
 export REGISTRY=ghcr.io/your-org/foretoken
-export INFERENCE_ENGINE_IMAGE=your-nvidia-runtime:version
 export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
 The release uses one shared version for the control-plane, frontend, model-server images, and Helm Chart. The MetaX model-server image adds the `-metax` suffix.
+
+Set `INFERENCE_ENGINE_IMAGE` only to override the default NVIDIA runtime.
+For DT, that override must match the [plugin's engine requirements](../../data-plane/dt-plugin/README.md#start-two-roles).
 
 After validating the artifacts, log in to the registry and push them:
 

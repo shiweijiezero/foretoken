@@ -25,8 +25,9 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from vllm import AsyncEngineArgs
-    from vllm.outputs import ExternalDraftRequest
-    from vllm.v1.engine.async_llm import AsyncLLM
+
+    from .vllm.engine import ExternalAsyncLLM as AsyncLLM
+    from .vllm.engine import ExternalDraftRequest
 
 
 class Message(BaseModel):
@@ -487,7 +488,7 @@ def create_app(
     rdma_nic: str = "",
 ) -> FastAPI:
     """Build an internal role API; its lifespan exclusively owns the vLLM engine."""
-    from vllm.v1.engine.async_llm import AsyncLLM
+    from .vllm.engine import ExternalAsyncLLM as AsyncLLM
 
     @asynccontextmanager
     async def lifespan(app):

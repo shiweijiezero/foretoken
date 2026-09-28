@@ -66,14 +66,14 @@
 <text x="980" y="809" font-size="21" font-weight="600" fill="#253042" text-anchor="start">MRV2 + 原生 rejection sampler</text>
 <text x="980" y="840" font-size="20" font-weight="400" fill="#647184" text-anchor="start">验证候选 · 采样 · 更新 Target KV</text>
 <rect x="960" y="888" width="404" height="65" rx="15" fill="#fff4d9" stroke="#ced8e5" stroke-width="1.5"/>
-<text x="980" y="921" font-size="20" font-weight="600" fill="#253042" text-anchor="start">OutputProcessor：确认输出 + ticket</text>
+<text x="980" y="921" font-size="20" font-weight="600" fill="#253042" text-anchor="start">AsyncLLM：确认输出 + ticket</text>
 <path d="M1162 523 L1162 541" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none"  marker-end="url(#arrow)"/>
 <path d="M1162 640 L1162 658" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none"  marker-end="url(#arrow)"/>
 <path d="M1162 756 L1162 774" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none"  marker-end="url(#arrow)"/>
 <path d="M1162 870 L1162 888" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none"  marker-end="url(#arrow)"/>
 <rect x="44" y="995" width="1338" height="96" rx="15" fill="#ffffff" stroke="#ced8e5" stroke-width="1.5"/>
-<text x="64" y="1028" font-size="25" font-weight="600" fill="#253042" text-anchor="start">交付边界：Foretoken DT 插件 + 独立 vLLM 引擎扩展版本</text>
-<text x="64" y="1059" font-size="20" font-weight="400" fill="#647184" text-anchor="start">插件接入原生 worker_extension_cls；vLLM 扩展提供外部候选准入和 MRV2 GPU I/O，不在安装时打补丁。</text>
+<text x="64" y="1028" font-size="25" font-weight="600" fill="#253042" text-anchor="start">交付边界：Foretoken DT 插件 + 固定版本原版 vLLM</text>
+<text x="64" y="1059" font-size="20" font-weight="400" fill="#647184" text-anchor="start">插件子类复用原生执行；少量运行时 patch 接入外部候选和 MRV2 GPU I/O，不修改 vLLM 文件。</text>
 <path d="M1428 191 H1878" stroke="#bd151b" stroke-width="3"/>
 <text x="1440" y="231" font-size="25" font-weight="700" fill="#253042" text-anchor="start">Frontend｜跨角色编排</text>
 <text x="1440" y="267" font-size="21" font-weight="400" fill="#647184" text-anchor="start">服务配置 speculation.draftPool。</text>
@@ -90,7 +90,7 @@
 <text x="1440" y="689" font-size="21" font-weight="400" fill="#647184" text-anchor="start">接收就绪后才让候选进入验证；</text>
 <text x="1440" y="719" font-size="21" font-weight="400" fill="#647184" text-anchor="start">网络等待不阻塞其他就绪请求。</text>
 <path d="M1428 779 H1878" stroke="#bd151b" stroke-width="3"/>
-<text x="1440" y="819" font-size="25" font-weight="700" fill="#253042" text-anchor="start">vLLM 扩展｜通用引擎接口</text>
+<text x="1440" y="819" font-size="25" font-weight="700" fill="#253042" text-anchor="start">vLLM 适配｜插件内接入</text>
 <text x="1440" y="855" font-size="21" font-weight="400" fill="#647184" text-anchor="start">EngineCore 管理调度执行循环；</text>
 <text x="1440" y="885" font-size="21" font-weight="400" fill="#647184" text-anchor="start">MRV2 是 Worker 中的 ModelRunner。</text>
 <text x="1440" y="915" font-size="21" font-weight="400" fill="#647184" text-anchor="start">两者属于不同层级，并非同一组件。</text>
@@ -99,7 +99,7 @@
 <rect x="364" y="1151" width="28" height="24" rx="4" fill="#f0ebff" stroke="#ced8e5" stroke-width="1.5"/>
 <text x="406" y="1172" font-size="21" font-weight="400" fill="#253042" text-anchor="start">Foretoken 新增 DT 组件</text>
 <rect x="790" y="1151" width="28" height="24" rx="4" fill="#fff4d9" stroke="#ced8e5" stroke-width="1.5"/>
-<text x="832" y="1172" font-size="21" font-weight="400" fill="#253042" text-anchor="start">独立 vLLM 扩展 / 接入点</text>
+<text x="832" y="1172" font-size="21" font-weight="400" fill="#253042" text-anchor="start">插件适配 / 运行时 patch</text>
 <text x="1440" y="1153" font-size="19" font-weight="400" fill="#647184" text-anchor="start">范围：文本、线性候选、每角色单 Worker</text>
 <text x="1440" y="1185" font-size="19" font-weight="400" fill="#647184" text-anchor="start">多 Draft 协作 / tree / PD 组合尚未实现</text>
 <path d="M650 300 V308 Q650 316 658 316 H1154 Q1162 316 1162 324 V332" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none" marker-end="url(#arrow)"/>

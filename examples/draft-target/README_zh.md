@@ -8,10 +8,10 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 [English](README.md)
 
 本示例将主模型和独立 Draft 模型分别部署为 Aggregate Pool，由现有前端 Router 自动发现和选择实例。
-需要两张 GPU、共享 RuntimeCache，以及包含[独立 external-speculation 引擎扩展](../../data-plane/dt-plugin/docs/mrv2-integration.md)的源码构建平台。
-已发布和仓库固定版本的 vLLM 不包含该扩展。安装平台时，把 `runtime.vllm.image`
-设为包含该扩展的 model-server 镜像；只安装 Python DT 包不会增加引擎接口。
-通过 RDMA 传提议分布时，两端都需要扩展引擎。
+需要两张 GPU、共享 RuntimeCache，以及包含 [DT 插件与其支持的原版 vLLM](../../data-plane/dt-plugin/docs/mrv2-integration.md) 的源码构建平台。
+NVIDIA 源码构建会自动准备受支持的 CUDA 13 引擎并安装 DT 包，主机驱动需兼容 CUDA 13。
+部署此示例不会升级已有发行版镜像，应先从源码重建平台。
+自定义引擎镜像必须匹配插件支持的原版 vLLM 版本。
 
 平台配置现有 `rdma.resourceName`、`rdma.resourceCount` 后，控制器会为每个角色分配
 RDMA 设备并启用 Mooncake GPU 概率传输。Worker 使用 Pod IP 建立握手；网络需允许

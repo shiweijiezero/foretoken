@@ -10,11 +10,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 Deploy the main model and a separate Draft model in independent Aggregate Pools,
 discovered and selected by the normal frontend Router. This example needs two
 GPUs, a shared RuntimeCache, and a
-source-built platform with the [external-speculation engine extension](../../data-plane/dt-plugin/docs/mrv2-integration.md).
-The released and repository-pinned vLLM engines do not provide that extension.
-Set the platform's `runtime.vllm.image` to your model-server image containing it;
-installing the Python DT package alone does not add the engine APIs. Both roles
-need the extended engine for probability transfer.
+source-built platform with the [DT plugin and its supported native vLLM version](../../data-plane/dt-plugin/docs/mrv2-integration.md).
+NVIDIA source builds prepare the supported CUDA 13 engine and install the DT package
+automatically. Use a CUDA 13-compatible host driver. Existing release images are
+not upgraded by deploying this example; rebuild the platform from source first.
+Custom engine images must match the plugin's supported native version.
 
 With the platform's existing `rdma.resourceName` and `rdma.resourceCount` configured,
 the controller allocates RDMA devices to each role and enables Mooncake GPU

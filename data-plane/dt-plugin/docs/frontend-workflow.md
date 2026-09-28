@@ -61,6 +61,11 @@ headers and nonzero DP ranks are rejected before role admission. These are curre
 implementation limits, not ignored options. The lower-level role API still
 supports direct token requests and optional Python-side stop strings.
 
+The allowlist applies after model generation defaults are resolved. For example,
+a model default of `repetition_penalty: 1.1` causes an HTTP 400 even when the client
+omits that field. Explicitly requesting `repetition_penalty: 1.0` disables the
+penalty and permits this supported path; it changes the requested sampling policy.
+
 ## Ownership during a round
 
 ```text
@@ -137,5 +142,5 @@ RDMA allocation enables the Worker connector; Pod IP supplies its handshake addr
 [deployment example](../../../examples/draft-target/README.md).
 
 The role reports owned session counts, not inferred scheduler or KV metrics.
-Metric-driven autoscaling remains unvalidated. This path requires the independent
-engine extension; it is not enabled by installing the plugin into stock vLLM.
+Metric-driven autoscaling remains unvalidated. This path requires the plugin and
+the exact native vLLM version in the [integration contract](mrv2-integration.md).

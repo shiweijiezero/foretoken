@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Keep aligned with the DT adapter's supported native engine version.
+vllm==0.30.1rc1.dev194+g3b4566c5c
+mooncake-transfer-engine-cuda13==0.3.13.post1
+# Keep FlashInfer's JIT compiler and headers on the runtime's CUDA minor version.
+cuda-toolkit[nvcc,cccl]==13.0.3.0

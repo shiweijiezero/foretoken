@@ -14,12 +14,19 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 通过现有 Controller、Router 部署请使用 [Kubernetes 示例](../../examples/draft-target/README_zh.md)。
 下面直接启动两个角色服务，再通过 [Rust 前端示例](docs/frontend-workflow.md)发送请求。
 
+NVIDIA 源码构建中，`make image-model-server` 会构建固定版本的 CUDA 13 引擎并安装本插件，
+包含 vLLM 子进程发现所需的入口。`foretoken install -e .` 默认使用同一运行环境。
+主机需支持 CUDA 13；显式覆盖 `INFERENCE_ENGINE_IMAGE` 时，应提供下述兼容引擎和 Mooncake 环境。
+沐曦沿用独立的运行时构建，不属于本 DT 适配层已验证的 NVIDIA 范围。
+
 ## 启动两个角色
 
-两台主机均需安装独立的 [vLLM 引擎扩展](https://github.com/shiweijiezero/vllm/pull/1)，
+两台主机均需安装原版 vLLM `0.30.1rc1.dev194+g3b4566c5c`，
 并准备 Python 3.10+、兼容的 PyTorch/Mooncake wheel 和可用的 GPU/RDMA 访问。
 环境还需包含 FastAPI、Uvicorn、AnyIO、Pydantic 2 和 HTTPX。
-安装本包不会安装或修改 vLLM，也不会注册 `vllm serve` 模式。
+本包通过原生类选择接口和少量进程内运行时 patch 接入，不修改已安装的 vLLM 文件，
+不依赖独立引擎分支，也不安装 vLLM 或注册 `vllm serve` 模式。
+适配层限定上述引擎版本，详见[集成说明](docs/mrv2-integration.md)。
 
 使用已加载的 `nvidia-peermem` 内核模块时，两端进程设置 `WITH_NVIDIA_PEERMEM=1`；
 否则 Mooncake 默认的 DMA-BUF 路径需要相应驱动支持。容器还需具备 GPU/RDMA 设备访问、
@@ -56,7 +63,7 @@ curl http://127.0.0.1:19100/status
 `candidate_format: "token_ids_log_probs"`。前端选中的两个角色必须使用相同格式。
 使用两端 HTTP 地址启动前端；角色服务仅提供内部 API，没有公共 OpenAI 接口或鉴权。
 
-每个 RDMA 角色使用一个 GPU Worker、eager 执行和本地同步调度。等待远端候选只暂停
+每个角色使用一个 GPU Worker、eager 执行和本地同步调度。等待远端候选只暂停
 对应请求，其他请求仍可执行。命令接受 vLLM 原有的模型、显存及 batch 参数。
 `--draft-token-budget` 设置每轮候选上限，默认 3；`--port` 设置 HTTP 端口，默认 19100；
 `--rdma-nic` 可指定 HCA，不设置时由 Mooncake 从可见设备中选择。
@@ -68,8 +75,14 @@ attention 后端也必须支持它。启动前显式设置 `VLLM_BATCH_INVARIANT
 贪心输出可能随 batch 组合变化。与独立 Target 对比时应使用相同设置。
 当前未测量这一设置的性能成本，也不承诺所有配置都能逐 token 完全一致。
 
+角色启动器会将 `foretoken_dt` 加入继承的 `VLLM_PLUGINS` 白名单，确保引擎子进程加载必要的钩子。
+
 支持 `temperature`、`top_p`、`top_k` 和 Target 的 `seed`。
 Draft 使用独立的随机数；固定 Target seed 不保证不同候选轮次或 batch 组合产生相同序列。
+
+前端拒绝非默认的重复、频率和存在惩罚，包括从模型 `generation_config.json` 继承的值。
+若模型默认开启重复惩罚，且你希望关闭它，应在请求中显式设置 `"repetition_penalty": 1.0`。
+当前 DT 路径不能保留非默认的惩罚行为，也不会静默忽略它。
 
 不使用 RDMA 时，两端都省略 `--rdma-host`。此时仅支持 `temperature: 0`，
 能力标识为 `greedy_token_ids`，候选通过 HTTP 传递；随机采样请求会在准入前被拒绝。

@@ -14,11 +14,12 @@ OCI_SOURCE ?= https://github.com/shiweijiezero/foretoken
 OCI_REVISION ?= $(shell git rev-parse HEAD)
 
 VLLM_METAX_IMAGE ?= foretoken-vllm-metax:dev
+VLLM_CUDA_IMAGE ?= foretoken-vllm-cuda:dev
 
 GIT = git $(if $(FORETOKEN_GITHUB_MIRROR),-c url.$(patsubst %/,%,$(FORETOKEN_GITHUB_MIRROR))/.insteadOf=https://github.com/,)
 
 .PHONY: vllm-source build-data-plane format verify-data-plane dev-build dev-deploy \
-	image-control-plane image-frontend image-vllm-metax image-model-server \
+	image-control-plane image-frontend image-vllm-cuda image-vllm-metax image-model-server \
 	image-model-server-metax image-benchmark dashboard alert-receivers
 
 # Regenerates the localized Grafana dashboards shipped by the chart; needs the `dev` extra installed.
@@ -70,6 +71,15 @@ image-frontend: vllm-source
 		--build-arg OCI_REVISION="$(OCI_REVISION)" \
 		-f data-plane/frontend/Dockerfile -t "$(FRONTEND_IMAGE)" .
 
+image-vllm-cuda:
+	docker build \
+		$(if $(or $(FORETOKEN_DOCKER_IO_REGISTRY),$(FORETOKEN_OCI_REGISTRY),$(OCI_REGISTRY)),--build-arg BASE_IMAGE_REGISTRY="$(or $(FORETOKEN_DOCKER_IO_REGISTRY),$(FORETOKEN_OCI_REGISTRY),$(OCI_REGISTRY))",) \
+		$(if $(or $(FORETOKEN_GHCR_REGISTRY),$(FORETOKEN_OCI_REGISTRY),$(OCI_REGISTRY)),--build-arg UV_IMAGE_REGISTRY="$(or $(FORETOKEN_GHCR_REGISTRY),$(FORETOKEN_OCI_REGISTRY),$(OCI_REGISTRY))",) \
+		$(if $(UV_IMAGE),--build-arg UV_IMAGE="$(UV_IMAGE)",) \
+		--build-arg UV_DEFAULT_INDEX \
+		-f deploy/inference-engines/vllm-cuda/Dockerfile \
+		-t "$(VLLM_CUDA_IMAGE)" .
+
 image-vllm-metax: mooncake-source
 	docker build \
 		$(if $(METAX_SDK_IMAGE),--build-arg METAX_SDK_IMAGE="$(METAX_SDK_IMAGE)",) \
@@ -86,9 +96,8 @@ image-vllm-metax: mooncake-source
 		-t "$(VLLM_METAX_IMAGE)" .
 
 image-model-server: vllm-source
-	@test -n "$(INFERENCE_ENGINE_IMAGE)" || \
-		(printf '%s\n' 'Set INFERENCE_ENGINE_IMAGE to a compatible inference engine image.' >&2; exit 1)
-	docker build --build-arg INFERENCE_ENGINE_IMAGE="$(INFERENCE_ENGINE_IMAGE)" \
+	$(if $(INFERENCE_ENGINE_IMAGE),,@$(MAKE) image-vllm-cuda)
+	docker build --build-arg INFERENCE_ENGINE_IMAGE="$(or $(INFERENCE_ENGINE_IMAGE),$(VLLM_CUDA_IMAGE))" \
 		$(if $(OCI_REGISTRY),--build-arg BASE_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \
 		$(if $(OCI_REGISTRY),--build-arg UV_IMAGE_REGISTRY="$(OCI_REGISTRY)",) \
 		$(if $(UV_IMAGE),--build-arg UV_IMAGE="$(UV_IMAGE)",) \
