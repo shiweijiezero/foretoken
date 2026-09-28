@@ -22,6 +22,9 @@ The delivery has two boundaries:
 - Foretoken integrates those services with ModelService deployment, discovery,
   instance selection, generation, streaming and drain.
 
+Both NVIDIA and MetaX (MACA) are required delivery platforms. The current
+NVIDIA validation is partial delivery evidence; it does not complete this scope.
+
 Target names the main model's verification responsibility. It does **not** require
 another public deployment role: phase one uses two `aggregate` pools and identifies
 the Draft pool through `speculation.draftPool`.
@@ -322,6 +325,51 @@ for the exact native interfaces. The normal model-server image installs this
 package and selects the supported CUDA engine runtime. Ordinary serving continues
 through its native execution path when no DT launch responsibility is configured.
 
+### NVIDIA and MetaX support
+
+Both platforms must implement the same role protocol, ticket semantics, proposal
+sampling contract and transfer ownership. Frontend routing and orchestration must
+not acquire accelerator-specific branches. Hardware and engine differences belong
+in the vLLM adapter and the existing platform runtime images.
+
+| Boundary | Shared behavior | Platform work |
+| --- | --- | --- |
+| Role services and frontend | Open/propose/verify/commit, confirmed output and cancellation | Reuse without introducing vendor-specific wire messages |
+| Engine adapter | Waiting tickets, candidate admission and request-slot association | Integrate with each runtime's actual EngineCore, Worker, Runner and sampler; preserve MetaX platform initialization |
+| Sampling | Export actual processed Draft probabilities and perform correct rejection sampling | Verify available kernels, temperature/truncation behavior and numeric behavior on each platform |
+| Device and transfer lifetime | Publish after producer completion; release after read ACK or safe GPU completion | Verify MACA tensor registration, streams/events and Mooncake RDMA completion with the platform build |
+| Packaging and deployment | Install one DT package through the existing model-server build | Use the appropriate NVIDIA or MetaX runtime, drivers, libraries and device resources |
+
+The existing [MetaX runtime](../../deploy/inference-engines/vllm-metax/Dockerfile)
+already builds Mooncake with `USE_MACA=ON` and configures
+`MC_MACA_HOST_TRANSPORT=1`. Reuse that build rather than install the CUDA Mooncake
+wheel into the MACA environment. Its
+[pinned source environment](../../deploy/inference-engines/vllm-metax/source-environment.json)
+currently uses core vLLM `0.30.0.dev0` and vLLM-MetaX `0.29.0.dev0`, whereas the DT
+adapter accepts only `0.30.1rc1.dev194+g3b4566c5c`. That mismatch currently prevents
+DT startup on the repository's MetaX runtime. Removing the version check alone
+would not establish compatibility.
+
+MetaX integration must first inspect the platform-selected Worker/Runner and its
+supported candidate-verification path, then adapt the existing DT admission and
+sampling hooks at those boundaries. It must not bypass the vendor's device or
+attention initialization by unconditionally selecting an upstream GPU Worker.
+Where interfaces match, share the implementation; keep necessary version/platform
+adaptations local to the engine adapter rather than duplicate the role service.
+
+The current launcher also defaults NVIDIA-oriented batch-invariant execution on.
+The MetaX path needs an explicitly supported numerical configuration instead of
+inheriting this assumption. Likewise, CUDA-compatible Torch API spelling alone
+does not prove that event ordering and GPU memory registration work on MACA.
+
+Completion requires standalone Draft/verification generation and cross-host RDMA
+on each platform, followed by Foretoken routing, streaming, cancellation and drain
+through each platform's packaged image. Check greedy results under a matched
+supported numerical configuration and validate the stochastic proposal-distribution
+path. A CPU transfer test or successful image build is insufficient. Mixed-vendor
+Draft/Target pairs need separate compatibility evidence; neither homogeneous
+platform run establishes that result.
+
 ### Foretoken integration
 
 | Area | Concrete change | Existing owner retained |
@@ -344,8 +392,8 @@ No separate controller or generic distributed workflow engine is introduced.
 
 ## Scope and extension boundaries
 
-Phase one supports text, linear candidates, one GPU worker per role instance,
-eager execution and synchronous local vLLM scheduling. Network admission is
+Phase one requires NVIDIA and MetaX support for text, linear candidates, one GPU
+worker per role instance, eager execution and synchronous local vLLM scheduling. Network admission is
 asynchronous with respect to GPU scheduling; this does not mean vLLM's optional
 async-scheduling mode is enabled.
 
@@ -385,6 +433,9 @@ specific functional paths, not statistical sampling equivalence, cross-node
 Kubernetes RDMA correctness, uninterrupted scale-down or a performance advantage.
 They predate the latest main-branch model-preparation integration; merge checks
 and new validation must identify their own coverage rather than inherit them.
+
+MetaX DT execution, its platform adapter and cross-host RDMA acceptance are still
+outstanding. They are required deliverables, not deferred multi-Draft features.
 
 Review should establish that:
 
