@@ -49,8 +49,8 @@ type LaunchPlanV1 struct {
 
 // LaunchDTPlan selects the independently installed DT role application.
 type LaunchDTPlan struct {
-	Role inferencev1alpha1.ModelRole `json:"role"`
-	RDMA bool                        `json:"rdma"`
+	Role inferencev1alpha1.SpeculationRole `json:"role"`
+	RDMA bool                              `json:"rdma"`
 }
 
 type LaunchArtifacts struct {
@@ -146,7 +146,10 @@ func Compile(template inferencev1alpha1.NormalizedPoolTemplate) (EffectiveConfig
 	if capacity != ranks {
 		return EffectiveConfig{}, fmt.Errorf("vLLM topology requires %d workers but the Pool provides %d accelerators", ranks, capacity)
 	}
-	if template.Role == inferencev1alpha1.ModelRoleDraft || template.Role == inferencev1alpha1.ModelRoleTarget {
+	if template.SpeculationRole != "" {
+		if template.Role != inferencev1alpha1.ModelRoleAggregate || (template.SpeculationRole != inferencev1alpha1.SpeculationRoleDraft && template.SpeculationRole != inferencev1alpha1.SpeculationRoleTarget) {
+			return EffectiveConfig{}, fmt.Errorf("speculation requires aggregate execution with draft or target responsibility")
+		}
 		if template.NodeCount != 1 || ranks != 1 || effective.Parallelism.DCP != 1 || effective.Parallelism.EP != nil {
 			return EffectiveConfig{}, fmt.Errorf("DT currently requires one GPU per Group; scale Pool replicas for additional role instances")
 		}
@@ -197,8 +200,8 @@ func BuildLaunchPlan(group inferencev1alpha1.ModelGroupSpec) (LaunchPlanV1, erro
 		return LaunchPlanV1{}, err
 	}
 	var dt *LaunchDTPlan
-	if group.Role == inferencev1alpha1.ModelRoleDraft || group.Role == inferencev1alpha1.ModelRoleTarget {
-		dt = &LaunchDTPlan{Role: group.Role, RDMA: group.RDMA != nil}
+	if group.SpeculationRole != "" {
+		dt = &LaunchDTPlan{Role: group.SpeculationRole, RDMA: group.RDMA != nil}
 		kv.Events = false
 	}
 	return LaunchPlanV1{DT: dt, Version: 1, NodeCount: group.NodeCount, Artifacts: LaunchArtifacts{Model: group.Artifacts.Model, Source: group.Artifacts.Source, Revision: group.Artifacts.ModelRevision, Tokenizer: group.Artifacts.Tokenizer, TokenizerRevision: group.Artifacts.TokenizerRevision}, Parallelism: parallelism, KV: kv, EC: ec, Lifecycle: LaunchLifecycle{StartupSeconds: startup, DrainSeconds: drain}, InternalGenerateRequestBodyLimitBytes: group.Runtime.InternalGenerateRequestBodyLimitBytes, EngineArgs: group.Runtime.EngineArgs.DeepCopy(), Profiling: group.Runtime.Profiling.DeepCopy()}, nil

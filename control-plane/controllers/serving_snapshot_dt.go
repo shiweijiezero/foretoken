@@ -14,7 +14,7 @@ import (
 
 func poolsHaveDT(pools []*inferencev1alpha1.ModelPool) bool {
 	return slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
-		return pool.Spec.Template.Role == inferencev1alpha1.ModelRoleDraft || pool.Spec.Template.Role == inferencev1alpha1.ModelRoleTarget
+		return pool.Spec.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleDraft || pool.Spec.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleTarget
 	})
 }
 
@@ -29,17 +29,17 @@ func projectServiceDTComponents(service *inferencev1alpha1.ModelService, pools [
 		if revision == "" {
 			continue
 		}
-		role := pool.Spec.Template.Role
-		if role != inferencev1alpha1.ModelRoleDraft && role != inferencev1alpha1.ModelRoleTarget {
+		role := pool.Spec.Template.SpeculationRole
+		if role != inferencev1alpha1.SpeculationRoleDraft && role != inferencev1alpha1.SpeculationRoleTarget {
 			continue
 		}
 		for index := range groups {
 			group := &groups[index]
-			if !routingGroupOwnedBy(group, pool) || group.Spec.Revision != revision || !routingGroupReady(group) || group.Spec.Role != role {
+			if !routingGroupOwnedBy(group, pool) || group.Spec.Revision != revision || !routingGroupReady(group) || group.Spec.SpeculationRole != role {
 				continue
 			}
 			selected = append(selected, group)
-			if role == inferencev1alpha1.ModelRoleTarget {
+			if role == inferencev1alpha1.SpeculationRoleTarget {
 				target = group
 			} else {
 				hasDraft = true
@@ -53,7 +53,7 @@ func projectServiceDTComponents(service *inferencev1alpha1.ModelService, pools [
 	components := make([]servingSnapshotDTComponent, 0, len(selected))
 	for _, group := range selected {
 		artifacts := group.Spec.Artifacts
-		if artifacts.Source != reference.Source || artifacts.Tokenizer != reference.Tokenizer || artifacts.TokenizerRevision != reference.TokenizerRevision || group.Spec.Role == inferencev1alpha1.ModelRoleTarget && (artifacts.Model != reference.Model || artifacts.ModelRevision != reference.ModelRevision) {
+		if artifacts.Source != reference.Source || artifacts.Tokenizer != reference.Tokenizer || artifacts.TokenizerRevision != reference.TokenizerRevision || group.Spec.SpeculationRole == inferencev1alpha1.SpeculationRoleTarget && (artifacts.Model != reference.Model || artifacts.ModelRevision != reference.ModelRevision) {
 			return nil, &splitRoutingProjectionError{service: service.Name, reason: fmt.Sprintf("Ready DT ModelGroup %q conflicts with the service model or tokenizer identity", group.Name)}
 		}
 		var revision *string
@@ -63,7 +63,7 @@ func projectServiceDTComponents(service *inferencev1alpha1.ModelService, pools [
 		components = append(components, servingSnapshotDTComponent{
 			ServiceUID: string(service.UID), PoolUID: group.Spec.ModelPoolRef.UID,
 			PoolName: routingPoolName(pools, group), RouteTargetID: string(group.UID),
-			PipelineScopeID: "dt:" + string(service.UID), Role: group.Spec.Role,
+			PipelineScopeID: "dt:" + string(service.UID), Role: group.Spec.SpeculationRole,
 			Model: reference.Model, EngineModel: artifacts.Model, EngineRevision: revision,
 			MaxInputTokens: copyOptionalInt32(group.Spec.MaxInputTokens),
 			Endpoint:       modelGroupEndpoint(group, group.Spec.Runtime.Port),

@@ -71,28 +71,29 @@ func (resolver StaticModelPoolResolver) Resolve(template inferencev1alpha1.Norma
 
 // ModelGroupTemplate is a resolved Group contract without Pool identity or ordinal.
 type ModelGroupTemplate struct {
-	Revision       string
-	Role           inferencev1alpha1.ModelRole
-	Artifacts      inferencev1alpha1.ModelGroupArtifacts
-	Runtime        inferencev1alpha1.ModelGroupRuntime
-	PDRuntime      *inferencev1alpha1.ModelGroupPDRuntimeConfig
-	RDMA           *inferencev1alpha1.RDMAAllocation
-	ECRuntime      *inferencev1alpha1.ModelGroupECRuntimeConfig
-	KVRuntime      *inferencev1alpha1.ModelGroupKVRuntimeConfig
-	Resources      inferencev1alpha1.ModelResources
-	Timeouts       inferencev1alpha1.ModelTimeouts
-	NodeCount      int32
-	MemberCount    int32
-	Parallelism    inferencev1alpha1.CompiledParallelism
-	MaxInputTokens *int32
-	Features       inferencev1alpha1.ModelFeatures
-	Accelerator    inferencev1alpha1.ModelGroupAccelerator
-	Network        string
+	Revision        string
+	Role            inferencev1alpha1.ModelRole
+	SpeculationRole inferencev1alpha1.SpeculationRole
+	Artifacts       inferencev1alpha1.ModelGroupArtifacts
+	Runtime         inferencev1alpha1.ModelGroupRuntime
+	PDRuntime       *inferencev1alpha1.ModelGroupPDRuntimeConfig
+	RDMA            *inferencev1alpha1.RDMAAllocation
+	ECRuntime       *inferencev1alpha1.ModelGroupECRuntimeConfig
+	KVRuntime       *inferencev1alpha1.ModelGroupKVRuntimeConfig
+	Resources       inferencev1alpha1.ModelResources
+	Timeouts        inferencev1alpha1.ModelTimeouts
+	NodeCount       int32
+	MemberCount     int32
+	Parallelism     inferencev1alpha1.CompiledParallelism
+	MaxInputTokens  *int32
+	Features        inferencev1alpha1.ModelFeatures
+	Accelerator     inferencev1alpha1.ModelGroupAccelerator
+	Network         string
 }
 
 // ResolveModelPool resolves one supported vLLM execution profile into a Group contract.
 func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
-	if template.Role != inferencev1alpha1.ModelRoleAggregate && template.Role != inferencev1alpha1.ModelRoleEncoder && template.Role != inferencev1alpha1.ModelRolePrefill && template.Role != inferencev1alpha1.ModelRoleDecode && template.Role != inferencev1alpha1.ModelRoleDraft && template.Role != inferencev1alpha1.ModelRoleTarget {
+	if template.Role != inferencev1alpha1.ModelRoleAggregate && template.Role != inferencev1alpha1.ModelRoleEncoder && template.Role != inferencev1alpha1.ModelRolePrefill && template.Role != inferencev1alpha1.ModelRoleDecode {
 		return ModelGroupTemplate{}, fmt.Errorf("ModelPool role %q is not supported", template.Role)
 	}
 	if template.NodeCount < 1 || template.MemberCount != template.NodeCount {
@@ -146,7 +147,7 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		}
 	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if template.NodeCount > 1 || effective.Parallelism.EP != nil || (pdRuntime != nil && pdRuntime.Protocol == "rdma") || template.Role == inferencev1alpha1.ModelRoleDraft || template.Role == inferencev1alpha1.ModelRoleTarget {
+	if template.NodeCount > 1 || effective.Parallelism.EP != nil || (pdRuntime != nil && pdRuntime.Protocol == "rdma") || template.SpeculationRole != "" {
 		rdma = profile.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
@@ -171,7 +172,8 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 	}
 
 	return ModelGroupTemplate{
-		Role: template.Role,
+		Role:            template.Role,
+		SpeculationRole: template.SpeculationRole,
 		Artifacts: inferencev1alpha1.ModelGroupArtifacts{
 			Model:             effective.Model,
 			Source:            template.Source,
@@ -316,25 +318,26 @@ func (template ModelGroupTemplate) Spec(pool *inferencev1alpha1.ModelPool, ordin
 		ecRuntime.ServiceUID = pool.Spec.ModelServiceRef.UID
 	}
 	return inferencev1alpha1.ModelGroupSpec{
-		ModelPoolRef:   inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
-		Revision:       template.Revision,
-		Ordinal:        ordinal,
-		Role:           template.Role,
-		Artifacts:      template.Artifacts,
-		Runtime:        template.Runtime,
-		PDRuntime:      pdRuntime,
-		RDMA:           template.RDMA,
-		ECRuntime:      ecRuntime,
-		KVRuntime:      template.KVRuntime,
-		Resources:      template.Resources,
-		Timeouts:       template.Timeouts,
-		NodeCount:      template.NodeCount,
-		MemberCount:    template.MemberCount,
-		Parallelism:    template.Parallelism,
-		MaxInputTokens: copyInt32(template.MaxInputTokens),
-		Features:       *template.Features.DeepCopy(),
-		Accelerator:    template.Accelerator,
-		Network:        template.Network,
+		ModelPoolRef:    inferencev1alpha1.LocalObjectReference{Name: pool.Name, UID: string(pool.UID)},
+		Revision:        template.Revision,
+		Ordinal:         ordinal,
+		Role:            template.Role,
+		SpeculationRole: template.SpeculationRole,
+		Artifacts:       template.Artifacts,
+		Runtime:         template.Runtime,
+		PDRuntime:       pdRuntime,
+		RDMA:            template.RDMA,
+		ECRuntime:       ecRuntime,
+		KVRuntime:       template.KVRuntime,
+		Resources:       template.Resources,
+		Timeouts:        template.Timeouts,
+		NodeCount:       template.NodeCount,
+		MemberCount:     template.MemberCount,
+		Parallelism:     template.Parallelism,
+		MaxInputTokens:  copyInt32(template.MaxInputTokens),
+		Features:        *template.Features.DeepCopy(),
+		Accelerator:     template.Accelerator,
+		Network:         template.Network,
 	}
 }
 

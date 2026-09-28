@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md)
 
-本示例分别部署 Draft、Target Pool，由现有前端 Router 自动发现和选择实例。
+本示例将主模型和独立 Draft 模型分别部署为 Aggregate Pool，由现有前端 Router 自动发现和选择实例。
 需要两张 GPU、共享 RuntimeCache，以及包含[独立 external-speculation 引擎扩展](../../data-plane/dt-plugin/docs/mrv2-integration.md)的源码构建平台。
 已发布和仓库固定版本的 vLLM 不包含该扩展。安装平台时，把 `runtime.vllm.image`
 设为包含该扩展的 model-server 镜像；只安装 Python DT 包不会增加引擎接口。
@@ -36,8 +36,10 @@ curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
   -d '{"model":"Qwen/Qwen3-4B","messages":[{"role":"user","content":"Hello"}],"temperature":0,"max_tokens":256}'
 ```
 
-`spec.model` 指定 Target。Draft 必须通过 `modelPools[].model` 指定自己的模型，
-其他角色不能覆盖该字段。两者继承服务的模型来源和 tokenizer，默认使用 Target 的
+`spec.model` 指定主模型，`spec.speculation.draftPool` 引用负责产生候选的 Pool。
+该 Pool 必须通过 `modelPools[].model` 指定 Draft 权重；其余 Pool 使用主模型并负责验证。
+两边都保留 `role: aggregate`。普通 Aggregate 部署不配置 `speculation`，也不配置独立 Draft Pool。
+只有被引用的 Draft Pool 可以覆盖模型。两者继承服务的模型来源和 tokenizer，默认使用主模型的
 tokenizer。需要选择 token ID 含义兼容的模型，不能只根据名称判断。
 当前 `source: local` 部署要求模型、tokenizer 使用 Pod 内可见的绝对路径。
 

@@ -131,15 +131,15 @@ type servingSnapshotEPDPipelineScope struct {
 
 // servingSnapshotDTComponent exposes a role independently of its compatible peers.
 type servingSnapshotDTComponent struct {
-	ServiceUID      string                      `json:"service_uid"`
-	PoolUID         string                      `json:"pool_uid"`
-	PoolName        string                      `json:"pool_name"`
-	RouteTargetID   string                      `json:"route_target_id"`
-	PipelineScopeID string                      `json:"pipeline_scope_id"`
-	Role            inferencev1alpha1.ModelRole `json:"role"`
-	Model           string                      `json:"model"`
-	EngineModel     string                      `json:"engine_model"`
-	EngineRevision  *string                     `json:"engine_revision"`
-	MaxInputTokens  *int32                      `json:"max_input_tokens,omitempty"`
-	Endpoint        string                      `json:"endpoint"`
+	ServiceUID      string                            `json:"service_uid"`
+	PoolUID         string                            `json:"pool_uid"`
+	PoolName        string                            `json:"pool_name"`
+	RouteTargetID   string                            `json:"route_target_id"`
+	PipelineScopeID string                            `json:"pipeline_scope_id"`
+	Role            inferencev1alpha1.SpeculationRole `json:"role"`
+	Model           string                            `json:"model"`
+	EngineModel     string                            `json:"engine_model"`
+	EngineRevision  *string                           `json:"engine_revision"`
+	MaxInputTokens  *int32                            `json:"max_input_tokens,omitempty"`
+	Endpoint        string                            `json:"endpoint"`
 }

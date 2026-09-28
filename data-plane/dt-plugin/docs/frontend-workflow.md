@@ -120,9 +120,14 @@ leave the active generation intact. Draining a role removes it from subsequent
 selections after readiness refresh while existing sessions retain their owner.
 There is no migration or replay of an active request onto another replica.
 
-**Deployment boundary:** `ModelService` accepts complete Draft/Target Pools.
-Target uses the service model; Draft specifies `modelPools[].model`. The
-controller publishes `dt_components` only for ready committed replicas, preserving
+**Deployment boundary:** `ModelService.spec.speculation.draftPool` references
+one Aggregate Pool with explicit Draft weights in `modelPools[].model`. The
+remaining Aggregate Pools use the service model and verify candidates. The
+controller derives `speculationRole` on Pool templates and Groups independently
+of their deployment `role`; this selects the DT launch plan and snapshot projection.
+Pools without speculation continue through ordinary Aggregate serving. P/D
+composition is currently rejected. The controller publishes `dt_components` only
+for ready committed replicas, preserving
 service model/tokenizer identity separately from each role's engine model. The
 model-server supervises the DT application using the existing launch argument
 renderer and process owner. Role `/healthz`, `/readyz`, telemetry and admission

@@ -12,9 +12,11 @@ spec:
   backend: vllm
   engineArgs:
     max-model-len: 4096
+  speculation:
+    draftPool: draft
   modelPools:
     - name: draft
-      role: draft
+      role: aggregate
       model: Qwen/Qwen3-0.6B
       replicas: 1
       resources:
@@ -23,8 +25,8 @@ spec:
           memory: 16Gi
           gpu:
             count: 1
-    - name: target
-      role: target
+    - name: main
+      role: aggregate
       replicas: 1
       resources:
         requests:

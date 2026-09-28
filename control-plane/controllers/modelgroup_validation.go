@@ -78,13 +78,16 @@ func validateMooncakeStoreRuntime(group *inferencev1alpha1.ModelGroup, store *in
 // Each serving role admits a different combination of P/D and EC runtime state.
 // The engine adapter validates topology when compiling the launch plan.
 func validateGroupRole(group *inferencev1alpha1.ModelGroup) error {
-	switch group.Spec.Role {
-	case inferencev1alpha1.ModelRoleAggregate:
-		return validateAggregateRole(group)
-	case inferencev1alpha1.ModelRoleDraft, inferencev1alpha1.ModelRoleTarget:
+	if group.Spec.SpeculationRole != "" {
+		if group.Spec.Role != inferencev1alpha1.ModelRoleAggregate || (group.Spec.SpeculationRole != inferencev1alpha1.SpeculationRoleDraft && group.Spec.SpeculationRole != inferencev1alpha1.SpeculationRoleTarget) {
+			return fmt.Errorf("speculation requires aggregate execution with draft or target responsibility")
+		}
 		if group.Spec.NodeCount != 1 || group.Spec.KVRuntime != nil || group.Spec.Runtime.Profiling != nil {
 			return fmt.Errorf("DT Groups require one node without KV transfer or profiling")
 		}
+	}
+	switch group.Spec.Role {
+	case inferencev1alpha1.ModelRoleAggregate:
 		return validateAggregateRole(group)
 	case inferencev1alpha1.ModelRoleEncoder:
 		return validateEncoderRole(group)

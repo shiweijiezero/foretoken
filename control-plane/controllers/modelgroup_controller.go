@@ -514,7 +514,7 @@ func (reconciler *ModelGroupReconciler) reconcileNetworkPolicy(ctx context.Conte
 			metricsScraperNamespaceLabel: metricsScraperNamespaceValue,
 		}},
 	})
-	if group.Spec.RDMA != nil && (group.Spec.Role == inferencev1alpha1.ModelRoleDraft || group.Spec.Role == inferencev1alpha1.ModelRoleTarget) {
+	if group.Spec.RDMA != nil && group.Spec.SpeculationRole != "" {
 		// DT workers establish dynamic Mooncake channels and acknowledge reads over HTTP.
 		// Only roles belonging to the same verified service may reach these ports.
 		ingress = append(ingress, networkingv1.NetworkPolicyIngressRule{From: []networkingv1.NetworkPolicyPeer{{

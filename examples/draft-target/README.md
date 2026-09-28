@@ -7,8 +7,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [中文](README_zh.md)
 
-Deploy independent Draft and Target Pools, discovered and selected by the normal
-frontend Router. This example needs two GPUs, a shared RuntimeCache, and a
+Deploy the main model and a separate Draft model in independent Aggregate Pools,
+discovered and selected by the normal frontend Router. This example needs two
+GPUs, a shared RuntimeCache, and a
 source-built platform with the [external-speculation engine extension](../../data-plane/dt-plugin/docs/mrv2-integration.md).
 The released and repository-pinned vLLM engines do not provide that extension.
 Set the platform's `runtime.vllm.image` to your model-server image containing it;
@@ -41,9 +42,13 @@ curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
   -d '{"model":"Qwen/Qwen3-4B","messages":[{"role":"user","content":"Hello"}],"temperature":0,"max_tokens":256}'
 ```
 
-`spec.model` selects Target. `modelPools[].model` is required for Draft and is
-invalid on other roles. Both inherit the service's model source and tokenizer;
-by default the tokenizer comes from Target. Choose models with compatible token
+`spec.model` selects the main model. `spec.speculation.draftPool` names the Pool
+that proposes candidates; it must set `modelPools[].model` to the Draft weights.
+All other Pools use the main model and verify candidates. Both sides keep
+`role: aggregate`. Ordinary Aggregate deployments omit `speculation` and the
+Draft-only Pool.
+Only the referenced Draft Pool may override the model. Both inherit the service's
+model source and tokenizer; by default the tokenizer comes from the main model. Choose models with compatible token
 IDs, not just similar names. For `source: local`, this initial deployment requires
 absolute model and tokenizer paths visible inside the Pods.
 

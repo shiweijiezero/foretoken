@@ -11,13 +11,13 @@
 <text x="898" y="257" font-size="20" font-weight="400" fill="#647184" text-anchor="start">独立 Pool · 发现 / 部署 · 角色启动与排空</text>
 <rect x="44" y="335" width="420" height="639" rx="15" fill="#f5f9ff" stroke="#ced8e5" stroke-width="1.5"/>
 <text x="64" y="375" font-size="29" font-weight="700" fill="#253042" text-anchor="start">Draft role</text>
-<text x="64" y="407" font-size="20" font-weight="400" fill="#647184" text-anchor="start">完整 Draft 推理服务</text>
+<text x="64" y="407" font-size="20" font-weight="400" fill="#647184" text-anchor="start">Aggregate Pool · Draft 职责</text>
 <rect x="484" y="335" width="438" height="639" rx="15" fill="#f3faf7" stroke="#ced8e5" stroke-width="1.5"/>
 <text x="504" y="375" font-size="29" font-weight="700" fill="#253042" text-anchor="start">DT Connector</text>
 <text x="504" y="407" font-size="20" font-weight="400" fill="#647184" text-anchor="start">控制消息与 GPU 张量分开传输</text>
 <rect x="942" y="335" width="440" height="639" rx="15" fill="#faf7ff" stroke="#ced8e5" stroke-width="1.5"/>
 <text x="962" y="375" font-size="29" font-weight="700" fill="#253042" text-anchor="start">Target role</text>
-<text x="962" y="407" font-size="20" font-weight="400" fill="#647184" text-anchor="start">完整 Target 推理服务</text>
+<text x="962" y="407" font-size="20" font-weight="400" fill="#647184" text-anchor="start">Aggregate Pool · 验证职责</text>
 <path d="M252 298 L252 334" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none"  marker-end="url(#arrow)"/>
 <path d="M878 246 L854 246" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none" stroke-dasharray="7 6" marker-end="url(#arrow)"/>
 <rect x="62" y="429" width="384" height="94" rx="15" fill="#f0ebff" stroke="#ced8e5" stroke-width="1.5"/>
@@ -76,8 +76,8 @@
 <text x="64" y="1059" font-size="20" font-weight="400" fill="#647184" text-anchor="start">插件接入原生 worker_extension_cls；vLLM 扩展提供外部候选准入和 MRV2 GPU I/O，不在安装时打补丁。</text>
 <path d="M1428 191 H1878" stroke="#bd151b" stroke-width="3"/>
 <text x="1440" y="231" font-size="25" font-weight="700" fill="#253042" text-anchor="start">Frontend｜跨角色编排</text>
-<text x="1440" y="267" font-size="21" font-weight="400" fill="#647184" text-anchor="start">为请求绑定一个 Draft 和一个 Target。</text>
-<text x="1440" y="297" font-size="21" font-weight="400" fill="#647184" text-anchor="start">控制每轮先后关系与会话生命周期；</text>
+<text x="1440" y="267" font-size="21" font-weight="400" fill="#647184" text-anchor="start">服务配置 speculation.draftPool。</text>
+<text x="1440" y="297" font-size="21" font-weight="400" fill="#647184" text-anchor="start">请求绑定双方，编排轮次与会话；</text>
 <text x="1440" y="327" font-size="21" font-weight="400" fill="#647184" text-anchor="start">本地 batch 仍由各自引擎调度。</text>
 <path d="M1428 387 H1878" stroke="#bd151b" stroke-width="3"/>
 <text x="1440" y="427" font-size="25" font-weight="700" fill="#253042" text-anchor="start">Draft / Target｜各自运行模型</text>

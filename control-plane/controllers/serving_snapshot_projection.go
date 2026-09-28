@@ -123,7 +123,7 @@ func (reconciler *FrontendServiceReconciler) projectScalingModels(ctx context.Co
 		if !modelServiceConfigured(service) {
 			continue
 		}
-		servicePools := ownedRoutingPools(service, pools.Items)
+		servicePools := servingRoutingPools(service, ownedRoutingPools(service, pools.Items), groups.Items)
 		if len(service.Status.ServingPoolRevisions) > 0 {
 			servicePools = slices.DeleteFunc(servicePools, func(pool *inferencev1alpha1.ModelPool) bool {
 				return serviceServingRevision(service, pool) == ""
@@ -142,7 +142,7 @@ func (reconciler *FrontendServiceReconciler) projectScalingModels(ctx context.Co
 		identityPool := servicePools[0]
 		if poolsHaveDT(servicePools) {
 			index := slices.IndexFunc(servicePools, func(pool *inferencev1alpha1.ModelPool) bool {
-				return pool.Spec.Template.Role == inferencev1alpha1.ModelRoleTarget
+				return pool.Spec.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleTarget
 			})
 			if index < 0 {
 				continue
@@ -155,7 +155,7 @@ func (reconciler *FrontendServiceReconciler) projectScalingModels(ctx context.Co
 		if len(service.Status.ServingPoolRevisions) > 0 {
 			var selected *inferencev1alpha1.ModelGroup
 			for _, pool := range servicePools {
-				if poolsHaveDT(servicePools) && pool.Spec.Template.Role != inferencev1alpha1.ModelRoleTarget {
+				if poolsHaveDT(servicePools) && pool.Spec.Template.SpeculationRole != inferencev1alpha1.SpeculationRoleTarget {
 					continue
 				}
 				revision := serviceServingRevision(service, pool)
@@ -206,7 +206,7 @@ func admissionTargetSetsForService(service *inferencev1alpha1.ModelService, pool
 	targets := make([]servingSnapshotScalingTarget, 0, len(pools))
 	for _, pool := range pools {
 		role := pool.Spec.Template.Role
-		if role != inferencev1alpha1.ModelRoleAggregate && role != inferencev1alpha1.ModelRoleEncoder && role != inferencev1alpha1.ModelRolePrefill && role != inferencev1alpha1.ModelRoleDecode && role != inferencev1alpha1.ModelRoleDraft && role != inferencev1alpha1.ModelRoleTarget {
+		if role != inferencev1alpha1.ModelRoleAggregate && role != inferencev1alpha1.ModelRoleEncoder && role != inferencev1alpha1.ModelRolePrefill && role != inferencev1alpha1.ModelRoleDecode {
 			continue
 		}
 		targets = append(targets, servingSnapshotScalingTarget{ServiceUID: string(service.UID), Name: pool.Spec.PoolName, UID: string(pool.UID), Kind: string(core.TargetPool)})
@@ -222,9 +222,9 @@ func admissionTargetSetsForService(service *inferencev1alpha1.ModelService, pool
 	}
 	if poolsHaveDT(pools) {
 		if !slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
-			return pool.Spec.Template.Role == inferencev1alpha1.ModelRoleDraft
+			return pool.Spec.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleDraft
 		}) || !slices.ContainsFunc(pools, func(pool *inferencev1alpha1.ModelPool) bool {
-			return pool.Spec.Template.Role == inferencev1alpha1.ModelRoleTarget
+			return pool.Spec.Template.SpeculationRole == inferencev1alpha1.SpeculationRoleTarget
 		}) {
 			return nil
 		}
@@ -292,7 +292,7 @@ func (reconciler *FrontendServiceReconciler) projectableRouting(ctx context.Cont
 		if !modelServiceReady(service) {
 			continue
 		}
-		servicePools := ownedRoutingPools(service, pools.Items)
+		servicePools := servingRoutingPools(service, ownedRoutingPools(service, pools.Items), modelGroups.Items)
 		servicePools = slices.DeleteFunc(servicePools, func(pool *inferencev1alpha1.ModelPool) bool {
 			return serviceServingRevision(service, pool) == ""
 		})
@@ -334,7 +334,7 @@ func (reconciler *FrontendServiceReconciler) projectableRouting(ctx context.Cont
 			}
 			for groupIndex := range modelGroups.Items {
 				group := &modelGroups.Items[groupIndex]
-				if !routingGroupOwnedBy(group, pool) || group.Spec.Revision != serviceServingRevision(service, pool) || !routingGroupReady(group) || group.Spec.Role != inferencev1alpha1.ModelRoleAggregate {
+				if !routingGroupOwnedBy(group, pool) || group.Spec.Revision != serviceServingRevision(service, pool) || !routingGroupReady(group) || group.Spec.Role != inferencev1alpha1.ModelRoleAggregate || group.Spec.SpeculationRole != "" {
 					continue
 				}
 				groups = append(groups, routingGroupForService(service, pool, group))
@@ -354,6 +354,29 @@ func (reconciler *FrontendServiceReconciler) projectableRouting(ctx context.Cont
 		return nil, nil, nil, nil, nil, nil, err
 	}
 	return groups, pdComponents, pdPipelineScopes, epdComponents, epdPipelineScopes, dtComponents, projectionErr
+}
+
+// servingRoutingPools keeps routing roles pinned to the committed Group cohort while
+// desired Pool templates roll out a different execution or speculation configuration.
+func servingRoutingPools(service *inferencev1alpha1.ModelService, pools []*inferencev1alpha1.ModelPool, groups []inferencev1alpha1.ModelGroup) []*inferencev1alpha1.ModelPool {
+	owned := slices.Clone(pools)
+	for index, pool := range owned {
+		revision := serviceServingRevision(service, pool)
+		if revision == "" {
+			continue
+		}
+		for groupIndex := range groups {
+			group := &groups[groupIndex]
+			if routingGroupOwnedBy(group, pool) && group.Spec.Revision == revision {
+				projected := pool.DeepCopy()
+				projected.Spec.Template.Role = group.Spec.Role
+				projected.Spec.Template.SpeculationRole = group.Spec.SpeculationRole
+				owned[index] = projected
+				break
+			}
+		}
+	}
+	return owned
 }
 
 func ownedRoutingPools(service *inferencev1alpha1.ModelService, pools []inferencev1alpha1.ModelPool) []*inferencev1alpha1.ModelPool {

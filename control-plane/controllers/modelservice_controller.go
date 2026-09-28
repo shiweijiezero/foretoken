@@ -389,6 +389,7 @@ func (reconciler *ModelServiceReconciler) serviceReadiness(ctx context.Context, 
 	if err := reconciler.List(ctx, &groups, client.InNamespace(service.Namespace)); err != nil {
 		return false, "PoolsNotReady", "ModelGroups are not ready", err
 	}
+	selectedPools = servingRoutingPools(service, selectedPools, groups.Items)
 	switch {
 	case poolsHaveDT(selectedPools):
 		if _, err := projectServiceDTComponents(service, selectedPools, groups.Items); err != nil {
