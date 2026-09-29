@@ -7,42 +7,70 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md)
 
-Foretoken collects service and accelerator metrics with Prometheus and shows them in the Foretoken System Overview Grafana dashboard. Alert rules are optional and disabled by default.
+Use Grafana to inspect serving performance, query persistent logs, and investigate alerts. Platform installation enables metrics and log collection; alerts are opt-in. For a first deployment, follow the [Quick Start](../README.md#quick-start).
 
-## Get started
+## View dashboards
 
-```bash
-foretoken install
-foretoken deploy examples/quickstart
+Open Grafana through your cluster's monitoring entry point. The CLI-managed Grafana Service is `foretoken-prometheus-grafana` in `foretoken-platform`, on port 80. It defaults to `ClusterIP`; access from outside the cluster requires an entry point configured by the cluster administrator. Reused Grafana installations keep their existing access settings.
+
+Open Foretoken System Overview, or Foretoken 系统概览 for Chinese. Select a namespace and model, then use the instance, execution-role, and engine-rank filters to inspect individual backends. Whole-model total curves remain a reference across all instances; detail curves follow those filters.
+
+The dashboard starts with the last 15 minutes. Change the time range to inspect historical trends; overview values correspond to the range's end.
+
+| Question | Where to look |
+| --- | --- |
+| Is the model keeping up with demand? | Prompt/output token rates, completed requests, and running/waiting queues. |
+| Where is latency increasing? | First-token and end-to-end latency, output-token intervals, and queue/prefill/decode durations. |
+| Is speculative decoding helping? | For models using it, compare draft acceptance and accepted tokens per draft with output throughput and latency. |
+| Are caches or devices under pressure? | Cache occupancy and hit rates, filesystem space, GPU utilization and memory, and CPU/memory usage. |
+| How are requests and replicas distributed? | Routing selection shares within each model and role, and autoscaling recommendations versus applied replicas. |
+
+TTFT measures time to the first token; E2EL measures time through generation completion. Both use seconds. TPOT is the per-request average output-token interval; ITL measures individual token intervals. Both use milliseconds and include mean curves. When observations are sparse, read p50/p95/p99 latency quantiles alongside the observation rate and these means. Panel descriptions provide the detailed measurement definitions.
+
+Shared frontend panels cover all models served by the selected frontend and record HTTP response starts. Control-plane panels describe the platform; autoscaling panels follow the selected model and autoscaling service.
+
+## Query logs
+
+In Grafana Explore, select Foretoken Logs and a time range. For the Quick Start namespace:
+
+```logql
+{job="foretoken", namespace="foretoken-demo"}
 ```
 
-`foretoken install` reuses an existing Prometheus or installs a CLI-managed kube-prometheus-stack. Grafana installed by Foretoken uses a light theme and provides the Foretoken dashboards in English and Chinese. Read-only access is anonymous by default; editing and administration still require login. Reused monitoring stacks keep their existing Grafana access settings.
+Narrow the query with `pod`, `container`, `node`, or `stream`. Append `|~ "(?i)error"` to find errors, or `|= "request-id"` with the identifier you are investigating.
 
-In Grafana, open Foretoken System Overview for English or Foretoken 系统概览 for Chinese. Select a namespace and model to see whole-model input and output throughput, completed requests, scheduler activity, latency, cache hit ratios and CPU/memory usage. Each model has separate totals and time-series curves.
+Collection includes model servers and their inference engines, frontends, KV services, and the controller. Collected logs remain queryable after a serving Pod or its namespace is deleted.
 
-Use the instance, execution-role and engine-rank selectors to inspect backend details without changing model totals. Instances are named by service, Pool and replica number; creation time distinguishes repeated names during replacements. Routing decisions show each backend's share within its model and role; a backend is one model instance and data-parallel rank. Selected backend lines keep the full model-and-role denominator.
+## Alerts
 
-Shared frontend panels show all traffic through the selected frontend, not just one model. Autoscaling follows the selected model and service; control-plane diagnostics describe the platform.
+Choose rules in the owning `ModelService` or `FrontendService`. For example, enable scrape-failure alerts under `spec`:
 
-After upgrading Foretoken, run `foretoken install` again to update the controller, frontend, scrape configuration, and dashboards. Importing dashboard JSON alone does not update metric producers.
+```yaml
+observability:
+  alerts:
+    rules:
+      - ForetokenMetricsTargetDown
+```
 
-## Require a login and retrieve credentials
+Redeploy the service configuration to apply changes. Remove a rule, or set `rules: []`, and redeploy to disable alerts while keeping metrics. The [service observability example](../examples/observability/README.md) provides a runnable configuration and deployment commands.
 
-Require login before viewing dashboards:
+Use the [alert reference](runbooks/alerts.md) to choose rules, thresholds, and the appropriate service type. For notifications, connect a [Lark](integrations/lark/README.md), [Slack](integrations/slack/README.md), or [DingTalk](integrations/dingtalk/README.md) receiver.
+
+## Platform settings
+
+The following `foretoken install` commands also update an existing installation. For a source-installed platform, retain `-e .` and run from the source root. Rerun the original install command after upgrading Foretoken to update dashboards and telemetry together.
+
+### Grafana login
+
+CLI-managed Grafana allows anonymous viewing by default. To require login for dashboards and log queries:
 
 ```bash
 foretoken install --grafana-auth password
 ```
 
-Restore anonymous read-only access:
+Use `--grafana-auth anonymous` to restore anonymous viewing. Subsequent installs retain the choice. Reused Grafana remains under its existing administrator's control.
 
-```bash
-foretoken install --grafana-auth anonymous
-```
-
-For a source installation, add the same option to its original installation command. Later installations retain the choice. This option applies only to Grafana installed by Foretoken. Values files can also set `observability.grafana.anonymousAccess`; `--grafana-auth` takes precedence.
-
-Retrieve the administrator credentials generated during installation:
+Retrieve the initial administrator credentials:
 
 ```bash
 kubectl get secret --namespace foretoken-platform \
@@ -50,137 +78,66 @@ kubectl get secret --namespace foretoken-platform \
   | python3 -c 'import base64,json,sys; d=json.load(sys.stdin)["data"]; print("User:",base64.b64decode(d["admin-user"]).decode()); print("Password:",base64.b64decode(d["admin-password"]).decode())'
 ```
 
-The Secret contains the initial password; if it has been changed in Grafana, use the updated password. For custom credentials, authentication, and persistence settings, see the [Grafana Helm chart](https://github.com/grafana/helm-charts/tree/main/charts/grafana).
+If the password has been changed in Grafana, use the updated password.
 
-## Check that collection works
+### Log storage
+
+Managed logs retain 14 days of data and start with a 5 GiB volume from the default StorageClass. For 30-day retention and automatic growth up to 50 GiB, save this in `platform-values.yaml`:
+
+```yaml
+observability:
+  logs:
+    retention: 720h
+    maxSize: 50Gi
+```
+
+Apply the file again whenever its settings change:
+
+```bash
+foretoken install --values platform-values.yaml
+```
+
+Setting `maxSize` enables expansion at 80% usage, doubling the requested capacity up to the limit. The storage driver must support online expansion and per-volume usage statistics.
+
+| Option under `observability.logs` | Use |
+| --- | --- |
+| `storageClass` / `initialSize` | Select the StorageClass and initial capacity for new storage. Existing volumes retain their capacity. |
+| `endpoint` | Use an existing Loki HTTP(S) base URL reachable by collectors and Grafana. |
+| `enabled: false` | Stop managed collection while keeping historical queries available. |
+
+### Existing monitoring
+
+The installer reuses compatible Prometheus and GPU exporters. If several Prometheus instances are available, select one explicitly. This example uses `monitoring/prometheus`; replace both names with those of your installation:
+
+```bash
+kubectl label namespace monitoring inference.foretoken.io/metrics-scraper=true --overwrite
+foretoken install --prometheus monitoring/prometheus
+```
+
+The selected Prometheus must select Foretoken's ServiceMonitors and recording rules in `foretoken-platform`. For service alerts, its `ruleNamespaceSelector` must also include workload namespaces. GPU exporters must cover the GPU nodes and expose Pod and namespace labels to associate devices with model workloads.
+
+For automatic Grafana provisioning, watch dashboard ConfigMaps labeled `grafana_dashboard=1` and datasource ConfigMaps labeled `grafana_datasource=1`, both in `foretoken-platform`. For manual dashboard import, export the installed version:
+
+```bash
+kubectl get configmap --namespace foretoken-platform \
+  foretoken-control-plane-system-dashboard \
+  --output jsonpath='{.data.foretoken-system-overview\.json}' \
+  > /tmp/foretoken-system-overview.json
+```
+
+Import this file into Grafana and select the matching Prometheus datasource. For logs, add a Loki datasource named Foretoken Logs pointing to the configured endpoint; managed Loki uses `http://foretoken-loki.foretoken-platform.svc:3100`.
+
+## Investigate missing data
+
+Check the selected namespace, model, and time range first, and send requests to the service. In Prometheus, inspect Targets for scrape failures and Rules for the `foretoken.recording` group. These resources identify the installed scrape and rule configuration:
 
 ```bash
 kubectl get servicemonitor,prometheusrule -A \
   -l app.kubernetes.io/name=foretoken-control-plane
 ```
 
-In Prometheus, confirm on Targets that the Foretoken targets are `UP` and on Rules that `foretoken.recording` is loaded. If service alerts are enabled, also confirm the corresponding `foretoken.alerting` rules are loaded. This query returns the Frontend request rate:
+For a triggered alert, use its [alert reference](runbooks/alerts.md). To investigate execution inside the model process, use [Profiling](../benchmarks/docs/profile/README.md).
 
-```promql
-sum(foretoken:frontend_http_response_starts:rate5m)
-```
+## Cleanup
 
-## Use an existing monitoring stack
-
-The CLI reuses what the cluster already provides and installs only what is missing:
-
-| Component | Not present | Present | Present but not usable | `foretoken uninstall` |
-| --- | --- | --- | --- | --- |
-| Prometheus | Install a CLI-managed kube-prometheus-stack | Reuse it | Stop and ask for an explicit choice | Remove only the CLI-managed release |
-| NVIDIA DCGM Exporter | Install a CLI-managed exporter on clusters with NVIDIA GPUs | Reuse it | Stop | Remove only the CLI-managed release |
-| MetaX mxExporter | Install a CLI-managed exporter | Reuse it | Stop | Remove only CLI-managed resources |
-
-An exporter is usable when it covers every GPU node and the selected Prometheus scrapes it. The CLI does not install GPU drivers, device plugins, or vendor operators.
-
-If several compatible Prometheus instances exist, choose one:
-
-```bash
-# Allow the Prometheus namespace to scrape Foretoken metrics
-kubectl label namespace monitoring \
-  inference.foretoken.io/metrics-scraper=true \
-  --overwrite
-
-# Select the Prometheus instance
-foretoken install --prometheus monitoring/prometheus
-```
-
-GPU panels and alerts associate devices with model workloads using the exporter's Pod and namespace labels. Reused exporters must expose those labels.
-
-For service alerts, a reused Prometheus must select rules in the workload namespaces through `ruleNamespaceSelector`; the CLI-managed stack already does this.
-
-With a reused Prometheus, Grafana stays under that platform's control. A Grafana sidecar that watches ConfigMaps labeled `grafana_dashboard=1` picks up the dashboard from the `foretoken-platform` namespace. Otherwise, export the JSON and import it through Grafana:
-
-```bash
-kubectl get configmap \
-  --namespace foretoken-platform \
-  foretoken-control-plane-system-dashboard \
-  --output jsonpath='{.data.foretoken-system-overview\.json}' \
-  > /tmp/foretoken-system-overview.json
-```
-
-## Alerts
-
-Alert selection belongs to the service deployment. In a `ModelService`, select only the rules needed for that model:
-
-```yaml
-spec:
-  observability:
-    alerts:
-      rules:
-        - ForetokenMetricsTargetDown
-```
-
-The [observability example](../examples/observability/README.md) keeps these settings in a Kustomize patch for the Quick Start. Edit its `observability.yaml`, then deploy:
-
-```bash
-foretoken deploy examples/observability --timeout 20m
-```
-
-`FrontendService` uses the same selection path for frontend scrape and HTTP errors. Model rules cover only that ModelService's execution groups; shared frontend failures remain frontend-level signals. Available names and trigger conditions are in the [alert reference](runbooks/alerts.md).
-
-Remove a name, or use `rules: []`, and deploy again to remove the corresponding alerts. Metrics and the dashboard remain available. The CLI reports alert configuration failures separately from serving readiness; `deploy` does not install monitoring.
-
-Selecting the power alert also requires a positive `spec.observability.alerts.thresholds.nvidiaPowerWatts`, chosen for the GPU model. Setting a threshold alone does not enable a rule. Configure notifications with a [Lark](integrations/lark/README.md), [Slack](integrations/slack/README.md), or [DingTalk](integrations/dingtalk/README.md) receiver.
-
-## Metrics reference
-
-| Source | Contents |
-| --- | --- |
-| Frontend `/metrics` | HTTP requests, admission queues, routing, and runtime state |
-| model-server `/metrics` | Inference-engine metrics and RuntimeCache filesystem state |
-| Controller `/metrics` | Reconciliation, workqueues, and published autoscaling decisions |
-| DCGM Exporter | NVIDIA utilization, memory, power, temperature, and XID errors |
-| mxExporter | MetaX utilization, memory, board power, and chip hotspot temperature |
-| kubelet/cAdvisor | Container CPU and memory |
-
-Dashboard latency metrics use seconds for TTFT and E2EL, and milliseconds for TPOT and ITL. Model-wide p50/p95/p99 percentiles combine request histogram buckets before calculating quantiles. In disaggregated serving, input throughput counts Aggregate/Prefill engines; output throughput, completions and generation latency count Aggregate/Decode engines. Scheduler and preemption totals count execution-stage requests and events across all roles. Prefix-cache hit ratios divide total hit tokens by total queried tokens. GPU utilization, memory, power, and temperature are shown per device. Cache filesystem panels show each model instance's highest utilization and least available space. Routing shares count selection decisions, not completed requests or cache hits.
-
-The following recording rules remain available for alerts and fixed-window queries. Model-serving rules are derived from vLLM metrics.
-
-| Area | Recording rule | Meaning |
-| --- | --- | --- |
-| Frontend | `foretoken:frontend_up:sum` | Reporting Frontend targets |
-| Frontend | `foretoken:frontend_http_response_starts:rate5m` | HTTP response starts per second |
-| Frontend | `foretoken:frontend_http_response_start_5xx_ratio:rate5m` | Share of response starts with a 5xx status |
-| Frontend | `foretoken:frontend_http_response_start_latency_seconds:quantile5m` | Time until response headers are sent, as `p50`, `p90`, and `p99` |
-| Frontend | `foretoken:frontend_upstream_queued_requests:sum` | Requests waiting for admission, by scaling target |
-| Frontend | `foretoken:frontend_kv_index_source_health_ratio:min` | Lowest KV event-source health ratio across Frontend replicas |
-| Model serving | `foretoken:model_server_up:sum` | Reporting model-server targets |
-| Model serving | `foretoken:model_server_completed_requests:rate5m` | Completed requests per second, by finish reason |
-| Model serving | `foretoken:model_server_prompt_tokens:rate5m` | Prompt tokens per second |
-| Model serving | `foretoken:model_server_generation_tokens:rate5m` | Generated tokens per second |
-| Model serving | `foretoken:model_server_requests_running:sum` | Requests currently running |
-| Model serving | `foretoken:model_server_requests_waiting:sum` | Requests waiting in the scheduler |
-| Model serving | `foretoken:model_server_e2e_request_latency_seconds:quantile5m` | Time from Frontend handler entry to generation completion, as `p50`, `p90`, and `p99` |
-| Model serving | `foretoken:model_server_time_to_first_token_seconds:quantile5m` | Time to first token, as `p50`, `p90`, and `p99` |
-| Model serving | `foretoken:model_server_time_per_output_token_seconds:quantile5m` | Time per output token, as `p50`, `p90`, and `p99` |
-| Model serving | `foretoken:model_server_inter_token_latency_seconds:quantile5m` | Gap between consecutive output tokens, as `p50`, `p90`, and `p99` |
-| Model serving | `foretoken:model_server_request_stage_time_seconds:quantile5m` | Time spent in the `queue`, `prefill`, and `decode` stages, as `p50`, `p90`, and `p99` |
-| Model serving | `foretoken:model_server_preemptions:rate5m` | Requests preempted per second |
-| Model serving | `foretoken:model_server_request_prompt_tokens_bucket:rate5m` | Prompt length histogram buckets |
-| Model serving | `foretoken:model_server_request_generation_tokens_bucket:rate5m` | Output length histogram buckets |
-| Cache | `foretoken:model_server_kv_cache_usage_ratio:max` | Highest KV cache usage ratio in an engine |
-| Cache | `foretoken:model_server_prefix_cache_hit_ratio:rate5m` | Local or external prefix cache hit ratio |
-| Cache | `foretoken:model_server_runtime_cache_available_bytes:min` | Lowest RuntimeCache free space |
-| Cache | `foretoken:model_server_runtime_cache_usage_ratio:max` | Highest RuntimeCache usage ratio |
-| Cache | `foretoken:model_server_runtime_cache_observation_success:min` | Whether every RuntimeCache mount can be inspected |
-| Cache | `foretoken:model_server_runtime_cache_temporary:max` | Whether any model server uses temporary Pod-local cache storage |
-| Accelerator | `foretoken:accelerator_gpu_utilization_ratio` | Per-device NVIDIA or MetaX utilization |
-| Accelerator | `foretoken:accelerator_gpu_memory_usage_ratio` | Per-device NVIDIA or MetaX memory usage |
-| Accelerator | `foretoken:accelerator_gpu_power_watts` | Per-device GPU power in watts |
-| Accelerator | `foretoken:accelerator_gpu_temperature_celsius` | Per-device GPU temperature in Celsius; MetaX uses chip hotspot temperature |
-
-Rules keep the namespace, Frontend service, model group, model role, model name, and Prefill/Decode pipeline scope labels. Frontend latency ends when response headers are sent, so for streaming responses it does not include token delivery; generation completion latency and TTFT start when the Frontend handler begins after JSON decoding. These cross-process measurements require synchronized node clocks. A streaming response can start with `2xx` and fail later, so the 5xx ratio is not an inference success rate. Accelerator rules cover only devices used by Foretoken workloads.
-
-## Profiling
-
-For a short CPU/GPU capture on an existing diagnostic service, see [Profiling](../benchmarks/docs/profile/README.md). It is separate from metrics collection.
-
-## Remove collection
-
-After all Foretoken services are deleted, `foretoken uninstall` removes CLI-managed Prometheus, DCGM Exporter, and MetaX mxExporter resources. Reused installations are left unchanged.
+Delete model and frontend services before running `foretoken uninstall`. Uninstall removes the platform and its managed monitoring, collectors, and Loki, while preserving log storage and reused installations. Reinstall with the original command and log settings to query retained logs again.

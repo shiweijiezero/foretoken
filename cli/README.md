@@ -48,7 +48,7 @@ foretoken install
 
 Installation selects the NVIDIA or MetaX runtime and automatically reuses or installs LeaderWorkerSet and the shared RDMA device plugin. Explicit runtime settings in `--values` take precedence; in a mixed-GPU cluster, select a resource with `runtime.vllm.gpu.resourceName` or restrict the nodes with `runtime.vllm.gpu.nodeSelector`.
 
-See [Observability](../observability/README.md) for dashboards and alerts.
+Log collection and persistence are enabled by default. See [Observability](../observability/README.md) for configuration, log queries, dashboards, and alerts.
 
 ### Gateway mode
 

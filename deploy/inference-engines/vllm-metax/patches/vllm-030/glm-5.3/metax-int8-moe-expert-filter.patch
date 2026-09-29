@@ -1,0 +1,28 @@
+--- a/vllm_metax/model_executor/layers/fused_moe/fused_moe.py
++++ b/vllm_metax/model_executor/layers/fused_moe/fused_moe.py
+@@ -999,2 +999,3 @@
+             mul_routed_weight,
++            filter_expert,
+         )
+--- a/vllm_metax/model_executor/layers/quantization/_python_api_ops.py
++++ b/vllm_metax/model_executor/layers/quantization/_python_api_ops.py
+@@ -443,2 +443,3 @@
+     mul_routed_weight: bool,
++    filter_expert: bool,
+ ) -> torch.Tensor:
+@@ -465,2 +466,3 @@
+         mul_routed_weight,
++        filter_expert=filter_expert,
+     )
+@@ -483,2 +485,3 @@
+     mul_routed_weight: bool,
++    filter_expert: bool,
+ ) -> torch.Tensor:
+@@ -923,2 +926,3 @@
+     mul_routed_weight: bool,
++    filter_expert: bool,
+ ) -> torch.Tensor:
+@@ -939,2 +943,3 @@
+         mul_routed_weight,
++        filter_expert,
+     )

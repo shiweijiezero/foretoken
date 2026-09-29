@@ -24,12 +24,11 @@ import (
 )
 
 const (
-	runtimeCacheFinalizer                       = "inference.foretoken.io/runtimecache-protection"
-	runtimeCacheDirectoryBookkeepingSize        = "1Gi"
-	runtimeCacheDirectoryAnnotation             = "inference.foretoken.io/runtime-cache-directory"
-	runtimeCacheLabel                           = "inference.foretoken.io/runtime-cache"
-	runtimeCacheRetentionAnnotation             = "inference.foretoken.io/runtime-cache-retention"
-	runtimeCacheExpansionFreeSpaceDivisor int64 = 5
+	runtimeCacheFinalizer                = "inference.foretoken.io/runtimecache-protection"
+	runtimeCacheDirectoryBookkeepingSize = "1Gi"
+	runtimeCacheDirectoryAnnotation      = "inference.foretoken.io/runtime-cache-directory"
+	runtimeCacheLabel                    = "inference.foretoken.io/runtime-cache"
+	runtimeCacheRetentionAnnotation      = "inference.foretoken.io/runtime-cache-retention"
 )
 
 // RuntimeCacheReconciler owns the PVC lifecycle for one RuntimeCache.
@@ -239,44 +238,9 @@ func (reconciler *RuntimeCacheReconciler) reconcilePVC(ctx context.Context, cach
 	return current, true, nil
 }
 
-func pvcCapacityAtLeastRequest(pvc *corev1.PersistentVolumeClaim) bool {
-	capacity := pvc.Status.Capacity[corev1.ResourceStorage]
-	requested := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
-	return capacity.Cmp(requested) >= 0
-}
-
 func pvcHasUsableCapacity(pvc *corev1.PersistentVolumeClaim) bool {
 	capacity := pvc.Status.Capacity[corev1.ResourceStorage]
 	return pvc.Status.Phase == corev1.ClaimBound && capacity.Sign() > 0
-}
-
-func pvcResizePending(pvc *corev1.PersistentVolumeClaim) bool {
-	for _, condition := range pvc.Status.Conditions {
-		if condition.Status == corev1.ConditionTrue && (condition.Type == corev1.PersistentVolumeClaimResizing || condition.Type == corev1.PersistentVolumeClaimFileSystemResizePending) {
-			return true
-		}
-	}
-	status := pvc.Status.AllocatedResourceStatuses[corev1.ResourceStorage]
-	return status == corev1.PersistentVolumeClaimControllerResizeInProgress ||
-		status == corev1.PersistentVolumeClaimNodeResizePending ||
-		status == corev1.PersistentVolumeClaimNodeResizeInProgress
-}
-
-func pvcResizeFailure(pvc *corev1.PersistentVolumeClaim) (string, bool) {
-	for _, condition := range pvc.Status.Conditions {
-		if condition.Status != corev1.ConditionTrue || condition.Type != corev1.PersistentVolumeClaimControllerResizeError && condition.Type != corev1.PersistentVolumeClaimNodeResizeError {
-			continue
-		}
-		if condition.Message != "" {
-			return condition.Message, true
-		}
-		return "Kubernetes reported a runtime cache resize error", true
-	}
-	status := pvc.Status.AllocatedResourceStatuses[corev1.ResourceStorage]
-	if status == corev1.PersistentVolumeClaimControllerResizeInfeasible || status == corev1.PersistentVolumeClaimNodeResizeInfeasible {
-		return "Kubernetes reported that the runtime cache resize cannot complete", true
-	}
-	return "", false
 }
 
 type runtimeCacheExpansionState struct {
@@ -302,7 +266,7 @@ func (reconciler *RuntimeCacheReconciler) reconcileAutomaticExpansion(ctx contex
 	shouldExpand := false
 	for _, observation := range observations {
 		available = min(available, observation.AvailableBytes)
-		if observation.AvailableBytes <= observation.CapacityBytes/runtimeCacheExpansionFreeSpaceDivisor {
+		if observation.AvailableBytes <= observation.CapacityBytes/pvcExpansionFreeSpaceDivisor {
 			shouldExpand = true
 		}
 	}
@@ -316,10 +280,7 @@ func (reconciler *RuntimeCacheReconciler) reconcileAutomaticExpansion(ctx contex
 	if currentRequest >= maxSize {
 		return runtimeCacheExpansionState{maxSizeReached: available > 0, noSpace: available == 0}, nil
 	}
-	target := maxSize
-	if currentRequest <= maxSize/2 {
-		target = currentRequest * 2
-	}
+	target := nextPVCSize(currentRequest, maxSize)
 	base := pvc.DeepCopy()
 	pvc.Spec.Resources.Requests[corev1.ResourceStorage] = *resource.NewQuantity(target, resource.BinarySI)
 	if err := reconciler.Patch(ctx, pvc, client.MergeFrom(base)); err != nil {

@@ -250,6 +250,24 @@ spec:
                 x-kubernetes-validations:
                 - message: timeouts.streamIdle must not exceed timeouts.request
                   rule: duration(self.streamIdle) <= duration(self.request)
+              videoTasks:
+                description: VideoTasks enables asynchronous video task submission
+                  and result access.
+                properties:
+                  claimName:
+                    minLength: 1
+                    type: string
+                  retentionSeconds:
+                    description: RetentionSeconds is the lifetime of a completed task
+                      and its stored files.
+                    format: int64
+                    maximum: 9223372036
+                    minimum: 1
+                    type: integer
+                required:
+                - claimName
+                - retentionSeconds
+                type: object
             required:
             - resources
             - timeouts

@@ -299,15 +299,23 @@ impl AdmissionTargets {
     }
 }
 
+/// Backend dependencies for models whose engine owns video request preprocessing.
+///
+/// Keeping the model identities, route inventory, and HTTP client together makes video support an
+/// all-or-nothing runtime capability instead of three independently initialized fields.
+struct VideoBackendContext {
+    models: BTreeSet<String>,
+    inventory: Arc<dyn RouteInventory>,
+    client: reqwest::Client,
+}
+
 /// All request-processing objects derived from one routing snapshot.
 ///
 /// Models share the Router. Text models own immutable request processors; video models
 /// delegate preprocessing to their selected HTTP backend.
 pub struct RuntimeState {
     models: BTreeMap<String, ModelRuntime>,
-    video_models: BTreeSet<String>,
-    video_inventory: Option<Arc<dyn RouteInventory>>,
-    video_client: Option<reqwest::Client>,
+    video: Option<VideoBackendContext>,
     admission_targets: BTreeMap<String, AdmissionTargets>,
     router: Arc<dyn Router>,
     resolver: Arc<dyn LlmFacadeResolver>,
@@ -325,9 +333,7 @@ impl RuntimeState {
     ) -> Self {
         Self {
             models,
-            video_models: BTreeSet::new(),
-            video_inventory: None,
-            video_client: None,
+            video: None,
             admission_targets: BTreeMap::new(),
             router,
             resolver,
@@ -335,15 +341,17 @@ impl RuntimeState {
     }
 
     /// Registers video models whose engine owns preprocessing, using the same route inventory.
-    pub fn with_video_models(
+    pub fn with_video_backend(
         mut self,
         models: BTreeSet<String>,
         inventory: Arc<dyn RouteInventory>,
         client: reqwest::Client,
     ) -> Self {
-        self.video_models = models;
-        self.video_inventory = Some(inventory);
-        self.video_client = Some(client);
+        self.video = Some(VideoBackendContext {
+            models,
+            inventory,
+            client,
+        });
         self
     }
 
@@ -495,7 +503,12 @@ impl RuntimeGeneration {
         let mut queued = None;
         loop {
             let slot = self.ready_state()?;
-            if (slot.state.models.contains_key(model) || slot.state.video_models.contains(model))
+            if (slot.state.models.contains_key(model)
+                || slot
+                    .state
+                    .video
+                    .as_ref()
+                    .is_some_and(|video| video.models.contains(model)))
                 && slot.control.model_ready(model)
             {
                 return Ok(slot);
@@ -649,7 +662,12 @@ impl Generation for RuntimeGeneration {
         request: crate::VideoRequest,
     ) -> Result<axum::response::Response, GenerationError> {
         let slot = self.generation_slot(&request.model).await?;
-        if !slot.state.video_models.contains(&request.model) {
+        let video = slot
+            .state
+            .video
+            .as_ref()
+            .ok_or(GenerationError::Unavailable)?;
+        if !video.models.contains(&request.model) {
             return Err(GenerationError::InvalidRequest);
         }
         let context = RouterRequest::video(request.model.clone(), request.request_id.clone());
@@ -657,19 +675,19 @@ impl Generation for RuntimeGeneration {
         let decision = session
             .select_initial()
             .map_err(|_| GenerationError::Unavailable)?;
-        let endpoint = slot
-            .state
-            .video_inventory
-            .as_ref()
-            .and_then(|inventory| inventory.http_endpoint(&decision))
+        let endpoint = video
+            .inventory
+            .http_endpoint(&decision)
             .ok_or(GenerationError::Unavailable)?;
-        let client = slot
-            .state
-            .video_client
-            .as_ref()
-            .ok_or(GenerationError::Internal)?;
         let _queue = foretoken_metrics::QueueGuard::backend_dispatch(&decision.admission_targets);
-        crate::video::forward(client, &endpoint, request, session, self.request_timeout).await
+        crate::video::forward(
+            &video.client,
+            &endpoint,
+            request,
+            session,
+            self.request_timeout,
+        )
+        .await
     }
 
     async fn generate(&self, request: GenerationRequest) -> Result<Generated, GenerationError> {

@@ -38,6 +38,7 @@ from foretoken.platform.gateway import GatewayControllerLifecycle
 from foretoken.platform.helm import Helm
 from foretoken.platform.leader_worker import LeaderWorkerLifecycle
 from foretoken.platform.load_balancer import LoadBalancerLifecycle
+from foretoken.platform.logs import LogCollectionLifecycle, log_config_from_values
 from foretoken.platform.model_distribution import (
     ModelDistributionLifecycle,
     dragonfly_config_from_values,
@@ -140,6 +141,7 @@ class PlatformLifecycle:
         self._gateway = GatewayControllerLifecycle(self._helm, self._kubectl)
         self._leader_worker = LeaderWorkerLifecycle(self._helm, self._kubectl)
         self._load_balancer = LoadBalancerLifecycle(self._helm, self._kubectl)
+        self._logs = LogCollectionLifecycle(self._helm)
         self._model_distribution = ModelDistributionLifecycle(self._helm, self._kubectl)
 
     def install(self, command: InstallCommand) -> None:
@@ -177,6 +179,12 @@ class PlatformLifecycle:
             (migrate_stored_rdma_values(helm.release_user_values(platform)),)
             if platform_exists else ()
         )
+        if stored_values:
+            stored_logs = stored_values[0].get("observability", {}).get("logs", {})
+            if "storageSize" in stored_logs:
+                stored_logs.setdefault("initialSize", stored_logs.pop("storageSize"))
+        log_config = log_config_from_values((*stored_values, *values))
+        log_plan = self._logs.plan(log_config)
         dragonfly_plan = self._model_distribution.resolve_install(
             dragonfly_config_from_values((*stored_values, *values))
         )
@@ -429,6 +437,8 @@ class PlatformLifecycle:
             "Gateway Controller", gateway_plan.action, gateway_plan.detail
         )
         _print_plan("Prometheus", prometheus_action, prometheus_detail)
+        for responsibility, action, detail in log_plan:
+            _print_plan(responsibility, action, detail)
         _print_plan("NVIDIA DCGM Exporter", nvidia_action, nvidia_detail)
         _print_plan("MetaX mxExporter", metax_action, metax_detail)
         if runtime_selection is None:
@@ -531,6 +541,7 @@ class PlatformLifecycle:
                 timeout_seconds=timeout_seconds(command.timeout),
             )
 
+        log_endpoint, log_storage_statefulset = self._logs.install(log_config, command.timeout)
         helm.install_platform(
             release=platform,
             source_images=source_images,
@@ -543,6 +554,8 @@ class PlatformLifecycle:
             observability_labels=observability_labels,
             observability_prometheus=f"{selected_prometheus.namespace}/{selected_prometheus.name}",
             grafana_anonymous_access=grafana_anonymous_access,
+            log_endpoint=log_endpoint,
+            log_storage_statefulset=log_storage_statefulset,
             gpu_resource_name=gpu_resource_name,
             rdma_resource_name=rdma.resource_name,
             rdma_managed=rdma.managed,
@@ -629,6 +642,7 @@ class PlatformLifecycle:
             prometheus_exists and helm.is_cleanup_managed(managed_prometheus)
         )
         metax_managed = bool(metax_exporter.managed_resources())
+        managed_logs = self._logs.managed_releases()
         dragonfly_managed = (
             helm.release_exists(helm.dragonfly_release())
             and helm.is_cleanup_managed(helm.dragonfly_release())
@@ -641,6 +655,7 @@ class PlatformLifecycle:
             or dcgm_managed
             or prometheus_managed
             or metax_managed
+            or managed_logs
             or dragonfly_managed
             or gateway_plan.managed
         ):
@@ -683,6 +698,9 @@ class PlatformLifecycle:
         _print_plan(
             "Gateway Controller", gateway_plan.action, gateway_plan.detail
         )
+        for release in managed_logs:
+            _print_plan("Logs", "Remove", release.display_name + " (retain stored logs)")
+        self._logs.uninstall(managed_logs, command.timeout)
         if platform_exists:
             helm.uninstall(platform, command.timeout)
             _print_plan("Foretoken platform", "Removed", platform.display_name)

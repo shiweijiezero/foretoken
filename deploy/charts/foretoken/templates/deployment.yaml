@@ -66,7 +66,12 @@ spec:
             {{- else }}
             - --metrics-bind-address=0
             {{- end }}
+            {{- if and .Values.observability.logs.managedStatefulSet .Values.observability.logs.maxSize }}
+            - {{ printf "--log-storage-statefulset=%s" .Values.observability.logs.managedStatefulSet | quote }}
+            - {{ printf "--log-storage-max-size=%s" .Values.observability.logs.maxSize | quote }}
+            {{- end }}
             - --health-probe-bind-address=:8081
+            - {{ printf "--video-worker-image=%s" (include "foretoken.image" .) | quote }}
             {{- range .Values.workload.imagePullSecrets }}
             - {{ printf "--workload-image-pull-secret=%s" .name | quote }}
             {{- end }}

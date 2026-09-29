@@ -16,6 +16,7 @@ import (
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -65,6 +66,7 @@ type GatewayParent struct {
 // FrontendRuntimeProfile contains platform-owned frontend settings and an optional production Gateway.
 type FrontendRuntimeProfile struct {
 	Image             string
+	WorkerImage       string
 	Port              int32
 	ImagePullSecrets  []corev1.LocalObjectReference
 	RuntimeCache      *inferencev1alpha1.RuntimeCacheBinding
@@ -87,7 +89,10 @@ func (reconciler *FrontendServiceReconciler) SetupWithManager(manager ctrl.Manag
 		For(&inferencev1alpha1.FrontendService{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
-		Owns(&corev1.ConfigMap{})
+		Owns(&corev1.ConfigMap{}).
+		Owns(&corev1.ServiceAccount{}).
+		Owns(&rbacv1.Role{}).
+		Owns(&rbacv1.RoleBinding{})
 	if reconciler.RuntimeProfile.Gateway != nil {
 		builder = builder.Owns(&gatewayv1.HTTPRoute{})
 	}
@@ -252,8 +257,16 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 		}
 	}
 	objects := []client.Object{service}
+	if frontend.Spec.VideoTasks != nil {
+		labels := map[string]string{frontendServiceLabel: frontend.Name}
+		objects = append(objects,
+			&corev1.ServiceAccount{TypeMeta: metav1.TypeMeta{APIVersion: "v1", Kind: "ServiceAccount"}, ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: labels}},
+			&rbacv1.Role{TypeMeta: metav1.TypeMeta{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "Role"}, ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: labels}, Rules: []rbacv1.PolicyRule{{APIGroups: []string{"inference.foretoken.io"}, Resources: []string{"videotasks"}, Verbs: []string{"get", "create", "patch", "delete"}}}},
+			&rbacv1.RoleBinding{TypeMeta: metav1.TypeMeta{APIVersion: rbacv1.SchemeGroupVersion.String(), Kind: "RoleBinding"}, ObjectMeta: metav1.ObjectMeta{Name: frontend.Name, Namespace: frontend.Namespace, Labels: labels}, RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: frontend.Name}, Subjects: []rbacv1.Subject{{Kind: "ServiceAccount", Name: frontend.Name, Namespace: frontend.Namespace}}},
+		)
+	}
 	if applyDeployment {
-		objects = append([]client.Object{deployment}, objects...)
+		objects = append(objects, deployment)
 	}
 	if route != nil {
 		objects = append(objects, route)
@@ -280,6 +293,15 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 		currentDeployment = new(appsv1.Deployment)
 		if err := reconciler.Get(ctx, client.ObjectKeyFromObject(deployment), currentDeployment); err != nil {
 			return ctrl.Result{}, fmt.Errorf("get frontend Deployment: %w", err)
+		}
+	}
+	if frontend.Spec.VideoTasks == nil && applyDeployment &&
+		currentDeployment.Status.ObservedGeneration >= currentDeployment.Generation &&
+		currentDeployment.Status.Replicas == *deployment.Spec.Replicas &&
+		currentDeployment.Status.UpdatedReplicas == *deployment.Spec.Replicas &&
+		currentDeployment.Status.AvailableReplicas == *deployment.Spec.Replicas {
+		if err := reconciler.deleteOwnedVideoTaskAccess(ctx, frontend); err != nil {
+			return ctrl.Result{}, err
 		}
 	}
 	routeRequired := route != nil
@@ -350,6 +372,28 @@ func (reconciler *FrontendServiceReconciler) deleteOwnedHTTPRoute(ctx context.Co
 	}
 	if err := reconciler.Delete(ctx, route); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete frontend HTTPRoute for local mode: %w", err)
+	}
+	return nil
+}
+
+// deleteOwnedVideoTaskAccess removes delegated access when asynchronous tasks are disabled.
+func (reconciler *FrontendServiceReconciler) deleteOwnedVideoTaskAccess(ctx context.Context, frontend *inferencev1alpha1.FrontendService) error {
+	reader := reconciler.APIReader
+	if reader == nil {
+		reader = reconciler.Client
+	}
+	for _, object := range []client.Object{&rbacv1.RoleBinding{}, &rbacv1.Role{}, &corev1.ServiceAccount{}} {
+		if err := reader.Get(ctx, client.ObjectKeyFromObject(frontend), object); apierrors.IsNotFound(err) {
+			continue
+		} else if err != nil {
+			return err
+		}
+		if !metav1.IsControlledBy(object, frontend) {
+			continue
+		}
+		if err := reconciler.Delete(ctx, object); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
 	}
 	return nil
 }

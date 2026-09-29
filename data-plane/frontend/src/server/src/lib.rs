@@ -8,6 +8,7 @@ pub mod draft_target;
 mod http;
 mod runtime;
 mod video;
+mod video_task;
 
 pub use video::VideoRequest;
 

@@ -19,6 +19,12 @@ metadata:
   labels:
     {{- include "foretoken.labels" . | nindent 4 }}
 rules:
+  {{- if and .Values.observability.logs.managedStatefulSet .Values.observability.logs.maxSize }}
+  # Kubelet volume observations are read through the API server's authenticated node proxy.
+  - apiGroups: [""]
+    resources: ["nodes/proxy"]
+    verbs: ["get"]
+  {{- end }}
   - apiGroups:
       - apiextensions.k8s.io
     resources:
@@ -39,6 +45,7 @@ rules:
       - modelpools.inference.foretoken.io
       - modelgroups.inference.foretoken.io
       - profileruns.inference.foretoken.io
+      - videotasks.inference.foretoken.io
     verbs:
       - get
       - patch
@@ -86,12 +93,59 @@ rules:
       - update
       - patch
   - apiGroups:
+      - inference.foretoken.io
+    resources:
+      - videotasks
+      - videotasks/status
+      - videotasks/finalizers
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - batch
+    resources:
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
+  - apiGroups:
       - apps
     resources:
       - replicasets
     verbs:
       - get
   {{- if .Values.frontend.enabled }}
+  - apiGroups:
+      - ""
+    resources:
+      - serviceaccounts
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - delete
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - roles
+      - rolebindings
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - patch
+      - delete
   - apiGroups:
       - inference.foretoken.io
     resources:

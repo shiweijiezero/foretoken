@@ -17,6 +17,7 @@ use foretoken_text::Prompt;
 use uuid::Uuid;
 
 use crate::runtime::{GeneratedChat, Generation, GenerationError, GenerationRequest};
+use crate::video_task::VideoTaskClient;
 
 /// Immutable frontend services shared by inference and diagnostic handlers.
 #[derive(Clone)]
@@ -24,6 +25,7 @@ pub(crate) struct ApiState {
     pub generation: Arc<dyn Generation>,
     pub models: Arc<dyn Fn() -> Vec<String> + Send + Sync>,
     pub stream_idle: Duration,
+    pub video_tasks: Option<Arc<VideoTaskClient>>,
 }
 
 impl ApiState {

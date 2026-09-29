@@ -165,7 +165,7 @@ impl RuntimeBuilder {
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .build()
                 .map_err(|error| RuntimeBuildError::ModelRuntime(error.to_string()))?;
-            state = state.with_video_models(video_models, video_inventory, client);
+            state = state.with_video_backend(video_models, video_inventory, client);
         }
         for (model, candidates) in admission_targets {
             state = state.with_admission_targets(model, candidates);

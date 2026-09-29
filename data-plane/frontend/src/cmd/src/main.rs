@@ -55,7 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let model_generation = generation.clone();
     let models = Arc::new(move || model_generation.configured_models());
-    let app = router(generation.clone(), models, config.stream_idle);
+    let app = router(generation.clone(), models, config.stream_idle)?;
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let server_shutdown = shutdown.clone();
     let mut server = Box::pin(

@@ -19,7 +19,8 @@ RUN if [ -n "${GOPROXY}" ]; then go env -w GOPROXY="${GOPROXY}"; fi \
 COPY control-plane/ ./
 # Build the long-running manager and the one-shot CRD bootstrapper from the same source tree.
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/manager ./cmd && \
-    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/crd-apply ./cmd/crd-apply
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/crd-apply ./cmd/crd-apply && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/video-worker ./cmd/video-worker
 
 FROM ${RUNTIME_IMAGE}
 ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
@@ -28,6 +29,7 @@ LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
       org.opencontainers.image.revision="${OCI_REVISION}"
 COPY --from=builder /out/manager /manager
 COPY --from=builder /out/crd-apply /crd-apply
+COPY --from=builder /out/video-worker /video-worker
 # Ship the generated API definitions with the binaries that consume them.
 COPY control-plane/config/crd/bases/ /opt/foretoken/crds/
 COPY LICENSE /LICENSE

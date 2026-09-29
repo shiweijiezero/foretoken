@@ -73,6 +73,12 @@ ZH = {
     "Inter-token latency (ITL)": "Token 间延迟 (ITL)",
     "Request time by stage": "各阶段请求耗时",
     "Preemptions": "抢占",
+    "Speculative decoding": "猜测解码",
+    "Draft and accepted tokens / s": "草稿与接受 token / s",
+    "Draft acceptance ratio": "草稿 token 接受率",
+    "Accepted tokens per draft": "每次草稿接受 token 数",
+    "Acceptance by draft position": "草稿各位置接受率",
+    "Latency observations / s": "延迟观测数 / s",
     "Prompt length": "输入长度",
     "Output length": "输出长度",
     "KV Cache utilization": "KV Cache 使用率",
@@ -139,10 +145,26 @@ ZH = {
         "从前端开始处理请求到首个输出 token 的耗时，按模型统计，单位为秒。",
     "Whole-model time per output token, in milliseconds; each request contributes its average interval.":
         "每个请求的平均输出 token 间隔，按模型统计分位数和均值，单位为毫秒。",
-    "Output-token intervals across aggregate and decode engines, in milliseconds.":
-        "聚合和 Decode 引擎的输出 token 间隔，单位为毫秒。",
-    "P95 time, in seconds, a request spends waiting for the scheduler, in prefill, and in decode.":
-        "请求在等待调度器、Prefill 和 Decode 阶段的 P95 耗时，单位为秒。",
+    "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets; compare the mean and observation rate when samples are sparse.":
+        "聚合和 Decode 引擎的输出 token 间隔，单位毫秒。分位数由直方图桶插值得到；样本稀少时对照均值和观测速率。",
+    "Observed request and token intervals per second. Sparse windows make histogram quantiles coarse; no observations leave them unavailable.":
+        "每秒完成的请求与 token 间隔观测数。样本稀少时直方图分位数较粗；无观测则不显示分位数。",
+    "Draft and accepted token rates for each whole model. These are speculative work, not final output throughput.":
+        "每个模型的草稿与接受 token 速率，表示猜测解码工作量，不等同最终输出吞吐量。",
+    "Accepted draft tokens divided by proposed draft tokens across all engines. No drafts produce no ratio; this is not a speedup estimate.":
+        "全部引擎接受的草稿 token 数除以提出的草稿 token 数；没有草稿时不显示比例，也不代表加速比。",
+    "Accepted draft tokens per draft iteration across all engines; excludes bonus tokens.":
+        "全部引擎每次草稿迭代接受的草稿 token 数，不包含额外 token。",
+    "Accepted tokens at each zero-based draft position divided by draft iterations across all engines. No drafts produce no ratio.":
+        "各草稿位置（从 0 开始）的接受数除以全部引擎草稿迭代数；没有草稿时不显示比例。",
+    "Draft / {{model_name}}": "草稿 / {{model_name}}",
+    "Accepted / {{model_name}}": "接受 / {{model_name}}",
+    "Position {{position}} / {{model_name}}": "位置 {{position}} / {{model_name}}",
+    "ITL / {{model_name}}": "ITL / {{model_name}}",
+    "TTFT / {{model_name}}": "TTFT / {{model_name}}",
+    "E2EL / {{model_name}}": "E2EL / {{model_name}}",
+    "P95 time spent in queue, prefill and decode by requests finishing in this window, in seconds. Stage durations appear when a request completes.":
+        "本窗口内已完成请求在排队、Prefill 和 Decode 阶段的 P95 耗时，单位秒；请求完成时才记录各阶段耗时。",
     "Whole-model preemption events per second across every engine, with selected backend details.":
         "每个模型全部引擎每秒发生的抢占事件总数，并展示所选后端明细。",
     "Distribution of prompt tokens per request across selected engines.": "所选引擎每次请求的输入 token 数分布。",
@@ -245,10 +267,17 @@ def instance_display(expr: str) -> str:
     return f'({expr}) * on(namespace,model_group) group_left(model_group_display) ({display})'
 
 
-def query(expr: str, legend: str | None = None, *, interval: str | None = None) -> prometheus.Dataquery:
+def query(
+    expr: str, legend: str | None = None, *, interval: str | None = None, instant: bool = False
+) -> prometheus.Dataquery:
+    """Build one Prometheus query for dashboard time series or current-value tiles."""
     if legend is not None and "{{model_group_display}}" in legend:
         expr = instance_display(expr)
-    target = prometheus.Dataquery().datasource(PROMETHEUS).expr(expr).range()
+    target = prometheus.Dataquery().datasource(PROMETHEUS).expr(expr)
+    if instant:
+        target.instant()
+    else:
+        target.range()
     if interval is not None:
         target.interval(interval)
     if legend is not None:
@@ -367,9 +396,9 @@ def headline(
             )
         ])
         .color_mode(models.BigValueColorMode.VALUE)
-        .graph_mode(models.BigValueGraphMode.AREA)
+        .graph_mode(models.BigValueGraphMode.NONE)
         .reduce_options(common.ReduceDataOptions().calcs(["lastNotNull"]))
-        .with_target(query(expr, legend or title, interval=interval).ref_id("A"))
+        .with_target(query(expr, legend or title, interval=interval or "5s", instant=True).ref_id("A"))
         .span(6)
         .height(4)
     )
@@ -408,10 +437,9 @@ def series(
         .show_points(models.VisibilityMode.NEVER)
         .legend(
             common.VizLegendOptions()
-            .display_mode(models.LegendDisplayMode.TABLE)
+            .display_mode(models.LegendDisplayMode.LIST)
             .placement(models.LegendPlacement.BOTTOM)
             .show_legend(True)
-            .calcs(["lastNotNull"])
         )
         .tooltip(common.VizTooltipOptions().mode(models.TooltipDisplayMode.MULTI).sort(models.SortOrder.DESCENDING))
         .targets([target.ref_id(chr(ord("A") + index)) for index, target in enumerate(targets)])
@@ -460,7 +488,8 @@ def latency(
             mean_expr = f"{scale} * {mean_expr}"
         targets.append(foretoken_query(mean_expr, prefix + "mean"))
         colors = {**QUANTILE_COLORS, "mean": ORANGE}
-    return series(title, description, targets, unit=unit, span=span, colors=colors if not dimensions else None).decimals(2)
+    panel = series(title, description, targets, unit=unit, span=span, colors=colors if not dimensions else None).height(10)
+    return panel.decimals(2) if scale == 1 else panel
 
 
 def distribution(title: str, description: str, metric: str) -> heatmap.Panel:
@@ -571,7 +600,7 @@ def build() -> dashboard_models.Dashboard:
         .editable()
         .tooltip(dashboard_models.DashboardCursorSync.CROSSHAIR)
         .refresh("5s")
-        .time("now-30m", "now")
+        .time("now-15m", "now")
         .timezone("browser")
         .links([])
         .annotation(
@@ -764,15 +793,19 @@ def build() -> dashboard_models.Dashboard:
         latency(
             model_metric("vllm:inter_token_latency_seconds_bucket", rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~"aggregate|decode"'),
             "Inter-token latency (ITL)",
-            "Output-token intervals across aggregate and decode engines, in milliseconds.",
+            "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets; compare the mean and observation rate when samples are sparse.",
             unit="suffix: ms",
             scale=1_000,
+            mean_rates=(
+                model_metric("vllm:inter_token_latency_seconds_sum", rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~"aggregate|decode"'),
+                model_metric("vllm:inter_token_latency_seconds_count", rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~"aggregate|decode"'),
+            ),
         )
     )
     board.with_panel(
         series(
             "Request time by stage",
-            "P95 time, in seconds, a request spends waiting for the scheduler, in prefill, and in decode.",
+            "P95 time spent in queue, prefill and decode by requests finishing in this window, in seconds. Stage durations appear when a request completes.",
             [
                 foretoken_query(
                     f"histogram_quantile(0.95, sum by(model_name,model_role,le) ({model_metric(metric, rate=True)}))",
@@ -787,7 +820,7 @@ def build() -> dashboard_models.Dashboard:
             unit="suffix: s",
             span=8,
             colors=STAGE_COLORS,
-        )
+        ).height(10)
     )
     board.with_panel(
         series(
@@ -799,7 +832,7 @@ def build() -> dashboard_models.Dashboard:
             ],
             unit="ops",
             span=8,
-        )
+        ).height(10)
     )
     board.with_panel(
         distribution(
@@ -813,6 +846,75 @@ def build() -> dashboard_models.Dashboard:
             "Output length",
             "Distribution of generated tokens per request across selected engines.",
             "vllm:request_generation_tokens_bucket",
+        )
+    )
+
+    board.with_panel(
+        series(
+            "Latency observations / s",
+            "Observed request and token intervals per second. Sparse windows make histogram quantiles coarse; no observations leave them unavailable.",
+            [
+                foretoken_query(model_total(metric, rate=True, roles="aggregate|decode"), f"{name} / {{{{model_name}}}}")
+                for name, metric in (
+                    ("ITL", "vllm:inter_token_latency_seconds_count"),
+                    ("TTFT", "vllm:time_to_first_token_seconds_count"),
+                    ("E2EL", "vllm:e2e_request_latency_seconds_count"),
+                )
+            ],
+            unit="ops",
+            span=24,
+        )
+    )
+
+    board.with_row(dashboard.Row("Speculative decoding"))
+    draft_tokens = model_total("vllm:spec_decode_num_draft_tokens_total", rate=True, roles="aggregate|decode")
+    accepted_tokens = model_total("vllm:spec_decode_num_accepted_tokens_total", rate=True, roles="aggregate|decode")
+    draft_iterations = model_total("vllm:spec_decode_num_drafts_total", rate=True, roles="aggregate|decode")
+    board.with_panel(
+        series(
+            "Draft and accepted tokens / s",
+            "Draft and accepted token rates for each whole model. These are speculative work, not final output throughput.",
+            [
+                foretoken_query(draft_tokens, "Draft / {{model_name}}"),
+                foretoken_query(accepted_tokens, "Accepted / {{model_name}}"),
+            ],
+            unit="suffix: token/s",
+            span=12,
+        ).override_by_query("A", [
+            dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": BLUE}),
+        ]).override_by_query("B", [
+            dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": TEAL}),
+        ])
+    )
+    board.with_panel(
+        series(
+            "Draft acceptance ratio",
+            "Accepted draft tokens divided by proposed draft tokens across all engines. No drafts produce no ratio; this is not a speedup estimate.",
+            [foretoken_query(f"({accepted_tokens}) / (({draft_tokens}) > 0)", "{{model_name}}")],
+            unit="percentunit",
+            span=12,
+        )
+    )
+    board.with_panel(
+        series(
+            "Accepted tokens per draft",
+            "Accepted draft tokens per draft iteration across all engines; excludes bonus tokens.",
+            [foretoken_query(f"({accepted_tokens}) / (({draft_iterations}) > 0)", "{{model_name}}")],
+            unit="short",
+            span=12,
+        )
+    )
+    board.with_panel(
+        series(
+            "Acceptance by draft position",
+            "Accepted tokens at each zero-based draft position divided by draft iterations across all engines. No drafts produce no ratio.",
+            [foretoken_query(
+                f"sum by(model_name,position) ({model_metric('vllm:spec_decode_num_accepted_tokens_per_pos_total', rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~\"aggregate|decode\"')}) "
+                f"/ on(model_name) group_left() (({draft_iterations}) > 0)",
+                "Position {{position}} / {{model_name}}",
+            )],
+            unit="percentunit",
+            span=12,
         )
     )
 
@@ -1063,7 +1165,6 @@ def build() -> dashboard_models.Dashboard:
             unit="reqps",
             span=12,
             colors={"2xx": GREEN, "4xx": ORANGE, "5xx": RED},
-            stack=True,
         )
     )
     board.with_panel(
@@ -1103,7 +1204,7 @@ def build() -> dashboard_models.Dashboard:
             unit="short",
             span=8,
             colors={"Pool": BLUE, "EPDPipelineScope": ORANGE},
-        )
+        ).height(10)
     )
 
     board.with_panel(
@@ -1113,7 +1214,7 @@ def build() -> dashboard_models.Dashboard:
             [query(f"foretoken:frontend_kv_index_source_health_ratio:min{{{FRONTEND}}}", "{{frontend_service}}")],
             unit="percentunit",
             span=8,
-        )
+        ).height(10)
     )
     control_plane = dashboard.Row("Control plane")
     control_plane.with_panel(
