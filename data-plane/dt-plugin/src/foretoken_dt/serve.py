@@ -8,16 +8,20 @@ def main() -> None:
     """Start one internal role service; vLLM owns model and accelerator settings."""
     import os
 
-    # Verification changes batch shapes. Select vLLM's invariant kernels before
-    # importing engine modules to stabilize greedy decisions across those shapes.
-    os.environ.setdefault("VLLM_BATCH_INVARIANT", "1")
+    import torch
+
+    is_metax = bool(getattr(torch.version, "maca", None))
+    # Batch-invariant kernels are NVIDIA-specific; MACA uses its platform kernels.
+    # Resolve the default before engine imports, preserving an explicit user setting.
+    os.environ.setdefault("VLLM_BATCH_INVARIANT", "0" if is_metax else "1")
     # Engine images may restrict plugin discovery, including with an empty list.
     # A DT role owns this required plugin in its spawned engine processes.
     allowed_plugins = os.environ.get("VLLM_PLUGINS")
     if allowed_plugins is not None:
         plugins = [name for name in allowed_plugins.split(",") if name]
-        if "foretoken_dt" not in plugins:
-            os.environ["VLLM_PLUGINS"] = ",".join([*plugins, "foretoken_dt"])
+        required = ("metax", "foretoken_dt") if is_metax else ("foretoken_dt",)
+        plugins.extend(name for name in required if name not in plugins)
+        os.environ["VLLM_PLUGINS"] = ",".join(plugins)
 
     import uvicorn
     from vllm import AsyncEngineArgs

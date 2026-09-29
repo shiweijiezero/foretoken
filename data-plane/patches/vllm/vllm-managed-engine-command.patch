@@ -14,3 +14,60 @@ diff --git a/rust/src/managed-engine/src/process.rs b/rust/src/managed-engine/sr
          let mut command = Command::from(command);
          command.stdin(Stdio::null()).stdout(Stdio::inherit()).stderr(Stdio::inherit());
  
+@@ -120,6 +126,15 @@
+                 return status;
+             }
+         }
++    }
++
++    /// Ask the launcher to shut down its children before process-group teardown.
++    /// Supervisors must still call shutdown after waiting for exit or their drain deadline.
++    pub async fn request_shutdown(&self) -> Result<()> {
++        if let Some(pid) = self.child.lock().await.id() {
++            process_group::terminate_launcher(pid)?;
++        }
++        Ok(())
+     }
+ 
+     /// Terminate the managed engine process group and wait for it to stop.
+@@ -179,19 +194,24 @@
+         }
+     }
+ 
++    /// Let an application launcher perform ordered child cleanup on SIGTERM.
++    pub fn terminate_launcher(pid: u32) -> Result<()> {
++        signal(pid as i32, libc::SIGTERM)
++    }
++
+     /// Send SIGTERM to the managed Python process group.
+     pub fn terminate(pid: u32) -> Result<()> {
+-        signal(pid, libc::SIGTERM)
++        signal(-(pid as i32), libc::SIGTERM)
+     }
+ 
+     /// Send SIGKILL to the managed Python process group.
+     pub fn kill(pid: u32) -> Result<()> {
+-        signal(pid, libc::SIGKILL)
+-    }
+-
+-    /// Deliver one signal to the managed Python process group.
+-    fn signal(pid: u32, signal: i32) -> Result<()> {
+-        let rc = unsafe { libc::kill(-(pid as i32), signal) };
++        signal(-(pid as i32), libc::SIGKILL)
++    }
++
++    /// Deliver a signal to a positive process ID or negative process-group ID.
++    fn signal(pid: i32, signal: i32) -> Result<()> {
++        let rc = unsafe { libc::kill(pid, signal) };
+         if rc == 0 {
+             return Ok(());
+         }
+@@ -200,7 +220,7 @@
+         if matches!(error.raw_os_error(), Some(code) if code == libc::ESRCH) {
+             return Ok(());
+         }
+-        Err(error).context("failed to signal managed engine process group")
++        Err(error).context("failed to signal managed engine")
+     }
+ }
+ 

@@ -22,8 +22,8 @@ Mooncake wheel 和 GPU 内存注册支持。
 没有 RDMA 分配时，此示例只接受温度 0。启用 RDMA 后，请求可使用 `temperature`、
 `top_p`、`top_k` 和 Target 的 `seed`。
 
-角色启动器默认在两端启用 vLLM batch invariance。使用计算能力 8.0 及以上的 NVIDIA GPU
-和兼容的引擎后端；原生环境变量覆盖方式及数值、性能限制见
+角色启动器在 NVIDIA 上默认启用 vLLM batch invariance，在沐曦上默认关闭。
+NVIDIA 模式要求计算能力 8.0 及以上的 GPU 和兼容的引擎后端；原生环境变量覆盖方式及数值、性能限制见
 [角色启动要求](../../data-plane/dt-plugin/README_zh.md#启动两个角色)。
 
 安装好上述平台后，在仓库根目录执行：

@@ -22,17 +22,26 @@ engine and installs this plugin, including its vLLM subprocess entry point.
 `foretoken install -e .` uses the same runtime by default. The host must support
 CUDA 13; an explicit `INFERENCE_ENGINE_IMAGE` override must provide the compatible
 engine and Mooncake environment described below. MetaX uses its separate runtime
-build and is not covered by this DT adapter's NVIDIA validation.
+build and the compatibility requirements below.
 
 ## Start two roles
 
-Both hosts need native vLLM `0.30.1rc1.dev194+g3b4566c5c`,
+Both hosts need native vLLM `0.30.1rc1.dev194+g3b4566c5c`, or the repository's
+MetaX source pair (`vllm==0.30.0.dev0`, `vllm-metax==0.29.0.dev0`),
 Python 3.10+, compatible PyTorch and Mooncake wheels, and working GPU/RDMA access.
 Install FastAPI, Uvicorn, AnyIO, Pydantic 2 and HTTPX in that environment.
 The package uses native class-selection interfaces and small process-local runtime
 patches; it does not edit installed vLLM files or require a separate engine branch.
 It does not install vLLM or register a `vllm serve` mode. The adapter is tied to
-this exact engine version; see the [integration contract](docs/mrv2-integration.md).
+these engine versions; see the [integration contract](docs/mrv2-integration.md).
+
+For MetaX, use the patched [source runtime](../../deploy/inference-engines/vllm-metax/),
+including its FlashAttention sequence-length fix for Model Runner V2. Keep
+`VLLM_USE_V2_MODEL_RUNNER=1` explicit: the platform defaults to the older runner.
+Use a MACA-compatible Mooncake build for RDMA; the source image sets
+`MC_MACA_HOST_TRANSPORT=1`. Successful generation does not establish GPU-direct
+transfer, cross-host operation or a performance improvement. MetaX greedy output
+can differ from Target-only decoding as batch shapes change.
 
 On systems using the loaded `nvidia-peermem` kernel module, set
 `WITH_NVIDIA_PEERMEM=1` in both process environments. Otherwise Mooncake's default
@@ -75,15 +84,17 @@ are internal APIs and do not expose public OpenAI endpoints or authentication.
 Each role uses one GPU worker, eager execution and synchronous local
 scheduling. Requests waiting for remote proposals do not block other requests.
 The role launcher includes `foretoken_dt` in an inherited `VLLM_PLUGINS` allowlist
-so spawned engine processes load the required hooks.
+so spawned engine processes load the required hooks. On MetaX it also includes
+the platform's `metax` plugin.
 The role accepts native vLLM model, memory and batching options.
 `--draft-token-budget` sets the maximum candidates per round (default 3).
 `--port` changes the HTTP port (default 19100); `--rdma-nic` optionally selects
 an HCA. Without a NIC filter, Mooncake chooses among visible devices.
 The HTTP and dynamically allocated Mooncake handshake ports must be reachable.
 
-The role launcher defaults vLLM's native `VLLM_BATCH_INVARIANT` to `1` on both
-roles to reduce batch-shape numerical variation. This mode's documented hardware
+The role launcher defaults vLLM's native `VLLM_BATCH_INVARIANT` to `1` on NVIDIA
+and `0` on MetaX, preserving an explicit environment setting. The NVIDIA default
+reduces batch-shape numerical variation. This mode's documented hardware
 scope is NVIDIA GPUs with compute capability 8.0 or newer; model and attention
 backends must also support it. Set `VLLM_BATCH_INVARIANT=0` explicitly before
 launch to disable it. Without it, greedy output can vary with batch composition.

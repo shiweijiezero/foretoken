@@ -10,7 +10,12 @@ from vllm import AsyncEngineArgs
 from vllm.config import SpeculativeConfig
 from vllm.config.utils import config
 
-from . import SUPPORTED_VLLM_VERSION
+from . import (
+    METAX_PLUGIN_VERSION,
+    METAX_VLLM_VERSION,
+    SUPPORTED_VLLM_VERSION,
+    supported_runtime,
+)
 
 
 @config
@@ -52,14 +57,24 @@ class ExternalEngineArgs(AsyncEngineArgs):
     def create_engine_config(self, *args, **kwargs):
         """Validate the supported engine boundary before spawning GPU processes."""
         installed = version("vllm")
-        if installed != SUPPORTED_VLLM_VERSION:
+        if not supported_runtime():
             raise RuntimeError(
-                f"DT supports native vLLM {SUPPORTED_VLLM_VERSION}; found {installed}"
+                f"DT requires vLLM {SUPPORTED_VLLM_VERSION}, or MetaX "
+                f"vLLM {METAX_VLLM_VERSION} with vllm-metax {METAX_PLUGIN_VERSION}; "
+                f"found vLLM {installed}"
             )
-        self.worker_cls = "foretoken_dt.vllm.worker.Worker"
         if self.speculative_config is not None:
             self.scheduler_cls = "foretoken_dt.vllm.scheduler.ExternalScheduler"
         result = super().create_engine_config(*args, **kwargs)
+        # Platform configuration must run before DT wraps its selected Worker.
+        workers = {
+            "vllm.v1.worker.gpu_worker.Worker": "foretoken_dt.vllm.worker.Worker",
+            "vllm_metax.v1.worker.gpu_worker.MacaWorker": "foretoken_dt.vllm.metax.Worker",
+        }
+        selected = result.parallel_config.worker_cls
+        if selected not in workers:
+            raise ValueError(f"DT has no adapter for platform worker {selected}")
+        result.parallel_config.worker_cls = workers[selected]
         if not result.use_v2_model_runner:
             raise ValueError("DT requires Model Runner V2")
         if (

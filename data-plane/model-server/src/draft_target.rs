@@ -141,7 +141,7 @@ pub(super) async fn run(
     }
     cache_shutdown.notify_waiters();
     engine
-        .shutdown(deadline.saturating_duration_since(tokio::time::Instant::now()))
+        .shutdown_application(deadline.saturating_duration_since(tokio::time::Instant::now()))
         .await?;
     match failure {
         Some(reason) => Err(io::Error::other(reason).into()),

@@ -9,11 +9,18 @@ The [DT Proposal](../../../docs/proposals/draft-target-disaggregation.md)
 describes the service architecture, role boundaries and acceptance sequence.
 
 The DT role service targets native vLLM `0.30.1rc1.dev194+g3b4566c5c`
-(commit `3b4566c5cf014605de6aeab6eb831b4f20511c17`). Foretoken owns the
+(commit `3b4566c5cf014605de6aeab6eb831b4f20511c17`) on NVIDIA. MetaX uses the
+core/plugin pair and ordered patches in
+[`source-environment.json`](../../../deploy/inference-engines/vllm-metax/source-environment.json).
+Its FlashAttention metadata builder uses MRV2's maximum sequence-length bound;
+MRV2 does not supply the older runner's CPU sequence-length tensor. Exact
+per-request lengths remain in the device metadata. Foretoken owns the
 compatibility layer in `foretoken_dt.vllm`; it does not edit installed vLLM files
 or require a separate engine branch.
 
-Native `worker_cls` and `scheduler_cls` select plugin subclasses. The
+Native `worker_cls` and `scheduler_cls` select plugin subclasses. Platform
+configuration selects its Worker first; DT then wraps that class, preserving
+MetaX's optional precision-debug Worker. The
 `vllm.general_plugins` entry point installs two process-local EngineCore hooks:
 candidate submission through the existing utility queue, and readiness while
 requests wait for remote candidates. Worker initialization temporarily replaces
@@ -75,8 +82,9 @@ also uses the plugin sampler's processed-logit export. Remote waits are per requ
 other requests can still execute. Distributed model execution, CUDA graphs,
 multimodal input and KV/EC transfer are not enabled by this adapter.
 
-The role CLI sets `VLLM_BATCH_INVARIANT=1` before importing vLLM unless the
-process environment already specifies a value. Native kernels own this numerical
+The role CLI defaults `VLLM_BATCH_INVARIANT` to `1` for NVIDIA and `0` for MACA
+before importing vLLM, unless the process environment already specifies a value.
+Native kernels own this numerical
 policy; the plugin does not replace their implementations. Target-only comparison
 runs must use the same setting. Model/backend support and hardware restrictions
 still apply, and independent Draft randomness prevents a general seeded-sequence
@@ -104,6 +112,12 @@ available during drain so Service routing does not interrupt existing sessions.
 Frontend or role failure terminates the request; transparent migration and replay
 are not implemented. Multiple Draft replicas provide capacity, not collaborative
 candidate trees or intermediate verification.
+
+After admission drain, model-server signals the role launcher first. Its lifespan
+closes Worker-owned transport registrations before stopping EngineCore. Sending
+SIGTERM to the whole process group at that point would stop the Worker while
+the role still needs cleanup RPCs. The existing process-group teardown remains
+the fallback when the application does not exit within the drain deadline.
 
 ## Worker and transport boundary
 

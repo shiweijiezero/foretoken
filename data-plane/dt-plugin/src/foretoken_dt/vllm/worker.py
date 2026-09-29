@@ -9,8 +9,8 @@ from vllm.v1.worker.gpu import model_runner
 from foretoken_dt.vllm.runner import GPUModelRunner, replace_binding
 
 
-class Worker(gpu_worker.Worker):
-    """Retain native GPU ownership and initialize the plugin's MRV2 Runner."""
+class ExternalRunnerMixin:
+    """Install DT Runner hooks while preserving the selected platform Worker."""
 
     def init_device(self):
         """Scope Runner factory replacement to this Worker's device setup."""
@@ -24,3 +24,7 @@ class Worker(gpu_worker.Worker):
             return super().compile_or_warm_up_model()
         finally:
             self.model_runner.warming_up = False
+
+
+class Worker(ExternalRunnerMixin, gpu_worker.Worker):
+    """Retain the native GPU Worker with external-candidate Runner hooks."""

@@ -17,16 +17,24 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 NVIDIA 源码构建中，`make image-model-server` 会构建固定版本的 CUDA 13 引擎并安装本插件，
 包含 vLLM 子进程发现所需的入口。`foretoken install -e .` 默认使用同一运行环境。
 主机需支持 CUDA 13；显式覆盖 `INFERENCE_ENGINE_IMAGE` 时，应提供下述兼容引擎和 Mooncake 环境。
-沐曦沿用独立的运行时构建，不属于本 DT 适配层已验证的 NVIDIA 范围。
+沐曦沿用独立的运行时构建，兼容要求见下文。
 
 ## 启动两个角色
 
-两台主机均需安装原版 vLLM `0.30.1rc1.dev194+g3b4566c5c`，
+两台主机均需安装原版 vLLM `0.30.1rc1.dev194+g3b4566c5c`，或仓库固定的
+沐曦版本组合（`vllm==0.30.0.dev0`、`vllm-metax==0.29.0.dev0`），
 并准备 Python 3.10+、兼容的 PyTorch/Mooncake wheel 和可用的 GPU/RDMA 访问。
 环境还需包含 FastAPI、Uvicorn、AnyIO、Pydantic 2 和 HTTPX。
 本包通过原生类选择接口和少量进程内运行时 patch 接入，不修改已安装的 vLLM 文件，
 不依赖独立引擎分支，也不安装 vLLM 或注册 `vllm serve` 模式。
 适配层限定上述引擎版本，详见[集成说明](docs/mrv2-integration.md)。
+
+沐曦需使用包含补丁的[源码运行环境](../../deploy/inference-engines/vllm-metax/)，
+其中包含 Model Runner V2 所需的 FlashAttention 序列长度修复。
+应显式设置 `VLLM_USE_V2_MODEL_RUNNER=1`，因为平台默认使用旧版 Runner。
+RDMA 需要兼容 MACA 的 Mooncake 构建；源码镜像已设置 `MC_MACA_HOST_TRANSPORT=1`。
+生成成功不能证明 GPU 直达传输、跨机运行或性能提升。
+沐曦贪心输出可能因 batch 形状变化而与独立 Target 解码不同。
 
 使用已加载的 `nvidia-peermem` 内核模块时，两端进程设置 `WITH_NVIDIA_PEERMEM=1`；
 否则 Mooncake 默认的 DMA-BUF 路径需要相应驱动支持。容器还需具备 GPU/RDMA 设备访问、
@@ -69,13 +77,15 @@ curl http://127.0.0.1:19100/status
 `--rdma-nic` 可指定 HCA，不设置时由 Mooncake 从可见设备中选择。
 HTTP 端口和 Mooncake 动态分配的握手端口需要互通。
 
-角色启动器默认在两端设置 vLLM 原生 `VLLM_BATCH_INVARIANT=1`，以减少 batch 形状引起的
-数值差异。该模式文档支持的硬件范围是计算能力 8.0 及以上的 NVIDIA GPU，模型和
+角色启动器在 NVIDIA 上默认设置 vLLM 原生 `VLLM_BATCH_INVARIANT=1`，在沐曦上默认设为 `0`，
+并保留显式设置的环境变量。NVIDIA 的默认值用于减少 batch 形状引起的数值差异。
+该模式文档支持的硬件范围是计算能力 8.0 及以上的 NVIDIA GPU，模型和
 attention 后端也必须支持它。启动前显式设置 `VLLM_BATCH_INVARIANT=0` 可关闭；关闭后
 贪心输出可能随 batch 组合变化。与独立 Target 对比时应使用相同设置。
 当前未测量这一设置的性能成本，也不承诺所有配置都能逐 token 完全一致。
 
 角色启动器会将 `foretoken_dt` 加入继承的 `VLLM_PLUGINS` 白名单，确保引擎子进程加载必要的钩子。
+沐曦环境还会加入平台的 `metax` 插件。
 
 支持 `temperature`、`top_p`、`top_k` 和 Target 的 `seed`。
 Draft 使用独立的随机数；固定 Target seed 不保证不同候选轮次或 batch 组合产生相同序列。

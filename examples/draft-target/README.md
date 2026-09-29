@@ -27,8 +27,8 @@ a compatible Mooncake wheel and GPU registration support.
 Without an RDMA allocation, this example accepts temperature zero only. With RDMA,
 requests may use `temperature`, `top_p`, `top_k` and a Target `seed`.
 
-The role launcher enables vLLM batch invariance by default on both roles. Use
-NVIDIA GPUs with compute capability 8.0 or newer and compatible engine backends;
+The role launcher enables vLLM batch invariance by default on NVIDIA and disables
+it on MetaX. The NVIDIA mode requires compute capability 8.0 or newer and compatible engine backends;
 see [role startup requirements](../../data-plane/dt-plugin/README.md#start-two-roles)
 for the native environment override and numerical/performance limitations.
 
