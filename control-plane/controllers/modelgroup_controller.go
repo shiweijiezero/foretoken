@@ -442,6 +442,7 @@ func (reconciler *ModelGroupReconciler) reconcileService(ctx context.Context, gr
 			Name: modelGroupServiceName(group), Namespace: group.Namespace, Labels: serviceLabels,
 			Annotations: map[string]string{
 				"inference.foretoken.io/model-service":             pool.Spec.ModelServiceRef.Name,
+				"inference.foretoken.io/served-model":              group.Spec.Artifacts.Model,
 				"inference.foretoken.io/model-pool":                pool.Spec.PoolName,
 				"inference.foretoken.io/model-instance":            strconv.Itoa(int(group.Spec.Ordinal)),
 				"inference.foretoken.io/model-instance-created-at": group.CreationTimestamp.UTC().Format(time.RFC3339),

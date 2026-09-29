@@ -36,6 +36,7 @@ class Task:
     id: str
     turns: tuple[Turn, ...]
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    prompt_token_ids: tuple[int, ...] | None = None
 
     def messages(self) -> list[dict[str, Any]]:
         """Return the turns as OpenAI Chat Completions messages."""
@@ -96,8 +97,8 @@ def _extract_row_content(
     line_number: int,
     *,
     allow_sharegpt: bool = False,
-) -> tuple[Any, str | None]:
-    """Extract the common OpenAI, prompt, user, and optional ShareGPT fields."""
+) -> tuple[Any, str | list[int] | None]:
+    """Extract chat content or a pre-tokenized Completions prompt from a dataset row."""
     if isinstance(row, list):
         return row, None
     if not isinstance(row, dict):
@@ -115,7 +116,12 @@ def _extract_row_content(
             )
         return _sharegpt_messages(row, dataset_path, line_number), None
     if "prompt" in row:
-        return None, str(row["prompt"])
+        prompt = row["prompt"]
+        if isinstance(prompt, list):
+            if not prompt or any(isinstance(token, bool) or not isinstance(token, int) or token < 0 for token in prompt):
+                raise ValueError(f"Tokenized prompt must be a non-empty list of non-negative integers at {dataset_path}:{line_number}")
+            return None, prompt
+        return None, str(prompt)
     if "user" in row:
         user_message = row["user"]
         if user_message is None or str(user_message) == "":
@@ -194,6 +200,8 @@ def _request_task(
     """Read one row as an independent request whose tools, if any, travel in the task metadata."""
     messages, prompt = _extract_row_content(row, dataset_path, line_number)
     metadata = request_row_metadata(row, dataset_path, line_number)
+    if isinstance(prompt, list):
+        return Task(id=f"{dataset_path}:{row_index}", turns=(), metadata=metadata, prompt_token_ids=tuple(prompt))
     if prompt is not None:
         turns: tuple[Turn, ...] = (Turn(role="user", content=prompt),)
     else:
@@ -245,13 +253,15 @@ def _conversation_task(
         line_number,
         allow_sharegpt=True,
     )
+    fields = request_row_metadata(row, dataset_path, line_number)
+    if isinstance(prompt, list):
+        return Task(id=f"{dataset_path}:{row_index}", turns=(), metadata=fields, prompt_token_ids=tuple(prompt))
     if prompt is not None:
         messages = [{"role": "user", "content": prompt}]
 
     turns = parse_message_turns(messages, dataset_path, line_number)
     if not any(turn.role == "user" for turn in turns):
         raise ValueError(f"Conversation has no user message at {dataset_path}:{line_number}")
-    fields = request_row_metadata(row, dataset_path, line_number)
     task = Task(id=f"{dataset_path}:{row_index}", turns=turns, metadata=fields)
     return task
 
@@ -360,7 +370,7 @@ def load_conversation_tasks(benchmark: BenchmarkConfig) -> list[Task]:
             if row_index < row_offset:
                 continue
             task = _conversation_task(row, dataset_path, line_number, row_index)
-            turn_count = len(split_chat_conversation(task.messages()))
+            turn_count = 1 if task.prompt_token_ids is not None else len(split_chat_conversation(task.messages()))
             if workload.max_turns is not None and workload.max_turns > 0:
                 turn_count = min(turn_count, workload.max_turns)
             if request_budget is not None and request_count + turn_count > request_budget:

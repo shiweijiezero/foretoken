@@ -13,7 +13,7 @@ Results include aggregate metrics and per-request records.
 | Observed request concurrency (`request_concurrency`) | `peak`: highest simultaneous active request count; `mean`: total request duration divided by measured run duration, including failed requests |
 | End-to-end latency (E2EL) | Request duration; successful streamed requests end at the last chunk with non-empty `choices` |
 | TTFT | Request start to the first chunk with non-empty `choices` |
-| TPOT | `(E2EL − TTFT) / (output tokens − 1)`; unavailable for fewer than two output tokens |
+| TPOT | `(E2EL − TTFT) / (output tokens − 1)`; zero for one output token; unavailable without output usage or streamed timing |
 | ITL | Intervals between chunks with non-empty `choices`; a chunk may contain multiple tokens |
 | Time to final-answer token (TTFAT) | Conversation start to the first chunk of its final answer |
 | Request throughput (req/s) | Successful requests divided by run duration |
@@ -34,7 +34,7 @@ Time curves also show request throughput, in-flight requests, failure rate and l
 
 ## SLO results
 
-When `--slo-params` is enabled, each request with latency-based criteria receives `slo_met` in `raw_output.json` and the W&B request-index history. The CLI, `metrics.json`, and W&B Summary record SLO attainment, request goodput, and token goodput for the same criteria. [SLO concurrency search](docs/perf/slo.md) evaluates aggregate criteria and reports the highest observed passing request peak with its configured limit and stopping reason.
+When `--slo-params` is enabled, each request with latency-based criteria receives `slo_met` in `raw_output.json` and the W&B request-index history. The CLI, `metrics.json`, and W&B Summary record SLO attainment, request goodput, and token goodput for the same criteria. Failed requests and requests missing required timing metrics count as not meeting the SLO. Attainment is the fraction of measured requests meeting all conditions; request goodput divides their count by run duration, and token goodput divides their output token total by the same duration. Adding `--slo-search` enables [SLO concurrency search](docs/perf/slo.md), which evaluates aggregate criteria and reports the highest observed passing request peak with its configured limit and stopping reason.
 
 Token counts remain unavailable when the service does not report them. If any successful request lacks input or output usage, aggregates that require the complete corresponding token total are unavailable rather than treating the missing value as zero. Cached input tokens preserve the service-reported value, including an explicit zero; they do not represent a storage-tier or KV-store hit rate.
 

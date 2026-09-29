@@ -26,7 +26,7 @@ foretoken perf examples/quickstart --dataset random \
 
 共 9 个参数点、27 次测量。并发 1 的结果同时用于单请求比较，延迟、吞吐与资源图表复用这些运行。tokenizer 从所选模型服务推导，需要覆盖时才传 `--tokenizer-path`。
 
-负载、生成和数据集字段沿用 CLI 名称，将连字符换成下划线。例如 `request_rate: [4, 8, 16]` 扫描到达率。[固定到达率配置](../../scripts/common/fixed-arrival.jsonl)和[容量配置](../../scripts/common/fixed-capacity.jsonl)可以直接使用。列表表示扫描维度；每次运行混合两个数据集时写作 `"dataset": [["first.jsonl", "second.jsonl"]]`。通过 `--slo-params` 添加 SLO 条件后，`--num-runs` 控制每个点的完整搜索重复次数，每次搜索的探测点测量一轮。
+负载、生成和数据集字段沿用 CLI 名称，将连字符换成下划线。例如 `request_rate: [4, 8, 16]` 扫描到达率。[固定到达率配置](../../scripts/common/fixed-arrival.jsonl)和[容量配置](../../scripts/common/fixed-capacity.jsonl)可以直接使用。列表表示扫描维度；每次运行混合两个数据集时写作 `"dataset": [["first.jsonl", "second.jsonl"]]`。`--slo-params` 只设置请求达标条件，不改变负载。加上 `--slo-search` 才搜索并发；此时 `--num-runs` 控制每个点的完整搜索重复次数，每次搜索的探测点测量一轮。
 
 ## 数据驱动负载
 

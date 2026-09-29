@@ -13,7 +13,7 @@
 | 实测请求并发（`request_concurrency`） | `peak` 为同时进行的请求数峰值；`mean` 为请求耗时总和除以测量时长，包含失败请求 |
 | End-to-end latency (E2EL) | 请求端到端耗时；成功的流式请求计时到最后一个 `choices` 非空分片 |
 | TTFT | 从发送请求到收到首个 `choices` 非空分片的时间 |
-| TPOT | `(E2EL − TTFT) / (输出 token 数 − 1)`；输出不足两个 token 时不可用 |
+| TPOT | `(E2EL − TTFT) / (输出 token 数 − 1)`；单 token 输出为零；缺少输出用量或流式计时时不可用 |
 | ITL | 相邻 `choices` 非空分片的到达间隔；一个分片可能包含多个 token |
 | Time to final-answer token (TTFAT) | 从整段对话开始到最终回答首个分片的时间 |
 | Request throughput (req/s) | 成功请求数除以运行时间 |
@@ -34,7 +34,7 @@ W&B 分别展示每次运行所测模型的输入和输出吞吐量。`Time` 曲
 
 ## SLO 结果
 
-启用 `--slo-params` 后，使用延迟类条件的请求会在 `raw_output.json` 和 W&B 逐请求曲线中获得 `slo_met`。CLI、`metrics.json` 和 W&B Summary 同时记录同一条件下的 SLO 达标率、请求 goodput 和 token goodput。[SLO 并发搜索](docs/perf/slo_zh.md) 按聚合条件判断探测点，报告实测最高达标请求峰值、对应配置限额和停止原因。
+启用 `--slo-params` 后，使用延迟类条件的请求会在 `raw_output.json` 和 W&B 逐请求曲线中获得 `slo_met`。CLI、`metrics.json` 和 W&B Summary 同时记录同一条件下的 SLO 达标率、请求 goodput 和 token goodput。失败或缺少必要计时指标的请求计为不达标。达标率是满足全部条件的请求占实测请求的比例；请求 goodput 和 token goodput 分别是达标请求数及其输出 token 总数除以运行时长。加上 `--slo-search` 后启用 [SLO 并发搜索](docs/perf/slo_zh.md)，按聚合条件判断探测点，报告实测最高达标请求峰值、对应配置限额和停止原因。
 
 服务未报告 token 用量时，对应 token 数保持不可用。如果任一成功请求缺少输入或输出用量，需要完整 token 总数的汇总指标也保持不可用，不把缺失值当作零。缓存输入 token 保留服务报告的原值，包括明确报告的零；它不表示某个存储层或 KV store 的命中率。
 

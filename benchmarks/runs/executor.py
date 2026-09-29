@@ -14,6 +14,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable
 
+import numpy as np
+
 from benchmarks.config.benchmark import BenchmarkConfig
 from benchmarks.datasets.conversations import (
     Task,
@@ -25,7 +27,7 @@ from benchmarks.datasets.synthetic import (
     generate_trace_random_requests,
     iter_duration_random_requests,
 )
-from benchmarks.integrations.openai import ChatCompletionsLoadClient
+from benchmarks.integrations.openai import OpenAILoadClient
 from benchmarks.model_service import ModelService
 from benchmarks.results.metrics import RequestMeasurement, summarize_measurement_groups, summarize_measurements
 from benchmarks.results.output import (
@@ -101,14 +103,12 @@ class TaskLoadBenchmark:
             return stream if hasattr(tasks, "__next__") else itertools.cycle(tasks)
         return itertools.islice(stream, budget)
 
-    def _next_interval(self, generator: random.Random) -> float:
+    def _next_interval(self, generator: np.random.RandomState) -> float:
         load = self.benchmark.load
         if load.arrival_pattern == "constant":
             return 1.0 / load.arrival_rate
-        if load.arrival_pattern == "poisson":
-            return generator.expovariate(load.arrival_rate)
-        shape = load.burstiness
-        return generator.gammavariate(shape, 1.0 / (load.arrival_rate * shape))
+        shape = 1.0 if load.arrival_pattern == "poisson" else load.burstiness
+        return float(generator.gamma(shape, 1.0 / (load.arrival_rate * shape)))
 
     async def _run_requests(
         self,
@@ -131,7 +131,7 @@ class TaskLoadBenchmark:
             stream = iter(itertools.islice(stream, budget))
         semaphore = asyncio.Semaphore(load.max_concurrency) if load.max_concurrency > 0 else None
         rate = load.arrival_rate
-        rng = random.Random(self.benchmark.resolved_workload.random_seed + (1 if warmup else 0))
+        rng = np.random.RandomState(self.benchmark.resolved_workload.random_seed + (1 if warmup else 0))
         measurements: list[RequestMeasurement] = []
         lock = asyncio.Lock()
         attempted_conversations = 0
@@ -140,7 +140,7 @@ class TaskLoadBenchmark:
         remaining_requests = budget
         active: set[asyncio.Task[None]] = set()
 
-        async with ChatCompletionsLoadClient(
+        async with OpenAILoadClient(
             self.benchmark,
             self.service,
             max_connections=load.max_concurrency if load.max_concurrency > 0 else None,
@@ -171,9 +171,10 @@ class TaskLoadBenchmark:
                                 return
                             acquired = True
                     context: list[dict[str, Any]] = []
+                    conversation = self.benchmark.is_multi_turn and task.prompt_token_ids is None
                     turns = [(task.messages(), None)]
                     generated_history = self.benchmark.resolved_workload.conversation_history == "generated"
-                    if self.benchmark.is_multi_turn:
+                    if conversation:
                         turns = split_chat_conversation(task.messages())
                         max_turns = self.benchmark.resolved_workload.max_turns
                         if max_turns is not None and max_turns > 0:
@@ -192,9 +193,10 @@ class TaskLoadBenchmark:
                                 remaining_requests -= 1
                         if profile is not None:
                             await profile.before_request()
-                        response = await client.send_messages(
-                            context + turn,
-                            task.metadata,
+                        response = (
+                            await client.send(task)
+                            if task.prompt_token_ids is not None
+                            else await client.send_messages(context + turn, task.metadata)
                         )
                         if generated_history and turn_index < len(turns) - 1 and response.get("tool_calls"):
                             response["success"] = False
@@ -211,8 +213,8 @@ class TaskLoadBenchmark:
                             output_tokens=response["output_tokens"],
                             cached_input_tokens=response["cached_input_tokens"],
                             succeeded=bool(response["success"]),
-                            conversation_id=task.id,
-                            turn=turn_index if self.benchmark.is_multi_turn else None,
+                            conversation_id=task.id if conversation else None,
+                            turn=turn_index if conversation else None,
                             status_code=response["status_code"],
                             error_message=response["error"],
                             dataset=task.metadata.get("_dataset") or (self.benchmark.resolved_workload.dataset_selectors[0] if self.benchmark.resolved_workload.dataset_selectors else None),
@@ -232,7 +234,7 @@ class TaskLoadBenchmark:
                             context.append({"role": "assistant", "content": response["generated_text"]})
                         elif reference_answer is not None:
                             context.append(reference_answer)
-                    if self.benchmark.is_multi_turn and conversation_succeeded and sent_turns == len(turns):
+                    if conversation and conversation_succeeded and sent_turns == len(turns):
                         async with lock:
                             completed_conversations += 1
                 finally:
@@ -284,9 +286,13 @@ class TaskLoadBenchmark:
                 grouped = load_multi_dataset_tasks(self.benchmark)
                 self.tasks = grouped.pop("__global__")
                 self.dataset_tasks = grouped
+            if self.benchmark.is_multi_turn and self.tasks is None:
+                self.tasks = list(self._load_tasks())
             record = build_benchmark_run_record(
                 self.benchmark, self.service, "task_load", resolved_load_record(self.benchmark)
             )
+            if self.benchmark.is_multi_turn:
+                record["multi_turn"] = any(task.prompt_token_ids is None for task in self.tasks)
             record["warmup_requests"] = self.benchmark.load.warmup_requests
             if self.dataset_tasks is not None:
                 record["datasets"] = list(self.dataset_tasks)
@@ -329,7 +335,7 @@ class TaskLoadBenchmark:
                 slo_criteria=(self.benchmark.slo.params[0] if self.benchmark.slo.params else None),
                 include_single_dataset=self.dataset_tasks is not None,
             ))
-            if self.benchmark.is_multi_turn:
+            if self._conversation_attempted:
                 metrics["multi_turn"] = True
                 metrics["conversation"] = {
                     "attempted_num": self._conversation_attempted,

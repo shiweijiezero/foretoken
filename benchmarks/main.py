@@ -37,7 +37,7 @@ def run_benchmark(
     service: ModelService,
 ) -> BenchmarkRun:
     """Execute an SLO search or measurement on a prepared service."""
-    if benchmark.slo.params:
+    if benchmark.slo.search:
         return SloAutoTuneBenchmark(benchmark, service).run()
     return measurement_runner(benchmark, service).run()
 

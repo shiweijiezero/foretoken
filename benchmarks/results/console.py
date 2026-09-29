@@ -135,7 +135,7 @@ def format_benchmark_config(
             f"  Trace Window: start={trace.start_offset_seconds:g}s, "
             f"duration={duration}\n"
             "  Trace concurrency: "
-            f"{trace.max_concurrency or 'no limit'}\n"
+            f"{benchmark.load.max_concurrency if benchmark.load.max_concurrency > 0 else 'no limit'}\n"
         )
         if trace.synthetic_prefix_reuse:
             trace_lines += "  Trace Prefix: synthetic hash-id blocks\n"
@@ -163,12 +163,13 @@ def format_benchmark_config(
     slo = benchmark.slo
     if slo.params:
         params_label = str(slo.params)
-        slo_lines = (
-            f"  SLO params : {params_label}\n"
-            f"  SLO concurrency bounds="
-            f"[{slo.lower_bound}, {slo.upper_bound if slo.upper_bound is not None else 'none'}], "
-            f"num_runs={slo.num_runs}\n"
-        )
+        slo_lines = f"  SLO params : {params_label}\n"
+        if slo.search:
+            slo_lines += (
+                f"  SLO concurrency bounds="
+                f"[{slo.lower_bound}, {slo.upper_bound if slo.upper_bound is not None else 'none'}], "
+                f"num_runs={slo.num_runs}\n"
+            )
     else:
         slo_lines = ""
     return (

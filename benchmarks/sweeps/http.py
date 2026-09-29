@@ -173,7 +173,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
             self.service = self.resources.enter_context(resolve_benchmark_service(point_config))
             self.selection = selection
         logger.info("%s", format_benchmark_config(point_config, self.service))
-        if point_config.slo.params:
+        if point_config.slo.search:
             result = SloAutoTuneBenchmark(
                 point_config,
                 self.service,

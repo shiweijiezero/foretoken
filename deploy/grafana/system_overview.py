@@ -296,8 +296,8 @@ def model_total(metric: str, *, rate: bool = False, roles: str = "") -> str:
 
 
 def selected_groups() -> str:
-    """Resolve model identity from engine gauges, including idle model instances."""
-    return f"max by(namespace,model_group) (0 * ({model_metric('vllm:kv_cache_usage_perc')}) + 1)"
+    """Resolve model identity from Service scrape targets even when engine metrics are absent."""
+    return 'max by(namespace,model_group) (foretoken:model_instance_info{namespace=~"$namespace",model_name=~"$model_name",model_group=~"$model_group"})'
 
 
 def scoped_group_metric(expr: str) -> str:
@@ -559,10 +559,9 @@ def render(locale: str) -> str:
 
 def build() -> dashboard_models.Dashboard:
     instances = (
-        'label_replace(max by(namespace,inference_foretoken_io_model_group) ('
-        'max_over_time(vllm:kv_cache_usage_perc{endpoint="model-server",namespace=~"$namespace",'
-        'model_name=~"$model_name"}[$__range] @ end())), "model_group", "$1", '
-        '"inference_foretoken_io_model_group", "(.+)")'
+        'max by(namespace,model_group) ('
+        'max_over_time(foretoken:model_instance_info{namespace=~"$namespace",'
+        'model_name=~"$model_name"}[$__range] @ end()))'
     )
     board = (
         dashboard.Dashboard("Foretoken System Overview")
@@ -595,7 +594,7 @@ def build() -> dashboard_models.Dashboard:
         .with_variable(
             variable(
                 "model_name", "Model",
-                'label_values(vllm:kv_cache_usage_perc{endpoint="model-server",namespace=~"$namespace"}, model_name)',
+                'label_values(foretoken:model_instance_info{namespace=~"$namespace"}, model_name)',
             )
         )
         .with_variable(
@@ -898,7 +897,7 @@ def build() -> dashboard_models.Dashboard:
     model_pods = (
         'max by(namespace,pod,model_group) (foretoken:accelerator_workload_labels{namespace=~"$namespace"}) '
         '* on(namespace,model_group) group_left(model_name) '
-        f"(max by(namespace,model_group,model_name) (0 * ({model_metric('vllm:kv_cache_usage_perc', whole_model=True)}) + 1))"
+        '(max by(namespace,model_group,model_name) (foretoken:model_instance_info{namespace=~"$namespace",model_name=~"$model_name"}))'
     )
     board.with_panel(
         series(

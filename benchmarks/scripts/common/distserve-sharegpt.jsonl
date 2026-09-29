@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+{"_benchmark_name":"distserve-sharegpt","dataset":"results/datasets/distserve-sharegpt.jsonl","num_prompts":300,"warmup_requests":0,"temperature":1,"top_p":1,"request_rate":[0.75,1.5,3,4.5,6,6.75,7.5,9],"max_concurrency":-1,"random_seed":0}

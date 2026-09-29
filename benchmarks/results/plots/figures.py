@@ -198,6 +198,9 @@ def _charts(
             }:
                 figure_title += f" · {series_list[0].name}"
             _style(axis, figure_title, chart.xlabel, chart.ylabel)
+            if chart.metric == "slo_slo_attainment":
+                axis.set_ylim(-3, 103)
+                axis.set_yticks(range(0, 101, 20))
             if chart.tick_labels:
                 ticks = sorted({x for series in series_list for x in series.x})
                 axis.set_xticks(

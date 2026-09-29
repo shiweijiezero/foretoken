@@ -26,7 +26,7 @@ foretoken perf examples/quickstart --dataset random \
 
 This produces nine parameter points and 27 measured runs. Concurrency 1 supplies the single-request comparison; latency, throughput, and resource plots reuse those runs. The tokenizer comes from the selected model service; `--tokenizer-path` overrides it.
 
-Load, generation, and dataset options use their CLI names with underscores. For example, `request_rate: [4, 8, 16]` scans arrival rates. The [fixed-arrival configuration](../../scripts/common/fixed-arrival.jsonl) and [capacity configuration](../../scripts/common/fixed-capacity.jsonl) are ready-to-run examples. Lists are sweep axes: to mix two datasets in each run, use `"dataset": [["first.jsonl", "second.jsonl"]]`. SLO criteria are supplied with `--slo-params`; `--num-runs` repeats the complete search for each point, with one measurement per probe.
+Load, generation, and dataset options use their CLI names with underscores. For example, `request_rate: [4, 8, 16]` scans arrival rates. The [fixed-arrival configuration](../../scripts/common/fixed-arrival.jsonl) and [capacity configuration](../../scripts/common/fixed-capacity.jsonl) are ready-to-run examples. Lists are sweep axes: to mix two datasets in each run, use `"dataset": [["first.jsonl", "second.jsonl"]]`. `--slo-params` scores requests without changing the load. Add `--slo-search` to search concurrency instead; then `--num-runs` repeats the complete search for each point, with one measurement per probe.
 
 ## Data-driven workloads
 

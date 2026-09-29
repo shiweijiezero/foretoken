@@ -98,6 +98,9 @@ def sweep_charts(
         "e2e_s",
         "denoise_s",
         "peak_gpu_memory_mb",
+        "slo_slo_attainment",
+        "slo_request_goodput",
+        "slo_token_goodput",
     }
     rows_by_group: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = defaultdict(
         list
@@ -160,7 +163,7 @@ def sweep_charts(
                 milliseconds = metric.startswith(("tpot_", "itl_")) and metric.endswith(
                     "_seconds"
                 )
-                scale = 1000 if milliseconds else 1
+                scale = 1000 if milliseconds else 100 if metric == "slo_slo_attainment" else 1
                 by_method: dict[str, list[tuple[float, dict[str, Any]]]] = defaultdict(
                     list
                 )
@@ -244,6 +247,9 @@ def sweep_charts(
                                 "e2e_s": "Video E2E latency (s)",
                                 "denoise_s": "Denoise latency (s)",
                                 "peak_gpu_memory_mb": "Peak GPU memory (MiB)",
+                                "slo_slo_attainment": "SLO attainment (%)",
+                                "slo_request_goodput": "Request goodput (req/s)",
+                                "slo_token_goodput": "Output goodput (tokens/s)",
                             }.get(metric, metric.replace("_", " ")),
                             series=tuple(panel_series),
                             tick_labels=(group,) if not axis else (),

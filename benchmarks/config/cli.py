@@ -437,12 +437,19 @@ def _add_benchmark_arguments(
     )
 
     parser.add_argument(
+        "--slo-search",
+        action="store_true",
+        default=_default(SloTuneConfig, "search"),
+        help="Search concurrency using aggregate --slo-params criteria instead of measuring the fixed load",
+    )
+    parser.add_argument(
         "--slo-params",
         type=json.loads,
         default=_default(SloTuneConfig, "params"),
         help=(
-            "JSON SLO criteria that enable search; metrics in one object are ANDed, "
-            "objects are searched independently"
+            "JSON array of SLO criteria; one object scores each request without search "
+            "(latency, ttft, tpot, itl; seconds). All conditions must hold. "
+            "With --slo-search, aggregate criteria objects are searched independently"
         ),
     )
     parser.add_argument(
@@ -555,6 +562,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
         ),
         # A sweep repeats the whole search; standalone SLO repeats each probe.
         slo=SloTuneConfig(
+            search=namespace.slo_search,
             params=namespace.slo_params,
             num_runs=1 if namespace.sweep else namespace.num_runs,
             upper_bound=namespace.slo_upper_bound,
