@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import shutil
-import subprocess
 from typing import Any
 
 from benchmarks.config.video_evaluation import (
@@ -18,6 +16,13 @@ from benchmarks.config.video_evaluation import (
 from benchmarks.integrations.video_evaluator import (
     VideoEvaluationCommand,
     VideoEvaluationIdentity,
+)
+from benchmarks.integrations.vbench.container import (
+    VBENCH_OUTPUT,
+    VBENCH_ROOT,
+    VBENCH_VIDEOS,
+    inspect_vbench_image,
+    vbench_container_command,
 )
 from benchmarks.results.output import write_json
 
@@ -43,7 +48,7 @@ def _prompt_source(config: VBenchEvaluationConfig) -> str:
 def prepare_prompt_file(
     config: VBenchEvaluationConfig, native_directory: Path
 ) -> Path | None:
-    """Use an explicit prompt map or derive one from Foretoken video results."""
+    """Copy or derive a prompt map inside the host directory mounted as output."""
     if config.prompt_file:
         path = Path(config.prompt_file)
         prompts = json.loads(path.read_text(encoding="utf-8"))
@@ -54,7 +59,13 @@ def prepare_prompt_file(
             raise ValueError(
                 "--prompt-file must contain a JSON object mapping video paths to prompts"
             )
-        return path
+        normalized: dict[str, str] = {}
+        for name, prompt in prompts.items():
+            filename = Path(name).name
+            if filename in normalized and normalized[filename] != prompt:
+                raise ValueError(f"--prompt-file contains conflicting prompts for {filename}")
+            normalized[filename] = prompt
+        return write_json(str(native_directory), "prompt_map.json", normalized)
     raw_results = Path(config.videos_path) / "raw_results.json"
     if not raw_results.is_file():
         return None
@@ -78,23 +89,6 @@ def prepare_prompt_file(
     return path
 
 
-def _vbench_commit(root: str) -> str | None:
-    """Identify the VBench checkout without borrowing a parent repository's commit."""
-    if shutil.which("git") is None:
-        return None
-    result = subprocess.run(
-        ["git", "-C", root, "rev-parse", "--show-toplevel", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    lines = result.stdout.splitlines()
-    if result.returncode or len(lines) != 2:
-        return None
-    checkout, commit = lines
-    return commit if Path(checkout).resolve() == Path(root).resolve() else None
-
-
 class VBenchEvaluator:
     """Adapt VBench custom_input to Foretoken's video evaluation lifecycle."""
 
@@ -102,6 +96,7 @@ class VBenchEvaluator:
 
     def __init__(self, config: VBenchEvaluationConfig) -> None:
         self.config = config
+        self.image = inspect_vbench_image(config.image)
 
     def describe(self) -> VideoEvaluationIdentity:
         """Record the selected videos, prompt source, and native code revision."""
@@ -109,9 +104,10 @@ class VBenchEvaluator:
             model=source_model(self.config.videos_path),
             evaluation_mode="custom_input",
             metadata={
-                "vbench_python": self.config.vbench_python,
-                "vbench_root": self.config.vbench_root,
-                "vbench_commit": _vbench_commit(self.config.vbench_root),
+                "vbench_image": self.config.image,
+                "vbench_image_id": self.image.image_id,
+                "vbench_image_digest": self.image.digest,
+                "vbench_commit": self.image.commit,
                 "dimensions": list(self.config.dimensions),
                 "prompt_source": _prompt_source(self.config),
                 "num_videos": len(_videos(self.config.videos_path)),
@@ -119,31 +115,33 @@ class VBenchEvaluator:
         )
 
     def prepare(self, native_directory: Path) -> VideoEvaluationCommand:
-        """Materialize any Foretoken prompt map and invoke official evaluate.py."""
+        """Mount Foretoken inputs and invoke VBench inside the selected image."""
         config = self.config
         prompt_file = prepare_prompt_file(config, native_directory)
-        arguments = [
-            config.vbench_python,
-            str(Path(config.vbench_root) / "evaluate.py"),
+        arguments = vbench_container_command(
+            self.image,
+            Path(config.cache),
+            videos=Path(config.videos_path),
+            output=native_directory,
+            gpu=True,
+        )
+        arguments.extend((
+            "python3",
+            f"{VBENCH_ROOT}/evaluate.py",
             "--videos_path",
-            config.videos_path,
+            VBENCH_VIDEOS,
             "--dimension",
             *config.dimensions,
             "--mode",
             "custom_input",
             "--output_path",
-            str(native_directory),
+            VBENCH_OUTPUT,
             "--load_ckpt_from_local",
             "True",
-        ]
+        ))
         if prompt_file is not None:
-            arguments.extend(("--prompt_file", str(prompt_file)))
-        environment = (
-            {"VBENCH_CACHE_DIR": config.vbench_cache}
-            if config.vbench_cache
-            else {}
-        )
-        return VideoEvaluationCommand(tuple(arguments), config.vbench_root, environment)
+            arguments.extend(("--prompt_file", f"{VBENCH_OUTPUT}/{prompt_file.name}"))
+        return VideoEvaluationCommand(tuple(arguments), None, {})
 
     def read_metrics(self, directory: Path) -> dict[str, Any]:
         """Normalize VBench aggregate dimension scores for shared result sinks."""

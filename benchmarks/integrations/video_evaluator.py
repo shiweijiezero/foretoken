@@ -21,15 +21,15 @@ class VideoEvaluationIdentity:
 
 @dataclass(frozen=True)
 class VideoEvaluationCommand:
-    """Describe a native evaluator process owned and logged by Foretoken."""
+    """Describe an evaluator process owned and logged by Foretoken."""
 
     arguments: tuple[str, ...]
-    cwd: str
+    cwd: str | None
     environment: dict[str, str]
 
 
 class VideoEvaluator(Protocol):
-    """Supply run identity, native execution, and normalized video quality scores."""
+    """Supply run identity, evaluator execution, and normalized video scores."""
 
     name: str
 
@@ -38,7 +38,7 @@ class VideoEvaluator(Protocol):
         ...
 
     def prepare(self, native_directory: Path) -> VideoEvaluationCommand:
-        """Prepare native inputs and return the child process invocation."""
+        """Prepare inputs and return the child process invocation."""
         ...
 
     def read_metrics(self, native_directory: Path) -> dict[str, Any]:

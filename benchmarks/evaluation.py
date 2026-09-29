@@ -10,14 +10,13 @@ import sys
 
 from benchmarks.config.evaluation import native_arguments, parse_evaluation_arguments
 from benchmarks.config.video_evaluation import (
-    parse_vbench_evaluation_arguments,
+    VBenchEvaluationConfig,
     parse_vbench_setup_arguments,
 )
-from benchmarks.integrations.vbench import VBenchEvaluator
+from benchmarks.integrations.vbench.evaluator import VBenchEvaluator
 from benchmarks.model_service import resolve_model_service
 from benchmarks.results.console import configure_logging
-from benchmarks.runs.evaluation import run_evaluation
-from benchmarks.runs.video_evaluation import run_video_evaluation
+from benchmarks.runs.evaluation import run_evaluation, run_video_evaluation
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -25,18 +24,17 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         arguments = tuple(sys.argv[1:] if argv is None else argv)
         if arguments[:1] == ("setup",):
-            from benchmarks.integrations.vbench_setup import setup_vbench
+            from benchmarks.integrations.vbench.setup import setup_vbench
 
             setup_vbench(parse_vbench_setup_arguments(arguments[1:]))
-            return
-        if any(argument.partition("=")[0] == "--video" for argument in arguments):
-            config = parse_vbench_evaluation_arguments(arguments)
-            configure_logging(not config.outputs.includes("quiet"))
-            run_video_evaluation(config, VBenchEvaluator(config))
             return
         config, help_requested = parse_evaluation_arguments(
             arguments
         )
+        if isinstance(config, VBenchEvaluationConfig):
+            configure_logging(not config.outputs.includes("quiet"))
+            run_video_evaluation(config, VBenchEvaluator(config))
+            return
         if config.evaluator is None:
             if help_requested:
                 return

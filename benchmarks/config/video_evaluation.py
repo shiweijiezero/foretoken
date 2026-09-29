@@ -10,7 +10,6 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
-import sys
 
 import yaml
 
@@ -34,14 +33,13 @@ CUSTOM_INPUT_VIDEO_SUFFIXES = frozenset({".mp4", ".gif"})
 
 @dataclass(frozen=True)
 class VBenchEvaluationConfig:
-    """Keep VBench runtime ownership separate from Foretoken's base environment."""
+    """Select an immutable VBench image and host-owned evaluation artifacts."""
 
     videos_path: str
     prompt_file: str | None
     dimensions: tuple[str, ...]
-    vbench_python: str
-    vbench_root: str
-    vbench_cache: str | None
+    image: str
+    cache: str
     outputs: BenchmarkOutputConfig
     wandb: WandbRunConfig
 
@@ -57,18 +55,12 @@ class VBenchEvaluationConfig:
             raise ValueError(f"video directory contains no MP4 or GIF files: {videos}")
         if self.prompt_file and not Path(self.prompt_file).is_file():
             raise ValueError(f"prompt file does not exist: {self.prompt_file}")
-        if not (Path(self.vbench_root) / "evaluate.py").is_file():
-            raise ValueError(
-                f"VBench checkout does not contain evaluate.py: {self.vbench_root}"
-            )
-        if self.vbench_cache and not Path(self.vbench_cache).is_dir():
-            raise ValueError(f"VBench cache directory does not exist: {self.vbench_cache}")
-        if not Path(self.vbench_python).is_file() and shutil.which(
-            self.vbench_python
-        ) is None:
-            raise ValueError(
-                f"VBench Python executable not found: {self.vbench_python}"
-            )
+        if not self.image:
+            raise ValueError("evaluators.vbench.image must name a Docker image")
+        if not Path(self.cache).is_dir():
+            raise ValueError(f"VBench cache directory does not exist: {self.cache}; run 'foretoken eval setup vbench'")
+        if shutil.which("docker") is None:
+            raise ValueError("VBench evaluation requires Docker on this machine")
         if not self.dimensions:
             raise ValueError(
                 "--dimension must select at least one custom-input dimension"
@@ -82,18 +74,14 @@ class VBenchEvaluationConfig:
         return {
             "videos_path": self.videos_path,
             "prompt_file": self.prompt_file,
-            "vbench_cache": self.vbench_cache,
+            "vbench_image": self.image,
+            "vbench_cache": self.cache,
             "output": {"destinations": self.outputs.destinations},
         }
 
 
 def _resolved_path(value: str) -> str:
     return str(Path(value).expanduser().resolve())
-
-
-def _python_executable(value: str) -> str:
-    path = Path(value).expanduser()
-    return str(path.resolve()) if path.is_file() else value
 
 
 def evaluator_config_path(config_path: str | None = None) -> Path:
@@ -125,36 +113,36 @@ def read_evaluator_config(path: Path) -> dict:
 
 
 def vbench_settings(path: Path) -> dict[str, str]:
-    """Resolve VBench runtime paths relative to their owning YAML file."""
+    """Read the container image and resolve its host cache beside the YAML."""
     evaluators = read_evaluator_config(path)["evaluators"]
     settings = evaluators.get("vbench", {})
     if not isinstance(settings, dict):
         raise ValueError(f"evaluator config must contain 'evaluators.vbench': {path}")
-    resolved: dict[str, str] = {}
-    for name in ("python", "root", "cache"):
-        value = settings.get(name)
-        if value is None:
-            continue
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"evaluators.vbench.{name} must be a path: {path}")
-        candidate = Path(value).expanduser()
-        if name == "python" and candidate.parent == Path(".") and candidate.name == value:
-            resolved[name] = value
-        else:
-            resolved[name] = str(
-                (path.parent / candidate).resolve()
-                if not candidate.is_absolute()
-                else candidate.resolve()
-            )
-    return resolved
+    if "python" in settings or "root" in settings:
+        raise ValueError(
+            f"VBench Python/root settings are no longer supported: {path}; "
+            "set evaluators.vbench.image to a VBench container image"
+        )
+    image = settings.get("image")
+    if not isinstance(image, str) or not image.strip():
+        raise ValueError(f"evaluators.vbench.image must be a Docker image: {path}")
+    cache = settings.get("cache", ".foretoken/evaluators/vbench/cache")
+    if not isinstance(cache, str) or not cache.strip():
+        raise ValueError(f"evaluators.vbench.cache must be a directory: {path}")
+    candidate = Path(cache).expanduser()
+    return {
+        "image": image.strip(),
+        "cache": str((path.parent / candidate).resolve()),
+    }
 
 
 @dataclass(frozen=True)
 class VBenchSetupConfig:
-    """Describe the local configuration and managed installation owned by setup."""
+    """Describe the project configuration and checkpoint cache owned by setup."""
 
     config_path: Path
     directory: Path
+    image: str | None
 
 
 def parse_vbench_setup_arguments(argv: Sequence[str]) -> VBenchSetupConfig:
@@ -162,7 +150,7 @@ def parse_vbench_setup_arguments(argv: Sequence[str]) -> VBenchSetupConfig:
     parser = argparse.ArgumentParser(
         prog="foretoken eval setup",
         allow_abbrev=False,
-        description="Prepare an independent VBench environment and evaluator YAML.",
+        description="Pull a VBench image, prepare checkpoints, and write evaluator YAML.",
     )
     parser.add_argument("evaluator", choices=("vbench",))
     parser.add_argument(
@@ -170,7 +158,11 @@ def parse_vbench_setup_arguments(argv: Sequence[str]) -> VBenchSetupConfig:
     )
     parser.add_argument(
         "--directory", type=_resolved_path,
-        help="managed installation directory (default: .foretoken/evaluators/vbench beside the YAML)",
+        help="checkpoint directory (default: .foretoken/evaluators/vbench beside the YAML)",
+    )
+    parser.add_argument(
+        "--image",
+        help="VBench Docker image; required when no VBench YAML exists",
     )
     options = parser.parse_args(argv)
     path = evaluator_config_path(options.config)
@@ -178,34 +170,11 @@ def parse_vbench_setup_arguments(argv: Sequence[str]) -> VBenchSetupConfig:
         Path(options.directory) if options.directory
         else path.parent / ".foretoken/evaluators/vbench"
     )
-    return VBenchSetupConfig(path, directory)
+    return VBenchSetupConfig(path, directory, options.image)
 
 
-def parse_vbench_evaluation_arguments(argv: Sequence[str]) -> VBenchEvaluationConfig:
-    """Parse Foretoken-owned VBench custom-input options."""
-    output = BenchmarkOutputConfig()
-    tracking = WandbRunConfig()
-    parser = argparse.ArgumentParser(
-        prog="foretoken eval",
-        allow_abbrev=False,
-        description="Score generated videos with VBench custom_input dimensions.",
-    )
-    parser.add_argument(
-        "--video",
-        required=True,
-        metavar="VIDEO_DIR",
-        type=_resolved_path,
-        help=(
-            "directory containing MP4 or GIF videos "
-            "(a Foretoken video result directory is accepted)"
-        ),
-    )
-    parser.add_argument(
-        "--evaluator",
-        choices=("vbench",),
-        default="vbench",
-        help="video evaluator (default: vbench)",
-    )
+def add_vbench_evaluation_arguments(parser: argparse.ArgumentParser) -> None:
+    """Attach VBench-only options to the shared evaluation parser."""
     parser.add_argument(
         "--config",
         type=_resolved_path,
@@ -221,56 +190,27 @@ def parse_vbench_evaluation_arguments(argv: Sequence[str]) -> VBenchEvaluationCo
         nargs="+",
         choices=CUSTOM_INPUT_DIMENSIONS,
         default=CUSTOM_INPUT_DIMENSIONS,
-        help="custom_input dimensions (default: all 10 supported dimensions)",
+        help="video quality dimensions (default: all 10 supported dimensions)",
     )
-    parser.add_argument(
-        "--vbench-python",
-        type=_python_executable,
-        help="override evaluators.vbench.python",
-    )
-    parser.add_argument(
-        "--vbench-root",
-        type=_resolved_path,
-        help="override evaluators.vbench.root (contains evaluate.py)",
-    )
-    parser.add_argument(
-        "--vbench-cache",
-        type=_resolved_path,
-        help="override evaluators.vbench.cache (VBENCH_CACHE_DIR)",
-    )
-    parser.add_argument(
-        "--output",
-        default=output.destinations,
-        type=lambda value: tuple(value.split(",")),
-        help="local,wandb,quiet (default: local,wandb)",
-    )
-    parser.add_argument(
-        "--output-dir",
-        default=output.output_dir,
-        help="parent directory for run artifacts (default: results)",
-    )
-    parser.add_argument("--wandb-project", default=tracking.project)
-    parser.add_argument("--wandb-entity", default=tracking.entity)
-    parser.add_argument("--wandb-run-name", default=tracking.run_name)
-    parser.add_argument("--wandb-group", default=tracking.group)
-    options = parser.parse_args(argv)
+
+
+def vbench_evaluation_config(options: argparse.Namespace) -> VBenchEvaluationConfig:
+    """Resolve shared CLI options and the configured VBench image into one run."""
     path = evaluator_config_path(options.config)
     if options.config and not path.is_file():
         raise ValueError(f"evaluator config file does not exist: {path}")
-    settings = vbench_settings(path) if path.is_file() else {}
-    vbench_root = options.vbench_root or settings.get("root")
-    if not vbench_root:
+    if not path.is_file():
         raise ValueError(
-            "Run 'foretoken eval setup vbench' first, or set evaluators.vbench.root "
-            "in foretoken-evaluators.yaml or pass --vbench-root"
+            "Run 'foretoken eval setup vbench --image IMAGE' first, or create "
+            f"a VBench evaluator YAML at {path}"
         )
+    settings = vbench_settings(path)
     config = VBenchEvaluationConfig(
-        videos_path=options.video,
+        videos_path=_resolved_path(options.video),
         prompt_file=options.prompt_file,
         dimensions=tuple(options.dimension),
-        vbench_python=options.vbench_python or settings.get("python") or sys.executable,
-        vbench_root=vbench_root,
-        vbench_cache=options.vbench_cache or settings.get("cache"),
+        image=settings["image"],
+        cache=settings["cache"],
         outputs=BenchmarkOutputConfig(options.output, options.output_dir),
         wandb=WandbRunConfig(
             project=options.wandb_project,
