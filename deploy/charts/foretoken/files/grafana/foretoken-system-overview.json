@@ -20,12 +20,28 @@
   "links": [],
   "panels": [
     {
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "content": "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. **Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\nRates use a rolling window. **No data** means no observations, not zero. Scrape counts show reporting endpoints, not service readiness.",
+        "mode": "markdown"
+      },
+      "repeatDirection": "h",
+      "title": "Reading this dashboard",
+      "transparent": false,
+      "type": "text"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 0
+        "y": 4
       },
       "id": 0,
       "panels": [],
@@ -41,7 +57,8 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
           },
           "mappings": [
             {
@@ -60,12 +77,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#d03b3b",
+                "color": "#2a78d6",
                 "value": null
-              },
-              {
-                "color": "#0ca30c",
-                "value": 1
               }
             ]
           },
@@ -77,12 +90,12 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 1
+        "y": 5
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -91,8 +104,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -104,12 +121,12 @@
           "expr": "sum((foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
           "instant": true,
           "interval": "5s",
-          "legendFormat": "Model scrape targets",
+          "legendFormat": "Reporting model targets",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Model scrape targets",
+      "title": "Reporting model targets",
       "transparent": false,
       "type": "stat"
     },
@@ -155,12 +172,12 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 1
+        "y": 5
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -169,8 +186,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -187,7 +208,7 @@
           "refId": "A"
         }
       ],
-      "title": "Prompt tokens / s",
+      "title": "Input throughput",
       "transparent": false,
       "type": "stat"
     },
@@ -233,12 +254,12 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 1
+        "y": 5
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -247,8 +268,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -265,7 +290,7 @@
           "refId": "A"
         }
       ],
-      "title": "Output tokens / s",
+      "title": "Output throughput",
       "transparent": false,
       "type": "stat"
     },
@@ -314,12 +339,12 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 1
+        "y": 5
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -328,8 +353,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -356,7 +385,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 9
       },
       "id": 0,
       "panels": [],
@@ -380,6 +409,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: token/s"
         },
         "overrides": [
@@ -408,7 +439,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 6
+        "y": 10
       },
       "options": {
         "legend": {
@@ -449,7 +480,7 @@
           "refId": "B"
         }
       ],
-      "title": "Input throughput (TPS)",
+      "title": "Input throughput",
       "transparent": false,
       "type": "timeseries"
     },
@@ -470,6 +501,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: token/s"
         },
         "overrides": [
@@ -498,7 +531,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 6
+        "y": 10
       },
       "options": {
         "legend": {
@@ -539,7 +572,7 @@
           "refId": "B"
         }
       ],
-      "title": "Output throughput (TPS)",
+      "title": "Output throughput",
       "transparent": false,
       "type": "timeseries"
     },
@@ -560,15 +593,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "reqps"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 16
+        "y": 20
       },
       "options": {
         "legend": {
@@ -630,15 +665,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 16
+        "y": 20
       },
       "options": {
         "legend": {
@@ -708,6 +745,19 @@
       "type": "timeseries"
     },
     {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "id": 0,
+      "panels": [],
+      "title": "Generation latency",
+      "type": "row"
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -725,15 +775,63 @@
             "showPoints": "never"
           },
           "decimals": 2,
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: s"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#86b6ef",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3987e5",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#184f95",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
+        "w": 12,
         "x": 0,
-        "y": 24
+        "y": 31
       },
       "options": {
         "legend": {
@@ -808,15 +906,63 @@
             "showPoints": "never"
           },
           "decimals": 2,
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: s"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#86b6ef",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3987e5",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#184f95",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 8,
-        "y": 24
+        "w": 12,
+        "x": 12,
+        "y": 31
       },
       "options": {
         "legend": {
@@ -890,15 +1036,78 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: ms"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#86b6ef",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3987e5",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#184f95",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#eb6834",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 16,
-        "y": 24
+        "w": 12,
+        "x": 0,
+        "y": 41
       },
       "options": {
         "legend": {
@@ -984,15 +1193,78 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: ms"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#86b6ef",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3987e5",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#184f95",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#eb6834",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 0,
-        "y": 34
+        "w": 12,
+        "x": 12,
+        "y": 41
       },
       "options": {
         "legend": {
@@ -1078,13 +1350,15 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: s"
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "queue"
+              "id": "byFrameRefID",
+              "options": "A"
             },
             "properties": [
               {
@@ -1098,8 +1372,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "prefill"
+              "id": "byFrameRefID",
+              "options": "B"
             },
             "properties": [
               {
@@ -1113,8 +1387,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "decode"
+              "id": "byFrameRefID",
+              "options": "C"
             },
             "properties": [
               {
@@ -1130,9 +1404,9 @@
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 8,
-        "y": 34
+        "w": 12,
+        "x": 0,
+        "y": 51
       },
       "options": {
         "legend": {
@@ -1185,7 +1459,7 @@
           "refId": "C"
         }
       ],
-      "title": "Request time by stage",
+      "title": "Stage latency (p95)",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1206,15 +1480,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "ops"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 16,
-        "y": 34
+        "w": 12,
+        "x": 12,
+        "y": 51
       },
       "options": {
         "legend": {
@@ -1255,7 +1531,7 @@
           "refId": "B"
         }
       ],
-      "title": "Preemptions",
+      "title": "Preemption events / s",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1264,12 +1540,157 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Distribution of prompt tokens per request across selected engines.",
+      "description": "TTFT and E2EL histogram observations per second for each whole model. No observations leave latency quantiles unavailable.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "No data",
+          "unit": "suffix: samples/s"
+        },
+        "overrides": []
+      },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 44
+        "y": 61
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "TTFT / {{model_name}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "E2EL / {{model_name}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Request latency samples / s",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Output-token interval observations per second for each whole model. These count token intervals, not requests.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "No data",
+          "unit": "suffix: samples/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 61
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "ITL / {{model_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Token interval samples / s",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 71
+      },
+      "id": 0,
+      "panels": [],
+      "title": "Request lengths",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Distribution of prompt tokens per request across selected engines.",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 72
       },
       "options": {
         "calculate": false,
@@ -1327,10 +1748,10 @@
       },
       "description": "Distribution of generated tokens per request across selected engines.",
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 44
+        "y": 72
       },
       "options": {
         "calculate": false,
@@ -1382,94 +1803,12 @@
       "type": "heatmap"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Observed request and token intervals per second. Sparse windows make histogram quantiles coarse; no observations leave them unavailable.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "ops"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 52
-      },
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "ITL / {{model_name}}",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "TTFT / {{model_name}}",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "E2EL / {{model_name}}",
-          "range": true,
-          "refId": "C"
-        }
-      ],
-      "title": "Latency observations / s",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 60
+        "y": 82
       },
       "id": 0,
       "panels": [],
@@ -1493,6 +1832,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: token/s"
         },
         "overrides": [
@@ -1529,10 +1870,10 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 61
+        "y": 83
       },
       "options": {
         "legend": {
@@ -1596,15 +1937,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 61
+        "y": 83
       },
       "options": {
         "legend": {
@@ -1654,15 +1996,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 69
+        "y": 93
       },
       "options": {
         "legend": {
@@ -1691,7 +2035,7 @@
           "refId": "A"
         }
       ],
-      "title": "Accepted tokens per draft",
+      "title": "Accepted tokens per draft iteration",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1714,15 +2058,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 69
+        "y": 93
       },
       "options": {
         "legend": {
@@ -1751,7 +2096,7 @@
           "refId": "A"
         }
       ],
-      "title": "Acceptance by draft position",
+      "title": "Acceptance probability by position",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1761,7 +2106,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 77
+        "y": 103
       },
       "id": 0,
       "panels": [],
@@ -1787,15 +2132,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 78
+        "y": 104
       },
       "options": {
         "legend": {
@@ -1846,13 +2192,14 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "local"
+              "id": "byFrameRefID",
+              "options": "A"
             },
             "properties": [
               {
@@ -1866,8 +2213,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "external"
+              "id": "byFrameRefID",
+              "options": "B"
             },
             "properties": [
               {
@@ -1882,10 +2229,10 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 78
+        "y": 104
       },
       "options": {
         "legend": {
@@ -1949,15 +2296,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 86
+        "y": 114
       },
       "options": {
         "legend": {
@@ -1985,7 +2333,7 @@
           "refId": "A"
         }
       ],
-      "title": "Storage usage",
+      "title": "Runtime cache filesystem usage",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2006,15 +2354,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "bytes"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 86
+        "y": 114
       },
       "options": {
         "legend": {
@@ -2042,7 +2392,7 @@
           "refId": "A"
         }
       ],
-      "title": "Available storage",
+      "title": "Runtime cache filesystem free space",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2052,7 +2402,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 94
+        "y": 124
       },
       "id": 0,
       "panels": [],
@@ -2078,15 +2428,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 95
+        "y": 125
       },
       "options": {
         "legend": {
@@ -2137,15 +2488,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 95
+        "y": 125
       },
       "options": {
         "legend": {
@@ -2182,6 +2534,124 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
+      "description": "Power draw of each GPU used by the selected model, in watts.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "No data",
+          "unit": "watt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 135
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "GPU power by device",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Temperature reported by each GPU used by the selected model; MetaX uses the chip hotspot sensor.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "No data",
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 135
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "GPU temperature by device",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "CPU cores used by all model-server Pods of each model, with selected instance and node details.",
       "fieldConfig": {
         "defaults": {
@@ -2194,15 +2664,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "cores"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 103
+        "y": 145
       },
       "options": {
         "legend": {
@@ -2264,15 +2736,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "bytes"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 103
+        "y": 145
       },
       "options": {
         "legend": {
@@ -2318,126 +2792,12 @@
       "type": "timeseries"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Power draw of each GPU used by the selected model, in watts.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "watt"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 111
-      },
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
-          "instant": false,
-          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "GPU power by device",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "Temperature reported by each GPU used by the selected model; MetaX uses the chip hotspot sensor.",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "celsius"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 111
-      },
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
-          "instant": false,
-          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "GPU temperature by device",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 119
+        "y": 155
       },
       "id": 0,
       "panels": [],
@@ -2463,15 +2823,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 10,
-        "w": 24,
+        "w": 12,
         "x": 0,
-        "y": 120
+        "y": 156
       },
       "options": {
         "legend": {
@@ -2521,15 +2882,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "reqps"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 130
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 156
       },
       "options": {
         "legend": {
@@ -2579,15 +2942,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "s"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 130
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 166
       },
       "options": {
         "legend": {
@@ -2616,7 +2981,7 @@
           "refId": "A"
         }
       ],
-      "title": "Routing stage latency",
+      "title": "Routing stage latency (p99)",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2637,15 +3002,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 130
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 166
       },
       "options": {
         "legend": {
@@ -2684,7 +3051,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 138
+        "y": 176
       },
       "id": 0,
       "panels": [],
@@ -2700,7 +3067,8 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
           },
           "mappings": [
             {
@@ -2719,12 +3087,8 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "#d03b3b",
+                "color": "#2a78d6",
                 "value": null
-              },
-              {
-                "color": "#0ca30c",
-                "value": 1
               }
             ]
           },
@@ -2736,12 +3100,12 @@
         "h": 4,
         "w": 8,
         "x": 0,
-        "y": 139
+        "y": 177
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -2750,8 +3114,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -2763,12 +3131,12 @@
           "expr": "sum(foretoken:frontend_up:sum{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"})",
           "instant": true,
           "interval": "5s",
-          "legendFormat": "Frontend scrape targets",
+          "legendFormat": "Reporting frontend targets",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Frontend scrape targets",
+      "title": "Reporting frontend targets",
       "transparent": false,
       "type": "stat"
     },
@@ -2814,12 +3182,12 @@
         "h": 4,
         "w": 8,
         "x": 8,
-        "y": 139
+        "y": 177
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -2828,8 +3196,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -2895,12 +3267,12 @@
         "h": 4,
         "w": 8,
         "x": 16,
-        "y": 139
+        "y": 177
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -2909,8 +3281,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -2948,6 +3324,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "reqps"
         },
         "overrides": [
@@ -2999,10 +3377,10 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 143
+        "y": 181
       },
       "options": {
         "legend": {
@@ -3056,15 +3434,17 @@
               "mode": "normal"
             }
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "reqps"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 143
+        "y": 181
       },
       "options": {
         "legend": {
@@ -3115,13 +3495,15 @@
             "showPoints": "never"
           },
           "decimals": 2,
+          "min": 0,
+          "noValue": "No data",
           "unit": "suffix: s"
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "p50"
+              "id": "byFrameRefID",
+              "options": "A"
             },
             "properties": [
               {
@@ -3135,8 +3517,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "p95"
+              "id": "byFrameRefID",
+              "options": "B"
             },
             "properties": [
               {
@@ -3150,8 +3532,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "p99"
+              "id": "byFrameRefID",
+              "options": "C"
             },
             "properties": [
               {
@@ -3169,7 +3551,7 @@
         "h": 10,
         "w": 8,
         "x": 0,
-        "y": 151
+        "y": 191
       },
       "options": {
         "legend": {
@@ -3243,6 +3625,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "short"
         },
         "overrides": [
@@ -3282,7 +3666,7 @@
         "h": 10,
         "w": 8,
         "x": 8,
-        "y": 151
+        "y": 191
       },
       "options": {
         "legend": {
@@ -3333,6 +3717,7 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "No data",
           "unit": "percentunit"
         },
         "overrides": []
@@ -3341,7 +3726,7 @@
         "h": 10,
         "w": 8,
         "x": 16,
-        "y": 151
+        "y": 191
       },
       "options": {
         "legend": {
@@ -3379,7 +3764,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 161
+        "y": 201
       },
       "id": 0,
       "panels": [
@@ -3400,15 +3785,17 @@
                 "pointSize": 8,
                 "showPoints": "never"
               },
+              "min": 0,
+              "noValue": "No data",
               "unit": "ops"
             },
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
+            "h": 10,
             "w": 8,
             "x": 0,
-            "y": 162
+            "y": 202
           },
           "options": {
             "legend": {
@@ -3458,15 +3845,17 @@
                 "pointSize": 8,
                 "showPoints": "never"
               },
+              "min": 0,
+              "noValue": "No data",
               "unit": "s"
             },
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
+            "h": 10,
             "w": 8,
             "x": 8,
-            "y": 162
+            "y": 202
           },
           "options": {
             "legend": {
@@ -3495,7 +3884,7 @@
               "refId": "A"
             }
           ],
-          "title": "Reconcile latency",
+          "title": "Reconcile latency (p99)",
           "transparent": false,
           "type": "timeseries"
         },
@@ -3516,15 +3905,17 @@
                 "pointSize": 8,
                 "showPoints": "never"
               },
+              "min": 0,
+              "noValue": "No data",
               "unit": "short"
             },
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
+            "h": 10,
             "w": 8,
             "x": 16,
-            "y": 162
+            "y": 202
           },
           "options": {
             "legend": {
@@ -3567,7 +3958,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 170
+        "y": 212
       },
       "id": 0,
       "panels": [],
@@ -3591,15 +3982,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 8,
         "x": 0,
-        "y": 171
+        "y": 213
       },
       "options": {
         "legend": {
@@ -3670,15 +4063,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 8,
         "x": 8,
-        "y": 171
+        "y": 213
       },
       "options": {
         "legend": {
@@ -3749,15 +4144,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "No data",
           "unit": "s"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 8,
         "x": 16,
-        "y": 171
+        "y": 213
       },
       "options": {
         "legend": {
@@ -3810,7 +4207,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 179
+        "y": 223
       },
       "options": {
         "cellHeight": "sm",

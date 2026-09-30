@@ -20,12 +20,28 @@
   "links": [],
   "panels": [
     {
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "content": "**模型总计**按命名空间和模型筛选；实例、角色和 rank 只筛选后端明细。**前端与路由**按前端服务筛选，共享前端包含所有模型的流量。\n\n速率使用滚动窗口。**无数据**表示没有观测，不代表零。上报端点数反映指标采集情况，不代表服务就绪。",
+        "mode": "markdown"
+      },
+      "repeatDirection": "h",
+      "title": "看板读法",
+      "transparent": false,
+      "type": "text"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 0
+        "y": 4
       },
       "id": 0,
       "panels": [],
@@ -41,7 +57,8 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
           },
           "mappings": [
             {
@@ -49,23 +66,19 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "No data"
+                  "text": "无数据"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "No data",
+          "noValue": "无数据",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "#d03b3b",
+                "color": "#2a78d6",
                 "value": null
-              },
-              {
-                "color": "#0ca30c",
-                "value": 1
               }
             ]
           },
@@ -77,12 +90,12 @@
         "h": 4,
         "w": 6,
         "x": 0,
-        "y": 1
+        "y": 5
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -91,8 +104,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -104,12 +121,12 @@
           "expr": "sum((foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
           "instant": true,
           "interval": "5s",
-          "legendFormat": "模型监控端点数",
+          "legendFormat": "模型上报端点数",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "模型监控端点数",
+      "title": "模型上报端点数",
       "transparent": false,
       "type": "stat"
     },
@@ -131,13 +148,13 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "No data"
+                  "text": "无数据"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "No data",
+          "noValue": "无数据",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -155,12 +172,12 @@
         "h": 4,
         "w": 6,
         "x": 6,
-        "y": 1
+        "y": 5
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -169,8 +186,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -187,7 +208,7 @@
           "refId": "A"
         }
       ],
-      "title": "输入吞吐量（TPS）",
+      "title": "输入吞吐量",
       "transparent": false,
       "type": "stat"
     },
@@ -209,13 +230,13 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "No data"
+                  "text": "无数据"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "No data",
+          "noValue": "无数据",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -233,12 +254,12 @@
         "h": 4,
         "w": 6,
         "x": 12,
-        "y": 1
+        "y": 5
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -247,8 +268,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -265,7 +290,7 @@
           "refId": "A"
         }
       ],
-      "title": "输出吞吐量（TPS）",
+      "title": "输出吞吐量",
       "transparent": false,
       "type": "stat"
     },
@@ -286,13 +311,13 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "No data"
+                  "text": "无数据"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "No data",
+          "noValue": "无数据",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -314,12 +339,12 @@
         "h": 4,
         "w": 6,
         "x": 18,
-        "y": 1
+        "y": 5
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -328,8 +353,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value_and_name",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -356,7 +385,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 5
+        "y": 9
       },
       "id": 0,
       "panels": [],
@@ -380,6 +409,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "suffix: token/s"
         },
         "overrides": [
@@ -408,7 +439,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 6
+        "y": 10
       },
       "options": {
         "legend": {
@@ -449,7 +480,7 @@
           "refId": "B"
         }
       ],
-      "title": "输入吞吐量（TPS）",
+      "title": "输入吞吐量",
       "transparent": false,
       "type": "timeseries"
     },
@@ -470,6 +501,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "suffix: token/s"
         },
         "overrides": [
@@ -498,7 +531,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 6
+        "y": 10
       },
       "options": {
         "legend": {
@@ -539,7 +572,7 @@
           "refId": "B"
         }
       ],
-      "title": "输出吞吐量（TPS）",
+      "title": "输出吞吐量",
       "transparent": false,
       "type": "timeseries"
     },
@@ -560,15 +593,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "reqps"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 16
+        "y": 20
       },
       "options": {
         "legend": {
@@ -630,15 +665,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 16
+        "y": 20
       },
       "options": {
         "legend": {
@@ -708,6 +745,19 @@
       "type": "timeseries"
     },
     {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "id": 0,
+      "panels": [],
+      "title": "生成延迟",
+      "type": "row"
+    },
+    {
       "datasource": {
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
@@ -725,15 +775,63 @@
             "showPoints": "never"
           },
           "decimals": 2,
+          "min": 0,
+          "noValue": "无数据",
           "unit": "suffix: s"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#86b6ef",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3987e5",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#184f95",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
+        "w": 12,
         "x": 0,
-        "y": 24
+        "y": 31
       },
       "options": {
         "legend": {
@@ -808,15 +906,63 @@
             "showPoints": "never"
           },
           "decimals": 2,
+          "min": 0,
+          "noValue": "无数据",
           "unit": "suffix: s"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#86b6ef",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3987e5",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#184f95",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 8,
-        "y": 24
+        "w": 12,
+        "x": 12,
+        "y": 31
       },
       "options": {
         "legend": {
@@ -890,15 +1036,78 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "suffix: ms"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#86b6ef",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3987e5",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#184f95",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#eb6834",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 16,
-        "y": 24
+        "w": 12,
+        "x": 0,
+        "y": 41
       },
       "options": {
         "legend": {
@@ -958,7 +1167,7 @@
           "expr": "1000 * sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / (sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:request_time_per_output_token_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) > 0)",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / mean",
+          "legendFormat": "{{model_name}} / 均值",
           "range": true,
           "refId": "D"
         }
@@ -984,15 +1193,78 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "suffix: ms"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#86b6ef",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3987e5",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "C"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#184f95",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "D"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#eb6834",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 0,
-        "y": 34
+        "w": 12,
+        "x": 12,
+        "y": 41
       },
       "options": {
         "legend": {
@@ -1052,12 +1324,12 @@
           "expr": "1000 * sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / (sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) > 0)",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / mean",
+          "legendFormat": "{{model_name}} / 均值",
           "range": true,
           "refId": "D"
         }
       ],
-      "title": "Token 间延迟 (ITL)",
+      "title": "相邻 token 间隔 (ITL)",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1078,13 +1350,15 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "suffix: s"
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "queue"
+              "id": "byFrameRefID",
+              "options": "A"
             },
             "properties": [
               {
@@ -1098,8 +1372,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "prefill"
+              "id": "byFrameRefID",
+              "options": "B"
             },
             "properties": [
               {
@@ -1113,8 +1387,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "decode"
+              "id": "byFrameRefID",
+              "options": "C"
             },
             "properties": [
               {
@@ -1130,9 +1404,9 @@
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 8,
-        "y": 34
+        "w": 12,
+        "x": 0,
+        "y": 51
       },
       "options": {
         "legend": {
@@ -1156,7 +1430,7 @@
           "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_queue_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / queue",
+          "legendFormat": "{{model_name}} / {{model_role}} / 排队",
           "range": true,
           "refId": "A"
         },
@@ -1168,7 +1442,7 @@
           "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_prefill_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / prefill",
+          "legendFormat": "{{model_name}} / {{model_role}} / 预填充",
           "range": true,
           "refId": "B"
         },
@@ -1180,12 +1454,12 @@
           "expr": "histogram_quantile(0.95, sum by(model_name,model_role,le) (label_replace(label_replace(label_replace(rate(vllm:request_decode_time_seconds_bucket{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / {{model_role}} / decode",
+          "legendFormat": "{{model_name}} / {{model_role}} / 解码",
           "range": true,
           "refId": "C"
         }
       ],
-      "title": "各阶段请求耗时",
+      "title": "阶段耗时（P95）",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1206,15 +1480,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "ops"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 10,
-        "w": 8,
-        "x": 16,
-        "y": 34
+        "w": 12,
+        "x": 12,
+        "y": 51
       },
       "options": {
         "legend": {
@@ -1255,7 +1531,7 @@
           "refId": "B"
         }
       ],
-      "title": "抢占",
+      "title": "抢占事件速率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1264,12 +1540,157 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "所选引擎每次请求的输入 token 数分布。",
+      "description": "每个模型每秒记录的 TTFT 与 E2EL 直方图样本数；没有观测时不显示延迟分位数。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "无数据",
+          "unit": "suffix: samples/s"
+        },
+        "overrides": []
+      },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 44
+        "y": 61
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "TTFT / {{model_name}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "E2EL / {{model_name}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "请求延迟观测速率",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "每个模型每秒记录的输出 token 间隔样本数，计数单位是 token 间隔，不是请求。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "无数据",
+          "unit": "suffix: samples/s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 61
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "ITL / {{model_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Token 间隔观测速率",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 71
+      },
+      "id": 0,
+      "panels": [],
+      "title": "请求长度分布",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所选引擎每次请求的输入 token 数分布。",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 72
       },
       "options": {
         "calculate": false,
@@ -1327,10 +1748,10 @@
       },
       "description": "所选引擎每次请求的输出 token 数分布。",
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 44
+        "y": 72
       },
       "options": {
         "calculate": false,
@@ -1382,98 +1803,16 @@
       "type": "heatmap"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "每秒完成的请求与 token 间隔观测数。样本稀少时直方图分位数较粗；无观测则不显示分位数。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "ops"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 24,
-        "x": 0,
-        "y": 52
-      },
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:inter_token_latency_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "ITL / {{model_name}}",
-          "range": true,
-          "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:time_to_first_token_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "TTFT / {{model_name}}",
-          "range": true,
-          "refId": "B"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:e2e_request_latency_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
-          "instant": false,
-          "interval": "5s",
-          "legendFormat": "E2EL / {{model_name}}",
-          "range": true,
-          "refId": "C"
-        }
-      ],
-      "title": "延迟观测数 / s",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 60
+        "y": 82
       },
       "id": 0,
       "panels": [],
-      "title": "猜测解码",
+      "title": "推测解码",
       "type": "row"
     },
     {
@@ -1481,7 +1820,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个模型的草稿与接受 token 速率，表示猜测解码工作量，不等同最终输出吞吐量。",
+      "description": "每个模型的草稿与接受 token 速率，表示推测解码工作量，不等同最终输出吞吐量。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1493,6 +1832,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "suffix: token/s"
         },
         "overrides": [
@@ -1529,10 +1870,10 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 61
+        "y": 83
       },
       "options": {
         "legend": {
@@ -1596,15 +1937,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "无数据",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 61
+        "y": 83
       },
       "options": {
         "legend": {
@@ -1654,15 +1996,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 69
+        "y": 93
       },
       "options": {
         "legend": {
@@ -1691,7 +2035,7 @@
           "refId": "A"
         }
       ],
-      "title": "每次草稿接受 token 数",
+      "title": "每次草稿迭代接受 token 数",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1714,15 +2058,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "无数据",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 69
+        "y": 93
       },
       "options": {
         "legend": {
@@ -1751,7 +2096,7 @@
           "refId": "A"
         }
       ],
-      "title": "草稿各位置接受率",
+      "title": "各草稿位置接受概率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1761,7 +2106,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 77
+        "y": 103
       },
       "id": 0,
       "panels": [],
@@ -1787,15 +2132,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "无数据",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 78
+        "y": 104
       },
       "options": {
         "legend": {
@@ -1823,7 +2169,7 @@
           "refId": "A"
         }
       ],
-      "title": "KV Cache 使用率",
+      "title": "KV 缓存使用率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1846,13 +2192,14 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "无数据",
           "unit": "percentunit"
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "local"
+              "id": "byFrameRefID",
+              "options": "A"
             },
             "properties": [
               {
@@ -1866,8 +2213,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "external"
+              "id": "byFrameRefID",
+              "options": "B"
             },
             "properties": [
               {
@@ -1882,10 +2229,10 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 78
+        "y": 104
       },
       "options": {
         "legend": {
@@ -1909,7 +2256,7 @@
           "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:prefix_cache_hits_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / (sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:prefix_cache_queries_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) > 0)",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / local",
+          "legendFormat": "{{model_name}} / 本地",
           "range": true,
           "refId": "A"
         },
@@ -1921,12 +2268,12 @@
           "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:external_prefix_cache_hits_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) / (sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:external_prefix_cache_queries_total{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) > 0)",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "{{model_name}} / external",
+          "legendFormat": "{{model_name}} / 外部",
           "range": true,
           "refId": "B"
         }
       ],
-      "title": "Prefix Cache 命中率",
+      "title": "前缀缓存命中率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1949,15 +2296,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "无数据",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 86
+        "y": 114
       },
       "options": {
         "legend": {
@@ -1985,7 +2333,7 @@
           "refId": "A"
         }
       ],
-      "title": "存储使用率",
+      "title": "运行缓存文件系统使用率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2006,15 +2354,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "bytes"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 86
+        "y": 114
       },
       "options": {
         "legend": {
@@ -2042,7 +2392,7 @@
           "refId": "A"
         }
       ],
-      "title": "存储可用空间",
+      "title": "运行缓存文件系统可用空间",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2052,7 +2402,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 94
+        "y": 124
       },
       "id": 0,
       "panels": [],
@@ -2078,15 +2428,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "无数据",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 95
+        "y": 125
       },
       "options": {
         "legend": {
@@ -2137,15 +2488,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "无数据",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 95
+        "y": 125
       },
       "options": {
         "legend": {
@@ -2182,6 +2534,124 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
+      "description": "所选模型所在 GPU 的功耗，单位为 W。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "无数据",
+          "unit": "watt"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 135
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "各设备 GPU 功耗",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "所选模型所在 GPU 报告的温度；沐曦使用芯片热点测点。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "无数据",
+          "unit": "celsius"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 135
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "instant": false,
+          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "各设备 GPU 温度",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "每个模型全部模型服务器 Pod 使用的 CPU 核数，并展示所选实例和节点的明细。",
       "fieldConfig": {
         "defaults": {
@@ -2194,15 +2664,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "cores"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 103
+        "y": 145
       },
       "options": {
         "legend": {
@@ -2264,15 +2736,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "bytes"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 103
+        "y": 145
       },
       "options": {
         "legend": {
@@ -2318,126 +2792,12 @@
       "type": "timeseries"
     },
     {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "所选模型所在 GPU 的功耗，单位为 W。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "watt"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 0,
-        "y": 111
-      },
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
-          "instant": false,
-          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "各设备 GPU 功耗",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${DS_PROMETHEUS}"
-      },
-      "description": "所选模型所在 GPU 报告的温度；沐曦使用芯片热点测点。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic-by-name"
-          },
-          "custom": {
-            "fillOpacity": 8,
-            "lineWidth": 2,
-            "pointSize": 8,
-            "showPoints": "never"
-          },
-          "unit": "celsius"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 111
-      },
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "repeatDirection": "h",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${DS_PROMETHEUS}"
-          },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
-          "instant": false,
-          "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
-          "range": true,
-          "refId": "A"
-        }
-      ],
-      "title": "各设备 GPU 温度",
-      "transparent": false,
-      "type": "timeseries"
-    },
-    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 119
+        "y": 155
       },
       "id": 0,
       "panels": [],
@@ -2463,15 +2823,16 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "无数据",
           "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
         "h": 10,
-        "w": 24,
+        "w": 12,
         "x": 0,
-        "y": 120
+        "y": 156
       },
       "options": {
         "legend": {
@@ -2521,15 +2882,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "reqps"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 130
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 156
       },
       "options": {
         "legend": {
@@ -2558,7 +2921,7 @@
           "refId": "A"
         }
       ],
-      "title": "路由结果",
+      "title": "路由选择速率（按结果）",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2579,15 +2942,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "s"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 8,
-        "y": 130
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 166
       },
       "options": {
         "legend": {
@@ -2616,7 +2981,7 @@
           "refId": "A"
         }
       ],
-      "title": "路由阶段延迟",
+      "title": "路由阶段耗时（P99）",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2637,15 +3002,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 16,
-        "y": 130
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 166
       },
       "options": {
         "legend": {
@@ -2684,7 +3051,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 138
+        "y": 176
       },
       "id": 0,
       "panels": [],
@@ -2700,7 +3067,8 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "fixedColor": "#2a78d6",
+            "mode": "fixed"
           },
           "mappings": [
             {
@@ -2708,23 +3076,19 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "No data"
+                  "text": "无数据"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "No data",
+          "noValue": "无数据",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "#d03b3b",
+                "color": "#2a78d6",
                 "value": null
-              },
-              {
-                "color": "#0ca30c",
-                "value": 1
               }
             ]
           },
@@ -2736,12 +3100,12 @@
         "h": 4,
         "w": 8,
         "x": 0,
-        "y": 139
+        "y": 177
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -2750,8 +3114,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -2763,12 +3131,12 @@
           "expr": "sum(foretoken:frontend_up:sum{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"})",
           "instant": true,
           "interval": "5s",
-          "legendFormat": "前端监控端点数",
+          "legendFormat": "前端上报端点数",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "前端监控端点数",
+      "title": "前端上报端点数",
       "transparent": false,
       "type": "stat"
     },
@@ -2790,13 +3158,13 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "No data"
+                  "text": "无数据"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "No data",
+          "noValue": "无数据",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2814,12 +3182,12 @@
         "h": 4,
         "w": 8,
         "x": 8,
-        "y": 139
+        "y": 177
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -2828,8 +3196,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -2867,13 +3239,13 @@
                 "match": "null+nan",
                 "result": {
                   "color": "#808080",
-                  "text": "No data"
+                  "text": "无数据"
                 }
               },
               "type": "special"
             }
           ],
-          "noValue": "No data",
+          "noValue": "无数据",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -2895,12 +3267,12 @@
         "h": 4,
         "w": 8,
         "x": 16,
-        "y": 139
+        "y": 177
       },
       "options": {
         "colorMode": "value",
         "graphMode": "none",
-        "justifyMode": "auto",
+        "justifyMode": "center",
         "orientation": "auto",
         "percentChangeColorMode": "standard",
         "reduceOptions": {
@@ -2909,8 +3281,12 @@
           ]
         },
         "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
+        "text": {
+          "titleSize": 12,
+          "valueSize": 32
+        },
+        "textMode": "value",
+        "wideLayout": false
       },
       "repeatDirection": "h",
       "targets": [
@@ -2948,6 +3324,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "reqps"
         },
         "overrides": [
@@ -2999,10 +3377,10 @@
         ]
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 0,
-        "y": 143
+        "y": 181
       },
       "options": {
         "legend": {
@@ -3031,7 +3409,7 @@
           "refId": "A"
         }
       ],
-      "title": "前端 HTTP 响应状态",
+      "title": "前端响应开始速率（按状态码）",
       "transparent": false,
       "type": "timeseries"
     },
@@ -3056,15 +3434,17 @@
               "mode": "normal"
             }
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "reqps"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 12,
         "x": 12,
-        "y": 143
+        "y": 181
       },
       "options": {
         "legend": {
@@ -3093,7 +3473,7 @@
           "refId": "A"
         }
       ],
-      "title": "前端各端点响应速率",
+      "title": "前端响应开始速率（按接口）",
       "transparent": false,
       "type": "timeseries"
     },
@@ -3115,13 +3495,15 @@
             "showPoints": "never"
           },
           "decimals": 2,
+          "min": 0,
+          "noValue": "无数据",
           "unit": "suffix: s"
         },
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
-              "options": "p50"
+              "id": "byFrameRefID",
+              "options": "A"
             },
             "properties": [
               {
@@ -3135,8 +3517,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "p95"
+              "id": "byFrameRefID",
+              "options": "B"
             },
             "properties": [
               {
@@ -3150,8 +3532,8 @@
           },
           {
             "matcher": {
-              "id": "byName",
-              "options": "p99"
+              "id": "byFrameRefID",
+              "options": "C"
             },
             "properties": [
               {
@@ -3169,7 +3551,7 @@
         "h": 10,
         "w": 8,
         "x": 0,
-        "y": 151
+        "y": 191
       },
       "options": {
         "legend": {
@@ -3243,6 +3625,8 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "short"
         },
         "overrides": [
@@ -3282,7 +3666,7 @@
         "h": 10,
         "w": 8,
         "x": 8,
-        "y": 151
+        "y": 191
       },
       "options": {
         "legend": {
@@ -3333,6 +3717,7 @@
           },
           "max": 1,
           "min": 0,
+          "noValue": "无数据",
           "unit": "percentunit"
         },
         "overrides": []
@@ -3341,7 +3726,7 @@
         "h": 10,
         "w": 8,
         "x": 16,
-        "y": 151
+        "y": 191
       },
       "options": {
         "legend": {
@@ -3379,7 +3764,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 161
+        "y": 201
       },
       "id": 0,
       "panels": [
@@ -3400,15 +3785,17 @@
                 "pointSize": 8,
                 "showPoints": "never"
               },
+              "min": 0,
+              "noValue": "无数据",
               "unit": "ops"
             },
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
+            "h": 10,
             "w": 8,
             "x": 0,
-            "y": 162
+            "y": 202
           },
           "options": {
             "legend": {
@@ -3458,15 +3845,17 @@
                 "pointSize": 8,
                 "showPoints": "never"
               },
+              "min": 0,
+              "noValue": "无数据",
               "unit": "s"
             },
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
+            "h": 10,
             "w": 8,
             "x": 8,
-            "y": 162
+            "y": 202
           },
           "options": {
             "legend": {
@@ -3495,7 +3884,7 @@
               "refId": "A"
             }
           ],
-          "title": "协调耗时",
+          "title": "协调耗时（P99）",
           "transparent": false,
           "type": "timeseries"
         },
@@ -3516,15 +3905,17 @@
                 "pointSize": 8,
                 "showPoints": "never"
               },
+              "min": 0,
+              "noValue": "无数据",
               "unit": "short"
             },
             "overrides": []
           },
           "gridPos": {
-            "h": 8,
+            "h": 10,
             "w": 8,
             "x": 16,
-            "y": 162
+            "y": 202
           },
           "options": {
             "legend": {
@@ -3567,7 +3958,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 170
+        "y": 212
       },
       "id": 0,
       "panels": [],
@@ -3591,15 +3982,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 8,
         "x": 0,
-        "y": 171
+        "y": 213
       },
       "options": {
         "legend": {
@@ -3670,15 +4063,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "short"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 8,
         "x": 8,
-        "y": 171
+        "y": 213
       },
       "options": {
         "legend": {
@@ -3749,15 +4144,17 @@
             "pointSize": 8,
             "showPoints": "never"
           },
+          "min": 0,
+          "noValue": "无数据",
           "unit": "s"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 10,
         "w": 8,
         "x": 16,
-        "y": 171
+        "y": 213
       },
       "options": {
         "legend": {
@@ -3810,7 +4207,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 179
+        "y": 223
       },
       "options": {
         "cellHeight": "sm",

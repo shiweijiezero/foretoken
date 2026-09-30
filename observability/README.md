@@ -15,17 +15,17 @@ Open Grafana through your cluster's monitoring entry point. The CLI-managed Graf
 
 Open Foretoken System Overview, or Foretoken 系统概览 for Chinese. Select a namespace and model, then use the instance, execution-role, and engine-rank filters to inspect individual backends. Whole-model total curves remain a reference across all instances; detail curves follow those filters.
 
-The dashboard starts with the last 15 minutes. Change the time range to inspect historical trends; overview values correspond to the range's end.
+The dashboard starts with the last 15 minutes. Change the time range to inspect historical trends; overview values correspond to the range's end. Reporting-target counts describe metric collection, not service readiness.
 
 | Question | Where to look |
 | --- | --- |
 | Is the model keeping up with demand? | Prompt/output token rates, completed requests, and running/waiting queues. |
 | Where is latency increasing? | First-token and end-to-end latency, output-token intervals, and queue/prefill/decode durations. |
-| Is speculative decoding helping? | For models using it, compare draft acceptance and accepted tokens per draft with output throughput and latency. |
+| Is speculative decoding helping? | For models using it, compare draft acceptance and accepted tokens per draft iteration with output throughput and latency. |
 | Are caches or devices under pressure? | Cache occupancy and hit rates, filesystem space, GPU utilization and memory, and CPU/memory usage. |
 | How are requests and replicas distributed? | Routing selection shares within each model and role, and autoscaling recommendations versus applied replicas. |
 
-TTFT measures time to the first token; E2EL measures time through generation completion. Both use seconds. TPOT is the per-request average output-token interval; ITL measures individual token intervals. Both use milliseconds and include mean curves. When observations are sparse, read p50/p95/p99 latency quantiles alongside the observation rate and these means. Panel descriptions provide the detailed measurement definitions.
+TTFT measures time to the first token; E2EL measures time through generation completion. Both use seconds. TPOT is the per-request average output-token interval; ITL measures individual token intervals. Both use milliseconds and include mean curves. Request and token-interval sample rates appear in separate charts. When observations are sparse, read p50/p95/p99 latency quantiles alongside the corresponding sample rate and these means. Panel descriptions provide the detailed measurement definitions.
 
 Shared frontend panels cover all models served by the selected frontend and record HTTP response starts. Control-plane panels describe the platform; autoscaling panels follow the selected model and autoscaling service.
 
