@@ -27,6 +27,7 @@ Set `spec.routerPipeline` only when you want to change the routing strategy. By 
 | Scorer | `prefix` | Prefer reusable prompt cache blocks; tune match-length preference with `matchLengthWeight` and `matchLengthScaleTokens`. |
 | Scorer | `no_hit_lru` | Prefer endpoints not previously selected for cold requests, then least recently selected endpoints; retain up to `lruSize` entries. |
 | Scorer | `load_aware` | Score an empty waiting queue at 0.5 and decrease linearly to zero at `threshold`. |
+| Scorer | `session_affinity` | Prefer the target and rank bound to the request body's `session_id`; tune idle eviction with `sessionIdConfig.evictionTtlSeconds` and `sessionIdConfig.evictionSweepSeconds`. |
 | Picker | `gamble_sampling` (default) | Sample from the full score ranking: higher ranks are more likely, ties have equal probability, and lower-ranked targets remain eligible. |
 | Picker | `max` · `power_of_two_choices` | Choose the highest score · sample two distinct targets and choose the higher score (random on ties). |
 

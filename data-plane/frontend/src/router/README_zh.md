@@ -27,6 +27,7 @@ spec:
 | Scorer | `prefix` | 优先考虑可复用的 prompt 缓存块；可用 `matchLengthWeight`、`matchLengthScaleTokens` 调整匹配长度偏好。 |
 | Scorer | `no_hit_lru` | 优先选择尚未处理过冷请求的端点，其次选择最久未选中的端点；最多保留 `lruSize` 条记录。 |
 | Scorer | `load_aware` | 空等待队列记为 0.5 分，并随队列长度线性下降，在 `threshold` 处降至零。 |
+| Scorer | `session_affinity` | 优先选择请求体 `session_id` 绑定的目标及 rank；可用 `sessionIdConfig.evictionTtlSeconds`、`sessionIdConfig.evictionSweepSeconds` 调整闲置清理。 |
 | Picker | `gamble_sampling`（默认） | 根据完整分数排名采样：排名越高，选中概率越大；同分概率相同，低排名目标仍有机会被选中。 |
 | Picker | `max` · `power_of_two_choices` | 选择最高分目标 · 随机抽取两个不同目标，选择分数较高者，同分时随机选取。 |
 
