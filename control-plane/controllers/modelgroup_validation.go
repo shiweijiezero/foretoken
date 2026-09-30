@@ -23,6 +23,9 @@ func validateGroupProfile(group *inferencev1alpha1.ModelGroup) error {
 }
 
 func validateGroupRuntime(group *inferencev1alpha1.ModelGroup) error {
+	if group.Spec.Runtime.SourceRevision != "" && group.Spec.Runtime.Backend != "vllm" {
+		return fmt.Errorf("source bundles support the vLLM model-server only")
+	}
 	if group.Spec.NodeCount < 1 || group.Spec.MemberCount != group.Spec.NodeCount {
 		return fmt.Errorf("model Groups require one member per node")
 	}

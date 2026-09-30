@@ -77,6 +77,9 @@ RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/regis
       "data-plane/target/release/${FORETOKEN_MODEL_SERVER_BINARY}" \
       /out/model-server
 
+FROM scratch AS source-export
+COPY --from=builder /out/model-server /bin/foretoken-model-server
+
 # vLLM-Omni images already contain their Python runtime and model plugins. This
 # target only adds the thin Foretoken lifecycle/proxy adapter and deliberately
 # skips the standard vLLM patch and dependency stages below.

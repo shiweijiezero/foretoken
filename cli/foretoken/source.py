@@ -9,11 +9,12 @@ import json
 import os
 import subprocess
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from foretoken.kubernetes import Kubectl, resource_ref
 from foretoken.manifest import DeploymentError
 from foretoken.network_sources import (
     SOURCE_SELECTION_POLICY,
@@ -23,18 +24,17 @@ from foretoken.network_sources import (
 
 @dataclass(frozen=True)
 class SourceImages:
-    """Image references and changed components prepared from one source root."""
+    """Selected deployment image references and build inputs from one source root."""
 
     source_root: Path
     image_mode: str
     control_plane: str
     frontend: str
     model_server: str
-    control_plane_changed: bool
-    frontend_changed: bool
-    model_server_changed: bool
+    inputs: Path
 
 
+@contextmanager
 def prepare_source_images(
     source_path: str,
     registry: str | None,
@@ -43,9 +43,10 @@ def prepare_source_images(
     timeout: str,
     inference_engine_image: str | None = None,
     *,
+    installed_images: tuple[str, str, str] | None = None,
     build_metax_runtime: bool = False,
-) -> SourceImages:
-    """Build and distribute source images with the selected inference runtime."""
+) -> Iterator[SourceImages]:
+    """Own image preparation inputs until platform installation commits or fails."""
     source_root = Path(source_path).expanduser().resolve()
     script = source_root / "deploy" / "dev-deploy"
     chart = source_root / "deploy" / "charts" / "foretoken" / "Chart.yaml"
@@ -77,6 +78,9 @@ def prepare_source_images(
             "K3D_CONFIG",
             "DEPLOY_TAG",
             "DEV_IMAGE_OUTPUT",
+            "FORETOKEN_INSTALLED_CONTROL_PLANE_IMAGE",
+            "FORETOKEN_INSTALLED_FRONTEND_IMAGE",
+            "FORETOKEN_INSTALLED_MODEL_SERVER_IMAGE",
         ):
             environment.pop(key, None)
         environment.update(
@@ -89,6 +93,14 @@ def prepare_source_images(
                 "DEV_TIMEOUT": timeout,
             }
         )
+        if installed_images is not None:
+            environment.update(
+                {
+                    "FORETOKEN_INSTALLED_CONTROL_PLANE_IMAGE": installed_images[0],
+                    "FORETOKEN_INSTALLED_FRONTEND_IMAGE": installed_images[1],
+                    "FORETOKEN_INSTALLED_MODEL_SERVER_IMAGE": installed_images[2],
+                }
+            )
         selected_sources, selections, unavailable_sources = (
             select_source_build_sources(environment)
         )
@@ -99,74 +111,39 @@ def prepare_source_images(
             environment["INFERENCE_ENGINE_IMAGE"] = inference_engine_image
         if build_metax_runtime:
             environment["FORETOKEN_BUILD_METAX_RUNTIME"] = "true"
-        completed = subprocess.run(
-            [str(script)],
-            cwd=source_root,
-            env=environment,
-            check=False,
-        )
-        if completed.returncode:
-            unavailable = (
-                "; unavailable within the "
-                f"{SOURCE_SELECTION_POLICY.probe_timeout_seconds:g}s source probe budget: "
-                + ", ".join(unavailable_sources)
-                if unavailable_sources
-                else ""
-            )
-            raise DeploymentError(
-                "source image preparation failed with exit code "
-                f"{completed.returncode}{unavailable}"
-            )
-        try:
-            value = json.loads(output_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise DeploymentError("source image preparation returned invalid JSON") from exc
-    return _decode_source_images(source_root, value)
+        from foretoken.editable import capture_build_inputs, validate_build_inputs
 
-
-def restart_changed_source_deployments(
-    kubectl: Kubectl,
-    images: SourceImages,
-    platform_namespace: str,
-    timeout: str,
-) -> None:
-    """Restart imported-image workloads whose local image content changed."""
-    if images.image_mode != "import":
-        return
-    stages = (
-        (
-            images.control_plane_changed,
-            "app.kubernetes.io/name=foretoken-control-plane,"
-            "app.kubernetes.io/instance=foretoken",
-            platform_namespace,
-        ),
-        (
-            images.frontend_changed,
-            "inference.foretoken.io/frontend-service",
-            "",
-        ),
-        (
-            images.model_server_changed,
-            "inference.foretoken.io/model-group",
-            "",
-        ),
-    )
-    for changed, selector, namespace_scope in stages:
-        if not changed:
-            continue
-        for deployment in kubectl.list_all_resources(
-            ("deployment.apps",), label_selector=selector
-        ):
-            ref = resource_ref(deployment)
-            if not ref.namespace:
-                raise DeploymentError(
-                    f"Kubernetes {ref.display_name} has no metadata.namespace"
+        prepared = subprocess.run(["make", "vllm-source"], cwd=source_root, env=environment, check=False)
+        if prepared.returncode:
+            raise DeploymentError("could not prepare the pinned vLLM build source")
+        with capture_build_inputs(source_root) as inputs:
+            completed = subprocess.run(
+                [str(script)],
+                cwd=source_root,
+                env=environment,
+                check=False,
+            )
+            if completed.returncode:
+                unavailable = (
+                    "; unavailable within the "
+                    f"{SOURCE_SELECTION_POLICY.probe_timeout_seconds:g}s source probe budget: "
+                    + ", ".join(unavailable_sources)
+                    if unavailable_sources
+                    else ""
                 )
-            if not namespace_scope or ref.namespace == namespace_scope:
-                kubectl.restart_deployment(ref.name, ref.namespace, timeout)
+                raise DeploymentError(
+                    "source image preparation failed with exit code "
+                    f"{completed.returncode}{unavailable}"
+                )
+            try:
+                value = json.loads(output_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise DeploymentError("source image preparation returned invalid JSON") from exc
+            validate_build_inputs(source_root, inputs)
+            yield _decode_source_images(source_root, value, inputs)
 
 
-def _decode_source_images(source_root: Path, value: Any) -> SourceImages:
+def _decode_source_images(source_root: Path, value: Any, inputs: Path) -> SourceImages:
     """Decode the JSON contract produced by deploy/dev-deploy."""
     if not isinstance(value, dict):
         raise DeploymentError("source image preparation returned an invalid object")
@@ -176,14 +153,7 @@ def _decode_source_images(source_root: Path, value: Any) -> SourceImages:
         "FRONTEND_DEPLOY_IMAGE",
         "MODEL_SERVER_DEPLOY_IMAGE",
     )
-    boolean_fields = (
-        "CONTROL_PLANE_CHANGED",
-        "FRONTEND_CHANGED",
-        "MODEL_SERVER_CHANGED",
-    )
-    if not all(isinstance(value.get(field), str) for field in string_fields) or not all(
-        isinstance(value.get(field), bool) for field in boolean_fields
-    ):
+    if not all(isinstance(value.get(field), str) for field in string_fields):
         raise DeploymentError("source image preparation returned invalid fields")
     if value["IMAGE_MODE"] not in {"import", "registry"}:
         raise DeploymentError("source image preparation returned an invalid image mode")
@@ -193,7 +163,5 @@ def _decode_source_images(source_root: Path, value: Any) -> SourceImages:
         value["CONTROL_PLANE_DEPLOY_IMAGE"],
         value["FRONTEND_DEPLOY_IMAGE"],
         value["MODEL_SERVER_DEPLOY_IMAGE"],
-        value["CONTROL_PLANE_CHANGED"],
-        value["FRONTEND_CHANGED"],
-        value["MODEL_SERVER_CHANGED"],
+        inputs,
     )

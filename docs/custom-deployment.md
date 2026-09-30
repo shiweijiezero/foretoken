@@ -113,6 +113,12 @@ printf '\n'
 
 ## 6. Redeploy source changes
 
-After changing the code, rerun the installation command with the same options, including any `--registry` and `--values` arguments.
+Source installation binds the checkout on this workstation to the target cluster. After editing it, run the deployment command again:
 
-BuildKit reuses compilation caches. The command imports or pushes only changed images, preserves the source installation mode, and rolls out workloads whose local image content changed. For lower-level image and Helm diagnosis, see the maintainer [source image lifecycle guide](development/source-image-lifecycle.md).
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+Deployment automatically selects runtime or image updates for Foretoken's frontend and vLLM model-server, reusing the saved installation settings.
+
+vLLM-Omni and vendor Python/CUDA changes use the [image build path](development/source-image-lifecycle.md), with an updated inference-engine image for engine changes.

@@ -1,17 +1,27 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# Manual source image lifecycle
+# Source updates and image lifecycle
 
 English | [简体中文](source-image-lifecycle_zh.md)
 
-This maintainer guide covers manual image import and raw Helm operations. Run commands from the Foretoken repository root unless stated otherwise.
+This maintainer guide describes runtime source activation, manual image import, and raw Helm operations. For normal installation and redeployment, use the [source deployment guide](../custom-deployment.md). Run commands from the Foretoken repository root unless stated otherwise.
 
 For MetaX image preparation, see [Prepare Foretoken for MetaX GPUs](metax-platform.md#install-from-source). To publish both GPU variants and the Chart together, use the [release artifact commands](release.md#build-and-push-the-release-artifacts).
 
+## Runtime source activation
+
+The CLI retains the source checkout and installation settings on the workstation, associated with the installed platform and cluster. During deployment it compares build inputs with the last prepared source. Rust changes use the Dockerfile's `source-export` target and existing BuildKit caches; Python adapter changes replace the complete adapter directory. Each component bundle carries forward its previously prepared executable, so a later Python-only edit retains earlier Rust changes.
+
+Complete bundles are published to the deployment's persistent runtime cache before service intent is applied. Existing controllers own frontend rollout and model Pool/Group replacement, including distributed workers. At process startup, the image's bootstrap selects the bundle executable and Python adapters. Publishing uses a separate CPU Pod, so it can complete even while the old inference process is unable to start.
+
+Changes to the bootstrap itself, dependencies, build configuration, control-plane code, or Helm require image preparation through the platform installation lifecycle. The same path is used when persistent runtime storage is unavailable. A successful CLI source installation clears service source selections because the images now contain the current source. Unchanged source reuses prepared bundles; controllers retain workloads whose desired configuration is unchanged.
+
+Runtime bundles apply to the frontend and the vLLM model-server. vLLM-Omni uses its own image build targets; see the [vLLM-Omni recipe](../../examples/recipes/minimax-h3/a100-bf16-tp2/README.md). Vendor Python and CUDA sources belong to the inference-engine image, not the runtime bundle.
+
 ## Import local images directly
 
-**Option 1: Import into a Kind cluster.** Create a Kind cluster directly to validate the control plane, CRDs, frontend, and scheduling behavior. To run a GPU model service, use k3d in option 2 and select the available GPUs as described in [Deploy Foretoken with k3d](../k3d-deployment.md). Install Kind first:
+Option 1: Import into a Kind cluster. Create a Kind cluster directly to validate the control plane, CRDs, frontend, and scheduling behavior. To run a GPU model service, use k3d in option 2 and select the available GPUs as described in [Deploy Foretoken with k3d](../k3d-deployment.md). Install Kind first:
 
 ```bash
 export KIND_VERSION=v0.32.0
@@ -27,7 +37,6 @@ kind version
 Create a single-node cluster:
 
 ```bash
-# Expected runtime: about 20 seconds
 export KIND_CLUSTER=foretoken-local
 kind create cluster --name "$KIND_CLUSTER"
 ```
@@ -35,7 +44,6 @@ kind create cluster --name "$KIND_CLUSTER"
 If you need to simulate a multi-node topology on the same machine, use the Kind config included in the project.
 
 ```bash
-# Expected runtime: about 30 seconds
 export KIND_CLUSTER=foretoken-local
 kind create cluster \
   --name "$KIND_CLUSTER" \
@@ -53,7 +61,6 @@ make dev-build
 Otherwise, use the defaults:
 
 ```bash
-# Expected runtime: about 8 minutes
 make dev-build
 
 kind load docker-image \
@@ -66,7 +73,7 @@ kubectl config use-context "kind-$KIND_CLUSTER"
 kubectl get nodes
 ```
 
-**Option 2: Import into a k3d cluster.** List the clusters on the current machine and set `CLUSTER` to the actual name:
+Option 2: Import into a k3d cluster. List the clusters on the current machine and set `CLUSTER` to the actual name:
 
 ```bash
 k3d cluster list
@@ -76,7 +83,6 @@ export CLUSTER=your-cluster-name
 If the target cluster has not been created, complete the cluster creation steps in [Deploy Foretoken with k3d](../k3d-deployment.md) first. Then build and import the local images from the repository root.
 
 ```bash
-# Expected runtime: about 6 minutes
 make dev-build
 
 k3d image import --cluster "$CLUSTER" \
@@ -93,7 +99,7 @@ kubectl get nodes
 
 `--namespace k8s.io` selects the containerd image namespace used by Kubernetes. A node administrator performs options 3 and 4.
 
-**Option 3: Import into single-node containerd.** When the Kubernetes node and development machine are the same host, build the image bundle from the repository root and import it into the Kubernetes containerd namespace.
+Option 3: Import into single-node containerd. When the Kubernetes node and development machine are the same host, build the image bundle from the repository root and import it into the Kubernetes containerd namespace.
 
 ```bash
 make dev-build
@@ -109,7 +115,7 @@ sudo ctr --namespace k8s.io images import ./tmp/foretoken-dev-images.tar
 rm ./tmp/foretoken-dev-images.tar
 ```
 
-**Option 4: Import into multi-node containerd.** For an offline multi-node Kubernetes cluster that uses containerd, build the image bundle on the development machine.
+Option 4: Import into multi-node containerd. For an offline multi-node Kubernetes cluster that uses containerd, build the image bundle on the development machine.
 
 ```bash
 make dev-build
@@ -144,7 +150,6 @@ done
 After importing the images, confirm that the current Kubernetes context points to the target cluster, then run the Helm command once.
 
 ```bash
-# Expected runtime: about 30 seconds
 helm upgrade --install foretoken \
   ./deploy/charts/foretoken \
   --namespace foretoken-platform \

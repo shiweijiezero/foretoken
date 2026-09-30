@@ -77,6 +77,8 @@ foretoken install \
 foretoken install -e .
 ```
 
+安装会将本工作站的源码目录绑定到目标集群。修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#6-修改源码后重新部署)。
+
 当前 context 是标准 kind 或 k3d 时，命令会构建并导入本地镜像；其他 Kubernetes context 需要提供节点可访问的 registry。安装前先使用有目标仓库推送权限的账户登录 registry：
 
 ```bash

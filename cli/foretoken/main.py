@@ -25,6 +25,7 @@ from foretoken.arguments import (
     UninstallCommand,
     parse_arguments,
 )
+from foretoken.editable import source_operation
 from foretoken.kubernetes import (
     Kubectl,
     ResourceProgress,
@@ -85,6 +86,12 @@ def _deploy(
     if profile is not None:
         # Resolve the selected model before changing the deployment.
         capture = ProfileRun(profile, deployment=deployment)
+    from foretoken.editable import EditableDeployment
+
+    source = EditableDeployment.discover(kubectl)
+    if source is not None:
+        source.prepare(timeout)
+        deployment = source.apply(deployment, timeout)
     namespace = deployment.namespace or "<current>"
     print(f"Applying {deployment.path} to namespace {namespace}")
     DirectoryVolumes(kubectl).apply(deployment, timeout)
@@ -98,6 +105,8 @@ def _deploy(
             report=_report_progress,
             observe=startup.poll,
         )
+        if source is not None:
+            source.verify(timeout, observe=lambda: startup.poll(deployment.service_refs(), time.monotonic() - started))
     print(f"Foretoken deployment is ready in {time.monotonic() - started:.1f}s")
     if capture is not None:
         try:
@@ -173,11 +182,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             oci_registry = command.oci_registry or os.environ.get(
                 "FORETOKEN_OCI_REGISTRY"
             )
-            PlatformLifecycle(oci_registry).install(command)
+            with source_operation(Kubectl(), installing=command.editable is not None):
+                PlatformLifecycle(oci_registry).install(command)
         elif isinstance(command, UninstallCommand):
-            PlatformLifecycle().uninstall(command)
+            with source_operation(Kubectl()):
+                PlatformLifecycle().uninstall(command)
         elif isinstance(command, DeployCommand):
-            _deploy(command.kustomize_path, command.timeout, command.profile)
+            with source_operation(Kubectl()):
+                _deploy(command.kustomize_path, command.timeout, command.profile)
         elif isinstance(command, DeleteCommand):
             _delete(command.kustomize_path, command.timeout)
         elif isinstance(command, StatusCommand):

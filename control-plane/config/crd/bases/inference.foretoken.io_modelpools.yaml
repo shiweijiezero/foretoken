@@ -386,6 +386,10 @@ spec:
                     - hf
                     - modelscope
                     type: string
+                  sourceRevision:
+                    description: SourceRevision pins the CLI-published source bundle
+                      used by this Pool's Groups.
+                    type: string
                   timeouts:
                     description: ModelTimeouts defines ModelService lifecycle budgets.
                     properties:

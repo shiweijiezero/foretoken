@@ -37,6 +37,7 @@ const TEMPORARY_MODEL_SOURCE_ROOT: &str = "/tmp/foretoken-model-source";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    foretoken_artifacts::source::activate("foretoken-model-server")?;
     vllm_tracing::init_tracing("ForetokenModelServer");
 
     match std::env::args().nth(1).as_deref() {
@@ -516,11 +517,14 @@ async fn spawn_engine_attempt(
         || config.launch.ec.enabled()
         || config.launch.profiling.engine == profiling::Engine::Mctracer
     {
-        let mut python_paths = vec![PathBuf::from(
-            foretoken_model_server::launch::PYTHON_MODULE_PATH,
-        )];
-        if let Some(existing) = std::env::var_os("PYTHONPATH") {
-            python_paths.extend(std::env::split_paths(&existing));
+        let mut python_paths = std::env::var_os("PYTHONPATH")
+            .map(|existing| std::env::split_paths(&existing).collect::<Vec<_>>())
+            .unwrap_or_default();
+        if std::env::var_os(foretoken_artifacts::source::ACTIVE_DIRECTORY_ENV).is_none() {
+            python_paths.insert(
+                0,
+                PathBuf::from(foretoken_model_server::launch::PYTHON_MODULE_PATH),
+            );
         }
         let python_path = std::env::join_paths(python_paths)
             .map_err(|error| EngineStartupFailure::Other(io::Error::other(error)))?;

@@ -19,9 +19,10 @@ mirrored_image() {
 }
 
 build_dev_images() {
+  local component=${1:-} output=${2:-}
   export DOCKER_BUILDKIT=1
 
-  if [[ "${FORETOKEN_BUILD_METAX_RUNTIME:-false}" == true ]]; then
+  if [[ -z "$output" && "${FORETOKEN_BUILD_METAX_RUNTIME:-false}" == true ]]; then
     local engine_image="${MODEL_SERVER_IMAGE}-engine"
     printf 'Building MetaX inference runtime: %s\n' "$engine_image"
     make image-vllm-metax VLLM_METAX_IMAGE="$engine_image"
@@ -74,6 +75,18 @@ build_dev_images() {
   fi
   if [[ -n "${UV_IMAGE:-}" ]]; then
     model_image_args=(--build-arg "UV_IMAGE=$UV_IMAGE")
+  fi
+
+  if [[ -n "$output" ]]; then
+    case "$component" in frontend|model-server) ;; *) printf 'unknown source component: %s\n' "$component" >&2; return 1 ;; esac
+    make vllm-source
+    docker build \
+      "${data_plane_image_args[@]}" \
+      "${model_image_args[@]}" \
+      "${cargo_args[@]}" \
+      -f "data-plane/$component/Dockerfile" \
+      --target source-export --output "type=local,dest=$output" .
+    return
   fi
 
   printf 'Building control-plane image: %s\n' "$CONTROL_PLANE_IMAGE"

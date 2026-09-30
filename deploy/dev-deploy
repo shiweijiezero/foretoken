@@ -39,10 +39,7 @@ write_image_output() {
     "$IMAGE_MODE" \
     "$CONTROL_PLANE_DEPLOY_IMAGE" \
     "$FRONTEND_DEPLOY_IMAGE" \
-    "$MODEL_SERVER_DEPLOY_IMAGE" \
-    "$CONTROL_PLANE_CHANGED" \
-    "$FRONTEND_CHANGED" \
-    "$MODEL_SERVER_CHANGED" <<'PY'
+    "$MODEL_SERVER_DEPLOY_IMAGE" <<'PY'
 import json
 import sys
 
@@ -52,9 +49,6 @@ import sys
     control_plane_deploy_image,
     frontend_deploy_image,
     model_server_deploy_image,
-    control_plane_changed,
-    frontend_changed,
-    model_server_changed,
 ) = sys.argv[1:]
 
 with open(output_path, "w", encoding="utf-8") as output:
@@ -64,9 +58,6 @@ with open(output_path, "w", encoding="utf-8") as output:
             "CONTROL_PLANE_DEPLOY_IMAGE": control_plane_deploy_image,
             "FRONTEND_DEPLOY_IMAGE": frontend_deploy_image,
             "MODEL_SERVER_DEPLOY_IMAGE": model_server_deploy_image,
-            "CONTROL_PLANE_CHANGED": control_plane_changed == "true",
-            "FRONTEND_CHANGED": frontend_changed == "true",
-            "MODEL_SERVER_CHANGED": model_server_changed == "true",
         },
         output,
         separators=(",", ":"),
@@ -165,9 +156,26 @@ CONTROL_PLANE_IMAGE="$LOCAL_IMAGE_PREFIX-control-plane"
 FRONTEND_IMAGE="$LOCAL_IMAGE_PREFIX-frontend"
 MODEL_SERVER_IMAGE="$LOCAL_IMAGE_PREFIX-model-server"
 
-CONTROL_PLANE_BEFORE=$(image_id "$CONTROL_PLANE_IMAGE")
-FRONTEND_BEFORE=$(image_id "$FRONTEND_IMAGE")
-MODEL_SERVER_BEFORE=$(image_id "$MODEL_SERVER_IMAGE")
+# CLI installs compare against deployed references, not aliases changed by a prior build.
+if [[ "${FORETOKEN_CLI_SOURCE:-false}" == true ]]; then
+  CONTROL_PLANE_BEFORE=$(image_id "${FORETOKEN_INSTALLED_CONTROL_PLANE_IMAGE:-}")
+  FRONTEND_BEFORE=$(image_id "${FORETOKEN_INSTALLED_FRONTEND_IMAGE:-}")
+  MODEL_SERVER_BEFORE=$(image_id "${FORETOKEN_INSTALLED_MODEL_SERVER_IMAGE:-}")
+  # A build alias may already contain unpublished edits, so it cannot prove deployment identity.
+  if [[ "${FORETOKEN_INSTALLED_CONTROL_PLANE_IMAGE:-}" == "$CONTROL_PLANE_IMAGE" || "${FORETOKEN_INSTALLED_CONTROL_PLANE_IMAGE:-}" == "$CONTROL_PLANE_IMAGE:latest" ]]; then
+    CONTROL_PLANE_BEFORE=
+  fi
+  if [[ "${FORETOKEN_INSTALLED_FRONTEND_IMAGE:-}" == "$FRONTEND_IMAGE" || "${FORETOKEN_INSTALLED_FRONTEND_IMAGE:-}" == "$FRONTEND_IMAGE:latest" ]]; then
+    FRONTEND_BEFORE=
+  fi
+  if [[ "${FORETOKEN_INSTALLED_MODEL_SERVER_IMAGE:-}" == "$MODEL_SERVER_IMAGE" || "${FORETOKEN_INSTALLED_MODEL_SERVER_IMAGE:-}" == "$MODEL_SERVER_IMAGE:latest" ]]; then
+    MODEL_SERVER_BEFORE=
+  fi
+else
+  CONTROL_PLANE_BEFORE=$(image_id "$CONTROL_PLANE_IMAGE")
+  FRONTEND_BEFORE=$(image_id "$FRONTEND_IMAGE")
+  MODEL_SERVER_BEFORE=$(image_id "$MODEL_SERVER_IMAGE")
+fi
 
 build_dev_images
 
@@ -182,50 +190,93 @@ MODEL_SERVER_CHANGED=false
 [[ "$FRONTEND_BEFORE" != "$FRONTEND_AFTER" ]] && FRONTEND_CHANGED=true
 [[ "$MODEL_SERVER_BEFORE" != "$MODEL_SERVER_AFTER" ]] && MODEL_SERVER_CHANGED=true
 
-RELEASE_EXISTS=false
-if RELEASE_STATUS=$(helm status "$RELEASE" --namespace "$PLATFORM_NAMESPACE" 2>&1); then
-  RELEASE_EXISTS=true
-elif grep -q 'release: not found' <<<"$RELEASE_STATUS"; then
-  CONTROL_PLANE_CHANGED=true
-  FRONTEND_CHANGED=true
-  MODEL_SERVER_CHANGED=true
-else
-  printf '%s\n' "$RELEASE_STATUS" >&2
-  exit 1
-fi
-
-if [[ "$RELEASE_EXISTS" == true ]]; then
-  CURRENT_CONTROL_PLANE_IMAGE=$(deployment_image "$PLATFORM_NAMESPACE" "app.kubernetes.io/instance=$RELEASE,app.kubernetes.io/name=foretoken-control-plane")
-  CURRENT_FRONTEND_IMAGE=$(deployment_image "$WORKLOAD_NAMESPACE" "inference.foretoken.io/frontend-service")
-  CURRENT_MODEL_SERVER_IMAGE=$(deployment_image "$WORKLOAD_NAMESPACE" "inference.foretoken.io/model-group")
-  if [[ "$IMAGE_MODE" == import ]]; then
-    [[ "${CURRENT_CONTROL_PLANE_IMAGE%:latest}" != "$CONTROL_PLANE_IMAGE" ]] && CONTROL_PLANE_CHANGED=true
-    if [[ -n "$CURRENT_FRONTEND_IMAGE" ]]; then
-      [[ "${CURRENT_FRONTEND_IMAGE%:latest}" != "$FRONTEND_IMAGE" ]] && FRONTEND_CHANGED=true
-    fi
-    if [[ -n "$CURRENT_MODEL_SERVER_IMAGE" ]]; then
-      [[ "${CURRENT_MODEL_SERVER_IMAGE%:latest}" != "$MODEL_SERVER_IMAGE" ]] && MODEL_SERVER_CHANGED=true
-    fi
-  else
-    [[ "$CURRENT_CONTROL_PLANE_IMAGE" != "$REGISTRY/control-plane:"* ]] && CONTROL_PLANE_CHANGED=true
-    if [[ -n "$CURRENT_FRONTEND_IMAGE" ]]; then
-      [[ "$CURRENT_FRONTEND_IMAGE" != "$REGISTRY/frontend:"* ]] && FRONTEND_CHANGED=true
-    fi
-    if [[ -n "$CURRENT_MODEL_SERVER_IMAGE" ]]; then
-      [[ "$CURRENT_MODEL_SERVER_IMAGE" != "$REGISTRY/model-server:"* ]] && MODEL_SERVER_CHANGED=true
-    fi
-  fi
-fi
-
 CONTROL_PLANE_DEPLOY_IMAGE=$CONTROL_PLANE_IMAGE
 FRONTEND_DEPLOY_IMAGE=$FRONTEND_IMAGE
 MODEL_SERVER_DEPLOY_IMAGE=$MODEL_SERVER_IMAGE
 
+RELEASE_EXISTS=false
+if [[ "${FORETOKEN_CLI_SOURCE:-false}" == true ]]; then
+  # Missing local references cannot establish reuse; distribute a fresh tagged image.
+  [[ -z "$CONTROL_PLANE_BEFORE" ]] && CONTROL_PLANE_CHANGED=true
+  [[ -z "$FRONTEND_BEFORE" ]] && FRONTEND_CHANGED=true
+  [[ -z "$MODEL_SERVER_BEFORE" ]] && MODEL_SERVER_CHANGED=true
+  # Reuse also requires a reference addressed for the requested distribution destination.
+  if [[ "$IMAGE_MODE" == import ]]; then
+    [[ "${FORETOKEN_INSTALLED_CONTROL_PLANE_IMAGE:-}" != "$CONTROL_PLANE_IMAGE:"* ]] && CONTROL_PLANE_CHANGED=true
+    [[ "${FORETOKEN_INSTALLED_FRONTEND_IMAGE:-}" != "$FRONTEND_IMAGE:"* ]] && FRONTEND_CHANGED=true
+    [[ "${FORETOKEN_INSTALLED_MODEL_SERVER_IMAGE:-}" != "$MODEL_SERVER_IMAGE:"* ]] && MODEL_SERVER_CHANGED=true
+  else
+    [[ "${FORETOKEN_INSTALLED_CONTROL_PLANE_IMAGE:-}" != "$REGISTRY/control-plane:"* ]] && CONTROL_PLANE_CHANGED=true
+    [[ "${FORETOKEN_INSTALLED_FRONTEND_IMAGE:-}" != "$REGISTRY/frontend:"* ]] && FRONTEND_CHANGED=true
+    [[ "${FORETOKEN_INSTALLED_MODEL_SERVER_IMAGE:-}" != "$REGISTRY/model-server:"* ]] && MODEL_SERVER_CHANGED=true
+  fi
+  if [[ "$CONTROL_PLANE_CHANGED" == false ]]; then
+    CONTROL_PLANE_DEPLOY_IMAGE=$FORETOKEN_INSTALLED_CONTROL_PLANE_IMAGE
+  fi
+  if [[ "$FRONTEND_CHANGED" == false ]]; then
+    FRONTEND_DEPLOY_IMAGE=$FORETOKEN_INSTALLED_FRONTEND_IMAGE
+  fi
+  if [[ "$MODEL_SERVER_CHANGED" == false ]]; then
+    MODEL_SERVER_DEPLOY_IMAGE=$FORETOKEN_INSTALLED_MODEL_SERVER_IMAGE
+  fi
+else
+  if RELEASE_STATUS=$(helm status "$RELEASE" --namespace "$PLATFORM_NAMESPACE" 2>&1); then
+    RELEASE_EXISTS=true
+  elif grep -q 'release: not found' <<<"$RELEASE_STATUS"; then
+    CONTROL_PLANE_CHANGED=true
+    FRONTEND_CHANGED=true
+    MODEL_SERVER_CHANGED=true
+  else
+    printf '%s\n' "$RELEASE_STATUS" >&2
+    exit 1
+  fi
+
+  if [[ "$RELEASE_EXISTS" == true ]]; then
+    CURRENT_CONTROL_PLANE_IMAGE=$(deployment_image "$PLATFORM_NAMESPACE" "app.kubernetes.io/instance=$RELEASE,app.kubernetes.io/name=foretoken-control-plane")
+    CURRENT_FRONTEND_IMAGE=$(deployment_image "$WORKLOAD_NAMESPACE" "inference.foretoken.io/frontend-service")
+    CURRENT_MODEL_SERVER_IMAGE=$(deployment_image "$WORKLOAD_NAMESPACE" "inference.foretoken.io/model-group")
+    if [[ "$IMAGE_MODE" == import ]]; then
+      [[ "${CURRENT_CONTROL_PLANE_IMAGE%:*}" != "$CONTROL_PLANE_IMAGE" ]] && CONTROL_PLANE_CHANGED=true
+      if [[ -n "$CURRENT_FRONTEND_IMAGE" ]]; then
+        [[ "${CURRENT_FRONTEND_IMAGE%:*}" != "$FRONTEND_IMAGE" ]] && FRONTEND_CHANGED=true
+      fi
+      if [[ -n "$CURRENT_MODEL_SERVER_IMAGE" ]]; then
+        [[ "${CURRENT_MODEL_SERVER_IMAGE%:*}" != "$MODEL_SERVER_IMAGE" ]] && MODEL_SERVER_CHANGED=true
+      fi
+    else
+      [[ "$CURRENT_CONTROL_PLANE_IMAGE" != "$REGISTRY/control-plane:"* ]] && CONTROL_PLANE_CHANGED=true
+      if [[ -n "$CURRENT_FRONTEND_IMAGE" ]]; then
+        [[ "$CURRENT_FRONTEND_IMAGE" != "$REGISTRY/frontend:"* ]] && FRONTEND_CHANGED=true
+      fi
+      if [[ -n "$CURRENT_MODEL_SERVER_IMAGE" ]]; then
+        [[ "$CURRENT_MODEL_SERVER_IMAGE" != "$REGISTRY/model-server:"* ]] && MODEL_SERVER_CHANGED=true
+      fi
+    fi
+  fi
+fi
+
 if [[ "$IMAGE_MODE" == import ]]; then
+  # Distinct references let the existing controllers replace complete Groups, including LWS.
+  # Keep the untagged build-cache images and the manual deployment workflow unchanged.
+  if [[ -n "$DEV_IMAGE_OUTPUT" ]]; then
+    source_tag="source-$(date +%Y%m%d%H%M%S)-$BASHPID"
+    if [[ "$CONTROL_PLANE_CHANGED" == true ]]; then
+      CONTROL_PLANE_DEPLOY_IMAGE="$CONTROL_PLANE_IMAGE:$source_tag"
+      docker tag "$CONTROL_PLANE_IMAGE" "$CONTROL_PLANE_DEPLOY_IMAGE"
+    fi
+    if [[ "$FRONTEND_CHANGED" == true ]]; then
+      FRONTEND_DEPLOY_IMAGE="$FRONTEND_IMAGE:$source_tag"
+      docker tag "$FRONTEND_IMAGE" "$FRONTEND_DEPLOY_IMAGE"
+    fi
+    if [[ "$MODEL_SERVER_CHANGED" == true ]]; then
+      MODEL_SERVER_DEPLOY_IMAGE="$MODEL_SERVER_IMAGE:$source_tag"
+      docker tag "$MODEL_SERVER_IMAGE" "$MODEL_SERVER_DEPLOY_IMAGE"
+    fi
+  fi
   changed_images=()
-  [[ "$CONTROL_PLANE_CHANGED" == true ]] && changed_images+=("$CONTROL_PLANE_IMAGE")
-  [[ "$FRONTEND_CHANGED" == true ]] && changed_images+=("$FRONTEND_IMAGE")
-  [[ "$MODEL_SERVER_CHANGED" == true ]] && changed_images+=("$MODEL_SERVER_IMAGE")
+  [[ "$CONTROL_PLANE_CHANGED" == true ]] && changed_images+=("$CONTROL_PLANE_DEPLOY_IMAGE")
+  [[ "$FRONTEND_CHANGED" == true ]] && changed_images+=("$FRONTEND_DEPLOY_IMAGE")
+  [[ "$MODEL_SERVER_CHANGED" == true ]] && changed_images+=("$MODEL_SERVER_DEPLOY_IMAGE")
   if ((${#changed_images[@]} > 0)); then
     printf 'Importing %s images into %s; waiting for import and unpack to finish\n' "${#changed_images[@]}" "$LOCAL_CLUSTER"
     printf '  %s\n' "${changed_images[@]}"

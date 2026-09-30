@@ -192,7 +192,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "-e",
         "--editable",
         metavar="PATH",
-        help="build Foretoken images from this source root",
+        help="build Foretoken images and bind this workstation's source root for subsequent deploy updates",
     )
     install.add_argument(
         "--registry",

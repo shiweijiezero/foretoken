@@ -113,6 +113,12 @@ printf '\n'
 
 ## 6. 修改源码后重新部署
 
-修改代码后，重新执行安装时使用的同一条命令，保留 `--registry` 和 `--values` 等选项。
+源码安装将本工作站的源码目录绑定到目标集群。修改后，再次执行部署命令：
 
-BuildKit 会复用编译缓存。命令只导入或推送发生变化的镜像，保持源码安装模式，并滚动更新使用本地同名镜像且内容发生变化的工作负载。需要排查底层镜像或 Helm 操作时，参阅维护者[源码镜像手工生命周期](development/source-image-lifecycle_zh.md)。
+```bash
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+命令会沿用保存的安装设置，自动选择直接更新运行时代码或更新镜像，部署 Foretoken 前端与 vLLM model-server 的改动。
+
+vLLM-Omni 和厂商引擎的 Python/CUDA 改动走[镜像构建路径](development/source-image-lifecycle_zh.md)；修改引擎时需使用包含这些改动的推理引擎镜像。

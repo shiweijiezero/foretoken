@@ -193,6 +193,10 @@ type ModelGroupRuntime struct {
 	// +kubebuilder:validation:Maximum=1
 	PreparationVersion int32 `json:"preparationVersion,omitempty"`
 
+	// SourceRevision pins the source bundle in this Group's persistent runtime cache.
+	// +optional
+	SourceRevision string `json:"sourceRevision,omitempty"`
+
 	// +kubebuilder:validation:Enum=vllm;vllm-omni
 	Backend string `json:"backend"`
 

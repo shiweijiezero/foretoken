@@ -46,7 +46,10 @@ RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/regis
       data-plane/target/release/foretoken-frontend \
       /out/foretoken-frontend
 
-FROM ${RUNTIME_IMAGE}
+FROM scratch AS source-export
+COPY --from=builder /out/foretoken-frontend /bin/foretoken-frontend
+
+FROM ${RUNTIME_IMAGE} AS runtime
 
 ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
 ARG OCI_REVISION

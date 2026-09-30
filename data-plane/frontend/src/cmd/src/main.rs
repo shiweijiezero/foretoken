@@ -17,6 +17,7 @@ use serving_snapshot::{refresh_active_generation, watch_serving_snapshot};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    foretoken_artifacts::source::activate("foretoken-frontend")?;
     foretoken_tracing::init_tracing("ForetokenFrontend");
 
     // Establish the long-lived generation owner before starting background refreshes.

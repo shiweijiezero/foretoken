@@ -44,6 +44,7 @@ func main() {
 	var metricsAddress string
 	var probeAddress string
 	var leaderElection bool
+	var sourceMode bool
 	var frontendEnabled bool
 	var frontendMode string
 	var frontendImage string
@@ -98,6 +99,7 @@ func main() {
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "Health probe bind address.")
 	flag.BoolVar(&leaderElection, "leader-elect", false, "Enable leader election.")
+	flag.BoolVar(&sourceMode, "source-mode", false, "Enable service source bundles from persistent runtime caches.")
 	flag.StringVar(&observabilityPrometheus, "observability-prometheus", "", "Prometheus NAMESPACE/NAME selected for service alert rules.")
 	flag.StringVar(&observabilityLabelsJSON, "observability-labels", "{}", "JSON labels used to select controller-owned alert rules.")
 	flag.StringVar(&logStorageStatefulSet, "log-storage-statefulset", "", "Managed Loki StatefulSet in the platform namespace; empty disables log volume expansion.")
@@ -363,6 +365,7 @@ func main() {
 			CacheProfile: cacheProfile,
 			Alerts:       serviceAlerts,
 			RuntimeProfile: controllers.FrontendRuntimeProfile{
+				SourceMode:        sourceMode,
 				Image:             frontendImage,
 				WorkerImage:       videoWorkerImage,
 				Port:              int32(frontendPort),
@@ -379,6 +382,7 @@ func main() {
 	if err := (&controllers.ModelServiceReconciler{
 		Client:                   manager.GetClient(),
 		CacheProfile:             cacheProfile,
+		SourceMode:               sourceMode,
 		HuggingFaceAccessProfile: huggingFaceAccessProfile,
 		Alerts:                   serviceAlerts,
 		MetricsProvider: controllers.NewHTTPScalingMetricsProvider(manager.GetClient(), controllers.AutoscalingTelemetryOptions{
@@ -405,6 +409,7 @@ func main() {
 	if err := (&controllers.ModelPoolReconciler{
 		Client: manager.GetClient(),
 		TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: resolver.RuntimeProfile{
+			SourceMode:         sourceMode,
 			Image:              inferenceEngineImage,
 			OmniImage:          omniInferenceEngineImage,
 			NsightImage:        nsightImage,
@@ -423,7 +428,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to register ModelPool controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, ModelDistribution: modelDistributionProfile}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, ModelDistribution: modelDistributionProfile, SourceMode: sourceMode}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelGroup controller")
 		os.Exit(1)
 	}

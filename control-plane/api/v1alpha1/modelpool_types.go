@@ -107,6 +107,10 @@ type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MaxLength=256
 	TokenizerRevision string `json:"tokenizerRevision,omitempty"`
 
+	// SourceRevision pins the CLI-published source bundle used by this Pool's Groups.
+	// +optional
+	SourceRevision string `json:"sourceRevision,omitempty"`
+
 	// RuntimeCache is set by the ModelService controller when persistent runtime caching is enabled.
 	// +optional
 	RuntimeCache *RuntimeCacheBinding `json:"runtimeCache,omitempty"`

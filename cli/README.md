@@ -77,6 +77,8 @@ Prepare the build tools listed in the [source deployment guide](../docs/custom-d
 foretoken install -e .
 ```
 
+This binds the checkout on this workstation to the target cluster. After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#6-redeploy-source-changes).
+
 A standard active kind or k3d context imports the built images locally. Other Kubernetes contexts need a registry reachable by their nodes. Sign in to the registry host with an account that can push the target repository before installation:
 
 ```bash

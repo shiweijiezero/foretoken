@@ -10,6 +10,7 @@ license.workspace = true
 [dependencies]
 async-trait.workspace = true
 axum.workspace = true
+foretoken-artifacts.workspace = true
 foretoken-backend-registry = { path = "../backend-registry" }
 foretoken-kv-indexer = { path = "../kv-indexer" }
 foretoken-llm-facade = { path = "../llm-facade" }

@@ -607,6 +607,7 @@ class Helm(HelmClient):
             gateway_controller_name,
             observability_labels,
         )
+        args.extend(["--set", f"development.enabled={str(source_mode).lower()}"])
         args.extend(["--set-string", f"observability.prometheus={observability_prometheus}"])
         args.extend(["--set-string", f"observability.logs.datasourceURL={log_endpoint}"])
         args.extend(["--set-string", f"observability.logs.managedStatefulSet={log_storage_statefulset}"])
@@ -644,20 +645,6 @@ class Helm(HelmClient):
             control_plane_image = source_images.control_plane
             frontend_image = source_images.frontend
             model_server_image = source_images.model_server
-            if stored_values is not None and not all(
-                (
-                    source_images.control_plane_changed,
-                    source_images.frontend_changed,
-                    source_images.model_server_changed,
-                )
-            ):
-                current_images = self.platform_image_references(release)
-                if not source_images.control_plane_changed:
-                    control_plane_image = current_images[0]
-                if not source_images.frontend_changed:
-                    frontend_image = current_images[1]
-                if not source_images.model_server_changed:
-                    model_server_image = current_images[2]
             repository, tag = _image_repository_tag(control_plane_image)
             args.extend(
                 [

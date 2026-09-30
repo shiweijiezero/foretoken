@@ -618,6 +618,10 @@ spec:
                     required:
                     - engine
                     type: object
+                  sourceRevision:
+                    description: SourceRevision pins the source bundle in this Group's
+                      persistent runtime cache.
+                    type: string
                   tritonCacheDirectory:
                     description: TritonCacheDirectory is the initial worker cache
                       path; Kubernetes expands its node reference.

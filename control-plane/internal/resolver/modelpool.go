@@ -14,6 +14,7 @@ import (
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
 	resourcevalidation "github.com/shiweijiezero/foretoken/control-plane/internal/resources"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	vllmconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllm"
 	vllmomniconfig "github.com/shiweijiezero/foretoken/control-plane/internal/vllmomni"
 )
@@ -48,6 +49,7 @@ type ECProfile struct {
 
 // RuntimeProfile contains platform-owned values for the initial vLLM runtime profile.
 type RuntimeProfile struct {
+	SourceMode         bool
 	Image              string
 	OmniImage          string
 	NsightImage        string
@@ -108,6 +110,12 @@ type resolvedModelRuntime struct {
 
 // ResolveModelPool resolves one supported vLLM execution profile into a Group contract.
 func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile) (ModelGroupTemplate, error) {
+	if err := runtimeconfig.ValidateSourceRuntime(template.SourceRevision, profile.SourceMode, template.RuntimeCache); err != nil {
+		return ModelGroupTemplate{}, err
+	}
+	if template.SourceRevision != "" && template.Backend != "vllm" {
+		return ModelGroupTemplate{}, fmt.Errorf("source bundles support the vLLM model-server only")
+	}
 	if template.Backend == vllmomniconfig.Backend {
 		return resolveVLLMOmniPool(template, profile)
 	}
@@ -254,7 +262,8 @@ func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate
 			Cache: template.RuntimeCache.DeepCopy(), HuggingFaceAccess: template.HuggingFaceAccess.DeepCopy(),
 		},
 		Runtime: inferencev1alpha1.ModelGroupRuntime{
-			Backend: template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
+			SourceRevision: template.SourceRevision,
+			Backend:        template.Backend, Image: runtime.Image, Port: profile.ModelServerPort,
 			EngineArgs:                            runtime.EngineArgs,
 			TritonCacheDirectory:                  vllmconfig.TritonCacheDirectory(template.RuntimeCache),
 			Profiling:                             template.Profiling.DeepCopy(),

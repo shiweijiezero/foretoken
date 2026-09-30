@@ -67,6 +67,7 @@ type ModelGroupReconciler struct {
 	ImagePullSecrets      []corev1.LocalObjectReference
 	ModelDistribution     runtimeconfig.ModelDistributionProfile
 	LeaderWorkerSets      bool
+	SourceMode            bool
 }
 
 // SetupWithManager registers the ModelGroup controller and its owned resources.
@@ -113,6 +114,9 @@ func (reconciler *ModelGroupReconciler) Reconcile(ctx context.Context, request c
 	pool, err := reconciler.owningModelPool(ctx, group)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if err := runtimeconfig.ValidateSourceRuntime(group.Spec.Runtime.SourceRevision, reconciler.SourceMode, group.Spec.Artifacts.Cache); err != nil {
+		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupFailureState(err))
 	}
 	if err := validateGroupProfile(group); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, group, modelGroupFailureState(err))
@@ -283,6 +287,9 @@ func desiredPreparationJob(group *inferencev1alpha1.ModelGroup, imagePullSecrets
 	var ports []corev1.ContainerPort
 	if cache != nil {
 		command = "prepare"
+		if group.Spec.Runtime.SourceRevision != "" {
+			env = append(env, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: runtimeconfig.SourceDirectory(cache.MountPath, group.Spec.Runtime.SourceRevision)})
+		}
 		env = append(env, runtimeCacheObserverEnv(*cache, group.Spec.Runtime.Port)...)
 		ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeCacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
 		volumes = append(volumes, corev1.Volume{Name: runtimeCacheVolumeName, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: cache.ClaimName}}})
@@ -405,6 +412,12 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	if group.Spec.Network != "" {
 		annotations = map[string]string{multusNetworksAnnotation: group.Spec.Network}
 	}
+	if group.Spec.Runtime.SourceRevision != "" {
+		if annotations == nil {
+			annotations = make(map[string]string)
+		}
+		annotations[runtimeconfig.SourceRevisionAnnotation] = group.Spec.Runtime.SourceRevision
+	}
 	replicas := int32(1)
 	revisionHistoryLimit := int32(10)
 	progressDeadlineSeconds := int32(startupSeconds)
@@ -489,6 +502,9 @@ func desiredDeployment(group *inferencev1alpha1.ModelGroup, imagePullSecrets []c
 	if cache := group.Spec.Artifacts.Cache; cache != nil {
 		volumes = append(volumes, corev1.Volume{Name: runtimeCacheVolumeName, VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: cache.ClaimName}}})
 		mounts = append(mounts, corev1.VolumeMount{Name: runtimeCacheVolumeName, MountPath: cache.MountPath})
+		if group.Spec.Runtime.SourceRevision != "" {
+			env = append(env, corev1.EnvVar{Name: runtimeconfig.SourceDirectoryEnv, Value: runtimeconfig.SourceDirectory(cache.MountPath, group.Spec.Runtime.SourceRevision)})
+		}
 		if group.Spec.Runtime.Backend == "vllm" {
 			ports = append(ports, corev1.ContainerPort{Name: "cache-observe", ContainerPort: runtimeCacheObservationPort(group.Spec.Runtime.Port), Protocol: corev1.ProtocolTCP})
 			env = append(env, runtimeCacheObserverEnv(*cache, group.Spec.Runtime.Port)...)

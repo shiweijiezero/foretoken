@@ -3,6 +3,8 @@
 
 //! Resolve local model and tokenizer directories without changing remote model identifiers.
 
+pub mod source;
+
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};

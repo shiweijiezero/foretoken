@@ -4,11 +4,14 @@
 # Deploys the control-plane manager and initializes its CRDs.
 
 {{- include "foretoken.validateValues" . }}
+{{- $sourceMode := and .Values.development .Values.development.enabled | default false }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: {{ include "foretoken.fullname" . }}
   namespace: {{ .Release.Namespace }}
+  annotations:
+    foretoken.io/install-source: {{ ternary "source" "release" $sourceMode | quote }}
   labels:
     {{- include "foretoken.labels" . | nindent 4 }}
 spec:
@@ -56,6 +59,7 @@ spec:
             - /manager
           args:
             - --leader-elect=true
+            - {{ printf "--source-mode=%t" $sourceMode | quote }}
             - {{ printf "--autoscaling-telemetry-collection-timeout=%s" .Values.controller.autoscalingTelemetry.collectionTimeout | quote }}
             - {{ printf "--autoscaling-telemetry-request-timeout=%s" .Values.controller.autoscalingTelemetry.requestTimeout | quote }}
             - {{ printf "--autoscaling-telemetry-concurrency=%d" (int .Values.controller.autoscalingTelemetry.concurrency) | quote }}
@@ -77,8 +81,8 @@ spec:
             {{- end }}
             {{- with .Values.workload.cache.claimName }}
             - {{ printf "--cache-claim=%s" . | quote }}
-            - {{ printf "--cache-mount-path=%s" $.Values.workload.cache.mountPath | quote }}
             {{- end }}
+            - {{ printf "--cache-mount-path=%s" .Values.workload.cache.mountPath | quote }}
             {{- if .Values.modelDistribution.modelexpress.enabled }}
             - --model-distribution-modelexpress=true
             {{- end }}

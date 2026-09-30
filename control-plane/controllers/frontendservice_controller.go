@@ -14,6 +14,7 @@ import (
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	"github.com/shiweijiezero/foretoken/control-plane/internal/runtimeconfig"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
@@ -65,6 +66,8 @@ type GatewayParent struct {
 
 // FrontendRuntimeProfile contains platform-owned frontend settings and an optional production Gateway.
 type FrontendRuntimeProfile struct {
+	SourceMode        bool
+	SourceRevision    string
 	Image             string
 	WorkerImage       string
 	Port              int32
@@ -214,6 +217,10 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	if err := reconciler.RuntimeProfile.validate(); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "RuntimeProfileIncomplete", FailureMessage: err.Error()})
 	}
+	sourceRevision, err := runtimeconfig.SourceRevision(frontend.Annotations, reconciler.RuntimeProfile.SourceMode)
+	if err != nil {
+		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "InvalidIntent", FailureMessage: err.Error()})
+	}
 	if err := ensureKVIndexerSecret(ctx, reconciler.Client, frontend.Namespace); err != nil {
 		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "KVIndexerSecretFailed", FailureMessage: err.Error()})
 	}
@@ -235,6 +242,13 @@ func (reconciler *FrontendServiceReconciler) reconcileFrontend(ctx context.Conte
 	}
 	profile := reconciler.RuntimeProfile
 	profile.RuntimeCache = runtimeCache
+	profile.SourceRevision = sourceRevision
+	if sourceRevision != "" && !cacheReady {
+		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "CacheNotReady", FailureMessage: "Source execution is waiting for persistent runtime cache storage and serving workloads"})
+	}
+	if err := runtimeconfig.ValidateSourceRuntime(sourceRevision, profile.SourceMode, runtimeCache); err != nil {
+		return ctrl.Result{}, reconciler.updateStatus(ctx, frontend, frontendState{FailureReason: "SourceRuntimeUnavailable", FailureMessage: err.Error()})
+	}
 	applyDeployment := true
 	if !cacheReady {
 		current := new(appsv1.Deployment)

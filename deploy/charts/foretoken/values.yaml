@@ -15,6 +15,10 @@ image:
 
 imagePullSecrets: []
 
+# Source installations enable code bundles synchronized to workload runtime caches.
+development:
+  enabled: false
+
 controller:
   replicas: 1
   autoscalingTelemetry:
