@@ -25,6 +25,8 @@ from benchmarks.integrations.vbench.container import (
 )
 from benchmarks.runs.evaluation import run_logged_process
 
+DEFAULT_VBENCH_IMAGE = "ghcr.io/xlpu/foretoken-vbench:stable"
+
 
 def _prepare_checkpoints(image: VBenchImage, cache: Path, log: Path) -> None:
     """Fetch every supported dimension's weights without starting GPU scoring."""
@@ -64,12 +66,7 @@ def setup_vbench(config: VBenchSetupConfig) -> None:
     document = read_evaluator_config(path) if path.is_file() else {"evaluators": {}}
     existing = "vbench" in document["evaluators"]
     settings = vbench_settings(path) if existing else {}
-    image = config.image or settings.get("image")
-    if not image:
-        raise ValueError(
-            "Specify a VBench image with '--image IMAGE' or set "
-            f"evaluators.vbench.image in {path}"
-        )
+    image = config.image or settings.get("image") or DEFAULT_VBENCH_IMAGE
     cache = Path(settings["cache"]) if existing else config.directory / "cache"
     config.directory.mkdir(parents=True, exist_ok=True)
     cache.mkdir(parents=True, exist_ok=True)

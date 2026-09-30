@@ -20,8 +20,10 @@ RUN python3 -m pip install --no-cache-dir \
       torch==2.5.1+cu121 torchvision==0.20.1+cu121 \
       --index-url https://download.pytorch.org/whl/cu121
 
+# Drop unused upstream archives and Git history before committing the runtime layer.
 RUN git clone https://github.com/Vchitect/VBench.git /opt/VBench \
     && git -C /opt/VBench checkout --detach "${VBENCH_REVISION}" \
+    && rm -r /opt/VBench/VBench-2.0/vbench2/third_party/LLaVA_NeXT/scripts/archived /opt/VBench/.git \
     && python3 -m pip install --no-cache-dir \
       -r /opt/VBench/requirements.txt \
       torch==2.5.1+cu121 torchvision==0.20.1+cu121 \

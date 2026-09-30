@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md) · [Evaluation and profiling](../../README.md)
 
-Use `foretoken eval` to score generated text and existing videos. Complete the [setup](../../README.md#get-started), then choose an evaluation method below. Add `--reference` for [reference/candidate distribution comparisons](distribution-comparison.md), including KL, bit-width plots, and logit differences.
+Use `foretoken eval` to score generated text and existing videos. Complete the [setup](../../README.md#get-started), then choose an evaluation method below. For text-model comparisons, add `--reference` to [compare reference and candidate probability distributions](distribution-comparison.md), including KL, bit-width plots, and logit differences.
 
 ## lm-evaluation-harness
 
@@ -59,27 +59,20 @@ For both frameworks, omit `--limit` to run the complete selected task. The evalu
 
 ## Evaluate video quality
 
-On a Linux x86_64 machine with Docker, an NVIDIA driver supporting CUDA 12.1, and the NVIDIA Container Toolkit, prepare a VBench image and its checkpoints before evaluating existing MP4 or GIF videos. The image must contain VBench and carry an `org.foretoken.vbench.commit` label. From a Foretoken source checkout, build the provided image once:
+Prepare VBench, then score the existing MP4 or GIF files in `VIDEO_DIR`:
 
 ```bash
-docker build -f benchmarks/docker/vbench/Dockerfile -t foretoken-vbench:local .
-foretoken eval setup vbench --image foretoken-vbench:local
-foretoken eval --video results/video-run \
-  --evaluator vbench \
-  --output local,wandb
+foretoken eval setup vbench
+foretoken eval --video VIDEO_DIR --output local
 ```
 
-The image fixes the VBench source and its Python, PyTorch, and CUDA dependencies without changing Foretoken's environment. Setup checks the image and prepares a checkpoint cache under `.foretoken/evaluators/vbench` beside the YAML. It downloads weights for all 10 supported video-quality dimensions but does not run GPU evaluation. Image building and checkpoint downloads need network access and several GB of disk space; upstream checkpoints come from Hugging Face and other hosts.
+`setup` saves reusable settings in `foretoken-evaluators.yaml`. `eval --video` scores videos without generating them; use `foretoken perf video` for generation and serving-performance measurements.
 
-After preparation succeeds, setup writes `foretoken-evaluators.yaml` with the exact image digest (or a local image ID) and cache path. Evaluation reuses it without installing dependencies. Both commands search upward for the nearest YAML; if none exists, setup creates it in the current directory. Use `--config PATH` for another YAML and setup's `--directory PATH` to change the default checkpoint location. A failed setup does not publish new YAML; inspect `setup.log` in the managed directory and retry. Once a VBench image is published in a registry, pass that image reference to `--image` instead of building locally.
+For Foretoken video results, prompts come from `raw_results.json`; otherwise they come from filenames. Use `--prompt-file` for a JSON mapping such as `{"clip.mp4": "A red car drives past."}` and `--dimension` to select dimensions. Scores are saved in `metrics.json`, with run provenance in `config.json`.
 
-`foretoken perf video` generates videos and measures serving performance; `foretoken eval --video` only scores existing videos and does not regenerate them. When the video directory is a Foretoken `perf video` result, the command derives exact prompts from `raw_results.json`. For another video directory, VBench infers prompts from file names, or you can pass a VBench JSON mapping with `--prompt-file`. Select a subset with `--dimension NAME [NAME ...]`; by default all 10 video-quality dimensions run.
+### Use your own image or configuration
 
-The new evaluation result's `config.json` records the selected image, its local ID and registry digest when available, the VBench commit from the image label, selected dimensions, prompt source, and number of videos. Foretoken video generation saves its own `config.json` and `raw_results.json` in the source directory.
-
-### Use an existing image
-
-If you already have a VBench image and prepared checkpoints, you can create the YAML yourself:
+Pass `--image IMAGE` to `setup` for a different VBench image. If its checkpoints are already prepared, you can instead provide an evaluator YAML with `--config PATH`:
 
 ```yaml
 evaluators:
@@ -88,11 +81,7 @@ evaluators:
     cache: .foretoken/evaluators/vbench/cache
 ```
 
-Then run `foretoken eval --video VIDEO_DIR` directly. If checkpoints are missing, run `foretoken eval setup vbench` to prepare them and pin the image in the YAML. Other evaluators' settings are retained.
-
-The cache directory must exist before evaluation. Relative YAML paths resolve beside the file. Docker mounts the video directory read-only and writes VBench reports to Foretoken's result directory. The supplied image must already be available locally for direct evaluation; setup pulls it when needed. The current image targets NVIDIA GPUs; MetaX evaluation needs its own validated image and is not supported yet.
-
-On a shared NVIDIA host, set `CUDA_VISIBLE_DEVICES` to an available host GPU index before running `foretoken eval --video`; the VBench container will use that GPU.
+For direct evaluation, the image and cache must exist locally. The image must contain VBench and an `org.foretoken.vbench.commit` label; relative cache paths resolve beside the YAML. The published image uses NVIDIA GPUs; on a shared host, select an available GPU with `CUDA_VISIBLE_DEVICES`.
 
 ## Use an existing endpoint
 
@@ -109,7 +98,7 @@ foretoken eval \
 
 This mode uses no Kubernetes resources. Add `--api-key` when authentication is required. For a Foretoken Gateway deployment, pass its Kustomize directory so the command discovers the address and routing headers.
 
-## Resume an evaluation
+## Resume text evaluation or model comparison
 
 Keep local output to retain progress. After an interruption, repeat the original command with `--resume` pointing to its printed result directory. Replace `results/previous-run` below with that directory:
 
@@ -141,4 +130,4 @@ Open the result directory printed by the command:
 
 W&B provides task metrics, a score table, and native reports as a downloadable artifact. Common [output settings](../../README.md#read-and-save-results) select destinations and organize comparisons.
 
-Compare scores using the same evaluator, task configuration, and sample selection.
+Compare scores using the same evaluator, inputs, prompts, and scoring settings.

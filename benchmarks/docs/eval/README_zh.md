@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文 · [评测与性能剖析](../../README_zh.md)
 
-使用 `foretoken eval` 评测生成文本和已有视频的质量。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的评测方式。添加 `--reference` 可[比较参考与候选模型的概率分布](distribution-comparison_zh.md)，查看 KL、位宽对比图和 logit 差异。
+使用 `foretoken eval` 评测生成文本和已有视频的质量。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的评测方式。比较文本模型时，添加 `--reference` 可[比较参考与候选模型的概率分布](distribution-comparison_zh.md)，查看 KL、位宽对比图和 logit 差异。
 
 ## lm-evaluation-harness
 
@@ -59,27 +59,20 @@ foretoken eval examples/quickstart \
 
 ## 视频质量评测
 
-在 Linux x86_64 机器上准备 Docker、支持 CUDA 12.1 的 NVIDIA 驱动和 NVIDIA Container Toolkit。VBench 镜像必须包含 VBench，并带有 `org.foretoken.vbench.commit` 标签。从 Foretoken 源码目录构建镜像后，即可准备权重并评测已有 MP4 或 GIF 视频：
+先准备 VBench，再为 `VIDEO_DIR` 中已有的 MP4 或 GIF 视频评分：
 
 ```bash
-docker build -f benchmarks/docker/vbench/Dockerfile -t foretoken-vbench:local .
-foretoken eval setup vbench --image foretoken-vbench:local
-foretoken eval --video results/video-run \
-  --evaluator vbench \
-  --output local,wandb
+foretoken eval setup vbench
+foretoken eval --video VIDEO_DIR --output local
 ```
 
-镜像固定 VBench 源码及 Python、PyTorch、CUDA 依赖，不修改 Foretoken 环境。setup 检查镜像，并在 YAML 所在目录的 `.foretoken/evaluators/vbench` 下准备权重缓存。它下载全部 10 个受支持维度的权重，但不运行 GPU 评测。构建镜像和下载权重都需要联网及数 GB 磁盘空间；上游权重来自 Hugging Face 等多个站点。
+`setup` 将可复用的配置保存到 `foretoken-evaluators.yaml`。`eval --video` 只给已有视频评分；生成视频和测量服务性能使用 `foretoken perf video`。
 
-准备成功后，setup 将准确的镜像 digest（或本地镜像 ID）和缓存路径写入 `foretoken-evaluators.yaml`。之后评测直接复用，不安装依赖。两个命令都会向上查找最近的 YAML；找不到时，setup 在当前目录生成文件。通过 `--config PATH` 指定其他 YAML，setup 的 `--directory PATH` 调整默认权重位置。失败时不会发布新 YAML，可查看托管目录下的 `setup.log` 并重试。镜像发布到仓库后，也可以用 `--image` 指定仓库地址，无需本地构建。
+Foretoken 视频结果的提示词来自 `raw_results.json`，其他目录则从文件名读取。可通过 `--prompt-file` 传入 JSON 映射，例如 `{"clip.mp4": "一辆红色汽车驶过。"}`；用 `--dimension` 选择评测维度。分数保存在 `metrics.json`，运行元数据保存在 `config.json`。
 
-`foretoken perf video` 生成视频并测量服务性能，`foretoken eval --video` 只评测已有视频的质量，不会重新生成。如果视频目录是 Foretoken `perf video` 的结果目录，命令会自动从 `raw_results.json` 读取每个视频的准确提示词。对于其他视频目录，VBench 会从文件名推断提示词，也可以通过 `--prompt-file` 传入 VBench JSON 映射。使用 `--dimension NAME [NAME ...]` 选择部分维度；默认运行全部 10 个视频质量维度。
+### 使用自定义镜像或配置
 
-新评测结果的 `config.json` 会记录镜像地址、本地镜像 ID、可获取时的仓库 digest、镜像标签中的 VBench commit、所选维度、提示词来源和视频数量。Foretoken 视频生成阶段仍在源目录保存自己的 `config.json` 和 `raw_results.json`。
-
-### 使用已有镜像
-
-如果已有 VBench 镜像和准备好的权重，也可以自行编写 YAML：
+用 `--image IMAGE` 可让 `setup` 准备其他 VBench 镜像。如果权重已经准备好，也可以通过 `--config PATH` 指定评测器 YAML：
 
 ```yaml
 evaluators:
@@ -88,11 +81,7 @@ evaluators:
     cache: .foretoken/evaluators/vbench/cache
 ```
 
-随后直接运行 `foretoken eval --video VIDEO_DIR`。如果缺少权重，运行 `foretoken eval setup vbench` 准备权重，并将镜像固定到 YAML 中。setup 会保留其他评测器的设置。
-
-评测前缓存目录必须存在；YAML 中的相对路径以配置文件所在目录为基准。Docker 只读挂载视频目录，将 VBench 报告写入 Foretoken 结果目录。直接评测时，配置的镜像须已在本机；setup 可按需拉取镜像。目前镜像面向 NVIDIA GPU；沐曦需要单独验证镜像，暂未支持。
-
-在共享的 NVIDIA 服务器上，可在运行 `foretoken eval --video` 前将 `CUDA_VISIBLE_DEVICES` 设为空闲显卡的主机编号，VBench 容器会使用这张卡。
+直接评测时，镜像和缓存须已在本机。镜像需要包含 VBench 和 `org.foretoken.vbench.commit` 标签；缓存的相对路径以 YAML 所在目录为基准。公开镜像使用 NVIDIA GPU；共享服务器上可通过 `CUDA_VISIBLE_DEVICES` 指定空闲显卡。
 
 ## 评测已有服务
 
@@ -109,7 +98,7 @@ foretoken eval \
 
 此模式不使用 Kubernetes 资源。需要认证时添加 `--api-key`。Foretoken Gateway 部署则传入 Kustomize 目录，由命令查找地址并配置路由请求头。
 
-## 恢复中断的评测
+## 恢复文本评测或模型对比
 
 保留本地输出即可保存进度。中断后，在原命令中追加 `--resume`，指向该次运行打印的结果目录。将下面的 `results/previous-run` 换成实际目录：
 
@@ -141,4 +130,4 @@ foretoken eval examples/quickstart \
 
 W&B 提供任务指标、分数表，并将框架报告作为 artifact 供下载。输出位置与运行分组采用通用[结果设置](../../README_zh.md#查看和保存结果)。
 
-比较分数时，使用相同的框架、任务配置和样本范围。
+比较分数时，应使用相同的评测器、输入、提示词和评分设置。

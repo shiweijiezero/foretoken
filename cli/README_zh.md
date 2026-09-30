@@ -143,7 +143,7 @@ FORETOKEN_REQUEST_HOST="$(foretoken endpoint examples/multi-model-quickstart --h
 
 ## 质量评测：文本、视频与模型对比
 
-使用 `foretoken eval`，通过 lm-evaluation-harness 或 EvalScope 为模型回答评分；评测已有视频时，添加 `--video VIDEO_DIR` 并使用 VBench。具体命令见[质量评测](../benchmarks/docs/eval/README_zh.md)。添加 `--reference` 可[比较候选与参考模型的概率分布](../benchmarks/docs/eval/distribution-comparison_zh.md)。
+使用 `foretoken eval` 为模型回答评分；添加 `--video VIDEO_DIR` 可评测已有视频。支持的评测器及结果说明见[质量评测](../benchmarks/docs/eval/README_zh.md)。比较文本模型时，添加 `--reference` 可[比较候选与参考模型的概率分布](../benchmarks/docs/eval/distribution-comparison_zh.md)。
 
 ## 性能剖析：执行瓶颈
 

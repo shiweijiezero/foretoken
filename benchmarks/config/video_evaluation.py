@@ -158,11 +158,14 @@ def parse_vbench_setup_arguments(argv: Sequence[str]) -> VBenchSetupConfig:
     )
     parser.add_argument(
         "--directory", type=_resolved_path,
-        help="checkpoint directory (default: .foretoken/evaluators/vbench beside the YAML)",
+        help=(
+            "setup log directory and default checkpoint cache parent "
+            "(default: .foretoken/evaluators/vbench beside the YAML)"
+        ),
     )
     parser.add_argument(
         "--image",
-        help="VBench Docker image; required when no VBench YAML exists",
+        help="VBench image (default: existing YAML image or published image)",
     )
     options = parser.parse_args(argv)
     path = evaluator_config_path(options.config)
@@ -183,7 +186,7 @@ def add_vbench_evaluation_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--prompt-file",
         type=_resolved_path,
-        help="VBench JSON prompt map; inferred from raw_results.json when available",
+        help="JSON map from video filenames to prompts (default: raw_results.json when available)",
     )
     parser.add_argument(
         "--dimension",
@@ -201,7 +204,7 @@ def vbench_evaluation_config(options: argparse.Namespace) -> VBenchEvaluationCon
         raise ValueError(f"evaluator config file does not exist: {path}")
     if not path.is_file():
         raise ValueError(
-            "Run 'foretoken eval setup vbench --image IMAGE' first, or create "
+            "Run 'foretoken eval setup vbench' first, or create "
             f"a VBench evaluator YAML at {path}"
         )
     settings = vbench_settings(path)
