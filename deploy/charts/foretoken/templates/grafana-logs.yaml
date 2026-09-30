@@ -1,0 +1,26 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{/* SPDX-FileCopyrightText: Copyright contributors to the Foretoken project */}}
+
+{{/* Provisions the platform log endpoint for Grafana's datasource sidecar. */}}
+{{- with .Values.observability.logs.datasourceURL }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "foretoken.compactName" (printf "%s-log-datasource" (include "foretoken.fullname" $)) }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "foretoken.labels" $ | nindent 4 }}
+    grafana_datasource: "1"
+data:
+  foretoken-logs.yaml: |-
+    apiVersion: 1
+    prune: true
+    datasources:
+      - name: Foretoken Logs
+        uid: foretoken-logs
+        type: loki
+        access: proxy
+        url: {{ . | quote }}
+        isDefault: false
+        editable: false
+{{- end }}

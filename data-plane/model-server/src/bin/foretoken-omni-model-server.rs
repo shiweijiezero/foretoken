@@ -194,6 +194,7 @@ async fn metadata(State(state): State<AppState>) -> Json<RuntimeMetadataResponse
         effective_max_model_len: 0,
         max_logprobs: None,
         ec_transfer: None,
+        prepared_tokenizer: None,
         capabilities: ["video".to_owned()].into_iter().collect(),
     })
 }

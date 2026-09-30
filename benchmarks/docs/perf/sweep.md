@@ -16,17 +16,43 @@ This runs 384 requests at concurrency 1, 2 and 4, requesting 256 output tokens e
 
 ## Keep related parameters together
 
-Common experiment files are maintained in [`scripts/common/`](../../scripts/common/). The [fixed-length sweep](../../scripts/common/fixed-length.jsonl) keeps three input/output length pairs in separate JSONL rows and expands each row's concurrency list.
+Common experiment files are maintained in [`scripts/common/`](../../scripts/common/). The [fixed-length sweep](../../scripts/common/fixed-length.jsonl) keeps five input/output length pairs in separate JSONL rows and expands each row's concurrency list.
 
 ```bash
 foretoken perf examples/quickstart --dataset random \
-  --sweep benchmarks/scripts/common/fixed-length.jsonl --num-runs 3 --num-prompts 1000 \
-  --warmup-requests 20 --temperature 0 --output local,wandb,plot
+  --sweep benchmarks/scripts/common/fixed-length.jsonl --num-runs 3 --num-prompts 128 \
+  --warmup-requests 8 --temperature 0 --output local,wandb,plot
 ```
 
-This produces nine parameter points and 27 measured runs. Concurrency 1 supplies the single-request comparison; latency, throughput, and resource plots reuse those runs. The tokenizer comes from the selected model service; `--tokenizer-path` overrides it.
+The five input/output pairs are 8,192/2,048, 32,768/4,096, 131,072/4,096, 8,192/16,384, and 32,768/16,384 tokens. At concurrency 1, 8, 16, and 32, they produce 20 parameter points and 60 measured runs, with 128 measured requests and 8 warmup requests per repetition as a starting workload. Use only pairs and concurrency levels supported by the selected model and service; the model context must accommodate both input and output. Concurrency 1 supplies the single-request comparison; latency, throughput, and resource plots reuse those runs. The tokenizer comes from the selected model service; `--tokenizer-path` overrides it.
 
-Load, generation, and dataset options use their CLI names with underscores. For example, `request_rate: [4, 8, 16]` scans arrival rates. The [fixed-arrival configuration](../../scripts/common/fixed-arrival.jsonl) and [capacity configuration](../../scripts/common/fixed-capacity.jsonl) are ready-to-run examples. Lists are sweep axes: to mix two datasets in each run, use `"dataset": [["first.jsonl", "second.jsonl"]]`. `--slo-params` scores requests without changing the load. Add `--slo-search` to search concurrency instead; then `--num-runs` repeats the complete search for each point, with one measurement per probe.
+Load, generation, and dataset options use their CLI names with underscores. For example, `request_rate: [4, 8, 16]` scans arrival rates. The [fixed-arrival configuration](../../scripts/common/fixed-arrival.jsonl) and [capacity configuration](../../scripts/common/fixed-capacity.jsonl) are ready-to-run examples. Lists are sweep axes: to mix two datasets in each run, use `"dataset": [["first.jsonl", "second.jsonl"]]`. Add `--slo-search` to search concurrency instead of scoring a fixed load; then `--num-runs` repeats the complete search for each point, with one measurement per probe.
+
+## Compare SLO thresholds and request rates
+
+The [SLO threshold configuration](../../scripts/common/slo-thresholds.jsonl) downloads the same ShareGPT conversations as the [rate sweep](slo.md#measure-attainment-at-fixed-conversation-rates). Replace the URL and model with your service's Chat Completions endpoint and model:
+
+```bash
+foretoken perf --url http://host/v1/chat/completions --model Qwen/Qwen3-0.6B \
+  --sweep benchmarks/scripts/common/slo-thresholds.jsonl \
+  --num-prompts 300 --warmup-requests 0 --num-runs 3 \
+  --experiment-name slo-thresholds --output local,wandb,plot
+```
+
+The 12 points each run three times, varying TTFT limits of 125, 250, and 500 ms across four starting conversation-arrival rates while holding TPOT at 100 ms. SLO attainment scores individual HTTP turns; the 300-request budget is shared across whole conversations. This is a Foretoken threshold-sensitivity workload, not a paper protocol. Local and W&B results share the per-point means and standard deviations, and compare attainment and goodput in curves. Local figures show standard-deviation error bars; exported figures are also uploaded when `plot` is selected. In a JSONL row, `"slo_params": [{"ttft": "<=0.25", "tpot": "<=0.1"}, {"ttft": "<=0.5", "tpot": "<=0.1"}]` scans two request-level criteria, each requiring both conditions. With `--slo-search`, nest the objects only when one choice contains several independent searches: `"slo_params": [[{"p99_ttft": "<=0.25"}, {"p99_tpot": "<=0.1"}]]`. The threshold plots keep the comparison operator and other workload settings fixed while varying their numeric x-axis; request-rate plots use a separate slice for each threshold.
+
+## Measure longer input contexts
+
+Use the [long-context configuration](../../scripts/common/long-context.jsonl) to compare input-length sensitivity at one concurrent request and a fixed 256-token output target:
+
+```bash
+foretoken perf examples/quickstart --dataset random \
+  --sweep benchmarks/scripts/common/long-context.jsonl \
+  --num-prompts 16 --warmup-requests 1 --num-runs 3 \
+  --experiment-name long-context --output local,wandb,plot
+```
+
+The six rows request input lengths of 16,384; 32,768; 65,536; 131,072; 262,144; and 512,000 tokens. Each point runs 16 measured requests and one warmup before each of three repetitions. The final value is 512,000 input tokens, leaving room for the output and template within a model that supports a sufficiently large context. Keep only rows your model can serve: its supported context must fit the input, 256 output tokens, and any chat-template overhead. Random input lengths are generation targets; check the reported input-token usage for the actual lengths. This is a Foretoken sensitivity workload, not a shared paper protocol or a p99/SLO capacity measurement. The same saved runs produce input-length curves with repeat statistics for local plots and W&B.
 
 ## Data-driven workloads
 
@@ -38,6 +64,24 @@ foretoken perf examples/quickstart \
   --num-runs 3 --warmup-requests 20 --num-prompts 1000 \
   --output local,wandb,plot
 ```
+
+This scans concurrency 1, 8, 16, and 32: four points and 12 measured runs.
+
+To compare conversation arrival rates on [ShareGPT](../../scripts/common/sharegpt-rate.jsonl) and [StudyChat](../../scripts/common/studychat-rate.jsonl) under the same settings, run:
+
+```bash
+foretoken perf examples/quickstart \
+  --sweep benchmarks/scripts/common/sharegpt-rate.jsonl \
+  --num-prompts 300 --warmup-requests 0 --num-runs 3 \
+  --experiment-name sharegpt-rate --output local,wandb,plot
+
+foretoken perf examples/quickstart \
+  --sweep benchmarks/scripts/common/studychat-rate.jsonl \
+  --num-prompts 300 --warmup-requests 0 --num-runs 3 \
+  --experiment-name studychat-rate --output local,wandb,plot
+```
+
+Each preset tests 2, 4, 8, and 16 conversation starts per second: four points and 12 measured runs per dataset. Each point has a 300-HTTP-request budget across the conversation turns, so the last conversation can end when the budget is reached. `max_tokens: 4096` is a per-turn generation limit, not a fixed output length.
 
 Replay the maintained [Mooncake Conversation trace](../../scripts/common/mooncake-conversation.jsonl):
 
@@ -72,7 +116,7 @@ All points for one method run before the next method starts. Temporary deploymen
 
 ## Read results and redraw
 
-The result directory contains `sweep_summary.csv`, individual run directories, and `plots/` with PDF, SVG, PNG, and CSV exports. Statistics retain each metric's sample count; error bars show the sample standard deviation across runs, including for per-run percentiles. A single repetition has no error estimate.
+The result directory contains `sweep_summary.csv`, individual run directories, and `plots/` with PDF, SVG, PNG, and CSV exports. For Kustomize runs with Prometheus, speculative decoding acceptance and stage-time estimates also appear in the sweep summary and comparison plots when available. Statistics retain each metric's sample count; error bars show the sample standard deviation across runs, including for per-run percentiles. A single repetition has no error estimate.
 
 W&B groups the individual runs and adds a comparison run with the same summary data and curves. With `plot` selected, it also receives the exported figures and tables. Reusing the same `--experiment-name` replaces that experiment directory; omitting it creates a timestamped directory.
 

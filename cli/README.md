@@ -48,7 +48,7 @@ foretoken install
 
 Installation selects the NVIDIA or MetaX runtime and automatically reuses or installs LeaderWorkerSet and the shared RDMA device plugin. Explicit runtime settings in `--values` take precedence; in a mixed-GPU cluster, select a resource with `runtime.vllm.gpu.resourceName` or restrict the nodes with `runtime.vllm.gpu.nodeSelector`.
 
-See [Observability](../observability/README.md) for dashboards and alerts.
+Log collection and persistence are enabled by default. See [Observability](../observability/README.md) for configuration, log queries, dashboards, and alerts.
 
 ### Gateway mode
 
@@ -85,6 +85,34 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 ```
 
 Registry login authorizes the local image push. Private registries also need `imagePullSecrets` and `workload.imagePullSecrets` through `--values` so nodes can pull the images; see [Deploy Foretoken from Source](../docs/custom-deployment.md).
+
+### Model distribution
+
+To share public model downloads between nodes through Dragonfly, save this in `platform-values.yaml`:
+
+```yaml
+modelDistribution:
+  dragonfly:
+    enabled: true
+```
+
+```bash
+foretoken install --values platform-values.yaml
+```
+
+Installation prepares Dragonfly or reuses an existing installation. Models that require authentication and custom model endpoints download directly from their provider. To select a particular Dragonfly Helm release, set `existingRelease: {name: dragonfly, namespace: dragonfly-system}` under `modelDistribution.dragonfly`.
+
+On NVIDIA clusters with RDMA, ModelExpress can load weights from running replicas. Add this alongside `dragonfly` to enable it:
+
+```yaml
+modelDistribution:
+  modelexpress:
+    enabled: true
+```
+
+Automatic weight transfer uses remote models with a persistent cache, data parallelism of one, and fixed expert placement. An explicit `load-format` remains unchanged. Each GPU worker selects a nearby available RDMA interface; replicas without a compatible source load the prepared files.
+
+Reapply the installation command after changing either setting. Set `enabled: false` to disable it. `foretoken uninstall` removes managed Dragonfly resources once no workloads use them; reused installations are retained.
 
 ### Installation options
 

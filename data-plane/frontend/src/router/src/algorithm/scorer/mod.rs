@@ -18,12 +18,36 @@ declare_router_algorithms! {
     active_request_scorer => ActiveRequestScorer = "active_request",
     token_load_scorer => TokenLoadScorer = "token_load",
     prefix_scorer => PrefixScorer = "prefix",
+    no_hit_lru_scorer => NoHitLruScorer = "no_hit_lru",
+    load_aware_scorer => LoadAwareScorer = "load_aware",
     kv_cache_utilization_scorer => KvCacheUtilizationScorer = "kv_cache_utilization",
     kv_least_loaded_scorer => KvLeastLoadedScorer = "kv_least_loaded",
     least_loaded_scorer => LeastLoadedScorer = "least_loaded",
     running_request_scorer => RunningRequestScorer = "running_request",
     queue_depth_scorer => QueueDepthScorer = "queue_depth",
     uniform_scorer => UniformScorer = "uniform",
+}
+
+/// A scoring-time state update consumed by Router when it commits the chosen candidate.
+pub type RouteSelectionUpdate = Box<dyn FnOnce(&RouteCandidate) + Send>;
+
+/// Scores and an optional state update for one selection attempt.
+/// Router runs the update only after validating the picker result; failed attempts drop it.
+pub struct ScoringOutcome {
+    /// One numeric or locality score for each candidate supplied to the scorer.
+    pub scores: Vec<RouteScore>,
+    /// Captures scoring-time facts needed when the chosen target is committed before dispatch.
+    /// Runs under Router's selection lock and must not re-enter routing.
+    pub on_selected: Option<RouteSelectionUpdate>,
+}
+
+impl From<Vec<RouteScore>> for ScoringOutcome {
+    fn from(scores: Vec<RouteScore>) -> Self {
+        Self {
+            scores,
+            on_selected: None,
+        }
+    }
 }
 
 /// Converts request-count observations into inverse min-max preferences.
@@ -93,6 +117,25 @@ pub trait RouteScorer<C: Send + 'static = ()>: Send + Sync {
         routing_progress: &RoutingProgress<'_>,
         customized_context: &mut C,
     ) -> Vec<RouteScore>;
+
+    /// Scores one selection attempt and optionally captures a post-selection state update.
+    fn score_for_selection(
+        &self,
+        request: &RouterRequest,
+        candidates: &[RouteCandidate],
+        kv_prefix_indexer: &dyn KvPrefixIndexer,
+        routing_progress: &RoutingProgress<'_>,
+        customized_context: &mut C,
+    ) -> ScoringOutcome {
+        self.score(
+            request,
+            candidates,
+            kv_prefix_indexer,
+            routing_progress,
+            customized_context,
+        )
+        .into()
+    }
 }
 
 /// Returns this DP rank's scheduler load; unavailable observations rank after measured loads.

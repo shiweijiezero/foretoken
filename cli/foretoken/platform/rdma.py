@@ -193,7 +193,7 @@ def select_rdma(
         return RDMASelection(
             None,
             "Upgrade" if owned_plugin else "Install",
-            "shared InfiniBand device plugin",
+            "shared RDMA device plugin",
             managed=True,
             node_names=tuple(sorted(node["metadata"]["name"] for node in nodes)),
             available=bool(available),
@@ -215,7 +215,7 @@ def select_rdma(
     return RDMASelection(
         None, "Unavailable",
         "no shared RDMA allocation on the selected GPU nodes; "
-        "set rdma.managed=true to provision the device plugin on InfiniBand nodes",
+        "set rdma.managed=true to provision the device plugin on RDMA-capable nodes",
     )
 
 

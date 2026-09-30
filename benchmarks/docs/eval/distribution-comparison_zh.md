@@ -3,11 +3,11 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# 比较模型概率分布
+# 比较参考模型与候选模型
 
 [English](distribution-comparison.md) | 简体中文 · [质量评测](README_zh.md)
 
-给 `foretoken eval` 添加 `--reference`，即可比较候选模型与参考模型预测下一个 token 的概率差异，查看完整词表 KL、Top-1/Top-k 一致率和 logit 差异，并生成本地图表及 W&B 结果。
+给 `foretoken eval` 添加 `--reference`，即可比较候选模型与参考模型。默认使用相同的原文前缀，比较下一个 token 的完整词表 KL、Top-1/Top-k 一致率和 logit 差异；要比较实际生成的 token，使用[贪心生成序列对比](#比较贪心生成序列)。两种方式都能保存本地图表与 W&B 结果。
 
 ## 比较量化模型
 
@@ -54,7 +54,14 @@ foretoken eval examples/quantized-model/bitsandbytes \
 
 ## 一次比较多个候选
 
-维护中的[候选列表](../../../examples/quantized-model/candidates.jsonl)包含 BF16 和 bitsandbytes 两项，已标注方法与名义位宽：
+常用场景直接把候选 Kustomize 部署目录写在选项前：
+
+```bash
+foretoken eval examples/quantized-model/bitsandbytes examples/quantized-model/bf16 \
+  --reference examples/quantized-model/bf16 --output local,wandb,plot
+```
+
+每个候选都与显式指定的参考部署对比。加上 `--greedy-compare --context-length 128 --max-tokens 64`，可比较实际生成的 token ID 序列；不添加时仍比较固定原文前缀下的概率分布。维护中的[候选列表](../../../examples/quantized-model/candidates.jsonl)包含 BF16 和 bitsandbytes 两项，已标注方法与名义位宽：
 
 ```bash
 foretoken eval \
@@ -89,9 +96,24 @@ foretoken eval \
 
 若共用服务地址，可以省略 `--reference-url`。认证使用 `--api-key`；参考服务凭据不同则使用 `--reference-api-key`。
 
-## 恢复模型对比
+## 比较贪心生成序列
 
-保留完整的本地结果目录。中断后，在原命令中追加 `--resume`，指向该目录。将下面的 `results/previous-run` 换成运行时打印的实际路径：
+使用维护中的候选列表，在相同输入下比较参考模型和候选模型实际生成的 token ID：
+
+```bash
+foretoken eval --reference examples/quantized-model/bf16 \
+  --candidates examples/quantized-model/candidates.jsonl \
+  --greedy-compare --context-length 128 --num-windows 4 --max-tokens 64 \
+  --output local,wandb,plot
+```
+
+命令使用参考模型的 tokenizer 准备四段相同的 128-token 输入，通过非流式 Completions 请求以 `temperature=0` 生成最多 64 个 token，并正常遵循 EOS 停止。两端必须采用相同的 token ID 映射，且响应提供原生 `choices[0].token_ids` 和 `finish_reason`。生成文本仅用于查看，不会重新分词后冒充生成 ID。模型的上下文长度要容纳输入及生成预算。
+
+`greedy_comparison_candidates.csv` 给出有效、失败样本数，以及仅以有效样本为分母的完整序列一致率。`greedy_comparison_samples.csv` 保存两端的生成 ID、文本、结束原因、序列长度、是否完全一致及首个不同 token 的位置（从零开始；若一端是另一端的前缀，则为较短序列的长度），以及不同位置数加长度差。失败样本不计为一致，命令以非零状态退出。本地图表和 W&B 展示候选对比及首个分歧的位置，`metrics.json` 保存共享输入 token ID 窗口及完整记录；每个样本的 `window` 可定位原始输入。这里比较的是生成序列，不等同于固定原文前缀下的 KL，也不代表答案正确率。比较使用相同服务模型名的不同 draft 配置时，在候选文件中为每项指定不同的部署路径或 URL 及 `label`。
+
+## 恢复概率分布对比
+
+保留概率分布对比的完整本地结果目录。中断后，在原命令中追加 `--resume`，指向该目录。将下面的 `results/previous-run` 换成运行时打印的实际路径：
 
 ```bash
 foretoken eval examples/quantized-model/bitsandbytes \

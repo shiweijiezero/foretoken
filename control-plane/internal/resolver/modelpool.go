@@ -6,8 +6,10 @@
 package resolver
 
 import (
+	"encoding/json"
 	"fmt"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
@@ -49,6 +51,7 @@ type RuntimeProfile struct {
 	Image              string
 	OmniImage          string
 	NsightImage        string
+	ModelExpress       bool
 	ModelServerPort    int32
 	DeviceResourceName string
 	RuntimeClassName   string
@@ -158,8 +161,22 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			return ModelGroupTemplate{}, fmt.Errorf("Nsight Systems requires a persistent RuntimeCache")
 		}
 	}
+	// Fixed-weight cohorts share upstream ModelExpress sources. DP may reuse world ranks,
+	// while EPLB mutates expert placement after loading; both retain native file loading.
+	loader, explicitLoader := effective.EngineArgs["load-format"]
+	var loaderName string
+	requestedModelExpress := json.Unmarshal(loader.Raw, &loaderName) == nil && loaderName == "modelexpress"
+	modelExpress := ((profile.ModelExpress && !explicitLoader) || requestedModelExpress) && profile.RDMA != nil && profile.DeviceResourceName == "nvidia.com/gpu" &&
+		template.RuntimeCache != nil && template.Source != inferencev1alpha1.ModelSourceLocal &&
+		effective.Parallelism.DP == 1 && (effective.Parallelism.EP == nil || !effective.Parallelism.EP.EPLB)
+	if modelExpress {
+		if effective.EngineArgs == nil {
+			effective.EngineArgs = make(inferencev1alpha1.EngineArguments)
+		}
+		effective.EngineArgs["load-format"] = apiextensionsv1.JSON{Raw: []byte(`"modelexpress"`)}
+	}
 	var rdma *inferencev1alpha1.RDMAAllocation
-	if template.NodeCount > 1 || effective.Parallelism.EP != nil || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
+	if modelExpress || template.NodeCount > 1 || effective.Parallelism.EP != nil || (pdRuntime != nil && pdRuntime.Protocol == "rdma") {
 		rdma = profile.RDMA.DeepCopy()
 	}
 	if pdRuntime != nil && pdRuntime.Protocol == "rdma" && rdma == nil {
@@ -182,6 +199,8 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 		TokenizerRevision: effective.TokenizerRevision,
 		EngineArgs:        effective.EngineArgs, Parallelism: effective.Parallelism,
 	})
+	// Only the vLLM runtime consumes the source-publication preparation contract.
+	resolved.Runtime.PreparationVersion = 1
 	resolved.Runtime.Profiling = template.Profiling.DeepCopy()
 	resolved.PDRuntime, resolved.RDMA, resolved.ECRuntime, resolved.KVRuntime = pdRuntime, rdma, ecRuntime, kvRuntime
 	return resolved, nil

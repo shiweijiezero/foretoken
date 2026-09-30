@@ -216,3 +216,109 @@ def distribution_comparison_sinks(config: EvaluationConfig, record: dict[str, An
         publisher=publish_distribution_comparison_wandb,
     )
     return [sinks[0], DistributionComparisonArtifactSink(directory), *sinks[1:]]
+
+
+_GREEDY_CANDIDATE_COLUMNS = (
+    "model", "label", "method", "weight_bits", "bits_per_weight", "model_size_gib",
+    "valid_samples", "failed_samples", "exact_matches", "exact_match_rate",
+)
+_GREEDY_SAMPLE_COLUMNS = (
+    "candidate", "window", "reference_token_ids", "candidate_token_ids",
+    "reference_text", "candidate_text", "reference_finish_reason", "candidate_finish_reason",
+    "reference_length", "candidate_length", "error", "exact_sequence_match", "first_divergence", "mismatch_count",
+)
+
+
+class GreedyComparisonArtifactSink:
+    """Write candidate and per-sample CSV projections before local and W&B publication."""
+
+    def __init__(self, directory: str) -> None:
+        self.directory = Path(directory)
+
+    def open(self, record: dict[str, Any]) -> None:
+        return None
+
+    def publish(self, run: BenchmarkRun) -> None:
+        comparison = run.metrics["greedy_comparison"]
+        for name, columns, rows in (
+            ("candidates", _GREEDY_CANDIDATE_COLUMNS, comparison["candidates"]),
+            ("samples", _GREEDY_SAMPLE_COLUMNS, comparison["samples"]),
+        ):
+            path = self.directory / f"greedy_comparison_{name}.csv"
+            with path.open("w", newline="", encoding="utf-8") as stream:
+                writer = csv.DictWriter(stream, fieldnames=columns)
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow({key: json.dumps(row[key], ensure_ascii=False) if isinstance(row[key], list) else row[key] for key in columns})
+            run.artifacts[f"greedy_comparison_{name}"] = path
+
+    def close(self, *, exit_code: int = 0) -> None:
+        return None
+
+
+class GreedyComparisonConsoleSink:
+    """Show exact-match rates and failed sample counts without pooling failed requests."""
+
+    def open(self, record: dict[str, Any]) -> None:
+        return None
+
+    def publish(self, run: BenchmarkRun) -> None:
+        comparison = run.metrics["greedy_comparison"]
+        logger.info("Greedy generation comparison · reference %s", comparison["reference_model"])
+        for point in comparison["candidates"]:
+            rate = point["exact_match_rate"]
+            logger.info(
+                "%s: exact %s, valid %d, failed %d",
+                point["label"], f"{rate:.1%}" if rate is not None else "—",
+                point["valid_samples"], point["failed_samples"],
+            )
+
+    def close(self, *, exit_code: int = 0) -> None:
+        return None
+
+
+def publish_greedy_comparison_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
+    """Publish candidate scores and native generated-sequence records through quality W&B."""
+    publish_quality_wandb(sdk_run, run)
+    comparison = run.metrics["greedy_comparison"]
+    for name, columns, rows in (
+        ("Candidates", _GREEDY_CANDIDATE_COLUMNS, comparison["candidates"]),
+        ("Samples", _GREEDY_SAMPLE_COLUMNS, comparison["samples"]),
+    ):
+        sdk_run.log({f"Greedy Comparison/{name}": wandb.Table(
+            columns=list(columns),
+            data=[[row[key] for key in columns] for row in rows],
+            allow_mixed_types=True,
+        )})
+    scored = [row for row in comparison["candidates"] if row["exact_match_rate"] is not None]
+    if scored:
+        table = wandb.Table(
+            columns=["Candidate", "Exact sequence match (%)"],
+            data=[[row["label"], row["exact_match_rate"] * 100] for row in scored],
+        )
+        sdk_run.log({"Greedy Comparison/Exact sequence match": wandb.plot.bar(
+            table, "Candidate", "Exact sequence match (%)", title="Greedy generated-sequence agreement",
+        )})
+    series = [
+        (point["label"], [row for row in comparison["samples"]
+                          if row["candidate"] == point["label"] and row["first_divergence"] is not None])
+        for point in comparison["candidates"]
+    ]
+    series = [(label, rows) for label, rows in series if rows]
+    if series:
+        sdk_run.log({"Greedy Comparison/First divergence": wandb.plot.line_series(
+            xs=[[row["window"] for row in rows] for _, rows in series],
+            ys=[[row["first_divergence"] for row in rows] for _, rows in series],
+            keys=[label for label, _ in series], xname="Sample index",
+            title="First differing generated token position",
+        )})
+
+
+def greedy_comparison_sinks(config: EvaluationConfig, record: dict[str, Any], directory: str) -> list[ResultSink]:
+    """Compose native-sequence artifacts with the existing evaluation publishers."""
+    sinks = evaluation_sinks(
+        config, record, directory,
+        console_sink=GreedyComparisonConsoleSink(),
+        publisher=publish_greedy_comparison_wandb,
+    )
+    return [sinks[0], GreedyComparisonArtifactSink(directory), *sinks[1:]]

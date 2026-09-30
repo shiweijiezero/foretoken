@@ -148,7 +148,8 @@ func (reconciler *FrontendServiceReconciler) projectScalingModels(ctx context.Co
 				revision := serviceServingRevision(service, pool)
 				for groupIndex := range groups.Items {
 					group := &groups.Items[groupIndex]
-					if routingGroupOwnedBy(group, pool) && group.Spec.Revision == revision && routingGroupReady(group) {
+					// Model identity survives engine restart; readiness filters executable routes separately.
+					if routingGroupOwnedBy(group, pool) && group.Spec.Revision == revision {
 						selected = group
 						break
 					}

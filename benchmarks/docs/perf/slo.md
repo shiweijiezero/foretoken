@@ -21,28 +21,25 @@ The search stops at the SLO boundary or configured upper bound, or earlier if a 
 
 For traces, use `--max-concurrency` for the in-flight request limit; arrivals follow trace timestamps. For multi-turn workloads, the limit counts conversations, while the measured peak and request budget count individual requests.
 
-## Measure attainment at fixed request rates
+## Measure attainment at fixed conversation rates
 
-The [DistServe ShareGPT configuration](../../scripts/common/distserve-sharegpt.jsonl) follows the official artifact's history-prefix sampling and per-request output lengths. Prepare the requests using the tokenizer of the model being served, then replace `http://host/v1/completions` below with that service's endpoint:
+The [ShareGPT rate configuration](../../scripts/common/sharegpt-rate.jsonl) downloads the original conversation dataset and scans a starting range of 2, 4, 8, and 16 conversations/s. Replace the URL and model below with your service's Chat Completions endpoint and model:
 
 ```bash
-python benchmarks/scripts/prepare_distserve_sharegpt.py --model facebook/opt-13b
-
-foretoken perf --url http://host/v1/completions --model facebook/opt-13b \
-  --sweep benchmarks/scripts/common/distserve-sharegpt.jsonl \
+foretoken perf --url http://host/v1/chat/completions --model Qwen/Qwen3-0.6B \
+  --sweep benchmarks/scripts/common/sharegpt-rate.jsonl \
+  --num-prompts 300 --warmup-requests 0 \
   --slo-params '[{"ttft":"<=0.25","tpot":"<=0.1"}]' \
-  --num-runs 3 --experiment-name distserve-sharegpt --output local,wandb,plot
+  --num-runs 3 --experiment-name sharegpt-rate --output local,wandb,plot
 ```
 
-Preparation downloads the artifact's ShareGPT source. For each conversation with at least three messages, it selects a random history prefix, joins its message values with newlines, and measures the next recorded message's token length. It retains the artifact's short-sequence filter and input-plus-output bound below 2048 tokens, then samples 300 requests with seed 0. The generated JSONL sends token IDs to Completions without a chat template and requests each sample's recorded output length exactly. Keep the served model and preparation tokenizer identical; `--tokenizer` selects a separate tokenizer repository or local directory when needed.
+The dataset runs as recorded multi-turn conversations. The 300-request budget counts individual HTTP turns, so the last conversation may stop when the budget is reached. `max_tokens: 4096` limits each generated answer; it does not request a fixed output length. The rate controls when conversations start, while the SLO measures each HTTP request's TTFT and TPOT. These rates are a Foretoken starting workload, not a published model-specific protocol. Only `--slo-search` enables concurrency search.
 
-The sweep uses the artifact's OPT-13B DistServe rates: 0.75, 1.5, 3, 4.5, 6, 6.75, 7.5, and 9 requests/s, with Poisson arrivals, no client concurrency limit, temperature 1, and no added warmup. The command repeats each point three times and scores TTFT at or below 250 ms and TPOT at or below 100 ms. `--slo-params` scores each fixed load; only `--slo-search` enables concurrency search.
-
-Protocol sources: [dataset preparation](https://github.com/LLMServe/DistServe/blob/main/evaluation/2-benchmark-serving/0-prepare-dataset.py), [sampling and arrivals](https://github.com/LLMServe/DistServe/blob/main/evaluation/2-benchmark-serving/2-benchmark-serving.py), and [rate settings](https://github.com/LLMServe/DistServe/blob/main/evaluation/ae-scripts/e2e/opt-13b-distllm-client.sh). Measurements use the service's OpenAI streaming endpoint rather than the artifact's custom timestamp response.
+[DistServe's serving benchmark](https://github.com/LLMServe/DistServe/blob/main/evaluation/2-benchmark-serving/2-benchmark-serving.py) is a reference for arrival-rate and SLO experiments; its dataset preparation and model-specific settings are not implied by this configuration.
 
 Measurement accepts one criteria object using `latency`, `ttft`, `tpot`, or `itl`, in seconds. Every condition must hold for a request to meet its SLO; failed requests and requests missing a required metric do not meet it. `itl` checks the maximum observed chunk interval of each request, not a global p99 token interval.
 
-The sweep exports arrival-rate curves for attainment, request goodput, token goodput, and latency. Read the highest tested rate meeting the selected attainment target (for example, 90% or 99%) from the results, and extend or refine the rate list in the parameter file to locate the boundary. Each run's fraction is computed separately before averaging; this is not a pooled-request fraction or an automatic capacity search.
+The sweep exports arrival-rate curves for attainment, request goodput, token goodput, and latency. Each run also plots [one-second SLO windows](../../metrics.md#slo-results) alongside throughput and latency. To compare several SLO thresholds and rates in one command, use the [threshold sweep](sweep.md#compare-slo-thresholds-and-request-rates). Read the highest tested conversation rate meeting the selected request-attainment target (for example, 90% or 99%) from the results, and extend or refine the rate list in the parameter file to locate the boundary. Each run's fraction is computed separately before averaging; this is not a pooled-request fraction or an automatic capacity search.
 
 ## Set search criteria
 

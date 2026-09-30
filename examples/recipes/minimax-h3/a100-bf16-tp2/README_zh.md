@@ -52,7 +52,6 @@ foretoken install -e . --values platform-values.yaml
 
 使用 Gateway 时，先在本配方的 `frontend.yaml` 中设置 `spec.hostname`，
 并按[网关模式](../../../../README_zh.md#网关模式)安装平台，再部署模型。
-下方请求命令同时适用于 LoadBalancer 和 Gateway。
 
 ```bash
 RECIPE=examples/recipes/minimax-h3/a100-bf16-tp2
@@ -67,7 +66,8 @@ foretoken deploy "$RECIPE" --timeout 1h
 REFERENCE_IMAGE=/path/to/reference.png
 ENDPOINT="$(foretoken endpoint "$RECIPE" --timeout 10m)"
 REQUEST_HOST="$(foretoken endpoint "$RECIPE" --host --timeout 10m)"
-curl --fail-with-body --max-time 4000 \
+mkdir -p ./data
+curl --fail --max-time 4000 \
   "${ENDPOINT%/}/v1/videos/sync" \
   -H "Host: $REQUEST_HOST" \
   -F model=MiniMaxAI/MiniMax-H3 \
@@ -76,10 +76,10 @@ curl --fail-with-body --max-time 4000 \
   -F width=1024 -F height=576 -F num_frames=124 -F fps=24 \
   -F num_inference_steps=50 -F aspect_ratio=16:9 -F flow_shift=12 -F seed=1 \
   -F 'extra_params={"task":"fl2va","audio_flow_shift":3}' \
-  --output h3-fl2va.mp4
+  --output ./data/video.mp4
 ```
 
-生成的视频保存到当前目录的 `h3-fl2va.mp4`。
+生成的视频保存到 `./data/video.mp4`。
 
 ## 根据参考视频生成
 
@@ -93,7 +93,8 @@ foretoken delete "$RECIPE" --timeout 2h
 foretoken deploy "$RECIPE" --timeout 1h
 ENDPOINT="$(foretoken endpoint "$RECIPE" --timeout 10m)"
 REQUEST_HOST="$(foretoken endpoint "$RECIPE" --host --timeout 10m)"
-curl --fail-with-body --max-time 4000 \
+mkdir -p ./data
+curl --fail --max-time 4000 \
   "${ENDPOINT%/}/v1/videos/sync" \
   -H "Host: $REQUEST_HOST" \
   -F model=MiniMaxAI/MiniMax-H3 \
@@ -102,10 +103,10 @@ curl --fail-with-body --max-time 4000 \
   -F width=1024 -F height=576 -F num_frames=124 -F fps=24 \
   -F num_inference_steps=50 -F aspect_ratio=16:9 -F flow_shift=12 -F seed=1 \
   -F 'extra_params={"task":"ref2va","audio_flow_shift":3}' \
-  --output h3-ref2va.mp4
+  --output ./data/h3-ref2va.mp4
 ```
 
-生成的视频保存为 `h3-ref2va.mp4`。切回图片输入时，将 `task-type` 改回 `fl2va`，
+生成的视频保存为 `./data/h3-ref2va.mp4`。切回图片输入时，将 `task-type` 改回 `fl2va`，
 重新执行删除和部署命令，再发送 FL2VA 请求。
 
 ## 其他模型来源

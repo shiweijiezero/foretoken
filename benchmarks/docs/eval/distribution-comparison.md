@@ -3,11 +3,11 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 -->
 
-# Compare model distributions
+# Compare reference and candidate models
 
 English | [简体中文](distribution-comparison_zh.md) · [Quality evaluation](README.md)
 
-Add `--reference` to `foretoken eval` to measure how a candidate model's next-token probabilities differ from a reference. The comparison reports full-vocabulary KL divergence, Top-1/Top-k agreement, and logit differences, with local plots and W&B output.
+Add `--reference` to `foretoken eval` to compare a candidate with a reference. By default, the comparison uses identical text prefixes and reports full-vocabulary KL divergence, Top-1/Top-k agreement, and logit differences. To compare the tokens the models actually generate, use [greedy generation](#compare-greedy-generated-sequences). Both modes can save local plots and W&B results.
 
 ## Compare a quantized model
 
@@ -54,7 +54,14 @@ Use `--dataset corpus.txt` for local text, or `--dataset corpus.jsonl` for recor
 
 ## Compare several candidates
 
-The maintained [candidate list](../../../examples/quantized-model/candidates.jsonl) contains BF16 and bitsandbytes with method and nominal bit-width labels:
+List candidate Kustomize deployments directly before the options for the usual case:
+
+```bash
+foretoken eval examples/quantized-model/bitsandbytes examples/quantized-model/bf16 \
+  --reference examples/quantized-model/bf16 --output local,wandb,plot
+```
+
+This compares each candidate against the explicitly selected reference. Add `--greedy-compare --context-length 128 --max-tokens 64` to compare generated token-ID sequences instead of the default teacher-forced distributions. The maintained [candidate list](../../../examples/quantized-model/candidates.jsonl) contains BF16 and bitsandbytes with method and nominal bit-width labels:
 
 ```bash
 foretoken eval \
@@ -89,9 +96,24 @@ The reference model ID identifies its tokenizer and model configuration. If it i
 
 With a shared endpoint, omit `--reference-url`. Authentication uses `--api-key`, with `--reference-api-key` for a different reference credential.
 
-## Resume a comparison
+## Compare greedy generated sequences
 
-Keep the complete local result directory. After an interruption, repeat the original command with `--resume` pointing to that directory. Replace `results/previous-run` below with the printed path:
+To see whether a candidate generates the same token IDs as a reference on identical prompts, use the maintained candidate list:
+
+```bash
+foretoken eval --reference examples/quantized-model/bf16 \
+  --candidates examples/quantized-model/candidates.jsonl \
+  --greedy-compare --context-length 128 --num-windows 4 --max-tokens 64 \
+  --output local,wandb,plot
+```
+
+The reference tokenizer prepares four identical 128-token prompts for both services. Each sends a non-streaming Completions request with `temperature=0`, at most 64 generated tokens, and normal EOS stopping. Both services must use the same token-ID mapping and return native `choices[0].token_ids` and `finish_reason`; decoded text is retained for inspection, never retokenized for comparison. Leave enough room in each model's context for the prompt and generation budget.
+
+`greedy_comparison_candidates.csv` reports valid and failed sample counts and the exact-sequence match rate among valid pairs. `greedy_comparison_samples.csv` records each pair's generated IDs, text, finish reasons, lengths, exact match, and first differing zero-based token position (or the shorter length if one sequence is a prefix), and the number of differing positions plus any length difference. Failures are not counted as matches and make the command exit nonzero. Local figures and W&B compare candidates and show first-divergence positions; `metrics.json` preserves the shared input token-ID windows alongside the complete records, indexed by each sample's `window`. This is generated-sequence consistency, not teacher-forced KL or answer correctness. To compare draft models with the same served model ID, give each candidate row a distinct deployment or URL and `label`.
+
+## Resume a distribution comparison
+
+Keep the complete local result directory from a distribution comparison. After an interruption, repeat the original command with `--resume` pointing to that directory. Replace `results/previous-run` below with the printed path:
 
 ```bash
 foretoken eval examples/quantized-model/bitsandbytes \

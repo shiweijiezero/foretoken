@@ -11,6 +11,10 @@ const (
 	ModelRootEnv = "FORETOKEN_MODEL_ROOT"
 	// TemporaryModelRootEnv is consumed by foretoken-artifacts in the frontend process.
 	TemporaryModelRootEnv = "FORETOKEN_TEMPORARY_MODEL_ROOT"
+	// RuntimeCacheBindingEnv carries namespace/claim identity for prepared tokenizer reuse.
+	RuntimeCacheBindingEnv = "FORETOKEN_RUNTIME_CACHE_BINDING"
+	// ModelPreparationScopeEnv selects the Pool revision's immutable acquisition publication.
+	ModelPreparationScopeEnv = "FORETOKEN_MODEL_PREPARATION_SCOPE"
 )
 
 // ModelDirectory returns the stable model area of a workload's persistent data root.

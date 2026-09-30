@@ -227,7 +227,7 @@ def _add_benchmark_arguments(
         "--request-rate",
         type=float,
         default=_default(HttpLoadSchedule, "arrival_rate"),
-        help="Target request arrival rate in req/s; -1 sends as fast as possible",
+        help="Target start rate in req/s, or conv/s for multi-turn workloads; -1 sends as fast as possible",
     )
     parser.add_argument(
         "--arrival-pattern",
@@ -472,16 +472,21 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
     models = tuple(namespace.model or ())
     if paths and urls:
         raise ValueError("provide Kustomize paths or --url values, not both")
-    if urls and len(models) not in (1, len(urls)):
-        raise ValueError("--model accepts one shared value or one value per --url")
+    sources = paths or urls
+    if models and len(models) not in (1, len(sources)):
+        raise ValueError("--model accepts one shared value or one value per service")
     service_choices = (
-        tuple({"name": Path(path).name, "path": path} for path in paths)
+        tuple(
+            {"name": Path(path).name, "path": path,
+             "model": models[0] if len(models) == 1 else models[index] if models else ""}
+            for index, path in enumerate(paths)
+        )
         if paths
         else tuple(
             {
                 "name": urlsplit(url).netloc or f"url-{index + 1}",
                 "url": url,
-                "model": models[0] if len(models) == 1 else models[index],
+                "model": models[0] if len(models) == 1 else models[index] if models else "",
             }
             for index, url in enumerate(urls)
         )

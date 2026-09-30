@@ -115,10 +115,10 @@ class TaskLoadBenchmark:
         *,
         warmup: bool = False,
         profile: BenchmarkProfile | None = None,
-    ) -> tuple[list[RequestMeasurement], float]:
+    ) -> tuple[list[RequestMeasurement], float, float]:
         tasks = self._load_tasks()
         if not tasks:
-            return [], 0.0
+            return [], 0.0, time.perf_counter()
         load = self.benchmark.load
         deadline = load.duration_seconds
         budget = load.request_count
@@ -268,7 +268,7 @@ class TaskLoadBenchmark:
                     await asyncio.wait(active, return_when=asyncio.FIRST_COMPLETED)
         self._conversation_attempted = attempted_conversations
         self._conversation_completed = completed_conversations
-        return measurements, time.perf_counter() - started
+        return measurements, time.perf_counter() - started, started
 
     def _warmup_config(self) -> BenchmarkConfig:
         return replace(
@@ -302,7 +302,7 @@ class TaskLoadBenchmark:
                     self._warmup_config(), self.service, tasks=self.tasks,
                     dataset_tasks=self.dataset_tasks,
                 )
-                warmup_measurements, warmup_duration = asyncio.run(warmup._run_requests(warmup=True))
+                warmup_measurements, warmup_duration, _ = asyncio.run(warmup._run_requests(warmup=True))
                 outputs.record_http_warmup(
                     warmup_measurements, duration=warmup_duration,
                     stream=self.benchmark.generation.stream,
@@ -313,7 +313,7 @@ class TaskLoadBenchmark:
                     raise ValueError("Warmup requests failed; measurement was not started")
             profile = outputs.create_profile()
             with (profile if profile is not None else nullcontext()):
-                measurements, elapsed = asyncio.run(self._run_requests(profile=profile))
+                measurements, elapsed, time_origin = asyncio.run(self._run_requests(profile=profile))
             if profile is not None:
                 artifacts = {"profile": Path(outputs.execution_dir) / "profile.json"}
             else:
@@ -355,7 +355,7 @@ class TaskLoadBenchmark:
                 metrics=metrics,
                 measurements=measurements,
                 artifacts=artifacts,
-                time_origin=time.perf_counter() - elapsed,
+                time_origin=time_origin,
             )
             outputs.publish(run)
         return run

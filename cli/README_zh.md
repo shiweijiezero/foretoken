@@ -48,7 +48,7 @@ foretoken install
 
 安装会自动选择 NVIDIA 或沐曦运行时，并复用或安装 LeaderWorkerSet 控制器和 RDMA 设备插件。`--values` 中显式指定的运行时配置优先。混合 GPU 集群通过 `runtime.vllm.gpu.resourceName` 选择资源，或通过 `runtime.vllm.gpu.nodeSelector` 限定节点范围。
 
-看板和告警的使用见[可观测性](../observability/README_zh.md)。
+安装默认启用日志采集和持久化。配置、日志查询、看板和告警见[可观测性](../observability/README_zh.md)。
 
 ### 网关模式
 
@@ -85,6 +85,34 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 ```
 
 登录 registry 用于授权本机推送镜像。私有 registry 还需要通过 `--values` 配置 `imagePullSecrets` 和 `workload.imagePullSecrets`，让节点能够拉取镜像，详见[从源码部署 Foretoken](../docs/custom-deployment_zh.md)。
+
+### 模型分发
+
+使用 Dragonfly 在节点间共享公开模型文件时，在 `platform-values.yaml` 中配置：
+
+```yaml
+modelDistribution:
+  dragonfly:
+    enabled: true
+```
+
+```bash
+foretoken install --values platform-values.yaml
+```
+
+安装命令会准备 Dragonfly，或复用已有安装。需要身份认证的模型及自定义模型源仍直接从源站下载。要选择特定的 Dragonfly Helm release，在 `modelDistribution.dragonfly` 下设置 `existingRelease: {name: dragonfly, namespace: dragonfly-system}`。
+
+在具备 RDMA 的 NVIDIA 集群上，还可以通过 ModelExpress 从运行中的副本加载权重。在同一个 `modelDistribution` 下加入：
+
+```yaml
+modelDistribution:
+  modelexpress:
+    enabled: true
+```
+
+自动权重传输适用于使用持久缓存、数据并行度为 1、未启用专家动态负载均衡的远端模型；显式设置的 `load-format` 保持不变。每个 GPU worker 选择拓扑邻近的可用 RDMA 网卡，没有兼容源副本时加载已准备的文件。
+
+修改设置后重新执行上述安装命令；将 `enabled` 设为 `false` 即可关闭对应能力。`foretoken uninstall` 在没有工作负载使用时移除托管的 Dragonfly，复用的安装会保留。
 
 ### 安装选项
 

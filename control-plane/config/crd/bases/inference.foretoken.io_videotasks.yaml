@@ -1,0 +1,311 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+#
+# Defines a generated Kubernetes API manifest for Foretoken custom resources.
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: videotasks.inference.foretoken.io
+spec:
+  group: inference.foretoken.io
+  names:
+    kind: VideoTask
+    listKind: VideoTaskList
+    plural: videotasks
+    singular: videotask
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.jobName
+      name: Job
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: VideoTask is a retained asynchronous video generation request.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: VideoTaskSpec requests one durable asynchronous video generation.
+            properties:
+              cancelRequested:
+                type: boolean
+              frontendUID:
+                description: FrontendUID binds this task to the FrontendService that
+                  admitted it.
+                minLength: 1
+                type: string
+              inputsReady:
+                description: InputsReady is set after task-local input files are durable
+                  on the shared PVC.
+                type: boolean
+              modelServiceRef:
+                description: VideoTaskServiceReference selects one existing ModelService
+                  in the task namespace.
+                properties:
+                  name:
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              request:
+                description: VideoRequest is the backend-neutral request passed to
+                  the worker Job.
+                properties:
+                  aspectRatio:
+                    type: string
+                  audioFlowShift:
+                    type: number
+                  flowShift:
+                    type: number
+                  fps:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  frameIndices:
+                    items:
+                      format: int32
+                      type: integer
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  height:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  inputFiles:
+                    items:
+                      description: VideoInputFile identifies an input file already
+                        available to the worker.
+                      properties:
+                        contentType:
+                          minLength: 1
+                          type: string
+                        field:
+                          minLength: 1
+                          type: string
+                        path:
+                          minLength: 1
+                          type: string
+                      required:
+                      - contentType
+                      - field
+                      - path
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  numFrames:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  numInferenceSteps:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  prompt:
+                    minLength: 1
+                    type: string
+                  seed:
+                    format: int64
+                    type: integer
+                  task:
+                    minLength: 1
+                    type: string
+                  width:
+                    format: int32
+                    minimum: 1
+                    type: integer
+                required:
+                - fps
+                - height
+                - numFrames
+                - numInferenceSteps
+                - prompt
+                - task
+                - width
+                type: object
+              worker:
+                description: VideoWorkerSpec defines the execution contract for the
+                  controller-created Job.
+                properties:
+                  endpoint:
+                    description: Endpoint is the internal video model-server endpoint
+                      used by the worker.
+                    minLength: 1
+                    type: string
+                  image:
+                    description: Image is the worker image implementing the Foretoken
+                      video task contract.
+                    minLength: 1
+                    type: string
+                  outputClaimName:
+                    description: OutputClaimName is a namespace-local PVC mounted
+                      at OutputPath.
+                    minLength: 1
+                    type: string
+                  outputPath:
+                    minLength: 1
+                    type: string
+                required:
+                - endpoint
+                - image
+                - outputClaimName
+                - outputPath
+                type: object
+            required:
+            - frontendUID
+            - modelServiceRef
+            - request
+            - worker
+            type: object
+            x-kubernetes-validations:
+            - message: video task frontend, target, request and worker are immutable
+              rule: self.frontendUID == oldSelf.frontendUID && self.modelServiceRef
+                == oldSelf.modelServiceRef && self.request == oldSelf.request && self.worker
+                == oldSelf.worker
+            - message: ready task inputs cannot become unready
+              rule: '!has(oldSelf.inputsReady) || !oldSelf.inputsReady || (has(self.inputsReady)
+                && self.inputsReady)'
+            - message: cancellation cannot be withdrawn
+              rule: '!has(oldSelf.cancelRequested) || !oldSelf.cancelRequested ||
+                (has(self.cancelRequested) && self.cancelRequested)'
+          status:
+            description: VideoTaskStatus publishes durable Job observation and artifact
+              identity.
+            properties:
+              artifact:
+                description: VideoArtifactReference identifies the worker-produced
+                  artifact on retained storage.
+                properties:
+                  claimName:
+                    type: string
+                  path:
+                    type: string
+                required:
+                - claimName
+                - path
+                type: object
+              cleanupJobName:
+                description: CleanupJobName keeps cleanup execution distinct from
+                  inference.
+                type: string
+              expiresAt:
+                description: ExpiresAt is persisted once a terminal result is published.
+                format: date-time
+                type: string
+              finishedAt:
+                format: date-time
+                type: string
+              jobCreationRequested:
+                type: boolean
+              jobName:
+                type: string
+              jobUID:
+                type: string
+              message:
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                enum:
+                - Pending
+                - Starting
+                - Running
+                - Succeeded
+                - Failed
+                - Cancelled
+                type: string
+              plan:
+                description: VideoExecutionPlan is controller-owned recovery state
+                  persisted before Job creation.
+                properties:
+                  jobName:
+                    type: string
+                  model:
+                    type: string
+                  outputClaimName:
+                    type: string
+                  outputPath:
+                    type: string
+                  retentionSeconds:
+                    format: int64
+                    type: integer
+                  revisions:
+                    items:
+                      description: ServingPoolRevision selects one prepared ModelPool
+                        cohort for the active service generation.
+                      properties:
+                        poolName:
+                          maxLength: 63
+                          minLength: 1
+                          type: string
+                        poolUID:
+                          minLength: 1
+                          type: string
+                        revision:
+                          maxLength: 63
+                          minLength: 1
+                          type: string
+                      required:
+                      - poolName
+                      - poolUID
+                      - revision
+                      type: object
+                    type: array
+                  serviceUID:
+                    type: string
+                  servingGeneration:
+                    format: int64
+                    type: integer
+                  timeoutSeconds:
+                    format: int64
+                    type: integer
+                  workerImage:
+                    type: string
+                required:
+                - jobName
+                - outputClaimName
+                - outputPath
+                - retentionSeconds
+                - timeoutSeconds
+                - workerImage
+                type: object
+              reason:
+                type: string
+              startedAt:
+                format: date-time
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -25,10 +25,11 @@ func TritonCacheDirectory(cache *inferencev1alpha1.RuntimeCacheBinding) string {
 }
 
 // RuntimeCacheEnv returns vLLM model and compilation cache environment for one ModelGroup.
-func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, tritonCacheDirectory string) []corev1.EnvVar {
+func RuntimeCacheEnv(cache *inferencev1alpha1.RuntimeCacheBinding, namespace, tritonCacheDirectory string) []corev1.EnvVar {
 	env := make([]corev1.EnvVar, 0, 6)
 	if cache != nil {
 		env = append(env,
+			corev1.EnvVar{Name: runtimeconfig.RuntimeCacheBindingEnv, Value: namespace + "/" + cache.ClaimName},
 			corev1.EnvVar{Name: runtimeconfig.ModelRootEnv, Value: runtimeconfig.ModelDirectory(cache.MountPath)},
 			corev1.EnvVar{Name: "HF_HOME", Value: runtimeconfig.ModelDirectory(cache.MountPath)},
 			corev1.EnvVar{Name: "VLLM_CACHE_ROOT", Value: path.Join(cache.MountPath, "vllm")},

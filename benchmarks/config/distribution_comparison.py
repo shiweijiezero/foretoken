@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from benchmarks.config.benchmark import ModelServiceSource
+from benchmarks.config.evaluation import deployment_labels
 from benchmarks.datasets.conversations import iter_jsonl_rows
 
 
@@ -56,6 +57,8 @@ class DistributionComparisonConfig:
     score_tokens: int
     top_k: tuple[int, ...]
     candidates: tuple[DistributionComparisonCandidate, ...]
+    max_tokens: int
+    greedy_compare: bool = False
 
     def reference_source(self, default: ModelServiceSource) -> ModelServiceSource:
         """Resolve the reference connection, reusing the candidate connection when omitted."""
@@ -89,6 +92,19 @@ class DistributionComparisonConfig:
 
     def protocol(self) -> dict[str, Any]:
         """Publish the text-selection and scoring protocol shared by every candidate."""
+        if self.greedy_compare:
+            return {
+                "dataset": self.dataset,
+                "dataset_config": self.dataset_config,
+                "split": self.split,
+                "text_column": self.text_column,
+                "tokenizer": self.tokenizer,
+                "context_length": self.context_length,
+                "num_windows": self.num_windows,
+                "max_tokens": self.max_tokens,
+                "temperature": 0,
+                "stream": False,
+            }
         return {
             "dataset": self.dataset,
             "dataset_config": self.dataset_config,
@@ -129,6 +145,8 @@ def add_distribution_comparison_arguments(parser: argparse.ArgumentParser) -> No
     parser.add_argument("--context-length", type=int, default=512, help="tokens in each non-overlapping text window (default: 512)")
     parser.add_argument("--num-windows", type=int, default=4, help="number of complete text windows (default: 4)")
     parser.add_argument("--score-tokens", type=int, default=16, help="score this many final token positions per window (default: 16)")
+    parser.add_argument("--greedy-compare", action="store_true", help="compare native generated token-ID sequences instead of teacher-forced probabilities")
+    parser.add_argument("--max-tokens", type=int, default=64, help="maximum generated tokens per greedy comparison (default: 64)")
     parser.add_argument("--top-k", type=int, nargs="+", default=[5, 10], help="token-set overlap sizes; Top-1 agreement is always reported")
     parser.add_argument("--candidates", default="", metavar="JSONL", help="candidate models and optional plot labels/coordinates")
     parser.add_argument("--label", default="", help="single-candidate display name")
@@ -138,24 +156,45 @@ def add_distribution_comparison_arguments(parser: argparse.ArgumentParser) -> No
     parser.add_argument("--model-size-gib", type=float, default=None, help="measured checkpoint size in GiB for plotting")
 
 
-def parse_distribution_comparison_arguments(arguments: Sequence[str], service: ModelServiceSource) -> DistributionComparisonConfig:
+def parse_distribution_comparison_arguments(
+    arguments: Sequence[str], services: tuple[ModelServiceSource, ...]
+) -> DistributionComparisonConfig:
     """Resolve comparison choices and candidate declarations before serving starts."""
     parser = argparse.ArgumentParser(
         prog="foretoken eval", allow_abbrev=False,
-        description="Compare full next-token distributions on identical text prefixes.",
+        description="Compare teacher-forced distributions or greedy generations on identical token-ID prefixes.",
     )
     add_distribution_comparison_arguments(parser)
     options = parser.parse_args(arguments)
+    service = services[0]
     if options.reference and options.reference_url:
         parser.error("use --reference or --reference-url, not both")
     if not (options.reference or options.reference_url or options.reference_model):
         parser.error("select a reference with --reference, --reference-url, or --reference-model")
-    if options.num_windows < 1 or not 1 <= options.score_tokens < options.context_length:
-        parser.error("require num-windows >= 1 and 1 <= score-tokens < context-length")
+    if options.num_windows < 1 or options.context_length < 1:
+        parser.error("require num-windows >= 1 and context-length >= 1")
+    if options.greedy_compare:
+        if options.max_tokens < 1:
+            parser.error("--max-tokens must be >= 1")
+        if any(arg.partition("=")[0] in {"--score-tokens", "--top-k"} for arg in arguments):
+            parser.error("--score-tokens and --top-k apply only to distribution comparison")
+    else:
+        if any(arg.partition("=")[0] == "--max-tokens" for arg in arguments):
+            parser.error("--max-tokens requires --greedy-compare")
+        if not 1 <= options.score_tokens < options.context_length:
+            parser.error("require 1 <= score-tokens < context-length")
     if not options.top_k or any(k < 1 for k in options.top_k):
         parser.error("--top-k values must be positive")
     candidates = []
-    if options.candidates:
+    if len(services) > 1 and options.candidates:
+        parser.error("use leading candidate paths or --candidates, not both")
+    if len(services) > 1:
+        if options.label or options.method or any(value is not None for value in (options.weight_bits, options.bits_per_weight, options.model_size_gib)):
+            parser.error("put candidate metadata in --candidates JSONL when comparing multiple methods")
+        for source, label in zip(services, deployment_labels(services)):
+            source.validate()
+            candidates.append(DistributionComparisonCandidate(source, label=label))
+    elif options.candidates:
         if options.label or options.method or any(value is not None for value in (options.weight_bits, options.bits_per_weight, options.model_size_gib)):
             parser.error("put labels and plot coordinates in --candidates rows when comparing multiple models")
         allowed = {"path", "url", "model", "label", "method", "weight_bits", "bits_per_weight", "model_size_gib"}
@@ -209,6 +248,8 @@ def parse_distribution_comparison_arguments(arguments: Sequence[str], service: M
         score_tokens=options.score_tokens,
         top_k=tuple(sorted(set(options.top_k))),
         candidates=tuple(candidates),
+        greedy_compare=options.greedy_compare,
+        max_tokens=options.max_tokens,
     )
     config.reference_source(service)
     return config

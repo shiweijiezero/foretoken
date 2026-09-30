@@ -11,7 +11,7 @@ import sys
 from benchmarks.config.evaluation import native_arguments, parse_evaluation_arguments
 from benchmarks.model_service import resolve_model_service
 from benchmarks.results.console import configure_logging
-from benchmarks.runs.evaluation import run_evaluation
+from benchmarks.runs.evaluation import run_evaluation, run_evaluation_comparison
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -24,11 +24,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             if help_requested:
                 return
             from benchmarks.config.distribution_comparison import parse_distribution_comparison_arguments
-            from benchmarks.runs.distribution_comparison import run_distribution_comparison
+            from benchmarks.runs.distribution_comparison import run_distribution_comparison, run_greedy_comparison
 
-            comparison = parse_distribution_comparison_arguments(config.arguments, config.service)
+            comparison = parse_distribution_comparison_arguments(config.arguments, config.services)
             configure_logging(not config.outputs.includes("quiet"))
-            run_distribution_comparison(config, comparison)
+            if comparison.greedy_compare:
+                run_greedy_comparison(config, comparison)
+            else:
+                run_distribution_comparison(config, comparison)
             return
         native = native_arguments(
             config.evaluator,
@@ -64,7 +67,12 @@ def main(argv: Sequence[str] | None = None) -> None:
                 )
 
         configure_logging(not config.outputs.includes("quiet"))
-        with resolve_model_service(config.service) as service:
-            run_evaluation(config, service)
+        if len(config.services) > 1:
+            run_evaluation_comparison(config)
+        else:
+            with resolve_model_service(config.service) as service:
+                run = run_evaluation(config, service)
+                if run.exit_code:
+                    raise SystemExit(run.exit_code if run.exit_code > 0 else 128 - run.exit_code)
     except ValueError as error:
         raise SystemExit(str(error)) from error

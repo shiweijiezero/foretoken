@@ -4,6 +4,8 @@ The MetaX engine build applies this bundle automatically to the core and plugin 
 
 The shared [compatibility patch](../metax-compatibility.patch) adapts the plugin's imports and dependencies to the core and preserves the core's automatic model-runner selection. The GLM patches cover typed KV layouts, sparse attention, sequence-parallel layers, MTP, and mHC normalization.
 
+For compressed-tensors checkpoints, the MLA patch gives projection layers their quantization configuration and leaves quantized weights with their own loaders. The INT8 MoE patch passes expert-parallel filtering to the native GEMM so blocks mapped to nonlocal experts are skipped.
+
 Source patches are applied before building the engine wheels. The DeepGEMM patch is applied after dependency installation because it modifies the installed kernel package. Update the source pair and its patches together.
 
 MTP retains the complete sparse indexer and separate cache groups. The core selects Model Runner V2 when the execution configuration supports it, including the GLM-5.3 BF16 recipe.

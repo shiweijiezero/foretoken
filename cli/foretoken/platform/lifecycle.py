@@ -38,6 +38,11 @@ from foretoken.platform.gateway import GatewayControllerLifecycle
 from foretoken.platform.helm import Helm
 from foretoken.platform.leader_worker import LeaderWorkerLifecycle
 from foretoken.platform.load_balancer import LoadBalancerLifecycle
+from foretoken.platform.logs import LogCollectionLifecycle, log_config_from_values
+from foretoken.platform.model_distribution import (
+    ModelDistributionLifecycle,
+    dragonfly_config_from_values,
+)
 from foretoken.platform.rdma import (
     migrate_stored_rdma_values,
     require_unused_managed_rdma,
@@ -136,6 +141,8 @@ class PlatformLifecycle:
         self._gateway = GatewayControllerLifecycle(self._helm, self._kubectl)
         self._leader_worker = LeaderWorkerLifecycle(self._helm, self._kubectl)
         self._load_balancer = LoadBalancerLifecycle(self._helm, self._kubectl)
+        self._logs = LogCollectionLifecycle(self._helm)
+        self._model_distribution = ModelDistributionLifecycle(self._helm, self._kubectl)
 
     def install(self, command: InstallCommand) -> None:
         """Install managed dependencies and update the Foretoken platform release."""
@@ -171,6 +178,15 @@ class PlatformLifecycle:
         stored_values = (
             (migrate_stored_rdma_values(helm.release_user_values(platform)),)
             if platform_exists else ()
+        )
+        if stored_values:
+            stored_logs = stored_values[0].get("observability", {}).get("logs", {})
+            if "storageSize" in stored_logs:
+                stored_logs.setdefault("initialSize", stored_logs.pop("storageSize"))
+        log_config = log_config_from_values((*stored_values, *values))
+        log_plan = self._logs.plan(log_config)
+        dragonfly_plan = self._model_distribution.resolve_install(
+            dragonfly_config_from_values((*stored_values, *values))
         )
         grafana_anonymous_access = grafana_anonymous_access_from_values(
             (*stored_values, *values)
@@ -421,6 +437,8 @@ class PlatformLifecycle:
             "Gateway Controller", gateway_plan.action, gateway_plan.detail
         )
         _print_plan("Prometheus", prometheus_action, prometheus_detail)
+        for responsibility, action, detail in log_plan:
+            _print_plan(responsibility, action, detail)
         _print_plan("NVIDIA DCGM Exporter", nvidia_action, nvidia_detail)
         _print_plan("MetaX mxExporter", metax_action, metax_detail)
         if runtime_selection is None:
@@ -441,6 +459,8 @@ class PlatformLifecycle:
         _print_plan("Inference runtime", runtime_action, runtime_detail)
         _print_plan("RDMA", rdma.action, rdma.detail)
         _print_plan("LeaderWorkerSet", leader_worker_plan.action, leader_worker_plan.detail)
+        if dragonfly_plan.config.enabled:
+            _print_plan("Model file distribution", dragonfly_plan.action, dragonfly_plan.release.display_name)
         _print_plan("Foretoken platform", platform_action, platform.display_name)
 
         source_images = (
@@ -460,6 +480,12 @@ class PlatformLifecycle:
         gateway.apply_before_platform(gateway_plan, command.timeout)
         self._leader_worker.apply(leader_worker_plan, command.timeout)
         _print_plan("LeaderWorkerSet", "Ready", leader_worker_plan.detail)
+        dragonfly_socket = self._model_distribution.apply(
+            dragonfly_plan,
+            runtime_selection.resource_name if runtime_selection is not None else "",
+            command.timeout,
+            node_names=tuple(node["metadata"]["name"] for node in runtime_selection.nodes) if runtime_selection is not None else (),
+        )
         if install_managed_prometheus:
             helm.install_prometheus(
                 managed_prometheus,
@@ -515,6 +541,7 @@ class PlatformLifecycle:
                 timeout_seconds=timeout_seconds(command.timeout),
             )
 
+        log_endpoint, log_storage_statefulset = self._logs.install(log_config, command.timeout)
         helm.install_platform(
             release=platform,
             source_images=source_images,
@@ -527,13 +554,19 @@ class PlatformLifecycle:
             observability_labels=observability_labels,
             observability_prometheus=f"{selected_prometheus.namespace}/{selected_prometheus.name}",
             grafana_anonymous_access=grafana_anonymous_access,
+            log_endpoint=log_endpoint,
+            log_storage_statefulset=log_storage_statefulset,
             gpu_resource_name=gpu_resource_name,
             rdma_resource_name=rdma.resource_name,
             rdma_managed=rdma.managed,
             rdma_node_names=rdma.node_names,
+            dragonfly_socket_path=dragonfly_socket,
             stored_values=stored_values[0] if platform_exists else None,
             timeout=command.timeout,
         )
+        if not dragonfly_plan.config.enabled or dragonfly_plan.release != helm.dragonfly_release():
+            if helm.release_exists(helm.dragonfly_release()):
+                _print_plan("Model file distribution", *self._model_distribution.finish_uninstall(command.timeout))
         if rdma.managed:
             live_discovery = ExporterDiscovery(kubectl, command.timeout)
             live_runtime = _select_runtime(live_discovery.nodes, runtime_scope)
@@ -609,6 +642,11 @@ class PlatformLifecycle:
             prometheus_exists and helm.is_cleanup_managed(managed_prometheus)
         )
         metax_managed = bool(metax_exporter.managed_resources())
+        managed_logs = self._logs.managed_releases()
+        dragonfly_managed = (
+            helm.release_exists(helm.dragonfly_release())
+            and helm.is_cleanup_managed(helm.dragonfly_release())
+        )
         gateway_plan = gateway.resolve_uninstall(
             platform, platform_exists=platform_exists
         )
@@ -617,6 +655,8 @@ class PlatformLifecycle:
             or dcgm_managed
             or prometheus_managed
             or metax_managed
+            or managed_logs
+            or dragonfly_managed
             or gateway_plan.managed
         ):
             resources = platform_service_resources(kubectl)
@@ -658,6 +698,9 @@ class PlatformLifecycle:
         _print_plan(
             "Gateway Controller", gateway_plan.action, gateway_plan.detail
         )
+        for release in managed_logs:
+            _print_plan("Logs", "Remove", release.display_name + " (retain stored logs)")
+        self._logs.uninstall(managed_logs, command.timeout)
         if platform_exists:
             helm.uninstall(platform, command.timeout)
             _print_plan("Foretoken platform", "Removed", platform.display_name)
@@ -683,6 +726,8 @@ class PlatformLifecycle:
         if gateway_result is not None:
             _print_plan("Gateway Controller", *gateway_result)
         _print_plan("LeaderWorkerSet", *self._leader_worker.finish_uninstall(command.timeout))
+        if helm.release_exists(helm.dragonfly_release()):
+            _print_plan("Model file distribution", *self._model_distribution.finish_uninstall(command.timeout))
         load_balancer_result = load_balancer.finish_uninstall(command.timeout)
         if load_balancer_result is not None:
             _print_plan("LoadBalancer", *load_balancer_result)

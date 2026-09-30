@@ -1,0 +1,514 @@
+diff --git a/rust/src/engine-core-client/src/metrics.rs b/rust/src/engine-core-client/src/metrics.rs
+index 8b2eb9e58..104c1add0 100644
+--- a/rust/src/engine-core-client/src/metrics.rs
++++ b/rust/src/engine-core-client/src/metrics.rs
+@@ -46,6 +46,8 @@ struct SchedulerStatsHandles {
+     spec_decode_num_draft_tokens: U64Counter,
+     spec_decode_num_accepted_tokens: U64Counter,
+     spec_decode_num_accepted_tokens_per_pos: Family<EnginePositionLabels, U64Counter>,
++    spec_decode_target_forward_duration_seconds: Family<EngineLabels, HistogramMetric>,
++    spec_decode_draft_duration_seconds: Family<EngineLabels, HistogramMetric>,
+
+     // Per-engine performance / MFU counters.
+     estimated_flops_per_gpu: U64Counter,
+@@ -137,6 +139,10 @@ fn resolve_scheduler_stats_handles(
+         spec_decode_num_accepted_tokens_per_pos: metrics
+             .spec_decode_num_accepted_tokens_per_pos
+             .clone(),
++        spec_decode_target_forward_duration_seconds: metrics
++            .spec_decode_target_forward_duration_seconds
++            .clone(),
++        spec_decode_draft_duration_seconds: metrics.spec_decode_draft_duration_seconds.clone(),
+         log_stats: metrics.log_stats.get_or_create_owned(&labels),
+         estimated_flops_per_gpu: metrics.estimated_flops_per_gpu.get_or_create_owned(&labels),
+         estimated_read_bytes_per_gpu: metrics
+@@ -206,6 +212,18 @@ fn record_scheduler_stats_with_handles(handles: &SchedulerStatsHandles, stats: &
+         }
+     }
+
++    // Publish paired samples only when a real speculative step was measured.
++    if let Some(timing) = &stats.spec_decode_timing {
++        handles
++            .spec_decode_target_forward_duration_seconds
++            .get_or_create(&handles.labels)
++            .observe(timing.target_forward_seconds);
++        handles
++            .spec_decode_draft_duration_seconds
++            .get_or_create(&handles.labels)
++            .observe(timing.draft_seconds);
++    }
++
+     // Per-engine performance / MFU counters.
+     if let Some(perf_stats) = &stats.perf_stats
+         && (perf_stats.num_flops_per_gpu != 0
+diff --git a/rust/src/engine-core-client/src/protocol/stats.rs b/rust/src/engine-core-client/src/protocol/stats.rs
+index f02da161e..22f0cd343 100644
+--- a/rust/src/engine-core-client/src/protocol/stats.rs
++++ b/rust/src/engine-core-client/src/protocol/stats.rs
+@@ -78,6 +78,15 @@ pub struct SpecDecodingStats {
+     pub num_accepted_tokens_per_pos: Vec<u64>,
+ }
+
++/// GPU timeline durations for a pure speculative decode step on its output rank.
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct SpecDecodeTiming {
++    /// Target model forward, including speculative verification work.
++    pub target_forward_seconds: f64,
++    /// Draft proposal, including its GPU work and intervening host gaps.
++    pub draft_seconds: f64,
++}
++
+ /// Breakdown of a scheduled prefill computation.
+ ///
+ /// Python models this as a plain `@dataclass`, so it is serialized by msgspec
+@@ -185,6 +194,9 @@ pub struct SchedulerStats {
+     pub kv_cache_eviction_events: Vec<KvCacheEvictionEvent>,
+     /// Speculative decoding scheduler stats, when enabled.
+     pub spec_decoding_stats: Option<SpecDecodingStats>,
++    /// Paired GPU stage durations for one pure speculative decoding batch.
++    #[serde(default)]
++    pub spec_decode_timing: Option<SpecDecodeTiming>,
+     /// Connector-specific KV transfer stats, kept opaque for now.
+     pub kv_connector_stats: Option<BTreeMap<String, OpaqueValue>>,
+     /// CUDA graph runtime stats when graph metrics are enabled.
+diff --git a/rust/src/metrics/src/scheduler.rs b/rust/src/metrics/src/scheduler.rs
+index af43961b9..25851468b 100644
+--- a/rust/src/metrics/src/scheduler.rs
++++ b/rust/src/metrics/src/scheduler.rs
+@@ -17,6 +17,14 @@ const KV_CACHE_RESIDENCY_BUCKETS: [f64; 21] = [
+     120.0, 300.0, 600.0, 1200.0, 1800.0,
+ ];
+
++const SPEC_DECODE_STAGE_BUCKETS: [f64; 13] = [
++    0.0001, 0.00025, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0,
++];
++
++fn spec_decode_stage_histogram() -> Histogram {
++    Histogram::new(SPEC_DECODE_STAGE_BUCKETS.iter().copied())
++}
++
+ fn kv_block_lifetime_histogram() -> Histogram {
+     Histogram::new(KV_CACHE_RESIDENCY_BUCKETS.iter().copied())
+ }
+@@ -173,6 +181,8 @@ pub struct SchedulerMetrics {
+     pub spec_decode_num_draft_tokens: Family<EngineLabels, U64Counter>,
+     pub spec_decode_num_accepted_tokens: Family<EngineLabels, U64Counter>,
+     pub spec_decode_num_accepted_tokens_per_pos: Family<EnginePositionLabels, U64Counter>,
++    pub spec_decode_target_forward_duration_seconds: HistogramFamily,
++    pub spec_decode_draft_duration_seconds: HistogramFamily,
+
+     // Per-engine performance / MFU counters.
+     pub estimated_flops_per_gpu: Family<EngineLabels, U64Counter>,
+@@ -289,6 +299,21 @@ impl SchedulerMetrics {
+             spec_decode_num_accepted_tokens_per_pos.clone(),
+         );
+
++        let spec_decode_target_forward_duration_seconds =
++            Family::new_with_constructor(spec_decode_stage_histogram as fn() -> Histogram);
++        registry.register(
++            "vllm:spec_decode_target_forward_duration_seconds",
++            "GPU timeline duration of target forward on pure speculative decode batches (output rank only; includes verification, not sampling).",
++            spec_decode_target_forward_duration_seconds.clone(),
++        );
++        let spec_decode_draft_duration_seconds =
++            Family::new_with_constructor(spec_decode_stage_histogram as fn() -> Histogram);
++        registry.register(
++            "vllm:spec_decode_draft_duration_seconds",
++            "GPU timeline duration of proposal on pure speculative decode batches (output rank only; includes host gaps between enqueued kernels).",
++            spec_decode_draft_duration_seconds.clone(),
++        );
++
+         // Per-engine performance / MFU counters.
+         let estimated_flops_per_gpu = Family::default();
+         registry.register(
+@@ -350,6 +375,8 @@ impl SchedulerMetrics {
+             spec_decode_num_draft_tokens,
+             spec_decode_num_accepted_tokens,
+             spec_decode_num_accepted_tokens_per_pos,
++            spec_decode_target_forward_duration_seconds,
++            spec_decode_draft_duration_seconds,
+             estimated_flops_per_gpu,
+             estimated_read_bytes_per_gpu,
+             estimated_write_bytes_per_gpu,
+diff --git a/vllm/config/observability.py b/vllm/config/observability.py
+index 093ed2f68..1c1c2870e 100644
+--- a/vllm/config/observability.py
++++ b/vllm/config/observability.py
+@@ -57,6 +57,10 @@ class ObservabilityConfig:
+     """Enable CUDA graph metrics (number of padded/unpadded tokens, runtime cudagraph
+     dispatch modes, and their observed frequencies at every logging interval)."""
+
++    spec_decode_timing_metrics: bool = False
++    """Time target forward and draft proposal on pure speculative decode batches.
++    Synchronizes the draft completion event before publishing the step output."""
++
+     enable_layerwise_nvtx_tracing: bool = False
+     """Enable layerwise NVTX tracing. This traces the execution of each layer or
+     module in the model and attach information such as input/output shapes to
+diff --git a/vllm/engine/arg_utils.py b/vllm/engine/arg_utils.py
+index c9b04b5e4..53652ecea 100644
+--- a/vllm/engine/arg_utils.py
++++ b/vllm/engine/arg_utils.py
+@@ -657,6 +657,7 @@ class EngineArgs:
+         ObservabilityConfig, "kv_cache_metrics_sample"
+     )
+     cudagraph_metrics: bool = ObservabilityConfig.cudagraph_metrics
++    spec_decode_timing_metrics: bool = ObservabilityConfig.spec_decode_timing_metrics
+     enable_layerwise_nvtx_tracing: bool = (
+         ObservabilityConfig.enable_layerwise_nvtx_tracing
+     )
+@@ -1480,6 +1481,10 @@ class EngineArgs:
+             "--cudagraph-metrics",
+             **observability_kwargs["cudagraph_metrics"],
+         )
++        observability_group.add_argument(
++            "--spec-decode-timing-metrics",
++            **observability_kwargs["spec_decode_timing_metrics"],
++        )
+         observability_group.add_argument(
+             "--enable-layerwise-nvtx-tracing",
+             **observability_kwargs["enable_layerwise_nvtx_tracing"],
+@@ -1930,6 +1935,7 @@ class EngineArgs:
+             kv_cache_metrics=self.kv_cache_metrics,
+             kv_cache_metrics_sample=self.kv_cache_metrics_sample,
+             cudagraph_metrics=self.cudagraph_metrics,
++            spec_decode_timing_metrics=self.spec_decode_timing_metrics,
+             enable_layerwise_nvtx_tracing=self.enable_layerwise_nvtx_tracing,
+             enable_mfu_metrics=self.enable_mfu_metrics,
+             enable_mm_processor_stats=self.enable_mm_processor_stats,
+diff --git a/vllm/v1/core/sched/scheduler.py b/vllm/v1/core/sched/scheduler.py
+index e4a213286..396b196ad 100644
+--- a/vllm/v1/core/sched/scheduler.py
++++ b/vllm/v1/core/sched/scheduler.py
+@@ -56,7 +56,12 @@ from vllm.v1.engine import EngineCoreEventType, EngineCoreOutput, EngineCoreOutp
+ from vllm.v1.kv_cache_interface import KVCacheConfig
+ from vllm.v1.metrics.perf import ModelMetrics, PerfStats
+ from vllm.v1.metrics.stats import PrefixCacheStats, SchedulerStats
+-from vllm.v1.outputs import DraftTokenIds, KVConnectorOutput, ModelRunnerOutput
++from vllm.v1.outputs import (
++    DraftTokenIds,
++    KVConnectorOutput,
++    ModelRunnerOutput,
++    SpecDecodeTiming,
++)
+ from vllm.v1.request import Request, RequestStatus, StreamingUpdate
+ from vllm.v1.spec_decode.dynamic.utils import build_dynamic_sd_schedule_lookup
+ from vllm.v1.spec_decode.metrics import SpecDecodingStats
+@@ -2121,6 +2126,7 @@ class Scheduler(SchedulerInterface):
+         if (
+             stats := self.make_stats(
+                 spec_decoding_stats,
++                model_runner_output.spec_decode_timing,
+                 kv_connector_stats,
+                 cudagraph_stats,
+                 perf_stats,
+@@ -2583,6 +2589,7 @@ class Scheduler(SchedulerInterface):
+     def make_stats(
+         self,
+         spec_decoding_stats: SpecDecodingStats | None = None,
++        spec_decode_timing: "SpecDecodeTiming | None" = None,
+         kv_connector_stats: KVConnectorStats | None = None,
+         cudagraph_stats: CUDAGraphStat | None = None,
+         perf_stats: PerfStats | None = None,
+@@ -2613,6 +2620,7 @@ class Scheduler(SchedulerInterface):
+             connector_prefix_cache_stats=connector_prefix_cache_stats,
+             kv_cache_eviction_events=eviction_events,
+             spec_decoding_stats=spec_stats,
++            spec_decode_timing=spec_decode_timing,
+             kv_connector_stats=connector_stats_payload,
+             cudagraph_stats=cudagraph_stats,
+             perf_stats=perf_stats,
+diff --git a/vllm/v1/metrics/stats.py b/vllm/v1/metrics/stats.py
+index 3956f7e44..3a6291c5d 100644
+--- a/vllm/v1/metrics/stats.py
++++ b/vllm/v1/metrics/stats.py
+@@ -13,6 +13,7 @@ from vllm.v1.spec_decode.metrics import SpecDecodingStats
+
+ if TYPE_CHECKING:
+     from vllm.v1.engine import EngineCoreEvent, EngineCoreOutput, FinishReason
++    from vllm.v1.outputs import SpecDecodeTiming
+
+
+ @dataclass
+@@ -204,6 +205,7 @@ class SchedulerStats:
+     kv_cache_eviction_events: list[KVCacheEvictionEvent] = field(default_factory=list)
+
+     spec_decoding_stats: SpecDecodingStats | None = None
++    spec_decode_timing: "SpecDecodeTiming | None" = None
+     kv_connector_stats: dict[str, Any] | None = None
+
+     waiting_lora_adapters: dict[str, int] = field(default_factory=dict)
+diff --git a/vllm/v1/outputs.py b/vllm/v1/outputs.py
+index 0bbee7667..8f57357c5 100644
+--- a/vllm/v1/outputs.py
++++ b/vllm/v1/outputs.py
+@@ -294,6 +294,38 @@ class ECConnectorOutput:
+     finished_recving: set[str] | None = None
+
+
++@dataclass
++class SpecDecodeTiming:
++    # Per-step GPU timeline durations, measured on the output-producing rank.
++    target_forward_seconds: float
++    draft_seconds: float
++
++
++@dataclass
++class SpecDecodeTimingEvents:
++    target_start: torch.cuda.Event = field(
++        default_factory=lambda: torch.cuda.Event(enable_timing=True)
++    )
++    target_end: torch.cuda.Event = field(
++        default_factory=lambda: torch.cuda.Event(enable_timing=True)
++    )
++    draft_start: torch.cuda.Event = field(
++        default_factory=lambda: torch.cuda.Event(enable_timing=True)
++    )
++    draft_end: torch.cuda.Event = field(
++        default_factory=lambda: torch.cuda.Event(enable_timing=True, blocking=True)
++    )
++
++    def resolve(self) -> SpecDecodeTiming:
++        """Wait for this step's draft and read both GPU timeline durations."""
++        self.draft_end.synchronize()
++        return SpecDecodeTiming(
++            target_forward_seconds=self.target_start.elapsed_time(self.target_end)
++            / 1000,
++            draft_seconds=self.draft_start.elapsed_time(self.draft_end) / 1000,
++        )
++
++
+ # ModelRunnerOutput is serialized and sent to the scheduler process.
+ # This is expensive for torch.Tensor so prefer to use list instead.
+ @dataclass
+@@ -335,6 +367,8 @@ class ModelRunnerOutput:
+     # information related to cudagraph execution
+     cudagraph_stats: CUDAGraphStat | None = None
+
++    spec_decode_timing: SpecDecodeTiming | None = None
++
+     # Per-step routed experts data captured by the worker.
+     # ``routing_data`` shape: (num_scheduled_tokens, num_layers,
+     #                         num_experts_per_tok); expert IDs as uint8/uint16.
+diff --git a/vllm/v1/worker/gpu/async_utils.py b/vllm/v1/worker/gpu/async_utils.py
+index ba0a66d2b..c02043a57 100644
+--- a/vllm/v1/worker/gpu/async_utils.py
++++ b/vllm/v1/worker/gpu/async_utils.py
+@@ -16,6 +16,7 @@ from vllm.v1.outputs import (
+     ModelRunnerOutput,
+     PoolerOutput,
+     RoutedExpertsTensors,
++    SpecDecodeTimingEvents,
+ )
+ from vllm.v1.worker.gpu.sample.output import SamplerOutput, SamplingMaskTensors
+ from vllm.v1.worker.utils import raise_if_nan_logits
+@@ -127,6 +128,7 @@ class AsyncOutput(AsyncModelRunnerOutput):
+         # as the copy operations are performed on a different CUDA stream than
+         # the one where the tensors were created.
+         self.model_runner_output = model_runner_output
++        self.spec_decode_timing_events: SpecDecodeTimingEvents | None = None
+         self.sampler_output = sampler_output
+         self.num_sampled_tokens = num_sampled_tokens
+         self.routed_experts = routed_experts
+@@ -203,6 +205,10 @@ class AsyncOutput(AsyncModelRunnerOutput):
+                 f"Mask: {mask.cpu().tolist()}"
+             )
+
++        if self.spec_decode_timing_events is not None:
++            self.model_runner_output.spec_decode_timing = (
++                self.spec_decode_timing_events.resolve()
++            )
+         return self.model_runner_output
+
+
+diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
+index 4b53defa4..31b23762e 100644
+--- a/vllm/v1/worker/gpu/model_runner.py
++++ b/vllm/v1/worker/gpu/model_runner.py
+@@ -67,6 +67,7 @@ from vllm.v1.outputs import (
+     DraftTokenIds,
+     ModelRunnerOutput,
+     RoutedExpertsTensors,
++    SpecDecodeTimingEvents,
+     make_empty_encoder_model_runner_output,
+ )
+ from vllm.v1.worker.block_table import get_block_table_width
+@@ -266,6 +267,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+         )
+
+         self.step_timing = StepTimingCollector()
++        self.spec_decode_timing: SpecDecodeTimingEvents | None = None
+
+         # General request states.
+         self.req_states = RequestState(
+@@ -1386,6 +1388,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+         is_profile: bool = False,
+         context_len: int = 0,
+     ) -> ModelRunnerOutput | IntermediateTensors | None:
++        self.spec_decode_timing = None
+         if not dummy_run:
+             # Update the request states.
+             self.update_pp_decode_requests()
+@@ -1593,6 +1596,22 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+             input_batch, batch_desc.cg_mode == CUDAGraphMode.FULL
+         )
+         self.step_timing.forward_start()
++        if (
++            not dummy_run
++            and self.is_last_pp_rank
++            and self.speculator is not None
++            and self.observability_config.spec_decode_timing_metrics
++            and scheduler_output.scheduled_spec_decode_tokens
++            and all(
++                req_id in scheduler_output.scheduled_spec_decode_tokens
++                and len(scheduler_output.scheduled_spec_decode_tokens[req_id]) > 0
++                and len(scheduler_output.scheduled_spec_decode_tokens[req_id]) + 1
++                == num_tokens
++                for req_id, num_tokens in scheduler_output.num_scheduled_tokens.items()
++            )
++        ):
++            self.spec_decode_timing = SpecDecodeTimingEvents()
++            self.spec_decode_timing.target_start.record()
+
+         # Run model.
+         if batch_desc.cg_mode == CUDAGraphMode.FULL:
+@@ -1634,6 +1653,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+                     # Eager (NONE): call the raw model directly.
+                     model_output = self.model(**model_inputs)
+
++        if self.spec_decode_timing is not None:
++            self.spec_decode_timing.target_end.record()
++
+         if self.is_last_pp_rank:
+             if self.use_aux_hidden_state_outputs:
+                 assert isinstance(model_output, tuple)
+@@ -1789,6 +1811,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+             if hasattr(self.model, "get_mtp_target_hidden_states"):
+                 pre_hc_hidden_states = self.model.get_mtp_target_hidden_states()
+                 spec_hidden_states = pre_hc_hidden_states[: hidden_states.shape[0]]  # type: ignore[union-attr]
++            if self.spec_decode_timing is not None:
++                self.spec_decode_timing.draft_start.record()
+             draft_tokens = self.speculator.propose(
+                 input_batch,
+                 attn_metadata,
+@@ -1803,6 +1827,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
+                 self.sampler.sampling_states.seeds.gpu,
+                 mm_inputs=mm_inputs,
+             )
++            if self.spec_decode_timing is not None:
++                self.spec_decode_timing.draft_end.record()
++                async_output.spec_decode_timing_events = self.spec_decode_timing
+             self.req_states.draft_tokens[input_batch.idx_mapping] = draft_tokens
+             if self.adaptive_verification is not None:
+                 self.adaptive_verification.record_confidences(
+diff --git a/vllm/v1/worker/gpu_model_runner.py b/vllm/v1/worker/gpu_model_runner.py
+index e81913f92..67f0c0dee 100644
+--- a/vllm/v1/worker/gpu_model_runner.py
++++ b/vllm/v1/worker/gpu_model_runner.py
+@@ -182,6 +182,7 @@ from vllm.v1.outputs import (
+     RoutedExpertsLists,
+     RoutedExpertsTensors,
+     SamplerOutput,
++    SpecDecodeTimingEvents,
+     make_empty_encoder_model_runner_output,
+ )
+ from vllm.v1.pool.late_interaction_runner import LateInteractionRunner
+@@ -301,6 +302,7 @@ class AsyncGPUModelRunnerOutput(AsyncModelRunnerOutput):
+         num_nans: torch.Tensor | None = None,
+     ):
+         self._model_runner_output = model_runner_output
++        self.spec_decode_timing_events: SpecDecodeTimingEvents | None = None
+         self._invalid_req_indices = invalid_req_indices
+
+         # Event on the copy stream so we can synchronize the non-blocking copy.
+@@ -393,6 +395,8 @@ class AsyncGPUModelRunnerOutput(AsyncModelRunnerOutput):
+                 f"Mask: {mask.cpu().tolist()}"
+             )
+
++        if self.spec_decode_timing_events is not None:
++            output.spec_decode_timing = self.spec_decode_timing_events.resolve()
+         return output
+
+
+@@ -4285,6 +4289,8 @@ class GPUModelRunner(
+                 "State error: sample_tokens() must be called "
+                 "after execute_model() returns None."
+             )
++        self._spec_decode_timing: SpecDecodeTimingEvents | None = None
++        self._timed_draft = False
+
+         # If ngram_gpu is used, we need to copy the scheduler_output to avoid
+         # the modification has influence on the scheduler_output in engine core process.
+@@ -4521,6 +4527,24 @@ class GPUModelRunner(
+             self.model_config.is_encoder_decoder and num_encoder_reqs > 0
+         )
+
++        # Only complete speculative decode steps have paired target and draft work.
++        # Mixed prefill/decode batches cannot be attributed to verification.
++        if (
++            self.speculative_config is not None
++            and self.observability_config.spec_decode_timing_metrics
++            and get_pp_group().is_last_rank
++            and scheduler_output.scheduled_spec_decode_tokens
++            and all(
++                req_id in scheduler_output.scheduled_spec_decode_tokens
++                and len(scheduler_output.scheduled_spec_decode_tokens[req_id]) > 0
++                and len(scheduler_output.scheduled_spec_decode_tokens[req_id]) + 1
++                == num_tokens
++                for req_id, num_tokens in scheduler_output.num_scheduled_tokens.items()
++            )
++        ):
++            self._spec_decode_timing = SpecDecodeTimingEvents()
++            self._spec_decode_timing.target_start.record()
++
+         # Run the model.
+         # Use persistent buffers for CUDA graphs.
+         # When spec decode is enabled, defer connector finalization
+@@ -4558,6 +4582,8 @@ class GPUModelRunner(
+                 inputs_embeds=inputs_embeds,
+                 **model_kwargs,
+             )
++        if self._spec_decode_timing is not None:
++            self._spec_decode_timing.target_end.record()
+
+         with record_function_or_nullcontext("gpu_model_runner: postprocess"):
+             if self.use_aux_hidden_state_outputs:
+@@ -4714,6 +4740,9 @@ class GPUModelRunner(
+
+         def propose_draft_token_ids(sampled_token_ids):
+             assert spec_decode_common_attn_metadata is not None
++            timing = self._spec_decode_timing if drafter_runs_model_forward else None
++            if timing is not None:
++                timing.draft_start.record()
+             with record_function_or_nullcontext("gpu_model_runner: draft"):
+                 self._draft_token_ids = self.propose_draft_token_ids(
+                     scheduler_output,
+@@ -4727,6 +4756,9 @@ class GPUModelRunner(
+                     slot_mappings,
+                 )
+                 self._copy_draft_token_ids_to_cpu(scheduler_output)
++            if timing is not None:
++                timing.draft_end.record()
++                self._timed_draft = True
+
+         spec_config = self.speculative_config
+         draft_after_bookkeeping = False
+@@ -4885,6 +4917,9 @@ class GPUModelRunner(
+             )
+
+         if not self.use_async_scheduling:
++            if self._timed_draft:
++                assert self._spec_decode_timing is not None
++                output.spec_decode_timing = self._spec_decode_timing.resolve()
+             if self.routed_experts_initialized:
+                 # Sync path: D2H was issued in ``_bookkeeping_sync`` and
+                 # synchronized by ``_to_list``'s event.synchronize(), so
+@@ -4925,6 +4960,8 @@ class GPUModelRunner(
+                 check_ep_fault=self.check_ep_fault,
+                 num_nans=num_nans_device,
+             )
++            if self._timed_draft:
++                async_output.spec_decode_timing_events = self._spec_decode_timing
+         with record_function_or_nullcontext(
+             "gpu_model_runner: set_async_sampled_token_ids"
+         ):

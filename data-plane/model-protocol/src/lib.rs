@@ -140,6 +140,19 @@ pub struct RuntimeEcTransferMetadata {
     pub profile: String,
     pub connector: String,
 }
+/// Concrete tokenizer snapshot selected during model acquisition.
+/// File revisions let frontends without the shared claim fetch the exact metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PreparedTokenizer {
+    pub scope: String,
+    pub model: String,
+    pub revision: String,
+    pub directory: String,
+    pub cache_binding: Option<String>,
+    pub files: std::collections::BTreeMap<String, String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeMetadataResponse {
@@ -152,6 +165,8 @@ pub struct RuntimeMetadataResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_logprobs: Option<i32>,
     pub ec_transfer: Option<RuntimeEcTransferMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepared_tokenizer: Option<PreparedTokenizer>,
     #[serde(default)]
     pub capabilities: std::collections::BTreeSet<String>,
 }

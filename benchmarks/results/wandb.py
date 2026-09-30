@@ -17,7 +17,7 @@ from benchmarks.results.plots.measurements import load_http_measurements
 
 if TYPE_CHECKING:
     from benchmarks.results.output import BenchmarkRun
-from benchmarks.results.replicas import replica_history_rows
+from benchmarks.results.replicas import gpu_allocation_history_rows, replica_history_rows
 from benchmarks.results.timeseries import (
     ELAPSED_TIME,
     REQUEST_INDEX,
@@ -85,7 +85,7 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
         _CONCURRENCY: int(metrics["max_concurrency"]),
         "Peak in-flight requests": metrics["request_concurrency"]["peak"],
         "Mean in-flight requests": metrics["request_concurrency"]["mean"],
-        _REQUEST_RATE: float(metrics["request_rate"]),
+        (_REQUEST_RATE if not metrics.get("multi_turn") else "Conversation arrival rate (conv/s)"): float(metrics["request_rate"]),
         _TOTAL_REQUESTS: int(metrics["request_num"]),
         _SUCCEED_REQUESTS: int(metrics["success_num"]),
         _FAILED_REQUESTS: int(metrics["failed_num"]),
@@ -144,6 +144,29 @@ def wandb_metric_fields(metrics: dict[str, Any]) -> dict[str, Any]:
                     float(value) * 100.0 if source == "slo_attainment" else float(value),
                     4,
                 )
+    allocation = metrics.get("gpu_allocation")
+    if isinstance(allocation, dict):
+        for resource, seconds in (allocation["gpu_seconds"] or {}).items():
+            message[f"GPU allocation/{resource}/GPU-seconds"] = seconds
+        for resource, hours in (allocation["gpu_hours"] or {}).items():
+            message[f"GPU allocation/{resource}/GPU-hours"] = hours
+        if allocation["coverage"] is not None:
+            message["GPU allocation/Observation coverage (%)"] = allocation["coverage"] * 100
+        if allocation["gpu_seconds"] is None:
+            for resource, seconds in allocation["observed_gpu_seconds"].items():
+                message[f"GPU allocation/{resource}/Observed GPU-seconds (partial)"] = seconds
+    speculative = metrics.get("speculative_decoding")
+    if isinstance(speculative, dict):
+        for key, name, scale in (
+            ("acceptance_ratio", "Speculative/Accepted draft tokens (%)", 100),
+            ("accepted_tokens_per_draft", "Speculative/Accepted tokens per draft", 1),
+            ("draft_mean_seconds", "Speculative/Draft GPU time per step (ms)", 1000),
+            ("target_forward_mean_seconds", "Speculative/Target forward GPU time per step (ms)", 1000),
+            ("draft_time_share_ratio", "Speculative/Draft share of measured GPU time (%)", 100),
+            ("target_forward_time_share_ratio", "Speculative/Target forward share of measured GPU time (%)", 100),
+        ):
+            if speculative.get(key) is not None:
+                message[name] = round(float(speculative[key]) * scale, 4)
     conversation = metrics.get("conversation")
     if isinstance(conversation, dict):
         message[_CONCURRENT_CONVERSATIONS] = int(metrics["max_concurrency"])
@@ -212,15 +235,22 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
     replica_path = run.artifacts.get("replica_observations")
     if replica_path is not None:
         replica_observations = json.loads(replica_path.read_text(encoding="utf-8"))
+    allocation_path = run.artifacts.get("gpu_allocation")
+    allocation = (
+        json.loads(allocation_path.read_text(encoding="utf-8"))
+        if allocation_path is not None else None
+    )
 
     if run.measurements is not None:
         sdk_run.define_metric(ELAPSED_TIME)
         sdk_run.define_metric(REQUEST_INDEX)
+        request_slo_met = (run.metrics.get("slo") or {}).get("request_slo_met")
         elapsed_rows = [
             *time_series(
                 run.measurements,
                 duration=float(run.metrics["benchmark_time"]),
                 stream=bool(run.metrics["stream"]),
+                slo_met=request_slo_met,
             ),
             *cumulative_series(
                 run.measurements,
@@ -233,8 +263,19 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 continue
             labels = {name: f"{group_name}/{name}" for name in groups}
             for name, label in labels.items():
-                subset = [item for item in run.measurements if getattr(item, field) == name]
-                for row in time_series(subset, duration=float(run.metrics["benchmark_time"]), stream=bool(run.metrics["stream"])):
+                selected = [
+                    (index, item) for index, item in enumerate(run.measurements)
+                    if getattr(item, field) == name
+                ]
+                subset = [item for _, item in selected]
+                subset_slo = (
+                    [request_slo_met[index] for index, _ in selected]
+                    if request_slo_met is not None else None
+                )
+                for row in time_series(
+                    subset, duration=float(run.metrics["benchmark_time"]),
+                    stream=bool(run.metrics["stream"]), slo_met=subset_slo,
+                ):
                     elapsed_rows.append({
                         ELAPSED_TIME: row[ELAPSED_TIME],
                         **{f"{label}/{key.removeprefix('Time/')}": value
@@ -255,6 +296,8 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
             )})
         if replica_observations:
             elapsed_rows.extend(replica_history_rows(replica_observations))
+        if allocation is not None:
+            elapsed_rows.extend(gpu_allocation_history_rows(allocation))
         elapsed_rows.sort(key=lambda row: float(row[ELAPSED_TIME]))
         series = (
             (ELAPSED_TIME, elapsed_rows),
@@ -263,14 +306,13 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
                 request_series(
                     run.measurements,
                     stream=bool(run.metrics["stream"]),
-                    slo_met=(run.metrics.get("slo") or {}).get("request_slo_met"),
+                    slo_met=request_slo_met,
                 ),
             ),
         )
         if any(run.metrics.get(name) for name in ("datasets", "models", "request_classes")) or any(
             item.target_output_tokens is not None for item in run.measurements
         ):
-            request_slo_met = (run.metrics.get("slo") or {}).get("request_slo_met")
             sdk_run.log({"Breakdown/Requests": wandb.Table(
                 columns=["Start (s)", "Dataset", "Model", "Request class", "Priority",
                          "Target output tokens", "Actual output tokens", "E2EL (s)", "Success", "SLO met"],
@@ -322,7 +364,10 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
             sdk_run.log(message)
 
     observations = [
-        run.artifacts[name] for name in ("prometheus_observations", "console_log")
+        run.artifacts[name]
+        for name in (
+            "prometheus_observations", "gpu_allocation", "gpu_allocation_csv", "console_log"
+        )
         if name in run.artifacts
     ]
     if observations:
@@ -332,6 +377,19 @@ def publish_http_wandb(sdk_run: Any, run: BenchmarkRun) -> None:
         sdk_run.log_artifact(artifact)
 
     sdk_run.log(wandb_metric_fields(run.metrics))
+    if "prometheus_observations" in run.artifacts:
+        from benchmarks.results.plots.measurements import _prometheus_charts
+
+        for chart in _prometheus_charts(run.artifacts["prometheus_observations"].parent):
+            if not chart.metric.startswith("spec_"):
+                continue
+            sdk_run.log({f"Speculative/{chart.metric}": wandb.plot.line_series(
+                xs=[list(series.x) for series in chart.series],
+                ys=[list(series.y) for series in chart.series],
+                keys=[series.name for series in chart.series],
+                xname="Elapsed time (s)",
+                title=f"{chart.ylabel} · 5-minute observation window",
+            )})
 
 
 def publish_sweep_wandb(sdk_run: Any, run: BenchmarkRun) -> None:

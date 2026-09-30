@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+{"_benchmark_name":"studychat-rate","dataset":"hf://datasets/KrisQ/StudyChat/data.jsonl","max_tokens":4096,"temperature":0,"request_rate":[2,4,8,16],"max_concurrency":-1,"random_seed":0}

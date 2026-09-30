@@ -19,7 +19,6 @@ from benchmarks.datasets.huggingface import (
     resolve_hf_file_uri,
 )
 
-
 @dataclass(frozen=True)
 class Turn:
     """One Chat Completions message, including fields beyond role and content."""
@@ -69,18 +68,37 @@ def iter_jsonl_rows(
             row_index += 1
 
 
+def _iter_dataset_file(path: Path, *, allow_comments: bool) -> Iterator[tuple[Path, int, int, Any]]:
+    """Stream JSON-array rows or read JSONL records without materializing a large corpus."""
+    if path.suffix != ".json":
+        yield from iter_jsonl_rows(path, allow_comments=allow_comments)
+        return
+    with path.open("r", encoding="utf-8") as stream:
+        first = stream.read(1)
+        while first and first.isspace():
+            first = stream.read(1)
+    if first != "[":
+        yield from iter_jsonl_rows(path, allow_comments=allow_comments)
+        return
+    import ijson
+
+    with path.open("rb") as stream:
+        for row_index, row in enumerate(ijson.items(stream, "item", use_float=True)):
+            yield path, row_index + 1, row_index, row
+
+
 def iter_dataset_rows(
     source: str | Path, *, allow_comments: bool = False
 ) -> Iterator[tuple[Path, int, int, Any]]:
-    """Yield normalized rows from a local JSONL file, Hub file, or Hub dataset."""
+    """Yield normalized rows from a local JSONL/JSON file, Hub file, or Hub dataset."""
     selector = str(source)
     local_path = Path(selector).expanduser()
     if local_path.is_file():
-        yield from iter_jsonl_rows(local_path, allow_comments=allow_comments)
+        yield from _iter_dataset_file(local_path, allow_comments=allow_comments)
         return
     if is_hf_file_uri(selector):
-        yield from iter_jsonl_rows(
-            resolve_hf_file_uri(selector), allow_comments=allow_comments
+        yield from _iter_dataset_file(
+            Path(resolve_hf_file_uri(selector)), allow_comments=allow_comments
         )
         return
     if is_hf_dataset_spec(selector):
@@ -220,7 +238,7 @@ def _sharegpt_messages(
         raise ValueError(
             f"Invalid conversations at {dataset_path}:{line_number}"
         )
-    role_map = {"human": "user", "gpt": "assistant"}
+    role_map = {"human": "user", "gpt": "assistant", "system": "system"}
     messages: list[dict[str, Any]] = []
     for index, message in enumerate(conversations):
         if not isinstance(message, dict):
@@ -231,7 +249,7 @@ def _sharegpt_messages(
         speaker = message.get("from")
         if speaker not in role_map or "value" not in message:
             raise ValueError(
-                "ShareGPT messages must use from=human/gpt and value at "
+                "ShareGPT messages must use from=human/gpt/system and value at "
                 f"{dataset_path}:{line_number}"
             )
         messages.append(
@@ -369,6 +387,15 @@ def load_conversation_tasks(benchmark: BenchmarkConfig) -> list[Task]:
         ):
             if row_index < row_offset:
                 continue
+            if dataset_path.suffix == ".json" and isinstance(row, dict) and "conversations" in row and "messages" not in row:
+                # Unfiltered conversation arrays include empty and non-chat records.
+                try:
+                    messages = _sharegpt_messages(row, dataset_path, line_number)
+                except ValueError:
+                    continue
+                if not any(message["role"] == "user" for message in messages):
+                    continue
+                row = {**row, "messages": messages}
             task = _conversation_task(row, dataset_path, line_number, row_index)
             turn_count = 1 if task.prompt_token_ids is not None else len(split_chat_conversation(task.messages()))
             if workload.max_turns is not None and workload.max_turns > 0:

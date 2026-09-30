@@ -8,9 +8,12 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	inferencev1alpha1 "github.com/shiweijiezero/foretoken/control-plane/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -24,6 +27,49 @@ func runtimeCacheObservationPort(runtimePort int32) int32 {
 		return runtimePort + 1
 	}
 	return runtimePort - 1
+}
+
+// runtimeCacheObserverEnv gives preparation and serving processes the same filesystem observer identity.
+func runtimeCacheObserverEnv(cache inferencev1alpha1.RuntimeCacheBinding, runtimePort int32) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "FORETOKEN_CACHE_MOUNT_PATH", Value: cache.MountPath},
+		{Name: runtimeCacheClaimEnv, Value: cache.ClaimName},
+		{Name: "FORETOKEN_CACHE_OBSERVATION_PORT", Value: strconv.Itoa(int(runtimeCacheObservationPort(runtimePort)))},
+		{Name: "FORETOKEN_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
+	}
+}
+
+// placeRuntimeCache keeps all consumers of a single-node writable claim together.
+// Self-affinity lets the first consumer establish placement; later preparation, serving,
+// and frontend Pods follow that node without maintaining a second attachment inventory.
+func placeRuntimeCache(ctx context.Context, reader client.Reader, namespace string, cache *inferencev1alpha1.RuntimeCacheBinding, pod *corev1.PodTemplateSpec) error {
+	if cache == nil {
+		return nil
+	}
+	claim := new(corev1.PersistentVolumeClaim)
+	if err := reader.Get(ctx, client.ObjectKey{Namespace: namespace, Name: cache.ClaimName}, claim); err != nil {
+		return fmt.Errorf("read runtime cache access modes: %w", err)
+	}
+	for _, mode := range claim.Spec.AccessModes {
+		if mode == corev1.ReadWriteMany {
+			return nil
+		}
+	}
+	const claimLabel = "inference.foretoken.io/runtime-cache-claim"
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels[claimLabel] = string(claim.UID)
+	if pod.Spec.Affinity == nil {
+		pod.Spec.Affinity = &corev1.Affinity{}
+	}
+	pod.Spec.Affinity.PodAffinity = &corev1.PodAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{{
+			TopologyKey:   corev1.LabelHostname,
+			LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{claimLabel: string(claim.UID)}},
+		}},
+	}
+	return nil
 }
 
 // RuntimeCacheProfile configures the cache mount path and an optional existing-claim override.

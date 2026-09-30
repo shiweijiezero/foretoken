@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from benchmarks.config.benchmark import (
@@ -21,12 +22,17 @@ from benchmarks.config.benchmark import (
 class EvaluationConfig:
     """Share service and output options; evaluator is absent for reference comparisons."""
 
-    service: ModelServiceSource
+    services: tuple[ModelServiceSource, ...]
     evaluator: str | None
     arguments: tuple[str, ...]
     outputs: BenchmarkOutputConfig
     wandb: WandbRunConfig
     resume: str = ""
+
+    @property
+    def service(self) -> ModelServiceSource:
+        """Return the primary candidate for single-service and reference comparisons."""
+        return self.services[0]
 
     def to_dict(self) -> dict:
         """Return publication settings without authentication or native secret-bearing arguments."""
@@ -37,15 +43,30 @@ class EvaluationConfig:
         }
 
 
+def deployment_labels(services: tuple[ModelServiceSource, ...]) -> tuple[str, ...]:
+    """Use the shortest distinct path suffix for each deployment's comparison label."""
+    names = [Path(source.kustomize_path).resolve().parts for source in services]
+    return tuple(
+        next(
+            ("/".join(parts[-size:]) for size in range(1, len(parts) + 1)
+             if sum(other[-size:] == parts[-size:] for other in names) == 1),
+            "/".join(parts),
+        )
+        for parts in names
+    )
+
+
 def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, bool]:
     """Extract exact Foretoken options; leave task options and their values in original order."""
     arguments = list(argv)
     comparison = any(
-        argument.partition("=")[0] in ("--reference", "--reference-url", "--reference-model")
+        argument.partition("=")[0] in ("--reference", "--reference-url", "--reference-model", "--greedy-compare")
         for argument in arguments
     )
-    # PATH is the first operand. A native option's value must never become PATH.
-    path = arguments.pop(0) if arguments and not arguments[0].startswith("-") else ""
+    # Only leading operands are deployment paths; native option values retain their position.
+    paths = []
+    while arguments and not arguments[0].startswith("-"):
+        paths.append(arguments.pop(0))
     source = ModelServiceSource()
     output = BenchmarkOutputConfig()
     tracking = WandbRunConfig()
@@ -53,13 +74,13 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
         prog="foretoken eval",
         allow_abbrev=False,
         add_help=False,
-        usage="%(prog)s [PATH | --url URL] [options]",
-        description="Compare model output distributions." if comparison else "Evaluate model quality with an evaluation framework.",
+        usage="%(prog)s [PATH ... | --url URL] [options]",
+        description="Compare reference and candidate models." if comparison else "Evaluate model quality with an evaluation framework.",
         epilog=(
-            "PATH selects the candidate deployment; --reference selects its reference."
+            "Leading PATH operands select candidate Kustomize deployments; --reference selects their reference."
             if comparison else
-            "Add --reference PATH to compare model distributions. "
-            "PATH is a Kustomize directory. Native task options need no separator."
+            "Leading PATH operands select Kustomize deployments for one task comparison. "
+            "Add --reference PATH for model comparisons. Native task options need no separator."
         ),
     )
     parser.add_argument(
@@ -110,13 +131,22 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
     options, native = parser.parse_known_args(arguments)
     if comparison and options.evaluator is not None:
         parser.error("--evaluator cannot be combined with a reference")
+    if len(paths) > 1 and len({str(Path(path).resolve()) for path in paths}) != len(paths):
+        parser.error("deployment paths in one comparison must be distinct")
+    if paths and options.url:
+        parser.error("select deployment paths or --url, not both")
+    if len(paths) > 1 and options.resume:
+        parser.error("--resume applies to one evaluation; omit it for a multi-deployment comparison")
     config = EvaluationConfig(
-        service=ModelServiceSource(
-            kustomize_path=path,
-            url=options.url,
-            model=options.model,
-            api_key=options.api_key,
-            wait_timeout=options.wait_timeout,
+        services=tuple(
+            ModelServiceSource(
+                kustomize_path=path,
+                url=options.url if not path else "",
+                model=options.model,
+                api_key=options.api_key,
+                wait_timeout=options.wait_timeout,
+            )
+            for path in (paths or [""])
         ),
         evaluator=None if comparison else options.evaluator or "lm-eval",
         resume=options.resume,
@@ -137,7 +167,8 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
         parser.print_help()
     else:
         if not comparison:
-            config.service.validate()
+            for service in config.services:
+                service.validate()
         config.outputs.validate()
     return config, options.help
 

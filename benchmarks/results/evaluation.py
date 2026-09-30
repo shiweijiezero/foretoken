@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import csv
 import json
 import logging
 from pathlib import Path
@@ -221,6 +222,7 @@ class EvaluationArtifactSink:
 def publish_quality_wandb(session: Any, run: BenchmarkRun) -> None:
     """Publish native-valued scalars, a complete score table, and downloadable run artifacts."""
     columns = [
+        *(["method"] if run.record.get("mode") == "evaluation_comparison" else []),
         "task",
         "level",
         "subset",
@@ -252,7 +254,7 @@ def publish_quality_wandb(session: Any, run: BenchmarkRun) -> None:
         ):
             key = "/".join(
                 quote(str(row[k]), safe="") or "all"
-                for k in ("task", "level", "subset", "filter", "metric")
+                for k in (("method",) if "method" in row else ()) + ("task", "level", "subset", "filter", "metric")
             )
             summary[f"Evaluation/{key}"] = row["value"]
     summary["Evaluation/Execution"] = run.metrics["execution"]
@@ -268,6 +270,71 @@ def publish_quality_wandb(session: Any, run: BenchmarkRun) -> None:
     session.log_artifact(artifact)
     if session.url:
         logger.info("W&B results: %s", session.url)
+
+
+class EvaluationComparisonArtifactSink:
+    """Save aligned multi-method scores as a spreadsheet beside child evaluator outputs."""
+
+    def __init__(self, directory: str) -> None:
+        self.directory = Path(directory)
+
+    def open(self, record: dict[str, Any]) -> None:
+        return None
+
+    def publish(self, run: BenchmarkRun) -> None:
+        columns = ("method", "task", "level", "subset", "filter", "metric", "value",
+                   "stderr", "samples", "direction", "display_multiplier", "display_unit", "primary")
+        path = self.directory / "evaluation_comparison.csv"
+        with path.open("w", encoding="utf-8", newline="") as stream:
+            writer = csv.DictWriter(stream, fieldnames=columns, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(run.metrics["scores"])
+        run.artifacts["evaluation_comparison_csv"] = path
+
+    def close(self, *, exit_code: int = 0) -> None:
+        return None
+
+
+class EvaluationComparisonConsoleSink:
+    """Show aligned task scores for each evaluated deployment."""
+
+    def open(self, record: dict[str, Any]) -> None:
+        return None
+
+    def publish(self, run: BenchmarkRun) -> None:
+        for method in run.metrics["evaluation_comparison"]["methods"]:
+            logger.info("Method %s (%s): %s", method["label"], method["model"], method["status"])
+        for row in run.metrics["scores"]:
+            if row["level"] == "task":
+                logger.info("%s · %s · %s/%s: %s", row["method"], row["task"],
+                            row["metric"], row["filter"], _display(row))
+
+    def close(self, *, exit_code: int = 0) -> None:
+        return None
+
+
+def publish_evaluation_comparison_wandb(session: Any, run: BenchmarkRun) -> None:
+    """Publish matched task scores and child artifacts through the quality W&B sink."""
+    publish_quality_wandb(session, run)
+    from benchmarks.results.plots.measurements import _evaluation_comparison_charts
+
+    for chart in _evaluation_comparison_charts(run.metrics["evaluation_comparison"]):
+        table = wandb.Table(columns=["Method", chart.ylabel], data=[
+            [series.name, series.y[0]] for series in chart.series
+        ])
+        session.log({f"Evaluation Comparison/{chart.name}": wandb.plot.bar(
+            table, "Method", chart.ylabel, title=chart.title,
+        )})
+
+
+def evaluation_comparison_sinks(config: EvaluationConfig, record: dict[str, Any], directory: str) -> list[ResultSink]:
+    """Compose one quality comparison around the existing result destinations."""
+    sinks = evaluation_sinks(
+        config, record, directory,
+        console_sink=EvaluationComparisonConsoleSink(),
+        publisher=publish_evaluation_comparison_wandb,
+    )
+    return [sinks[0], EvaluationComparisonArtifactSink(directory), *sinks[1:]]
 
 
 def evaluation_sinks(

@@ -21,28 +21,25 @@ foretoken perf examples/quickstart \
 
 使用 trace 时，`--max-concurrency` 设置在途请求上限，请求按 trace 时间戳到达。多轮负载的限额约束对话数，实测峰值和请求预算则按每轮请求统计。
 
-## 固定请求速率，测量达标率
+## 固定对话启动速率，测量达标率
 
-[DistServe ShareGPT 配置](../../scripts/common/distserve-sharegpt.jsonl)沿用官方实验代码的历史前缀采样和逐请求输出长度。先用被测模型的 tokenizer 准备请求，再将下方 `http://host/v1/completions` 替换为该模型服务的地址：
+[ShareGPT 到达率配置](../../scripts/common/sharegpt-rate.jsonl)自动下载原始对话数据，扫描每秒启动 2、4、8、16 段对话的起始负载。将下方 URL 和模型名换成服务的 Chat Completions 地址和模型：
 
 ```bash
-python benchmarks/scripts/prepare_distserve_sharegpt.py --model facebook/opt-13b
-
-foretoken perf --url http://host/v1/completions --model facebook/opt-13b \
-  --sweep benchmarks/scripts/common/distserve-sharegpt.jsonl \
+foretoken perf --url http://host/v1/chat/completions --model Qwen/Qwen3-0.6B \
+  --sweep benchmarks/scripts/common/sharegpt-rate.jsonl \
+  --num-prompts 300 --warmup-requests 0 \
   --slo-params '[{"ttft":"<=0.25","tpot":"<=0.1"}]' \
-  --num-runs 3 --experiment-name distserve-sharegpt --output local,wandb,plot
+  --num-runs 3 --experiment-name sharegpt-rate --output local,wandb,plot
 ```
 
-准备脚本自动下载官方实验所用的 ShareGPT 文件。从至少包含三条消息的对话中随机选择历史前缀，用换行符拼接消息正文，并用下一条记录的 token 数作为目标输出长度。保留原代码的短序列筛选规则和输入加输出小于 2048 token 的限制，再以种子 0 抽样 300 个请求。生成的 JSONL 通过 Completions 直接发送 token ID，不添加聊天模板，各请求按记录长度生成输出。准备脚本与被测服务须使用相同 tokenizer；分词器仓库或本地目录与模型名不同时，通过 `--tokenizer` 指定。
+数据集按记录的顺序执行完整多轮对话。300 个请求的预算按各轮 HTTP 请求计数，最后一段对话可能在用尽预算时停止。`max_tokens: 4096` 是每轮生成上限，不是固定输出长度。到达率控制对话何时启动，SLO 则逐条 HTTP 请求统计 TTFT 和 TPOT。上述速率是 Foretoken 的起始负载，不是某篇论文的模型专属参数。只有 `--slo-search` 才搜索并发。
 
-扫描沿用官方 OPT-13B DistServe 脚本的 0.75、1.5、3、4.5、6、6.75、7.5、9 请求/秒，使用 Poisson 到达、不限制客户端并发，temperature 为 1，不额外预热。命令将每个速率点重复 3 次，要求 TTFT 不超过 250 毫秒且 TPOT 不超过 100 毫秒。`--slo-params` 只统计指定负载下的达标率，加上 `--slo-search` 才搜索并发。
-
-协议来源：[数据处理](https://github.com/LLMServe/DistServe/blob/main/evaluation/2-benchmark-serving/0-prepare-dataset.py)、[请求抽样与到达过程](https://github.com/LLMServe/DistServe/blob/main/evaluation/2-benchmark-serving/2-benchmark-serving.py)、[速率设置](https://github.com/LLMServe/DistServe/blob/main/evaluation/ae-scripts/e2e/opt-13b-distllm-client.sh)。本命令通过服务的 OpenAI 流式接口计时，原实验代码则读取自定义接口返回的时间戳。
+[DistServe 的服务评测代码](https://github.com/LLMServe/DistServe/blob/main/evaluation/2-benchmark-serving/2-benchmark-serving.py)可作为请求到达与 SLO 实验的参考；本配置不宣称复现其数据准备和模型专属设置。
 
 测量模式接受一个条件对象，指标为 `latency`、`ttft`、`tpot` 或 `itl`，单位均为秒。一个请求满足全部条件才算达标；失败或缺少必要指标的请求计为不达标。`itl` 检查每个请求中最大的分片间隔，不是全局 token 间隔的 p99。
 
-扫描结果自动绘制到达率与达标率、请求 goodput、token goodput、延迟的曲线。从结果中读取达到目标达标率（如 90% 或 99%）的最高已测速率，再扩展或细化参数文件中的速率列表以定位边界。各轮先计算达标比例，再汇总均值；不合并所有请求计算一个比例，也不自动搜索容量。
+扫描结果自动绘制到达率与达标率、请求 goodput、token goodput、延迟的曲线。各次运行也会沿吞吐和延迟的时间轴绘制[一秒 SLO 窗口](../../metrics_zh.md#slo-结果)。一次比较多个 SLO 阈值和速率，可使用[阈值扫描](sweep_zh.md#比较-slo-阈值与请求速率)。从结果中读取请求达标率达到目标（如 90% 或 99%）的最高已测对话启动速率，再扩展或细化参数文件中的速率列表以定位边界。各轮先计算达标比例，再汇总均值；不合并所有请求计算一个比例，也不自动搜索容量。
 
 ## 设置搜索条件
 

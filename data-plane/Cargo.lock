@@ -1369,8 +1369,10 @@ dependencies = [
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
  "tokio",
+ "tokio-util",
  "uuid",
  "vllm-llm",
 ]
@@ -1382,6 +1384,7 @@ dependencies = [
  "foretoken-artifacts",
  "foretoken-chat",
  "foretoken-engine-core-client",
+ "foretoken-model-protocol",
  "foretoken-tokenizer",
  "hf-hub",
  "reqwest 0.12.28",

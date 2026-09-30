@@ -10,7 +10,7 @@ foretoken perf examples/quickstart \
   --max-concurrency 4 --num-prompts 20 --output local,wandb
 ```
 
-多个数据集共享到达时钟、并发限制和请求预算。默认平均分配 `--num-prompts`；两个来源传入 `--dataset-weights 3,1` 时，第一个获得四分之三的配额。仅指定 `--duration` 而不指定 `--num-prompts` 时，按权重抽取对话，再执行选定的轮次。每条请求保留来源身份；有请求配额时，最后一条多轮对话会按该来源的剩余配额截断。远程选择器也可换成本地 JSONL 路径；随机输入不能与其他数据集混用。
+多个数据集共享到达时钟、并发限制和请求预算。默认平均分配 `--num-prompts`；两个来源传入 `--dataset-weights 3,1` 时，第一个获得四分之三的配额。仅指定 `--duration` 而不指定 `--num-prompts` 时，按权重抽取对话，再执行选定的轮次。每条请求保留来源身份；有请求配额时，最后一条多轮对话会按该来源的剩余配额截断。远程选择器也可换成本地 JSONL 或顶层为对话数组的 JSON 路径；随机输入不能与其他数据集混用。
 
 JSONL 中的整数 token 数组，例如 `{"prompt":[1,42,73],"output_length":32}`，作为一条已分词的 Completions 请求发送，不拆成多轮，也不添加聊天模板。token ID 必须使用被测模型的 tokenizer。字符串 `prompt` 仍按 Chat Completions 消息发送。
 

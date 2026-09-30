@@ -45,6 +45,11 @@ def _preserve_value(value: Any) -> Any:
     return value
 
 
+def _slo_criteria(value: Any) -> list[dict[str, str]]:
+    """Keep one sweep choice as a group of criteria for the existing SLO config."""
+    return [value] if isinstance(value, dict) else value
+
+
 # Only HTTP request, generation, and workload choices are exposed by this adapter.
 _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "max_concurrency": ("load", "max_concurrency", int),
@@ -82,6 +87,7 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "prompt": ("workload", "fixed_prompt", str),
     "max_turns": ("workload", "max_turns", int),
     "conversation_history": ("workload", "conversation_history", str),
+    "slo_params": ("slo", "params", _slo_criteria),
 }
 
 

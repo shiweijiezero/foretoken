@@ -60,6 +60,11 @@ func observeGroupCache(ctx context.Context, kubeClient client.Client, group *inf
 	if err := kubeClient.List(ctx, &pods, client.InNamespace(group.Namespace), client.MatchingLabels(modelGroupLabels(group))); err != nil {
 		return nil, err
 	}
+	var preparationPods corev1.PodList
+	if err := kubeClient.List(ctx, &preparationPods, client.InNamespace(group.Namespace), client.MatchingLabels{modelPreparationGroupLabel: group.Name}); err != nil {
+		return nil, err
+	}
+	pods.Items = append(pods.Items, preparationPods.Items...)
 	var observations []runtimeCacheObservation
 	var failures []error
 	for index := range pods.Items {

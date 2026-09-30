@@ -10,7 +10,7 @@ foretoken perf examples/quickstart \
   --max-concurrency 4 --num-prompts 20 --output local,wandb
 ```
 
-Datasets share one arrival clock, concurrency limit, and request budget. `--num-prompts` is divided evenly by default; use `--dataset-weights 3,1` with two datasets to allocate three quarters to the first. With `--duration` instead of `--num-prompts`, weights select conversations, each of which runs its selected turns. Each request keeps its source identity. With a request budget, the final multi-turn conversation is truncated to its source's remaining allocation. Local JSONL paths can replace remote selectors. Random inputs cannot be mixed with other datasets.
+Datasets share one arrival clock, concurrency limit, and request budget. `--num-prompts` is divided evenly by default; use `--dataset-weights 3,1` with two datasets to allocate three quarters to the first. With `--duration` instead of `--num-prompts`, weights select conversations, each of which runs its selected turns. Each request keeps its source identity. With a request budget, the final multi-turn conversation is truncated to its source's remaining allocation. Local JSONL paths or top-level JSON conversation arrays can replace remote selectors. Random inputs cannot be mixed with other datasets.
 
 A JSONL row with an integer token array, such as `{"prompt":[1,42,73],"output_length":32}`, is one pre-tokenized Completions request, not a conversation. The IDs must use the served model's tokenizer; no chat template is added. A string `prompt` retains its Chat Completions behavior.
 

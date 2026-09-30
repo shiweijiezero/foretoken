@@ -163,6 +163,39 @@ groups:
             )
           )
 
+      # These are sums of paired GPU stage observations, not elapsed wall time.
+      - record: foretoken:model_server_spec_decode_draft_seconds:rate5m
+        expr: |
+          sum by (namespace, modelservice, model_group, model_role, model_name, engine) (
+            label_replace(
+              label_replace(
+                rate(vllm:spec_decode_draft_duration_seconds_sum{
+                  endpoint="model-server",
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role=~"aggregate|decode"
+                }[5m]),
+                "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+              ),
+              "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_spec_decode_target_forward_seconds:rate5m
+        expr: |
+          sum by (namespace, modelservice, model_group, model_role, model_name, engine) (
+            label_replace(
+              label_replace(
+                rate(vllm:spec_decode_target_forward_duration_seconds_sum{
+                  endpoint="model-server",
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role=~"aggregate|decode"
+                }[5m]),
+                "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+              ),
+              "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            )
+          )
+
       - record: foretoken:frontend_up:sum
         expr: |
           sum by (namespace, frontend_service) (
