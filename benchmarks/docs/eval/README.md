@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](README_zh.md) · [Evaluation and profiling](../../README.md)
 
-Evaluate a running model with lm-evaluation-harness or EvalScope. Complete the [setup](../../README.md#get-started), then choose a framework below. Add `--reference` for [reference/candidate distribution comparisons](distribution-comparison.md), including KL, bit-width plots, and logit differences.
+Use `foretoken eval` to score generated text and existing videos. Complete the [setup](../../README.md#get-started), then choose an evaluation method below. For text-model comparisons, add `--reference` to [compare reference and candidate probability distributions](distribution-comparison.md), including KL, bit-width plots, and logit differences.
 
 ## lm-evaluation-harness
 
@@ -57,6 +57,32 @@ The summary reports task scores and how many samples were scored. Category and s
 
 For both frameworks, omit `--limit` to run the complete selected task. The evaluator and task define prompting and scoring. Run `foretoken eval --evaluator lm-eval --help` or `foretoken eval --evaluator evalscope --help` for the corresponding options.
 
+## Evaluate video quality
+
+Prepare VBench, then score the existing MP4 or GIF files in `VIDEO_DIR`:
+
+```bash
+foretoken eval setup vbench
+foretoken eval --video VIDEO_DIR --output local
+```
+
+`setup` saves reusable settings in `foretoken-evaluators.yaml`. `eval --video` scores videos without generating them; use `foretoken perf video` for generation and serving-performance measurements.
+
+For Foretoken video results, prompts come from `raw_results.json`; otherwise they come from filenames. Use `--prompt-file` for a JSON mapping such as `{"clip.mp4": "A red car drives past."}` and `--dimension` to select dimensions. Scores are saved in `metrics.json`, with run provenance in `config.json`.
+
+### Use your own image or configuration
+
+Pass `--image IMAGE` to `setup` for a different VBench image. If its checkpoints are already prepared, you can instead provide an evaluator YAML with `--config PATH`:
+
+```yaml
+evaluators:
+  vbench:
+    image: foretoken-vbench:local
+    cache: .foretoken/evaluators/vbench/cache
+```
+
+For direct evaluation, the image and cache must exist locally. The image must contain VBench and an `org.foretoken.vbench.commit` label; relative cache paths resolve beside the YAML. The published image uses NVIDIA GPUs; on a shared host, select an available GPU with `CUDA_VISIBLE_DEVICES`.
+
 ## Use an existing endpoint
 
 Replace the deployment directory with the service's Chat Completions URL and model name:
@@ -72,7 +98,7 @@ foretoken eval \
 
 This mode uses no Kubernetes resources. Add `--api-key` when authentication is required. For a Foretoken Gateway deployment, pass its Kustomize directory so the command discovers the address and routing headers.
 
-## Resume an evaluation
+## Resume text evaluation or model comparison
 
 Keep local output to retain progress. After an interruption, repeat the original command with `--resume` pointing to its printed result directory. Replace `results/previous-run` below with that directory:
 
@@ -104,4 +130,4 @@ Open the result directory printed by the command:
 
 W&B provides task metrics, a score table, and native reports as a downloadable artifact. Common [output settings](../../README.md#read-and-save-results) select destinations and organize comparisons.
 
-Compare scores using the same evaluator, task configuration, and sample selection.
+Compare scores using the same evaluator, inputs, prompts, and scoring settings.

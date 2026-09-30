@@ -346,7 +346,7 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "eval",
         add_help=False,
-        help="Score model answers or compare reference and candidate distributions",
+        help="Score text or video outputs, or compare model distributions",
     )
     subparsers.add_parser(
         "plot", add_help=False,

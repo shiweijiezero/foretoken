@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Dispatch answer scoring or distribution comparisons through shared service and result lifecycles."""
+"""Dispatch text scoring, video scoring, or model distribution comparisons."""
 
 from __future__ import annotations
 
@@ -9,17 +9,32 @@ from collections.abc import Sequence
 import sys
 
 from benchmarks.config.evaluation import native_arguments, parse_evaluation_arguments
+from benchmarks.config.video_evaluation import (
+    VBenchEvaluationConfig,
+    parse_vbench_setup_arguments,
+)
+from benchmarks.integrations.vbench.evaluator import VBenchEvaluator
 from benchmarks.model_service import resolve_model_service
 from benchmarks.results.console import configure_logging
-from benchmarks.runs.evaluation import run_evaluation
+from benchmarks.runs.evaluation import run_evaluation, run_video_evaluation
 
 
 def main(argv: Sequence[str] | None = None) -> None:
-    """Select distribution comparison or native answer scoring through shared service lifecycles."""
+    """Route video artifacts or resolve services for text scoring and comparisons."""
     try:
+        arguments = tuple(sys.argv[1:] if argv is None else argv)
+        if arguments[:1] == ("setup",):
+            from benchmarks.integrations.vbench.setup import setup_vbench
+
+            setup_vbench(parse_vbench_setup_arguments(arguments[1:]))
+            return
         config, help_requested = parse_evaluation_arguments(
-            sys.argv[1:] if argv is None else argv
+            arguments
         )
+        if isinstance(config, VBenchEvaluationConfig):
+            configure_logging(not config.outputs.includes("quiet"))
+            run_video_evaluation(config, VBenchEvaluator(config))
+            return
         if config.evaluator is None:
             if help_requested:
                 return
