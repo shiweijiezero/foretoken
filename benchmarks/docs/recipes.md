@@ -7,11 +7,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 English | [简体中文](recipes_zh.md) · [Evaluation and profiling](../README.md)
 
-Run these commands from the repository root, replacing `examples/quickstart` with your model's configuration directory. For length sweeps, keep only preset rows whose input and output fit the model's context.
+Run these commands from the repository root, replacing `examples/quickstart` with your model's configuration directory.
 
 ## Input length, output length, and concurrency
 
-Compare latency and throughput across fixed input/output length pairs and concurrency levels.
+Compare latency and throughput across fixed input/output length pairs and concurrency levels, keeping only pairs that fit the model's context.
 
 ```bash
 foretoken perf examples/quickstart --dataset random \
@@ -22,7 +22,7 @@ foretoken perf examples/quickstart --dataset random \
 
 ## Long-context performance
 
-Vary input length at concurrency 1 with a fixed 512-token output.
+Vary input length at concurrency 1 with a fixed 512-token output, reserving room for the output within the model's context.
 
 ```bash
 foretoken perf examples/quickstart --dataset random \
@@ -32,9 +32,9 @@ foretoken perf examples/quickstart --dataset random \
   --experiment-name long-context --output local,wandb,plot
 ```
 
-## Conversation arrival rates
+## Conversations started per second
 
-Compare ShareGPT and StudyChat at different conversation arrival rates; the request budget counts individual turns.
+Use ShareGPT and StudyChat to start conversations using a Poisson process, averaging 2, 4, 8, or 16 new conversations per second; `--num-prompts` counts individual turns.
 
 ```bash
 foretoken perf examples/quickstart \
@@ -68,7 +68,7 @@ foretoken perf examples/quickstart \
 
 ## SLO threshold sensitivity
 
-Compare attainment and goodput across arrival rates and first-token latency thresholds.
+Vary the average number of conversations started per second and the first-token latency threshold, using Poisson arrivals to compare attainment and goodput.
 
 ```bash
 foretoken perf examples/quickstart \

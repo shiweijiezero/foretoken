@@ -7,11 +7,11 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](recipes.md) | 简体中文 · [评测与性能剖析](../README_zh.md)
 
-在仓库根目录运行，将 `examples/quickstart` 换成待测模型的 配置目录。长度扫描只保留输入与输出总长度不超过模型上下文的配置行。
+在仓库根目录运行，将 `examples/quickstart` 换成待测模型的配置目录。
 
 ## 输入输出长度与并发
 
-在固定输入／输出长度组合下扫描并发，比较延迟与吞吐量。
+在固定输入／输出长度组合下扫描并发，比较延迟与吞吐量；配置文件中只保留模型上下文能容纳的长度组合。
 
 ```bash
 foretoken perf examples/quickstart --dataset random \
@@ -22,7 +22,7 @@ foretoken perf examples/quickstart --dataset random \
 
 ## 长上下文性能
 
-固定并发为 1、输出为 512 token，比较输入长度增长带来的性能变化。
+固定并发为 1、输出为 512 token，比较输入长度增长带来的性能变化；选择输入长度时，为输出预留 512 token。
 
 ```bash
 foretoken perf examples/quickstart --dataset random \
@@ -32,9 +32,9 @@ foretoken perf examples/quickstart --dataset random \
   --experiment-name long-context --output local,wandb,plot
 ```
 
-## 多轮对话到达率
+## 多轮对话：每秒启动多少段
 
-分别在 ShareGPT 和 StudyChat 上扫描会话到达率，请求预算按每轮请求计数。
+使用 ShareGPT 和 StudyChat，按泊松过程随机启动新对话，分别测试平均每秒 2、4、8、16 段对话；`--num-prompts` 按每轮请求计数。
 
 ```bash
 foretoken perf examples/quickstart \
@@ -68,7 +68,7 @@ foretoken perf examples/quickstart \
 
 ## SLO 阈值敏感性
 
-同时扫描到达率与首 token 延迟阈值，比较达标率和 goodput。
+改变平均每秒启动的对话数和首 token 延迟阈值，比较达标率和 goodput；新对话按泊松过程随机启动。
 
 ```bash
 foretoken perf examples/quickstart \
@@ -144,7 +144,7 @@ foretoken eval --reference examples/quantized-model/bf16 \
 
 ## 推测解码
 
-将 `BASELINE` 和 `CANDIDATE` 分别设为同一目标模型关闭、开启推测解码的 配置目录，比较性能和贪心生成序列。
+将 `BASELINE` 和 `CANDIDATE` 分别设为同一目标模型关闭、开启推测解码的配置目录，比较性能和贪心生成序列。
 
 ```bash
 BASELINE=path/to/non-speculative-deployment
