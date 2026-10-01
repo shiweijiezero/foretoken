@@ -71,22 +71,22 @@ Add `--gateway-section-name LISTENER` only when more than one listener matches.
 
 ### Current source
 
-Prepare the build tools listed in the [source deployment guide](../docs/custom-deployment.md), then build and install from the repository root:
+Build and install from the repository root. The cluster needs a default StorageClass for compiler caches; see the [source deployment guide](../docs/custom-deployment.md) for storage overrides.
 
 ```bash
 foretoken install -e .
 ```
 
-This binds the checkout on this workstation to the target cluster. After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#6-redeploy-source-changes).
+This binds the workstation checkout to the target cluster and builds in dedicated Pods. After editing it, use `foretoken deploy` to [redeploy source changes](../docs/custom-deployment.md#deploy-and-update-code). Use `--engine-source PATH` to also bind a [vLLM engine checkout](../docs/custom-deployment.md#edit-an-inference-engine).
 
-A standard active kind or k3d context imports the built images locally. Other Kubernetes contexts need a registry reachable by their nodes. Sign in to the registry host with an account that can push the target repository before installation:
+A standard active kind or k3d context loads the built images directly into its nodes. Other Kubernetes contexts need a registry reachable by their nodes. For a private repository, prepare pull Secrets before installation as described in [Deploy Foretoken from Source](../docs/custom-deployment.md#remote-clusters-and-private-registries). For publicly readable images, replace `example/foretoken` with a repository you can push to:
 
 ```bash
 docker login ghcr.io
 foretoken install -e . --registry ghcr.io/example/foretoken
 ```
 
-Registry login authorizes the local image push. Private registries also need `imagePullSecrets` and `workload.imagePullSecrets` through `--values` so nodes can pull the images; see [Deploy Foretoken from Source](../docs/custom-deployment.md).
+Registry login authorizes the cluster build to push images.
 
 ### Model distribution
 

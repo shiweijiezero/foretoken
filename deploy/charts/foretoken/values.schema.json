@@ -19,7 +19,16 @@
       "type": "object",
       "required": ["enabled"],
       "properties": {
-        "enabled": {"type": "boolean"}
+        "enabled": {"type": "boolean"},
+        "build": {
+          "type": "object",
+          "properties": {
+            "image": {"type": "string", "minLength": 1},
+            "storageClassName": {"type": "string"},
+            "storageSize": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

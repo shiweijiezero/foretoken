@@ -18,6 +18,11 @@ imagePullSecrets: []
 # Source installations enable code bundles synchronized to workload runtime caches.
 development:
   enabled: false
+  # Used by the CLI for source builds; compiler caches remain in the cluster.
+  build:
+    image: docker.io/moby/buildkit:v0.33.1-rootless
+    storageClassName: ""
+    storageSize: 100Gi
 
 controller:
   replicas: 1

@@ -12,7 +12,8 @@
 ## 构建和安装
 
 准备可用的 GPU Kubernetes 集群，以及[源码部署指南](../../../../docs/custom-deployment_zh.md)
-列出的工具。本地集群可按 [k3d 指南](../../../../docs/k3d-deployment_zh.md)搭建。
+列出的工具。下方镜像构建命令还需要启用 BuildKit 的 Docker、Make 和由 rustup 管理的 Rust 工具链。
+本地集群可按 [k3d 指南](../../../../docs/k3d-deployment_zh.md)搭建。
 在 Foretoken 仓库根目录执行：
 
 ```bash

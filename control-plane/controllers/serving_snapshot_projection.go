@@ -89,6 +89,28 @@ func (reconciler *FrontendServiceReconciler) reconcileServingSnapshot(ctx contex
 	if err := reconciler.Patch(ctx, desired, client.Apply, client.FieldOwner(frontendServiceFieldOwner), client.ForceOwnership); err != nil {
 		return false, fmt.Errorf("apply serving snapshot ConfigMap: %w", err)
 	}
+	// Updating Pod metadata prompts kubelet to refresh the projected ConfigMap.
+	// Consumer acknowledgements still come from the frontend's active generation.
+	const refreshAnnotation = "inference.foretoken.io/serving-config-version"
+	refreshVersion := fmt.Sprint(version)
+	var pods corev1.PodList
+	if err := reconciler.List(ctx, &pods, client.InNamespace(frontend.Namespace), client.MatchingLabels{frontendServiceLabel: frontend.Name}); err != nil {
+		return false, fmt.Errorf("list frontend Pods for config refresh: %w", err)
+	}
+	for index := range pods.Items {
+		pod := &pods.Items[index]
+		if !pod.DeletionTimestamp.IsZero() || pod.Annotations[refreshAnnotation] == refreshVersion {
+			continue
+		}
+		base := pod.DeepCopy()
+		if pod.Annotations == nil {
+			pod.Annotations = make(map[string]string)
+		}
+		pod.Annotations[refreshAnnotation] = refreshVersion
+		if err := reconciler.Patch(ctx, pod, client.MergeFrom(base)); err != nil && !apierrors.IsNotFound(err) {
+			return false, fmt.Errorf("refresh frontend Pod %q config: %w", pod.Name, err)
+		}
+	}
 	if frontend.Status.ServingSnapshotVersion < version {
 		base := frontend.DeepCopy()
 		frontend.Status.ServingSnapshotVersion = version

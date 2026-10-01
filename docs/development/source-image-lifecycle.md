@@ -9,22 +9,30 @@ Source updates separate runtime code from the image that supplies its dependenci
 
 ## Preparation and publication
 
-The CLI owns the workstation's checkout binding, saved installation settings, input comparison, and artifact preparation. The binding identifies the cluster and installed platform; it is not shared between workstations. Source operations on the same workstation serialize by cluster so preparation and cleanup cannot remove artifacts another operation is using.
+The CLI owns the workstation's checkout binding, saved installation settings, and input comparison. The binding identifies the cluster, installed platform, and controller-selected runtime environment; it is not shared between workstations. Source operations on the same workstation serialize by cluster. The client assigns revisions to changed paths and sends only their contents and removals; a completed input record marks the cluster workspace ready for a build.
 
-For the Foretoken frontend and vLLM model-server, Rust changes export executables through the existing Docker builder and compilation cache. Python adapter changes replace the complete adapter directory. A Python-only update retains the component's last compiled executable. Input snapshots are committed only after checking that the checkout did not change during preparation.
+Dedicated BuildKit Pods own compilation. Persistent compiler volumes retain the source workspace, dependency downloads, build caches, and outputs separately from model data. Existing Dockerfiles build platform images or export runtime executables. Registry builds push directly from the cluster. Local kind/k3d builds load images into the node's containerd without routing image archives through the client. An interrupted installation retains its compiler cache. After acquiring the workstation's operation lock, the next source operation retires that binding's abandoned build Pods before reusing it. Each temporary registry Secret belongs to its build Pod.
 
-A bundle is the complete executable and adapter payload for one component revision. The CLI uploads it to a staging directory in persistent runtime storage and publishes it before selecting that revision on a service. Published directories are immutable. A separate CPU publisher allows publication even when the previous inference process cannot start.
+Runtime publication copies a complete component payload into a staging directory on the workload's persistent cache, then selects the revision only after publication finishes. Published directories are not modified by later updates. The publisher uses the runtime image's user and runs outside the serving Pods, so a failed inference process does not prevent preparing its replacement.
+
+## Engine source and native extensions
+
+An explicit engine checkout is independent of the pinned vLLM Rust dependency. Its Python source is authoritative; the runtime supplies compatible native libraries and generated or vendor files that the checkout does not contain. Foretoken's engine patches remain applied. Deleted inputs must disappear from subsequent payloads, and Python-only updates retain successful native builds.
+
+Native builds use the selected runtime's Python, PyTorch, and accelerator environment, adding compiler tools in a separate build stage. Upstream build tools own compilation and their incremental caches. Full-image updates package the completed payload with metadata from the engine source, then use the normal package resolver to install dependencies. Accelerator ABI dependencies remain tied to the selected base image. MetaX native updates also select the compiled plugin at runtime rather than its precompiled kernel package.
 
 ## Workload activation
 
-The CLI selects the source revision on the service; existing controllers own frontend rollout and model Pool/Group replacement. Model preparation and serving must receive the same selection. At startup, the image bootstrap selects the executable and Python adapters. If a bundle declares an executable, a missing executable fails startup rather than silently running the image's older code.
+The CLI selects the source revision on the service; existing controllers own frontend rollout and model Pool/Group replacement. Model preparation and serving receive the same selection. At startup, the image bootstrap selects the executable, Python adapters, and engine payload. If a bundle declares an executable, a missing executable fails startup rather than silently running the image's older code.
 
-The CLI checks the selected serving workloads and their active source before reporting deployment success. An earlier Ready workload does not prove that the update is active. Unchanged source reuses prepared artifacts, and unchanged workload configuration does not trigger replacement.
+The CLI observes the selected workloads, active source, consumed routing version, and Service endpoints before reporting deployment success. Unchanged source reuses prepared artifacts, and unchanged workload configuration does not trigger replacement.
 
-## Image updates
+Controllers retain admission closure, route withdrawal, request drain, and resource release for both source and image updates. Withdrawal is acknowledged by the frontend's active routing version, independently of serving readiness: a frontend with no remaining backend can acknowledge the empty routing snapshot while it is not ready to serve. Existing drain deadlines still bound unreachable consumers and unfinished requests.
 
-Bootstrap changes require a new image because the bootstrap runs before source activation. Dependency, build, control-plane, and Helm changes also use the existing platform installation lifecycle. When runtime storage is unavailable, or a single-node writable claim is awaiting its first placement, deployment uses images instead; model preparation retains ownership of initial storage placement.
+## Image updates and cleanup
 
-Image preparation compares the build with deployed image references and the requested distribution destination. A successful source installation clears existing service source selections so workloads use the newly built images. Local snapshots and bundles are retired when no longer referenced by the saved binding; uninstall removes the workstation binding without deleting remote model data.
+Bootstrap changes require a new image because the bootstrap runs before source activation. Dependency, build, control-plane, and Helm changes also use the platform installation lifecycle. When runtime storage is unavailable, or a single-node writable claim is awaiting its first placement, deployment uses images instead; model preparation retains ownership of initial storage placement.
 
-vLLM Python/CUDA sources and vLLM-Omni builds remain part of their inference-engine image paths. They are not runtime adapter bundles; their user-facing entry points are in [Use a custom inference engine](../custom-deployment.md#7-use-a-custom-inference-engine).
+Image reuse compares build output with installed references and the requested distribution destination. A successful source installation clears service source selections so workloads use the newly built images. Local snapshots are retired when no longer referenced. Runtime payload cleanup preserves service intent, retained rollout templates, and running or terminating consumers across namespaces that may share a data directory. It removes only the current binding's unreferenced publications, leaving other writers' candidates intact.
+
+Compiler volumes used for runtime updates follow the model cache's lifecycle. Source uninstall removes managed compiler caches and the workstation binding without deleting model data. vLLM-Omni retains its separate [image build recipe](../../examples/recipes/minimax-h3/a100-bf16-tp2/README.md#build-and-install).

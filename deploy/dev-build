@@ -19,11 +19,7 @@ for command in docker make; do
   }
 done
 
-build_dev_images "${1:-}" "${2:-}"
+build_dev_images
 
-if [[ -n "${2:-}" ]]; then
-  printf 'Prepared %s artifacts in %s\n' "$1" "$2"
-else
-  printf 'Built images:\n'
-  printf '  %s\n' "$CONTROL_PLANE_IMAGE" "$FRONTEND_IMAGE" "$MODEL_SERVER_IMAGE"
-fi
+printf 'Built images:\n'
+printf '  %s\n' "$CONTROL_PLANE_IMAGE" "$FRONTEND_IMAGE" "$MODEL_SERVER_IMAGE"

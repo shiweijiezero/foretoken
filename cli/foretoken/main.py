@@ -79,6 +79,7 @@ def _deploy(
     kustomize_path: str, timeout: str, profile: ProfileCommand | None = None
 ) -> None:
     """Apply and wait for serving readiness, then optionally capture external traffic."""
+    started = time.monotonic()
     kubectl = Kubectl()
     deployment = load_deployment(kustomize_path, kubectl)
     timeout_seconds(timeout)
@@ -92,11 +93,15 @@ def _deploy(
     if source is not None:
         source.prepare(timeout)
         deployment = source.apply(deployment, timeout)
+        print(
+            f"Source preparation completed in {time.monotonic() - started:.1f}s",
+            flush=True,
+        )
     namespace = deployment.namespace or "<current>"
     print(f"Applying {deployment.path} to namespace {namespace}")
     DirectoryVolumes(kubectl).apply(deployment, timeout)
     print(f"Waiting up to {timeout} for Foretoken services")
-    started = time.monotonic()
+    rollout_started = time.monotonic()
     with StartupProgress(kubectl, lambda line: print(line, flush=True)) as startup:
         wait_for_resources(
             deployment.service_refs(),
@@ -106,7 +111,12 @@ def _deploy(
             observe=startup.poll,
         )
         if source is not None:
-            source.verify(timeout, observe=lambda: startup.poll(deployment.service_refs(), time.monotonic() - started))
+            source.verify(
+                timeout,
+                observe=lambda: startup.poll(
+                    deployment.service_refs(), time.monotonic() - rollout_started
+                ),
+            )
     print(f"Foretoken deployment is ready in {time.monotonic() - started:.1f}s")
     if capture is not None:
         try:
@@ -182,13 +192,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             oci_registry = command.oci_registry or os.environ.get(
                 "FORETOKEN_OCI_REGISTRY"
             )
-            with source_operation(Kubectl(), installing=command.editable is not None):
+            with source_operation(
+                Kubectl(), command.timeout, installing=command.editable is not None
+            ):
                 PlatformLifecycle(oci_registry).install(command)
         elif isinstance(command, UninstallCommand):
-            with source_operation(Kubectl()):
+            with source_operation(Kubectl(), command.timeout):
                 PlatformLifecycle().uninstall(command)
         elif isinstance(command, DeployCommand):
-            with source_operation(Kubectl()):
+            with source_operation(Kubectl(), command.timeout):
                 _deploy(command.kustomize_path, command.timeout, command.profile)
         elif isinstance(command, DeleteCommand):
             _delete(command.kustomize_path, command.timeout)

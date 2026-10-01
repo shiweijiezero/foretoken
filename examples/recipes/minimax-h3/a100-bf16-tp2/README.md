@@ -14,8 +14,9 @@ capacity for the platform.
 ## Build and install
 
 Prepare a GPU-enabled Kubernetes cluster and the tools in the
-[source deployment guide](../../../../docs/custom-deployment.md). For a local
-cluster, follow the [k3d guide](../../../../docs/k3d-deployment.md).
+[source deployment guide](../../../../docs/custom-deployment.md). The image-build
+commands below also need Docker with BuildKit, Make, and a rustup-managed Rust
+toolchain. For a local cluster, follow the [k3d guide](../../../../docs/k3d-deployment.md).
 Run from the Foretoken repository root:
 
 ```bash

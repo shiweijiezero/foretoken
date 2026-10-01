@@ -142,14 +142,26 @@ class PlatformLifecycle:
         self._logs = LogCollectionLifecycle(self._helm)
         self._model_distribution = ModelDistributionLifecycle(self._helm, self._kubectl)
 
-    def install(self, command: InstallCommand, *, source_base_image: str | None = None) -> None:
-        """Install the platform, committing source inputs or releasing them on failure."""
+    def install(
+        self,
+        command: InstallCommand,
+        *,
+        source_base_image: str | None = None,
+        source_build_arguments: dict[str, str] | None = None,
+    ) -> None:
+        """Install the platform and commit successful source inputs to its workstation binding."""
         with ExitStack() as artifacts:
-            self._install(command, artifacts, source_base_image=source_base_image)
+            self._install(
+                command, artifacts,
+                source_base_image=source_base_image,
+                source_build_arguments=source_build_arguments,
+            )
 
     def _install(
         self, command: InstallCommand, artifacts: ExitStack,
-        *, source_base_image: str | None,
+        *,
+        source_base_image: str | None,
+        source_build_arguments: dict[str, str] | None,
     ) -> None:
         """Reconcile managed dependencies and the platform within the installation's artifact lifetime."""
         helm = self._helm
@@ -473,16 +485,16 @@ class PlatformLifecycle:
 
         source_images = (
             artifacts.enter_context(prepare_source_images(
-                command.editable,
-                command.registry,
-                self._oci_registry,
+                command,
                 platform.namespace,
-                command.timeout,
+                (*stored_values, *values),
                 source_runtime_image,
                 installed_images=(
                     helm.platform_image_references(platform) if platform_exists else None
                 ),
                 build_metax_runtime=build_metax_runtime,
+                runtime_backend=runtime_selection.backend if runtime_selection else "nvidia",
+                saved_arguments=source_build_arguments,
             ))
             if command.editable is not None
             else None
@@ -613,7 +625,7 @@ class PlatformLifecycle:
         if source_images is not None:
             from foretoken.editable import record_install
 
-            record_install(kubectl, command, source_runtime_image, source_images.inputs)
+            record_install(kubectl, command, source_runtime_image, source_images.inputs, build_state=source_images.build_state)
         _print_plan("Foretoken platform", "Ready", platform.display_name)
         if not load_balancer_plan.install and load_balancer_plan.action != "Reuse":
             _print_plan(
@@ -643,6 +655,9 @@ class PlatformLifecycle:
                 "use its existing Helm lifecycle"
             )
 
+        from foretoken.editable import has_source_state
+
+        source_builds = (platform_exists and helm.release_install_source(platform) == "source") or has_source_state(kubectl)
         dcgm_exists = helm.release_exists(managed_dcgm)
         dcgm_managed = dcgm_exists and helm.is_cleanup_managed(managed_dcgm)
         prometheus_exists = helm.release_exists(managed_prometheus)
@@ -740,5 +755,8 @@ class PlatformLifecycle:
         if load_balancer_result is not None:
             _print_plan("LoadBalancer", *load_balancer_result)
         from foretoken.editable import forget_install
+        from foretoken.source import remove_build_caches
 
+        if source_builds:
+            remove_build_caches(kubectl, command.timeout)
         forget_install(kubectl)

@@ -11,7 +11,6 @@ import json
 import os
 import shutil
 import subprocess
-import tarfile
 import tempfile
 import time
 import uuid
@@ -24,6 +23,11 @@ from typing import Any
 import yaml
 
 from foretoken.arguments import InstallCommand
+from foretoken.cluster_build import (
+    ClusterBuilder,
+    registry_credentials,
+    remove_build_pods,
+)
 from foretoken.kubernetes import Kubectl, timeout_seconds
 from foretoken.manifest import DeploymentError, ForetokenDeployment, parse_deployment
 
@@ -56,7 +60,10 @@ def _state_directory(kubectl: Kubectl) -> Path:
 
 def _has_server_binding(kubectl: Kubectl) -> bool:
     """Prefilter local bindings without requiring cluster access for release deployments."""
-    bindings = list(_source_home().glob("*/install.json"))
+    bindings = [
+        *(_source_home().glob("*/install.json")),
+        *(_source_home().glob("*/build.json")),
+    ]
     if not bindings:
         return False
     server = _context_identity(kubectl)["server"]
@@ -72,7 +79,9 @@ def _has_server_binding(kubectl: Kubectl) -> bool:
 
 
 @contextmanager
-def source_operation(kubectl: Kubectl, *, installing: bool = False) -> Iterator[None]:
+def source_operation(
+    kubectl: Kubectl, timeout: str, *, installing: bool = False
+) -> Iterator[None]:
     """Serialize CLI source operations by cluster, including artifact readers and cleanup.
 
     The CLI entry point holds this lock through install, deploy, or uninstall. Internal
@@ -89,12 +98,46 @@ def source_operation(kubectl: Kubectl, *, installing: bool = False) -> Iterator[
     with (locks / directory.name).open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
+            bindings = set()
+            for name in ("install.json", "build.json"):
+                path = directory / name
+                if path.is_file():
+                    binding = (
+                        json.loads(path.read_text()).get("build", {}).get("binding")
+                    )
+                    if binding:
+                        bindings.add(binding)
+            for binding in bindings:
+                remove_build_pods(kubectl, timeout, binding=binding)
             yield
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def _inputs(root: Path) -> dict[str, Path]:
+def engine_source_roots(sources: tuple[str, ...]) -> dict[str, str]:
+    """Resolve explicitly selected runtime checkouts, independently of Rust's pinned dependency."""
+    roots = {}
+    for source in sources:
+        name, separator, value = source.partition("=")
+        if not separator:
+            name, value = "vllm", source
+        if name not in {"vllm", "vllm-metax"} or name in roots:
+            raise DeploymentError(
+                "--engine-source accepts one vllm checkout and one optional vllm-metax checkout"
+            )
+        path = Path(value).expanduser().resolve()
+        package = path / name.replace("-", "_")
+        if not package.is_dir() or not (path / "setup.py").is_file():
+            raise DeploymentError(f"engine source is not a {name} checkout: {path}")
+        roots[name] = str(path)
+    if roots and "vllm" not in roots:
+        raise DeploymentError(
+            "--engine-source vllm-metax=PATH also requires the corresponding --engine-source vllm=PATH"
+        )
+    return roots
+
+
+def _inputs(root: Path, engines: dict[str, str] | None = None) -> dict[str, Path]:
     """Select build inputs using Git's tracked and non-ignored source files."""
     command = [
         "git",
@@ -117,7 +160,7 @@ def _inputs(root: Path) -> dict[str, Path]:
         path = root / name
         if not name.startswith(
             ("data-plane/", "control-plane/", "deploy/")
-        ) and name not in {"Makefile", ".dockerignore", ".gitmodules"}:
+        ) and name not in {"Makefile", "LICENSE", ".dockerignore", ".gitmodules"}:
             continue
         if path.is_file() and path.suffix not in {".md", ".png", ".svg"}:
             files[name] = path
@@ -146,16 +189,79 @@ def _inputs(root: Path) -> dict[str, Path]:
                 name = "data-plane/third_party/vllm/" + os.fsdecode(raw)
                 if (root / name).is_file():
                     files[name] = root / name
+    mooncake = root / "third_party/mooncake"
+    if (mooncake / ".git").exists():
+        result = subprocess.run(
+            ["git", "-C", str(mooncake), "ls-files", "--recurse-submodules", "-z"],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode:
+            raise DeploymentError(result.stderr.decode().strip())
+        for raw in result.stdout.split(b"\0"):
+            if raw:
+                name = "third_party/mooncake/" + os.fsdecode(raw)
+                if (root / name).is_file():
+                    files[name] = root / name
+    for engine, checkout in (engines or {}).items():
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                checkout,
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode:
+            raise DeploymentError(result.stderr.decode().strip())
+        for raw in result.stdout.split(b"\0"):
+            if not raw:
+                continue
+            name = os.fsdecode(raw)
+            path = Path(checkout) / name
+            if path.is_file():
+                files[f"engine/{engine}/{name}"] = path
     return files
 
 
-def _snapshot(files: dict[str, Path], destination: Path) -> None:
+def _snapshot(
+    files: dict[str, Path], destination: Path, engines: dict[str, str] | None = None
+) -> None:
     """Save exact input bytes so timestamps and unchanged Git commits cannot hide edits."""
     destination.mkdir(parents=True)
     for name, source in files.items():
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+    if engines:
+        manifest = {}
+        deleted = {}
+        for engine, checkout in engines.items():
+            prefix = f"engine/{engine}/"
+            manifest[engine] = {
+                "files": sorted(
+                    name.removeprefix(prefix)
+                    for name in files
+                    if name.startswith(prefix)
+                )
+            }
+            result = subprocess.run(
+                ["git", "-C", checkout, "ls-files", "--deleted", "-z"],
+                capture_output=True,
+                check=True,
+            )
+            deleted[engine] = [
+                os.fsdecode(name) for name in result.stdout.split(b"\0") if name
+            ]
+        (destination / "engine").mkdir(exist_ok=True)
+        _write_json(destination / "engine/manifest.json", manifest)
+        _write_json(destination / "engine/deleted.json", deleted)
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -172,11 +278,13 @@ def _write_json(path: Path, value: object) -> None:
 
 
 @contextmanager
-def capture_build_inputs(root: Path) -> Iterator[Path]:
+def capture_build_inputs(
+    root: Path, engines: dict[str, str] | None = None
+) -> Iterator[Path]:
     """Own candidate image inputs until record_install moves them into committed state."""
     destination = _source_home() / "builds" / ("inputs-" + uuid.uuid4().hex)
     try:
-        _snapshot(_inputs(root), destination)
+        _snapshot(_inputs(root, engines), destination, engines)
         yield destination
     finally:
         if destination.exists():
@@ -198,13 +306,16 @@ def _local_candidates(directory: Path) -> Iterator[None]:
         for snapshot in directory.glob("inputs-*"):
             if snapshot.name != state.get("inputs"):
                 shutil.rmtree(snapshot)
-        retained = {
-            Path(bundle["path"]).parent
-            for bundle in state.get("bundles", {}).values()
-        }
-        for bundle in (directory / "bundles").glob("*"):
-            if bundle not in retained:
-                shutil.rmtree(bundle)
+        if (directory / "bundles").is_dir():
+            shutil.rmtree(directory / "bundles")
+
+
+def has_source_state(kubectl: Kubectl) -> bool:
+    """Identify installed or interrupted source builds belonging to this actual cluster."""
+    if not _has_server_binding(kubectl):
+        return False
+    directory = _state_directory(kubectl)
+    return any((directory / name).is_file() for name in ("install.json", "build.json"))
 
 
 def forget_install(kubectl: Kubectl) -> None:
@@ -215,13 +326,17 @@ def forget_install(kubectl: Kubectl) -> None:
             shutil.rmtree(directory)
 
 
-def validate_build_inputs(root: Path, snapshot: Path) -> None:
+def validate_build_inputs(
+    root: Path, snapshot: Path, engines: dict[str, str] | None = None
+) -> None:
     """Reject a build whose checkout changed before its image or bundle was selected."""
-    current = _inputs(root)
+    current = _inputs(root, engines)
     previous = {
         str(path.relative_to(snapshot))
         for path in snapshot.rglob("*")
         if path.is_file()
+        and str(path.relative_to(snapshot))
+        not in {"engine/manifest.json", "engine/deleted.json"}
     }
     if previous != current.keys() or any(
         not filecmp.cmp(snapshot / name, path, shallow=False)
@@ -233,8 +348,58 @@ def validate_build_inputs(root: Path, snapshot: Path) -> None:
         )
 
 
+def snapshot_versions(
+    snapshot: Path, previous: Path | None, versions: dict[str, str]
+) -> dict[str, str]:
+    """Assign a new revision only to changed input paths for cluster-side delta transfer."""
+    revision = snapshot.name.removeprefix("inputs-")
+    result = {}
+    for path in snapshot.rglob("*"):
+        if not path.is_file():
+            continue
+        name = str(path.relative_to(snapshot))
+        old = previous / name if previous else None
+        unchanged = (
+            name in versions
+            and old is not None
+            and old.is_file()
+            and old.stat().st_mode == path.stat().st_mode
+            and filecmp.cmp(old, path, shallow=False)
+        )
+        result[name] = versions[name] if unchanged else revision
+    return result
+
+
+def _runtime_settings(platform: dict[str, Any]) -> dict[str, Any]:
+    """Read the controller-owned runtime environment used to bind and validate source builds."""
+    arguments = platform["spec"]["template"]["spec"]["containers"][0]["args"]
+    options = dict(
+        arg[2:].split("=", 1)
+        for arg in arguments
+        if arg.startswith("--") and "=" in arg
+    )
+    return {
+        "image": options["frontend-image"],
+        "model_image": options["inference-engine-image"],
+        "omni_image": options.get("omni-inference-engine-image", ""),
+        "nsight_image": options.get("nsight-image", ""),
+        "mount": options["cache-mount-path"],
+        "claim": options.get("cache-claim", ""),
+        "pull_secrets": [
+            arg.split("=", 1)[1]
+            for arg in arguments
+            if arg.startswith("--workload-image-pull-secret=")
+        ],
+    }
+
+
 def record_install(
-    kubectl: Kubectl, command: InstallCommand, base_image: str | None, snapshot: Path
+    kubectl: Kubectl,
+    command: InstallCommand,
+    base_image: str | None,
+    snapshot: Path,
+    *,
+    build_state: dict[str, Any] | None = None,
 ) -> None:
     """Associate a successful editable installation with its checkout on this workstation."""
     if command.editable is None:
@@ -243,7 +408,12 @@ def record_install(
     directory = _state_directory(kubectl)
     directory.mkdir(parents=True, exist_ok=True)
     settings = asdict(command)
-    settings.update(editable=str(root), values=[])
+    engines = engine_source_roots(command.engine_sources)
+    settings.update(
+        editable=str(root),
+        values=[],
+        engine_sources=[f"{name}={path}" for name, path in engines.items()],
+    )
     platforms = kubectl.list_all_resources(
         ("deployment.apps",),
         label_selector="app.kubernetes.io/name=foretoken-control-plane",
@@ -255,12 +425,6 @@ def record_install(
     ]
     if len(managed) != 1:
         raise DeploymentError("expected one source-installed Foretoken platform")
-    arguments = managed[0]["spec"]["template"]["spec"]["containers"][0]["args"]
-    options = dict(
-        arg[2:].split("=", 1)
-        for arg in arguments
-        if arg.startswith("--") and "=" in arg
-    )
     # A full image build already includes source changes. Retire overlays for every service,
     # not only the deployment which happened to trigger the environment update.
     for service in kubectl.list_all_resources(("modelservice", "frontendservice")):
@@ -297,27 +461,18 @@ def record_install(
             directory / "install.json",
             {
                 "root": str(root),
+                "engines": engines,
+                "build": build_state or {},
                 "context": _context_identity(kubectl),
                 "inputs": destination.name,
                 "platform_uid": managed[0]["metadata"]["uid"],
                 "base_image": base_image,
-                "runtime": {
-                    "image": options["frontend-image"],
-                    "model_image": options["inference-engine-image"],
-                    "omni_image": options.get("omni-inference-engine-image", ""),
-                    "nsight_image": options.get("nsight-image", ""),
-                    "mount": options["cache-mount-path"],
-                    "claim": options.get("cache-claim", ""),
-                    "pull_secrets": [
-                        arg.split("=", 1)[1]
-                        for arg in arguments
-                        if arg.startswith("--workload-image-pull-secret=")
-                    ],
-                },
+                "runtime": _runtime_settings(managed[0]),
                 "command": settings,
                 "bundles": {},
             },
         )
+        (directory / "build.json").unlink(missing_ok=True)
 
 
 class EditableDeployment:
@@ -358,6 +513,7 @@ class EditableDeployment:
         if (
             len(source) != 1
             or state.get("platform_uid") != source[0]["metadata"]["uid"]
+            or state["runtime"] != _runtime_settings(source[0])
         ):
             raise DeploymentError(
                 "source installation changed; associate its checkout with foretoken install -e PATH"
@@ -374,10 +530,24 @@ class EditableDeployment:
             self._prepare(timeout)
 
     def _prepare(self, timeout: str) -> None:
-        """Compile changed components or reuse installation for build-environment changes."""
-        current = _inputs(self.root)
+        """Capture a runtime update or reuse installation for build-environment changes."""
+        from foretoken.source import pinned_rust_revision
+
+        if not self.state.get("build") or self.state["build"]["arguments"].get(
+            "VLLM_REVISION"
+        ) != pinned_rust_revision(self.root):
+            self._rebuild(timeout)
+            return
+        engines = self.state.get("engines", {})
+        current = _inputs(self.root, engines)
         old = self.directory / self.state["inputs"]
-        previous = {str(p.relative_to(old)) for p in old.rglob("*") if p.is_file()}
+        previous = {
+            str(p.relative_to(old))
+            for p in old.rglob("*")
+            if p.is_file()
+            and str(p.relative_to(old))
+            not in {"engine/manifest.json", "engine/deleted.json"}
+        }
         changed = {
             name
             for name in previous | current.keys()
@@ -393,8 +563,35 @@ class EditableDeployment:
         compile_components: set[str] = set()
         rebuild = False
         for name in changed:
-            if name == "data-plane/artifacts/src/source.rs":
-                # The image's bootstrap runs before the candidate executable can take over.
+            if name.startswith("engine/"):
+                if Path(name).suffix in {".md", ".png", ".svg"}:
+                    continue
+                parts = Path(name).parts
+                native_source = (
+                    "vllm-metax"
+                    if self.state["build"]["backend"] == "metax"
+                    else "vllm"
+                )
+                if parts[1] == native_source and (
+                    parts[2] in {"csrc", "cmake", "CMakeLists.txt"}
+                    or Path(name).suffix
+                    in {".cu", ".cuh", ".cpp", ".cc", ".c", ".h", ".hpp", ".cmake"}
+                ):
+                    self.state["build"]["engine_native"] = True
+                if len(parts) > 2 and (
+                    parts[2]
+                    in {
+                        "requirements",
+                        "pyproject.toml",
+                        "setup.py",
+                        "setup.cfg",
+                        "Dockerfile",
+                    }
+                ):
+                    rebuild = True
+                else:
+                    components.add("model-server")
+            elif name == "data-plane/artifacts/src/source.rs":
                 rebuild = True
             elif name.startswith("data-plane/model-server/python/") and name.endswith(
                 ".py"
@@ -419,44 +616,20 @@ class EditableDeployment:
             )
             self._rebuild(timeout)
             return
-        # Build from one staged view; the saved snapshot is also the comparison input next time.
-        revision = str(uuid.uuid4())
-        snapshot = self.directory / ("inputs-" + revision)
-        _snapshot(current, snapshot)
+        snapshot = self.directory / ("inputs-" + str(uuid.uuid4()))
+        _snapshot(current, snapshot, engines)
+        validate_build_inputs(self.root, snapshot, engines)
+        self.state["build"]["versions"] = snapshot_versions(
+            snapshot, old, self.state["build"]["versions"]
+        )
         bundles = dict(self.state["bundles"])
-        for component in sorted(components):
-            revision = str(uuid.uuid4())
-            destination = self.directory / "bundles" / revision / component
-            destination.mkdir(parents=True)
-            previous_bundle = bundles.get(component)
-            if previous_bundle:
-                shutil.copytree(
-                    Path(previous_bundle["path"]), destination, dirs_exist_ok=True
-                )
-            if component == "model-server":
-                python = destination / "python"
-                if python.exists():
-                    shutil.rmtree(python)
-                shutil.copytree(snapshot / "data-plane/model-server/python", python)
-            if component in compile_components:
-                print(
-                    f"Compiling {component} changes with the existing build cache",
-                    flush=True,
-                )
-                self._compile(component, destination)
-            _write_json(
-                destination / "complete.json",
-                {
-                    "revision": revision,
-                    "component": component,
-                    "executable": f"foretoken-{component}"
-                    if (destination / "bin" / f"foretoken-{component}").is_file()
-                    else None,
-                },
-            )
-            bundles[component] = {"revision": revision, "path": str(destination)}
-        # A build must not mark concurrently edited files as already deployed.
-        validate_build_inputs(self.root, snapshot)
+        for component in components:
+            prior = bundles.get(component, {})
+            bundles[component] = {
+                "revision": str(uuid.uuid4()),
+                "compile": component in compile_components
+                or prior.get("compile", False),
+            }
         self.state.update(inputs=snapshot.name, bundles=bundles)
         _write_json(self.directory / "install.json", self.state)
 
@@ -468,28 +641,12 @@ class EditableDeployment:
         settings.update(values=(), timeout=timeout)
         command = InstallCommand(**settings)
         PlatformLifecycle(command.oci_registry).install(
-            command, source_base_image=self.state.get("base_image")
+            command,
+            source_base_image=self.state.get("base_image"),
+            source_build_arguments=self.state.get("build", {}).get("arguments"),
         )
         self.state = json.loads((self.directory / "install.json").read_text())
         self.selected.clear()
-
-    def _compile(self, component: str, destination: Path) -> None:
-        """Export cached Linux build output without creating or distributing a runtime image."""
-        from foretoken.network_sources import select_source_build_sources
-
-        environment = os.environ.copy()
-        if self.state["command"].get("oci_registry"):
-            environment["FORETOKEN_OCI_REGISTRY"] = self.state["command"][
-                "oci_registry"
-            ]
-        selected, _, _ = select_source_build_sources(environment)
-        environment.update(selected)
-        command = [str(self.root / "deploy/dev-build"), component, str(destination)]
-        result = subprocess.run(command, cwd=self.root, env=environment, check=False)
-        if result.returncode:
-            raise DeploymentError(
-                f"{component} artifact build failed with exit code {result.returncode}"
-            )
 
     def apply(
         self, deployment: ForetokenDeployment, timeout: str
@@ -558,10 +715,13 @@ class EditableDeployment:
         )
 
     def _publish(
-        self, namespace: str, bundles: dict[str, dict[str, str]], timeout: str
+        self, namespace: str, bundles: dict[str, dict[str, Any]], timeout: str
     ) -> bool:
-        """Use one CPU publisher to populate the cache independently of inference startup."""
+        """Compile on separate storage and publish to the workload cache before rollout."""
+        from foretoken.source import ensure_build_cache, local_build_nodes
+
         runtime = self.state["runtime"]
+        build = self.state["build"]
         claim = runtime["claim"]
         if not claim:
             caches = self.kubectl.list_resources(("runtimecache",), namespace)
@@ -586,104 +746,246 @@ class EditableDeployment:
                 "claimName"
             ]
         pvc = self.kubectl.get("pvc", claim, namespace)
-        # Model preparation owns first placement of single-node writable storage on GPU nodes.
+        # Keep first GPU-node placement with the model preparation controller.
         if (
             pvc.get("status", {}).get("phase") != "Bound"
             and "ReadWriteMany" not in pvc["spec"]["accessModes"]
         ):
             return False
-        name = "foretoken-source-" + uuid.uuid4().hex[:12]
-        pod = {
-            "apiVersion": "v1",
-            "kind": "Pod",
-            "metadata": {
-                "name": name,
-                "namespace": namespace,
-                "labels": {"inference.foretoken.io/source-publisher": "true"},
-            },
-            "spec": {
-                "restartPolicy": "Never",
-                "automountServiceAccountToken": False,
-                "activeDeadlineSeconds": int(timeout_seconds(timeout)),
-                "imagePullSecrets": [
-                    {"name": value} for value in runtime["pull_secrets"]
-                ],
-                "volumes": [
-                    {"name": "source", "persistentVolumeClaim": {"claimName": claim}}
-                ],
-                "containers": [
-                    {
-                        "name": "publisher",
-                        "image": runtime["model_image"],
-                        "imagePullPolicy": "IfNotPresent",
-                        "env": [{"name": "NVIDIA_VISIBLE_DEVICES", "value": "void"}],
-                        "securityContext": {
-                            "allowPrivilegeEscalation": False,
-                            "capabilities": {"drop": ["ALL"]},
-                        },
-                        "command": ["sleep", str(int(timeout_seconds(timeout)))],
-                        "volumeMounts": [
-                            {"name": "source", "mountPath": runtime["mount"]}
-                        ],
-                    }
-                ],
-            },
-        }
-        # Keep the configured engine image's user for every publication. A frontend-only
-        # update must not switch the owner of the shared source directory to UID 65532.
         mounts = [
-            existing
-            for existing in self.kubectl.list_resources(("pods",), namespace)
-            if existing["spec"].get("nodeName")
+            pod
+            for pod in self.kubectl.list_resources(("pods",), namespace)
+            if pod["spec"].get("nodeName")
             and any(
-                v.get("persistentVolumeClaim", {}).get("claimName") == claim
-                for v in existing["spec"].get("volumes", [])
+                volume.get("persistentVolumeClaim", {}).get("claimName") == claim
+                for volume in pod["spec"].get("volumes", [])
             )
         ]
-        if mounts:
-            existing = min(
-                mounts,
-                key=lambda p: (
-                    p.get("status", {}).get("phase") != "Running",
-                    bool(p["metadata"].get("deletionTimestamp")),
-                ),
+        mounts.sort(
+            key=lambda pod: (
+                pod.get("status", {}).get("phase") != "Running",
+                bool(pod["metadata"].get("deletionTimestamp")),
             )
-            pod["spec"]["nodeName"] = existing["spec"]["nodeName"]
-        self.kubectl.run(["create", "-f", "-"], input_text=yaml.safe_dump(pod))
-        try:
-            self.kubectl.run(
+        )
+        node = mounts[0]["spec"]["nodeName"] if mounts else ""
+        local_nodes = local_build_nodes(
+            self.kubectl, build["registry"], build["containerd_socket"]
+        )
+        socket = local_nodes[0][1]
+        if socket and not node:
+            node = local_nodes[0][0]
+        node_uid = (
+            self.kubectl.get("node", node)["metadata"]["uid"][:8] if node else "shared"
+        )
+        build_claim = f"foretoken-source-build-{pvc['metadata']['uid'][:8]}-{node_uid}"
+        ensure_build_cache(
+            self.kubectl,
+            namespace,
+            build_claim,
+            build["configuration"],
+            owner={
+                "apiVersion": "v1",
+                "kind": "PersistentVolumeClaim",
+                "name": claim,
+                "uid": pvc["metadata"]["uid"],
+            },
+        )
+        snapshot = self.directory / self.state["inputs"]
+        files = {
+            str(path.relative_to(snapshot)): path
+            for path in snapshot.rglob("*")
+            if path.is_file()
+        }
+        with ClusterBuilder(
+            self.kubectl,
+            namespace,
+            build_claim,
+            "/var/cache/foretoken-build",
+            build["configuration"]["image"],
+            build["binding"],
+            timeout,
+            node=node,
+            containerd_socket=socket,
+            pull_secrets=tuple(runtime["pull_secrets"]),
+            publisher_image=runtime["model_image"],
+            runtime_claim=claim,
+            runtime_mount=runtime["mount"],
+            credentials=registry_credentials(
                 [
-                    "wait",
-                    "pod/" + name,
-                    "-n",
-                    namespace,
-                    "--for=condition=Ready",
-                    f"--timeout={timeout}",
+                    runtime["model_image"],
+                    build["configuration"]["image"],
+                    "docker.io",
+                    "ghcr.io",
+                    *(
+                        value
+                        for key, value in build["arguments"].items()
+                        if key.endswith("REGISTRY")
+                    ),
                 ]
-            )
-            for bundle in bundles.values():
-                self._upload(
-                    bundle, namespace, name, "publisher", runtime["mount"], timeout
+            ),
+        ) as builder:
+            builder.sync(files, build["versions"])
+            for component, bundle in bundles.items():
+                revision = bundle["revision"]
+                destination = runtime["mount"] + "/source/" + revision
+                if builder.read_json(
+                    destination + "/complete.json", container="publisher"
+                ):
+                    continue
+                staging = builder.root + "/output/" + revision
+                payload = staging + "/payload"
+                builder.run(["rm", "-rf", "--", staging])
+                builder.run(["mkdir", "-p", payload])
+                if bundle["compile"]:
+                    builder.build(
+                        f"data-plane/{component}/Dockerfile",
+                        target="source-export",
+                        destination=staging + "/runtime",
+                        arguments=build["arguments"],
+                    )
+                    builder.run(
+                        [
+                            "sh",
+                            "-ec",
+                            'cp -R "$1/." "$2/"',
+                            "assemble",
+                            staging + "/runtime",
+                            payload,
+                        ]
+                    )
+                if component == "model-server":
+                    builder.run(
+                        [
+                            "cp",
+                            "-R",
+                            builder.workspace + "/data-plane/model-server/python",
+                            payload + "/python",
+                        ]
+                    )
+                    if self.state.get("engines"):
+                        builder.build(
+                            "deploy/inference-engines/source-build.Dockerfile",
+                            target="source-export",
+                            destination=staging + "/engine",
+                            arguments={
+                                **build["arguments"],
+                                "RUNTIME_IMAGE": runtime["model_image"],
+                                "CACHE_ID": build["binding"]
+                                + "-"
+                                + build["environment"],
+                                "BUILD_NATIVE": str(
+                                    build.get("engine_native", False)
+                                ).lower(),
+                            },
+                        )
+                        builder.run(
+                            [
+                                "sh",
+                                "-ec",
+                                'cp -R "$1/." "$2/"',
+                                "assemble",
+                                staging + "/engine",
+                                payload,
+                            ]
+                        )
+                builder.publish(
+                    payload,
+                    destination,
+                    {
+                        "revision": revision,
+                        "binding": build["binding"],
+                        "component": component,
+                        "executable": f"foretoken-{component}"
+                        if bundle["compile"]
+                        else None,
+                    },
                 )
-        finally:
-            self.kubectl.run(
-                [
-                    "delete",
-                    "pod",
-                    name,
-                    "-n",
-                    namespace,
-                    "--ignore-not-found",
-                    "--wait=true",
-                    f"--timeout={timeout}",
-                ]
-            )
+                builder.run(["rm", "-rf", "--", staging])
+            self._retire_sources(builder)
         return True
+
+    def _retire_sources(self, builder: ClusterBuilder) -> None:
+        """Retire this binding's unreferenced payloads while preserving shared-volume consumers."""
+        # Namespaces may mount the same data directory. Include retained rollout
+        # templates and terminating/preparation Pods, not just currently Ready services.
+        objects = list(
+            self.kubectl.list_all_resources(
+                ("modelservice", "frontendservice", "modelpool", "modelgroup")
+            )
+        )
+        for label in (
+            "inference.foretoken.io/model-group",
+            "inference.foretoken.io/frontend-service",
+            "inference.foretoken.io/model-preparation-group",
+        ):
+            objects.extend(
+                self.kubectl.list_all_resources(
+                    ("pods", "jobs", "replicasets", "deployments"), label_selector=label
+                )
+            )
+        keep = {bundle["revision"] for bundle in self.state["bundles"].values()}
+        for obj in objects:
+            spec = obj.get("spec", {})
+            template = spec.get("template", {})
+            keep.update(
+                filter(
+                    None,
+                    (
+                        obj["metadata"].get("annotations", {}).get(SOURCE_REVISION),
+                        template.get("metadata", {})
+                        .get("annotations", {})
+                        .get(SOURCE_REVISION),
+                        template.get("sourceRevision"),
+                        spec.get("runtime", {}).get("sourceRevision"),
+                    ),
+                )
+            )
+            pod_spec = spec if obj["kind"] == "Pod" else template.get("spec", {})
+            for container in (
+                *pod_spec.get("containers", []),
+                *pod_spec.get("initContainers", []),
+            ):
+                for variable in container.get("env", []):
+                    if variable[
+                        "name"
+                    ] == "FORETOKEN_SOURCE_DIRECTORY" and variable.get("value"):
+                        keep.add(variable["value"].rstrip("/").rsplit("/", 1)[-1])
+        script = """import json, shutil, sys
+from pathlib import Path
+selection = json.load(sys.stdin)
+root = Path(sys.argv[1])
+for directory in root.iterdir():
+    if not directory.is_dir() or directory.name in selection["keep"]:
+        continue
+    manifest = directory / "complete.json"
+    if not manifest.is_file():
+        continue
+    try:
+        bundle = json.loads(manifest.read_text())
+        if isinstance(bundle, dict) and bundle.get("binding") == selection["binding"] and bundle.get("revision") == directory.name:
+            shutil.rmtree(directory)
+    except (OSError, ValueError) as error:
+        print(f"Source cache cleanup: {directory.name}: {error}", file=sys.stderr)
+"""
+        builder.run(
+            [
+                "sh",
+                "-ec",
+                'exec "${FORETOKEN_VLLM_PYTHON:-python}" -c "$1" "$2"',
+                "retire",
+                script,
+                self.state["runtime"]["mount"] + "/source",
+            ],
+            container="publisher",
+            input_text=json.dumps(
+                {"binding": self.state["build"]["binding"], "keep": sorted(keep)}
+            ),
+        )
 
     def _ready_containers(
         self, namespace: str, component: str, service: str, revision: str
-    ) -> list[tuple[str, str, str]]:
-        """Select the committed source or image cohort, not an earlier ready generation."""
+    ) -> list[tuple[str, str, str, str]]:
+        """Select ready containers and route identities from the committed source or image cohort."""
         containers = []
         selected = {}
         seen_pools = set()
@@ -707,6 +1009,7 @@ class EditableDeployment:
                 continue
             labels = metadata.get("labels", {})
             expected_image = self.state["runtime"]["image"]
+            route_target = ""
             if component == "frontend":
                 if labels.get("inference.foretoken.io/frontend-service") != service:
                     continue
@@ -744,6 +1047,7 @@ class EditableDeployment:
                 if runtime["image"] != expected_image:
                     continue
                 seen_pools.add(pool["metadata"]["uid"])
+                route_target = group["metadata"]["uid"]
             for container in pod["spec"]["containers"]:
                 if (
                     container["name"] == component
@@ -757,85 +1061,129 @@ class EditableDeployment:
                         ),
                         "",
                     )
-                    containers.append((metadata["name"], component, directory))
+                    containers.append(
+                        (metadata["name"], component, directory, route_target)
+                    )
         if component == "model-server" and seen_pools != set(selected):
             return []
         return containers
 
-    def _upload(
+    def _frontend_routes_ready(
         self,
-        bundle: dict[str, str],
         namespace: str,
-        pod: str,
-        container: str,
-        mount: str,
-        timeout: str,
-    ) -> None:
-        """Stage immutable files before exposing a source revision to any new runtime."""
-        revision = bundle["revision"]
-        destination = f"{mount}/source/{revision}"
-        command = self.kubectl.command(
-            [
-                "exec",
-                "-i",
-                "-n",
-                namespace,
-                pod,
-                "-c",
-                container,
-                "--",
-                "sh",
-                "-c",
-                'set -eu; mkdir -p -m 2775 "${1%/*}"; if test -f "$1/complete.json"; then cat >/dev/null; exit 0; fi; stage=$(mktemp -d "$1.staging.XXXXXX"); tar --no-same-owner -xf - -C "$stage"; test -f "$stage/complete.json"; chmod -R a+rX "$stage"; mv -T "$stage" "$1"',
-                "source-upload",
-                destination,
-            ]
+        service: str,
+        writers: list[tuple[str, str, str, str]],
+        route_targets: set[str],
+        deadline: float,
+    ) -> bool:
+        """Observe the existing routing publication, consumer acknowledgements and Service endpoints."""
+        deployment = self.kubectl.get("deployment", service, namespace)
+        config_name = next(
+            volume["configMap"]["name"]
+            for volume in deployment["spec"]["template"]["spec"]["volumes"]
+            if volume["name"] == "serving"
         )
-        with tempfile.TemporaryFile() as archive:
-            with tarfile.open(fileobj=archive, mode="w") as tar:
-                for path in sorted(Path(bundle["path"]).rglob("*")):
-                    if path.is_file():
-                        tar.add(
-                            path,
-                            arcname=str(path.relative_to(bundle["path"])),
-                            recursive=False,
-                        )
-            archive.seek(0)
-            result = subprocess.run(command, stdin=archive, check=False)
-        if result.returncode:
-            raise DeploymentError(f"source upload failed for {namespace}/{pod}")
-        print(f"Source {revision}: prepared {namespace}/{pod}", flush=True)
+        config_map = self.kubectl.get_if_exists("configmap", config_name, namespace)
+        if config_map is None:
+            return False
+        snapshot = json.loads(config_map["data"]["serving.json"])
+        published = {
+            route["route_target_id"]
+            for section in ("groups", "pd_components", "epd_components")
+            for route in (snapshot.get(section) or [])
+        }
+        if not route_targets <= published:
+            return False
+        pods = [
+            pod
+            for pod in self.kubectl.list_resources(("pods",), namespace)
+            if not pod["metadata"].get("deletionTimestamp")
+            and pod["metadata"]
+            .get("labels", {})
+            .get("inference.foretoken.io/frontend-service")
+            == service
+        ]
+        if len(pods) < deployment["spec"]["replicas"] or {
+            pod["metadata"]["name"] for pod in pods
+        } != {name for name, _, _, _ in writers}:
+            return False
+        for pod in pods:
+            container = next(
+                c for c in pod["spec"]["containers"] if c["name"] == "frontend"
+            )
+            port = next(
+                port["containerPort"]
+                for port in container["ports"]
+                if port["name"] == "http"
+            )
+            state = json.loads(
+                self.kubectl.get_raw(
+                    f"/api/v1/namespaces/{namespace}/pods/http:{pod['metadata']['name']}:{port}/proxy/statusz",
+                    f"{max(1, int(deadline - time.monotonic()))}s",
+                )
+            )
+            if (
+                not state["serving_ready"]
+                or state["active_generation"] != snapshot["version"]
+            ):
+                return False
+        endpoints = {
+            endpoint.get("targetRef", {}).get("uid")
+            for value in self.kubectl.list_resources(("endpointslices",), namespace)
+            if value["metadata"].get("labels", {}).get("kubernetes.io/service-name")
+            == service
+            for endpoint in value.get("endpoints", [])
+            if endpoint.get("conditions", {}).get("ready") is True
+        }
+        return bool(pods) and {pod["metadata"]["uid"] for pod in pods} <= endpoints
 
     def verify(
         self, timeout: str, *, observe: Callable[[], None] | None = None
     ) -> None:
-        """Wait for source-aware readiness and check each selected process after replacement."""
+        """Wait for selected runtime code and for frontends to consume the matching routes."""
         deadline = time.monotonic() + timeout_seconds(timeout)
-        for (kind, namespace, service), revision in self.selected.items():
+        routes: dict[str, set[str]] = {}
+        # Source annotations do not advance Service generation. Verify committed
+        # backend code first, then the routing consumers of that exact cohort.
+        selected = sorted(
+            self.selected.items(), key=lambda item: item[0][0] == "FrontendService"
+        )
+        for (kind, namespace, service), revision in selected:
             component = _COMPONENTS[kind]
+            if component == "frontend":
+                from foretoken.manifest import ResourceRef
+
+                self.kubectl.rollout_status(
+                    ResourceRef("Deployment", service, namespace),
+                    f"{max(1, int(deadline - time.monotonic()))}s",
+                )
             while True:
                 if observe is not None:
                     observe()
                 writers = self._ready_containers(
                     namespace, component, service, revision
                 )
-                if writers:
+                if writers and (
+                    component != "frontend"
+                    or self._frontend_routes_ready(
+                        namespace,
+                        service,
+                        writers,
+                        routes.get(namespace, set()),
+                        deadline,
+                    )
+                ):
                     break
                 if time.monotonic() >= deadline:
                     raise DeploymentError(
                         f"timed out waiting for {namespace}/{service} to activate source {revision}"
                     )
                 time.sleep(2)
-            if component == "frontend":
-                from foretoken.manifest import ResourceRef
-
-                self.kubectl.rollout_status(
-                    ResourceRef("Deployment", service, namespace), timeout
+            if component == "model-server":
+                routes.setdefault(namespace, set()).update(
+                    route for _, _, _, route in writers
                 )
-                writers = self._ready_containers(
-                    namespace, component, service, revision
-                )
-            for pod, container, directory in writers:
+            for pod, container, directory, _ in writers:
                 expected = (
                     f"FORETOKEN_ACTIVE_SOURCE_DIRECTORY={directory}" if revision else ""
                 )

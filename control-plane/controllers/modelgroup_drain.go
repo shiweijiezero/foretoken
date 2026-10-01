@@ -168,7 +168,7 @@ func (reconciler *ModelGroupReconciler) reconcileDelete(ctx context.Context, gro
 		return ctrl.Result{}, err
 	}
 	if !withdrawn {
-		if err := reconciler.updateDrainStatus(ctx, group, group.Status.DrainStartedAt, false, true, false, "WaitingForRouting", "Waiting for every ready frontend Pod to install the withdrawal snapshot"); err != nil {
+		if err := reconciler.updateDrainStatus(ctx, group, group.Status.DrainStartedAt, false, true, false, "WaitingForRouting", "Waiting for every frontend Pod to install the withdrawal snapshot"); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: modelGroupDrainPollInterval}, nil
@@ -234,11 +234,8 @@ func (reconciler *ModelGroupReconciler) routingWithdrawn(ctx context.Context, gr
 			if !pod.DeletionTimestamp.IsZero() {
 				continue
 			}
-			// Every surviving replica must observe the withdrawal before deletion. An unready
-			// replica may later rejoin the Service, so it cannot be excluded from the barrier.
-			if !podReady(pod) {
-				return false, nil
-			}
+			// Observe every surviving replica, including those made unready by the
+			// withdrawal of their last backend. Serving readiness is not a routing ACK.
 			endpoint, err := frontendPodEndpoint(pod)
 			if err != nil {
 				return false, err
@@ -285,7 +282,7 @@ func podReady(pod *corev1.Pod) bool {
 
 func frontendPodEndpoint(pod *corev1.Pod) (string, error) {
 	if pod.Status.PodIP == "" {
-		return "", fmt.Errorf("ready frontend Pod %q has no Pod IP", pod.Name)
+		return "", fmt.Errorf("frontend Pod %q has no Pod IP", pod.Name)
 	}
 	for _, container := range pod.Spec.Containers {
 		for _, port := range container.Ports {
@@ -295,7 +292,7 @@ func frontendPodEndpoint(pod *corev1.Pod) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("ready frontend Pod %q has no %q port", pod.Name, frontendHTTPPortName)
+	return "", fmt.Errorf("frontend Pod %q has no %q port", pod.Name, frontendHTTPPortName)
 }
 
 func (reconciler *ModelGroupReconciler) drainClient() ModelGroupDrainClient {
