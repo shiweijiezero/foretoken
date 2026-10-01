@@ -353,8 +353,8 @@ spec:
                       rule: '!has(self.limits) || !has(self.limits.memory) || quantity(self.requests.memory).compareTo(quantity(self.limits.memory))
                         <= 0'
                   role:
-                    description: ModelRole identifies a ModelPool's role in the serving
-                      path.
+                    description: ModelRole identifies the model execution stage served
+                      by a ModelPool.
                     enum:
                     - aggregate
                     - encoder
@@ -385,6 +385,13 @@ spec:
                     - local
                     - hf
                     - modelscope
+                    type: string
+                  speculationRole:
+                    description: SpeculationRole is derived from the ModelService
+                      speculation binding.
+                    enum:
+                    - draft
+                    - target
                     type: string
                   timeouts:
                     description: ModelTimeouts defines ModelService lifecycle budgets.
@@ -430,6 +437,8 @@ spec:
                 - timeouts
                 type: object
                 x-kubernetes-validations:
+                - message: speculation requires aggregate execution
+                  rule: '!has(self.speculationRole) || self.role == ''aggregate'''
                 - message: memberCount must equal nodeCount in v1alpha1
                   rule: self.memberCount == self.nodeCount
             required:

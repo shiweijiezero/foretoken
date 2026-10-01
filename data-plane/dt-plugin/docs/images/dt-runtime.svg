@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1280" viewBox="0 0 1920 1280"><!-- SPDX-License-Identifier: Apache-2.0; SPDX-FileCopyrightText: Copyright contributors to the Foretoken project --><defs><marker id="arrow" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" viewBox="0 0 10 10" refX="10" refY="5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#647184"/></marker><marker id="green" markerUnits="userSpaceOnUse" markerWidth="12" markerHeight="12" viewBox="0 0 10 10" refX="10" refY="5" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#27866e"/></marker></defs><style>text{font-family:"PingFang SC","Microsoft YaHei",Arial,sans-serif}</style><rect width="1920" height="1280" fill="white"/>
+<text x="42" y="38" font-size="17" font-weight="600" fill="#647184" text-anchor="start">RUNTIME FLOW · CURRENT IMPLEMENTATION</text>
+<text x="42" y="99" font-size="42" font-weight="700" fill="#bd151b" text-anchor="start">DT 运行流程｜控制经 Frontend，概率张量在 Worker 间直传</text>
+<text x="44" y="140" font-size="22" font-weight="400" fill="#647184" text-anchor="start">一次请求绑定一个 Draft 和一个 Target；每轮验证后，用 Target 确认的前缀继续生成</text>
+<rect x="36" y="184" width="420" height="912" rx="15" fill="#f5f9ff" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="58" y="227" font-size="30" font-weight="700" fill="#253042" text-anchor="start">Draft service</text>
+<text x="58" y="263" font-size="21" font-weight="400" fill="#647184" text-anchor="start">本地 Scheduler · Draft KV</text>
+<rect x="482" y="184" width="866" height="912" rx="15" fill="#f3faf7" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="504" y="227" font-size="30" font-weight="700" fill="#253042" text-anchor="start">Frontend + DT transport</text>
+<text x="504" y="263" font-size="21" font-weight="400" fill="#647184" text-anchor="start">Frontend 编排轮次；Connector 管理张量生命周期</text>
+<rect x="1374" y="184" width="510" height="912" rx="15" fill="#faf7ff" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="1396" y="227" font-size="30" font-weight="700" fill="#253042" text-anchor="start">Target service</text>
+<text x="1396" y="263" font-size="21" font-weight="400" fill="#647184" text-anchor="start">本地 Scheduler · Target KV</text>
+<rect x="516" y="287" width="798" height="91" rx="15" fill="#eaf3ff" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="536" y="320" font-size="23" font-weight="600" fill="#253042" text-anchor="start">① Frontend 选择实例，向 Target 发起请求</text>
+<text x="536" y="351" font-size="20" font-weight="400" fill="#647184" text-anchor="start">公共 API → 角色绑定 → prompt + sampling params</text>
+<path d="M1314 333 L1392 333" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none"  marker-end="url(#arrow)"/>
+<rect x="1392" y="287" width="474" height="119" rx="15" fill="#eaf3ff" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="1412" y="320" font-size="23" font-weight="600" fill="#253042" text-anchor="start">② Target prefill</text>
+<text x="1412" y="351" font-size="20" font-weight="400" fill="#647184" text-anchor="start">执行模型，产生第一个确认 token</text>
+<text x="1412" y="379" font-size="20" font-weight="400" fill="#647184" text-anchor="start">返回 confirmed delta + 下一轮 ticket</text>
+<rect x="516" y="430" width="798" height="91" rx="15" fill="#f0ebff" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="536" y="463" font-size="23" font-weight="600" fill="#253042" text-anchor="start">③ Frontend 同步确认前缀，请求 Draft 提议</text>
+<text x="536" y="494" font-size="20" font-weight="400" fill="#647184" text-anchor="start">使用 Target 的当前轮次；按剩余输出预算确定候选数量</text>
+<path d="M516 475 L438 475" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none"  marker-end="url(#arrow)"/>
+<rect x="54" y="430" width="384" height="119" rx="15" fill="#eaf3ff" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="74" y="463" font-size="23" font-weight="600" fill="#253042" text-anchor="start">④ Draft 本地调度并生成</text>
+<text x="74" y="494" font-size="20" font-weight="400" fill="#647184" text-anchor="start">普通 vLLM 请求 + prefix cache</text>
+<text x="74" y="522" font-size="20" font-weight="400" fill="#647184" text-anchor="start">输出候选 IDs；Worker 捕获 log(q)</text>
+<rect x="54" y="589" width="384" height="119" rx="15" fill="#f0ebff" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="74" y="622" font-size="23" font-weight="600" fill="#253042" text-anchor="start">Draft Worker 发布张量</text>
+<text x="74" y="653" font-size="20" font-weight="400" fill="#647184" text-anchor="start">等待生产端 CUDA event</text>
+<text x="74" y="681" font-size="20" font-weight="400" fill="#647184" text-anchor="start">保留已注册的 GPU 源缓冲区</text>
+<path d="M246 549 L246 589" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none"  marker-end="url(#arrow)"/>
+<rect x="516" y="565" width="798" height="91" rx="15" fill="#f0ebff" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="536" y="598" font-size="23" font-weight="600" fill="#253042" text-anchor="start">⑤ Frontend 转发候选 IDs + 张量描述符</text>
+<text x="536" y="629" font-size="20" font-weight="400" fill="#647184" text-anchor="start">Target RoleService 发起接收；Frontend 不读取概率数组</text>
+<path d="M438 606 L516 606" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none"  marker-end="url(#arrow)"/>
+<path d="M1314 606 L1392 606" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none"  marker-end="url(#arrow)"/>
+<rect x="1392" y="565" width="474" height="91" rx="15" fill="#f0ebff" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="1412" y="598" font-size="23" font-weight="600" fill="#253042" text-anchor="start">Target Worker 异步接收</text>
+<text x="1412" y="629" font-size="20" font-weight="400" fill="#647184" text-anchor="start">网络等待期间，其他就绪请求仍可执行</text>
+<rect x="516" y="696" width="798" height="109" rx="15" fill="#e8f5f0" stroke="#94c7b7" stroke-width="1.5"/>
+<text x="915" y="733" font-size="25" font-weight="600" fill="#26765f" text-anchor="middle">⑥ Mooncake RDMA：GPU log(q) [K, V]</text>
+<text x="915" y="775" font-size="21" font-weight="400" fill="#647184" text-anchor="middle">Worker → Worker；读完成后 ACK，允许源缓冲区复用</text>
+<rect x="1392" y="706" width="474" height="119" rx="15" fill="#fff4d9" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="1412" y="739" font-size="23" font-weight="600" fill="#253042" text-anchor="start">⑦ 就绪后提交候选</text>
+<text x="1412" y="770" font-size="20" font-weight="400" fill="#647184" text-anchor="start">RoleService stage(q) + ticket</text>
+<text x="1412" y="798" font-size="20" font-weight="400" fill="#647184" text-anchor="start">EngineCore → Scheduler 批量准入</text>
+<rect x="1392" y="862" width="474" height="119" rx="15" fill="#fff4d9" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="1412" y="895" font-size="23" font-weight="600" fill="#253042" text-anchor="start">⑧ MRV2 验证与原生拒绝采样</text>
+<text x="1412" y="926" font-size="20" font-weight="400" fill="#647184" text-anchor="start">消费 q，提交接受 token 及后续采样结果</text>
+<text x="1412" y="954" font-size="20" font-weight="400" fill="#647184" text-anchor="start">更新 Target KV，执行停止处理</text>
+<path d="M1629 825 L1629 862" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none"  marker-end="url(#arrow)"/>
+<rect x="516" y="885" width="798" height="119" rx="15" fill="#eaf3ff" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="536" y="918" font-size="23" font-weight="600" fill="#253042" text-anchor="start">⑨ Frontend 接收确认 delta + 下一轮 ticket</text>
+<text x="536" y="949" font-size="20" font-weight="400" fill="#647184" text-anchor="start">向用户输出；向 Draft commit 确认前缀；返回步骤 ③</text>
+<text x="536" y="977" font-size="20" font-weight="400" fill="#647184" text-anchor="start">终止时结束双方会话，不再创建下一轮</text>
+<path d="M1392 931 L1314 931" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none"  marker-end="url(#arrow)"/>
+<rect x="54" y="885" width="384" height="119" rx="15" fill="#f0ebff" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="74" y="918" font-size="23" font-weight="600" fill="#253042" text-anchor="start">Draft 对齐确认前缀</text>
+<text x="74" y="949" font-size="20" font-weight="400" fill="#647184" text-anchor="start">下一轮从已确认 token 继续</text>
+<text x="74" y="977" font-size="20" font-weight="400" fill="#647184" text-anchor="start">不能把未确认候选直接交给用户</text>
+<path d="M516 944 L438 944" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none"  marker-end="url(#arrow)"/>
+<text x="54" y="1049" font-size="20" font-weight="400" fill="#647184" text-anchor="start">两边引擎各自组 batch。</text>
+<text x="516" y="1049" font-size="20" font-weight="400" fill="#647184" text-anchor="start">目标端 q 保留到引擎输出 / abort，并等待最终 GPU 消费。</text>
+<rect x="36" y="1120" width="905" height="112" rx="15" fill="#f8fafc" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="56" y="1153" font-size="23" font-weight="600" fill="#253042" text-anchor="start">生命周期：请求、传输、GPU 消费分别完成后释放</text>
+<text x="56" y="1184" font-size="20" font-weight="400" fill="#647184" text-anchor="start">断开连接关闭会话；已开始的读取仍完成 ACK；drain 拒绝新绑定。</text>
+<text x="56" y="1212" font-size="20" font-weight="400" fill="#647184" text-anchor="start">已注册的空闲缓冲区可复用，在角色关闭时注销。</text>
+<rect x="965" y="1120" width="919" height="112" rx="15" fill="#f8fafc" stroke="#ced8e5" stroke-width="1.5"/>
+<text x="985" y="1153" font-size="23" font-weight="600" fill="#253042" text-anchor="start">当前部署边界</text>
+<text x="985" y="1184" font-size="20" font-weight="400" fill="#647184" text-anchor="start">每角色单 Worker、eager 执行；支持文本 greedy / 随机采样。</text>
+<text x="985" y="1212" font-size="20" font-weight="400" fill="#647184" text-anchor="start">独立 KV；当前不包含 KV 传输、多 Draft tree、级联验证或 PD 组合。</text>
+<path d="M1629 408 V464 Q1629 474 1619 474 H1317" stroke="#647184" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none" marker-end="url(#arrow)"/>
+<path d="M246 710 V832 Q246 842 256 842 H1344 Q1354 842 1354 832 V760 Q1354 750 1364 750 H1389" stroke="#27866e" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" fill="none" marker-end="url(#green)"/>
+<path d="M1629 659 V703" stroke="#647184" stroke-width="2.5" fill="none" marker-end="url(#arrow)"/>
+</svg>

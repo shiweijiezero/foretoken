@@ -26,6 +26,8 @@ pub const PYTHON_MODULE_PATH: &str = "/opt/foretoken/python";
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaunchPlanV1 {
+    #[serde(default)]
+    pub dt: Option<DraftTargetPlan>,
     pub version: u8,
     /// Kubernetes nodes participating in this complete execution group.
     #[serde(rename = "nodeCount")]
@@ -42,6 +44,32 @@ pub struct LaunchPlanV1 {
     pub internal_generate_request_body_limit_bytes: usize,
     #[serde(default, rename = "engineArgs")]
     pub engine_args: BTreeMap<String, serde_json::Value>,
+}
+
+/// Selects the independent role application while retaining the shared engine argument renderer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DraftTargetPlan {
+    pub role: DraftTargetRole,
+    #[serde(default)]
+    pub rdma: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DraftTargetRole {
+    Draft,
+    Target,
+}
+
+impl DraftTargetRole {
+    /// Returns the role application's CLI value for the process launcher.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Target => "target",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

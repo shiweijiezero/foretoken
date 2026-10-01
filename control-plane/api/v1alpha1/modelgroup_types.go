@@ -228,7 +228,8 @@ type ModelGroupRuntime struct {
 // +kubebuilder:validation:XValidation:rule="self == oldSelf",message="ModelGroup spec is immutable"
 // +kubebuilder:validation:XValidation:rule="self.memberCount == self.nodeCount",message="memberCount must equal nodeCount in v1alpha1"
 // +kubebuilder:validation:XValidation:rule="self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp",message="accelerator capacity must equal the compiled worker rank count"
-// +kubebuilder:validation:XValidation:rule="self.role == 'aggregate' ? !has(self.pdRuntime) && !has(self.ecRuntime) : self.role == 'encoder' ? !has(self.pdRuntime) && has(self.ecRuntime) && self.ecRuntime.role == 'producer' : self.role == 'prefill' ? has(self.pdRuntime) && (!has(self.ecRuntime) || self.ecRuntime.role == 'consumer') : self.role == 'decode' ? has(self.pdRuntime) && !has(self.ecRuntime) : false",message="aggregate, encoder, prefill, and decode ModelGroups require their fixed runtime configurations"
+// +kubebuilder:validation:XValidation:rule="self.role == 'aggregate' ? !has(self.pdRuntime) && !has(self.ecRuntime) : self.role == 'encoder' ? !has(self.pdRuntime) && has(self.ecRuntime) && self.ecRuntime.role == 'producer' : self.role == 'prefill' ? has(self.pdRuntime) && (!has(self.ecRuntime) || self.ecRuntime.role == 'consumer') : self.role == 'decode' ? has(self.pdRuntime) && !has(self.ecRuntime) : false",message="ModelGroup roles require their fixed runtime configurations"
+// +kubebuilder:validation:XValidation:rule="!has(self.speculationRole) || self.role == 'aggregate'",message="speculation requires aggregate execution"
 type ModelGroupSpec struct {
 	ModelPoolRef LocalObjectReference `json:"modelPoolRef"`
 
@@ -243,6 +244,10 @@ type ModelGroupSpec struct {
 	Ordinal int32 `json:"ordinal"`
 
 	Role ModelRole `json:"role"`
+
+	// SpeculationRole is the controller-assigned speculative decoding responsibility.
+	// +optional
+	SpeculationRole SpeculationRole `json:"speculationRole,omitempty"`
 
 	Artifacts ModelGroupArtifacts `json:"artifacts"`
 	Runtime   ModelGroupRuntime   `json:"runtime"`

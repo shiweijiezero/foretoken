@@ -67,7 +67,8 @@ impl RuntimeBuilder {
         let version = snapshot.version;
         let has_physical_backends = !snapshot.groups.is_empty()
             || !snapshot.pd_components.is_empty()
-            || !snapshot.epd_components.is_empty();
+            || !snapshot.epd_components.is_empty()
+            || !snapshot.dt_components.is_empty();
         let identities = snapshot
             .model_identities()
             .map_err(|error| RuntimeBuildError::InvalidSnapshot(error.to_string()))?;
@@ -110,16 +111,21 @@ impl RuntimeBuilder {
             .map(|(model, _)| model.clone())
             .collect::<BTreeSet<_>>();
         let models = if has_physical_backends {
-            model_runtimes(
-                identities
-                    .into_iter()
-                    .filter(|(model, _)| {
-                        healthy_models.contains(model) && !video_models.contains(model)
-                    })
-                    .collect(),
-                &registry,
-            )
-            .await?
+            let identities = identities
+                .into_iter()
+                .filter(|(model, _)| {
+                    healthy_models.contains(model) && !video_models.contains(model)
+                })
+                .collect();
+            // Tokenizer construction performs substantial synchronous CPU work. Keep it
+            // off the async worker so HTTP connections and readiness probes keep progressing.
+            let registry = registry.clone();
+            let runtime = tokio::runtime::Handle::current();
+            tokio::task::spawn_blocking(move || {
+                runtime.block_on(model_runtimes(identities, &registry))
+            })
+            .await
+            .map_err(|error| RuntimeBuildError::ModelRuntime(error.to_string()))??
         } else {
             BTreeMap::new()
         };

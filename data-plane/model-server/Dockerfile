@@ -10,9 +10,8 @@
 
 ARG BASE_IMAGE_REGISTRY=docker.io
 ARG UV_IMAGE_REGISTRY=ghcr.io
-ARG INFERENCE_ENGINE_IMAGE_REGISTRY=ghcr.io
 ARG RUST_BUILDER_IMAGE=${BASE_IMAGE_REGISTRY}/library/rust:1.97.1-slim-bullseye
-ARG INFERENCE_ENGINE_IMAGE=${INFERENCE_ENGINE_IMAGE_REGISTRY}/shiweijiezero/foretoken/model-server
+ARG INFERENCE_ENGINE_IMAGE=foretoken-vllm-cuda:dev
 ARG FORETOKEN_VLLM_PYTHON
 ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.9.10
 
@@ -105,6 +104,7 @@ RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
     --mount=type=bind,source=data-plane/patches/vllm/vllm-offloading-event-identity.patch,target=/tmp/vllm-offload-identity.patch \
     --mount=type=bind,source=data-plane/patches/vllm/vllm-ready-logprobs.patch,target=/tmp/vllm-ready-logprobs.patch \
     --mount=type=bind,source=data-plane/patches/vllm/vllm-0.26-ready-logprobs.patch,target=/tmp/vllm-0.26-ready-logprobs.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-0.30-ready-logprobs.patch,target=/tmp/vllm-0.30-ready-logprobs.patch \
     vllm_site="$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
       'from importlib.metadata import distribution; print(distribution("vllm").locate_file(""))')" \
     && vllm_version="$("${FORETOKEN_VLLM_PYTHON:-python}" -c 'from importlib.metadata import version; print(version("vllm"))')" \
@@ -112,6 +112,9 @@ RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
     && offload_patch= \
     && case "$vllm_version" in \
          0.26.*) ready_patch=/tmp/vllm-0.26-ready-logprobs.patch ;; \
+         0.30.1rc1.dev194+g3b4566c5c) \
+           ready_patch=/tmp/vllm-0.30-ready-logprobs.patch \
+           offload_patch=/tmp/vllm-offload-identity.patch ;; \
          0.30.*) offload_patch=/tmp/vllm-offload-identity.patch ;; \
        esac \
     && offload_events="$vllm_site/vllm/distributed/kv_transfer/kv_connector/v1/offloading/events.py" \
@@ -137,6 +140,7 @@ ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 # Engine images may provide a Python virtual environment without pip.
 # MACA also exposes torch.version.cuda, so select dependencies from the engine build.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    --mount=type=bind,source=data-plane/dt-plugin,target=/tmp/dt-plugin,rw \
     python_path=$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
       'import sys; print(sys.executable)') \
     && backend=$("$python_path" -c \
@@ -147,6 +151,9 @@ RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
     && uv pip install --no-cache --python "$python_path" \
       --constraint /tmp/foretoken-engine-constraints.txt \
       --default-index "${UV_DEFAULT_INDEX}" "$@" \
+    && rm -rf /opt/foretoken/python/foretoken_dt \
+    && uv pip install --no-cache --no-deps --python "$python_path" \
+      --default-index "${UV_DEFAULT_INDEX}" /tmp/dt-plugin \
     && uv pip check --python "$python_path" \
     && rm /tmp/foretoken-engine-constraints.txt
 

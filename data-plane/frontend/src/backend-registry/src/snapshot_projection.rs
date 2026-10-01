@@ -116,7 +116,12 @@ pub(crate) fn project_kv_runtime(
     })
 }
 
-fn pool_target(service_uid: String, pool_uid: String, pool_name: String) -> ScalingTarget {
+/// Builds the controller-owned Pool identity shared by snapshot topology projections.
+pub(crate) fn pool_target(
+    service_uid: String,
+    pool_uid: String,
+    pool_name: String,
+) -> ScalingTarget {
     ScalingTarget {
         service_uid,
         name: pool_name,
@@ -160,6 +165,12 @@ pub(crate) fn project_registry(
     };
     let mut routes = Vec::new();
     let mut components = BTreeMap::new();
+    crate::draft_target::project(
+        &snapshot,
+        &admission_by_target,
+        &mut routes,
+        &mut components,
+    )?;
     let mut aggregate_models = BTreeSet::new();
     let mut pd_models = BTreeSet::new();
 
@@ -307,7 +318,10 @@ pub(crate) fn project_registry(
             ModelServerRole::Decode => Component::Decode {
                 endpoint: component.endpoint,
             },
-            ModelServerRole::Aggregate | ModelServerRole::Encoder => {
+            ModelServerRole::Aggregate
+            | ModelServerRole::Encoder
+            | ModelServerRole::Draft
+            | ModelServerRole::Target => {
                 return Err(SnapshotError::InvalidPdPipelineScope(
                     route.pipeline_scope_id.clone().unwrap_or_default(),
                 ));
@@ -447,7 +461,7 @@ pub(crate) fn project_registry(
             ModelServerRole::Decode => Component::Decode {
                 endpoint: component.endpoint,
             },
-            ModelServerRole::Aggregate => unreachable!("aggregate E/P/D component was rejected"),
+            _ => unreachable!("non E/P/D component was rejected"),
         };
         if components
             .insert(route.route_target_id.clone(), component)

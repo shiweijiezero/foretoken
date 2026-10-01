@@ -46,6 +46,19 @@ impl ManagedEngine {
         self.handle.try_wait().await
     }
 
+    /// Lets an application close child-owned resources before bounded group teardown.
+    /// DT uses this after admission drain so its API process can still call its Worker.
+    pub async fn shutdown_application(&self, timeout: Duration) -> Result<(), String> {
+        let deadline = Instant::now() + timeout;
+        self.handle
+            .request_shutdown()
+            .await
+            .map_err(|error| error.to_string())?;
+        let _ = timeout_at(deadline, self.handle.wait_for_exit()).await;
+        self.shutdown(deadline.saturating_duration_since(Instant::now()))
+            .await
+    }
+
     /// Stops the actual engine after request drain, then reaps the launcher or reports failure.
     pub async fn shutdown(&self, timeout: Duration) -> Result<(), String> {
         let deadline = Instant::now() + timeout;

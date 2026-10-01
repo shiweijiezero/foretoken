@@ -57,7 +57,8 @@ impl RouteCandidate {
     /// Returns the required execution roles after this candidate for routing algorithms.
     pub fn future_stages(&self) -> &'static [ModelServerRole] {
         match self.role {
-            ModelServerRole::Aggregate | ModelServerRole::Decode => &[],
+            ModelServerRole::Aggregate | ModelServerRole::Decode | ModelServerRole::Draft => &[],
+            ModelServerRole::Target => &[ModelServerRole::Draft],
             ModelServerRole::Prefill => &[ModelServerRole::Decode],
             ModelServerRole::Encoder => &[ModelServerRole::Prefill, ModelServerRole::Decode],
         }

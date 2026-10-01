@@ -3,6 +3,7 @@
 
 //! Builds immutable component inventory and dynamic execution facades from snapshots.
 
+mod draft_target;
 mod registry;
 mod route_target_stats;
 mod snapshot;
@@ -11,9 +12,9 @@ mod snapshot_projection;
 pub use foretoken_artifacts::ModelSource;
 pub use registry::BackendRegistry;
 pub use snapshot::{
-    ModelIdentity, ServingSnapshot, SnapshotEpdComponent, SnapshotEpdPipelineScope, SnapshotError,
-    SnapshotGroup, SnapshotModel, SnapshotParallelism, SnapshotPdComponent,
-    SnapshotPdPipelineScope,
+    ModelIdentity, ServingSnapshot, SnapshotDtComponent, SnapshotEpdComponent,
+    SnapshotEpdPipelineScope, SnapshotError, SnapshotGroup, SnapshotModel, SnapshotParallelism,
+    SnapshotPdComponent, SnapshotPdPipelineScope,
 };
 
 use foretoken_kv_indexer::KvRuntimeConfig;

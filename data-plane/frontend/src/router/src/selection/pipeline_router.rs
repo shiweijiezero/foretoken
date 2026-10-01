@@ -323,7 +323,11 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     candidate.pipeline_scope_id.is_some()
                         && Self::future_stages_available(candidate, candidates)
                 }
-                ModelServerRole::Decode => false,
+                ModelServerRole::Target => {
+                    candidate.pipeline_scope_id.is_some()
+                        && Self::future_stages_available(candidate, scored)
+                }
+                ModelServerRole::Decode | ModelServerRole::Draft => false,
             },
             RouteError::NoMatchingRouteTarget {
                 model: request.model.clone(),
@@ -393,6 +397,9 @@ impl PipelineRouter<()> {
 #[derive(Clone)]
 enum SessionStage {
     Initial,
+    Target {
+        pipeline_scope_id: String,
+    },
     Encoder {
         pipeline_scope_id: String,
     },
@@ -467,7 +474,15 @@ impl<C: Send + 'static> RouteSession for Session<C> {
                 encoder_completed: false,
             },
             ModelServerRole::Aggregate => SessionStage::Complete,
-            ModelServerRole::Decode => unreachable!("initial eligibility rejects Decode"),
+            ModelServerRole::Target => SessionStage::Target {
+                pipeline_scope_id: candidate
+                    .pipeline_scope_id
+                    .clone()
+                    .expect("eligible target has a pipeline scope"),
+            },
+            ModelServerRole::Decode | ModelServerRole::Draft => {
+                unreachable!("role is not an initial stage")
+            }
         };
         self.selected.push((
             candidate.route_target_id.clone(),
@@ -500,6 +515,34 @@ impl<C: Send + 'static> RouteSession for Session<C> {
         self.selected
             .push((prefill.route_target_id.clone(), prefill.data_parallel_rank));
         Ok(prefill.decision())
+    }
+
+    fn select_draft(&mut self) -> Result<RouteDecision, RouteError> {
+        let SessionStage::Target { pipeline_scope_id } = &self.stage else {
+            return Err(RouteError::DraftBeforeTarget);
+        };
+        let progress = RoutingProgress {
+            current_stage: RoutingStage::Draft,
+            completed_stages: &[],
+            pipeline_scope_id: Some(pipeline_scope_id),
+        };
+        let draft = self.router.select(
+            &self.request,
+            &progress,
+            &mut self.customized_context,
+            |candidate, _| {
+                candidate.role == ModelServerRole::Draft
+                    && candidate.pipeline_scope_id.as_ref() == Some(pipeline_scope_id)
+            },
+            RouteError::NoMatchingRouteTarget {
+                model: self.request.model.clone(),
+            },
+        )?;
+        // Target and Draft execute alternating rounds. Neither has completed at binding time.
+        self.selected
+            .push((draft.route_target_id.clone(), draft.data_parallel_rank));
+        self.stage = SessionStage::Complete;
+        Ok(draft.decision())
     }
 
     fn select_decode(&mut self) -> Result<RouteDecision, RouteError> {

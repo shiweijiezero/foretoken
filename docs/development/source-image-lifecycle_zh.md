@@ -50,7 +50,10 @@ FORETOKEN_VLLM_PYTHON=/absolute/path/to/python \
 make dev-build
 ```
 
-否则直接使用默认值：
+否则直接使用默认值。NVIDIA 源码构建会准备固定版本的原版 vLLM 和 Mooncake CUDA 13 wheel，
+再将 DT 插件安装到 model-server 镜像中，主机驱动需支持 CUDA 13。
+独立固定的 Rust 构建源码不决定 Python 引擎版本。显式覆盖引擎镜像时保留该镜像的
+加速器依赖；运行 DT 还需满足[插件的引擎要求](../../data-plane/dt-plugin/README_zh.md#启动两个角色)。
 
 ```bash
 # 预计执行时间：约 8 分钟

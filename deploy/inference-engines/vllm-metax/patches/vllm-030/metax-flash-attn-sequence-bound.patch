@@ -1,0 +1,16 @@
+--- a/vllm_metax/v1/attention/backends/flash_attn.py
++++ b/vllm_metax/v1/attention/backends/flash_attn.py
+@@ -757,10 +757,9 @@
+             split_prefill_seq_lens = common_attn_metadata.seq_lens[
+                 split_decode_num_reqs:num_reqs
+             ]
+-            split_prefill_seq_lens_cpu = common_attn_metadata.seq_lens_cpu[
+-                split_decode_num_reqs:num_reqs
+-            ]
+-            split_prefill_max_seq_len = int(split_prefill_seq_lens_cpu.max().item())
++            # FlashAttention needs an upper bound; exact row lengths stay on
++            # device in cu_seqlens_k. Reuse the runner's bound without a CPU sync.
++            split_prefill_max_seq_len = max_seq_len
+             split_prefill_block_table = common_attn_metadata.block_table_tensor[
+                 split_decode_num_reqs:num_reqs
+             ]

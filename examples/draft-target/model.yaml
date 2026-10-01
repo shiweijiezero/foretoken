@@ -1,0 +1,36 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Requires the DT plugin and its supported native vLLM version.
+apiVersion: inference.foretoken.io/v1alpha1
+kind: ModelService
+metadata:
+  name: dt-qwen3
+spec:
+  model: Qwen/Qwen3-4B
+  source: hf
+  backend: vllm
+  engineArgs:
+    max-model-len: 4096
+  speculation:
+    draftPool: draft
+  modelPools:
+    - name: draft
+      role: aggregate
+      model: Qwen/Qwen3-0.6B
+      replicas: 1
+      resources:
+        requests:
+          cpu: "4"
+          memory: 16Gi
+          gpu:
+            count: 1
+    - name: main
+      role: aggregate
+      replicas: 1
+      resources:
+        requests:
+          cpu: "4"
+          memory: 32Gi
+          gpu:
+            count: 1

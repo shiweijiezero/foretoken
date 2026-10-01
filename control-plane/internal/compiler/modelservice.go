@@ -56,6 +56,9 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 	if internalGenerateRequestBodyLimitBytes < inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes || internalGenerateRequestBodyLimitBytes > inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes {
 		return nil, fmt.Errorf("internalGenerateRequestBodyLimitBytes must be between %d and %d", inferencev1alpha1.MinInternalGenerateRequestBodyLimitBytes, inferencev1alpha1.MaxInternalGenerateRequestBodyLimitBytes)
 	}
+	if err := validateSpeculation(spec); err != nil {
+		return nil, err
+	}
 	if len(spec.ModelPools) == 0 {
 		replicas := valueOrDefault(spec.Replicas, 1)
 		nodes := valueOrDefault(spec.Nodes, 1)
@@ -91,11 +94,55 @@ func CompileModelService(spec inferencev1alpha1.ModelServiceSpec) ([]ModelPool, 
 		if err != nil {
 			return nil, fmt.Errorf("modelPools %q: %w", entry.Name, err)
 		}
+		if spec.Speculation != nil {
+			pool.Template.SpeculationRole = inferencev1alpha1.SpeculationRoleTarget
+			if entry.Name == spec.Speculation.DraftPool {
+				pool.Template.SpeculationRole = inferencev1alpha1.SpeculationRoleDraft
+			}
+		}
+		if entry.Model != "" {
+			if source != inferencev1alpha1.ModelSourceLocal && path.IsAbs(entry.Model) {
+				return nil, fmt.Errorf("modelPools %q: absolute draft model paths require source local", entry.Name)
+			}
+			pool.Template.Model = entry.Model
+		}
+		if spec.Speculation != nil && source == inferencev1alpha1.ModelSourceLocal {
+			if !path.IsAbs(pool.Template.Model) || !path.IsAbs(pool.Template.Tokenizer) {
+				return nil, fmt.Errorf("modelPools %q: local DT model and tokenizer require absolute container paths", entry.Name)
+			}
+		}
 		pools = append(pools, pool)
 	}
 
 	sort.Slice(pools, func(i, j int) bool { return pools[i].Name < pools[j].Name })
 	return pools, nil
+}
+
+// validateSpeculation checks the user binding before deriving per-pool responsibilities.
+func validateSpeculation(spec inferencev1alpha1.ModelServiceSpec) error {
+	foundDraft := false
+	for _, pool := range spec.ModelPools {
+		isDraft := spec.Speculation != nil && pool.Name == spec.Speculation.DraftPool
+		if pool.Model != "" && !isDraft {
+			return fmt.Errorf("modelPools %q: model override requires speculation.draftPool", pool.Name)
+		}
+		if spec.Speculation == nil {
+			continue
+		}
+		if pool.Role != "" && pool.Role != inferencev1alpha1.ModelRoleAggregate {
+			return fmt.Errorf("speculation currently requires aggregate modelPools")
+		}
+		if isDraft {
+			if pool.Model == "" {
+				return fmt.Errorf("modelPools %q: speculation.draftPool requires model", pool.Name)
+			}
+			foundDraft = true
+		}
+	}
+	if spec.Speculation != nil && (!foundDraft || len(spec.ModelPools) < 2) {
+		return fmt.Errorf("speculation requires a named draftPool and at least one main model pool")
+	}
+	return nil
 }
 
 // Validate service-wide topology across Pools: aggregate and split roles are exclusive,

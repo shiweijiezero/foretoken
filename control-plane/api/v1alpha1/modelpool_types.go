@@ -19,7 +19,7 @@ type LocalObjectReference struct {
 	UID string `json:"uid"`
 }
 
-// ModelRole identifies a ModelPool's role in the serving path.
+// ModelRole identifies the model execution stage served by a ModelPool.
 // +enum
 // +kubebuilder:validation:Enum=aggregate;encoder;prefill;decode
 type ModelRole string
@@ -29,6 +29,16 @@ const (
 	ModelRoleEncoder   ModelRole = "encoder"
 	ModelRolePrefill   ModelRole = "prefill"
 	ModelRoleDecode    ModelRole = "decode"
+)
+
+// SpeculationRole identifies a controller-assigned responsibility in speculative decoding.
+// +enum
+// +kubebuilder:validation:Enum=draft;target
+type SpeculationRole string
+
+const (
+	SpeculationRoleDraft  SpeculationRole = "draft"
+	SpeculationRoleTarget SpeculationRole = "target"
 )
 
 // ManagedMooncakeStoreBinding pins a Ready Foretoken-owned KVService against ABA.
@@ -84,6 +94,7 @@ type HuggingFaceAccess struct {
 
 // NormalizedPoolTemplate is the normalized configuration produced from ModelService intent.
 // Platform runtime and accelerator resolution may further constrain it before Groups are created.
+// +kubebuilder:validation:XValidation:rule="!has(self.speculationRole) || self.role == 'aggregate'",message="speculation requires aggregate execution"
 // +kubebuilder:validation:XValidation:rule="self.memberCount == self.nodeCount",message="memberCount must equal nodeCount in v1alpha1"
 type NormalizedPoolTemplate struct {
 	// +kubebuilder:validation:MinLength=1
@@ -119,6 +130,10 @@ type NormalizedPoolTemplate struct {
 	Backend string `json:"backend"`
 
 	Role ModelRole `json:"role"`
+
+	// SpeculationRole is derived from the ModelService speculation binding.
+	// +optional
+	SpeculationRole SpeculationRole `json:"speculationRole,omitempty"`
 
 	// +kubebuilder:validation:Minimum=1
 	NodeCount int32 `json:"nodeCount"`

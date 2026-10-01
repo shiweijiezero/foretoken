@@ -24,9 +24,9 @@ func modelGroupLeaderWorkerSetName(group *inferencev1alpha1.ModelGroup) string {
 }
 
 // reconcileWorkload keeps complete Group availability independent of the Pod orchestration backend.
-func (reconciler *ModelGroupReconciler) reconcileWorkload(ctx context.Context, group *inferencev1alpha1.ModelGroup) (bool, error) {
+func (reconciler *ModelGroupReconciler) reconcileWorkload(ctx context.Context, group *inferencev1alpha1.ModelGroup, pool *inferencev1alpha1.ModelPool) (bool, error) {
 	if group.Spec.NodeCount == 1 {
-		deployment, err := reconciler.reconcileDeployment(ctx, group)
+		deployment, err := reconciler.reconcileDeployment(ctx, group, pool)
 		if err != nil {
 			return false, err
 		}
@@ -53,7 +53,7 @@ func (reconciler *ModelGroupReconciler) reconcileWorkload(ctx context.Context, g
 			return false, fmt.Errorf("get superseded LeaderWorkerSet: %w", err)
 		}
 	}
-	deployment, err := desiredDeployment(group, reconciler.ImagePullSecrets)
+	deployment, err := desiredDeployment(group, pool, reconciler.ImagePullSecrets)
 	if err != nil {
 		return false, err
 	}

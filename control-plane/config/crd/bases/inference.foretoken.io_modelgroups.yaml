@@ -555,8 +555,8 @@ spec:
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                 type: string
               role:
-                description: ModelRole identifies a ModelPool's role in the serving
-                  path.
+                description: ModelRole identifies the model execution stage served
+                  by a ModelPool.
                 enum:
                 - aggregate
                 - encoder
@@ -628,6 +628,13 @@ spec:
                 - internalGenerateRequestBodyLimitBytes
                 - port
                 type: object
+              speculationRole:
+                description: SpeculationRole is the controller-assigned speculative
+                  decoding responsibility.
+                enum:
+                - draft
+                - target
+                type: string
               timeouts:
                 description: ModelTimeouts defines ModelService lifecycle budgets.
                 properties:
@@ -674,14 +681,15 @@ spec:
             - message: accelerator capacity must equal the compiled worker rank count
               rule: self.nodeCount * self.resources.requests.gpu.count == self.parallelism.pp
                 * self.parallelism.tp * self.parallelism.pcp * self.parallelism.dp
-            - message: aggregate, encoder, prefill, and decode ModelGroups require
-                their fixed runtime configurations
+            - message: ModelGroup roles require their fixed runtime configurations
               rule: 'self.role == ''aggregate'' ? !has(self.pdRuntime) && !has(self.ecRuntime)
                 : self.role == ''encoder'' ? !has(self.pdRuntime) && has(self.ecRuntime)
                 && self.ecRuntime.role == ''producer'' : self.role == ''prefill''
                 ? has(self.pdRuntime) && (!has(self.ecRuntime) || self.ecRuntime.role
                 == ''consumer'') : self.role == ''decode'' ? has(self.pdRuntime) &&
                 !has(self.ecRuntime) : false'
+            - message: speculation requires aggregate execution
+              rule: '!has(self.speculationRole) || self.role == ''aggregate'''
           status:
             description: ModelGroupStatus defines the observed state of a ModelGroup.
             properties:

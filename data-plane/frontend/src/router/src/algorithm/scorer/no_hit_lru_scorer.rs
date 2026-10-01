@@ -87,10 +87,11 @@ impl RouteScorer for NoHitLruScorer {
             let has_stage_role = match routing_progress.current_stage {
                 RoutingStage::Initial => matches!(
                     candidate.role,
-                    ModelServerRole::Aggregate | ModelServerRole::Prefill
+                    ModelServerRole::Aggregate | ModelServerRole::Prefill | ModelServerRole::Target
                 ),
                 RoutingStage::Prefill => candidate.role == ModelServerRole::Prefill,
                 RoutingStage::Decode => candidate.role == ModelServerRole::Decode,
+                RoutingStage::Draft => candidate.role == ModelServerRole::Draft,
             };
             has_stage_role
                 && routing_progress.pipeline_scope_id.is_none_or(|scope| {

@@ -26,6 +26,11 @@ build_dev_images() {
     printf 'Building MetaX inference runtime: %s\n' "$engine_image"
     make image-vllm-metax VLLM_METAX_IMAGE="$engine_image"
     export INFERENCE_ENGINE_IMAGE="$engine_image"
+  elif [[ -z "${INFERENCE_ENGINE_IMAGE:-}" ]]; then
+    local engine_image="${MODEL_SERVER_IMAGE}-engine"
+    printf 'Building NVIDIA inference runtime: %s\n' "$engine_image"
+    make image-vllm-cuda VLLM_CUDA_IMAGE="$engine_image"
+    export INFERENCE_ENGINE_IMAGE="$engine_image"
   fi
 
   local -a go_args=() cargo_args=() model_args=()
@@ -63,9 +68,6 @@ build_dev_images() {
     )
   fi
   if [[ -n "$ghcr_registry" ]]; then
-    model_image_args+=(
-      --build-arg "INFERENCE_ENGINE_IMAGE_REGISTRY=${ghcr_registry%/}"
-    )
     if [[ -z "${UV_IMAGE:-}" ]]; then
       model_image_args+=(
         --build-arg "UV_IMAGE_REGISTRY=${ghcr_registry%/}"

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-//! Executes aggregate, P/D, and E/P/D generation while retaining cross-stage cleanup ownership.
+//! Executes aggregate, P/D, E/P/D, and DT generation while retaining cross-stage cleanup ownership.
 
 use foretoken_llm_facade::{
     LlmFacadeResolver, MultiStageCleanup, RouteStage, TokenStream, consume_encoder,
@@ -51,7 +51,24 @@ pub(crate) async fn execute_workflow(
             )
             .await
         }
-        ModelServerRole::Decode => Err(GenerationError::Internal),
+        ModelServerRole::Target => {
+            let draft = session.select_draft().map_err(unavailable)?;
+            let draft_client = resolver
+                .resolve_draft_target(&draft)
+                .ok_or(GenerationError::Internal)?;
+            let target_client = resolver
+                .resolve_draft_target(&initial)
+                .ok_or(GenerationError::Internal)?;
+            let stream = crate::draft_target::generate_draft_target_tokens(
+                draft_client,
+                target_client,
+                request,
+            )
+            .await
+            .map_err(GenerationError::from)?;
+            Ok((initial, stream))
+        }
+        ModelServerRole::Decode | ModelServerRole::Draft => Err(GenerationError::Internal),
     }
 }
 

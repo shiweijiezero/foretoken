@@ -87,17 +87,20 @@ v0.0.1.post1
 
 ## 构建与推送发布产物
 
-准备兼容的 NVIDIA 和沐曦推理运行时镜像，然后将下面的仓库前缀和镜像名称替换为实际值：
+NVIDIA 运行时由固定版本的上游 vLLM 和 Mooncake CUDA 13 wheel 构建。
+准备兼容的沐曦推理运行时镜像，然后将下面的仓库前缀和沐曦镜像名称替换为实际值：
 
 ```bash
 export REGISTRY=ghcr.io/your-org/foretoken
-export INFERENCE_ENGINE_IMAGE=your-nvidia-runtime:version
 export METAX_INFERENCE_ENGINE_IMAGE=your-metax-runtime:version
 
 deploy/release-artifacts build --registry "$REGISTRY"
 ```
 
 control-plane、frontend、model-server 镜像和 Helm Chart 使用同一个版本。沐曦 model-server 镜像带有 `-metax` 后缀。
+
+仅在覆盖默认 NVIDIA 运行时时设置 `INFERENCE_ENGINE_IMAGE`。
+DT 场景下，覆盖镜像必须满足[插件的引擎要求](../../data-plane/dt-plugin/README_zh.md#启动两个角色)。
 
 完成产物验证后，登录仓库并推送：
 

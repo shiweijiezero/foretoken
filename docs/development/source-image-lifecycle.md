@@ -50,7 +50,12 @@ FORETOKEN_VLLM_PYTHON=/absolute/path/to/python \
 make dev-build
 ```
 
-Otherwise, use the defaults:
+Otherwise, use the defaults. NVIDIA source builds prepare pinned native vLLM and
+Mooncake CUDA 13 wheels, then install the DT plugin in the model-server image.
+The host driver must support CUDA 13. The independently pinned Rust build source
+does not select the Python engine version. An explicit engine-image override
+keeps its own accelerator dependencies and must meet the
+[DT engine requirements](../../data-plane/dt-plugin/README.md#start-two-roles) to run DT.
 
 ```bash
 # Expected runtime: about 8 minutes

@@ -26,6 +26,8 @@ pub enum ModelServerRole {
     Encoder,
     Prefill,
     Decode,
+    Draft,
+    Target,
 }
 
 /// Request accepted by the single model-server ingress owned by one routable ModelGroup.
