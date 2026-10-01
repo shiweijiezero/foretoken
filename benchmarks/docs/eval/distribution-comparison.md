@@ -21,8 +21,6 @@ foretoken eval examples/quantized-model/bitsandbytes \
 
 Both deployments use Qwen2.5-0.5B-Instruct with BF16 computation; the candidate loads its weights in 4-bit. Model and tokenizer settings come from the reference deployment. Existing deployments are reused; temporary deployments run sequentially and are removed after use, so one available GPU is sufficient when both are temporary.
 
-The examples enable full-vocabulary output. For a deployment created from older example files, apply the updated Kustomize directory with `foretoken deploy PATH` before comparing.
-
 ## Read the results
 
 The summary compares candidates using these metrics:
@@ -36,7 +34,7 @@ The summary compares candidates using these metrics:
 | Centered-logit RMSE | Root-mean-square difference after subtracting each vector's mean log probability; invariant to a common logit offset |
 | Total variation | Half the sum of absolute probability differences |
 
-The result directory contains a candidate table (`distribution_comparison_candidates.csv`), per-position records (`distribution_comparison_positions.jsonl`), and, with `plot` selected, PDF/SVG/PNG figures in `plots/`. `metrics.json` records the sample settings and completion status. Add `wandb` to `--output` to publish tables, curves, and images.
+Use `distribution_comparison_candidates.csv` for the candidate summary, `distribution_comparison_positions.jsonl` to inspect individual positions, and `plots/` for the comparison figures.
 
 These plots compare Qwen3-0.6B BF16 and bitsandbytes 4-bit through existing endpoints, using two 96-token WikiText-2 windows and scoring their last 32 positions:
 
@@ -50,7 +48,7 @@ Use [task evaluation](README.md) for answer quality and [performance evaluation]
 
 The default corpus is [WikiText-2](https://huggingface.co/datasets/Salesforce/wikitext), configuration `wikitext-2-raw-v1`, test split. Four non-overlapping 512-token windows are sampled, scoring the last 16 positions of each: 64 paired positions per candidate. Each prefix comes from the original corpus rather than generated answers; this is teacher forcing.
 
-Use `--dataset corpus.txt` for local text, or `--dataset corpus.jsonl` for records containing a `text` field. `--text-column` selects another field. Hugging Face datasets also accept `--dataset-config` and `--split`. Adjust sample size with `--context-length`, `--num-windows`, and `--score-tokens`. A tokenizer-defined beginning-of-sequence token is added to each window.
+Use `--dataset corpus.txt` for local text, or `--dataset corpus.jsonl` for records containing a `text` field. `--text-column` selects another field. Hugging Face datasets also accept `--dataset-config` and `--split`. Adjust sample size with `--context-length`, `--num-windows`, and `--score-tokens`.
 
 ## Compare several candidates
 
@@ -61,7 +59,7 @@ foretoken eval examples/quantized-model/bitsandbytes examples/quantized-model/bf
   --reference examples/quantized-model/bf16 --output local,wandb,plot
 ```
 
-This compares each candidate against the explicitly selected reference. Add `--greedy-compare --context-length 128 --max-tokens 64` to compare generated token-ID sequences instead of the default teacher-forced distributions. The maintained [candidate list](../../../examples/quantized-model/candidates.jsonl) contains BF16 and bitsandbytes with method and nominal bit-width labels:
+Each candidate is compared against the reference. To give candidates custom labels or size coordinates, use a [candidate file](../../../examples/quantized-model/candidates.jsonl):
 
 ```bash
 foretoken eval \
@@ -72,7 +70,7 @@ foretoken eval \
 
 To customize the list, write one JSON object per candidate, following that file. Each row selects `path`, or `url` with its `model`; rows without either reuse the command's candidate service. Paths are relative to the command's working directory. Single-model deployments supply their model IDs. Labels default to deployment directory names or model IDs; use `label` to distinguish identical names.
 
-For one candidate, `--label` and `--method` annotate the plots. Deployments supply the quantization method from `engineArgs` when no method label is given. Optional size coordinates produce separate comparison plots; without them, the horizontal axis uses candidate names:
+For one candidate, `--label` and `--method` annotate the plots. The quantization method is inferred from the deployment when omitted. Optional size coordinates produce separate comparison plots; without them, the horizontal axis uses candidate names:
 
 | Candidate field / CLI option | Meaning |
 | --- | --- |
@@ -107,9 +105,11 @@ foretoken eval --reference examples/quantized-model/bf16 \
   --output local,wandb,plot
 ```
 
-The reference tokenizer prepares four identical 128-token prompts for both services. Each sends a non-streaming Completions request with `temperature=0`, at most 64 generated tokens, and normal EOS stopping. Both services must use the same token-ID mapping and return native `choices[0].token_ids` and `finish_reason`; decoded text is retained for inspection, never retokenized for comparison. Leave enough room in each model's context for the prompt and generation budget.
+The command compares four 128-token prompts using greedy decoding (`temperature=0`), generating up to 64 tokens per prompt or stopping at EOS. Both services must use the same token-ID mapping and return `choices[0].token_ids` and `finish_reason` in their Completions responses. Each model's context must accommodate the prompt and generation budget.
 
-`greedy_comparison_candidates.csv` reports valid and failed sample counts and the exact-sequence match rate among valid pairs. `greedy_comparison_samples.csv` records each pair's generated IDs, text, finish reasons, lengths, exact match, and first differing zero-based token position (or the shorter length if one sequence is a prefix), and the number of differing positions plus any length difference. Failures are not counted as matches and make the command exit nonzero. Local figures and W&B compare candidates and show first-divergence positions; `metrics.json` preserves the shared input token-ID windows alongside the complete records, indexed by each sample's `window`. This is generated-sequence consistency, not teacher-forced KL or answer correctness. To compare draft models with the same served model ID, give each candidate row a distinct deployment or URL and `label`.
+`greedy_comparison_candidates.csv` reports valid and failed sample counts and the exact-sequence match rate among valid pairs. Inspect generated tokens and the first divergence in `greedy_comparison_samples.csv`.
+
+To compare draft configurations that share a served model ID, give each candidate a distinct deployment or URL and `label`.
 
 ## Resume a distribution comparison
 
@@ -121,4 +121,4 @@ foretoken eval examples/quantized-model/bitsandbytes \
   --resume results/previous-run --output local,plot
 ```
 
-Completed windows and saved corpus tokens are reused; an interrupted window is recomputed in full. A completed reference or candidate needs no deployment or requests. Keep the same models, weights, tokenizer, candidates, and scoring settings. Results are written to a new directory, leaving the previous run unchanged.
+The command reuses completed work and saves results in a new directory. Keep the models, weights, tokenizer, candidates, and scoring settings unchanged.

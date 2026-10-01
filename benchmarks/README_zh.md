@@ -15,7 +15,7 @@ pip install foretoken
 # pip install -e .
 ```
 
-以下示例在[快速开始](../README_zh.md#快速开始)准备的仓库目录运行，将结果保存到本地和 W&B。首次使用 W&B 前，执行一次 `wandb login`。
+在[快速开始](../README_zh.md#快速开始)准备的仓库目录运行以下示例。首次使用 W&B 前，执行 `wandb login`。
 
 传入 Kustomize 目录即可使用其中的模型服务。单模型部署自动选择模型，多模型部署通过 `--model` 指定。评测已有端点时，将目录换成 `--url`，并提供服务的模型名。
 

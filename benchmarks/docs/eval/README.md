@@ -52,7 +52,7 @@ foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbyt
   --tasks piqa --limit 100 --output local,wandb,plot
 ```
 
-Each deployment is evaluated sequentially. The result directory contains each evaluator's native reports and `evaluation_comparison.csv` with method, task, metric, answer filter, sample count, score, and native standard error. Local figures and a W&B comparison run keep distinct tasks and metrics separate. Deployments with the same directory name receive distinct path-based labels. Single-deployment evaluation remains unchanged.
+The deployments are evaluated in turn. Compare task scores and available standard errors in `evaluation_comparison.csv`; detailed evaluator reports are saved with each run.
 
 For [reference/candidate distribution or greedy sequence comparisons](distribution-comparison.md), provide `--reference` explicitly with multiple candidate deployment paths.
 
@@ -66,7 +66,7 @@ foretoken eval examples/quickstart \
   --output local,wandb
 ```
 
-The summary reports task scores and how many samples were scored. Category and subset scores remain in the saved reports and W&B. Use [EvalScope's native options](https://evalscope.readthedocs.io/en/latest/get_started/basic_usage.html), including `--dataset-args` and `--generation-config`, to configure the task.
+The summary reports task scores and sample counts; saved reports provide category and subset scores. Use [EvalScope's native options](https://evalscope.readthedocs.io/en/latest/get_started/basic_usage.html), including `--dataset-args` and `--generation-config`, to configure the task.
 
 For both frameworks, omit `--limit` to run the complete selected task. The evaluator and task define prompting and scoring. Run `foretoken eval --evaluator lm-eval --help` or `foretoken eval --evaluator evalscope --help` for the corresponding options.
 
@@ -115,6 +115,6 @@ Open the result directory printed by the command:
 | `native/` | The framework's reports and any generated sample records |
 | `evaluator.log` | The evaluator's execution log |
 
-W&B provides task metrics, a score table, and native reports as a downloadable artifact. Common [output settings](../../README.md#read-and-save-results) select destinations and organize comparisons.
+See [output settings](../../README.md#read-and-save-results) to choose where results are saved.
 
 Compare scores using the same evaluator, task configuration, and sample selection.

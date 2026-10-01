@@ -35,13 +35,11 @@ foretoken perf --url http://host/v1/chat/completions --model Qwen/Qwen3-0.6B \
   --num-runs 1 --experiment-name sharegpt-rate --output local,wandb,plot
 ```
 
-数据集按记录的顺序执行完整多轮对话。100 个请求的预算按各轮 HTTP 请求计数，最后一段对话可能在用尽预算时停止。有文本参考答案的轮次按对应 token 数定长生成，规则见[对话输出长度](conversations_zh.md)。到达率控制对话何时启动，SLO 则逐条 HTTP 请求统计 TTFT 和 TPOT。上述速率是 Foretoken 的起始负载，不是某篇论文的模型专属参数。只有 `--slo-search` 才搜索并发。
+到达率控制对话何时启动，SLO 则按各轮 HTTP 请求统计 TTFT 和 TPOT。100 个请求预算按轮次计数，最后一段对话可能在预算耗尽时停止。有文本参考答案的轮次按对应 token 数定长生成，显式长度设置见[对话输出长度](conversations_zh.md)。`--slo-params` 统计这组固定负载的达标情况，`--slo-search` 开启并发搜索。
 
-[DistServe 的服务评测代码](https://github.com/LLMServe/DistServe/blob/main/evaluation/2-benchmark-serving/2-benchmark-serving.py)可作为请求到达与 SLO 实验的参考；本配置不宣称复现其数据准备和模型专属设置。
+固定负载测量接受一个条件对象，指标为 `latency`、`ttft`、`tpot` 或 `itl`。耗时阈值使用 `s` 或 `ms` 后缀，例如 `<=2s`、`<=100ms`；不带单位时按秒解释。一个请求满足全部条件才算达标，失败或缺少必要指标的请求计为不达标。`itl` 检查每个请求中最大的分片间隔。
 
-测量模式接受一个条件对象，指标为 `latency`、`ttft`、`tpot` 或 `itl`。耗时阈值可带 `s` 或 `ms` 后缀，例如 `<=2s`、`<=100ms`；不带后缀的数值仍按秒解释，以兼容现有配置。一个请求满足全部条件才算达标；失败或缺少必要指标的请求计为不达标。`itl` 检查每个请求中最大的分片间隔，不是全局 token 间隔的 p99。
-
-扫描结果自动绘制到达率与达标率、请求 goodput、token goodput、延迟的曲线。各次运行也会沿吞吐和延迟的时间轴绘制[一秒 SLO 窗口](../../metrics_zh.md#slo-结果)。一次比较多个 SLO 阈值和速率，可使用[阈值扫描](sweep_zh.md#比较-slo-阈值与请求速率)。从结果中读取请求达标率达到目标（如 90% 或 99%）的最高已测对话启动速率，再扩展或细化参数文件中的速率列表以定位边界。各轮先计算达标比例，再汇总均值；不合并所有请求计算一个比例，也不自动搜索容量。
+比较各速率下的达标率、goodput（达标请求或 token 的吞吐量）和延迟。选择达到目标达标率（如 90% 或 99%）的最高已测对话启动速率，再扩展或细化速率列表以定位边界。重复运行时，达标率是各轮达标比例的均值，而非合并所有请求后计算的比例。[一秒 SLO 窗口](../../metrics_zh.md#slo-结果)展示运行期间达标情况的变化。同时比较阈值与速率，见[阈值扫描](sweep_zh.md#比较-slo-阈值与请求速率)。
 
 ## 设置搜索条件
 

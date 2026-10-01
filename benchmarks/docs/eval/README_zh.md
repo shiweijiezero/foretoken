@@ -52,7 +52,7 @@ foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbyt
   --tasks piqa --limit 100 --output local,wandb,plot
 ```
 
-各服务依次评测。结果目录保留每个评测框架的原始报告；`evaluation_comparison.csv` 按部署列出任务、指标、答案筛选方式、样本量、分数及框架提供的标准误差。本地图和 W&B 对比运行将不同任务、指标分开呈现。同名目录会使用可区分的路径标签；单部署命令仍按原方式工作。
+各部署依次评测。通过 `evaluation_comparison.csv` 比较任务得分及框架提供的标准误差；详细报告保存在各次运行的结果目录中。
 
 如需比较[参考模型与多个候选模型的概率分布或贪心生成序列](distribution-comparison_zh.md)，请显式添加 `--reference`。
 
@@ -66,7 +66,7 @@ foretoken eval examples/quickstart \
   --output local,wandb
 ```
 
-汇总结果展示任务得分和已完成评分的样本数，各类别和子集的详细分数保存在报告与 W&B 中。通过 [EvalScope 原生参数](https://evalscope.readthedocs.io/zh-cn/latest/get_started/basic_usage.html)配置任务，例如 `--dataset-args` 和 `--generation-config`。
+汇总结果展示任务得分和样本数，各类别及子集的详细分数见保存的报告。通过 [EvalScope 原生参数](https://evalscope.readthedocs.io/zh-cn/latest/get_started/basic_usage.html)配置任务，例如 `--dataset-args` 和 `--generation-config`。
 
 两个框架都可去掉 `--limit`，运行完整的所选任务。提示词和判分规则由框架及任务定义。全部选项分别见 `foretoken eval --evaluator lm-eval --help` 和 `foretoken eval --evaluator evalscope --help`。
 
@@ -115,6 +115,6 @@ foretoken eval examples/quickstart \
 | `native/` | 框架报告及其生成的逐样本记录 |
 | `evaluator.log` | 评测框架的运行日志 |
 
-W&B 提供任务指标、分数表，并将框架报告作为 artifact 供下载。输出位置与运行分组采用通用[结果设置](../../README_zh.md#查看和保存结果)。
+结果保存位置见[输出设置](../../README_zh.md#查看和保存结果)。
 
 比较分数时，使用相同的框架、任务配置和样本范围。
