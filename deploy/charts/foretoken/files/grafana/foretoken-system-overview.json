@@ -2312,7 +2312,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Number of complete speculative decode batches timed per second; no observations when timing is disabled or batches contain prefill.",
+      "description": "Timed pure speculative decode batches per second, collected automatically for GPU drafting.",
       "fieldConfig": {
         "defaults": {
           "color": {

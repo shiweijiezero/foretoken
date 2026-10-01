@@ -1,0 +1,343 @@
+diff --git a/vllm/distributed/device_communicators/shm_broadcast.py b/vllm/distributed/device_communicators/shm_broadcast.py
+--- a/vllm/distributed/device_communicators/shm_broadcast.py
++++ b/vllm/distributed/device_communicators/shm_broadcast.py
+@@ -776,7 +776,7 @@
+                     written_flag = metadata_buffer[0]
+                     return not (not written_flag or read_flag)
+
+-                if SPINLOOP_EXT_ENABLED and not check():
++                if SPINLOOP_EXT_ENABLED and timeout != 0 and not check():
+                     spinloop(
+                         metadata_buffer[0 : self.local_reader_rank + 1],
+                         check,
+diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
+--- a/vllm/v1/engine/core.py
++++ b/vllm/v1/engine/core.py
+@@ -606,9 +610,41 @@
+         engine_core_outputs = self.scheduler.update_from_output(
+             scheduler_output, model_output
+         )
++        self._attach_spec_decode_timings(
++            engine_core_outputs, model_output.spec_decode_timing
++        )
+         self._attach_iteration_details(engine_core_outputs, iteration_details)
+
+         return engine_core_outputs, scheduler_output.total_num_scheduled_tokens > 0
++
++    def _attach_spec_decode_timings(
++        self,
++        outputs: dict[int, EngineCoreOutputs],
++        timing: SpecDecodeTimingResult | None,
++    ) -> None:
++        """Publish completed worker samples without making metrics scheduler work."""
++        if timing is None:
++            return
++        self._spec_decode_timing_pending |= timing.pending
++        if not timing.samples:
++            return
++        stats = next(
++            (
++                output.scheduler_stats
++                for output in outputs.values()
++                if output.scheduler_stats is not None
++            ),
++            None,
++        )
++        if stats is None:
++            stats = self.scheduler.make_stats()
++            if stats is None:
++                return
++            output = next(iter(outputs.values()), None)
++            if output is None:
++                outputs[0] = output = EngineCoreOutputs()
++            output.scheduler_stats = stats
++        stats.spec_decode_timings.extend(timing.samples)
+
+     def post_step(self, model_executed: bool) -> None:
+         # When using async scheduling we can't get draft token ids in advance,
+@@ -707,6 +743,9 @@
+         self._process_aborts_queue()
+         engine_core_outputs = self.scheduler.update_from_output(
+             scheduler_output, model_output
++        )
++        self._attach_spec_decode_timings(
++            engine_core_outputs, model_output.spec_decode_timing
+         )
+         self._attach_iteration_details(engine_core_outputs, iteration_details)
+
+@@ -922,8 +961,8 @@
+         """Check if engine is sleeping at any level."""
+         return self.is_scheduler_paused() or self.model_executor.is_sleeping
+
+-    def execute_dummy_batch(self):
+-        self.model_executor.execute_dummy_batch()
++    def execute_dummy_batch(self) -> list[SpecDecodeTimingResult | None]:
++        return self.model_executor.execute_dummy_batch()
+
+     def add_lora(self, lora_request: LoRARequest) -> bool:
+         return self.model_executor.add_lora(lora_request)
+@@ -1410,7 +1449,10 @@
+                 if logger.isEnabledFor(DEBUG):
+                     logger.debug("EngineCore waiting for work.")
+                     waited = True
+-            block = self.process_input_queue_block
++            block = (
++                self.process_input_queue_block
++                and not self._has_pending_spec_decode_timings()
++            )
+             try:
+                 req = self.input_queue.get(block=block)
+                 self._handle_client_request(*req)
+@@ -1437,11 +1514,14 @@
+             self.output_queue.put_nowait(output)
+         # Post-step hook.
+         self.post_step(model_executed)
++        self._poll_spec_decode_timings()
+
+         # If no model execution happened but there is still scheduler work
+         # (e.g. WAITING_FOR_REMOTE_KVS or delayed KV connector frees), yield
+         # the GIL briefly to allow background transfer threads to make progress.
+-        if not model_executed and self.scheduler.has_requests():
++        if not model_executed and (
++            self.scheduler.has_requests() or self._has_pending_spec_decode_timings()
++        ):
+             time.sleep(0.001)
+
+         return model_executed
+diff --git a/vllm/v1/executor/abstract.py b/vllm/v1/executor/abstract.py
+--- a/vllm/v1/executor/abstract.py
++++ b/vllm/v1/executor/abstract.py
+@@ -21,7 +21,7 @@
+ from vllm.v1.core.sched.output import GrammarOutput, SchedulerOutput
+ from vllm.v1.engine import ReconfigureDistributedRequest
+ from vllm.v1.kv_cache_interface import KVCacheConfig, KVCacheSpec
+-from vllm.v1.outputs import DraftTokenIds, ModelRunnerOutput
++from vllm.v1.outputs import DraftTokenIds, ModelRunnerOutput, SpecDecodeTimingResult
+ from vllm.v1.worker.worker_base import CompilationTimes, WorkerBase
+
+ if TYPE_CHECKING:
+@@ -246,8 +246,14 @@
+         )
+         return output[0]
+
+-    def execute_dummy_batch(self) -> None:
+-        self.collective_rpc("execute_dummy_batch")
++    def execute_dummy_batch(self) -> list[SpecDecodeTimingResult | None]:
++        return self.collective_rpc("execute_dummy_batch")
++
++    def collect_spec_decode_timings(
++        self,
++    ) -> Future[list[SpecDecodeTimingResult | None]]:
++        """Query worker timing queues without blocking inference output processing."""
++        return self.collective_rpc("collect_spec_decode_timings", non_block=True)
+
+     def take_draft_token_ids(self) -> DraftTokenIds | None:
+         output: list[DraftTokenIds] = self.collective_rpc("take_draft_token_ids")
+diff --git a/vllm/v1/executor/multiproc_executor.py b/vllm/v1/executor/multiproc_executor.py
+--- a/vllm/v1/executor/multiproc_executor.py
++++ b/vllm/v1/executor/multiproc_executor.py
+@@ -68,7 +68,12 @@
+ from vllm.v1.core.sched.output import GrammarOutput, SchedulerOutput
+ from vllm.v1.executor.abstract import Executor, FailureCallback
+ from vllm.v1.executor.vllm_net_devices import set_worker_net_device
+-from vllm.v1.outputs import AsyncModelRunnerOutput, DraftTokenIds, ModelRunnerOutput
++from vllm.v1.outputs import (
++    AsyncModelRunnerOutput,
++    DraftTokenIds,
++    ModelRunnerOutput,
++    SpecDecodeTimingResult,
++)
+ from vllm.v1.worker.worker_base import WorkerWrapperBase
+
+ logger = init_logger(__name__)
+@@ -80,12 +85,37 @@
+         futures_queue: deque["FutureWrapper"],
+         get_response: Callable[[], Any],
+         aggregate: Callable = lambda x: x,
++        poll_response: Callable[[], tuple[bool, Any]] | None = None,
+     ):
+         self.futures_queue = futures_queue
+         self.get_response = get_response
+         self.aggregate = aggregate
++        self.poll_response = poll_response
+         super().__init__()
+         self.futures_queue.appendleft(self)
++
++    def done(self) -> bool:
++        if super().done():
++            return True
++        # Responses share one FIFO. Polling must never overtake another RPC.
++        if (
++            self.poll_response is None
++            or not self.futures_queue
++            or self.futures_queue[-1] is not self
++        ):
++            return False
++        try:
++            ready, response = self.poll_response()
++            if not ready:
++                return False
++            response = self.aggregate(response)
++        except Exception as error:
++            self.futures_queue.pop()
++            self.set_exception(error)
++        else:
++            self.futures_queue.pop()
++            self.set_result(response)
++        return True
+
+     def result(self, timeout=None):
+         if timeout is not None:
+@@ -424,8 +479,19 @@
+                 responses.append(result)
+             return responses[0] if output_rank is not None else responses
+
++        def poll_response():
++            try:
++                return True, get_response(timeout_override=0.0)
++            except TimeoutError:
++                if deadline is not None and time.monotonic() >= deadline:
++                    raise
++                return False, None
++
+         future = FutureWrapper(
+-            self.futures_queue, get_response=get_response, aggregate=aggregate
++            self.futures_queue,
++            get_response=get_response,
++            aggregate=aggregate,
++            poll_response=poll_response if pollable else None,
+         )
+
+         return future if non_block else future.result()
+diff --git a/vllm/v1/executor/ray_executor.py b/vllm/v1/executor/ray_executor.py
+--- a/vllm/v1/executor/ray_executor.py
++++ b/vllm/v1/executor/ray_executor.py
+@@ -26,6 +26,7 @@
+     WORKER_SPECIFIC_ENV_VARS,
+     FutureWrapper,
+     RayWorkerWrapper,
++    RpcFuture,
+     detach_zero_copy_from_model_runner_output,
+     initialize_ray_cluster,
+     ray,
+@@ -490,7 +491,7 @@
+
+         # Get the results of the ray workers.
+         if non_block:
+-            return FutureWrapper(ray_worker_outputs)
++            return RpcFuture(ray_worker_outputs)
+
+         return ray.get(ray_worker_outputs, timeout=timeout)
+
+diff --git a/vllm/v1/executor/ray_utils.py b/vllm/v1/executor/ray_utils.py
+--- a/vllm/v1/executor/ray_utils.py
++++ b/vllm/v1/executor/ray_utils.py
+@@ -4,7 +4,8 @@
+ import os
+ import time
+ from collections import defaultdict
+-from concurrent.futures import Future
++from concurrent.futures import Future, InvalidStateError
++from contextlib import suppress
+ from typing import TYPE_CHECKING, Union
+
+ import numpy as np
+@@ -168,7 +169,7 @@
+                 assert not output or not output.req_ids
+                 output = scheduler_output, grammar_output, None
+             elif output is None:
+-                output = self.worker.model_runner.sample_tokens(grammar_output)
++                output = self.worker.sample_tokens(grammar_output)
+                 # Ensure outputs crossing Ray compiled DAG are serializable.
+                 # AsyncModelRunnerOutput holds CUDA events and cannot be
+                 # pickled.
+diff --git a/vllm/v1/metrics/stats.py b/vllm/v1/metrics/stats.py
+--- a/vllm/v1/metrics/stats.py
++++ b/vllm/v1/metrics/stats.py
+@@ -10,6 +10,7 @@
+ from vllm.compilation.cuda_graph import CUDAGraphStat
+ from vllm.v1.metrics.perf import PerfStats
+ from vllm.v1.spec_decode.metrics import SpecDecodingStats
++from vllm.v1.spec_decode.timing import SpecDecodeTiming
+
+ if TYPE_CHECKING:
+     from vllm.v1.engine import EngineCoreEvent, EngineCoreOutput, FinishReason
+diff --git a/vllm/v1/outputs.py b/vllm/v1/outputs.py
+--- a/vllm/v1/outputs.py
++++ b/vllm/v1/outputs.py
+@@ -335,6 +336,8 @@
+     # information related to cudagraph execution
+     cudagraph_stats: CUDAGraphStat | None = None
+
++    spec_decode_timing: SpecDecodeTimingResult | None = None
++
+     # Per-step routed experts data captured by the worker.
+     # ``routing_data`` shape: (num_scheduled_tokens, num_layers,
+     #                         num_experts_per_tok); expert IDs as uint8/uint16.
+diff --git a/vllm/v1/worker/gpu_model_runner.py b/vllm/v1/worker/gpu_model_runner.py
+--- a/vllm/v1/worker/gpu_model_runner.py
++++ b/vllm/v1/worker/gpu_model_runner.py
+@@ -182,6 +183,7 @@
+     RoutedExpertsLists,
+     RoutedExpertsTensors,
+     SamplerOutput,
++    SpecDecodeTimingResult,
+     make_empty_encoder_model_runner_output,
+ )
+ from vllm.v1.pool.late_interaction_runner import LateInteractionRunner
+@@ -224,6 +226,10 @@
+ from vllm.v1.worker.gpu_ubatch_wrapper import UBatchWrapper
+ from vllm.v1.worker.kv_connector_model_runner_mixin import KVConnectorModelRunnerMixin
+ from vllm.v1.worker.lora_model_runner_mixin import LoRAModelRunnerMixin
++from vllm.v1.worker.spec_decode_timing import (
++    SpecDecodeTimingCollector,
++    SpecDecodeTimingEvents,
++)
+ from vllm.v1.worker.ubatch_utils import (
+     UBatchSlices,
+     check_ubatch_thresholds,
+@@ -4558,6 +4600,8 @@
+                 inputs_embeds=inputs_embeds,
+                 **model_kwargs,
+             )
++        if self._spec_decode_timing is not None:
++            self._spec_decode_timing.target_end.record()
+
+         with record_function_or_nullcontext("gpu_model_runner: postprocess"):
+             if self.use_aux_hidden_state_outputs:
+@@ -4983,6 +5029,11 @@
+             self.input_batch.is_token_ids[i, pos] = True
+             self.input_batch.num_tokens_no_spec[i] = pos + 1
+         self.input_batch.prev_req_id_to_index = prev_req_id_to_index
++
++    def collect_spec_decode_timings(self) -> SpecDecodeTimingResult | None:
++        """Drain ready stage samples on the worker thread without waiting for the GPU."""
++        collector = self.spec_decode_timing_collector
++        return collector.drain() if collector is not None else None
+
+     def take_draft_token_ids(self) -> DraftTokenIds | None:
+         if not self.num_spec_tokens or not self._draft_token_req_ids:
+diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
+--- a/vllm/v1/worker/gpu_worker.py
++++ b/vllm/v1/worker/gpu_worker.py
+@@ -838,6 +840,10 @@
+             mode=self.observability_config.jit_monitor_mode,
+             verbose=self.observability_config.jit_monitor_verbose,
+         )
++
++        # Kernel warmup uses the request APIs but must not publish serving timings.
++        if self.model_runner.spec_decode_timing_collector is not None:
++            self.model_runner.spec_decode_timing_collector.start_serving()
+
+         # Freeze the worker heap so the GC won't scan static objects
+         # (model weights, KV caches, CUDA graphs) during inference.
+@@ -1182,7 +1199,8 @@
+
+-    def execute_dummy_batch(self) -> None:
++    def execute_dummy_batch(self) -> SpecDecodeTimingResult | None:
+         num_tokens = getattr(self.model_runner, "uniform_decode_query_len", 1)
+         self.model_runner._dummy_run(num_tokens, uniform_decode=True)
++        return self.collect_spec_decode_timings()
+
+     def add_lora(self, lora_request: LoRARequest) -> bool:
+         return self.model_runner.add_lora(lora_request)

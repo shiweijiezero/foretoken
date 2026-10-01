@@ -1,0 +1,129 @@
+diff --git a/rust/src/engine-core-client/src/metrics.rs b/rust/src/engine-core-client/src/metrics.rs
+--- a/rust/src/engine-core-client/src/metrics.rs
++++ b/rust/src/engine-core-client/src/metrics.rs
+@@ -46,6 +46,8 @@
+     spec_decode_num_draft_tokens: U64Counter,
+     spec_decode_num_accepted_tokens: U64Counter,
+     spec_decode_num_accepted_tokens_per_pos: Family<EnginePositionLabels, U64Counter>,
++    spec_decode_target_forward_duration_seconds: Family<EngineLabels, HistogramMetric>,
++    spec_decode_draft_duration_seconds: Family<EngineLabels, HistogramMetric>,
+
+     // Per-engine performance / MFU counters.
+     estimated_flops_per_gpu: U64Counter,
+@@ -137,6 +139,10 @@
+         spec_decode_num_accepted_tokens_per_pos: metrics
+             .spec_decode_num_accepted_tokens_per_pos
+             .clone(),
++        spec_decode_target_forward_duration_seconds: metrics
++            .spec_decode_target_forward_duration_seconds
++            .clone(),
++        spec_decode_draft_duration_seconds: metrics.spec_decode_draft_duration_seconds.clone(),
+         log_stats: metrics.log_stats.get_or_create_owned(&labels),
+         estimated_flops_per_gpu: metrics.estimated_flops_per_gpu.get_or_create_owned(&labels),
+         estimated_read_bytes_per_gpu: metrics
+@@ -204,6 +210,18 @@
+                 })
+                 .inc_by(accepted_tokens);
+         }
++    }
++
++    // Publish paired samples only when a real speculative step was measured.
++    for timing in &stats.spec_decode_timings {
++        handles
++            .spec_decode_target_forward_duration_seconds
++            .get_or_create(&handles.labels)
++            .observe(timing.target_forward_seconds);
++        handles
++            .spec_decode_draft_duration_seconds
++            .get_or_create(&handles.labels)
++            .observe(timing.draft_seconds);
+     }
+
+     // Per-engine performance / MFU counters.
+diff --git a/rust/src/engine-core-client/src/protocol/stats.rs b/rust/src/engine-core-client/src/protocol/stats.rs
+--- a/rust/src/engine-core-client/src/protocol/stats.rs
++++ b/rust/src/engine-core-client/src/protocol/stats.rs
+@@ -76,6 +76,15 @@
+     pub num_accepted_tokens: u64,
+     /// Accepted drafted tokens counted by draft position.
+     pub num_accepted_tokens_per_pos: Vec<u64>,
++}
++
++/// GPU timeline durations for a pure speculative decode step on its output rank.
++#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
++pub struct SpecDecodeTiming {
++    /// Target model forward, including speculative verification work.
++    pub target_forward_seconds: f64,
++    /// Draft proposal, including its GPU work and intervening host gaps.
++    pub draft_seconds: f64,
+ }
+
+ /// Breakdown of a scheduled prefill computation.
+@@ -185,6 +194,9 @@
+     pub kv_cache_eviction_events: Vec<KvCacheEvictionEvent>,
+     /// Speculative decoding scheduler stats, when enabled.
+     pub spec_decoding_stats: Option<SpecDecodingStats>,
++    /// Completed GPU stage samples, which may arrive after their token output.
++    #[serde(default)]
++    pub spec_decode_timings: Vec<SpecDecodeTiming>,
+     /// Connector-specific KV transfer stats, kept opaque for now.
+     pub kv_connector_stats: Option<BTreeMap<String, OpaqueValue>>,
+     /// CUDA graph runtime stats when graph metrics are enabled.
+diff --git a/rust/src/metrics/src/scheduler.rs b/rust/src/metrics/src/scheduler.rs
+--- a/rust/src/metrics/src/scheduler.rs
++++ b/rust/src/metrics/src/scheduler.rs
+@@ -16,6 +16,14 @@
+     0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0, 60.0,
+     120.0, 300.0, 600.0, 1200.0, 1800.0,
+ ];
++
++const SPEC_DECODE_STAGE_BUCKETS: [f64; 13] = [
++    0.0001, 0.00025, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0,
++];
++
++fn spec_decode_stage_histogram() -> Histogram {
++    Histogram::new(SPEC_DECODE_STAGE_BUCKETS.iter().copied())
++}
+
+ fn kv_block_lifetime_histogram() -> Histogram {
+     Histogram::new(KV_CACHE_RESIDENCY_BUCKETS.iter().copied())
+@@ -173,6 +181,8 @@
+     pub spec_decode_num_draft_tokens: Family<EngineLabels, U64Counter>,
+     pub spec_decode_num_accepted_tokens: Family<EngineLabels, U64Counter>,
+     pub spec_decode_num_accepted_tokens_per_pos: Family<EnginePositionLabels, U64Counter>,
++    pub spec_decode_target_forward_duration_seconds: HistogramFamily,
++    pub spec_decode_draft_duration_seconds: HistogramFamily,
+
+     // Per-engine performance / MFU counters.
+     pub estimated_flops_per_gpu: Family<EngineLabels, U64Counter>,
+@@ -287,6 +297,21 @@
+             "vllm:spec_decode_num_accepted_tokens_per_pos",
+             "Accepted tokens per draft position.",
+             spec_decode_num_accepted_tokens_per_pos.clone(),
++        );
++
++        let spec_decode_target_forward_duration_seconds =
++            Family::new_with_constructor(spec_decode_stage_histogram as fn() -> Histogram);
++        registry.register(
++            "vllm:spec_decode_target_forward_duration_seconds",
++            "GPU timeline duration of target forward on pure speculative decode batches (output rank only; includes verification, not sampling).",
++            spec_decode_target_forward_duration_seconds.clone(),
++        );
++        let spec_decode_draft_duration_seconds =
++            Family::new_with_constructor(spec_decode_stage_histogram as fn() -> Histogram);
++        registry.register(
++            "vllm:spec_decode_draft_duration_seconds",
++            "GPU timeline duration of proposal on pure speculative decode batches (output rank only; includes host gaps between enqueued kernels).",
++            spec_decode_draft_duration_seconds.clone(),
+         );
+
+         // Per-engine performance / MFU counters.
+@@ -350,6 +375,8 @@
+             spec_decode_num_draft_tokens,
+             spec_decode_num_accepted_tokens,
+             spec_decode_num_accepted_tokens_per_pos,
++            spec_decode_target_forward_duration_seconds,
++            spec_decode_draft_duration_seconds,
+             estimated_flops_per_gpu,
+             estimated_read_bytes_per_gpu,
+             estimated_write_bytes_per_gpu,

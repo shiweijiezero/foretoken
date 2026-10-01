@@ -105,18 +105,31 @@ RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
     --mount=type=bind,source=data-plane/patches/vllm/vllm-offloading-event-identity.patch,target=/tmp/vllm-offload-identity.patch \
     --mount=type=bind,source=data-plane/patches/vllm/vllm-ready-logprobs.patch,target=/tmp/vllm-ready-logprobs.patch \
     --mount=type=bind,source=data-plane/patches/vllm/vllm-0.26-ready-logprobs.patch,target=/tmp/vllm-0.26-ready-logprobs.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-spec-decode-timing-collector.patch,target=/tmp/vllm-spec-decode-timing-collector.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-spec-decode-timing-hooks.patch,target=/tmp/vllm-spec-decode-timing-hooks.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-spec-decode-stage-timing.patch,target=/tmp/vllm-spec-decode-stage-timing.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-0.26-spec-decode-stage-timing.patch,target=/tmp/vllm-0.26-spec-decode-stage-timing.patch \
+    --mount=type=bind,source=data-plane/patches/vllm/vllm-0.30-spec-decode-stage-timing.patch,target=/tmp/vllm-0.30-spec-decode-stage-timing.patch \
     vllm_site="$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
       'from importlib.metadata import distribution; print(distribution("vllm").locate_file(""))')" \
     && vllm_version="$("${FORETOKEN_VLLM_PYTHON:-python}" -c 'from importlib.metadata import version; print(version("vllm"))')" \
     && ready_patch=/tmp/vllm-ready-logprobs.patch \
     && offload_patch= \
+    && timing_patch= \
     && case "$vllm_version" in \
-         0.26.*) ready_patch=/tmp/vllm-0.26-ready-logprobs.patch ;; \
+         0.26.*) ready_patch=/tmp/vllm-0.26-ready-logprobs.patch; timing_patch=/tmp/vllm-0.26-spec-decode-stage-timing.patch ;; \
+         0.30.0*) offload_patch=/tmp/vllm-offload-identity.patch; timing_patch=/tmp/vllm-0.30-spec-decode-stage-timing.patch ;; \
+         0.30.1*) offload_patch=/tmp/vllm-offload-identity.patch; timing_patch=/tmp/vllm-spec-decode-stage-timing.patch ;; \
          0.30.*) offload_patch=/tmp/vllm-offload-identity.patch ;; \
        esac \
+    && timing_collector= && timing_hooks= \
+    && if [ -n "$timing_patch" ]; then \
+         timing_collector=/tmp/vllm-spec-decode-timing-collector.patch; \
+         timing_hooks=/tmp/vllm-spec-decode-timing-hooks.patch; \
+       fi \
     && offload_events="$vllm_site/vllm/distributed/kv_transfer/kv_connector/v1/offloading/events.py" \
     && if [ ! -f "$offload_events" ]; then offload_patch=; fi \
-    && for engine_patch in /tmp/vllm-profiling.patch "$ready_patch" "$offload_patch"; do \
+    && for engine_patch in /tmp/vllm-profiling.patch "$ready_patch" "$offload_patch" "$timing_collector" "$timing_hooks" "$timing_patch"; do \
          [ -n "$engine_patch" ] || continue; \
          if patch --force --reverse --dry-run --fuzz=0 --strip=1 \
               --directory="$vllm_site" --input="$engine_patch" >/dev/null 2>&1; then \
@@ -129,6 +142,12 @@ RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
     && "${FORETOKEN_VLLM_PYTHON:-python}" -m compileall -q -f \
       "$vllm_site/vllm/profiler/wrapper.py" "$vllm_site/vllm/v1/worker/gpu_worker.py" \
       "$vllm_site/vllm/v1/engine/__init__.py" "$vllm_site/vllm/v1/engine/core.py" \
+    && if [ -n "$timing_patch" ]; then \
+         "${FORETOKEN_VLLM_PYTHON:-python}" -m compileall -q -f \
+           "$vllm_site/vllm/v1/worker" "$vllm_site/vllm/v1/executor" \
+           "$vllm_site/vllm/v1/outputs.py" "$vllm_site/vllm/v1/metrics/stats.py" \
+           "$vllm_site/vllm/v1/spec_decode/timing.py"; \
+       fi \
     && if [ -n "$offload_patch" ]; then \
          "${FORETOKEN_VLLM_PYTHON:-python}" -m compileall -q -f "$offload_events"; \
        fi

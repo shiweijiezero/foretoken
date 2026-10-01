@@ -21,21 +21,15 @@ The dashboard starts with the last 15 minutes. Change the time range to inspect 
 | --- | --- |
 | Is the model keeping up with demand? | Prompt/output token rates, completed requests, and running/waiting queues. |
 | Where is latency increasing? | First-token and end-to-end latency, output-token intervals, and queue/prefill/decode durations. |
-| Is speculative decoding helping? | Compare draft acceptance, output throughput, and latency; enable stage GPU timing to inspect draft and target execution. |
+| Is speculative decoding helping? | Compare draft acceptance, output throughput, latency, and automatically collected draft/target GPU time. |
 | Are caches or devices under pressure? | Cache occupancy and hit rates, filesystem space, GPU utilization and memory, and CPU/memory usage. |
 | How are requests and replicas distributed? | Routing selection shares within each model and role, and autoscaling recommendations versus applied replicas. |
 
 TTFT measures time to the first token; E2EL measures time through generation completion. Both use seconds. TPOT is the per-request average output-token interval; ITL measures individual token intervals. Both use milliseconds and include mean curves. When samples are sparse, read latency quantiles alongside the observation rate and means. Panel descriptions provide the detailed measurement definitions.
 
-For a vLLM model using speculative decoding, enable stage timing in its `ModelService` to compare drafting and target execution:
+GPU drafting automatically enables stage timing. The panels show mean draft and target-forward GPU time, each stage's share of their combined duration, and timed batches per second. Samples cover complete speculative decode batches on one output rank per engine. Target forward includes verification but excludes sampling; GPU event intervals include gaps between queued kernels.
 
-```yaml
-spec:
-  engineArgs:
-    spec-decode-timing-metrics: true
-```
-
-The stage panels show mean GPU event duration for draft proposals and target forward, each stage's share of their combined measured duration, and timed batches per second. Only complete speculative decode batches are measured, on one output rank per engine. Target forward includes verification but excludes sampling; GPU event durations can include gaps between kernels. These are not request wall-clock time or speedup. No eligible batches leave the panels empty, not zero. Timing is off by default because waiting for draft completion can reduce asynchronous overlap.
+Completed samples are collected asynchronously, including the final batch when the service becomes idle. Timing adds no GPU synchronization to the inference path. Panels remain empty when no eligible samples exist.
 
 Shared frontend panels cover all models served by the selected frontend and record HTTP response starts. Control-plane panels describe the platform; autoscaling panels follow the selected model and autoscaling service.
 

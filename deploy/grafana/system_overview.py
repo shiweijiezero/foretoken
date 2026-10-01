@@ -184,8 +184,8 @@ ZH = {
         "每个引擎仅在输出 rank 统计完整的推测解码 batch。GPU event 耗时包含内核间的主机间隙；目标模型 forward 包含验证但不含采样。均值是阶段耗时总和除以计时步数，不是请求延迟。",
     "Draft and target-forward durations each divided by their sum over the same measured steps. These are not wall-clock shares or model speedup; no timed steps produce no ratios.":
         "同一批计时步中，草稿与目标模型 forward 耗时分别除以两者之和。这不是墙钟时间占比或模型加速比；没有计时步则不显示比例。",
-    "Number of complete speculative decode batches timed per second; no observations when timing is disabled or batches contain prefill.":
-        "每秒计时的完整推测解码 batch 数；关闭计时或 batch 包含预填充时没有样本。",
+    "Timed pure speculative decode batches per second, collected automatically for GPU drafting.":
+        "使用 GPU 起草时自动采集的纯推测解码 batch 计时样本数（每秒）。",
     "ITL / {{model_name}}": "ITL / {{model_name}}",
     "TTFT / {{model_name}}": "TTFT / {{model_name}}",
     "E2EL / {{model_name}}": "E2EL / {{model_name}}",
@@ -1017,7 +1017,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Timed speculative steps / s",
-            "Number of complete speculative decode batches timed per second; no observations when timing is disabled or batches contain prefill.",
+            "Timed pure speculative decode batches per second, collected automatically for GPU drafting.",
             [foretoken_query(timed_steps, "{{model_name}}")],
             unit="ops",
             span=24,
