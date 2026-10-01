@@ -15,13 +15,10 @@ Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平
 
 ## 安装命令行工具
 
-使用 pip 安装已经发布的 Foretoken 命令行工具包：
+使用 pip 安装发布的命令行工具：
 
 ```bash
 pip install foretoken
-
-# 如果使用源码安装：
-# pip install -e .
 ```
 
 或使用 uv 创建并激活虚拟环境后安装：
@@ -32,7 +29,7 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-运行 `foretoken --version` 查看已安装的命令行工具版本。
+首次使用尚未发布的源码，或将旧 CLI 更新到这份源码时，改为在仓库根目录运行 `pip install -e .`。运行 `foretoken --version` 查看已安装的 CLI 版本。
 
 ## 安装 Kubernetes 平台
 
@@ -77,7 +74,9 @@ foretoken install \
 foretoken install -e .
 ```
 
-安装会将本工作站的源码目录绑定到目标集群，并在专用 Pod 中构建。修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#部署与更新代码)。通过 `--engine-source PATH` 还可关联 [vLLM 引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)。
+命令在集群专用 Pod 中构建平台，并将源码目录绑定到目标集群。
+
+修改后，用 `foretoken deploy` [重新部署源码](../docs/custom-deployment_zh.md#部署与更新代码)。通过 `--engine-source PATH` 还可关联 [vLLM 引擎源码](../docs/custom-deployment_zh.md#修改推理引擎)。
 
 当前 context 是标准 kind 或 k3d 时，命令直接在节点载入构建好的镜像；其他 Kubernetes context 需要节点可访问的镜像仓库。私有仓库需在安装前按[源码部署指南](../docs/custom-deployment_zh.md#远程集群与私有镜像仓库)准备拉取 Secret。镜像允许公开拉取时，将 `example/foretoken` 替换为有推送权限的仓库后执行：
 
@@ -90,7 +89,7 @@ foretoken install -e . --registry ghcr.io/example/foretoken
 
 ### 模型分发
 
-使用 Dragonfly 在节点间共享公开模型文件时，在 `platform-values.yaml` 中配置：
+使用 Dragonfly 在节点间共享公开模型文件时，在 `deploy/platform-values.yaml` 中配置：
 
 ```yaml
 modelDistribution:
@@ -98,9 +97,13 @@ modelDistribution:
     enabled: true
 ```
 
+使用发布镜像的平台执行：
+
 ```bash
-foretoken install --values platform-values.yaml
+foretoken install --values deploy/platform-values.yaml
 ```
+
+源码安装从仓库根目录执行 `foretoken install -e . --values deploy/platform-values.yaml`，保留原镜像仓库和引擎源码选项。
 
 安装命令会准备 Dragonfly，或复用已有安装。需要身份认证的模型及自定义模型源仍直接从源站下载。要选择特定的 Dragonfly Helm release，在 `modelDistribution.dragonfly` 下设置 `existingRelease: {name: dragonfly, namespace: dragonfly-system}`。
 

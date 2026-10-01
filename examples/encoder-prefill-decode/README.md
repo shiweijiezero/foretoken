@@ -17,7 +17,7 @@ docker build -f examples/encoder-prefill-decode/runtime.Dockerfile -t foretoken-
 
 The cluster needs a StorageClass that supports `ReadWriteMany`. Set `storageClassName` in `encoder-cache.yaml` if the default StorageClass does not provide shared storage. RDMA transport also needs allocated RDMA devices with GPUDirect RDMA enabled; choose TCP below if these are unavailable.
 
-Save the runtime choice and shared encoder cache settings as `platform-values.yaml`:
+Save the runtime choice and shared encoder cache settings as `deploy/platform-values.yaml`:
 
 ```yaml
 runtime:
@@ -41,7 +41,7 @@ TCP does not require RDMA devices; GPU KV data is staged through host memory.
 Install from this checkout:
 
 ```bash
-foretoken install -e . --values platform-values.yaml
+foretoken install -e . --values deploy/platform-values.yaml
 ```
 
 For a remote cluster, also pass `--registry REGISTRY` with a container registry accessible to its nodes. See the [CLI guide](../../cli/README.md#current-source) for installation options.

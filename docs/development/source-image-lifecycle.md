@@ -31,8 +31,8 @@ Controllers retain admission closure, route withdrawal, request drain, and resou
 
 ## Image updates and cleanup
 
-Bootstrap changes require a new image because the bootstrap runs before source activation. Dependency, build, control-plane, and Helm changes also use the platform installation lifecycle. When runtime storage is unavailable, or a single-node writable claim is awaiting its first placement, deployment uses images instead; model preparation retains ownership of initial storage placement.
+Changes to the image's startup code require a new image because that code runs before source activation. Dependency, build, control-plane, and Helm changes also use the platform installation lifecycle. When runtime storage is unavailable, or a single-node writable claim is awaiting its first placement, deployment uses images instead; model preparation retains ownership of initial storage placement.
 
 Image reuse compares build output with installed references and the requested distribution destination. A successful source installation clears service source selections so workloads use the newly built images. Local snapshots are retired when no longer referenced. Runtime payload cleanup preserves service intent, retained rollout templates, and running or terminating consumers across namespaces that may share a data directory. It removes only the current binding's unreferenced publications, leaving other writers' candidates intact.
 
-Compiler volumes used for runtime updates follow the model cache's lifecycle. Source uninstall removes managed compiler caches and the workstation binding without deleting model data. vLLM-Omni retains its separate [image build recipe](../../examples/recipes/minimax-h3/a100-bf16-tp2/README.md#build-and-install).
+Compiler volumes used for runtime updates follow the model cache's lifecycle. Source uninstall removes managed compiler caches and the workstation binding without deleting model data. vLLM-Omni retains its separate [image build recipe](../custom-deployment.md#vllm-omni-runtime).

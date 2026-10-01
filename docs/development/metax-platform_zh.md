@@ -25,7 +25,7 @@ foretoken install
 
 ## 从源码安装
 
-需要构建 Foretoken 当前源码时，先按[源码部署指南](../custom-deployment_zh.md)准备集群编译存储，并从这份源码安装 CLI，再从仓库根目录运行：
+从仓库根目录执行以下命令，在集群中构建并安装平台：
 
 ```bash
 foretoken install -e .

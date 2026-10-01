@@ -137,7 +137,7 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 
 ### 4.1 Choose a deployment method
 
-Build from this checkout to use the directory-backed example below. Prepare the tools listed in the [source deployment guide](custom-deployment.md), then run:
+Install the CLI from this checkout, then build and install the cluster platform:
 
 ```bash
 pip install -e .

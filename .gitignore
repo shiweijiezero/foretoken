@@ -12,6 +12,7 @@ __pycache__/
 
 # Local environment
 .env.local
+/deploy/platform-values.yaml
 
 # Manually downloaded upstream references
 reference/

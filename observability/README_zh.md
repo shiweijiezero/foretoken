@@ -58,7 +58,7 @@ observability:
 
 ## 平台设置
 
-下面的 `foretoken install` 命令也用于更新已有安装。源码安装需保留 `-e .`，并从源码根目录执行。升级 Foretoken 后，重新执行原安装命令，让看板和指标采集一起更新。
+以下命令用于更新已有平台。源码安装时，将所示选项加到原安装命令中，从源码根目录以 `-e .` 执行，并保留镜像仓库设置和已有的 `--engine-source` 绑定。升级 Foretoken 后，重新执行原安装命令，让看板和指标采集一起更新。
 
 ### Grafana 登录
 
@@ -82,7 +82,7 @@ kubectl get secret --namespace foretoken-platform \
 
 ### 日志存储
 
-托管日志默认保留 14 天，通过默认 StorageClass 初始申请 5 GiB 存储。如需保留 30 天，并允许容量增长到 50 GiB，在 `platform-values.yaml` 中填写：
+托管日志默认保留 14 天，通过默认 StorageClass 初始申请 5 GiB 存储。如需保留 30 天，并允许容量增长到 50 GiB，在 `deploy/platform-values.yaml` 中填写：
 
 ```yaml
 observability:
@@ -94,7 +94,7 @@ observability:
 修改文件后重新应用：
 
 ```bash
-foretoken install --values platform-values.yaml
+foretoken install --values deploy/platform-values.yaml
 ```
 
 设置 `maxSize` 后，用量达到 80% 时自动将申请容量翻倍，直到上限。存储驱动需支持在线扩容和按卷统计用量。

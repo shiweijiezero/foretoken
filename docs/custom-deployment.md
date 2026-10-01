@@ -9,13 +9,18 @@ Build Foretoken in the target Kubernetes cluster and deploy changes from a local
 
 ## Install from source
 
-Prepare Python 3.11+, Git, kubectl, and Helm. The cluster must allow BuildKit Pods and have a default StorageClass for persistent compiler caches. To choose another class, set `development.build.storageClassName` in a values file and pass it with `--values` when installing.
+Prepare Python 3.11+, Git, kubectl, and Helm. The cluster must allow BuildKit Pods and have a default StorageClass for persistent compiler caches. To choose a different storage class, set `development.build.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`.
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-pip install -e .
 kubectl config current-context
+```
+
+Install the CLI from this checkout:
+
+```bash
+pip install -e .
 ```
 
 For a local kind or k3d cluster, build and install without a registry:
@@ -24,7 +29,7 @@ For a local kind or k3d cluster, build and install without a registry:
 foretoken install -e .
 ```
 
-Builds run in dedicated Pods; images are loaded directly into the cluster nodes. Installation waits for the Kubernetes platform to become ready. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
+Builds run in dedicated Pods, and images are loaded directly into the cluster nodes. Installation waits for the Kubernetes platform to become ready. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
 
 ### Remote clusters and private registries
 
@@ -35,7 +40,7 @@ export REGISTRY=ghcr.io/example/foretoken
 docker login ghcr.io
 ```
 
-For a private registry, create an image pull Secret named `registry-auth` in `foretoken-platform` before installation, and in each workload namespace before deployment. Save these references in `platform-values.yaml`:
+For a private registry, create an image pull Secret named `registry-auth` in `foretoken-platform` before installation, and in each workload namespace before deployment. Save these references in `deploy/platform-values.yaml`:
 
 ```yaml
 imagePullSecrets:
@@ -48,7 +53,7 @@ workload:
 Install using that file:
 
 ```bash
-foretoken install -e . --registry "$REGISTRY" --values platform-values.yaml
+foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
 ```
 
 For publicly readable images, omit `--values` unless other overrides are needed. Registry login authorizes image pushes; the pull Secrets authorize cluster nodes to download private images.
@@ -65,7 +70,7 @@ After editing the checkout, run the same command again. It uses the saved instal
 
 Affected workloads restart and may reload model weights. The command waits for the selected code and serving routes to become active. Unchanged source and deployment configuration leave existing workloads running. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
 
-After changing installation settings in a values file, rerun installation with that file and the original registry and engine-source options before deploying. For source installations created before automatic updates were available, rerun the original installation command once to register the checkout.
+Changes to CLI Python files take effect directly from the editable checkout; rerun `pip install -e .` when its Python dependencies change. For platform installation settings, rerun `foretoken install -e .`, retaining the values files, registry, and engine-source options. For source installations created before automatic updates were available, rerun the original installation command once to register the checkout.
 
 ## Edit an inference engine
 
@@ -89,7 +94,7 @@ The build Pod compiles plugin extensions for MetaX; core CUDA kernels are not us
 
 ### Select a different runtime environment
 
-The runtime image supplies Python, PyTorch, and accelerator libraries. To change that environment, set a compatible image in `platform-values.yaml`, replacing the example with an image available to the cluster builder:
+The runtime image supplies Python, PyTorch, and accelerator libraries. To change that environment, set a compatible image in `deploy/platform-values.yaml`, replacing the example with an image available to the cluster builder:
 
 ```yaml
 runtime:
@@ -97,6 +102,47 @@ runtime:
     image: ghcr.io/example/custom-vllm:latest
 ```
 
-Reapply the installation command with `--values platform-values.yaml`, retaining the registry and engine-source options. With `-e`, Foretoken uses this image as its build base and adds the model-server. Then deploy the workload again.
+Reapply the installation command with `--values deploy/platform-values.yaml`, retaining the registry and engine-source options. With `-e`, Foretoken uses this image as its build base and adds the model-server. Then deploy the workload again.
 
-vLLM-Omni uses a separate [build recipe and image setting](../examples/recipes/minimax-h3/a100-bf16-tp2/README.md#build-and-install). MetaX base-image builds are covered by [Prepare Foretoken for MetaX GPUs](development/metax-platform.md#install-from-source).
+MetaX base-image builds are covered by [Prepare Foretoken for MetaX GPUs](development/metax-platform.md#install-from-source).
+
+### vLLM-Omni runtime
+
+vLLM-Omni uses a separate model-server image. Build it from the repository root on a machine with Docker BuildKit, Make, and a rustup-managed Rust toolchain:
+
+```bash
+make image-vllm-omni VLLM_OMNI_IMAGE=foretoken-vllm-omni:latest
+make image-model-server-omni \
+  INFERENCE_ENGINE_IMAGE=foretoken-vllm-omni:latest \
+  OMNI_MODEL_SERVER_IMAGE=foretoken-omni-model-server:latest
+```
+
+For k3d, set `CLUSTER` to the existing cluster name and import the image:
+
+```bash
+CLUSTER=foretoken-qwen-test
+k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
+```
+
+For a remote cluster, use the registry login and `REGISTRY` configured [above](#remote-clusters-and-private-registries):
+
+```bash
+docker tag foretoken-omni-model-server:latest "$REGISTRY/omni-model-server:latest"
+docker push "$REGISTRY/omni-model-server:latest"
+```
+
+Set `runtime.vllmOmni.image` in `deploy/platform-values.yaml` to the image the nodes can pull. This example uses the local image; for a registry, replace it with the full pushed reference:
+
+```yaml
+runtime:
+  vllmOmni:
+    image: foretoken-omni-model-server:latest
+```
+
+Apply the runtime setting:
+
+```bash
+foretoken install -e . --values deploy/platform-values.yaml
+```
+
+Retain `--registry "$REGISTRY"` for remote platform builds and any other installation options. Rebuild and distribute the Omni image after changing its code; the editable vLLM source path above targets the standard vLLM backend.

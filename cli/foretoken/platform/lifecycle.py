@@ -183,7 +183,7 @@ class PlatformLifecycle:
             requested_source = "source" if command.editable is not None else "release"
             if install_source != requested_source:
                 command_hint = (
-                    "foretoken install -e PATH"
+                    "foretoken install -e ."
                     if install_source == "source"
                     else "foretoken install"
                 )

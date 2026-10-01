@@ -16,7 +16,7 @@ kubectl create secret generic foretoken-slack-webhook \
   --from-literal=url='<SLACK_INCOMING_WEBHOOK_URL>'
 ```
 
-Add to `platform-values.yaml`:
+Add to `deploy/platform-values.yaml`:
 
 ```yaml
 observability:
@@ -26,12 +26,12 @@ observability:
         name: foretoken-slack-webhook
 ```
 
-Apply using the platform's original installation mode:
+Apply using the platform's original installation mode. For a source installation, run this from the Foretoken repository root and retain its registry and engine-source options:
 
 ```bash
-foretoken install --values platform-values.yaml
-# For a source-installed platform, run from the repository root:
-# foretoken install -e . --values platform-values.yaml
+foretoken install --values deploy/platform-values.yaml
+# For a source-installed platform:
+# foretoken install -e . --values deploy/platform-values.yaml
 ```
 
 Enable the [service alerts](../../README.md#alerts) you need. Firing and resolved notifications include affected resources, English descriptions and runbook links.

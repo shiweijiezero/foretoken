@@ -11,7 +11,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 ## 接入机器人
 
-使用 CLI 管理的监控时，先按原安装方式更新平台：
+使用 CLI 管理的监控时，先按原安装方式更新平台。源码安装从仓库根目录执行，并保留原命令中的镜像仓库和引擎源码选项：
 
 ```bash
 foretoken install

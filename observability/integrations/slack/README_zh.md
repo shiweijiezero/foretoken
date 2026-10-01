@@ -16,7 +16,7 @@ kubectl create secret generic foretoken-slack-webhook \
   --from-literal=url='<SLACK_INCOMING_WEBHOOK_URL>'
 ```
 
-在 `platform-values.yaml` 中添加：
+在 `deploy/platform-values.yaml` 中添加：
 
 ```yaml
 observability:
@@ -26,12 +26,12 @@ observability:
         name: foretoken-slack-webhook
 ```
 
-沿用平台原来的安装方式应用配置：
+沿用平台原来的安装方式应用配置。源码安装时，从 Foretoken 仓库根目录执行，并保留原命令中的镜像仓库和引擎源码选项：
 
 ```bash
-foretoken install --values platform-values.yaml
+foretoken install --values deploy/platform-values.yaml
 # 源码安装的平台，在仓库根目录执行：
-# foretoken install -e . --values platform-values.yaml
+# foretoken install -e . --values deploy/platform-values.yaml
 ```
 
 启用需要的[服务告警](../../README_zh.md#告警)。触发和解除通知包含受影响资源、英文说明和排障链接。

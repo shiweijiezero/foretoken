@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-# Copy this file and replace the image and GPU values with settings that exist
-# in your cluster. The registry must be reachable by workload nodes. Select
+# Save the overrides you need in deploy/platform-values.yaml, using image and GPU
+# settings that exist in your cluster. The registry must be reachable by workload nodes. Select
 # frontend topology through foretoken install options rather than this file.
 
 # Enable Slack notifications with a webhook Secret in foretoken-platform.

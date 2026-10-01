@@ -25,7 +25,7 @@ The CLI selects MetaX-compatible release images and installs the platform and re
 
 ## Install from source
 
-To build Foretoken's images from a checkout, follow the [source deployment guide](../custom-deployment.md) to prepare cluster build storage and install the CLI from that checkout. Then run from the repository root:
+From the repository root, build and install the platform in the cluster:
 
 ```bash
 foretoken install -e .

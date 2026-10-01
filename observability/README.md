@@ -58,7 +58,7 @@ Use the [alert reference](runbooks/alerts.md) to choose rules, thresholds, and t
 
 ## Platform settings
 
-The following `foretoken install` commands also update an existing installation. For a source-installed platform, retain `-e .` and run from the source root. Rerun the original install command after upgrading Foretoken to update dashboards and telemetry together.
+The commands below update an existing platform. For a source installation, add the shown options to the original install command, running from the checkout root with `-e .`, and retaining registry settings and any `--engine-source` bindings. Reapply the original install command after upgrading Foretoken to update dashboards and telemetry together.
 
 ### Grafana login
 
@@ -82,7 +82,7 @@ If the password has been changed in Grafana, use the updated password.
 
 ### Log storage
 
-Managed logs retain 14 days of data and start with a 5 GiB volume from the default StorageClass. For 30-day retention and automatic growth up to 50 GiB, save this in `platform-values.yaml`:
+Managed logs retain 14 days of data and start with a 5 GiB volume from the default StorageClass. For 30-day retention and automatic growth up to 50 GiB, save this in `deploy/platform-values.yaml`:
 
 ```yaml
 observability:
@@ -94,7 +94,7 @@ observability:
 Apply the file again whenever its settings change:
 
 ```bash
-foretoken install --values platform-values.yaml
+foretoken install --values deploy/platform-values.yaml
 ```
 
 Setting `maxSize` enables expansion at 80% usage, doubling the requested capacity up to the limit. The storage driver must support online expansion and per-volume usage statistics.

@@ -507,7 +507,7 @@ class EditableDeployment:
         path = directory / "install.json"
         if not path.is_file():
             raise DeploymentError(
-                "source checkout is not associated with this workstation; run foretoken install -e PATH"
+                "source checkout is not associated with this workstation; run `foretoken install -e .` from that checkout's root"
             )
         state = json.loads(path.read_text())
         if (
@@ -516,11 +516,11 @@ class EditableDeployment:
             or state["runtime"] != _runtime_settings(source[0])
         ):
             raise DeploymentError(
-                "source installation changed; associate its checkout with foretoken install -e PATH"
+                "source installation changed; run `foretoken install -e .` from the intended checkout's root"
             )
         if not Path(state["root"]).is_dir():
             raise DeploymentError(
-                f"source checkout is unavailable: {state['root']}; run foretoken install -e PATH"
+                f"source checkout is unavailable: {state['root']}; run `foretoken install -e .` from that checkout's root"
             )
         return cls(kubectl, directory, state)
 
