@@ -4,6 +4,8 @@ English | [简体中文](README_zh.md)
 
 Measure service latency and throughput with `foretoken perf`, score model answers with `foretoken eval`, and inspect execution bottlenecks with profiling.
 
+For commands grouped by experiment, see the [experiment command reference](docs/recipes.md).
+
 ## Get started
 
 Install Foretoken with Python 3.11 or later:
