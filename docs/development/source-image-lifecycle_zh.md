@@ -188,3 +188,11 @@ REGISTRY="$REGISTRY" \
 IMAGE_PULL_SECRET=foretoken-registry \
 make dev-deploy
 ```
+
+## AFD 运行时依赖
+
+NVIDIA 和沐曦 model-server 镜像均在常规构建过程中安装 AFD 插件，无需额外构建开关。运行时依赖及 Python 兼容范围由 [`data-plane/model-server/pyproject.toml`](../../data-plane/model-server/pyproject.toml) 声明，引擎解释器需要使用 Python 3.10–3.13。安装时保留基础镜像中的 vLLM 和 PyTorch 版本。
+
+固定版本的插件以 vLLM `0.26.0` 为 AFD 执行目标，安装插件不会把其他 model-server 构建也限制到该版本。上游提供 CUDA 和 Ascend 的执行路径，沐曦上的 AFD 执行尚未验证。
+
+上游 vLLM 通过显式的 `additional_config["afd"]` 配置启用 AFD。普通 Foretoken 部署不提供该配置；Foretoken 目前也尚未提供 AFD 部署接口或 Attention/FFN 实例管理。插件安装后仍会被 vLLM 自动发现并注册，因此依赖可安装并不代表已经确认所有引擎版本的普通推理兼容性。

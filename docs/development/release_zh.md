@@ -99,6 +99,8 @@ deploy/release-artifacts build --registry "$REGISTRY"
 
 control-plane、frontend、model-server 镜像和 Helm Chart 使用同一个版本。沐曦 model-server 镜像带有 `-metax` 后缀。
 
+两种 model-server 镜像均在常规构建过程中安装 [AFD 运行时依赖](source-image-lifecycle_zh.md#afd-运行时依赖)。
+
 完成产物验证后，登录仓库并推送：
 
 ```bash

@@ -156,15 +156,17 @@ ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 # Engine images may provide a Python virtual environment without pip.
 # MACA also exposes torch.version.cuda, so select dependencies from the engine build.
 RUN --mount=from=uv,source=/uv,target=/usr/local/bin/uv \
+    --mount=type=bind,source=data-plane/model-server/pyproject.toml,target=/tmp/foretoken-runtime/pyproject.toml \
     python_path=$("${FORETOKEN_VLLM_PYTHON:-python}" -c \
       'import sys; print(sys.executable)') \
     && backend=$("$python_path" -c \
       'import torch; print("maca" if getattr(torch.version, "maca", None) else "cuda" if torch.version.cuda else "other")') \
-    && set -- modelscope==1.35.3 tzdata \
-    && case "$backend" in cuda) set -- "$@" bitsandbytes==0.49.2 modelexpress==0.6.0 nixl==1.4.1 ;; esac \
+    && set -- \
+    && case "$backend" in cuda) set -- --extra cuda ;; esac \
     && "$python_path" -c 'from importlib.metadata import version; print("torch==" + version("torch")); print("vllm==" + version("vllm"))' > /tmp/foretoken-engine-constraints.txt \
-    && uv pip install --no-cache --python "$python_path" \
+    && uv pip install --directory /tmp/foretoken-runtime --no-cache --python "$python_path" \
       --constraint /tmp/foretoken-engine-constraints.txt \
+      --requirements /tmp/foretoken-runtime/pyproject.toml \
       --default-index "${UV_DEFAULT_INDEX}" "$@" \
     && uv pip check --python "$python_path" \
     && rm /tmp/foretoken-engine-constraints.txt

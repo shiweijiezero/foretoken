@@ -99,6 +99,8 @@ deploy/release-artifacts build --registry "$REGISTRY"
 
 The release uses one shared version for the control-plane, frontend, model-server images, and Helm Chart. The MetaX model-server image adds the `-metax` suffix.
 
+Both model-server variants include the [AFD runtime dependencies](source-image-lifecycle.md#afd-runtime-dependencies) through the normal image build.
+
 After validating the artifacts, log in to the registry and push them:
 
 ```bash

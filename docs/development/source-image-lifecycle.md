@@ -188,3 +188,11 @@ REGISTRY="$REGISTRY" \
 IMAGE_PULL_SECRET=foretoken-registry \
 make dev-deploy
 ```
+
+## AFD runtime dependencies
+
+Normal model-server builds include the AFD plugin on both NVIDIA and MetaX images. No additional build flag is needed. The runtime dependencies and Python compatibility range are declared in [`data-plane/model-server/pyproject.toml`](../../data-plane/model-server/pyproject.toml); the engine interpreter must use Python 3.10–3.13. Installation preserves the base image's vLLM and PyTorch versions.
+
+The pinned plugin targets vLLM `0.26.0` for AFD execution. Installing it does not require other model-server builds to use that version. Upstream describes CUDA and Ascend execution; MetaX AFD execution has not been verified.
+
+AFD execution requires explicit `additional_config["afd"]` settings in the upstream vLLM runtime. Ordinary Foretoken deployments do not supply these settings, and Foretoken does not yet expose an AFD deployment interface or manage Attention/FFN instances. The plugin is still discovered and registered by vLLM when installed, so dependency availability alone does not establish ordinary-serving compatibility on every engine version.

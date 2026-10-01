@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Dependency-only project consumed by the model-server image build.
+[project]
+name = "foretoken-model-server-runtime"
+version = "0.0.0"
+requires-python = ">=3.10,<3.14"
+dependencies = [
+    "modelscope==1.35.3",
+    "tzdata",
+    # Install only the plugin; its optional vllm extra targets vLLM 0.26.0 for
+    # AFD execution and would replace the engine supplied by the base image.
+    "vllm-afd-plugin @ https://github.com/vllm-project/afd-plugin/archive/85e826ed8239dd9d8032375bb84a56116e24f0e0.tar.gz#sha256=4757f42b529c107c129568e8691fbf978a12a316397b6c27fbf776840c49c715",
+]
+
+[project.optional-dependencies]
+cuda = [
+    "bitsandbytes==0.49.2",
+    "modelexpress==0.6.0",
+    "nixl==1.4.1",
+]
+
+[tool.uv]
+package = false
+
+# The source archive lacks the Git metadata used by setuptools-scm.
+[tool.uv.extra-build-variables.vllm-afd-plugin]
+SETUPTOOLS_SCM_PRETEND_VERSION_FOR_VLLM_AFD_PLUGIN = "0.26.0rc1"
