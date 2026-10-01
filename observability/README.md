@@ -27,9 +27,7 @@ The dashboard starts with the last 15 minutes. Change the time range to inspect 
 
 TTFT measures time to the first token; E2EL measures time through generation completion. Both use seconds. TPOT is the per-request average output-token interval; ITL measures individual token intervals. Both use milliseconds and include mean curves. When samples are sparse, read latency quantiles alongside the observation rate and means. Panel descriptions provide the detailed measurement definitions.
 
-GPU drafting automatically enables stage timing. The panels show mean draft and target-forward GPU time, each stage's share of their combined duration, and timed batches per second. Samples cover complete speculative decode batches on one output rank per engine. Target forward includes verification but excludes sampling; GPU event intervals include gaps between queued kernels.
-
-Completed samples are collected asynchronously, including the final batch when the service becomes idle. Timing adds no GPU synchronization to the inference path. Panels remain empty when no eligible samples exist.
+When GPU drafting is active, the dashboard automatically shows draft and target-forward GPU time alongside acceptance, throughput, and latency. Use these panels to compare the cost of the two stages. If the selected time range contains no qualifying samples, the panels remain empty.
 
 Shared frontend panels cover all models served by the selected frontend and record HTTP response starts. Control-plane panels describe the platform; autoscaling panels follow the selected model and autoscaling service.
 

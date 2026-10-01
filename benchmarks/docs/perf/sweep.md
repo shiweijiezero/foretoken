@@ -16,7 +16,20 @@ This runs 384 requests at concurrency 1, 2 and 4, requesting 256 output tokens e
 
 ## Keep related parameters together
 
-Common experiment files are maintained in [`scripts/common/`](../../scripts/common/). The [fixed-length sweep](../../scripts/common/fixed-length.jsonl) keeps five input/output length pairs in separate JSONL rows and expands each row's concurrency list.
+Common experiment files are maintained in [`scripts/common/`](../../scripts/common/). Each file is a reusable workload definition: pass it with `--sweep` to run every listed parameter point. The preset files are:
+
+| File | Workload | What the command compares |
+| --- | --- | --- |
+| [`fixed-length.jsonl`](../../scripts/common/fixed-length.jsonl) | Fixed prompt/output lengths | Concurrency for five input/output length pairs |
+| [`fixed-arrival.jsonl`](../../scripts/common/fixed-arrival.jsonl) | Fixed short prompts and outputs | Request rates 4, 8, and 16 per second |
+| [`fixed-capacity.jsonl`](../../scripts/common/fixed-capacity.jsonl) | Long fixed prompts and short outputs | Concurrency 1 and 8 at two context lengths |
+| [`long-context.jsonl`](../../scripts/common/long-context.jsonl) | One request at several input lengths | Input-length sensitivity with a fixed output target |
+| [`conversation-rate.jsonl`](../../scripts/common/conversation-rate.jsonl) | Conversation dataset traffic | Conversation start rates 2, 4, 8, and 16 per second |
+| [`studychat-conversation.jsonl`](../../scripts/common/studychat-conversation.jsonl) | StudyChat conversation workload | Concurrency 1, 8, 16, and 32 |
+| [`slo-thresholds.jsonl`](../../scripts/common/slo-thresholds.jsonl) | Conversation traffic with request SLOs | Four rates × three TTFT thresholds |
+| [`quantized-models.jsonl`](../../scripts/common/quantized-models.jsonl) | BF16 and 4-bit deployments | The two service choices at concurrency 1, 4, and 8 |
+
+For example, this command runs all five fixed-length rows at every listed concurrency:
 
 ```bash
 foretoken perf examples/quickstart --dataset random \

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-
+# Compare balanced, long-input, and long-output generation lengths.
 {"_benchmark_name":"balanced-8192in-2048out","min_prompt_length":8192,"max_prompt_length":8192,"min_output_length":2048,"max_output_length":2048,"max_concurrency":[1,8,16,32]}
 {"_benchmark_name":"long-input-32768in-4096out","min_prompt_length":32768,"max_prompt_length":32768,"min_output_length":4096,"max_output_length":4096,"max_concurrency":[1,8,16,32]}
 {"_benchmark_name":"long-input-131072in-4096out","min_prompt_length":131072,"max_prompt_length":131072,"min_output_length":4096,"max_output_length":4096,"max_concurrency":[1,8,16,32]}

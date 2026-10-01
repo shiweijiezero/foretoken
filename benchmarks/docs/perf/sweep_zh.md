@@ -16,7 +16,20 @@ foretoken perf examples/quickstart \
 
 ## 成组设置参数
 
-常用实验配置集中在 [`scripts/common/`](../../scripts/common/)。[固定长度配置](../../scripts/common/fixed-length.jsonl)用不同行保持五组输入／输出长度配对，再展开各行的并发列表。
+常用实验配置集中在 [`scripts/common/`](../../scripts/common/)。每个文件都是可复用的负载定义：通过 `--sweep` 传入后，命令会运行其中列出的全部参数点。各预设的用途如下：
+
+| 文件 | 负载 | 命令比较的内容 |
+| --- | --- | --- |
+| [`fixed-length.jsonl`](../../scripts/common/fixed-length.jsonl) | 固定输入／输出长度 | 五组输入／输出长度下的并发 |
+| [`fixed-arrival.jsonl`](../../scripts/common/fixed-arrival.jsonl) | 固定短输入和输出 | 每秒 4、8、16 个请求的到达速率 |
+| [`fixed-capacity.jsonl`](../../scripts/common/fixed-capacity.jsonl) | 固定长输入和短输出 | 两种上下文长度下的并发 1 和 8 |
+| [`long-context.jsonl`](../../scripts/common/long-context.jsonl) | 单请求、多种输入长度 | 固定输出目标下的输入长度敏感性 |
+| [`conversation-rate.jsonl`](../../scripts/common/conversation-rate.jsonl) | 对话数据集流量 | 每秒启动 2、4、8、16 段对话 |
+| [`studychat-conversation.jsonl`](../../scripts/common/studychat-conversation.jsonl) | StudyChat 对话负载 | 并发 1、8、16、32 |
+| [`slo-thresholds.jsonl`](../../scripts/common/slo-thresholds.jsonl) | 带请求级 SLO 的对话流量 | 4 个速率 × 3 个 TTFT 阈值 |
+| [`quantized-models.jsonl`](../../scripts/common/quantized-models.jsonl) | BF16 与 4-bit 部署 | 并发 1、4、8 下的两种服务选择 |
+
+例如，下面的命令会运行固定长度文件中的五行配置及其全部并发点：
 
 ```bash
 foretoken perf examples/quickstart --dataset random \
