@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](distribution-comparison.md) | 简体中文 · [质量评测](README_zh.md)
 
-给 `foretoken eval` 添加 `--reference`，即可比较候选模型与参考模型。默认使用相同的原文前缀，比较下一个 token 的完整词表 KL、Top-1/Top-k 一致率和 logit 差异；要比较实际生成的 token，使用[贪心生成序列对比](#比较贪心生成序列)。两种方式都能保存本地图表与 W&B 结果。
+给 `foretoken eval` 添加 `--reference`，即可比较候选模型与参考模型。默认使用相同的原文前缀，比较下一个 token 的完整词表 KL、Top-1/Top-k 一致率和 logit 差异；要比较实际生成的 token，使用[贪心生成序列对比](#比较贪心生成序列)。
 
 ## 比较量化模型
 
