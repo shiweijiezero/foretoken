@@ -119,6 +119,29 @@ Source installation binds the checkout on this workstation to the target cluster
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-Deployment automatically selects runtime or image updates for Foretoken's frontend and vLLM model-server, reusing the saved installation settings.
+Deployment reuses the saved installation settings. Foretoken frontend and vLLM model-server Rust/Python changes use compiled executables or copied source without rebuilding runtime images when persistent runtime storage is available. Changes to dependencies, build configuration, the control plane, or the startup bootstrap use the image build path automatically. If source and deployment configuration are unchanged, existing workloads remain running.
 
-vLLM-Omni and vendor Python/CUDA changes use the [image build path](development/source-image-lifecycle.md), with an updated inference-engine image for engine changes.
+Updated workloads restart and may reload model weights. The command waits for the selected code to be active and the services to be ready; use the request in section 5 to try the change.
+
+After changing installation settings in a values file, rerun the installation command with that file and the same registry options before deploying. For source installations created before automatic updates were available, rerun the original installation command once to register the checkout.
+
+## 7. Use a custom inference engine
+
+Changes to vLLM itself, including its Python and CUDA kernels, require an inference-engine image containing those changes. Build that image using the engine's build instructions, then set its reference in `platform-values.yaml`. Replace the example reference with the image available to the local Docker builder:
+
+```yaml
+runtime:
+  vllm:
+    image: ghcr.io/example/custom-vllm:latest
+```
+
+With `-e`, this image is the build base: Foretoken adds its model-server and distributes the resulting image. For the registry setup in section 2, run:
+
+```bash
+foretoken install -e . --registry "$REGISTRY" --values platform-values.yaml
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+Omit `--registry` for local kind or k3d image import. Keep other installation overrides in the values file.
+
+vLLM-Omni has a separate build and image setting; follow the [vLLM-Omni recipe](../examples/recipes/minimax-h3/a100-bf16-tp2/README.md#build-and-install). MetaX engine builds are covered by [Prepare Foretoken for MetaX GPUs](development/metax-platform.md#install-from-source).

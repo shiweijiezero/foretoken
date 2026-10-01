@@ -1,195 +1,30 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# Source updates and image lifecycle
+# Runtime source lifecycle
 
 English | [简体中文](source-image-lifecycle_zh.md)
 
-This maintainer guide describes runtime source activation, manual image import, and raw Helm operations. For normal installation and redeployment, use the [source deployment guide](../custom-deployment.md). Run commands from the Foretoken repository root unless stated otherwise.
+Source updates separate runtime code from the image that supplies its dependencies. This reference describes the ownership and activation rules for maintaining that separation. Installation and redeployment commands are in [Deploy Foretoken from Source](../custom-deployment.md).
 
-For MetaX image preparation, see [Prepare Foretoken for MetaX GPUs](metax-platform.md#install-from-source). To publish both GPU variants and the Chart together, use the [release artifact commands](release.md#build-and-push-the-release-artifacts).
+## Preparation and publication
 
-## Runtime source activation
+The CLI owns the workstation's checkout binding, saved installation settings, input comparison, and artifact preparation. The binding identifies the cluster and installed platform; it is not shared between workstations. Source operations on the same workstation serialize by cluster so preparation and cleanup cannot remove artifacts another operation is using.
 
-The CLI retains the source checkout and installation settings on the workstation, associated with the installed platform and cluster. During deployment it compares build inputs with the last prepared source. Rust changes use the Dockerfile's `source-export` target and existing BuildKit caches; Python adapter changes replace the complete adapter directory. Each component bundle carries forward its previously prepared executable, so a later Python-only edit retains earlier Rust changes.
+For the Foretoken frontend and vLLM model-server, Rust changes export executables through the existing Docker builder and compilation cache. Python adapter changes replace the complete adapter directory. A Python-only update retains the component's last compiled executable. Input snapshots are committed only after checking that the checkout did not change during preparation.
 
-Complete bundles are published to the deployment's persistent runtime cache before service intent is applied. Existing controllers own frontend rollout and model Pool/Group replacement, including distributed workers. At process startup, the image's bootstrap selects the bundle executable and Python adapters. Publishing uses a separate CPU Pod, so it can complete even while the old inference process is unable to start.
+A bundle is the complete executable and adapter payload for one component revision. The CLI uploads it to a staging directory in persistent runtime storage and publishes it before selecting that revision on a service. Published directories are immutable. A separate CPU publisher allows publication even when the previous inference process cannot start.
 
-Changes to the bootstrap itself, dependencies, build configuration, control-plane code, or Helm require image preparation through the platform installation lifecycle. The same path is used when persistent runtime storage is unavailable. A successful CLI source installation clears service source selections because the images now contain the current source. Unchanged source reuses prepared bundles; controllers retain workloads whose desired configuration is unchanged.
+## Workload activation
 
-Runtime bundles apply to the frontend and the vLLM model-server. vLLM-Omni uses its own image build targets; see the [vLLM-Omni recipe](../../examples/recipes/minimax-h3/a100-bf16-tp2/README.md). Vendor Python and CUDA sources belong to the inference-engine image, not the runtime bundle.
+The CLI selects the source revision on the service; existing controllers own frontend rollout and model Pool/Group replacement. Model preparation and serving must receive the same selection. At startup, the image bootstrap selects the executable and Python adapters. If a bundle declares an executable, a missing executable fails startup rather than silently running the image's older code.
 
-## Import local images directly
+The CLI checks the selected serving workloads and their active source before reporting deployment success. An earlier Ready workload does not prove that the update is active. Unchanged source reuses prepared artifacts, and unchanged workload configuration does not trigger replacement.
 
-Option 1: Import into a Kind cluster. Create a Kind cluster directly to validate the control plane, CRDs, frontend, and scheduling behavior. To run a GPU model service, use k3d in option 2 and select the available GPUs as described in [Deploy Foretoken with k3d](../k3d-deployment.md). Install Kind first:
+## Image updates
 
-```bash
-export KIND_VERSION=v0.32.0
-mkdir -p ./tmp/bin
-curl -fL \
-  -o ./tmp/bin/kind \
-  "https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION/kind-linux-amd64"
-chmod +x ./tmp/bin/kind
-export PATH="$PWD/tmp/bin:$PATH"
-kind version
-```
+Bootstrap changes require a new image because the bootstrap runs before source activation. Dependency, build, control-plane, and Helm changes also use the existing platform installation lifecycle. When runtime storage is unavailable, or a single-node writable claim is awaiting its first placement, deployment uses images instead; model preparation retains ownership of initial storage placement.
 
-Create a single-node cluster:
+Image preparation compares the build with deployed image references and the requested distribution destination. A successful source installation clears existing service source selections so workloads use the newly built images. Local snapshots and bundles are retired when no longer referenced by the saved binding; uninstall removes the workstation binding without deleting remote model data.
 
-```bash
-export KIND_CLUSTER=foretoken-local
-kind create cluster --name "$KIND_CLUSTER"
-```
-
-If you need to simulate a multi-node topology on the same machine, use the Kind config included in the project.
-
-```bash
-export KIND_CLUSTER=foretoken-local
-kind create cluster \
-  --name "$KIND_CLUSTER" \
-  --config deploy/kind/multi-node.yaml
-```
-
-After creating the cluster, build and import the local images. The vLLM adapter supports EngineCore layouts from vLLM 0.20–0.29 and the current 0.30 development version. Engine/model compatibility must also match the target accelerator. The inference-engine image normally provides its Python executable as `python`. If it requires a specific executable, set both build inputs:
-
-```bash
-INFERENCE_ENGINE_IMAGE=<compatible-inference-engine-image> \
-FORETOKEN_VLLM_PYTHON=/absolute/path/to/python \
-make dev-build
-```
-
-Otherwise, use the defaults:
-
-```bash
-make dev-build
-
-kind load docker-image \
-  --name "$KIND_CLUSTER" \
-  foretoken-dev-control-plane:latest \
-  foretoken-dev-frontend:latest \
-  foretoken-dev-model-server:latest
-
-kubectl config use-context "kind-$KIND_CLUSTER"
-kubectl get nodes
-```
-
-Option 2: Import into a k3d cluster. List the clusters on the current machine and set `CLUSTER` to the actual name:
-
-```bash
-k3d cluster list
-export CLUSTER=your-cluster-name
-```
-
-If the target cluster has not been created, complete the cluster creation steps in [Deploy Foretoken with k3d](../k3d-deployment.md) first. Then build and import the local images from the repository root.
-
-```bash
-make dev-build
-
-k3d image import --cluster "$CLUSTER" \
-  foretoken-dev-control-plane:latest \
-  foretoken-dev-frontend:latest \
-  foretoken-dev-model-server:latest
-
-mkdir -p ./tmp
-k3d kubeconfig get "$CLUSTER" \
-  > "./tmp/kubeconfig-$CLUSTER.yaml"
-export KUBECONFIG="$PWD/tmp/kubeconfig-$CLUSTER.yaml"
-kubectl get nodes
-```
-
-`--namespace k8s.io` selects the containerd image namespace used by Kubernetes. A node administrator performs options 3 and 4.
-
-Option 3: Import into single-node containerd. When the Kubernetes node and development machine are the same host, build the image bundle from the repository root and import it into the Kubernetes containerd namespace.
-
-```bash
-make dev-build
-mkdir -p ./tmp
-
-docker save \
-  foretoken-dev-control-plane:latest \
-  foretoken-dev-frontend:latest \
-  foretoken-dev-model-server:latest \
-  --output ./tmp/foretoken-dev-images.tar
-
-sudo ctr --namespace k8s.io images import ./tmp/foretoken-dev-images.tar
-rm ./tmp/foretoken-dev-images.tar
-```
-
-Option 4: Import into multi-node containerd. For an offline multi-node Kubernetes cluster that uses containerd, build the image bundle on the development machine.
-
-```bash
-make dev-build
-mkdir -p ./tmp
-
-docker save \
-  foretoken-dev-control-plane:latest \
-  foretoken-dev-frontend:latest \
-  foretoken-dev-model-server:latest \
-  --output ./tmp/foretoken-dev-images.tar
-```
-
-Replace `node-a` and `node-b` with the SSH addresses of the actual nodes, then import the bundle into every node that may run a Foretoken workload.
-
-```bash
-for NODE in node-a node-b; do
-  # Transfer the image bundle to the node
-  ssh "$NODE" 'mkdir -p ./tmp'
-  rsync --archive --progress \
-    ./tmp/foretoken-dev-images.tar \
-    "$NODE:./tmp/foretoken-dev-images.tar"
-
-  # Import it into the containerd image namespace used by Kubernetes
-  ssh -t "$NODE" \
-    'sudo ctr --namespace k8s.io images import ./tmp/foretoken-dev-images.tar &&
-     rm ./tmp/foretoken-dev-images.tar'
-done
-```
-
-## Install the platform with Helm
-
-After importing the images, confirm that the current Kubernetes context points to the target cluster, then run the Helm command once.
-
-```bash
-helm upgrade --install foretoken \
-  ./deploy/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=local \
-  --set image.repository=foretoken-dev-control-plane \
-  --set image.tag=latest \
-  --set image.pullPolicy=Never \
-  --set frontend.image=foretoken-dev-frontend:latest \
-  --set runtime.vllm.image=foretoken-dev-model-server:latest \
-  --wait \
-  --timeout=5m
-```
-
-## Build and deploy through an OCI registry
-
-An OCI registry distributes images built on the development machine to Kubernetes nodes. The following example uses GHCR.
-
-```bash
-export GITHUB_USER=your-github-user
-export REGISTRY="ghcr.io/$GITHUB_USER/foretoken-dev"
-docker login ghcr.io
-REGISTRY="$REGISTRY" make dev-deploy
-```
-
-This command pushes the images and installs or updates the Foretoken platform.
-
-The script pushes:
-
-```text
-ghcr.io/your-github-user/foretoken-dev/control-plane:<tag>
-ghcr.io/your-github-user/foretoken-dev/frontend:<tag>
-ghcr.io/your-github-user/foretoken-dev/model-server:<tag>
-```
-
-For a private registry, provide a Kubernetes image pull Secret through `IMAGE_PULL_SECRET`:
-
-```bash
-REGISTRY="$REGISTRY" \
-IMAGE_PULL_SECRET=foretoken-registry \
-make dev-deploy
-```
+vLLM Python/CUDA sources and vLLM-Omni builds remain part of their inference-engine image paths. They are not runtime adapter bundles; their user-facing entry points are in [Use a custom inference engine](../custom-deployment.md#7-use-a-custom-inference-engine).

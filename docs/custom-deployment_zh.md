@@ -119,6 +119,29 @@ printf '\n'
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-命令会沿用保存的安装设置，自动选择直接更新运行时代码或更新镜像，部署 Foretoken 前端与 vLLM model-server 的改动。
+命令沿用保存的安装设置。有可用的持久运行时存储时，Foretoken 前端和 vLLM model-server 的 Rust/Python 改动通过编译可执行文件或复制源码更新，无需重新构建运行时镜像。依赖、构建配置、控制面或启动引导代码变化时，自动走镜像构建流程。源码和部署配置均未变化时，现有工作负载保持运行。
 
-vLLM-Omni 和厂商引擎的 Python/CUDA 改动走[镜像构建路径](development/source-image-lifecycle_zh.md)；修改引擎时需使用包含这些改动的推理引擎镜像。
+更新会重启受影响的工作负载，并可能重新加载模型权重。命令会等待所选代码生效、服务就绪；之后可用第 5 节的请求试用改动。
+
+修改 values 文件中的安装设置后，先保留原镜像仓库选项、带上该文件重新执行安装命令，再部署服务。若平台是在支持自动更新之前从源码安装的，先重新执行一次原安装命令，登记源码目录。
+
+## 7. 使用自定义推理引擎
+
+修改 vLLM 本体，包括其中的 Python 代码和 CUDA kernel，需要先按引擎的构建说明生成包含改动的推理引擎镜像，再把镜像地址填入 `platform-values.yaml`。将下面的示例地址替换为本机 Docker 构建器能够使用的镜像：
+
+```yaml
+runtime:
+  vllm:
+    image: ghcr.io/example/custom-vllm:latest
+```
+
+使用 `-e` 时，该镜像作为构建基础，Foretoken 会加入 model-server 并分发生成的镜像。沿用第 2 节的镜像仓库设置，执行：
+
+```bash
+foretoken install -e . --registry "$REGISTRY" --values platform-values.yaml
+foretoken deploy examples/quickstart --timeout 20m
+```
+
+本地 kind 或 k3d 直接导入镜像时省略 `--registry`。values 文件中保留其他自定义安装设置。
+
+vLLM-Omni 使用独立的构建流程和镜像配置，见 [vLLM-Omni 配方](../examples/recipes/minimax-h3/a100-bf16-tp2/README_zh.md#构建和安装)。沐曦引擎构建见[准备沐曦 Foretoken 平台](development/metax-platform_zh.md#从源码安装)。
