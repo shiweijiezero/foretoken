@@ -4,7 +4,7 @@
 
 用 `foretoken perf` 测量服务延迟和吞吐量，用 `foretoken eval` 评估回答质量，通过性能剖析定位执行瓶颈。
 
-按实验目的查找命令，见[实验命令参考](docs/recipes_zh.md)。
+[实验命令示例](docs/recipes_zh.md)
 
 ## 开始使用
 
