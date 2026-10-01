@@ -75,9 +75,9 @@ def _plot_conditions(bench: dict[str, Any]) -> dict[str, Any]:
     groups = conditions.get("slo_params")
     if not isinstance(groups, list) or len(groups) != 1 or not isinstance(groups[0], dict):
         return conditions
-    from evalscope.perf.sla.sla_run import parse_sla_params
+    from benchmarks.integrations.evalscope.slo import parse_slo_criteria
 
-    rules = parse_sla_params(groups)[0]
+    rules = parse_slo_criteria(groups)[0]
     if any(str(rule) in {"max", "min"} for rule in rules.values()):
         return conditions
     conditions.pop("slo_params")

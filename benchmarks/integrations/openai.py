@@ -63,6 +63,15 @@ class OpenAILoadClient:
     async def __aexit__(self, *args: object) -> None:
         await self._client.close()
 
+    def model_for(self, metadata: Mapping[str, Any]) -> str:
+        """Resolve the request model for workload tokenization and HTTP dispatch."""
+        model = metadata.get("model", self._request_overrides.get("model", self._model))
+        if not model:
+            raise ValueError("Dataset row must specify model when --model is omitted")
+        if self._models and model not in self._models:
+            raise ValueError(f"Dataset model {model!r} is not advertised by the deployment")
+        return model
+
     async def send(self, task: Task) -> dict[str, Any]:
         """Send one independent request for ``task`` and return its observation."""
         return await self._send(task.messages(), task.metadata, prompt_token_ids=task.prompt_token_ids)
@@ -89,11 +98,7 @@ class OpenAILoadClient:
         target_length = metadata.get("output_length")
         if target_length is None:
             target_length = self._generation.sample_output_length()
-        model = metadata.get("model", self._request_overrides.get("model", self._model))
-        if not model:
-            raise ValueError("Dataset row must specify model when --model is omitted")
-        if self._models and model not in self._models:
-            raise ValueError(f"Dataset model {model!r} is not advertised by the deployment")
+        model = self.model_for(metadata)
         request_fields: dict[str, Any] = {
             "model": model,
             **({"prompt": list(prompt_token_ids)} if completion else {"messages": messages}),

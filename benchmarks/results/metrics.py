@@ -151,11 +151,11 @@ def request_slo_results(
             "token_goodput": None,
         }
 
-    from evalscope.perf.sla.sla_run import parse_sla_params
+    from benchmarks.integrations.evalscope.slo import parse_slo_criteria
 
     checks = [
         (_SLO_CRITERION.fullmatch(name).group(1), rule)
-        for name, rule in parse_sla_params([supported])[0].items()
+        for name, rule in parse_slo_criteria([supported])[0].items()
     ]
     request_slo_met: list[bool] = []
     good_requests = 0

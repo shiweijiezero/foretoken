@@ -10,9 +10,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from evalscope.perf.sla.sla_run import parse_sla_params
-
 from benchmarks.config.benchmark import BenchmarkConfig
+from benchmarks.integrations.evalscope.slo import parse_slo_criteria
 from benchmarks.model_service import ModelService
 from benchmarks.results.console import log_slo_results
 from benchmarks.results.output import (
@@ -91,7 +90,7 @@ def _check_slo(
         return False
     return all(
         average_values[name] is not None and rule.validate(average_values[name])
-        for name, rule in parse_sla_params([criteria])[0].items()
+        for name, rule in parse_slo_criteria([criteria])[0].items()
     )
 
 

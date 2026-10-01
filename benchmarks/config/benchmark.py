@@ -160,7 +160,7 @@ class ChatCompletionsGeneration:
             )
 
     def sample_output_length(self) -> int | None:
-        """Choose an exact synthetic output target, or None for ordinary generation."""
+        """Choose an exact output target, or None when no length range is configured."""
         if self.min_output_length is None:
             return None
         return random.randint(self.min_output_length, self.max_output_length)
@@ -356,9 +356,9 @@ class SloTuneConfig:
             for group in self.params
         ):
             raise ValueError("--slo-params metric names and criteria must be strings")
-        from evalscope.perf.sla.sla_run import parse_sla_params
+        from benchmarks.integrations.evalscope.slo import parse_slo_criteria
 
-        parse_sla_params(self.params)
+        parse_slo_criteria(self.params)
         if not self.search:
             if len(self.params) != 1:
                 raise ValueError("measurement accepts one --slo-params object; use --slo-search for independent searches")

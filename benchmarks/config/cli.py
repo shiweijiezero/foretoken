@@ -255,8 +255,8 @@ def _add_benchmark_arguments(
         nargs="+",
         default=_default(ChatCompletionsGeneration, "max_tokens"),
         help=(
-            "Max generation tokens: one value (fixed) or two values "
-            "MIN MAX for uniform sampling per request"
+            "Generation limit when no row, sampled, or reference-answer output length applies: "
+            "one value or two values MIN MAX for uniform sampling per request"
         ),
     )
     parser.add_argument(
@@ -377,7 +377,7 @@ def _add_benchmark_arguments(
     parser.add_argument(
         "--tokenizer-path",
         default=_default(ChatRequestDataset, "tokenizer"),
-        help="Tokenizer override; random workloads infer it from the selected model service",
+        help="Tokenizer override for random inputs and reference-answer lengths; inferred from the request model",
     )
     parser.add_argument(
         "--random-seed",
@@ -448,7 +448,8 @@ def _add_benchmark_arguments(
         default=_default(SloTuneConfig, "params"),
         help=(
             "JSON array of SLO criteria; one object scores each request without search "
-            "(latency, ttft, tpot, itl; seconds). All conditions must hold. "
+            "(latency, ttft, tpot, itl). Duration thresholds accept s or ms, "
+            "e.g. <=2s or <=100ms; unitless durations use seconds. All conditions must hold. "
             "With --slo-search, aggregate criteria objects are searched independently"
         ),
     )

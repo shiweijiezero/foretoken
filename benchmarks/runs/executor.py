@@ -23,6 +23,7 @@ from benchmarks.datasets.conversations import (
     load_request_tasks,
     split_chat_conversation,
 )
+from benchmarks.datasets.huggingface import resolve_tokenizer_path
 from benchmarks.datasets.synthetic import (
     generate_trace_random_requests,
     iter_duration_random_requests,
@@ -110,6 +111,49 @@ class TaskLoadBenchmark:
         shape = 1.0 if load.arrival_pattern == "poisson" else load.burstiness
         return float(generator.gamma(shape, 1.0 / (load.arrival_rate * shape)))
 
+    def _reference_output_lengths(
+        self, tasks: Iterable[Task], client: OpenAILoadClient,
+    ) -> dict[tuple[str, int], int]:
+        """Prepare per-turn text targets before measurement using each request's tokenizer.
+
+        Explicit row targets and sampled output ranges take precedence. The
+        local tokenizer cache is released after preparation, outside the load clock.
+        """
+        if not self.benchmark.is_multi_turn or self.benchmark.generation.min_output_length is not None:
+            return {}
+        workload = self.benchmark.resolved_workload
+        tokenizers: dict[tuple[str, str], Any] = {}
+        lengths: dict[tuple[str, int], int] = {}
+        for task in tasks:
+            if task.prompt_token_ids is not None or "output_length" in task.metadata:
+                continue
+            turns = split_chat_conversation(task.messages())
+            if workload.max_turns is not None and workload.max_turns > 0:
+                turns = turns[:workload.max_turns]
+            for index, (_, answer) in enumerate(turns):
+                if answer is None or answer.get("tool_calls"):
+                    continue
+                text = answer.get("content")
+                if isinstance(text, list) and all(part.get("type") == "text" for part in text):
+                    text = "".join(part["text"] for part in text)
+                if not isinstance(text, str) or not text:
+                    continue
+                identity = (
+                    ("hf", workload.tokenizer) if workload.tokenizer
+                    else replace(self.service, model=client.model_for(task.metadata)).tokenizer_identity
+                )
+                if identity not in tokenizers:
+                    from transformers import AutoTokenizer
+
+                    source, name = identity
+                    tokenizers[identity] = AutoTokenizer.from_pretrained(
+                        resolve_tokenizer_path(name, source=source),
+                    )
+                count = len(tokenizers[identity].encode(text, add_special_tokens=False))
+                if count:
+                    lengths[task.id, index] = count
+        return lengths
+
     async def _run_requests(
         self,
         *,
@@ -145,6 +189,7 @@ class TaskLoadBenchmark:
             self.service,
             max_connections=load.max_concurrency if load.max_concurrency > 0 else None,
         ) as client, asyncio.TaskGroup() as request_tasks:
+            reference_lengths = self._reference_output_lengths(tasks, client)
             if profile is not None:
                 await profile.before_request()
             started = time.perf_counter()
@@ -193,10 +238,14 @@ class TaskLoadBenchmark:
                                 remaining_requests -= 1
                         if profile is not None:
                             await profile.before_request()
+                        metadata = task.metadata
+                        reference_length = reference_lengths.get((task.id, turn_index))
+                        if reference_length is not None:
+                            metadata = {**metadata, "output_length": reference_length}
                         response = (
                             await client.send(task)
                             if task.prompt_token_ids is not None
-                            else await client.send_messages(context + turn, task.metadata)
+                            else await client.send_messages(context + turn, metadata)
                         )
                         if generated_history and turn_index < len(turns) - 1 and response.get("tool_calls"):
                             response["success"] = False

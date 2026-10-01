@@ -12,7 +12,7 @@ foretoken perf examples/quickstart \
 
 多个数据集共享到达时钟、并发限制和请求预算。默认平均分配 `--num-prompts`；两个来源传入 `--dataset-weights 3,1` 时，第一个获得四分之三的配额。仅指定 `--duration` 而不指定 `--num-prompts` 时，按权重抽取对话，再执行选定的轮次。每条请求保留来源身份；有请求配额时，最后一条多轮对话会按该来源的剩余配额截断。远程选择器也可换成本地 JSONL 或顶层为对话数组的 JSON 路径；随机输入不能与其他数据集混用。
 
-JSONL 中的整数 token 数组，例如 `{"prompt":[1,42,73],"output_length":32}`，作为一条已分词的 Completions 请求发送，不拆成多轮，也不添加聊天模板。token ID 必须使用被测模型的 tokenizer。字符串 `prompt` 仍按 Chat Completions 消息发送。
+JSONL 中的整数 token 数组，例如 `{"prompt":[1,42,73],"output_length":32}`，作为一条已分词的 Completions 请求发送，不拆成多轮，也不添加聊天模板。token ID 必须使用被测模型的 tokenizer。字符串 `prompt` 仍按 Chat Completions 消息发送。有文本参考答案的轮次使用对应请求模型的 tokenizer 确定输出目标，详见[对话输出长度](conversations_zh.md)。
 
 JSONL 和 Hugging Face 数据行可以指定 `model`、整数 `priority`、评测标签 `request_class` 和正整数 `output_length`。例如 `{"prompt":"你好","model":"Qwen/Qwen3-0.6B","request_class":"interactive","output_length":32}` 会选择该模型，通过 `min_tokens` 和 `ignore_eos` 请求恰好输出 32 个 token；服务返回的 token 数不符时记为请求失败。省略 `model` 则沿用服务选择；URL 或多模型部署的数据行都指定模型时，无需额外传 `--model`。`priority` 会传给服务端，需要服务支持优先级调度；`request_class` 是结果分组标签。
 
