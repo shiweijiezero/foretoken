@@ -40,7 +40,7 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 pip install foretoken
 
-# Bootstrap an unpublished checkout instead:
+# From a source checkout:
 # pip install -e .
 ```
 
