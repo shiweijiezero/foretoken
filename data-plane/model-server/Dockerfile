@@ -11,7 +11,7 @@
 ARG BASE_IMAGE_REGISTRY=docker.io
 ARG UV_IMAGE_REGISTRY=ghcr.io
 ARG INFERENCE_ENGINE_IMAGE_REGISTRY=ghcr.io
-ARG RUST_BUILDER_IMAGE=${BASE_IMAGE_REGISTRY}/library/rust:1.97.1-bullseye
+ARG RUST_BUILDER_IMAGE=${BASE_IMAGE_REGISTRY}/library/rust:1.97.1-slim-bullseye
 ARG INFERENCE_ENGINE_IMAGE=${INFERENCE_ENGINE_IMAGE_REGISTRY}/shiweijiezero/foretoken/model-server
 ARG FORETOKEN_VLLM_PYTHON
 ARG UV_IMAGE=${UV_IMAGE_REGISTRY}/astral-sh/uv:0.9.10
@@ -43,15 +43,19 @@ ARG FORETOKEN_GITHUB_MIRROR
 ARG FORETOKEN_CARGO_REGISTRY
 ARG CARGO_NET_GIT_FETCH_WITH_CLI
 ARG FORETOKEN_MODEL_SERVER_BINARY=foretoken-model-server
-ARG VLLM_REVISION
+
+RUN if [ "${CARGO_NET_GIT_FETCH_WITH_CLI}" = true ]; then \
+      apt-get update \
+      && apt-get install -y --no-install-recommends git \
+      && rm -rf /var/lib/apt/lists/*; \
+    fi
 
 WORKDIR /workspace
 
 COPY data-plane/ ./data-plane/
 
 # Bullseye cannot load procedural macros linked against the frontend builder's newer glibc.
-RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm,sharing=locked \
-    --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
+RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=foretoken-cargo-target-model-server,target=/workspace/data-plane/target,sharing=locked \
     if [ -n "${FORETOKEN_GITHUB_MIRROR}" ]; then \
@@ -66,25 +70,12 @@ RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm
     && if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
       export CARGO_NET_GIT_FETCH_WITH_CLI; \
     fi \
-    && if [ ! -f data-plane/third_party/vllm/rust/Cargo.toml ]; then \
-      if [ ! -f /var/cache/vllm/rust/Cargo.toml ]; then \
-        git -C /var/cache/vllm init -q \
-        && git -C /var/cache/vllm fetch --depth=1 https://github.com/vllm-project/vllm.git "${VLLM_REVISION}" \
-        && git -C /var/cache/vllm checkout -q --detach FETCH_HEAD; \
-      fi \
-      && mkdir -p data-plane/third_party/vllm \
-      && git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
-    fi \
-    && cargo run --locked --manifest-path data-plane/xtask/Cargo.toml -- prepare-vllm \
     && cargo build --locked --release \
       --manifest-path data-plane/Cargo.toml \
       --package foretoken-model-server --bin "${FORETOKEN_MODEL_SERVER_BINARY}" \
     && install -Dm755 \
       "data-plane/target/release/${FORETOKEN_MODEL_SERVER_BINARY}" \
       /out/model-server
-
-FROM scratch AS source-export
-COPY --from=builder /out/model-server /bin/foretoken-model-server
 
 # vLLM-Omni images already contain their Python runtime and model plugins. This
 # target only adds the thin Foretoken lifecycle/proxy adapter and deliberately
@@ -110,8 +101,8 @@ ENV FORETOKEN_VLLM_PYTHON=${FORETOKEN_VLLM_PYTHON}
 # Patch the installed Python engine, not the independent Rust build source.
 # A derived Foretoken image may already contain this exact backport.
 RUN --mount=from=patch-tool,source=/usr/bin/patch,target=/usr/local/bin/patch \
-    --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/foretoken-vllm-patches \
-    "${FORETOKEN_VLLM_PYTHON:-python}" /tmp/foretoken-vllm-patches/vllm_patches.py
+    --mount=type=bind,source=data-plane/patches/vllm,target=/tmp/vllm-patches \
+    "${FORETOKEN_VLLM_PYTHON:-python}" /tmp/vllm-patches/apply.py
 
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 # Engine images may provide a Python virtual environment without pip.

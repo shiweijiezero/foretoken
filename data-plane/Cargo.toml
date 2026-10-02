@@ -27,24 +27,7 @@ exclude = ["third_party/vllm"]
 
 [workspace.metadata.foretoken]
 vllm_source = "third_party/vllm"
-vllm_patches = [
-    "patches/vllm/vllm-chat-request-processor.patch",
-    "patches/vllm/vllm-engine-core-version-compatibility.patch",
-    "patches/vllm/vllm-mooncake-context-parallel.patch",
-    "patches/vllm/vllm-multinode-pcp-world-size.patch",
-    "patches/vllm/vllm-http-latency-histogram-buckets.patch",
-    "patches/vllm/vllm-latency-histogram-buckets.patch",
-    "patches/vllm/vllm-managed-engine-command.patch",
-    "patches/vllm/vllm-ready-logprobs.patch",
-    "patches/vllm/vllm-rust-ready-logprobs.patch",
-    "patches/vllm/vllm-logprob-padding-tokens.patch",
-    "patches/vllm/vllm-offloading-event-identity.patch",
-    "patches/vllm/vllm-fused-gdn-declaration.patch",
-    "patches/vllm/vllm-rust-spec-decode-stage-timing.patch",
-    "patches/vllm/vllm-spec-decode-timing-collector.patch",
-    "patches/vllm/vllm-spec-decode-timing-hooks.patch",
-    "patches/vllm/vllm-spec-decode-stage-timing.patch",
-]
+vllm_patch_series = "patches/vllm/source.series"
 
 [workspace.package]
 version = "0.0.1"

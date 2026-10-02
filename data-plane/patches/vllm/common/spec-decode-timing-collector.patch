@@ -29,7 +29,7 @@ diff --git a/vllm/v1/worker/spec_decode_timing.py b/vllm/v1/worker/spec_decode_t
 new file mode 100644
 --- /dev/null
 +++ b/vllm/v1/worker/spec_decode_timing.py
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,111 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 +
@@ -42,12 +42,24 @@ new file mode 100644
 +import torch
 +
 +from vllm.utils.gpu_sync_debug import with_gpu_sync_check
++from vllm.v1.core.sched.output import SchedulerOutput
 +from vllm.v1.outputs import (
 +    AsyncModelRunnerOutput,
 +    ModelRunnerOutput,
 +    SpecDecodeTimingResult,
 +)
 +from vllm.v1.spec_decode.timing import SpecDecodeTiming
++
++
++def is_speculative_decode_batch(scheduler_output: SchedulerOutput) -> bool:
++    """Select batches whose scheduled tokens all belong to speculative decode."""
++    draft_tokens = scheduler_output.scheduled_spec_decode_tokens
++    return bool(draft_tokens) and all(
++        req_id in draft_tokens
++        and len(draft_tokens[req_id]) > 0
++        and len(draft_tokens[req_id]) + 1 == num_tokens
++        for req_id, num_tokens in scheduler_output.num_scheduled_tokens.items()
++    )
 +
 +
 +class TimedAsyncOutput(AsyncModelRunnerOutput):

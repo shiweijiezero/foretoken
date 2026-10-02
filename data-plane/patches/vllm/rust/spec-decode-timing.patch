@@ -1,16 +1,25 @@
 diff --git a/rust/src/engine-core-client/src/metrics.rs b/rust/src/engine-core-client/src/metrics.rs
 --- a/rust/src/engine-core-client/src/metrics.rs
 +++ b/rust/src/engine-core-client/src/metrics.rs
-@@ -46,6 +46,8 @@
+@@ -3,6 +3,7 @@
+
+ use std::collections::BTreeMap;
+ use std::collections::BTreeSet;
++use std::sync::OnceLock;
+ use std::time::{SystemTime, UNIX_EPOCH};
+
+ use vllm_metrics::{
+@@ -46,6 +47,9 @@
      spec_decode_num_draft_tokens: U64Counter,
      spec_decode_num_accepted_tokens: U64Counter,
      spec_decode_num_accepted_tokens_per_pos: Family<EnginePositionLabels, U64Counter>,
 +    spec_decode_target_forward_duration_seconds: Family<EngineLabels, HistogramMetric>,
 +    spec_decode_draft_duration_seconds: Family<EngineLabels, HistogramMetric>,
++    spec_decode_timing_histograms: OnceLock<(HistogramMetric, HistogramMetric)>,
 
      // Per-engine performance / MFU counters.
      estimated_flops_per_gpu: U64Counter,
-@@ -137,6 +139,10 @@
+@@ -137,6 +141,11 @@
          spec_decode_num_accepted_tokens_per_pos: metrics
              .spec_decode_num_accepted_tokens_per_pos
              .clone(),
@@ -18,28 +27,33 @@ diff --git a/rust/src/engine-core-client/src/metrics.rs b/rust/src/engine-core-c
 +            .spec_decode_target_forward_duration_seconds
 +            .clone(),
 +        spec_decode_draft_duration_seconds: metrics.spec_decode_draft_duration_seconds.clone(),
++        spec_decode_timing_histograms: OnceLock::new(),
          log_stats: metrics.log_stats.get_or_create_owned(&labels),
          estimated_flops_per_gpu: metrics.estimated_flops_per_gpu.get_or_create_owned(&labels),
          estimated_read_bytes_per_gpu: metrics
-@@ -204,6 +210,18 @@
-                 })
-                 .inc_by(accepted_tokens);
+@@ -206,6 +215,22 @@
          }
-+    }
-+
-+    // Publish paired samples only when a real speculative step was measured.
-+    for timing in &stats.spec_decode_timings {
-+        handles
-+            .spec_decode_target_forward_duration_seconds
-+            .get_or_create(&handles.labels)
-+            .observe(timing.target_forward_seconds);
-+        handles
-+            .spec_decode_draft_duration_seconds
-+            .get_or_create(&handles.labels)
-+            .observe(timing.draft_seconds);
      }
 
++    // Cache paired histogram handles on the first measured speculative step.
++    if !stats.spec_decode_timings.is_empty() {
++        let (target_forward, draft) = handles.spec_decode_timing_histograms.get_or_init(|| {
++            (
++                handles
++                    .spec_decode_target_forward_duration_seconds
++                    .get_or_create_owned(&handles.labels),
++                handles.spec_decode_draft_duration_seconds.get_or_create_owned(&handles.labels),
++            )
++        });
++        for timing in &stats.spec_decode_timings {
++            target_forward.observe(timing.target_forward_seconds);
++            draft.observe(timing.draft_seconds);
++        }
++    }
++
      // Per-engine performance / MFU counters.
+     if let Some(perf_stats) = &stats.perf_stats
+         && (perf_stats.num_flops_per_gpu != 0
 diff --git a/rust/src/engine-core-client/src/protocol/stats.rs b/rust/src/engine-core-client/src/protocol/stats.rs
 --- a/rust/src/engine-core-client/src/protocol/stats.rs
 +++ b/rust/src/engine-core-client/src/protocol/stats.rs

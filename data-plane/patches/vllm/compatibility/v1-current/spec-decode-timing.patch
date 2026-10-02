@@ -1,17 +1,14 @@
 diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
 --- a/vllm/v1/engine/core.py
 +++ b/vllm/v1/engine/core.py
-@@ -86,7 +86,7 @@
- )
+@@ -87,5 +87,5 @@
  from vllm.v1.kv_cache_interface import KVCacheConfig, get_kv_cache_spec_kind
  from vllm.v1.metrics.stats import SchedulerIterationDetails, SchedulerStats
 -from vllm.v1.outputs import ModelRunnerOutput
 +from vllm.v1.outputs import ModelRunnerOutput, SpecDecodeTimingResult
  from vllm.v1.request import Request, RequestStatus
  from vllm.v1.serial_utils import MsgpackDecoder, MsgpackEncoder, bytestr
- from vllm.v1.structured_output import StructuredOutputManager
-@@ -168,6 +168,10 @@
-             hash_block_size=hash_block_size,
+@@ -169,4 +169,8 @@
          )
          self.use_spec_decode = vllm_config.speculative_config is not None
 +        self._spec_decode_timing_pending = False
@@ -20,54 +17,14 @@ diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
 +        ) = None
          self.check_for_draft_tokens = (
              self.use_spec_decode or vllm_config.model_config.is_diffusion
-         )
-@@ -1427,8 +1469,43 @@
-             req = self.input_queue.get_nowait()
-             self._handle_client_request(*req)
+@@ -1467,5 +1471,5 @@
 
-+    def _has_pending_spec_decode_timings(self) -> bool:
-+        return (
-+            self._spec_decode_timing_pending
-+            or self._spec_decode_timing_future is not None
-+        )
-+
-+    def _publish_spec_decode_timings(
-+        self, results: list[SpecDecodeTimingResult | None]
-+    ) -> None:
-+        """Send completed samples through the normal per-engine stats channel."""
-+        outputs: dict[int, EngineCoreOutputs] = {}
-+        for result in results:
-+            self._attach_spec_decode_timings(outputs, result)
-+        for output in outputs.items():
-+            self.output_queue.put_nowait(output)
-+
-+    def _poll_spec_decode_timings(self) -> None:
-+        """Drain an idle GPU tail without blocking input handling or extending a DP wave."""
-+        future = self._spec_decode_timing_future
-+        if future is not None and future.done():
-+            results = future.result()
-+            self._spec_decode_timing_future = None
-+            self._publish_spec_decode_timings(results)
-+        if (
-+            self._spec_decode_timing_pending
-+            and self._spec_decode_timing_future is None
-+            and not self.has_work()
-+            and self.input_queue.empty()
-+            and self.is_running()
-+        ):
-+            self._spec_decode_timing_pending = False
-+            self._spec_decode_timing_future = (
-+                self.model_executor.collect_spec_decode_timings()
-+            )
-+
      def _process_engine_step(self) -> bool:
 -        """Called only when there are unfinished local requests."""
 +        """Process inference work and completed telemetry without extra GPU work."""
 
          # Step the engine core.
-         outputs, model_executed = self.step_fn()
-@@ -2169,7 +2249,9 @@
-                 # engine is sleeping.
+@@ -2246,5 +2250,7 @@
                  elif not self.model_executor.is_sleeping:
                      with self.capture_iteration_details(None) as iteration_details:
 -                        self.execute_dummy_batch()
@@ -76,12 +33,10 @@ diff --git a/vllm/v1/engine/core.py b/vllm/v1/engine/core.py
 +                        self._publish_spec_decode_timings(timings)
                      if iteration_details is not None and not self.has_coordinator:
                          stats = self._make_iteration_details_stats(iteration_details)
-                         self.output_queue.put_nowait(
 diff --git a/vllm/v1/executor/multiproc_executor.py b/vllm/v1/executor/multiproc_executor.py
 --- a/vllm/v1/executor/multiproc_executor.py
 +++ b/vllm/v1/executor/multiproc_executor.py
-@@ -357,8 +387,27 @@
-             kv_output_aggregator=self.kv_output_aggregator,
+@@ -388,6 +388,25 @@
          )
 
 -    def execute_dummy_batch(self) -> None:
@@ -109,17 +64,13 @@ diff --git a/vllm/v1/executor/multiproc_executor.py b/vllm/v1/executor/multiproc
 +        return future
 
      def take_draft_token_ids(self) -> DraftTokenIds | None:
-         # OPTIMIZATION: Get output only from a single worker (output_rank)
-@@ -375,6 +424,7 @@
-         non_block: bool = False,
+@@ -406,4 +425,5 @@
          unique_reply_rank: int | None = None,
          kv_output_aggregator: KVOutputAggregator | None = None,
 +        pollable: bool = False,
      ) -> Any:
          """Returns single result if unique_reply_rank and/or kv_output_aggregator
-         is provided, otherwise list."""
-@@ -406,12 +456,17 @@
-         if output_rank is not None:
+@@ -437,10 +457,15 @@
              response_mqs = (response_mqs[output_rank],)
 
 -        def get_response():
@@ -138,71 +89,28 @@ diff --git a/vllm/v1/executor/multiproc_executor.py b/vllm/v1/executor/multiproc
 +                    dequeue_timeout = timeout_override
                  try:
                      status, result = mq.dequeue(timeout=dequeue_timeout)
-                 except TimeoutError as e:
-diff --git a/vllm/v1/executor/ray_utils.py b/vllm/v1/executor/ray_utils.py
---- a/vllm/v1/executor/ray_utils.py
-+++ b/vllm/v1/executor/ray_utils.py
-@@ -245,6 +246,33 @@
-             output.routed_experts = type(output.routed_experts)(
-                 routing_data_c, slot_mapping_c
-             )
-+
-+
-+class RpcFuture(Future):
-+    """Gather ordinary RPC replies using Ray's own completion notifications."""
-+
-+    def __init__(self, references):
-+        super().__init__()
-+        self.worker_futures = [reference.future() for reference in references]
-+        if not self.worker_futures:
-+            self.set_result([])
-+        for future in self.worker_futures:
-+            future.add_done_callback(self._collect)
-+
-+    def _collect(self, completed):
-+        if self.done():
-+            return
-+        try:
-+            completed.result()
-+            if not all(future.done() for future in self.worker_futures):
-+                return
-+            results = [future.result() for future in self.worker_futures]
-+        except Exception as error:
-+            with suppress(InvalidStateError):
-+                self.set_exception(error)
-+        else:
-+            with suppress(InvalidStateError):
-+                self.set_result(results)
-
-
- class FutureWrapper(Future):
 diff --git a/vllm/v1/metrics/stats.py b/vllm/v1/metrics/stats.py
 --- a/vllm/v1/metrics/stats.py
 +++ b/vllm/v1/metrics/stats.py
-@@ -204,6 +205,7 @@
-     kv_cache_eviction_events: list[KVCacheEvictionEvent] = field(default_factory=list)
+@@ -206,4 +206,5 @@
 
      spec_decoding_stats: SpecDecodingStats | None = None
 +    spec_decode_timings: list[SpecDecodeTiming] = field(default_factory=list)
      kv_connector_stats: dict[str, Any] | None = None
 
-     waiting_lora_adapters: dict[str, int] = field(default_factory=dict)
 diff --git a/vllm/v1/outputs.py b/vllm/v1/outputs.py
 --- a/vllm/v1/outputs.py
 +++ b/vllm/v1/outputs.py
-@@ -12,6 +12,7 @@
-
+@@ -13,4 +13,5 @@
  from vllm.compilation.cuda_graph import CUDAGraphStat
  from vllm.v1.core.sched.output import SchedulerOutput
 +from vllm.v1.spec_decode.timing import SpecDecodeTimingResult
 
  if TYPE_CHECKING:
-     from vllm.distributed.kv_events import KVConnectorKVEvents
 diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runner.py
 --- a/vllm/v1/worker/gpu/model_runner.py
 +++ b/vllm/v1/worker/gpu/model_runner.py
-@@ -33,7 +33,9 @@
- from vllm.config.compilation import CUDAGraphMode
+@@ -34,5 +34,7 @@
  from vllm.distributed.parallel_state import (
      get_dcp_group,
 +    get_pcp_group,
@@ -210,28 +118,17 @@ diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runne
 +    get_tp_group,
  )
  from vllm.forward_context import BatchDescriptor, set_forward_context
- from vllm.logger import init_logger
-@@ -67,6 +69,7 @@
-     DraftTokenIds,
-     ModelRunnerOutput,
-     RoutedExpertsTensors,
-+    SpecDecodeTimingResult,
-     make_empty_encoder_model_runner_output,
- )
- from vllm.v1.worker.block_table import get_block_table_width
-@@ -144,6 +147,10 @@
- from vllm.v1.worker.gpu.states import RequestState
+@@ -145,4 +147,9 @@
  from vllm.v1.worker.gpu.structured_outputs import StructuredOutputsWorker
  from vllm.v1.worker.lora_model_runner_mixin import LoRAModelRunnerMixin
 +from vllm.v1.worker.spec_decode_timing import (
 +    SpecDecodeTimingCollector,
 +    SpecDecodeTimingEvents,
++    is_speculative_decode_batch,
 +)
  from vllm.v1.worker.utils import (
      KVBlockZeroer,
-     copy_kv_cache_blocks_inplace,
-@@ -266,6 +273,14 @@
-         )
+@@ -267,4 +274,12 @@
 
          self.step_timing = StepTimingCollector()
 +        self.spec_decode_timing_collector = (
@@ -244,38 +141,25 @@ diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runne
 +        self.spec_decode_timing: SpecDecodeTimingEvents | None = None
 
          # General request states.
-         self.req_states = RequestState(
-@@ -1386,6 +1401,7 @@
-         is_profile: bool = False,
+@@ -1387,4 +1402,5 @@
          context_len: int = 0,
      ) -> ModelRunnerOutput | IntermediateTensors | None:
 +        self.spec_decode_timing = None
          if not dummy_run:
              # Update the request states.
-             self.update_pp_decode_requests()
-@@ -1593,6 +1609,20 @@
-             input_batch, batch_desc.cg_mode == CUDAGraphMode.FULL
+@@ -1594,4 +1610,11 @@
          )
          self.step_timing.forward_start()
 +        if (
 +            not dummy_run
 +            and self.spec_decode_timing_collector is not None
 +            and self.spec_decode_timing_collector.enabled
-+            and scheduler_output.scheduled_spec_decode_tokens
-+            and all(
-+                req_id in scheduler_output.scheduled_spec_decode_tokens
-+                and len(scheduler_output.scheduled_spec_decode_tokens[req_id]) > 0
-+                and len(scheduler_output.scheduled_spec_decode_tokens[req_id]) + 1
-+                == num_tokens
-+                for req_id, num_tokens in scheduler_output.num_scheduled_tokens.items()
-+            )
++            and is_speculative_decode_batch(scheduler_output)
 +        ):
 +            self.spec_decode_timing = self.spec_decode_timing_collector.begin()
 
          # Run model.
-         if batch_desc.cg_mode == CUDAGraphMode.FULL:
-@@ -1634,6 +1664,9 @@
-                     # Eager (NONE): call the raw model directly.
+@@ -1635,4 +1658,7 @@
                      model_output = self.model(**model_inputs)
 
 +        if self.spec_decode_timing is not None:
@@ -283,18 +167,14 @@ diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runne
 +
          if self.is_last_pp_rank:
              if self.use_aux_hidden_state_outputs:
-                 assert isinstance(model_output, tuple)
-@@ -1789,6 +1822,8 @@
-             if hasattr(self.model, "get_mtp_target_hidden_states"):
+@@ -1790,4 +1816,6 @@
                  pre_hc_hidden_states = self.model.get_mtp_target_hidden_states()
                  spec_hidden_states = pre_hc_hidden_states[: hidden_states.shape[0]]  # type: ignore[union-attr]
 +            if self.spec_decode_timing is not None:
 +                self.spec_decode_timing.draft_start.record()
              draft_tokens = self.speculator.propose(
                  input_batch,
-                 attn_metadata,
-@@ -1803,6 +1838,9 @@
-                 self.sampler.sampling_states.seeds.gpu,
+@@ -1804,4 +1832,7 @@
                  mm_inputs=mm_inputs,
              )
 +            if self.spec_decode_timing is not None:
@@ -302,35 +182,18 @@ diff --git a/vllm/v1/worker/gpu/model_runner.py b/vllm/v1/worker/gpu/model_runne
 +                self.spec_decode_timing_collector.end_draft(self.spec_decode_timing)
              self.req_states.draft_tokens[input_batch.idx_mapping] = draft_tokens
              if self.adaptive_verification is not None:
-                 self.adaptive_verification.record_confidences(
-@@ -1822,6 +1860,11 @@
-         model_runner_output.kv_connector_output = kv_connector_output
-
-         return async_output
-+
-+    def collect_spec_decode_timings(self) -> SpecDecodeTimingResult | None:
-+        """Drain ready stage samples on the worker thread without waiting for the GPU."""
-+        collector = self.spec_decode_timing_collector
-+        return collector.drain() if collector is not None else None
-
-     def take_draft_token_ids(self) -> DraftTokenIds | None:
-         return self.draft_tokens_handler.get_draft_tokens()
 diff --git a/vllm/v1/worker/gpu_model_runner.py b/vllm/v1/worker/gpu_model_runner.py
 --- a/vllm/v1/worker/gpu_model_runner.py
 +++ b/vllm/v1/worker/gpu_model_runner.py
-@@ -46,6 +46,7 @@
- from vllm.distributed.parallel_state import (
+@@ -47,4 +47,5 @@
      GraphCaptureContext,
      get_dcp_group,
 +    get_pcp_group,
      get_pp_group,
      get_tp_group,
-     graph_capture,
-@@ -919,6 +925,24 @@
-         # (e.g., KV sharing, encoder-only attention), but not in the
-         # KVCacheConfig of the scheduler.
+@@ -926,4 +927,22 @@
          self.runner_only_attn_layers: set[str] = set()
-+
+
 +        self.drafter_runs_model_forward = self.speculative_config is not None and (
 +            self.speculative_config.use_eagle()
 +            or self.speculative_config.uses_draft_model()
@@ -348,19 +211,16 @@ diff --git a/vllm/v1/worker/gpu_model_runner.py b/vllm/v1/worker/gpu_model_runne
 +            and get_pcp_group().rank_in_group == 0
 +            else None
 +        )
-
++
          # Cached outputs.
          self._draft_token_ids: list[list[int]] | torch.Tensor | None = None
-@@ -4285,6 +4309,7 @@
-                 "State error: sample_tokens() must be called "
+@@ -4291,4 +4310,5 @@
                  "after execute_model() returns None."
              )
 +        self._spec_decode_timing: SpecDecodeTimingEvents | None = None
 
          # If ngram_gpu is used, we need to copy the scheduler_output to avoid
-         # the modification has influence on the scheduler_output in engine core process.
-@@ -4520,6 +4545,23 @@
-         has_encoder_input = (
+@@ -4526,4 +4546,14 @@
              self.model_config.is_encoder_decoder and num_encoder_reqs > 0
          )
 +
@@ -370,21 +230,12 @@ diff --git a/vllm/v1/worker/gpu_model_runner.py b/vllm/v1/worker/gpu_model_runne
 +            self.spec_decode_timing_collector is not None
 +            and self.spec_decode_timing_collector.enabled
 +            and self._input_fits_in_drafter(spec_decode_common_attn_metadata)
-+            and scheduler_output.scheduled_spec_decode_tokens
-+            and all(
-+                req_id in scheduler_output.scheduled_spec_decode_tokens
-+                and len(scheduler_output.scheduled_spec_decode_tokens[req_id]) > 0
-+                and len(scheduler_output.scheduled_spec_decode_tokens[req_id]) + 1
-+                == num_tokens
-+                for req_id, num_tokens in scheduler_output.num_scheduled_tokens.items()
-+            )
++            and is_speculative_decode_batch(scheduler_output)
 +        ):
 +            self._spec_decode_timing = self.spec_decode_timing_collector.begin()
 
          # Run the model.
-         # Use persistent buffers for CUDA graphs.
-@@ -4714,6 +4758,9 @@
-
+@@ -4722,4 +4752,7 @@
          def propose_draft_token_ids(sampled_token_ids):
              assert spec_decode_common_attn_metadata is not None
 +            timing = self._spec_decode_timing
@@ -392,9 +243,7 @@ diff --git a/vllm/v1/worker/gpu_model_runner.py b/vllm/v1/worker/gpu_model_runne
 +                timing.draft_start.record()
              with record_function_or_nullcontext("gpu_model_runner: draft"):
                  self._draft_token_ids = self.propose_draft_token_ids(
-                     scheduler_output,
-@@ -4726,6 +4773,9 @@
-                     spec_decode_common_attn_metadata,
+@@ -4734,4 +4767,7 @@
                      slot_mappings,
                  )
 +                if timing is not None:
@@ -402,9 +251,7 @@ diff --git a/vllm/v1/worker/gpu_model_runner.py b/vllm/v1/worker/gpu_model_runne
 +                    self.spec_decode_timing_collector.end_draft(timing)
                  self._copy_draft_token_ids_to_cpu(scheduler_output)
 
-         spec_config = self.speculative_config
-@@ -4737,11 +4787,7 @@
-             )
+@@ -4745,9 +4781,5 @@
              # Whether the drafter runs a GPU model forward (and thus carries
              # TP/EP/DP collectives), independent of padded-batch timing.
 -            drafter_runs_model_forward = (
@@ -415,12 +262,10 @@ diff --git a/vllm/v1/worker/gpu_model_runner.py b/vllm/v1/worker/gpu_model_runne
 +            drafter_runs_model_forward = self.drafter_runs_model_forward
              use_gpu_toks = (
                  drafter_runs_model_forward
-                 and not spec_config.disable_padded_drafter_batch
 diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
 --- a/vllm/v1/worker/gpu_worker.py
 +++ b/vllm/v1/worker/gpu_worker.py
-@@ -74,9 +74,11 @@
-     AsyncModelRunnerOutput,
+@@ -75,7 +75,9 @@
      DraftTokenIds,
      ModelRunnerOutput,
 +    SpecDecodeTimingResult,
@@ -430,24 +275,12 @@ diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
 +from vllm.v1.worker.spec_decode_timing import TimedAsyncOutput
  from vllm.v1.worker.startup_plan import (
      maybe_apply_startup_plan,
-     maybe_save_startup_plan,
-@@ -1019,7 +1025,18 @@
-     def sample_tokens(
-         self, grammar_output: "GrammarOutput | None"
-     ) -> ModelRunnerOutput | AsyncModelRunnerOutput:
--        return self.model_runner.sample_tokens(grammar_output)
-+        output = self.model_runner.sample_tokens(grammar_output)
-+        collector = self.model_runner.spec_decode_timing_collector
-+        if collector is not None and collector.enabled:
-+            if isinstance(output, AsyncModelRunnerOutput):
-+                return TimedAsyncOutput(output, collector)
-+            if isinstance(output, ModelRunnerOutput):
-+                output.spec_decode_timing = collector.drain()
-+        return output
-+
-+    def collect_spec_decode_timings(self) -> SpecDecodeTimingResult | None:
-+        """Return ready GPU stage samples without synchronizing any device work."""
-+        return self.model_runner.collect_spec_decode_timings()
+@@ -1198,6 +1200,7 @@
 
-     @torch.inference_mode()
-     @with_gpu_sync_check
+-    def execute_dummy_batch(self) -> None:
++    def execute_dummy_batch(self) -> SpecDecodeTimingResult | None:
+         num_tokens = getattr(self.model_runner, "uniform_decode_query_len", 1)
+         self.model_runner._dummy_run(num_tokens, uniform_decode=True)
++        return self.collect_spec_decode_timings()
+
+     def add_lora(self, lora_request: LoRARequest) -> bool:

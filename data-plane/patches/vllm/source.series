@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+rust/chat-request-processor.patch
+rust/engine-core-version-compatibility.patch
+common/mooncake-context-parallel.patch
+common/multinode-pcp-world-size.patch
+rust/http-latency-histogram-buckets.patch
+rust/latency-histogram-buckets.patch
+rust/managed-engine-command.patch
+common/ready-logprobs.patch
+rust/ready-logprobs.patch
+rust/logprob-padding-tokens.patch
+common/offloading-event-identity.patch
+common/fused-gdn-declaration.patch
+rust/spec-decode-timing.patch
+common/shm-nonblocking-read.patch
+common/spec-decode-timing-collector.patch
+common/spec-decode-timing-hooks.patch
+compatibility/v1-current/spec-decode-timing.patch
