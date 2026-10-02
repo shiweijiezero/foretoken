@@ -4,6 +4,7 @@
 common/python-profiling.patch
 common/ready-logprobs.patch
 common/offloading-event-identity.patch
+common/metax-dp-ep-shared-expert-serialization.patch
 common/spec-decode-timing-collector.patch
 common/spec-decode-timing-hooks.patch
 common/shm-nonblocking-read.patch
