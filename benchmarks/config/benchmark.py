@@ -7,10 +7,28 @@ from __future__ import annotations
 
 import math
 import random
+import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Optional
 
 OutputTokenLimit = int | list[int]
+
+
+def parse_duration_seconds(value: str | int | float) -> float:
+    """Convert CLI and sweep time values to seconds; unitless values are seconds."""
+    if not isinstance(value, str):
+        return float(value)
+    match = re.fullmatch(
+        r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\s*(ms|s|min|m|h|d)?",
+        value.strip(),
+    )
+    if match is None:
+        raise ValueError(
+            "expected a time value such as 30s, 8min or 1h; units: ms, s, m, min, h, d"
+        )
+    number, unit = match.groups()
+    scale = {None: 1, "ms": 0.001, "s": 1, "m": 60, "min": 60, "h": 3600, "d": 86400}
+    return float(number) * scale[unit]
 
 
 def normalize_output_token_limit(value: int | list[int]) -> OutputTokenLimit:
@@ -42,7 +60,7 @@ class ModelServiceSource:
     health_url: str = ""
     model: str = ""
     api_key: str = "EMPTY"
-    timeout_seconds: int = 300
+    timeout_seconds: float = 300
     max_retries: int = 0
     wait_timeout: str = "15m"
     name: str = ""
@@ -51,6 +69,8 @@ class ModelServiceSource:
         """Require one service source and, normally, a model for an existing URL."""
         if bool(self.kustomize_path) == bool(self.url):
             raise ValueError("provide either PATH or --url")
+        if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
+            raise ValueError("--timeout must be finite and > 0")
         if self.max_retries < 0:
             raise ValueError("--max-retries must be >= 0")
         if require_model and self.url and not self.model:

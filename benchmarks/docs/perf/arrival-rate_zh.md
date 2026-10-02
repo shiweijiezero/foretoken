@@ -20,7 +20,7 @@ foretoken perf examples/quickstart \
   --output local,wandb
 ```
 
-`--request-rate -1 --max-concurrency -1` 会尽快启动请求预算内的请求。添加 `--duration SECONDS` 可按墙上时钟停止新的请求准入；省略 `--num-prompts` 时使用时长作为工作负载边界。多轮数据共享 HTTP 请求预算，`--max-concurrency` 限制同时执行的对话数。
+`--request-rate -1 --max-concurrency -1` 会尽快启动请求预算内的请求。添加 `--duration 5min` 可在五分钟后停止发送新请求；省略 `--num-prompts` 时使用时长作为工作负载边界。多轮数据共享 HTTP 请求预算，`--max-concurrency` 限制同时执行的对话数。
 
 使用固定间隔或 Gamma 到达：
 

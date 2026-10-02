@@ -30,13 +30,13 @@ foretoken perf video \
   --flow-shift 12 \
   --audio-flow-shift 3 \
   --seed 1 \
-  --timeout 3600 \
+  --timeout 1h \
   --max-concurrency 1 \
   --output local,wandb \
   --output-dir results/video/ti2v
 ```
 
-Generated videos are saved under `--output-dir`. Use `--warmup-requests N` to run N requests before measurement, or `--duration SECONDS` to set a time limit for sending requests; requests already sent are allowed to finish. To compare generation and load settings, add `--sweep benchmarks/examples/video-sweep.jsonl`.
+Generated videos are saved under `--output-dir`. Use `--warmup-requests N` to run N requests before measurement, or `--duration 5min` to send requests for up to five minutes; requests already sent are allowed to finish. To compare generation and load settings, add `--sweep benchmarks/examples/video-sweep.jsonl`.
 
 ![TI2V aggregate benchmark summary](../imgs/video-ti2v-benchmark-summary.png)
 
@@ -60,7 +60,7 @@ foretoken perf video \
   --flow-shift 12 \
   --audio-flow-shift 3 \
   --seed 1 \
-  --timeout 3600 \
+  --timeout 1h \
   --max-concurrency 1 \
   --output local,wandb \
   --output-dir results/video/tv2v

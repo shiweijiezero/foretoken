@@ -86,13 +86,13 @@ foretoken perf examples/quickstart \
 ```bash
 foretoken perf examples/quickstart \
   --trace KrisQ/StudyChat --dataset KrisQ/StudyChat \
-  --trace-start 18609050.546 --trace-duration 480 \
+  --trace-start 18609050.546s --trace-duration 8min \
   --max-concurrency 16 --max-tokens 4096 \
   --output local,wandb,plot
 
 foretoken perf examples/quickstart \
   --trace valeriol29/mooncake-traces:conversation --dataset random \
-  --trace-start 57 --trace-duration 480 --max-concurrency 16 \
+  --trace-start 57s --trace-duration 8min --max-concurrency 16 \
   --trace-synthetic-prefix-reuse --random-seed 0 --max-tokens 64 \
   --output local,wandb,plot
 ```
@@ -170,7 +170,7 @@ CANDIDATE=path/to/ablation-deployment
 
 foretoken perf "$BASELINE" "$CANDIDATE" \
   --trace valeriol29/mooncake-traces:conversation --dataset random \
-  --trace-start 57 --trace-duration 480 --max-concurrency 16 \
+  --trace-start 57s --trace-duration 8min --max-concurrency 16 \
   --trace-synthetic-prefix-reuse --random-seed 0 --max-tokens 64 \
   --slo-params '[{"ttft":"<=2s","tpot":"<=100ms"}]' \
   --output local,wandb,plot

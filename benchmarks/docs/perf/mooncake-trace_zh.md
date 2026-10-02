@@ -7,7 +7,7 @@ Mooncake trace 数据集记录请求长度和共享前缀块，不包含原始�
 ```bash
 foretoken perf examples/quickstart \
   --trace valeriol29/mooncake-traces:conversation \
-  --trace-start 57 --trace-duration 480 \
+  --trace-start 57s --trace-duration 8min \
   --dataset random \
   --random-seed 0 --trace-synthetic-prefix-reuse \
   --max-concurrency 16 --max-tokens 64 \

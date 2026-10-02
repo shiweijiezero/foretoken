@@ -7,7 +7,7 @@
 ```bash
 foretoken perf examples/quickstart \
   --trace KrisQ/StudyChat --dataset KrisQ/StudyChat \
-  --trace-start 18609050.546 --trace-duration 480 \
+  --trace-start 18609050.546s --trace-duration 8min \
   --max-concurrency 16 --max-tokens 4096 \
   --output local,wandb,plot
 ```

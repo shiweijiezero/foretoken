@@ -16,6 +16,7 @@ from benchmarks.config.benchmark import (
     ModelServiceSource,
     ParameterSweepConfig,
     normalize_output_token_limit,
+    parse_duration_seconds,
 )
 from benchmarks.model_service import resolve_benchmark_service
 from benchmarks.results.console import format_benchmark_config, log_sweep_results
@@ -58,7 +59,7 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "request_rate": ("load", "arrival_rate", float),
     "arrival_pattern": ("load", "arrival_pattern", str),
     "burstiness": ("load", "burstiness", float),
-    "duration": ("load", "duration_seconds", float),
+    "duration": ("load", "duration_seconds", parse_duration_seconds),
     "max_tokens": ("generation", "max_tokens", normalize_output_token_limit),
     "min_output_length": ("generation", "min_output_length", int),
     "max_output_length": ("generation", "max_output_length", int),
@@ -73,8 +74,8 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "extra_body": ("generation", "extra_body", dict),
     "dataset": ("workload", "dataset_selectors", _dataset_selectors),
     "trace": ("trace", "trace_selector", str),
-    "trace_start": ("trace", "start_offset_seconds", float),
-    "trace_duration": ("trace", "duration_seconds", float),
+    "trace_start": ("trace", "start_offset_seconds", parse_duration_seconds),
+    "trace_duration": ("trace", "duration_seconds", parse_duration_seconds),
     "trace_synthetic_prefix_reuse": ("trace", "synthetic_prefix_reuse", _preserve_value),
     "dataset_weights": ("workload", "dataset_weights", lambda value: [float(item) for item in (value.split(",") if isinstance(value, str) else value)]),
     "dataset_offset": ("workload", "row_offset", int),

@@ -30,13 +30,13 @@ foretoken perf video \
   --flow-shift 12 \
   --audio-flow-shift 3 \
   --seed 1 \
-  --timeout 3600 \
+  --timeout 1h \
   --max-concurrency 1 \
   --output local,wandb \
   --output-dir results/video/ti2v
 ```
 
-生成的视频保存在 `--output-dir` 指定的目录中。用 `--warmup-requests N` 在测量前预热 N 个请求，或用 `--duration SECONDS` 设置发送请求的时长，已发送的请求会继续等待完成。比较生成参数和负载设置时，添加 `--sweep benchmarks/examples/video-sweep.jsonl`。
+生成的视频保存在 `--output-dir` 指定的目录中。用 `--warmup-requests N` 在测量前预热 N 个请求，或用 `--duration 5min` 将发送请求的时长设为五分钟，已发送的请求会继续等待完成。比较生成参数和负载设置时，添加 `--sweep benchmarks/examples/video-sweep.jsonl`。
 
 ![TI2V 评测汇总结果](../imgs/video-ti2v-benchmark-summary.png)
 
@@ -60,7 +60,7 @@ foretoken perf video \
   --flow-shift 12 \
   --audio-flow-shift 3 \
   --seed 1 \
-  --timeout 3600 \
+  --timeout 1h \
   --max-concurrency 1 \
   --output local,wandb \
   --output-dir results/video/tv2v

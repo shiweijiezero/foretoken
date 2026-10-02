@@ -32,6 +32,8 @@ foretoken perf examples/quickstart \
 
 The summary reports request success, latency, and throughput. Streamed requests also report time to first token (TTFT) and time per output token (TPOT).
 
+Performance time values may include a unit such as `s`, `min`, or `h`; unitless values use seconds.
+
 [Performance examples](docs/perf/README.md) cover datasets, conversations, arrival rates, trace replay, parameter sweeps, SLO searches, and video generation. Definitions and units are in [Performance metrics](metrics.md).
 
 ## Evaluate model quality

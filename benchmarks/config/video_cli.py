@@ -9,7 +9,11 @@ import argparse
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from benchmarks.config.benchmark import BenchmarkOutputConfig, WandbRunConfig
+from benchmarks.config.benchmark import (
+    BenchmarkOutputConfig,
+    WandbRunConfig,
+    parse_duration_seconds,
+)
 from benchmarks.config.cli import _add_benchmark_arguments
 from benchmarks.config.video import (
     VideoBenchmarkConfig,
@@ -61,8 +65,8 @@ def parse_video_arguments(
         help="Video requests completed before measurement; excluded from metrics",
     )
     parser.add_argument(
-        "--duration", type=float, default=None,
-        help="Stop admitting video requests after this many seconds",
+        "--duration", type=parse_duration_seconds, default=None,
+        help="Stop sending video requests after this duration (e.g. 8min; default unit: s)",
     )
     parser.add_argument(
         "--sweep",

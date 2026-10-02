@@ -27,6 +27,7 @@ from benchmarks.config.benchmark import (
     ParameterSweepConfig,
     SloTuneConfig,
     WandbRunConfig,
+    parse_duration_seconds,
 )
 
 
@@ -80,9 +81,9 @@ def _add_benchmark_arguments(
     )
     parser.add_argument(
         "--timeout",
-        type=float if video else int,
+        type=parse_duration_seconds,
         default=_default(ModelServiceSource, "timeout_seconds"),
-        help="Request timeout seconds",
+        help="Request timeout (e.g. 500ms, 30s, 5min; default unit: s)",
     )
     parser.add_argument(
         "--max-concurrency",
@@ -243,9 +244,9 @@ def _add_benchmark_arguments(
     )
     parser.add_argument(
         "--duration",
-        type=float,
+        type=parse_duration_seconds,
         default=_default(HttpLoadSchedule, "duration_seconds"),
-        help="Maximum measured workload duration in seconds",
+        help="Maximum measured workload duration (e.g. 30s, 8min, 1h; default unit: s)",
     )
 
     # Chat Completions generation parameters
@@ -355,15 +356,15 @@ def _add_benchmark_arguments(
     )
     parser.add_argument(
         "--trace-start",
-        type=float,
+        type=parse_duration_seconds,
         default=_default(ArrivalTraceSchedule, "start_offset_seconds"),
-        help="Start offset from the first trace timestamp, in seconds",
+        help="Offset from the first trace timestamp (e.g. 57s, 8min, 1h; unitless values use seconds)",
     )
     parser.add_argument(
         "--trace-duration",
-        type=float,
+        type=parse_duration_seconds,
         default=_default(ArrivalTraceSchedule, "duration_seconds"),
-        help="Trace window duration in seconds; omit to replay to the end",
+        help="Trace window length (ms, s, m/min, h, d; default unit: s); omit to replay to the end",
     )
     parser.add_argument(
         "--trace-synthetic-prefix-reuse",
