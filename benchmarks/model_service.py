@@ -142,23 +142,26 @@ def _model_service_refs(
     )
 
 
-def _model_gpu_count(deployment: ForetokenDeployment, model: str) -> int:
+def _model_gpu_count(
+    deployment: ForetokenDeployment, model: str, kubectl: Kubectl,
+) -> int:
+    """Count allocated GPUs in the service-selected, ready execution groups."""
+    services = kubectl.get_resources(_model_service_refs(deployment, model))
+    selected = {
+        (pool["poolUID"], pool["revision"])
+        for service in services
+        for pool in service["status"]["servingPoolRevisions"]
+    }
     total = 0
-    for document in deployment.objects:
-        if document.get("kind") != "ModelService":
+    for group in kubectl.list_resources(("modelgroups",), deployment.namespace):
+        spec = group["spec"]
+        if (spec["modelPoolRef"]["uid"], spec["revision"]) not in selected:
             continue
-        spec = document.get("spec") or {}
-        if str(spec.get("model") or "") != model:
+        if group["metadata"].get("deletionTimestamp") or group["status"].get("phase") != "Ready":
             continue
-        requests = ((spec.get("resources") or {}).get("requests") or {})
-        gpu_count = int((requests.get("gpu") or {}).get("count") or 0)
-        replicas = int(spec.get("replicas") or 1)
-        nodes = int(spec.get("nodes") or 1)
-        total += gpu_count * replicas * nodes
+        total += int(spec["nodeCount"]) * int(spec["resources"]["requests"]["gpu"]["count"])
     if total < 1:
-        raise DeploymentError(
-            f"deployment does not declare GPU capacity for model {model!r}"
-        )
+        raise DeploymentError(f"no resolved GPU capacity for model {model!r}")
     return total
 
 
@@ -214,8 +217,8 @@ def _discover_model_service(
         "" if allow_multiple_models and not source.model and len(set(deployment.models.values())) > 1
         else _select_model(deployment.models.values(), source.model)
     )
-    gpu_count = _model_gpu_count(deployment, model) if model else None
     wait_for_resources(deployment.service_refs(), kubectl, source.wait_timeout)
+    gpu_count = _model_gpu_count(deployment, model, kubectl) if model else None
     endpoint = resolve_frontend_endpoint(deployment, kubectl, source.wait_timeout)
     chat_completions_url = f"{endpoint.url}/v1/chat/completions"
     api_root = f"{endpoint.url}/v1"

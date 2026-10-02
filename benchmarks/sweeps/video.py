@@ -9,6 +9,7 @@ import asyncio
 from dataclasses import replace
 from typing import Any, Callable
 
+from benchmarks.config.benchmark import parse_duration_seconds
 from benchmarks.config.video import VideoBenchmarkConfig, VideoParameterSweepConfig
 from benchmarks.results.output import wandb_run_timestamp
 from benchmarks.sweeps.core import (
@@ -34,7 +35,7 @@ _VIDEO_SWEEP_FIELDS: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "audio_flow_shift": ("audio_flow_shift", float),
     "seed": ("seed", int),
     "max_concurrency": ("concurrency", int),
-    "duration": ("duration_s", float),
+    "duration": ("duration_s", parse_duration_seconds),
     "warmup_requests": ("warmup_requests", int),
 }
 

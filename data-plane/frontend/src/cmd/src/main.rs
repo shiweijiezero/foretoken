@@ -17,6 +17,7 @@ use serving_snapshot::{refresh_active_generation, watch_serving_snapshot};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    foretoken_artifacts::source::activate("foretoken-frontend")?;
     foretoken_tracing::init_tracing("ForetokenFrontend");
 
     // Establish the long-lived generation owner before starting background refreshes.
@@ -55,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
     let model_generation = generation.clone();
     let models = Arc::new(move || model_generation.configured_models());
-    let app = router(generation.clone(), models, config.stream_idle);
+    let app = router(generation.clone(), models, config.stream_idle)?;
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let server_shutdown = shutdown.clone();
     let mut server = Box::pin(

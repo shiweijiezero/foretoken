@@ -110,6 +110,9 @@ def _evalscope_arguments_type() -> type:
 
         omit_temperature: bool = Field(default=False, exclude=True, repr=False)
         max_retries: int = Field(ge=0)
+        # Keep fractional seconds when adapting EvalScope's integer timeout fields.
+        read_timeout: float
+        total_timeout: float
         output_length_range: tuple[int, int] | None = None
         profile: Any = Field(default=None, exclude=True, repr=False)
 

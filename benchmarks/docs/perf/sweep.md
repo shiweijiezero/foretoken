@@ -2,7 +2,7 @@
 
 English | [简体中文](sweep_zh.md) · [Performance examples](README.md)
 
-Compare load settings and export figures with the existing [parameter file](../../examples/sweep.jsonl):
+After [setup](README.md#setup), compare concurrency settings with the existing [parameter file](../../examples/sweep.jsonl):
 
 ```bash
 foretoken perf examples/quickstart \
@@ -12,32 +12,110 @@ foretoken perf examples/quickstart \
   --experiment-name concurrency --output local,wandb,plot
 ```
 
-This runs 384 requests at concurrency 1, 2 and 4, requesting 256 output tokens each. Every point is repeated three times, with 16 warmup conversations before each repetition. A sweep also accepts `--url` with `--model`, and supports the same conversation, mixed-dataset, trace, and profile options as a single run.
+This measures concurrency 1, 2, and 4 with a fixed 256-token output target. Each point is repeated three times, with 16 warmup conversations before each repetition.
 
-## Keep related parameters together
+## Choose a workload
 
-Common experiment files are maintained in [`scripts/common/`](../../scripts/common/). The [fixed-length sweep](../../scripts/common/fixed-length.jsonl) keeps three input/output length pairs in separate JSONL rows and expands each row's concurrency list.
+Common parameter files are maintained in [`scripts/common/`](../../scripts/common/). Pass a file with `--sweep` to measure its parameter combinations:
+
+| File | Purpose |
+| --- | --- |
+| [`fixed-length.jsonl`](../../scripts/common/fixed-length.jsonl) | Compare concurrency with balanced, long-input, and long-output workloads |
+| [`fixed-arrival.jsonl`](../../scripts/common/fixed-arrival.jsonl) | Compare request rates with short fixed inputs and outputs |
+| [`fixed-capacity.jsonl`](../../scripts/common/fixed-capacity.jsonl) | Compare concurrency with long fixed inputs and short outputs |
+| [`long-context.jsonl`](../../scripts/common/long-context.jsonl) | Vary input length; set output length and concurrency in the command |
+| [`conversation-rate.jsonl`](../../scripts/common/conversation-rate.jsonl) | Vary conversation start rates for a selected dataset |
+| [`studychat-conversation.jsonl`](../../scripts/common/studychat-conversation.jsonl) | Vary concurrency for a StudyChat workload |
+| [`slo-thresholds.jsonl`](../../scripts/common/slo-thresholds.jsonl) | Compare request-level SLO thresholds at different conversation start rates |
+| [`quantized-models.jsonl`](../../scripts/common/quantized-models.jsonl) | Compare BF16 and 4-bit deployments across concurrency settings |
+
+For fixed-length workloads:
 
 ```bash
 foretoken perf examples/quickstart --dataset random \
-  --sweep benchmarks/scripts/common/fixed-length.jsonl --num-runs 3 --num-prompts 1000 \
-  --warmup-requests 20 --temperature 0 --output local,wandb,plot
+  --sweep benchmarks/scripts/common/fixed-length.jsonl --num-runs 1 --num-prompts 32 \
+  --warmup-requests 4 --temperature 0 --output local,wandb,plot
 ```
 
-This produces nine parameter points and 27 measured runs. Concurrency 1 supplies the single-request comparison; latency, throughput, and resource plots reuse those runs. The tokenizer comes from the selected model service; `--tokenizer-path` overrides it.
+Keep only length pairs and concurrency levels supported by the selected model and service. The model context must accommodate input, output, and chat-template overhead. Fixed output lengths require service support for `min_tokens` and `ignore_eos`. The tokenizer is inferred from the selected model; use `--tokenizer-path` to override it.
 
-Load, generation, and dataset options use their CLI names with underscores. For example, `request_rate: [4, 8, 16]` scans arrival rates. The [fixed-arrival configuration](../../scripts/common/fixed-arrival.jsonl) and [capacity configuration](../../scripts/common/fixed-capacity.jsonl) are ready-to-run examples. Lists are sweep axes: to mix two datasets in each run, use `"dataset": [["first.jsonl", "second.jsonl"]]`. SLO criteria are supplied with `--slo-params`; `--num-runs` repeats the complete search for each point, with one measurement per probe.
+Each JSONL row keeps related settings together. Fields use CLI names with underscores, such as `request_rate`. Lists define sweep axes, and multiple axes in a row expand into all combinations. To mix two datasets in each run, use a nested list: `"dataset": [["first.jsonl", "second.jsonl"]]`.
+
+`--slo-params` scores the fixed workload. Add `--slo-search` to [search concurrency](slo.md); with a sweep, `--num-runs` repeats the complete search for each point, with one measurement per probe.
+
+## Compare SLO thresholds and request rates
+
+The [SLO threshold configuration](../../scripts/common/slo-thresholds.jsonl) varies request-level TTFT limits and conversation start rates, keeping the TPOT limit fixed. Replace the URL and model with your service's Chat Completions endpoint and model:
+
+```bash
+foretoken perf --url http://host/v1/chat/completions --model Qwen/Qwen3-0.6B \
+  --dataset hf://datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json \
+  --sweep benchmarks/scripts/common/slo-thresholds.jsonl \
+  --temperature 0 --random-seed 0 --max-concurrency -1 \
+  --num-prompts 100 --warmup-requests 0 --num-runs 1 \
+  --experiment-name slo-thresholds --output local,wandb,plot
+```
+
+Each request must meet both timing limits. The 100-request budget counts individual HTTP turns. Compare attainment and goodput at each rate; threshold curves hold the comparison operator and other workload settings fixed, while rate curves show a separate slice for each threshold. See [fixed-rate SLO measurement](slo.md#measure-attainment-at-fixed-conversation-rates) for interpreting attainment.
+
+In a JSONL row, `"slo_params": [{"ttft": "<=250ms", "tpot": "<=100ms"}, {"ttft": "<=500ms", "tpot": "<=100ms"}]` scans two criteria choices. With `--slo-search`, nest objects to run several independent searches within one choice: `"slo_params": [[{"p99_ttft": "<=250ms"}, {"p99_tpot": "<=100ms"}]]`.
+
+## Measure longer input contexts
+
+Use the [long-context configuration](../../scripts/common/long-context.jsonl) with one concurrent request and a fixed 512-token output target:
+
+```bash
+foretoken perf examples/quickstart --dataset random \
+  --sweep benchmarks/scripts/common/long-context.jsonl \
+  --min-output-length 512 --max-output-length 512 --max-concurrency 1 \
+  --num-prompts 4 --warmup-requests 1 --num-runs 1 \
+  --experiment-name long-context --output local,wandb,plot
+```
+
+Keep only rows your model can serve: its context must fit the input, 512 output tokens, and chat-template overhead. Random input lengths are generation targets; check reported input-token usage for actual lengths. These small samples help compare input-length sensitivity; use a larger request budget and repeated measurements to assess tail latency or SLO capacity.
+
+## Run conversation workloads
+
+For a StudyChat concurrency comparison:
+
+```bash
+foretoken perf examples/quickstart \
+  --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
+  --sweep benchmarks/scripts/common/studychat-conversation.jsonl \
+  --max-tokens 128 --temperature 0 --num-runs 3 \
+  --warmup-requests 20 --num-prompts 1000 --output local,wandb,plot
+```
+
+To compare conversation start rates on ShareGPT and StudyChat, use the same [rate configuration](../../scripts/common/conversation-rate.jsonl) with each dataset:
+
+```bash
+foretoken perf examples/quickstart \
+  --dataset hf://datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/ShareGPT_V3_unfiltered_cleaned_split.json \
+  --sweep benchmarks/scripts/common/conversation-rate.jsonl \
+  --temperature 0 --random-seed 0 --max-concurrency -1 \
+  --num-prompts 100 --warmup-requests 0 --num-runs 1 \
+  --experiment-name sharegpt-rate --output local,wandb,plot
+
+foretoken perf examples/quickstart \
+  --dataset hf://datasets/KrisQ/StudyChat/data.jsonl \
+  --sweep benchmarks/scripts/common/conversation-rate.jsonl \
+  --temperature 0 --random-seed 0 --max-concurrency -1 \
+  --num-prompts 100 --warmup-requests 0 --num-runs 1 \
+  --experiment-name studychat-rate --output local,wandb,plot
+```
+
+The rate controls conversation starts, while the request budget counts HTTP turns; the last conversation may stop when the budget is reached. Turns with text reference answers generate matching token counts, and turns without one use the `--max-tokens` limit. See [conversation output lengths](conversations.md) for overrides. For recorded arrival times, use [Mooncake trace replay](mooncake-trace.md).
 
 ## Compare methods
 
-Multiple Kustomize examples can also be passed directly for a single workload:
+Pass multiple Kustomize examples to measure the same workload on each service:
 
 ```bash
 foretoken perf examples/quickstart examples/quickstart3 \
   --dataset random --num-prompts 100 --output local,wandb,plot
 ```
 
-Multiple endpoints use one `--url` followed by several URLs; `--model` accepts one shared model or one model per URL. A row's `service` list provides the same choices inside a reusable sweep file. Kustomize examples can be written directly as paths; the [quantized-model sweep](../../scripts/common/quantized-models.jsonl) compares the [BF16 and 4-bit deployments](../../../examples/quantized-model/README.md):
+Multiple endpoints use one `--url` followed by several URLs; `--model` accepts one shared model or one model per URL. A sweep row's `service` list provides the same choices. The [quantized-model sweep](../../scripts/common/quantized-models.jsonl) compares the [BF16 and 4-bit deployments](../../../examples/quantized-model/README.md):
 
 ```bash
 foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-models.jsonl \
@@ -45,23 +123,21 @@ foretoken perf --dataset random --sweep benchmarks/scripts/common/quantized-mode
   --temperature 0 --experiment-name methods --output local,wandb,plot
 ```
 
-Service paths are relative to the repository root. An endpoint choice uses `name`, `url`, and `model`; `health_url` is optional. Authentication uses the command's `--api-key`.
+Service paths are relative to the repository root. An endpoint choice uses `name`, `url`, and `model`; `health_url` is optional. Authentication uses `--api-key`.
 
-All points for one method run before the next method starts. Temporary deployments are removed between methods; existing services are reused unchanged. To measure a changed configuration on an existing service, apply it with `foretoken deploy` first.
+All points for one method run before the next method starts. Temporary deployments are removed between methods; existing services are reused unchanged. Apply configuration changes to an existing service with `foretoken deploy` before measuring them.
 
 ## Read results and redraw
 
-The result directory contains `sweep_summary.csv`, individual run directories, and `plots/` with PDF, SVG, PNG, and CSV exports. Statistics retain each metric's sample count; error bars show the sample standard deviation across runs, including for per-run percentiles. A single repetition has no error estimate.
+Use `sweep_summary.csv` and the comparison plots to compare latency and throughput under the same workload settings. Error bars show sample standard deviation across repetitions, including for per-run percentiles; one repetition has no error estimate. Check each metric's sample count and failed runs when comparing points.
 
-W&B groups the individual runs and adds a comparison run with the same summary data and curves. With `plot` selected, it also receives the exported figures and tables. Reusing the same `--experiment-name` replaces that experiment directory; omitting it creates a timestamped directory.
-
-Redraw the first example at double-column width without sending requests:
+Reusing the same `--experiment-name` replaces that experiment directory; omitting it creates a timestamped directory. Redraw the first example at double-column width without sending requests:
 
 ```bash
 foretoken plot results/concurrency --columns 2
 ```
 
-Use `--metric` to select a summary metric and `--method` to select a named method; both may be repeated. `--output-dir` writes an alternative layout to a separate directory. See [output settings](../../README.md#read-and-save-results) for destination selection.
+Use `--metric` to select a summary metric and `--method` to select a named method; both may be repeated. `--output-dir` saves an alternative layout separately. See [output settings](../../README.md#read-and-save-results) for destination selection.
 
 ## Video settings
 
@@ -73,4 +149,4 @@ foretoken perf video \
   --num-runs 2 --output local,wandb,plot
 ```
 
-Video points may vary `width`, `height`, `num_frames`, `fps`, `num_inference_steps`, `aspect_ratio`, `flow_shift`, `audio_flow_shift`, `seed`, `max_concurrency`, `duration`, and `warmup_requests`. Each point retains its generated videos and performance metrics.
+Each point retains generated videos and performance metrics. See [video workloads](video.md) for generation settings and service requirements.

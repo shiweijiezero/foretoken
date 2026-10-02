@@ -19,11 +19,14 @@ from typing import Any
 from benchmarks.results.plots.data import Chart, Series, _method, _numeric, sweep_charts
 from benchmarks.results.plots.measurements import (
     _http_charts,
+    gpu_allocation_charts,
     _prometheus_charts,
     _video_phase_charts,
     phase_summary_charts,
     _quality_charts,
     _distribution_charts,
+    _greedy_charts,
+    _evaluation_comparison_charts,
     _slo_charts,
 )
 
@@ -187,6 +190,9 @@ def _charts(
                         linewidth=1,
                         label="Min-cost / min-KL frontier",
                     )
+            if chart.metric.startswith("gpu_allocation_"):
+                axis.set_xlim(0, float(series_list[0].records[0]["duration_s"]))
+                axis.set_ylim(bottom=0)
             if chart.yscale == "symlog":
                 axis.set_yscale("symlog", linthresh=1e-6)
             figure_title = chart.title
@@ -198,6 +204,13 @@ def _charts(
             }:
                 figure_title += f" · {series_list[0].name}"
             _style(axis, figure_title, chart.xlabel, chart.ylabel)
+            if chart.metric in {
+                "slo_slo_attainment", "exact_match_rate", "Time/SLO attainment (%)",
+                "speculative_decoding_acceptance_ratio", "speculative_decoding_draft_time_share_ratio",
+                "speculative_decoding_target_forward_time_share_ratio",
+            }:
+                axis.set_ylim(-3, 103)
+                axis.set_yticks(range(0, 101, 20))
             if chart.tick_labels:
                 ticks = sorted({x for series in series_list for x in series.x})
                 axis.set_xticks(
@@ -459,7 +472,25 @@ def render_results(
         run_metrics = json.loads((source / "metrics.json").read_text(encoding="utf-8"))
         warmup_metrics_path = source / "warmup_metrics.json"
         warmup_metrics = json.loads(warmup_metrics_path.read_text(encoding="utf-8")) if warmup_metrics_path.is_file() else None
-        if "distribution_comparison" in run_metrics:
+        if "evaluation_comparison" in run_metrics:
+            comparison = run_metrics["evaluation_comparison"]
+            identities = [method["label"] for method in comparison["methods"]]
+            charts = _evaluation_comparison_charts(comparison)
+            if methods:
+                charts = [replace(chart, series=tuple(item for item in chart.series
+                                                      if item.name in methods)) for chart in charts]
+                charts = [chart for chart in charts if chart.series]
+        elif "greedy_comparison" in run_metrics:
+            comparison = run_metrics["greedy_comparison"]
+            identities = list(dict.fromkeys(str(point["method"]) for point in comparison["candidates"]))
+            charts = _greedy_charts(comparison)
+            if methods:
+                charts = [replace(chart, series=tuple(
+                    item for item in chart.series
+                    if str(item.records[0].get("method") or item.name) in methods
+                )) for chart in charts]
+                charts = [chart for chart in charts if chart.series]
+        elif "distribution_comparison" in run_metrics:
             comparison = run_metrics["distribution_comparison"]
             identities = list(
                 dict.fromkeys(
@@ -496,6 +527,7 @@ def render_results(
                 charts += _http_charts(source, warmup_metrics, warmup=True)
                 charts += phase_summary_charts(run_metrics, warmup_metrics)
             charts += _prometheus_charts(source)
+            charts += gpu_allocation_charts(source)
         out.mkdir(parents=True, exist_ok=True)
         result = {}
         if "scores" in run_metrics:

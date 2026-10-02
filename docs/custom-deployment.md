@@ -5,51 +5,42 @@
 
 [English](custom-deployment.md) | [中文](custom-deployment_zh.md)
 
-This guide explains how to build Foretoken images from source, configure the Kubernetes platform to use them, and redeploy source changes. Model services remain separate and are deployed with `foretoken deploy`.
+Build Foretoken from a local checkout and deploy source changes to Kubernetes.
 
-Prepare Python 3.11+, Git, Docker with BuildKit, Make, kubectl, Helm, and a Rust toolchain managed by rustup. Get the current source and run commands from its root:
+## Install from source
+
+Prepare Python 3.11+, Git, kubectl, and Helm. The cluster must allow BuildKit Pods and have a default StorageClass for persistent compiler caches. To choose a different storage class, set `development.build.storageClassName` in `deploy/platform-values.yaml` and pass it with `--values`.
 
 ```bash
 git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
-```
-
-## 1. Prepare the target Kubernetes cluster
-
-Confirm that `kubectl` points to the target cluster:
-
-```bash
 kubectl config current-context
-kubectl get nodes
 ```
 
-## 2. Build images and install the platform from source
-
-Install the command-line tool from the source root with pip:
+Install the CLI from this checkout:
 
 ```bash
 pip install -e .
 ```
 
-Or create and activate a virtual environment with uv:
+For a local kind or k3d cluster, build and install without a registry:
 
 ```bash
-uv venv
-source .venv/bin/activate
-uv pip install -e .
+foretoken install -e .
 ```
 
-Configure the corresponding endpoint or proxy address when a mirror is required.
+Builds run in dedicated Pods, and images are loaded directly into the cluster nodes. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
 
-Distribute the built images through a registry reachable by every target node. Replace `example` with a namespace you can push to:
+### Remote clusters and private registries
+
+Other clusters need a registry reachable by the build Pods and target nodes. Replace `example` with a namespace you can push to, and authorize the build using a Docker CLI login:
 
 ```bash
 export REGISTRY=ghcr.io/example/foretoken
 docker login ghcr.io
-foretoken install -e . --registry "$REGISTRY"
 ```
 
-For a private registry, create a pull Secret with the same name in the platform namespace and each workload namespace. Save its references in `platform-values.yaml`:
+For a private registry, create an image pull Secret named `registry-auth` in `foretoken-platform` before installation, and in each workload namespace before deployment. Save these references in `deploy/platform-values.yaml`:
 
 ```yaml
 imagePullSecrets:
@@ -59,60 +50,98 @@ workload:
     - name: registry-auth
 ```
 
-```bash
-foretoken install -e . \
-  --registry "$REGISTRY" \
-  --values platform-values.yaml
-```
-
-For a local kind or k3d cluster, you can omit `--registry` to import images directly:
+Install using that file:
 
 ```bash
-foretoken install -e .
+foretoken install -e . --registry "$REGISTRY" --values deploy/platform-values.yaml
 ```
 
-## 3. Confirm the platform deployment
+For publicly readable images, omit `--values` unless other overrides are needed. Registry login authorizes image pushes; the pull Secrets authorize cluster nodes to download private images.
 
-`foretoken install -e .` waits for the Helm release and control-plane rollout. After it exits successfully, inspect the installed release and controller:
+## Deploy and update code
 
-```bash
-helm status foretoken --namespace foretoken-platform
-kubectl get deployment foretoken-control-plane \
-  --namespace foretoken-platform
-```
-
-The Deployment should report all desired replicas as Ready. Model workloads appear only after the next step.
-
-## 4. Deploy the Quick Start (optional)
-
-The Quick Start workload requests one GPU, 8 CPU, and 52 GiB memory; allow additional capacity for the platform. With k3d, first configure the GPUs as described in [Deploy Foretoken with k3d](k3d-deployment.md), then confirm that the current Kubernetes context points to the target k3d cluster.
+Deploy the maintained [Quick Start](../README.md#quick-start) on a GPU-enabled cluster:
 
 ```bash
 foretoken deploy examples/quickstart --timeout 20m
 ```
 
-The command discovers the rendered services, reports state changes, and exits when the current configuration is ready.
+After editing the checkout, run the same command again. It uses the saved installation settings and sends only added or changed files and deletions. Dedicated build Pods compile Rust changes and prepare Python updates; compiler caches and outputs stay in the cluster. With writable persistent runtime storage, these updates do not rebuild runtime images. Dependency, build, control-plane, and startup bootstrap changes use the image build path automatically.
 
-## 5. Send a request (optional)
+Affected workloads restart and may reload model weights. The command waits for the selected code and serving routes to become active. Unchanged source and deployment configuration leave existing workloads running. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
 
-After completing [section 4: Deploy the Quick Start](#4-deploy-the-quick-start-optional), resolve the default `local` frontend URL and send an OpenAI-compatible request:
+Changes to CLI Python files take effect directly from the editable checkout; rerun `pip install -e .` when its Python dependencies change.
+## Edit an inference engine
+
+To modify vLLM, bind a Git checkout matching the runtime's Python, PyTorch, and accelerator environment. For a checkout at `../vllm`:
 
 ```bash
-FRONTEND_URL="$(foretoken endpoint examples/quickstart)"
-
-curl --fail-with-body "$FRONTEND_URL/v1/chat/completions" \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "model": "Qwen/Qwen3-0.6B",
-    "messages": [{"role": "user", "content": "Reply with: Foretoken is ready"}],
-    "max_tokens": 32,
-    "temperature": 0
-  }'
-printf '\n'
+foretoken install -e . --engine-source ../vllm
 ```
 
-## 6. Redeploy source changes
+Retain `--registry` and `--values` when using them. After editing the engine checkout, use `foretoken deploy` as above. Python and Triton changes synchronize source; Triton JIT compilation runs in the inference engine. NVIDIA CUDA/C++ changes compile the vLLM extensions in the build Pod using persistent caches.
 
-After changing the code, rerun the installation command with the same options, including any `--registry` and `--values` arguments.
+For MetaX, native kernels belong to the plugin checkout. Bind it alongside the matching core checkout:
 
-BuildKit reuses compilation caches. The command imports or pushes only changed images, preserves the source installation mode, and rolls out workloads whose local image content changed. For lower-level image and Helm diagnosis, see the maintainer [source image lifecycle guide](development/source-image-lifecycle.md).
+```bash
+foretoken install -e . \
+  --engine-source ../vllm \
+  --engine-source vllm-metax=../vllm-metax
+```
+
+The build Pod compiles plugin extensions for MetaX; core CUDA kernels are not used by that backend. Retain the installation's registry and values options.
+
+### Select a different runtime environment
+
+The runtime image supplies Python, PyTorch, and accelerator libraries. To change that environment, set a compatible image in `deploy/platform-values.yaml`, replacing the example with an image available to the cluster builder:
+
+```yaml
+runtime:
+  vllm:
+    image: ghcr.io/example/custom-vllm:latest
+```
+
+Reapply the installation command with `--values deploy/platform-values.yaml`, retaining the registry and engine-source options. With `-e`, Foretoken uses this image as its build base and adds the model-server. Then deploy the workload again.
+
+MetaX base-image builds are covered by [Prepare Foretoken for MetaX GPUs](development/metax-platform.md#install-from-source).
+
+### vLLM-Omni runtime
+
+vLLM-Omni uses a separate model-server image. Build it from the repository root on a machine with Docker BuildKit, Make, and a rustup-managed Rust toolchain:
+
+```bash
+make image-vllm-omni VLLM_OMNI_IMAGE=foretoken-vllm-omni:latest
+make image-model-server-omni \
+  INFERENCE_ENGINE_IMAGE=foretoken-vllm-omni:latest \
+  OMNI_MODEL_SERVER_IMAGE=foretoken-omni-model-server:latest
+```
+
+For k3d, set `CLUSTER` to the existing cluster name and import the image:
+
+```bash
+CLUSTER=foretoken-qwen-test
+k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
+```
+
+For a remote cluster, use the registry login and `REGISTRY` configured [above](#remote-clusters-and-private-registries):
+
+```bash
+docker tag foretoken-omni-model-server:latest "$REGISTRY/omni-model-server:latest"
+docker push "$REGISTRY/omni-model-server:latest"
+```
+
+Set `runtime.vllmOmni.image` in `deploy/platform-values.yaml` to the image the nodes can pull. This example uses the local image; for a registry, replace it with the full pushed reference:
+
+```yaml
+runtime:
+  vllmOmni:
+    image: foretoken-omni-model-server:latest
+```
+
+Apply the runtime setting:
+
+```bash
+foretoken install -e . --values deploy/platform-values.yaml
+```
+
+Retain `--registry "$REGISTRY"` for remote platform builds and any other installation options. Rebuild and distribute the Omni image after changing its code; the editable vLLM source path above targets the standard vLLM backend.

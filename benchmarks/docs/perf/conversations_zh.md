@@ -14,6 +14,10 @@ foretoken perf examples/quickstart \
 
 默认采用 `--conversation-history dataset`：后续请求使用数据集记录的 assistant 答案作为历史，每轮仍请求模型生成新回答并测量性能。添加 `--conversation-history generated`，则将本次实际生成的回答用于后续历史。
 
+有非空文本参考答案的轮次，自动按参考答案的 token 数定长生成。长度使用该请求模型的 tokenizer 计算，不添加特殊 token，分词在正式计时前完成。服务需支持 `min_tokens` 和 `ignore_eos`；逐请求结果同时保存目标与实际输出长度。
+
+长度设置依次优先采用数据行的 `output_length`、显式的 `--min-output-length`/`--max-output-length` 范围、参考答案长度。没有可用文本答案的轮次自然结束，生成上限由 `--max-tokens` 控制。tokenizer 默认从请求模型解析；服务使用模型别名或单独存放 tokenizer 时，可用 `--tokenizer-path` 指定。
+
 `--num-prompts` 限制所有对话合计发送的 HTTP 请求数。若只运行每段对话的首轮：
 
 ```bash

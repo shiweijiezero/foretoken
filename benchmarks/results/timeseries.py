@@ -128,13 +128,15 @@ def cumulative_series(
 
 
 def time_series(
-    measurements: list[RequestMeasurement], *, duration: float, stream: bool
+    measurements: list[RequestMeasurement], *, duration: float, stream: bool,
+    slo_met: list[bool] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Yield one-second completion windows and time-weighted in-flight request counts.
 
     Token throughput attributes a request's tokens to its completion window,
-    not to individual streamed token arrivals. Empty completion windows report
-    zero counts and throughput but have no latency or failure-rate sample.
+    not to individual streamed token arrivals. SLO values use the caller's
+    per-request decisions on the original measurement indexes. Empty completion
+    windows report zero counts and throughput but no fraction or latency sample.
     """
     if not measurements:
         return
@@ -142,12 +144,12 @@ def time_series(
     if end <= 0:
         return
     count = math.ceil(end)
-    completed: dict[int, list[RequestMeasurement]] = defaultdict(list)
+    completed: dict[int, list[tuple[int, RequestMeasurement]]] = defaultdict(list)
     arrivals: dict[int, int] = defaultdict(int)
     events = request_activity_events(measurements)
-    for item in measurements:
+    for measurement_index, item in enumerate(measurements):
         stop = item.started_at + item.latency
-        completed[min(int(stop), count - 1)].append(item)
+        completed[min(int(stop), count - 1)].append((measurement_index, item))
         arrivals[min(int(item.started_at), count - 1)] += 1
     # Integrate concurrency between request starts and finishes, carrying active
     # requests across window boundaries rather than sampling only at each edge.
@@ -165,7 +167,8 @@ def time_series(
             event_index += 1
         area += active * (right - position)
         position = right
-        rows = completed[index]
+        finished = completed[index]
+        rows = [item for _, item in finished]
         successful = [item for item in rows if item.succeeded]
         row: dict[str, Any] = {
             ELAPSED_TIME: right,
@@ -187,6 +190,15 @@ def time_series(
             )
         if rows:
             row["Time/Failure rate (%)"] = 100 * (len(rows) - len(successful)) / len(rows)
+        if slo_met is not None:
+            passing = [item for measurement_index, item in finished if slo_met[measurement_index]]
+            if rows:
+                row["Time/SLO attainment (%)"] = 100 * len(passing) / len(rows)
+            row["Time/SLO request goodput (req/s)"] = len(passing) / width
+            if all(item.output_tokens is not None for item in passing):
+                row["Time/SLO token goodput (tokens/s)"] = sum(
+                    int(item.output_tokens) for item in passing
+                ) / width
         if successful:
             row["Time/E2EL p95 (s)"] = percentile_summary(
                 [item.latency for item in successful]

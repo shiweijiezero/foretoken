@@ -14,8 +14,8 @@ import numpy as np
 from benchmarks.model_service import ModelService
 
 
-class CompletionDistributionClient:
-    """Own one service connection while scoring fixed token-ID prefixes, not generated histories."""
+class CompletionComparisonClient:
+    """Own one Completions connection for fixed-prefix probability and generation comparisons."""
 
     def __init__(self, service: ModelService, *, timeout: float) -> None:
         self._model = service.model
@@ -25,11 +25,42 @@ class CompletionDistributionClient:
             timeout=timeout,
         )
 
-    def __enter__(self) -> CompletionDistributionClient:
+    def __enter__(self) -> CompletionComparisonClient:
         return self
 
     def __exit__(self, *args: object) -> None:
         self._client.close()
+
+    def generate(self, prefix: list[int], max_tokens: int) -> dict[str, object]:
+        """Return the service's native generated IDs, text, and finish reason for a greedy continuation."""
+        response = self._client.post(self._url, json={
+            "model": self._model,
+            "prompt": prefix,
+            "max_tokens": max_tokens,
+            "temperature": 0,
+            "stream": False,
+            "return_token_ids": True,
+        })
+        response.raise_for_status()
+        payload = response.json()
+        try:
+            choice = payload["choices"][0]
+            token_ids = choice["token_ids"]
+            text = choice["text"]
+            reason = choice["finish_reason"]
+            if (not isinstance(token_ids, list) or any(
+                not isinstance(token, int) or isinstance(token, bool) or token < 0
+                for token in token_ids
+            ) or not isinstance(text, str) or not isinstance(reason, str) or not reason):
+                raise ValueError("missing native token IDs, generated text, or finish reason")
+            if reason not in {"stop", "length"}:
+                raise ValueError(f"generation did not finish normally: {reason}")
+            return {"token_ids": token_ids, "text": text, "finish_reason": reason}
+        except (KeyError, IndexError, TypeError, ValueError) as error:
+            raise ValueError(
+                f"Invalid greedy completion for {self._model!r}: {error}; "
+                "the service must return choices[0].token_ids and finish_reason"
+            ) from error
 
     def logprobs(
         self, prefix: list[int], vocabulary_size: int

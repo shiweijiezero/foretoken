@@ -15,6 +15,15 @@ image:
 
 imagePullSecrets: []
 
+# Source installations enable code bundles synchronized to workload runtime caches.
+development:
+  enabled: false
+  # Used by the CLI for source builds; compiler caches remain in the cluster.
+  build:
+    image: docker.io/moby/buildkit:v0.33.1-rootless
+    storageClassName: ""
+    storageSize: 100Gi
+
 controller:
   replicas: 1
   autoscalingTelemetry:
@@ -29,6 +38,20 @@ workload:
   cache:
     claimName: ""
     mountPath: /var/cache/foretoken
+
+# Optional peer distribution for model files and loaded weights.
+modelDistribution:
+  # Requires a compatible CUDA runtime and allocated RDMA devices.
+  modelexpress:
+    enabled: false
+  dragonfly:
+    enabled: false
+    # Leave empty to let foretoken install manage the Dragonfly release.
+    existingRelease:
+      name: ""
+      namespace: ""
+    # Resolved from the installed daemon by foretoken install; also supports direct Helm use.
+    socketPath: /var/run/dragonfly/dfdaemon.sock
 
 # Unused node-network IP addresses for services when the cluster assigns none.
 # Consumed by foretoken install, which then manages MetalLB in Layer 2 mode.
@@ -76,6 +99,8 @@ observability:
   prometheus: ""
   # foretoken install manages Grafana access; omit anonymousAccess to retain its current setting.
   grafana: {}
+  # foretoken install manages persistent container logs; settings are optional overrides.
+  logs: {}
   notifications:
     # Alertmanager namespace; empty uses the Foretoken release namespace.
     namespace: ""

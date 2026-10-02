@@ -43,9 +43,12 @@ groups:
       # Service-owned identity remains available even when the engine scrape fails.
       - record: foretoken:model_instance_info
         expr: |
-          max by (namespace, model_group, modelservice, model_pool, model_instance, model_instance_created_at) (
+          max by (namespace, model_group, model_name, modelservice, model_pool, model_instance, model_instance_created_at) (
             label_replace(
-              0 * up{endpoint="model-server", inference_foretoken_io_model_group!="", modelservice!=""} + 1,
+              label_replace(
+                0 * up{endpoint="model-server", inference_foretoken_io_model_group!="", modelservice!="", served_model!=""} + 1,
+                "model_name", "$1", "served_model", "(.+)"
+              ),
               "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
             )
           )
@@ -157,6 +160,39 @@ groups:
               ),
               "pd_pipeline_scope", "$1",
               "inference_foretoken_io_pd_pipeline_scope", "(.+)"
+            )
+          )
+
+      # These are sums of paired GPU stage observations, not elapsed wall time.
+      - record: foretoken:model_server_spec_decode_draft_seconds:rate5m
+        expr: |
+          sum by (namespace, modelservice, model_group, model_role, model_name, engine) (
+            label_replace(
+              label_replace(
+                rate(vllm:spec_decode_draft_duration_seconds_sum{
+                  endpoint="model-server",
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role=~"aggregate|decode"
+                }[5m]),
+                "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+              ),
+              "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
+            )
+          )
+
+      - record: foretoken:model_server_spec_decode_target_forward_seconds:rate5m
+        expr: |
+          sum by (namespace, modelservice, model_group, model_role, model_name, engine) (
+            label_replace(
+              label_replace(
+                rate(vllm:spec_decode_target_forward_duration_seconds_sum{
+                  endpoint="model-server",
+                  inference_foretoken_io_model_group!="",
+                  inference_foretoken_io_model_role=~"aggregate|decode"
+                }[5m]),
+                "model_group", "$1", "inference_foretoken_io_model_group", "(.+)"
+              ),
+              "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
             )
           )
 
@@ -272,19 +308,18 @@ groups:
                   inference_foretoken_io_frontend_service!=""
                 }
                 /
-                clamp_min(
+                (
                   foretoken_kv_index_sources_total{
                     endpoint="http",
                     inference_foretoken_io_frontend_service!=""
-                  },
-                  1
+                  } > 0
                 )
               )
-              *
-              foretoken_kv_index_enabled{
+              and
+              (foretoken_kv_index_enabled{
                 endpoint="http",
                 inference_foretoken_io_frontend_service!=""
-              },
+              } == 1),
               "frontend_service", "$1",
               "inference_foretoken_io_frontend_service", "(.+)"
             )
@@ -660,7 +695,7 @@ groups:
               )
             )
             /
-            clamp_min(
+            (
               sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name) (
                 label_replace(label_replace(label_replace(
                   rate(vllm:prefix_cache_queries_total{
@@ -672,8 +707,7 @@ groups:
                 ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
                 ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
                 )
-              ),
-              1e-9
+              ) > 0
             ),
             "cache", "local", "__name__", ".*"
           )
@@ -692,7 +726,7 @@ groups:
               )
             )
             /
-            clamp_min(
+            (
               sum by (namespace, model_group, model_role, pd_pipeline_scope, model_name) (
                 label_replace(label_replace(label_replace(
                   rate(vllm:external_prefix_cache_queries_total{
@@ -704,8 +738,7 @@ groups:
                 ), "model_role", "$1", "inference_foretoken_io_model_role", "(.+)"
                 ), "pd_pipeline_scope", "$1", "inference_foretoken_io_pd_pipeline_scope", "(.+)"
                 )
-              ),
-              1e-9
+              ) > 0
             ),
             "cache", "external", "__name__", ".*"
           )
@@ -853,12 +886,7 @@ groups:
                 (
                   DCGM_FI_DEV_FB_USED
                   /
-                  clamp_min(
-                    DCGM_FI_DEV_FB_USED
-                    +
-                    DCGM_FI_DEV_FB_FREE,
-                    1
-                  )
+                  ((DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE) > 0)
                 ),
                 "namespace", "$1", "exported_namespace", "(.+)"
               ), "pod", "$1", "exported_pod", "(.+)"

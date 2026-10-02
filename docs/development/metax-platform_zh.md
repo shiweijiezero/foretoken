@@ -25,13 +25,13 @@ foretoken install
 
 ## 从源码安装
 
-需要构建 Foretoken 当前源码时，先按[源码部署指南](../custom-deployment_zh.md)准备构建工具，并从这份源码安装 CLI，再从仓库根目录运行：
+从仓库根目录执行以下命令，在集群中构建并安装平台：
 
 ```bash
 foretoken install -e .
 ```
 
-构建会自动从公开 SDK 软件包和固定版本源码准备沐曦推理运行时，包含 GLM-5.3 支持。镜像如何导入集群或通过仓库分发，见[源码部署指南](../custom-deployment_zh.md#2-从源码构建镜像并安装平台)。
+构建会自动从公开 SDK 软件包和固定版本源码准备沐曦推理运行时，包含 GLM-5.3 支持。镜像如何导入集群或通过仓库分发，见[源码部署指南](../custom-deployment_zh.md#从源码安装)。
 
 需要使用自己的 SDK 镜像时，为命令设置 `METAX_SDK_IMAGE`。若要复用已有推理运行时而非重新构建，在通过 `--values` 传入的平台配置中设置 `runtime.vllm.image`。
 

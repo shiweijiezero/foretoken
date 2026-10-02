@@ -20,7 +20,7 @@ foretoken perf examples/quickstart \
   --output local,wandb
 ```
 
-With `--request-rate -1 --max-concurrency -1`, the entire request budget starts as fast as possible. Add `--duration SECONDS` to stop admissions at a wall-clock deadline; omit `--num-prompts` for a duration-bounded workload. Multi-turn data uses the same HTTP request budget and limits conversations in progress.
+With `--request-rate -1 --max-concurrency -1`, the entire request budget starts as fast as possible. Add `--duration 5min` to stop sending new requests after five minutes; omit `--num-prompts` for a duration-bounded workload. Multi-turn data uses the same HTTP request budget and limits conversations in progress.
 
 To use fixed or Gamma arrivals:
 

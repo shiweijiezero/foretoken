@@ -7,11 +7,11 @@ Mooncake trace 数据集记录请求长度和共享前缀块，不包含原始�
 ```bash
 foretoken perf examples/quickstart \
   --trace valeriol29/mooncake-traces:conversation \
-  --trace-start 57 --trace-duration 5 \
+  --trace-start 57s --trace-duration 8min \
   --dataset random \
   --random-seed 0 --trace-synthetic-prefix-reuse \
-  --trace-max-concurrency 16 --max-tokens 64 \
-  --output local,wandb
+  --max-concurrency 16 --max-tokens 64 \
+  --output local,wandb,plot
 ```
 
 输入复用轨迹中的 512-token 块。服务端重新分词可能改变边界，实际缓存命中以服务指标为准。此模式不与 `--prefix-length` 组合。

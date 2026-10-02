@@ -15,9 +15,11 @@ import (
 
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,9 +44,11 @@ func main() {
 	var metricsAddress string
 	var probeAddress string
 	var leaderElection bool
+	var sourceMode bool
 	var frontendEnabled bool
 	var frontendMode string
 	var frontendImage string
+	var videoWorkerImage string
 	var frontendPort int
 	var frontendGatewayName string
 	var frontendGatewayNamespace string
@@ -84,21 +88,29 @@ func main() {
 	var modelSourceEndpoint string
 	var modelSourceTokenSecretName string
 	var modelSourceTokenSecretKey string
+	var dragonflySocketPath string
+	var modelExpress bool
 	var observabilityPrometheus string
 	var observabilityLabelsJSON string
+	var logStorageStatefulSet string
+	var logStorageMaxSize string
 
 	// Metrics stay disabled until the chart exposes a secured endpoint.
 	flag.StringVar(&metricsAddress, "metrics-bind-address", "0", "Metrics endpoint bind address; 0 disables metrics.")
 	flag.StringVar(&probeAddress, "health-probe-bind-address", ":8081", "Health probe bind address.")
 	flag.BoolVar(&leaderElection, "leader-elect", false, "Enable leader election.")
+	flag.BoolVar(&sourceMode, "source-mode", false, "Enable service source bundles from persistent runtime caches.")
 	flag.StringVar(&observabilityPrometheus, "observability-prometheus", "", "Prometheus NAMESPACE/NAME selected for service alert rules.")
 	flag.StringVar(&observabilityLabelsJSON, "observability-labels", "{}", "JSON labels used to select controller-owned alert rules.")
+	flag.StringVar(&logStorageStatefulSet, "log-storage-statefulset", "", "Managed Loki StatefulSet in the platform namespace; empty disables log volume expansion.")
+	flag.StringVar(&logStorageMaxSize, "log-storage-max-size", "", "Maximum capacity of each managed log volume.")
 	flag.DurationVar(&autoscalingTelemetryCollectionTimeout, "autoscaling-telemetry-collection-timeout", 3*time.Second, "Total budget for one autoscaling telemetry observation.")
 	flag.DurationVar(&autoscalingTelemetryRequestTimeout, "autoscaling-telemetry-request-timeout", time.Second, "Timeout for one autoscaling telemetry HTTP request.")
 	flag.IntVar(&autoscalingTelemetryConcurrency, "autoscaling-telemetry-concurrency", 8, "Maximum concurrent autoscaling telemetry HTTP requests per source type.")
 	flag.BoolVar(&frontendEnabled, "frontend-enabled", false, "Enable FrontendService workload reconciliation.")
 	flag.StringVar(&frontendMode, "frontend-mode", frontendModeLocal, "Frontend access mode: local or gateway.")
 	flag.StringVar(&frontendImage, "frontend-image", "", "Frontend runtime image.")
+	flag.StringVar(&videoWorkerImage, "video-worker-image", "", "Platform image containing the video-worker executable.")
 	flag.IntVar(&frontendPort, "frontend-port", 8080, "Frontend runtime HTTP port.")
 	flag.StringVar(&frontendGatewayName, "frontend-gateway-name", "", "Platform Gateway name used by frontend HTTPRoutes.")
 	flag.StringVar(&frontendGatewayNamespace, "frontend-gateway-namespace", "", "Platform Gateway namespace; defaults to the FrontendService namespace.")
@@ -115,6 +127,8 @@ func main() {
 	flag.StringVar(&modelSourceEndpoint, "model-source-endpoint", "", "Optional Hugging Face-compatible Hub endpoint.")
 	flag.StringVar(&modelSourceTokenSecretName, "model-source-token-secret-name", "", "Namespace-local Secret containing the Hugging Face credential.")
 	flag.StringVar(&modelSourceTokenSecretKey, "model-source-token-secret-key", "", "Key in the model source credential Secret.")
+	flag.StringVar(&dragonflySocketPath, "model-distribution-dragonfly-socket", "", "Node-local Dragonfly download socket used by model preparation.")
+	flag.BoolVar(&modelExpress, "model-distribution-modelexpress", false, "Use ModelExpress weight sources for compatible inference workloads.")
 	flag.StringVar(&inferenceEngineImage, "inference-engine-image", "", "Inference engine image containing the Foretoken model-server adapter.")
 	flag.StringVar(&omniInferenceEngineImage, "omni-inference-engine-image", "", "Optional vLLM-Omni image containing the Foretoken Omni adapter.")
 	flag.StringVar(&nsightImage, "nsight-image", "", "Optional NVIDIA model-server image prepared for Nsight Systems.")
@@ -151,6 +165,7 @@ func main() {
 	}
 	cacheProfile := controllers.RuntimeCacheProfile{ClaimName: cacheClaimName, MountPath: cacheMountPath}
 	huggingFaceAccessProfile := controllers.HuggingFaceAccessProfile{Endpoint: modelSourceEndpoint, TokenSecretName: modelSourceTokenSecretName, TokenSecretKey: modelSourceTokenSecretKey}
+	modelDistributionProfile := runtimeconfig.ModelDistributionProfile{DragonflySocketPath: dragonflySocketPath}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&logOptions)))
 	if inferenceEngineImage == "" {
 		ctrl.Log.Error(errors.New("inference-engine-image must be nonempty"), "invalid inference engine profile")
@@ -162,6 +177,10 @@ func main() {
 	}
 	if err := huggingFaceAccessProfile.Validate(); err != nil {
 		ctrl.Log.Error(err, "invalid Hugging Face access profile")
+		os.Exit(1)
+	}
+	if err := modelDistributionProfile.Validate(); err != nil {
+		ctrl.Log.Error(err, "invalid model distribution profile")
 		os.Exit(1)
 	}
 	if modelServerPort < 1 || modelServerPort > 65535 {
@@ -297,9 +316,34 @@ func main() {
 		os.Exit(1)
 	}
 
+	if logStorageStatefulSet != "" {
+		maximum, err := resource.ParseQuantity(logStorageMaxSize)
+		if err != nil || maximum.Sign() <= 0 || maximum.CmpInt64(maximum.Value()) != 0 {
+			ctrl.Log.Error(errors.New("log-storage-max-size must be a positive whole-byte quantity"), "invalid log storage configuration")
+			os.Exit(1)
+		}
+		kubeClient, err := kubernetes.NewForConfig(restConfig)
+		if err != nil {
+			ctrl.Log.Error(err, "unable to configure log volume observations")
+			os.Exit(1)
+		}
+		if err := (&controllers.LogStorageReconciler{
+			Client: manager.GetClient(), Kubernetes: kubeClient,
+			StatefulSet: client.ObjectKey{Namespace: controlPlaneNamespace, Name: logStorageStatefulSet},
+			MaxSize:     maximum,
+		}).SetupWithManager(manager); err != nil {
+			ctrl.Log.Error(err, "unable to register log storage controller")
+			os.Exit(1)
+		}
+	}
+
 	// Controllers are registered explicitly so each resource keeps one lifecycle owner.
 	if err := (&controllers.ProfileRunReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ProfileRun controller")
+		os.Exit(1)
+	}
+	if err := (&controllers.VideoTaskReconciler{Client: manager.GetClient(), WorkerImage: videoWorkerImage, FrontendPort: int32(frontendPort), ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
+		ctrl.Log.Error(err, "unable to register VideoTask controller")
 		os.Exit(1)
 	}
 	if err := (&controllers.RuntimeCacheReconciler{Client: manager.GetClient()}).SetupWithManager(manager); err != nil {
@@ -321,7 +365,9 @@ func main() {
 			CacheProfile: cacheProfile,
 			Alerts:       serviceAlerts,
 			RuntimeProfile: controllers.FrontendRuntimeProfile{
+				SourceMode:        sourceMode,
 				Image:             frontendImage,
+				WorkerImage:       videoWorkerImage,
 				Port:              int32(frontendPort),
 				ImagePullSecrets:  workloadImagePullSecrets,
 				HuggingFaceAccess: huggingFaceAccessProfile.Access(),
@@ -336,6 +382,7 @@ func main() {
 	if err := (&controllers.ModelServiceReconciler{
 		Client:                   manager.GetClient(),
 		CacheProfile:             cacheProfile,
+		SourceMode:               sourceMode,
 		HuggingFaceAccessProfile: huggingFaceAccessProfile,
 		Alerts:                   serviceAlerts,
 		MetricsProvider: controllers.NewHTTPScalingMetricsProvider(manager.GetClient(), controllers.AutoscalingTelemetryOptions{
@@ -362,9 +409,11 @@ func main() {
 	if err := (&controllers.ModelPoolReconciler{
 		Client: manager.GetClient(),
 		TemplateResolver: resolver.StaticModelPoolResolver{RuntimeProfile: resolver.RuntimeProfile{
+			SourceMode:         sourceMode,
 			Image:              inferenceEngineImage,
 			OmniImage:          omniInferenceEngineImage,
 			NsightImage:        nsightImage,
+			ModelExpress:       modelExpress,
 			ModelServerPort:    int32(modelServerPort),
 			DeviceResourceName: gpuResourceName,
 			RuntimeClassName:   runtimeClassName,
@@ -379,7 +428,7 @@ func main() {
 		ctrl.Log.Error(err, "unable to register ModelPool controller")
 		os.Exit(1)
 	}
-	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets}).SetupWithManager(manager); err != nil {
+	if err := (&controllers.ModelGroupReconciler{Client: manager.GetClient(), ControlPlaneNamespace: controlPlaneNamespace, ImagePullSecrets: workloadImagePullSecrets, ModelDistribution: modelDistributionProfile, SourceMode: sourceMode}).SetupWithManager(manager); err != nil {
 		ctrl.Log.Error(err, "unable to register ModelGroup controller")
 		os.Exit(1)
 	}

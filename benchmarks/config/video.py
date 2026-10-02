@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -153,8 +154,10 @@ class VideoBenchmarkConfig:
             raise ValueError("video --warmup-requests must be zero or positive")
         if self.warmup_requests > len(self.requests):
             raise ValueError("video --warmup-requests cannot exceed selected requests")
-        if self.duration_s is not None and self.duration_s <= 0:
-            raise ValueError("video --duration must be positive")
+        if self.duration_s is not None and (
+            not math.isfinite(self.duration_s) or self.duration_s <= 0
+        ):
+            raise ValueError("video --duration must be finite and positive")
         if self.sweep.num_runs < 1:
             raise ValueError("video --num-runs must be positive")
         endpoint = urlsplit(self.endpoint.url)
@@ -163,8 +166,8 @@ class VideoBenchmarkConfig:
             raise ValueError(f"invalid video endpoint URL: {self.endpoint.url}")
         if health.scheme not in {"http", "https"} or not health.netloc:
             raise ValueError(f"invalid video health URL: {self.endpoint.health_url}")
-        if self.endpoint.timeout_s <= 0:
-            raise ValueError("video --timeout must be positive")
+        if not math.isfinite(self.endpoint.timeout_s) or self.endpoint.timeout_s <= 0:
+            raise ValueError("video --timeout must be finite and positive")
         self.outputs.validate()
         if self.outputs.includes("wandb") and not self.wandb.project.strip():
             raise ValueError("video --wandb-project must not be empty")

@@ -8,7 +8,6 @@ use std::time::Duration;
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderName};
 use axum::response::Response;
-use bytes::Bytes;
 use foretoken_router::RouteSession;
 use futures::StreamExt;
 
@@ -19,7 +18,8 @@ pub struct VideoRequest {
     pub model: String,
     pub request_id: String,
     pub headers: HeaderMap,
-    pub body: Bytes,
+    /// Anonymous request file; dispatch owns its handle until upload completes or is cancelled.
+    pub body: tokio::fs::File,
 }
 
 pub(crate) async fn forward(

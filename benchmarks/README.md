@@ -4,6 +4,8 @@ English | [简体中文](README_zh.md)
 
 Measure service latency and throughput with `foretoken perf`, score model answers with `foretoken eval`, and inspect execution bottlenecks with profiling.
 
+[Experiment commands](docs/recipes.md)
+
 ## Get started
 
 Install Foretoken with Python 3.11 or later:
@@ -15,7 +17,7 @@ pip install foretoken
 # pip install -e .
 ```
 
-Run the examples from the repository checkout prepared by the [Quick Start](../README.md#quick-start). They save results locally and to W&B; run `wandb login` once before using W&B.
+Run the examples from the repository checkout prepared by the [Quick Start](../README.md#quick-start). Run `wandb login` before first using W&B.
 
 Pass a Kustomize directory to use its model service. A single-model deployment supplies the model name automatically; use `--model` to choose among multiple models. To measure an existing endpoint, replace the directory with `--url` and provide its model name.
 
@@ -29,6 +31,8 @@ foretoken perf examples/quickstart \
 ```
 
 The summary reports request success, latency, and throughput. Streamed requests also report time to first token (TTFT) and time per output token (TPOT).
+
+Performance time values may include a unit such as `s`, `min`, or `h`; unitless values use seconds.
 
 [Performance examples](docs/perf/README.md) cover datasets, conversations, arrival rates, trace replay, parameter sweeps, SLO searches, and video generation. Definitions and units are in [Performance metrics](metrics.md).
 

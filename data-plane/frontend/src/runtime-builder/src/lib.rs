@@ -159,7 +159,7 @@ impl RuntimeBuilder {
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .build()
                 .map_err(|error| RuntimeBuildError::ModelRuntime(error.to_string()))?;
-            state = state.with_video_models(video_models, video_inventory, client);
+            state = state.with_video_backend(video_models, video_inventory, client);
         }
         for (model, candidates) in admission_targets {
             state = state.with_admission_targets(model, candidates);
@@ -255,6 +255,9 @@ async fn model_runtimes(
         let model_dtype = registry
             .effective_model_dtype(&model)
             .map_err(RuntimeBuildError::ModelRuntime)?;
+        let prepared_tokenizer = registry
+            .prepared_tokenizer(&model)
+            .map_err(RuntimeBuildError::ModelRuntime)?;
         let SnapshotRuntime {
             text_processor,
             tokenizer,
@@ -270,6 +273,7 @@ async fn model_runtimes(
                 foretoken_text::backend::SamplingLimits::DEFAULT_MAX_LOGPROBS,
             ),
             model_dtype,
+            prepared_tokenizer.as_ref(),
         )
         .await
         .map_err(|error| RuntimeBuildError::ModelRuntime(error.to_string()))?;

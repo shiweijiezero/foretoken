@@ -137,7 +137,7 @@ kubectl rollout status daemonset/nvidia-device-plugin-daemonset \
 
 ### 4.1 选择部署方式
 
-下面的目录型示例使用当前仓库构建的平台。按[源码部署指南](custom-deployment_zh.md)准备工具，然后安装：
+先从当前源码安装 CLI，再构建并安装集群平台：
 
 ```bash
 pip install -e .
@@ -170,7 +170,7 @@ spec:
   hostname: foretoken.example.com
 ```
 
-启用网关模式并部署快速开始示例，命令会按需安装 Envoy Gateway：
+启用网关模式并部署快速开始示例：
 
 ```bash
 foretoken install -e . --frontend-mode gateway

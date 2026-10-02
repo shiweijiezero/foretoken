@@ -73,6 +73,25 @@ pub async fn resolve_snapshot(
     Ok(snapshot)
 }
 
+/// Downloads exactly the metadata file revisions recorded by the preparation SDK.
+/// The Pool publication scope isolates this staging directory from other serving revisions.
+pub async fn resolve_prepared_snapshot(
+    prepared: &foretoken_model_protocol::PreparedTokenizer,
+) -> Result<PathBuf, ModelScopeError> {
+    let root = foretoken_artifacts::temporary_model_root()
+        .or_else(foretoken_artifacts::model_root)
+        .ok_or(ModelScopeError::MissingCacheRoot)?;
+    let snapshot = foretoken_artifacts::preparation_directory(&root, &prepared.scope)?
+        .join("frontend-tokenizer");
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("foretoken/", env!("CARGO_PKG_VERSION")))
+        .build()?;
+    for (file, revision) in &prepared.files {
+        download_file(&client, &prepared.model, revision, file, &snapshot).await?;
+    }
+    Ok(snapshot)
+}
+
 fn snapshot_has_frontend_artifact(snapshot: &Path, accepted_files: &[&str]) -> bool {
     accepted_files
         .iter()
@@ -137,6 +156,9 @@ async fn download_file(
     let destination = snapshot.join(relative);
     if destination.is_file() {
         return Ok(());
+    }
+    if std::env::var(foretoken_artifacts::HF_HUB_OFFLINE_ENV).is_ok_and(|value| value == "1") {
+        return Err(ModelScopeError::OfflineCacheMiss);
     }
     let mut url = model_url(model_id, "repo")?;
     url.query_pairs_mut()

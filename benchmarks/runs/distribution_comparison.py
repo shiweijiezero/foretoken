@@ -20,10 +20,10 @@ from benchmarks.config.evaluation import EvaluationConfig
 from benchmarks.config.distribution_comparison import DistributionComparisonConfig
 from benchmarks.datasets.conversations import iter_jsonl_rows
 from benchmarks.datasets.huggingface import resolve_tokenizer_path
-from benchmarks.integrations.distributions import CompletionDistributionClient, compare_logprobs
+from benchmarks.integrations.distributions import CompletionComparisonClient, compare_logprobs
 from benchmarks.model_service import ModelService, resolve_model_service
 from benchmarks.results.environment import serving_environment
-from benchmarks.results.distribution_comparison import distribution_comparison_sinks
+from benchmarks.results.distribution_comparison import distribution_comparison_sinks, greedy_comparison_sinks
 from benchmarks.results.distribution_comparison_checkpoint import DistributionComparisonCheckpoint
 from benchmarks.results.output import BenchmarkRun, ResultOutputs, write_json
 
@@ -170,7 +170,7 @@ def _score_reference(
         vocabulary_size = saved["protocol"]["model_vocab_size"]
         score_positions = range(comparison.context_length - comparison.score_tokens, comparison.context_length)
         logger.info("Reference: %s | %d/%d windows already complete", reference.model, len(completed), comparison.num_windows)
-        with CompletionDistributionClient(reference, timeout=source.timeout_seconds) as client:
+        with CompletionComparisonClient(reference, timeout=source.timeout_seconds) as client:
             for index, tokens in enumerate(saved["windows"]):
                 if index in completed:
                     continue
@@ -235,7 +235,7 @@ def run_distribution_comparison(
                             saved = {"metadata": metadata, "environment": serving_environment(service)}
                             checkpoint.put(f"candidate/{candidate_index}", saved)
                             logger.info("Candidate: %s | %d/%d windows already complete", metadata["label"], len(completed), len(windows))
-                            with CompletionDistributionClient(service, timeout=candidate.service.timeout_seconds) as client:
+                            with CompletionComparisonClient(service, timeout=candidate.service.timeout_seconds) as client:
                                 for window_index, tokens in enumerate(windows):
                                     if window_index in completed:
                                         continue
@@ -282,4 +282,132 @@ def run_distribution_comparison(
             exit_code=exit_code,
         ))
         if failure is not None:
+            raise SystemExit(exit_code) from failure
+
+
+def _greedy_sample(reference: dict[str, object], candidate: dict[str, object], index: int, label: str) -> dict[str, Any]:
+    """Compare two native generated token sequences without scoring failed requests."""
+    row: dict[str, Any] = {
+        "candidate": label, "window": index,
+        "reference_token_ids": reference.get("token_ids"),
+        "candidate_token_ids": candidate.get("token_ids"),
+        "reference_text": reference.get("text"),
+        "candidate_text": candidate.get("text"),
+        "reference_finish_reason": reference.get("finish_reason"),
+        "candidate_finish_reason": candidate.get("finish_reason"),
+        "reference_length": len(reference["token_ids"]) if "token_ids" in reference else None,
+        "candidate_length": len(candidate["token_ids"]) if "token_ids" in candidate else None,
+        "error": reference.get("error") or candidate.get("error"),
+        "exact_sequence_match": None,
+        "first_divergence": None,
+        "mismatch_count": None,
+    }
+    if row["error"]:
+        return row
+    left, right = reference["token_ids"], candidate["token_ids"]
+    row["exact_sequence_match"] = left == right
+    row["mismatch_count"] = sum(a != b for a, b in zip(left, right)) + abs(len(left) - len(right))
+    row["first_divergence"] = next(
+        (position for position, (a, b) in enumerate(zip(left, right)) if a != b),
+        min(len(left), len(right)) if len(left) != len(right) else None,
+    )
+    return row
+
+
+def run_greedy_comparison(config: EvaluationConfig, comparison: DistributionComparisonConfig) -> None:
+    """Compare greedy continuations on identical token-ID prompts through the existing eval lifecycle."""
+    if config.resume:
+        raise ValueError("--resume is not supported for greedy generation comparisons")
+    reference_source = comparison.reference_source(config.service)
+    record = {"mode": "greedy_comparison"}
+    samples: list[dict[str, Any]] = []
+    points: list[dict[str, Any]] = []
+    environments: dict[str, Any] = {"candidates": []}
+    failure: BaseException | None = None
+    reference_model = reference_source.model
+    protocol = comparison.protocol()
+    prompt_windows: list[list[int]] = []
+    started = time.monotonic()
+    with ResultOutputs(
+        config, None, directory_prefix="greedy-comparison-",
+        sink_factory=lambda directory: greedy_comparison_sinks(config, record, directory),
+    ) as outputs:
+        outputs.open(record)
+        directory = Path(outputs.execution_dir)
+        try:
+            from transformers import AutoTokenizer
+
+            with resolve_model_service(reference_source) as reference:
+                tokenizer_path, _, tokenizer_id = _reference_text_files(reference, comparison.tokenizer)
+                tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
+                prompt_windows = _token_windows(comparison, tokenizer)
+                reference_model = reference.model
+                protocol = {**protocol, "tokenizer": tokenizer_id, "bos_token_id": tokenizer.bos_token_id}
+                environments["reference"] = serving_environment(reference)
+                with CompletionComparisonClient(reference, timeout=reference_source.timeout_seconds) as client:
+                    reference_samples = []
+                    for tokens in prompt_windows:
+                        try:
+                            reference_samples.append(client.generate(tokens, comparison.max_tokens))
+                        except (httpx.HTTPError, ValueError) as error:
+                            reference_samples.append({"error": str(error)})
+
+            labels: set[str] = set()
+            for candidate in comparison.candidates:
+                with resolve_model_service(candidate.service) as service:
+                    metadata = candidate.metadata(service.model)
+                    if metadata["label"] in labels:
+                        raise ValueError("Candidate labels must be distinct; set label in each --candidates row")
+                    labels.add(metadata["label"])
+                    environments["candidates"].append({"label": metadata["label"], **serving_environment(service)})
+                    with CompletionComparisonClient(service, timeout=candidate.service.timeout_seconds) as client:
+                        for index, (tokens, reference_sample) in enumerate(zip(prompt_windows, reference_samples)):
+                            if "error" in reference_sample:
+                                candidate_sample: dict[str, object] = {"error": "reference request failed"}
+                            else:
+                                try:
+                                    candidate_sample = client.generate(tokens, comparison.max_tokens)
+                                except (httpx.HTTPError, ValueError) as error:
+                                    candidate_sample = {"error": str(error)}
+                            samples.append(_greedy_sample(reference_sample, candidate_sample, index, metadata["label"]))
+                candidate_rows = [row for row in samples if row["candidate"] == metadata["label"]]
+                valid = [row for row in candidate_rows if row["error"] is None]
+                exact_matches = sum(row["exact_sequence_match"] for row in valid)
+                points.append({
+                    **metadata,
+                    "valid_samples": len(valid),
+                    "failed_samples": len(candidate_rows) - len(valid),
+                    "exact_matches": exact_matches,
+                    "exact_match_rate": exact_matches / len(valid) if valid else None,
+                })
+        except (DeploymentError, ValueError, OSError, httpx.HTTPError, KeyboardInterrupt) as error:
+            failure = error
+            logger.error("Greedy comparison stopped: %s", error)
+        failed_samples = sum(row["error"] is not None for row in samples)
+        if failed_samples:
+            first_error = next(row["error"] for row in samples if row["error"] is not None)
+            logger.error("%d greedy comparison samples failed; first error: %s", failed_samples, first_error)
+        metrics = {
+            "duration_seconds": time.monotonic() - started,
+            "scores": [{
+                "task": point["label"], "level": "task", "subset": "", "filter": "greedy",
+                "metric": "exact_sequence_match", "value": point["exact_match_rate"],
+                "stderr": None, "samples": point["valid_samples"], "direction": "higher",
+                "display_multiplier": 100, "display_unit": "%", "primary": True,
+            } for point in points],
+            "execution": {"greedy_comparison": {
+                "requested": len(comparison.candidates) * comparison.num_windows,
+                "succeeded": sum(row["error"] is None for row in samples),
+                "errored": failed_samples, "incomplete": failure is not None,
+            }},
+            "greedy_comparison": {
+                "reference_model": reference_model, "protocol": protocol,
+                "prompt_windows": prompt_windows,
+                "candidates": points, "samples": samples,
+            },
+        }
+        artifacts = {"serving_environments": write_json(str(directory), "serving_environments.json", environments)}
+        exit_code = 130 if isinstance(failure, KeyboardInterrupt) else int(failure is not None or failed_samples > 0)
+        outputs.publish(BenchmarkRun(record, metrics, None, artifacts, exit_code=exit_code))
+        if exit_code:
             raise SystemExit(exit_code) from failure

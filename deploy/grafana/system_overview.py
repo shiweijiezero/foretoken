@@ -18,12 +18,13 @@ from __future__ import annotations
 import argparse
 import json
 
-from grafana_foundation_sdk.builders import common, dashboard, heatmap, prometheus, stat, table, timeseries
+from grafana_foundation_sdk.builders import common, dashboard, heatmap, prometheus, stat, table, text, timeseries
 from grafana_foundation_sdk.cog.encoder import JSONEncoder
 from grafana_foundation_sdk.models import common as models
 from grafana_foundation_sdk.models import dashboard as dashboard_models
 from grafana_foundation_sdk.models import heatmap as heatmap_models
 from grafana_foundation_sdk.models import prometheus as prometheus_models
+from grafana_foundation_sdk.models import text as text_models
 
 PROMETHEUS = dashboard_models.DataSourceRef(type_val="prometheus", uid="${DS_PROMETHEUS}")
 
@@ -41,6 +42,24 @@ STAGE_COLORS = {"queue": AMBER, "prefill": BLUE, "decode": TEAL}
 ZH = {
     "Foretoken System Overview": "Foretoken 系统概览",
     "Overview": "概览",
+    "Reading this dashboard": "看板读法",
+    "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. **Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\nRates use a rolling window. **No data** means no observations, not zero. Scrape counts show reporting endpoints, not service readiness.":
+        "**模型总计**按命名空间和模型筛选；实例、角色和 rank 只筛选后端明细。**前端与路由**按前端服务筛选，共享前端包含所有模型的流量。\n\n速率使用滚动窗口。**无数据**表示没有观测，不代表零。上报端点数反映指标采集情况，不代表服务就绪。",
+    "No data": "无数据",
+    "Generation latency": "生成延迟",
+    "Request lengths": "请求长度分布",
+    "Request latency samples / s": "请求延迟观测速率",
+    "Token interval samples / s": "Token 间隔观测速率",
+    "TTFT and E2EL histogram observations per second for each whole model. No observations leave latency quantiles unavailable.":
+        "每个模型每秒记录的 TTFT 与 E2EL 直方图样本数；没有观测时不显示延迟分位数。",
+    "Output-token interval observations per second for each whole model. These count token intervals, not requests.":
+        "每个模型每秒记录的输出 token 间隔样本数，计数单位是 token 间隔，不是请求。",
+    "{{model_name}} / local": "{{model_name}} / 本地",
+    "{{model_name}} / external": "{{model_name}} / 外部",
+    "{{model_name}} / mean": "{{model_name}} / 均值",
+    "{{model_name}} / {{model_role}} / queue": "{{model_name}} / {{model_role}} / 排队",
+    "{{model_name}} / {{model_role}} / prefill": "{{model_name}} / {{model_role}} / 预填充",
+    "{{model_name}} / {{model_role}} / decode": "{{model_name}} / {{model_role}} / 解码",
     "Shared frontend": "共享前端",
     "Model Serving": "模型服务",
     "Cache": "缓存",
@@ -48,19 +67,17 @@ ZH = {
     "Routing decisions": "路由决策",
     "Control plane": "控制面",
     "Autoscaling decisions": "扩缩容决策",
-    "Frontend scrape targets": "前端监控端点数",
-    "Model scrape targets": "模型监控端点数",
+    "Reporting frontend targets": "前端上报端点数",
+    "Reporting model targets": "模型上报端点数",
     "Frontend response starts / s": "前端响应开始速率",
-    "Prompt tokens / s": "输入吞吐量（TPS）",
-    "Output tokens / s": "输出吞吐量（TPS）",
+    "Input throughput": "输入吞吐量",
+    "Output throughput": "输出吞吐量",
     "Frontend queued requests": "前端排队请求",
-    "Frontend responses by HTTP status": "前端 HTTP 响应状态",
-    "Frontend responses by endpoint": "前端各端点响应速率",
+    "Frontend responses by HTTP status": "前端响应开始速率（按状态码）",
+    "Frontend responses by endpoint": "前端响应开始速率（按接口）",
     "Frontend response-header latency": "前端响应头延迟",
     "Frontend admission queue": "前端准入队列",
     "Completed request rate": "完成请求速率",
-    "Input throughput (TPS)": "输入吞吐量（TPS）",
-    "Output throughput (TPS)": "输出吞吐量（TPS）",
     "Total / {{model_name}}": "模型总计 / {{model_name}}",
     "Running total / {{model_name}}": "运行总数 / {{model_name}}",
     "Waiting total / {{model_name}}": "排队总数 / {{model_name}}",
@@ -70,27 +87,35 @@ ZH = {
     "End-to-end latency (E2EL)": "端到端延迟 (E2EL)",
     "Time to first token (TTFT)": "首 token 延迟 (TTFT)",
     "Time per output token (TPOT)": "每输出 token 耗时 (TPOT)",
-    "Inter-token latency (ITL)": "Token 间延迟 (ITL)",
-    "Request time by stage": "各阶段请求耗时",
-    "Preemptions": "抢占",
+    "Inter-token latency (ITL)": "相邻 token 间隔 (ITL)",
+    "Stage latency (p95)": "阶段耗时（P95）",
+    "Preemption events / s": "抢占事件速率",
+    "Speculative decoding": "推测解码",
+    "Draft and accepted tokens / s": "草稿与接受 token / s",
+    "Draft acceptance ratio": "草稿 token 接受率",
+    "Accepted tokens per draft iteration": "每次草稿迭代接受 token 数",
+    "Acceptance probability by position": "各草稿位置接受概率",
+    "Speculative stage GPU time": "推测解码阶段 GPU 时间",
+    "Speculative GPU time shares": "推测解码 GPU 时间占比",
+    "Timed speculative steps / s": "推测解码计时步数 / s",
     "Prompt length": "输入长度",
     "Output length": "输出长度",
-    "KV Cache utilization": "KV Cache 使用率",
-    "Prefix Cache hit ratio": "Prefix Cache 命中率",
+    "KV Cache utilization": "KV 缓存使用率",
+    "Prefix Cache hit ratio": "前缀缓存命中率",
     "Frontend cache-index health": "前端缓存索引健康度",
-    "Storage usage": "存储使用率",
-    "Available storage": "存储可用空间",
+    "Runtime cache filesystem usage": "运行缓存文件系统使用率",
+    "Runtime cache filesystem free space": "运行缓存文件系统可用空间",
     "GPU utilization by device": "各设备 GPU 使用率",
     "GPU memory by device": "各设备 GPU 显存使用率",
     "GPU power by device": "各设备 GPU 功耗",
     "GPU temperature by device": "各设备 GPU 温度",
     "Serving CPU usage": "服务 CPU 使用量",
     "Serving memory usage": "服务内存使用量",
-    "Routing outcomes": "路由结果",
-    "Routing stage latency": "路由阶段延迟",
+    "Routing outcomes": "路由选择速率（按结果）",
+    "Routing stage latency (p99)": "路由阶段耗时（P99）",
     "Eligible instances and ranks": "路由候选数量（请求平均）",
     "Reconcile errors": "协调错误",
-    "Reconcile latency": "协调耗时",
+    "Reconcile latency (p99)": "协调耗时（P99）",
     "Controller workqueues": "控制器工作队列",
     "Replica decisions": "副本决策",
     "Serving capacity": "服务容量",
@@ -139,10 +164,33 @@ ZH = {
         "从前端开始处理请求到首个输出 token 的耗时，按模型统计，单位为秒。",
     "Whole-model time per output token, in milliseconds; each request contributes its average interval.":
         "每个请求的平均输出 token 间隔，按模型统计分位数和均值，单位为毫秒。",
-    "Output-token intervals across aggregate and decode engines, in milliseconds.":
-        "聚合和 Decode 引擎的输出 token 间隔，单位为毫秒。",
-    "P95 time, in seconds, a request spends waiting for the scheduler, in prefill, and in decode.":
-        "请求在等待调度器、Prefill 和 Decode 阶段的 P95 耗时，单位为秒。",
+    "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets; compare the mean and observation rate when samples are sparse.":
+        "聚合和 Decode 引擎的输出 token 间隔，单位毫秒。分位数由直方图桶插值得到；样本稀少时对照均值和观测速率。",
+    "Draft and accepted token rates for each whole model. These are speculative work, not final output throughput.":
+        "每个模型的草稿与接受 token 速率，表示推测解码工作量，不等同最终输出吞吐量。",
+    "Accepted draft tokens divided by proposed draft tokens across all engines. No drafts produce no ratio; this is not a speedup estimate.":
+        "全部引擎接受的草稿 token 数除以提出的草稿 token 数；没有草稿时不显示比例，也不代表加速比。",
+    "Accepted draft tokens per draft iteration across all engines; excludes bonus tokens.":
+        "全部引擎每次草稿迭代接受的草稿 token 数，不包含额外 token。",
+    "Accepted tokens at each zero-based draft position divided by draft iterations across all engines. No drafts produce no ratio.":
+        "各草稿位置（从 0 开始）的接受数除以全部引擎草稿迭代数；没有草稿时不显示比例。",
+    "Draft / {{model_name}}": "草稿 / {{model_name}}",
+    "Accepted / {{model_name}}": "接受 / {{model_name}}",
+    "Position {{position}} / {{model_name}}": "位置 {{position}} / {{model_name}}",
+    "Target forward / {{model_name}}": "目标模型 forward / {{model_name}}",
+    "Draft share / {{model_name}}": "草稿占比 / {{model_name}}",
+    "Target forward share / {{model_name}}": "目标模型 forward 占比 / {{model_name}}",
+    "Only complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification but excludes sampling. The mean is stage duration sum divided by timed steps, not request latency.":
+        "每个引擎仅在输出 rank 统计完整的推测解码 batch。GPU event 耗时包含内核间的主机间隙；目标模型 forward 包含验证但不含采样。均值是阶段耗时总和除以计时步数，不是请求延迟。",
+    "Draft and target-forward durations each divided by their sum over the same measured steps. These are not wall-clock shares or model speedup; no timed steps produce no ratios.":
+        "同一批计时步中，草稿与目标模型 forward 耗时分别除以两者之和。这不是墙钟时间占比或模型加速比；没有计时步则不显示比例。",
+    "Timed pure speculative decode batches per second, collected automatically for GPU drafting.":
+        "使用 GPU 起草时自动采集的纯推测解码 batch 计时样本数（每秒）。",
+    "ITL / {{model_name}}": "ITL / {{model_name}}",
+    "TTFT / {{model_name}}": "TTFT / {{model_name}}",
+    "E2EL / {{model_name}}": "E2EL / {{model_name}}",
+    "P95 time spent in queue, prefill and decode by requests finishing in this window, in seconds. Stage durations appear when a request completes.":
+        "本窗口内已完成请求在排队、Prefill 和 Decode 阶段的 P95 耗时，单位秒；请求完成时才记录各阶段耗时。",
     "Whole-model preemption events per second across every engine, with selected backend details.":
         "每个模型全部引擎每秒发生的抢占事件总数，并展示所选后端明细。",
     "Distribution of prompt tokens per request across selected engines.": "所选引擎每次请求的输入 token 数分布。",
@@ -245,10 +293,17 @@ def instance_display(expr: str) -> str:
     return f'({expr}) * on(namespace,model_group) group_left(model_group_display) ({display})'
 
 
-def query(expr: str, legend: str | None = None, *, interval: str | None = None) -> prometheus.Dataquery:
+def query(
+    expr: str, legend: str | None = None, *, interval: str | None = None, instant: bool = False
+) -> prometheus.Dataquery:
+    """Build one Prometheus query for dashboard time series or current-value tiles."""
     if legend is not None and "{{model_group_display}}" in legend:
         expr = instance_display(expr)
-    target = prometheus.Dataquery().datasource(PROMETHEUS).expr(expr).range()
+    target = prometheus.Dataquery().datasource(PROMETHEUS).expr(expr)
+    if instant:
+        target.instant()
+    else:
+        target.range()
     if interval is not None:
         target.interval(interval)
     if legend is not None:
@@ -296,8 +351,8 @@ def model_total(metric: str, *, rate: bool = False, roles: str = "") -> str:
 
 
 def selected_groups() -> str:
-    """Resolve model identity from engine gauges, including idle model instances."""
-    return f"max by(namespace,model_group) (0 * ({model_metric('vllm:kv_cache_usage_perc')}) + 1)"
+    """Resolve model identity from Service scrape targets even when engine metrics are absent."""
+    return 'max by(namespace,model_group) (foretoken:model_instance_info{namespace=~"$namespace",model_name=~"$model_name",model_group=~"$model_group"})'
 
 
 def scoped_group_metric(expr: str) -> str:
@@ -367,9 +422,13 @@ def headline(
             )
         ])
         .color_mode(models.BigValueColorMode.VALUE)
-        .graph_mode(models.BigValueGraphMode.AREA)
+        .graph_mode(models.BigValueGraphMode.NONE)
+        .wide_layout(False)
+        .justify_mode(models.BigValueJustifyMode.CENTER)
+        .text(common.VizTextDisplayOptions().title_size(12).value_size(32))
+        .text_mode(models.BigValueTextMode.VALUE_AND_NAME if legend else models.BigValueTextMode.VALUE)
         .reduce_options(common.ReduceDataOptions().calcs(["lastNotNull"]))
-        .with_target(query(expr, legend or title, interval=interval).ref_id("A"))
+        .with_target(query(expr, legend or title, interval=interval or "5s", instant=True).ref_id("A"))
         .span(6)
         .height(4)
     )
@@ -402,31 +461,38 @@ def series(
         .datasource(PROMETHEUS)
         .unit(unit)
         .color_scheme(dashboard.FieldColor().mode(dashboard_models.FieldColorModeId.PALETTE_CLASSIC_BY_NAME))
+        .min(0)
+        .no_value("No data")
         .line_width(2)
         .fill_opacity(24 if stack else 8)
         .point_size(8)
         .show_points(models.VisibilityMode.NEVER)
         .legend(
             common.VizLegendOptions()
-            .display_mode(models.LegendDisplayMode.TABLE)
+            .display_mode(models.LegendDisplayMode.LIST)
             .placement(models.LegendPlacement.BOTTOM)
             .show_legend(True)
-            .calcs(["lastNotNull"])
         )
         .tooltip(common.VizTooltipOptions().mode(models.TooltipDisplayMode.MULTI).sort(models.SortOrder.DESCENDING))
         .targets([target.ref_id(chr(ord("A") + index)) for index, target in enumerate(targets)])
         .span(span)
-        .height(8)
+        .height(10)
     )
     if unit == "percentunit":
         panel.min(0).max(1)
     if stack:
         panel.stacking(common.StackingConfig().mode(models.StackingMode.NORMAL).group("A"))
+    # Bind semantic colors to queries before legend localization; dynamic status labels use names.
     for name, color in (colors or {}).items():
-        panel.override_by_name(
-            name,
-            [dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": color})],
-        )
+        value = [dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": color})]
+        matched = False
+        for index, target in enumerate(targets):
+            legend = target.build().legend_format or ""
+            if legend == name or legend.endswith(" / " + name):
+                panel.override_by_query(chr(ord("A") + index), value)
+                matched = True
+        if not matched:
+            panel.override_by_name(name, value)
     return panel
 
 
@@ -438,7 +504,7 @@ def latency(
     unit: str,
     scale: int = 1,
     mean_rates: tuple[str, str] | None = None,
-    span: int = 8,
+    span: int = 12,
     dimensions: str = "model_name",
 ) -> timeseries.Panel:
     """A raw-histogram latency panel with fixed units and optional interval-local mean."""
@@ -460,7 +526,8 @@ def latency(
             mean_expr = f"{scale} * {mean_expr}"
         targets.append(foretoken_query(mean_expr, prefix + "mean"))
         colors = {**QUANTILE_COLORS, "mean": ORANGE}
-    return series(title, description, targets, unit=unit, span=span, colors=colors if not dimensions else None).decimals(2)
+    panel = series(title, description, targets, unit=unit, span=span, colors=colors)
+    return panel.decimals(2) if scale == 1 else panel
 
 
 def distribution(title: str, description: str, metric: str) -> heatmap.Panel:
@@ -485,7 +552,7 @@ def distribution(title: str, description: str, metric: str) -> heatmap.Panel:
         .color(heatmap.HeatmapColorOptions().mode(heatmap_models.HeatmapColorMode.SCHEME).scheme("Blues").steps(64))
         .y_axis(heatmap.YAxisConfig().unit("short"))
         .span(12)
-        .height(8)
+        .height(10)
     )
 
 
@@ -531,7 +598,7 @@ def variable(name: str, label: str, query_text: str) -> dashboard.QueryVariable:
 
 def localize_dashboard(value: object) -> object:
     """Translate visible dashboard strings while leaving queries and metric identities unchanged."""
-    visible_keys = {"title", "description", "label", "legendFormat", "noValue", "text"}
+    visible_keys = {"title", "description", "label", "legendFormat", "noValue", "text", "content"}
     if isinstance(value, dict):
         localized = {
             key: ZH.get(item, item) if key in visible_keys and isinstance(item, str) else localize_dashboard(item)
@@ -558,11 +625,11 @@ def render(locale: str) -> str:
 
 
 def build() -> dashboard_models.Dashboard:
+    """Build both locales' shared operator view, ordered from model traffic to platform diagnostics."""
     instances = (
-        'label_replace(max by(namespace,inference_foretoken_io_model_group) ('
-        'max_over_time(vllm:kv_cache_usage_perc{endpoint="model-server",namespace=~"$namespace",'
-        'model_name=~"$model_name"}[$__range] @ end())), "model_group", "$1", '
-        '"inference_foretoken_io_model_group", "(.+)")'
+        'max by(namespace,model_group) ('
+        'max_over_time(foretoken:model_instance_info{namespace=~"$namespace",'
+        'model_name=~"$model_name"}[$__range] @ end()))'
     )
     board = (
         dashboard.Dashboard("Foretoken System Overview")
@@ -571,7 +638,7 @@ def build() -> dashboard_models.Dashboard:
         .editable()
         .tooltip(dashboard_models.DashboardCursorSync.CROSSHAIR)
         .refresh("5s")
-        .time("now-30m", "now")
+        .time("now-15m", "now")
         .timezone("browser")
         .links([])
         .annotation(
@@ -595,7 +662,7 @@ def build() -> dashboard_models.Dashboard:
         .with_variable(
             variable(
                 "model_name", "Model",
-                'label_values(vllm:kv_cache_usage_perc{endpoint="model-server",namespace=~"$namespace"}, model_name)',
+                'label_values(foretoken:model_instance_info{namespace=~"$namespace"}, model_name)',
             )
         )
         .with_variable(
@@ -633,19 +700,31 @@ def build() -> dashboard_models.Dashboard:
 
     frontend_request_rates = frontend_metric("http_requests_total", rate=True)
 
+    board.with_panel(
+        text.Panel()
+        .title("Reading this dashboard")
+        .mode(text_models.TextMode.MARKDOWN)
+        .content(
+            "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. "
+            "**Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\n"
+            "Rates use a rolling window. **No data** means no observations, not zero. "
+            "Scrape counts show reporting endpoints, not service readiness."
+        )
+        .span(24)
+        .height(4)
+    )
     board.with_row(dashboard.Row("Overview"))
     board.with_panel(
         headline(
-            "Model scrape targets",
+            "Reporting model targets",
             "Prometheus targets currently reporting for the selected model groups and roles.",
             f"sum({scoped_group_metric(f'foretoken:model_server_up:sum{{{GROUP}}}')})",
-            color=None,
-            thresholds=steps((None, RED), (1, GREEN)),
+            color=BLUE,
         )
     )
     board.with_panel(
         headline(
-            "Prompt tokens / s",
+            "Input throughput",
             "Input tokens per second for each whole model, across all instances and ranks.",
             model_total("vllm:prompt_tokens_total", rate=True, roles="aggregate|prefill"),
             unit="suffix: token/s",
@@ -655,7 +734,7 @@ def build() -> dashboard_models.Dashboard:
     )
     board.with_panel(
         headline(
-            "Output tokens / s",
+            "Output throughput",
             "Output tokens per second for each whole model, across all instances and ranks.",
             model_total("vllm:generation_tokens_total", rate=True, roles="aggregate|decode"),
             unit="suffix: token/s",
@@ -680,8 +759,8 @@ def build() -> dashboard_models.Dashboard:
     # Whole-model totals ignore drill-down filters; backend curves retain those filters.
     # In a disaggregated pipeline, input belongs to prefill and output to decode.
     for title, metric, roles, color in (
-        ("Input throughput (TPS)", "vllm:prompt_tokens_total", "aggregate|prefill", BLUE),
-        ("Output throughput (TPS)", "vllm:generation_tokens_total", "aggregate|decode", ORANGE),
+        ("Input throughput", "vllm:prompt_tokens_total", "aggregate|prefill", BLUE),
+        ("Output throughput", "vllm:generation_tokens_total", "aggregate|decode", ORANGE),
     ):
         backend_rate = model_metric(metric, rate=True, extra=f'inference_foretoken_io_model_role=~"{roles}"')
         board.with_panel(
@@ -697,7 +776,7 @@ def build() -> dashboard_models.Dashboard:
                 ],
                 unit="suffix: token/s",
                 span=12,
-            ).height(10).override_by_query("A", [
+            ).override_by_query("A", [
                 dashboard_models.DynamicConfigValue(id_val="custom.lineWidth", value=4),
                 dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": color}),
             ])
@@ -731,6 +810,7 @@ def build() -> dashboard_models.Dashboard:
             span=12,
         )
     )
+    board.with_row(dashboard.Row("Generation latency"))
     board.with_panel(
         latency(
             model_metric("vllm:e2e_request_latency_seconds_bucket", rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~"aggregate|decode"'),
@@ -764,15 +844,19 @@ def build() -> dashboard_models.Dashboard:
         latency(
             model_metric("vllm:inter_token_latency_seconds_bucket", rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~"aggregate|decode"'),
             "Inter-token latency (ITL)",
-            "Output-token intervals across aggregate and decode engines, in milliseconds.",
+            "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets; compare the mean and observation rate when samples are sparse.",
             unit="suffix: ms",
             scale=1_000,
+            mean_rates=(
+                model_metric("vllm:inter_token_latency_seconds_sum", rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~"aggregate|decode"'),
+                model_metric("vllm:inter_token_latency_seconds_count", rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~"aggregate|decode"'),
+            ),
         )
     )
     board.with_panel(
         series(
-            "Request time by stage",
-            "P95 time, in seconds, a request spends waiting for the scheduler, in prefill, and in decode.",
+            "Stage latency (p95)",
+            "P95 time spent in queue, prefill and decode by requests finishing in this window, in seconds. Stage durations appear when a request completes.",
             [
                 foretoken_query(
                     f"histogram_quantile(0.95, sum by(model_name,model_role,le) ({model_metric(metric, rate=True)}))",
@@ -785,22 +869,48 @@ def build() -> dashboard_models.Dashboard:
                 )
             ],
             unit="suffix: s",
-            span=8,
+            span=12,
             colors=STAGE_COLORS,
         )
     )
     board.with_panel(
         series(
-            "Preemptions",
+            "Preemption events / s",
             "Whole-model preemption events per second across every engine, with selected backend details.",
             [
                 foretoken_query(model_total("vllm:num_preemptions_total", rate=True), "Total / {{model_name}}"),
                 foretoken_query(f"sum by(namespace,model_name,model_group,model_role,engine) ({model_metric('vllm:num_preemptions_total', rate=True)})", "{{model_group_display}} / rank {{engine}}"),
             ],
             unit="ops",
-            span=8,
+            span=12,
         )
     )
+    for title, description, observations in (
+        (
+            "Request latency samples / s",
+            "TTFT and E2EL histogram observations per second for each whole model. No observations leave latency quantiles unavailable.",
+            (("TTFT", "vllm:time_to_first_token_seconds_count"), ("E2EL", "vllm:e2e_request_latency_seconds_count")),
+        ),
+        (
+            "Token interval samples / s",
+            "Output-token interval observations per second for each whole model. These count token intervals, not requests.",
+            (("ITL", "vllm:inter_token_latency_seconds_count"),),
+        ),
+    ):
+        board.with_panel(
+            series(
+                title,
+                description,
+                [
+                    foretoken_query(model_total(metric, rate=True, roles="aggregate|decode"), f"{name} / {{{{model_name}}}}")
+                    for name, metric in observations
+                ],
+                unit="suffix: samples/s",
+                span=12,
+            )
+        )
+
+    board.with_row(dashboard.Row("Request lengths"))
     board.with_panel(
         distribution(
             "Prompt length",
@@ -813,6 +923,104 @@ def build() -> dashboard_models.Dashboard:
             "Output length",
             "Distribution of generated tokens per request across selected engines.",
             "vllm:request_generation_tokens_bucket",
+        )
+    )
+
+    board.with_row(dashboard.Row("Speculative decoding"))
+    draft_tokens = model_total("vllm:spec_decode_num_draft_tokens_total", rate=True, roles="aggregate|decode")
+    accepted_tokens = model_total("vllm:spec_decode_num_accepted_tokens_total", rate=True, roles="aggregate|decode")
+    draft_iterations = model_total("vllm:spec_decode_num_drafts_total", rate=True, roles="aggregate|decode")
+    board.with_panel(
+        series(
+            "Draft and accepted tokens / s",
+            "Draft and accepted token rates for each whole model. These are speculative work, not final output throughput.",
+            [
+                foretoken_query(draft_tokens, "Draft / {{model_name}}"),
+                foretoken_query(accepted_tokens, "Accepted / {{model_name}}"),
+            ],
+            unit="suffix: token/s",
+            span=12,
+        ).override_by_query("A", [
+            dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": BLUE}),
+        ]).override_by_query("B", [
+            dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": TEAL}),
+        ])
+    )
+    board.with_panel(
+        series(
+            "Draft acceptance ratio",
+            "Accepted draft tokens divided by proposed draft tokens across all engines. No drafts produce no ratio; this is not a speedup estimate.",
+            [foretoken_query(f"({accepted_tokens}) / (({draft_tokens}) > 0)", "{{model_name}}")],
+            unit="percentunit",
+            span=12,
+        )
+    )
+    board.with_panel(
+        series(
+            "Accepted tokens per draft iteration",
+            "Accepted draft tokens per draft iteration across all engines; excludes bonus tokens.",
+            [foretoken_query(f"({accepted_tokens}) / (({draft_iterations}) > 0)", "{{model_name}}")],
+            unit="short",
+            span=12,
+        )
+    )
+    board.with_panel(
+        series(
+            "Acceptance probability by position",
+            "Accepted tokens at each zero-based draft position divided by draft iterations across all engines. No drafts produce no ratio.",
+            [foretoken_query(
+                f"sum by(model_name,position) ({model_metric('vllm:spec_decode_num_accepted_tokens_per_pos_total', rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~\"aggregate|decode\"')}) "
+                f"/ on(model_name) group_left() (({draft_iterations}) > 0)",
+                "Position {{position}} / {{model_name}}",
+            )],
+            unit="percentunit",
+            span=12,
+        )
+    )
+
+    draft_time = model_total("vllm:spec_decode_draft_duration_seconds_sum", rate=True, roles="aggregate|decode")
+    target_time = model_total("vllm:spec_decode_target_forward_duration_seconds_sum", rate=True, roles="aggregate|decode")
+    timed_steps = model_total("vllm:spec_decode_draft_duration_seconds_count", rate=True, roles="aggregate|decode")
+    stage_time = f"(({draft_time}) + ({target_time}))"
+    board.with_panel(
+        series(
+            "Speculative stage GPU time",
+            "Only complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification but excludes sampling. The mean is stage duration sum divided by timed steps, not request latency.",
+            [
+                foretoken_query(f"({target_time}) / (({timed_steps}) > 0)", "Target forward / {{model_name}}"),
+                foretoken_query(f"({draft_time}) / (({timed_steps}) > 0)", "Draft / {{model_name}}"),
+            ],
+            unit="s",
+            span=12,
+        ).override_by_query("A", [
+            dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": BLUE}),
+        ]).override_by_query("B", [
+            dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": TEAL}),
+        ])
+    )
+    board.with_panel(
+        series(
+            "Speculative GPU time shares",
+            "Draft and target-forward durations each divided by their sum over the same measured steps. These are not wall-clock shares or model speedup; no timed steps produce no ratios.",
+            [
+                foretoken_query(f"({target_time}) / (({stage_time}) > 0)", "Target forward share / {{model_name}}"),
+                foretoken_query(f"({draft_time}) / (({stage_time}) > 0)", "Draft share / {{model_name}}"),
+            ],
+            unit="percentunit",
+            span=12,
+        ).override_by_query("A", [
+            dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": BLUE}),
+        ]).override_by_query("B", [
+            dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": TEAL}),
+        ])
+    )
+    board.with_panel(
+        series(
+            "Timed speculative steps / s",
+            "Timed pure speculative decode batches per second, collected automatically for GPU drafting.",
+            [foretoken_query(timed_steps, "{{model_name}}")],
+            unit="ops",
+            span=24,
         )
     )
 
@@ -850,7 +1058,7 @@ def build() -> dashboard_models.Dashboard:
     )
     board.with_panel(
         series(
-            "Storage usage",
+            "Runtime cache filesystem usage",
             "Highest RuntimeCache filesystem usage by model instance.",
             [query(scoped_group_metric(f"foretoken:model_server_runtime_cache_usage_ratio:max{{{GROUP}}}"), "{{model_group_display}}")],
             unit="percentunit",
@@ -859,7 +1067,7 @@ def build() -> dashboard_models.Dashboard:
     )
     board.with_panel(
         series(
-            "Available storage",
+            "Runtime cache filesystem free space",
             "Lowest available RuntimeCache filesystem space by model instance.",
             [
                 query(
@@ -889,6 +1097,23 @@ def build() -> dashboard_models.Dashboard:
             unit="percentunit",
         )
     )
+    board.with_panel(
+        by_device(
+            "GPU power by device",
+            "Power draw of each GPU used by the selected model, in watts.",
+            "foretoken:accelerator_gpu_power_watts",
+            unit="watt",
+        )
+    )
+    board.with_panel(
+        by_device(
+            "GPU temperature by device",
+            "Temperature reported by each GPU used by the selected model; MetaX uses the chip hotspot sensor.",
+            "foretoken:accelerator_gpu_temperature_celsius",
+            unit="celsius",
+        )
+    )
+
     container = 'namespace=~"$namespace",container="model-server"'
     # Group membership includes workers that do not expose the head's engine metrics.
     selected_pods = (
@@ -898,7 +1123,7 @@ def build() -> dashboard_models.Dashboard:
     model_pods = (
         'max by(namespace,pod,model_group) (foretoken:accelerator_workload_labels{namespace=~"$namespace"}) '
         '* on(namespace,model_group) group_left(model_name) '
-        f"(max by(namespace,model_group,model_name) (0 * ({model_metric('vllm:kv_cache_usage_perc', whole_model=True)}) + 1))"
+        '(max by(namespace,model_group,model_name) (foretoken:model_instance_info{namespace=~"$namespace",model_name=~"$model_name"}))'
     )
     board.with_panel(
         series(
@@ -941,23 +1166,6 @@ def build() -> dashboard_models.Dashboard:
         )
     )
 
-    board.with_panel(
-        by_device(
-            "GPU power by device",
-            "Power draw of each GPU used by the selected model, in watts.",
-            "foretoken:accelerator_gpu_power_watts",
-            unit="watt",
-        )
-    )
-    board.with_panel(
-        by_device(
-            "GPU temperature by device",
-            "Temperature reported by each GPU used by the selected model; MetaX uses the chip hotspot sensor.",
-            "foretoken:accelerator_gpu_temperature_celsius",
-            unit="celsius",
-        )
-    )
-
     # Route distribution uses the smallest routable unit; controller internals remain diagnostic.
     board.with_row(dashboard.Row("Routing decisions"))
     selections = routing_target_rates()
@@ -978,8 +1186,8 @@ def build() -> dashboard_models.Dashboard:
                 f"({shares}) and on(namespace,model_group,data_parallel_rank) ({selected_ranks})",
                 "{{model_group_display}} / rank {{data_parallel_rank}}",
             )],
-            unit="percentunit", span=24,
-        ).height(10)
+            unit="percentunit", span=12,
+        )
     )
     board.with_panel(
         series(
@@ -994,12 +1202,12 @@ def build() -> dashboard_models.Dashboard:
                 )
             ],
             unit="reqps",
-            span=8,
+            span=12,
         )
     )
     board.with_panel(
         series(
-            "Routing stage latency",
+            "Routing stage latency (p99)",
             "P99 filter, scorer, and picker time across selected Frontend replicas.",
             [
                 foretoken_query(
@@ -1009,7 +1217,7 @@ def build() -> dashboard_models.Dashboard:
                 )
             ],
             unit="s",
-            span=8,
+            span=12,
         )
     )
     board.with_panel(
@@ -1024,17 +1232,16 @@ def build() -> dashboard_models.Dashboard:
                 )
             ],
             unit="short",
-            span=8,
+            span=12,
         )
     )
     board.with_row(dashboard.Row("Shared frontend"))
     board.with_panel(
         headline(
-            "Frontend scrape targets",
+            "Reporting frontend targets",
             "Prometheus targets currently reporting for the selected Frontend services.",
             f"sum(foretoken:frontend_up:sum{{{FRONTEND}}})",
-            color=None,
-            thresholds=steps((None, RED), (1, GREEN)),
+            color=BLUE,
         ).span(8)
     )
     board.with_panel(
@@ -1063,7 +1270,6 @@ def build() -> dashboard_models.Dashboard:
             unit="reqps",
             span=12,
             colors={"2xx": GREEN, "4xx": ORANGE, "5xx": RED},
-            stack=True,
         )
     )
     board.with_panel(
@@ -1132,7 +1338,7 @@ def build() -> dashboard_models.Dashboard:
     )
     control_plane.with_panel(
         series(
-            "Reconcile latency",
+            "Reconcile latency (p99)",
             "P99 reconciliation time by controller.",
             [
                 foretoken_query(

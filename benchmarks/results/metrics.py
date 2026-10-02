@@ -83,6 +83,9 @@ def compute_tpot(
     """Compute TPOT from the latency and token count of one streamed request."""
     if ttft is None or output_tokens is None:
         return None
+    # A one-token response has no decode interval, matching serving SLO benchmarks.
+    if output_tokens == 1:
+        return 0.0
     denominator = int(output_tokens) - 1
     if denominator <= 0:
         return None
@@ -123,14 +126,6 @@ def normalized_generation_throughput(
 
 
 _SLO_CRITERION = re.compile(r"^(?:avg_|p50_|p90_|p95_|p99_)?(latency|ttft|tpot|itl)$")
-_SLO_OPERATORS = {
-    "<": lambda actual, expected: actual < expected,
-    "<=": lambda actual, expected: actual <= expected,
-    "==": lambda actual, expected: actual == expected,
-    ">=": lambda actual, expected: actual >= expected,
-    ">": lambda actual, expected: actual > expected,
-}
-_SLO_EXPRESSION = re.compile(r"^(<=|>=|==|<|>)\s*(-?(?:\d+(?:\.\d*)?|\.\d+))$")
 
 
 def request_slo_results(
@@ -138,14 +133,14 @@ def request_slo_results(
     criteria: dict[str, str] | None,
     total_time: float,
 ) -> dict[str, Any] | None:
-    """Score requests against the request-level subset of global search criteria."""
+    """Score requests using the same condition parser as aggregate SLO searches."""
     if not criteria:
         return None
 
     # Search criteria may also contain aggregate-only metrics such as rps.
     supported = {
         name: expression for name, expression in criteria.items()
-        if _SLO_CRITERION.fullmatch(name) and _SLO_EXPRESSION.fullmatch(expression)
+        if _SLO_CRITERION.fullmatch(name)
     }
     if not supported:
         return {
@@ -156,17 +151,15 @@ def request_slo_results(
             "token_goodput": None,
         }
 
-    checks = []
-    for name, expression in supported.items():
-        match = _SLO_EXPRESSION.fullmatch(expression)
-        checks.append((
-            _SLO_CRITERION.fullmatch(name).group(1),
-            _SLO_OPERATORS[match.group(1)],
-            float(match.group(2)),
-        ))
+    from benchmarks.integrations.evalscope.slo import parse_slo_criteria
+
+    checks = [
+        (_SLO_CRITERION.fullmatch(name).group(1), rule)
+        for name, rule in parse_slo_criteria([supported])[0].items()
+    ]
     request_slo_met: list[bool] = []
     good_requests = 0
-    good_tokens = 0
+    good_tokens: int | None = 0
     for item in measurements:
         values = {
             "latency": item.latency,
@@ -175,22 +168,25 @@ def request_slo_results(
             "itl": max(item.itl_samples) if item.itl_samples else None,
         }
         met = item.succeeded
-        for metric, operator, expected in checks:
+        for metric, rule in checks:
             actual = values[metric]
-            met = met and actual is not None and operator(float(actual), expected)
+            met = met and actual is not None and rule.validate(float(actual))
         request_slo_met.append(bool(met))
         if met:
             good_requests += 1
-            good_tokens += int(item.output_tokens or 0)
+            good_tokens = (
+                good_tokens + item.output_tokens
+                if good_tokens is not None and item.output_tokens is not None else None
+            )
 
     duration = float(total_time)
     return {
         "criteria": criteria,
         "request_criteria": supported,
         "request_slo_met": request_slo_met,
-        "slo_attainment": good_requests / len(measurements) if measurements else 0.0,
+        "slo_attainment": good_requests / len(measurements) if measurements else None,
         "request_goodput": good_requests / duration if duration > 0 else None,
-        "token_goodput": good_tokens / duration if duration > 0 else None,
+        "token_goodput": good_tokens / duration if good_tokens is not None and duration > 0 else None,
     }
 
 

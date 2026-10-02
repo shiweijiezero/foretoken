@@ -55,6 +55,16 @@ type RouterPipeline struct {
 	Picker RouterStage `json:"picker"`
 }
 
+// VideoTaskStorage configures the dedicated PVC shared by the frontend and video workers.
+type VideoTaskStorage struct {
+	// +kubebuilder:validation:MinLength=1
+	ClaimName string `json:"claimName"`
+	// RetentionSeconds is the lifetime of a completed task and its stored files.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=9223372036
+	RetentionSeconds int64 `json:"retentionSeconds"`
+}
+
 // FrontendServiceSpec defines the desired state of a frontend service.
 type FrontendServiceSpec struct {
 	// +optional
@@ -78,6 +88,10 @@ type FrontendServiceSpec struct {
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern="^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$"
 	Hostname string `json:"hostname,omitempty"`
+
+	// VideoTasks enables asynchronous video task submission and result access.
+	// +optional
+	VideoTasks *VideoTaskStorage `json:"videoTasks,omitempty"`
 }
 
 // FrontendServiceStatus defines the observed state of a frontend service.

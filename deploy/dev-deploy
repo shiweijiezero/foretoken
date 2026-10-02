@@ -18,7 +18,6 @@ DEV_TIMEOUT=${DEV_TIMEOUT:-5m}
 IMAGE_PULL_SECRET=${IMAGE_PULL_SECRET:-}
 LOCAL_IMAGE_PREFIX=${LOCAL_IMAGE_PREFIX:-foretoken-dev}
 K3D_CONFIG=${K3D_CONFIG:-$ROOT/deploy/k3d/config.yaml}
-DEV_IMAGE_OUTPUT=${DEV_IMAGE_OUTPUT:-}
 
 for command in docker helm kubectl make; do
   command -v "$command" >/dev/null || {
@@ -33,47 +32,6 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-
-write_image_output() {
-  python3 - "$DEV_IMAGE_OUTPUT" \
-    "$IMAGE_MODE" \
-    "$CONTROL_PLANE_DEPLOY_IMAGE" \
-    "$FRONTEND_DEPLOY_IMAGE" \
-    "$MODEL_SERVER_DEPLOY_IMAGE" \
-    "$CONTROL_PLANE_CHANGED" \
-    "$FRONTEND_CHANGED" \
-    "$MODEL_SERVER_CHANGED" <<'PY'
-import json
-import sys
-
-(
-    output_path,
-    image_mode,
-    control_plane_deploy_image,
-    frontend_deploy_image,
-    model_server_deploy_image,
-    control_plane_changed,
-    frontend_changed,
-    model_server_changed,
-) = sys.argv[1:]
-
-with open(output_path, "w", encoding="utf-8") as output:
-    json.dump(
-        {
-            "IMAGE_MODE": image_mode,
-            "CONTROL_PLANE_DEPLOY_IMAGE": control_plane_deploy_image,
-            "FRONTEND_DEPLOY_IMAGE": frontend_deploy_image,
-            "MODEL_SERVER_DEPLOY_IMAGE": model_server_deploy_image,
-            "CONTROL_PLANE_CHANGED": control_plane_changed == "true",
-            "FRONTEND_CHANGED": frontend_changed == "true",
-            "MODEL_SERVER_CHANGED": model_server_changed == "true",
-        },
-        output,
-        separators=(",", ":"),
-    )
-    output.write("\n")
-PY
-}
 
 if [[ -n "$CLUSTER" && -n "$KIND_CLUSTER" ]]; then
   printf 'set either CLUSTER or KIND_CLUSTER, not both\n' >&2
@@ -145,11 +103,7 @@ elif [[ -n "$CLUSTER" ]]; then
   LOCAL_CLUSTER=k3d
 else
   [[ -n "$REGISTRY" ]] || {
-    if [[ "${FORETOKEN_CLI_SOURCE:-false}" == true ]]; then
-      printf 'current context requires: foretoken install -e PATH --registry REGISTRY\n' >&2
-    else
-      printf 'set REGISTRY for the Kubernetes deployment\n' >&2
-    fi
+    printf 'set REGISTRY for the Kubernetes deployment\n' >&2
     exit 1
   }
 fi
@@ -182,6 +136,10 @@ MODEL_SERVER_CHANGED=false
 [[ "$FRONTEND_BEFORE" != "$FRONTEND_AFTER" ]] && FRONTEND_CHANGED=true
 [[ "$MODEL_SERVER_BEFORE" != "$MODEL_SERVER_AFTER" ]] && MODEL_SERVER_CHANGED=true
 
+CONTROL_PLANE_DEPLOY_IMAGE=$CONTROL_PLANE_IMAGE
+FRONTEND_DEPLOY_IMAGE=$FRONTEND_IMAGE
+MODEL_SERVER_DEPLOY_IMAGE=$MODEL_SERVER_IMAGE
+
 RELEASE_EXISTS=false
 if RELEASE_STATUS=$(helm status "$RELEASE" --namespace "$PLATFORM_NAMESPACE" 2>&1); then
   RELEASE_EXISTS=true
@@ -199,12 +157,12 @@ if [[ "$RELEASE_EXISTS" == true ]]; then
   CURRENT_FRONTEND_IMAGE=$(deployment_image "$WORKLOAD_NAMESPACE" "inference.foretoken.io/frontend-service")
   CURRENT_MODEL_SERVER_IMAGE=$(deployment_image "$WORKLOAD_NAMESPACE" "inference.foretoken.io/model-group")
   if [[ "$IMAGE_MODE" == import ]]; then
-    [[ "${CURRENT_CONTROL_PLANE_IMAGE%:latest}" != "$CONTROL_PLANE_IMAGE" ]] && CONTROL_PLANE_CHANGED=true
+    [[ "${CURRENT_CONTROL_PLANE_IMAGE%:*}" != "$CONTROL_PLANE_IMAGE" ]] && CONTROL_PLANE_CHANGED=true
     if [[ -n "$CURRENT_FRONTEND_IMAGE" ]]; then
-      [[ "${CURRENT_FRONTEND_IMAGE%:latest}" != "$FRONTEND_IMAGE" ]] && FRONTEND_CHANGED=true
+      [[ "${CURRENT_FRONTEND_IMAGE%:*}" != "$FRONTEND_IMAGE" ]] && FRONTEND_CHANGED=true
     fi
     if [[ -n "$CURRENT_MODEL_SERVER_IMAGE" ]]; then
-      [[ "${CURRENT_MODEL_SERVER_IMAGE%:latest}" != "$MODEL_SERVER_IMAGE" ]] && MODEL_SERVER_CHANGED=true
+      [[ "${CURRENT_MODEL_SERVER_IMAGE%:*}" != "$MODEL_SERVER_IMAGE" ]] && MODEL_SERVER_CHANGED=true
     fi
   else
     [[ "$CURRENT_CONTROL_PLANE_IMAGE" != "$REGISTRY/control-plane:"* ]] && CONTROL_PLANE_CHANGED=true
@@ -217,15 +175,11 @@ if [[ "$RELEASE_EXISTS" == true ]]; then
   fi
 fi
 
-CONTROL_PLANE_DEPLOY_IMAGE=$CONTROL_PLANE_IMAGE
-FRONTEND_DEPLOY_IMAGE=$FRONTEND_IMAGE
-MODEL_SERVER_DEPLOY_IMAGE=$MODEL_SERVER_IMAGE
-
 if [[ "$IMAGE_MODE" == import ]]; then
   changed_images=()
-  [[ "$CONTROL_PLANE_CHANGED" == true ]] && changed_images+=("$CONTROL_PLANE_IMAGE")
-  [[ "$FRONTEND_CHANGED" == true ]] && changed_images+=("$FRONTEND_IMAGE")
-  [[ "$MODEL_SERVER_CHANGED" == true ]] && changed_images+=("$MODEL_SERVER_IMAGE")
+  [[ "$CONTROL_PLANE_CHANGED" == true ]] && changed_images+=("$CONTROL_PLANE_DEPLOY_IMAGE")
+  [[ "$FRONTEND_CHANGED" == true ]] && changed_images+=("$FRONTEND_DEPLOY_IMAGE")
+  [[ "$MODEL_SERVER_CHANGED" == true ]] && changed_images+=("$MODEL_SERVER_DEPLOY_IMAGE")
   if ((${#changed_images[@]} > 0)); then
     printf 'Importing %s images into %s; waiting for import and unpack to finish\n' "${#changed_images[@]}" "$LOCAL_CLUSTER"
     printf '  %s\n' "${changed_images[@]}"
@@ -258,11 +212,6 @@ else
     docker tag "$MODEL_SERVER_IMAGE" "$MODEL_SERVER_DEPLOY_IMAGE"
     docker push "$MODEL_SERVER_DEPLOY_IMAGE"
   fi
-fi
-
-if [[ -n "$DEV_IMAGE_OUTPUT" ]]; then
-  write_image_output
-  exit 0
 fi
 
 helm_args=(

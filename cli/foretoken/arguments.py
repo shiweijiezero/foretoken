@@ -27,6 +27,7 @@ class InstallCommand:
     gateway_section_name: str
     timeout: str
     grafana_auth: str | None = None
+    engine_sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -183,7 +184,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Install or update the Foretoken Kubernetes control plane",
         description=(
             "Install or update Foretoken CRDs and the controller, discover the cluster "
-            "LoadBalancer, configure shared monitoring, and create Gateway resources "
+            "LoadBalancer, configure shared metrics and persistent logs, and create Gateway resources "
             "when Gateway mode is selected. "
             "Model services are deployed separately with 'foretoken deploy'."
         ),
@@ -192,7 +193,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "-e",
         "--editable",
         metavar="PATH",
-        help="build Foretoken images from this source root",
+        help="build Foretoken images and bind this workstation's source root for subsequent deploy updates",
+    )
+    install.add_argument(
+        "--engine-source", action="append", metavar="[ENGINE=]PATH",
+        help="bind a vLLM checkout for source updates; repeat with vllm-metax=PATH for its plugin (requires -e)",
     )
     install.add_argument(
         "--registry",
@@ -214,7 +219,7 @@ def _build_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="PATH",
         help=(
-            "Helm values for images, runtime, hardware, or a managed LoadBalancer "
+            "Helm values for images, runtime, hardware, logging, build caches, or a managed LoadBalancer "
             "address pool; may be repeated"
         ),
     )
@@ -388,6 +393,8 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             )
         if parsed_args.registry and not parsed_args.editable:
             parser.error("--registry requires --editable PATH")
+        if parsed_args.engine_source and not parsed_args.editable:
+            parser.error("--engine-source requires --editable PATH")
         return InstallCommand(
             tuple(parsed_args.values or ()),
             parsed_args.editable,
@@ -400,6 +407,7 @@ def parse_arguments(argv: Sequence[str]) -> ParsedCommand:
             parsed_args.gateway_section_name,
             parsed_args.timeout,
             parsed_args.grafana_auth,
+            tuple(parsed_args.engine_source or ()),
         )
     if parsed_args.command == "uninstall":
         return UninstallCommand(parsed_args.timeout)

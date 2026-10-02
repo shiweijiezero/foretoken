@@ -66,7 +66,7 @@ diff --git a/vllm/v1/worker/gpu_worker.py b/vllm/v1/worker/gpu_worker.py
 +
          if is_start:
 @@ -1232,2 +1238,5 @@
- 
+
 +        if self.profiler is not None and self.profiler_config.profiler == "torch":
 +            self.profiler._raise_if_failed()
 +

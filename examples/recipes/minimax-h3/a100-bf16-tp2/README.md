@@ -11,42 +11,10 @@ model replica using tensor parallelism across two GPUs (TP=2). The model request
 two A100 80 GB GPUs, 32 CPU cores, and 256 GiB of host memory; allow additional
 capacity for the platform.
 
-## Build and install
+## Before deploying
 
-Prepare a GPU-enabled Kubernetes cluster and the tools in the
-[source deployment guide](../../../../docs/custom-deployment.md). For a local
-cluster, follow the [k3d guide](../../../../docs/k3d-deployment.md).
-Run from the Foretoken repository root:
-
-```bash
-make image-vllm-omni VLLM_OMNI_IMAGE=foretoken-vllm-omni:latest
-make image-model-server-omni \
-  INFERENCE_ENGINE_IMAGE=foretoken-vllm-omni:latest \
-  OMNI_MODEL_SERVER_IMAGE=foretoken-omni-model-server:latest
-```
-
-For k3d, import the model-server image into the cluster selected by `CLUSTER`:
-
-```bash
-k3d image import --cluster "$CLUSTER" foretoken-omni-model-server:latest
-```
-
-For a remote cluster, tag and push that image to a registry reachable by its
-nodes, and use the pushed image reference below. Save the following as
-`platform-values.yaml`:
-
-```yaml
-runtime:
-  vllmOmni:
-    image: foretoken-omni-model-server:latest
-```
-
-Install or update the platform. Remote clusters also need `--registry` as
-shown in the source deployment guide.
-
-```bash
-foretoken install -e . --values platform-values.yaml
-```
+The platform must use the [vLLM-Omni runtime](../../../../docs/custom-deployment.md#vllm-omni-runtime).
+Run the recipe commands below from the Foretoken repository root.
 
 ## Deploy
 
@@ -59,8 +27,7 @@ in `cache.yaml` to a directory available on the target node, as described in
 
 For Gateway access, set `spec.hostname` in this recipe's `frontend.yaml` and
 install the platform in [Gateway mode](../../../../README.md#gateway-mode)
-before deploying. The request commands below work with either LoadBalancer or
-Gateway access.
+before deploying.
 
 ```bash
 RECIPE=examples/recipes/minimax-h3/a100-bf16-tp2
@@ -75,7 +42,8 @@ Set `REFERENCE_IMAGE` to an existing PNG file:
 REFERENCE_IMAGE=/path/to/reference.png
 ENDPOINT="$(foretoken endpoint "$RECIPE" --timeout 10m)"
 REQUEST_HOST="$(foretoken endpoint "$RECIPE" --host --timeout 10m)"
-curl --fail-with-body --max-time 4000 \
+mkdir -p ./data
+curl --fail --max-time 4000 \
   "${ENDPOINT%/}/v1/videos/sync" \
   -H "Host: $REQUEST_HOST" \
   -F model=MiniMaxAI/MiniMax-H3 \
@@ -84,10 +52,10 @@ curl --fail-with-body --max-time 4000 \
   -F width=1024 -F height=576 -F num_frames=124 -F fps=24 \
   -F num_inference_steps=50 -F aspect_ratio=16:9 -F flow_shift=12 -F seed=1 \
   -F 'extra_params={"task":"fl2va","audio_flow_shift":3}' \
-  --output h3-fl2va.mp4
+  --output ./data/video.mp4
 ```
 
-The response is saved to `h3-fl2va.mp4` in the current directory.
+The generated video is saved to `./data/video.mp4`.
 
 ## Generate from a video
 
@@ -101,7 +69,8 @@ foretoken delete "$RECIPE" --timeout 2h
 foretoken deploy "$RECIPE" --timeout 1h
 ENDPOINT="$(foretoken endpoint "$RECIPE" --timeout 10m)"
 REQUEST_HOST="$(foretoken endpoint "$RECIPE" --host --timeout 10m)"
-curl --fail-with-body --max-time 4000 \
+mkdir -p ./data
+curl --fail --max-time 4000 \
   "${ENDPOINT%/}/v1/videos/sync" \
   -H "Host: $REQUEST_HOST" \
   -F model=MiniMaxAI/MiniMax-H3 \
@@ -110,10 +79,10 @@ curl --fail-with-body --max-time 4000 \
   -F width=1024 -F height=576 -F num_frames=124 -F fps=24 \
   -F num_inference_steps=50 -F aspect_ratio=16:9 -F flow_shift=12 -F seed=1 \
   -F 'extra_params={"task":"ref2va","audio_flow_shift":3}' \
-  --output h3-ref2va.mp4
+  --output ./data/h3-ref2va.mp4
 ```
 
-The response is saved to `h3-ref2va.mp4`. To return to image input, change
+The response is saved to `./data/h3-ref2va.mp4`. To return to image input, change
 `task-type` back to `fl2va` and repeat the delete/deploy commands before sending
 an FL2VA request.
 
@@ -128,7 +97,7 @@ spec:
   source: modelscope
 ```
 
-For a Hugging Face-compatible mirror, add its URL to `platform-values.yaml`
+For a Hugging Face-compatible mirror, add its URL to `deploy/platform-values.yaml`
 and rerun the platform installation command before deploying the model:
 
 ```yaml

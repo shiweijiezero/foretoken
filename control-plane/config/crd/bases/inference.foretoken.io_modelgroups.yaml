@@ -598,6 +598,14 @@ spec:
                     maximum: 65535
                     minimum: 1
                     type: integer
+                  preparationVersion:
+                    description: |-
+                      PreparationVersion selects the source-publication contract for this immutable cohort.
+                      Omitted on cohorts created before source preparation was introduced.
+                    format: int32
+                    maximum: 1
+                    minimum: 0
+                    type: integer
                   profiling:
                     description: Profiling fixes the instrumentation prepared at runtime
                       startup.
@@ -611,6 +619,10 @@ spec:
                     required:
                     - engine
                     type: object
+                  sourceRevision:
+                    description: SourceRevision pins the source bundle in this Group's
+                      persistent runtime cache.
+                    type: string
                   tritonCacheDirectory:
                     description: TritonCacheDirectory is the initial worker cache
                       path; Kubernetes expands its node reference.

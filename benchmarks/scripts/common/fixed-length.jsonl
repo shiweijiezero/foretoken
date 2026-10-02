@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
-
-{"_benchmark_name":"short-context-128in-128out","min_prompt_length":128,"max_prompt_length":128,"min_output_length":128,"max_output_length":128,"max_concurrency":[1,8,32]}
-{"_benchmark_name":"long-context-8192in-256out","min_prompt_length":8192,"max_prompt_length":8192,"min_output_length":256,"max_output_length":256,"max_concurrency":[1,8,32]}
-{"_benchmark_name":"long-generation-128in-1024out","min_prompt_length":128,"max_prompt_length":128,"min_output_length":1024,"max_output_length":1024,"max_concurrency":[1,8,32]}
+# Compare balanced, long-input, and long-output generation lengths.
+{"_benchmark_name":"balanced-8192in-2048out","min_prompt_length":8192,"max_prompt_length":8192,"min_output_length":2048,"max_output_length":2048,"max_concurrency":[1,8,16,32]}
+{"_benchmark_name":"long-input-32768in-4096out","min_prompt_length":32768,"max_prompt_length":32768,"min_output_length":4096,"max_output_length":4096,"max_concurrency":[1,8,16,32]}
+{"_benchmark_name":"long-input-131072in-4096out","min_prompt_length":131072,"max_prompt_length":131072,"min_output_length":4096,"max_output_length":4096,"max_concurrency":[1,8,16,32]}
+{"_benchmark_name":"long-output-8192in-16384out","min_prompt_length":8192,"max_prompt_length":8192,"min_output_length":16384,"max_output_length":16384,"max_concurrency":[1,8,16,32]}
+{"_benchmark_name":"long-output-32768in-16384out","min_prompt_length":32768,"max_prompt_length":32768,"min_output_length":16384,"max_output_length":16384,"max_concurrency":[1,8,16,32]}

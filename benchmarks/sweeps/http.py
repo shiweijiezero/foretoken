@@ -16,6 +16,7 @@ from benchmarks.config.benchmark import (
     ModelServiceSource,
     ParameterSweepConfig,
     normalize_output_token_limit,
+    parse_duration_seconds,
 )
 from benchmarks.model_service import resolve_benchmark_service
 from benchmarks.results.console import format_benchmark_config, log_sweep_results
@@ -45,6 +46,11 @@ def _preserve_value(value: Any) -> Any:
     return value
 
 
+def _slo_criteria(value: Any) -> list[dict[str, str]]:
+    """Keep one sweep choice as a group of criteria for the existing SLO config."""
+    return [value] if isinstance(value, dict) else value
+
+
 # Only HTTP request, generation, and workload choices are exposed by this adapter.
 _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "max_concurrency": ("load", "max_concurrency", int),
@@ -53,7 +59,7 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "request_rate": ("load", "arrival_rate", float),
     "arrival_pattern": ("load", "arrival_pattern", str),
     "burstiness": ("load", "burstiness", float),
-    "duration": ("load", "duration_seconds", float),
+    "duration": ("load", "duration_seconds", parse_duration_seconds),
     "max_tokens": ("generation", "max_tokens", normalize_output_token_limit),
     "min_output_length": ("generation", "min_output_length", int),
     "max_output_length": ("generation", "max_output_length", int),
@@ -67,6 +73,10 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "repetition_penalty": ("generation", "repetition_penalty", _preserve_value),
     "extra_body": ("generation", "extra_body", dict),
     "dataset": ("workload", "dataset_selectors", _dataset_selectors),
+    "trace": ("trace", "trace_selector", str),
+    "trace_start": ("trace", "start_offset_seconds", parse_duration_seconds),
+    "trace_duration": ("trace", "duration_seconds", parse_duration_seconds),
+    "trace_synthetic_prefix_reuse": ("trace", "synthetic_prefix_reuse", _preserve_value),
     "dataset_weights": ("workload", "dataset_weights", lambda value: [float(item) for item in (value.split(",") if isinstance(value, str) else value)]),
     "dataset_offset": ("workload", "row_offset", int),
     "tokenizer_path": ("workload", "tokenizer", str),
@@ -78,6 +88,7 @@ _SWEEP_FIELDS: dict[str, tuple[str, str, Callable[[Any], Any]]] = {
     "prompt": ("workload", "fixed_prompt", str),
     "max_turns": ("workload", "max_turns", int),
     "conversation_history": ("workload", "conversation_history", str),
+    "slo_params": ("slo", "params", _slo_criteria),
 }
 
 
@@ -169,7 +180,7 @@ class _HttpSweepAdapter(SweepAdapter[BenchmarkConfig]):
             self.service = self.resources.enter_context(resolve_benchmark_service(point_config))
             self.selection = selection
         logger.info("%s", format_benchmark_config(point_config, self.service))
-        if point_config.slo.params:
+        if point_config.slo.search:
             result = SloAutoTuneBenchmark(
                 point_config,
                 self.service,

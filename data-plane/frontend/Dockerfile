@@ -16,6 +16,7 @@ WORKDIR /workspace
 ARG FORETOKEN_GITHUB_MIRROR
 ARG FORETOKEN_CARGO_REGISTRY
 ARG CARGO_NET_GIT_FETCH_WITH_CLI
+ARG VLLM_REVISION
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential git libssl-dev perl pkg-config \
@@ -25,7 +26,8 @@ COPY data-plane/ ./data-plane/
 
 # Key the target cache by the builder image: artifacts built on different
 # Debian releases are not interchangeable even with the same Rust version.
-RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
+RUN --mount=type=cache,id=foretoken-vllm-${VLLM_REVISION},target=/var/cache/vllm,sharing=locked \
+    --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=foretoken-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=foretoken-cargo-target-bookworm,target=/workspace/data-plane/target,sharing=locked \
     if [ -n "${FORETOKEN_GITHUB_MIRROR}" ]; then \
@@ -39,6 +41,16 @@ RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/regis
     && if [ -n "${CARGO_NET_GIT_FETCH_WITH_CLI}" ]; then \
       export CARGO_NET_GIT_FETCH_WITH_CLI; \
     fi \
+    && if [ ! -f data-plane/third_party/vllm/rust/Cargo.toml ]; then \
+      if [ ! -f /var/cache/vllm/rust/Cargo.toml ]; then \
+        git -C /var/cache/vllm init -q \
+        && git -C /var/cache/vllm fetch --depth=1 https://github.com/vllm-project/vllm.git "${VLLM_REVISION}" \
+        && git -C /var/cache/vllm checkout -q --detach FETCH_HEAD; \
+      fi \
+      && mkdir -p data-plane/third_party/vllm \
+      && git -C /var/cache/vllm archive HEAD | tar -x -C data-plane/third_party/vllm; \
+    fi \
+    && cargo run --locked --manifest-path data-plane/xtask/Cargo.toml -- prepare-vllm \
     && cargo build --locked --release \
       --manifest-path data-plane/Cargo.toml \
       --package foretoken-frontend \
@@ -46,7 +58,10 @@ RUN --mount=type=cache,id=foretoken-cargo-registry,target=/usr/local/cargo/regis
       data-plane/target/release/foretoken-frontend \
       /out/foretoken-frontend
 
-FROM ${RUNTIME_IMAGE}
+FROM scratch AS source-export
+COPY --from=builder /out/foretoken-frontend /bin/foretoken-frontend
+
+FROM ${RUNTIME_IMAGE} AS runtime
 
 ARG OCI_SOURCE=https://github.com/shiweijiezero/foretoken
 ARG OCI_REVISION

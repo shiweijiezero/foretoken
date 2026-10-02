@@ -37,10 +37,13 @@ class PlatformConfig:
     install_source_label: str
     platform: ManagedChart
     prometheus: ManagedChart
+    loki: ManagedChart
+    log_collector: ManagedChart
     dcgm_exporter: ManagedChart
     envoy_gateway: ManagedChart
     metallb: ManagedChart
     leader_worker: ManagedChart
+    dragonfly: ManagedChart
     envoy_gateway_default_controller: str
     envoy_gateway_controller: str
     dcgm_metrics: str
@@ -83,6 +86,7 @@ def _chart_source(
 def default_platform_config(oci_registry: str | None = None) -> PlatformConfig:
     """Return version-aligned release identities and optional OCI mirror paths."""
     registry = _oci_registry(oci_registry)
+    dragonfly_version = "1.8.5"
     return PlatformConfig(
         namespace="foretoken-platform",
         load_balancer_namespace="metallb-system",
@@ -104,6 +108,26 @@ def default_platform_config(oci_registry: str | None = None) -> PlatformConfig:
                 "oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack",
             ),
             version="88.5.2",
+        ),
+        loki=ManagedChart(
+            release_name="foretoken-loki",
+            source=_chart_source(
+                registry,
+                "https://github.com/grafana-community/helm-charts/releases/download/"
+                "loki-18.13.5/loki-18.13.5.tgz",
+                "grafana-community/charts/loki",
+            ),
+            version="18.13.5" if registry else None,
+        ),
+        log_collector=ManagedChart(
+            release_name="foretoken-log-collector",
+            source=_chart_source(
+                registry,
+                "https://github.com/fluent/helm-charts/releases/download/"
+                "fluent-bit-0.58.2/fluent-bit-0.58.2.tgz",
+                "fluent/charts/fluent-bit",
+            ),
+            version="0.58.2" if registry else None,
         ),
         dcgm_exporter=ManagedChart(
             release_name="foretoken-dcgm-exporter",
@@ -135,6 +159,16 @@ def default_platform_config(oci_registry: str | None = None) -> PlatformConfig:
             release_name="foretoken-lws",
             source=_chart_source(registry, "oci://registry.k8s.io/lws/charts/lws"),
             version="0.10.0",
+        ),
+        dragonfly=ManagedChart(
+            release_name="foretoken-dragonfly",
+            source=_chart_source(
+                registry,
+                "https://github.com/dragonflyoss/helm-charts/releases/download/"
+                f"dragonfly-{dragonfly_version}/dragonfly-{dragonfly_version}.tgz",
+                "dragonflyoss.github.io/helm-charts/dragonfly",
+            ),
+            version=dragonfly_version if registry else None,
         ),
         envoy_gateway_default_controller=(
             "gateway.envoyproxy.io/gatewayclass-controller"
@@ -180,6 +214,14 @@ def load_platform_values(paths: tuple[str, ...]) -> tuple[dict[str, Any], ...]:
             raise DeploymentError(
                 f"Helm values file {path} sets observability.prometheus; use --prometheus"
             )
+        distribution = values.get("modelDistribution", {})
+        if isinstance(distribution, dict):
+            dragonfly = distribution.get("dragonfly", {})
+            if isinstance(dragonfly, dict) and "socketPath" in dragonfly:
+                raise DeploymentError(
+                    f"Helm values file {path} sets modelDistribution.dragonfly.socketPath; "
+                    "foretoken install resolves it from the managed or existing Dragonfly release"
+                )
         frontend = values.get("frontend")
         if isinstance(frontend, dict):
             reserved = tuple(key for key in ("mode", "gateway") if key in frontend)

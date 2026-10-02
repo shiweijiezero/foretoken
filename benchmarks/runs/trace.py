@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.config.benchmark import BenchmarkConfig
-from benchmarks.integrations.openai import ChatCompletionsLoadClient
+from benchmarks.integrations.openai import OpenAILoadClient
 from benchmarks.model_service import ModelService
 from benchmarks.results.metrics import (
     RequestMeasurement,
@@ -166,7 +166,7 @@ class TraceReplayBenchmark:
 
     async def _send_event(
         self,
-        client: ChatCompletionsLoadClient,
+        client: OpenAILoadClient,
         event: ArrivalTraceEvent,
         index: int,
         *,
@@ -221,7 +221,7 @@ class TraceReplayBenchmark:
 
     async def _replay_events(
         self,
-        client: ChatCompletionsLoadClient,
+        client: OpenAILoadClient,
         events: list[ArrivalTraceEvent],
         *,
         max_concurrency: int | None,
@@ -313,7 +313,7 @@ class TraceReplayBenchmark:
                 start_offset_seconds=trace.start_offset_seconds,
                 duration_seconds=trace.duration_seconds,
             )
-            if self.benchmark.slo.params and self.benchmark.load.request_count is not None:
+            if self.benchmark.slo.search and self.benchmark.load.request_count is not None:
                 events = events[: self.benchmark.load.request_count]
             trace_format = reader.trace_format
             if trace_format is None:
@@ -329,7 +329,10 @@ class TraceReplayBenchmark:
                 raise ValueError("Trace warmup consumed every selected event")
             request_count = len(measured_events)
 
-            max_concurrency = trace.max_concurrency
+            max_concurrency = (
+                self.benchmark.load.max_concurrency
+                if self.benchmark.load.max_concurrency > 0 else None
+            )
             active_connection_limit = (
                 request_count
                 if max_concurrency is None
@@ -358,7 +361,6 @@ class TraceReplayBenchmark:
                     "payload_dataset": self.benchmark.resolved_workload.dataset_selectors[0],
                     "trace_start": trace.start_offset_seconds,
                     "trace_duration": trace.duration_seconds,
-                    "trace_max_concurrency": max_concurrency,
                     "trace_synthetic_prefix_reuse": trace.synthetic_prefix_reuse,
                     "trace_format": trace_format,
                     "payload_source": request_origin,
@@ -369,7 +371,7 @@ class TraceReplayBenchmark:
             warmup_events = events[:warmup_count]
             measured_trace_start = measured_events[0].timestamp_seconds
             with (profile if profile is not None else nullcontext()):
-                async with ChatCompletionsLoadClient(
+                async with OpenAILoadClient(
                     self.benchmark,
                     self.service,
                     max_connections=active_connection_limit,

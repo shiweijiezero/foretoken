@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+# Compare conversation arrival rates at fixed request rates.
+{"request_rate":[2,4,8,16]}

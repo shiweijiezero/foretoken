@@ -7,6 +7,7 @@
     "imagePullSecrets",
     "controller",
     "workload",
+    "modelDistribution",
     "loadBalancer",
     "rdma",
     "frontend",
@@ -14,6 +15,23 @@
     "runtime"
   ],
   "properties": {
+    "development": {
+      "type": "object",
+      "required": ["enabled"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "build": {
+          "type": "object",
+          "properties": {
+            "image": {"type": "string", "minLength": 1},
+            "storageClassName": {"type": "string"},
+            "storageSize": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "profiling": {
       "type": "object",
       "additionalProperties": false,
@@ -176,6 +194,41 @@
       },
       "additionalProperties": false
     },
+    "modelDistribution": {
+      "type": "object",
+      "required": ["dragonfly", "modelexpress"],
+      "additionalProperties": false,
+      "properties": {
+        "modelexpress": {
+          "type": "object",
+          "required": ["enabled"],
+          "additionalProperties": false,
+          "properties": {"enabled": {"type": "boolean"}}
+        },
+        "dragonfly": {
+          "type": "object",
+          "required": ["enabled", "existingRelease", "socketPath"],
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "existingRelease": {
+              "type": "object",
+              "required": ["name", "namespace"],
+              "additionalProperties": false,
+              "properties": {
+                "name": {"type": "string"},
+                "namespace": {"type": "string"}
+              }
+            },
+            "socketPath": {"type": "string"}
+          },
+          "allOf": [{
+            "if": {"properties": {"enabled": {"const": true}}},
+            "then": {"properties": {"socketPath": {"minLength": 1, "pattern": "^/"}}}
+          }]
+        }
+      }
+    },
     "loadBalancer": {
       "type": "object",
       "required": [
@@ -286,6 +339,20 @@
               "type": "boolean",
               "description": "Allow read-only access without login to CLI-managed Grafana."
             }
+          },
+          "additionalProperties": false
+        },
+        "logs": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "endpoint": {"type": "string", "description": "Existing Loki HTTP(S) base URL; empty installs managed storage."},
+            "retention": {"type": "string", "description": "Managed Loki retention duration."},
+            "storageClass": {"type": "string"},
+            "initialSize": {"type": "string", "description": "Initial managed log PVC request; defaults to 5Gi."},
+            "maxSize": {"type": "string", "description": "Enable automatic log PVC expansion up to this capacity; requires an expandable StorageClass."},
+            "managedStatefulSet": {"type": "string", "description": "Managed Loki StatefulSet resolved by foretoken install."},
+            "datasourceURL": {"type": "string", "description": "Loki query URL resolved by foretoken install."}
           },
           "additionalProperties": false
         },

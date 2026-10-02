@@ -1,190 +1,38 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <!-- SPDX-FileCopyrightText: Copyright contributors to the Foretoken project -->
 
-# 源码镜像手工生命周期
+# 运行时源码生命周期
 
-[English](source-image-lifecycle.md) | [中文](source-image-lifecycle_zh.md)
+[English](source-image-lifecycle.md) | 简体中文
 
-本维护者指南说明手工镜像导入和原始 Helm 操作。除非另有说明，命令均从 Foretoken 仓库根目录执行。
+源码更新将运行时代码与提供依赖的镜像分开管理。本文说明维护这条路径时需要遵守的职责与生效规则。安装和重新部署命令见[从源码部署 Foretoken](../custom-deployment_zh.md)。
 
-沐曦镜像准备方式见[准备沐曦 Foretoken 平台](metax-platform_zh.md#从源码安装)。统一发布两个 GPU 变体及 Chart，使用[发布产物命令](release_zh.md#构建与推送发布产物)。
+## 准备与发布
 
-## 直接导入本地镜像
+CLI 负责工作站上的源码目录绑定、安装设置保存和输入比较。绑定对应实际集群、已安装的平台和控制器选定的运行环境，不在工作站之间共享。同一工作站对同一集群的源码操作串行执行。客户端为变化的路径分配修订标识，只发送改动内容和删除信息；输入记录完整写入后，集群工作区才可用于构建。
 
-**选项 1：导入 Kind 集群。** 使用 Kind 验证控制平面、CRD、前端服务和调度逻辑时，可以直接创建集群。需要运行 GPU 模型服务时，使用选项 2 的 k3d，并按 [使用 k3d 部署 Foretoken](../k3d-deployment_zh.md) 指定可用 GPU。先安装 Kind：
+专用 BuildKit Pod 负责编译。源码工作区、依赖下载、编译缓存与产物保存在独立编译卷中，与模型数据分开。已有 Dockerfile 负责构建平台镜像或导出运行时可执行文件。镜像仓库模式由集群直接推送产物；本地 kind/k3d 将镜像载入节点的 containerd，不经过客户端中转。安装中断后保留编译缓存。下一次源码操作取得工作站操作锁后，先清理该绑定遗留的构建 Pod，再复用缓存。临时镜像仓库 Secret 归构建 Pod 所有。
 
-```bash
-export KIND_VERSION=v0.32.0
-mkdir -p ./tmp/bin
-curl -fL \
-  -o ./tmp/bin/kind \
-  "https://github.com/kubernetes-sigs/kind/releases/download/$KIND_VERSION/kind-linux-amd64"
-chmod +x ./tmp/bin/kind
-export PATH="$PWD/tmp/bin:$PATH"
-kind version
-```
+发布时，先将完整组件代码包复制到工作负载持久缓存的临时目录，完成后才在服务上选择该版本。后续更新不修改已发布的目录。发布进程使用运行时镜像的用户身份，在提供推理服务的 Pod 之外执行，因此旧推理进程无法启动时仍能准备替换代码。
 
-创建单节点集群：
+## 引擎源码与编译扩展
 
-```bash
-# 预计执行时间：约 20 秒
-export KIND_CLUSTER=foretoken-local
-kind create cluster --name "$KIND_CLUSTER"
-```
+显式关联的引擎源码与仓库固定的 vLLM Rust 依赖相互独立。Python 代码以该源码目录为准；目录中没有的兼容动态库、生成文件和外部依赖文件由运行时补齐，同时保留 Foretoken 的引擎补丁。删除的输入必须从后续代码包中消失，仅更新 Python 时也要保留已经成功编译的扩展。
 
-若需要在同一台机器上模拟多节点拓扑，使用项目提供的 Kind 配置文件。
+编译扩展使用所选运行时的 Python、PyTorch 和设备环境，在独立构建阶段补齐编译工具。编译及增量缓存交给上游构建工具管理。完整镜像更新将已准备的代码与源码生成的包元数据一起打包，再由正常的包解析器安装依赖；涉及设备 ABI 的依赖仍与所选基础镜像保持一致。沐曦原生扩展更新还需让运行时选择新编译的插件，而不是预编译 kernel 包。
 
-```bash
-# 预计执行时间：约 30 秒
-export KIND_CLUSTER=foretoken-local
-kind create cluster \
-  --name "$KIND_CLUSTER" \
-  --config deploy/kind/multi-node.yaml
-```
+## 工作负载生效
 
-创建集群后，构建并导入本地镜像。vLLM adapter 支持 vLLM 0.20–0.29 及当前 0.30 开发版的 EngineCore 协议布局；引擎与模型本身还需匹配目标加速器。inference-engine image 通常通过 `python` 提供 Python 解释器；如果必须使用特定解释器路径，同时设置两个构建输入：
+CLI 在服务上选择源码版本，已有控制器负责前端滚动更新和模型 Pool/Group 替换。模型准备与推理进程收到相同的源码选择。启动时，镜像内的引导代码选择可执行文件、Python 适配代码和引擎代码包。代码包声明的可执行文件缺失时，启动失败，不会静默使用镜像中的旧代码。
 
-```bash
-INFERENCE_ENGINE_IMAGE=<compatible-inference-engine-image> \
-FORETOKEN_VLLM_PYTHON=/absolute/path/to/python \
-make dev-build
-```
+CLI 观察选中的工作负载、实际启用的源码、已加载的路由版本和 Service 端点，再报告部署成功。源码未变化时复用已准备的产物；工作负载配置未变化时不触发替换。
 
-否则直接使用默认值：
+源码更新和镜像更新都由现有控制器协调停止接收新请求、撤回路由、排空请求和释放资源。路由撤回以各前端实际加载的路由版本为确认依据，与服务就绪状态分开：没有剩余后端的前端虽然无法提供推理服务，仍可确认已加载空路由快照。消费者不可达或请求未完成时，继续使用既有排空期限。
 
-```bash
-# 预计执行时间：约 8 分钟
-make dev-build
+## 镜像更新与清理
 
-kind load docker-image \
-  --name "$KIND_CLUSTER" \
-  foretoken-dev-control-plane:latest \
-  foretoken-dev-frontend:latest \
-  foretoken-dev-model-server:latest
+镜像内的启动代码在源码启用前执行，因此修改这部分代码需要更新镜像。依赖、构建、控制面和 Helm 的改动也使用平台安装流程。运行时存储不可用，或单节点可写存储卷尚待首次放置时，部署改用镜像；存储的首次节点放置仍由模型准备流程负责。
 
-kubectl config use-context "kind-$KIND_CLUSTER"
-kubectl get nodes
-```
+镜像复用以构建结果、已安装镜像引用和本次分发目的地为依据。源码安装成功后清除服务的源码选择，使工作负载使用新镜像。不再被引用的本地快照会被清理。运行时代码包的回收会保留服务意图、尚存的更新模板、运行中或正在终止的消费者，并覆盖可能共享数据目录的其他命名空间；只删除当前绑定不再使用的发布产物，不删除其他写入者尚未启用的代码。
 
-**选项 2：导入 k3d 集群。** 先查看当前机器上的集群，并将 `CLUSTER` 设置为实际名称：
-
-```bash
-k3d cluster list
-export CLUSTER=your-cluster-name
-```
-
-如果目标集群尚未创建，请先完成[使用 k3d 部署 Foretoken](../k3d-deployment_zh.md)中的集群创建步骤。然后在仓库根目录构建并导入本地镜像。
-
-```bash
-# 预计执行时间：约 6 分钟
-make dev-build
-
-k3d image import --cluster "$CLUSTER" \
-  foretoken-dev-control-plane:latest \
-  foretoken-dev-frontend:latest \
-  foretoken-dev-model-server:latest
-
-mkdir -p ./tmp
-k3d kubeconfig get "$CLUSTER" \
-  > "./tmp/kubeconfig-$CLUSTER.yaml"
-export KUBECONFIG="$PWD/tmp/kubeconfig-$CLUSTER.yaml"
-kubectl get nodes
-```
-
-`--namespace k8s.io` 表示 Kubernetes 使用的 containerd 镜像命名空间。选项 3 和选项 4 由节点管理员执行。
-
-**选项 3：导入单节点上的 containerd。** Kubernetes 节点与开发机是同一台机器时，在仓库根目录构建镜像包并导入 Kubernetes 使用的 containerd 镜像命名空间。
-
-```bash
-make dev-build
-mkdir -p ./tmp
-
-docker save \
-  foretoken-dev-control-plane:latest \
-  foretoken-dev-frontend:latest \
-  foretoken-dev-model-server:latest \
-  --output ./tmp/foretoken-dev-images.tar
-
-sudo ctr --namespace k8s.io images import ./tmp/foretoken-dev-images.tar
-rm ./tmp/foretoken-dev-images.tar
-```
-
-**选项 4：导入多节点 containerd。** 针对使用 containerd 的离线多节点 Kubernetes 集群，在开发机上构建镜像包。
-
-```bash
-make dev-build
-mkdir -p ./tmp
-
-docker save \
-  foretoken-dev-control-plane:latest \
-  foretoken-dev-frontend:latest \
-  foretoken-dev-model-server:latest \
-  --output ./tmp/foretoken-dev-images.tar
-```
-
-将 `node-a` 和 `node-b` 替换为实际节点的 SSH 地址，然后导入每个可能运行 Foretoken 工作负载的节点。
-
-```bash
-for NODE in node-a node-b; do
-  # 将镜像包传输到节点
-  ssh "$NODE" 'mkdir -p ./tmp'
-  rsync --archive --progress \
-    ./tmp/foretoken-dev-images.tar \
-    "$NODE:./tmp/foretoken-dev-images.tar"
-
-  # 在节点上导入 Kubernetes 使用的 containerd 镜像空间
-  ssh -t "$NODE" \
-    'sudo ctr --namespace k8s.io images import ./tmp/foretoken-dev-images.tar &&
-     rm ./tmp/foretoken-dev-images.tar'
-done
-```
-
-## 使用 Helm 安装平台
-
-镜像导入完成后，确认当前 Kubernetes 上下文指向目标集群，然后执行 Helm 命令。
-
-```bash
-# 预计执行时间：约 30 秒
-helm upgrade --install foretoken \
-  ./deploy/charts/foretoken \
-  --namespace foretoken-platform \
-  --create-namespace \
-  --set frontend.enabled=true \
-  --set frontend.mode=local \
-  --set image.repository=foretoken-dev-control-plane \
-  --set image.tag=latest \
-  --set image.pullPolicy=Never \
-  --set frontend.image=foretoken-dev-frontend:latest \
-  --set runtime.vllm.image=foretoken-dev-model-server:latest \
-  --wait \
-  --timeout=5m
-```
-
-## 通过 OCI 镜像仓库构建并部署
-
-OCI 镜像仓库可以将开发机构建的镜像分发给 Kubernetes 节点。以下示例使用 GHCR。
-
-```bash
-export GITHUB_USER=your-github-user
-export REGISTRY="ghcr.io/$GITHUB_USER/foretoken-dev"
-docker login ghcr.io
-REGISTRY="$REGISTRY" make dev-deploy
-```
-
-该命令会推送镜像并安装或更新 Foretoken 平台。
-
-脚本会自动推送：
-
-```text
-ghcr.io/your-github-user/foretoken-dev/control-plane:<tag>
-ghcr.io/your-github-user/foretoken-dev/frontend:<tag>
-ghcr.io/your-github-user/foretoken-dev/model-server:<tag>
-```
-
-使用私有镜像仓库时，通过 `IMAGE_PULL_SECRET` 提供 Kubernetes 镜像拉取 Secret：
-
-```bash
-REGISTRY="$REGISTRY" \
-IMAGE_PULL_SECRET=foretoken-registry \
-make dev-deploy
-```
+运行时更新所用编译卷跟随模型缓存的生命周期。源码卸载会删除托管的编译缓存和工作站绑定，保留模型数据。vLLM-Omni 仍使用独立的[镜像构建配方](../custom-deployment_zh.md#vllm-omni-运行时)。

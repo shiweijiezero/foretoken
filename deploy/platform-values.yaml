@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
+
+# Optional platform overrides. The chart defaults apply when sections remain commented.
+# Pass this file with: foretoken install --values deploy/platform-values.yaml
+
+# Shared model downloads:
+# modelDistribution:
+#   dragonfly:
+#     enabled: true
+
+# Private image registry. Create registry-auth in foretoken-platform and in each
+# workload namespace before using these references.
+# imagePullSecrets:
+#   - name: registry-auth
+# workload:
+#   imagePullSecrets:
+#     - name: registry-auth
+
+# Source-build storage. The default StorageClass and 100Gi compiler cache apply
+# unless these values are overridden.
+# development:
+#   build:
+#     storageClassName: your-storage-class
+#     storageSize: 100Gi
+
+# Runtime or hardware overrides:
+# runtime:
+#   vllm:
+#     image: registry.example.com/foretoken/model-server:dev
+#     gpu:
+#       resourceName: nvidia.com/gpu
+#       nodeSelector:
+#         key: nvidia.com/gpu.product
+#         value: NVIDIA-H100-80GB-HBM3
+
+# Managed LoadBalancer addresses for clusters without automatic allocation:
+# loadBalancer:
+#   managedAddresses:
+#     - 192.168.1.240-192.168.1.250

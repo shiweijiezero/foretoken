@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmarks.results.metrics import RequestMeasurement
+from benchmarks.results.replicas import gpu_allocation_history_rows
 from benchmarks.results.timeseries import (
     ELAPSED_TIME,
     REQUEST_INDEX,
@@ -94,6 +95,11 @@ def _http_charts(source: Path, metrics: dict[str, Any], *, warmup: bool = False)
         return []
     raw = json.loads(raw_path.read_text(encoding="utf-8"))
     measurements = load_http_measurements(raw)
+    slo_met = (
+        [bool(row["slo_met"]) for row in raw]
+        if raw and all(row.get("slo_met") is not None for row in raw)
+        else (metrics.get("slo") or {}).get("request_slo_met")
+    )
     stream = bool(metrics["stream"])
     prefix = "warmup-" if warmup else ""
     phase = "Warmup · " if warmup else ""
@@ -144,7 +150,7 @@ def _http_charts(source: Path, metrics: dict[str, Any], *, warmup: bool = False)
         request_series(
             measurements,
             stream=stream,
-            slo_met=(metrics.get("slo") or {}).get("request_slo_met"),
+            slo_met=slo_met,
         )
     )
     for row, original in zip(ordered, sorted(raw, key=lambda item: item["start_time"])):
@@ -158,7 +164,8 @@ def _http_charts(source: Path, metrics: dict[str, Any], *, warmup: bool = False)
         )
     windows = list(
         time_series(
-            measurements, duration=float(metrics["benchmark_time"]), stream=stream
+            measurements, duration=float(metrics["benchmark_time"]),
+            stream=stream, slo_met=slo_met,
         )
     )
     charts += _rows_chart(
@@ -178,11 +185,14 @@ def _http_charts(source: Path, metrics: dict[str, Any], *, warmup: bool = False)
     )
     charts += _rows_chart(
         f"{prefix}time",
-        f"{phase}One-second completion windows",
+        f"{phase}Per-second results",
         windows,
         ELAPSED_TIME,
         (
             "Time/Request throughput (req/s)",
+            "Time/SLO attainment (%)",
+            "Time/SLO request goodput (req/s)",
+            "Time/SLO token goodput (tokens/s)",
             "Time/Completed output tokens per second",
             "Time/E2EL p95 (s)",
             "Time/TTFT p95 (s)",
@@ -233,7 +243,7 @@ def _video_phase_charts(source: Path, metrics: dict[str, Any]) -> list[Chart]:
 
 
 def _prometheus_charts(source: Path) -> list[Chart]:
-    """Use the observer's elapsed clock and Prometheus vector labels unchanged."""
+    """Plot observer series on their elapsed clock, retaining complete labels in CSV records."""
     path = source / "prometheus_observations.json"
     if not path.is_file():
         return []
@@ -265,9 +275,18 @@ def _prometheus_charts(source: Path) -> list[Chart]:
                     )
     charts = []
     for name in dict.fromkeys(key[0] for key in grouped):
+        def display_label(label: str) -> str:
+            """Show service, group, role and rank without printing raw JSON in figure titles."""
+            if not name.startswith("spec_"):
+                return label
+            values = json.loads(label)
+            group = values.get("model_group") or values.get("modelservice") or values.get("model_name")
+            role = values.get("model_role") or values.get("inference_foretoken_io_model_role")
+            return " / ".join(str(item) for item in (group, role, values.get("engine")) if item is not None)
+
         series = tuple(
             Series(
-                label,
+                display_label(label),
                 tuple(row["elapsed_time_s"] for row in grouped[(name, label)]),
                 tuple(row["value"] for row in grouped[(name, label)]),
                 (None,) * len(grouped[(name, label)]),
@@ -278,7 +297,11 @@ def _prometheus_charts(source: Path) -> list[Chart]:
         )
         if series:
             unit = (
-                "ratio"
+                "GPU s/s"
+                if name in {"spec_draft_gpu_seconds_per_second", "spec_target_forward_gpu_seconds_per_second"}
+                else "tokens/draft"
+                if name == "spec_accepted_tokens_per_draft"
+                else "ratio"
                 if name.endswith("_ratio")
                 else "W"
                 if name.endswith("_watts")
@@ -290,16 +313,61 @@ def _prometheus_charts(source: Path) -> list[Chart]:
                 if name.endswith("_rate")
                 else "requests"
             )
+            title = {
+                "spec_draft_gpu_seconds_per_second": "Draft GPU work",
+                "spec_target_forward_gpu_seconds_per_second": "Target forward GPU work",
+                "spec_draft_time_share_ratio": "Draft GPU-time share",
+                "spec_target_forward_time_share_ratio": "Target forward GPU-time share",
+                "spec_acceptance_ratio": "Draft acceptance",
+                "spec_accepted_tokens_per_draft": "Accepted tokens per draft",
+            }.get(name, f"Prometheus · {name.replace('_', ' ')}")
             charts.append(
                 Chart(
                     f"prometheus-{name}",
-                    f"Prometheus · {name.replace('_', ' ')}",
+                    title,
                     "Elapsed time (s)",
-                    f"{name.replace('_', ' ')} ({unit})",
+                    f"{title if name.startswith('spec_') else name.replace('_', ' ')} ({unit})",
                     series,
                     metric=name,
                 )
             )
+    return charts
+
+
+def gpu_allocation_charts(source: Path) -> list[Chart]:
+    """Plot sampled allocated GPU counts by resource on the benchmark clock.
+
+    The observer owns coverage and integration. Saved history rows retain the
+    boundary samples and unknown intervals, so the chart never estimates cost.
+    """
+    path = source / "gpu_allocation.json"
+    if not path.is_file():
+        return []
+    allocation = json.loads(path.read_text(encoding="utf-8"))
+    rows = gpu_allocation_history_rows(allocation)
+    resources = sorted({key for row in rows for key in row if key.startswith("Resources/")})
+    charts = []
+    for field in resources:
+        resource = field.removeprefix("Resources/").removesuffix("/Allocated GPUs")
+        records = tuple({**row, "resource_name": resource, "duration_s": allocation["duration_s"]} for row in rows)
+        values = tuple(
+            float(row[field]) if _numeric(row.get(field)) is not None else math.nan
+            for row in rows
+        )
+        if not any(math.isfinite(value) for value in values):
+            continue
+        charts.append(Chart(
+            name=f"gpu-allocation-{re.sub('[^a-z0-9]+', '-', resource.lower()).strip('-')}",
+            title=f"Allocated GPUs · {resource}",
+            xlabel=ELAPSED_TIME,
+            ylabel=f"Allocated GPUs ({resource})",
+            series=(Series(
+                "Observed", tuple(float(row[ELAPSED_TIME]) for row in rows),
+                values, (None,) * len(rows), records,
+            ),),
+            kind="step",
+            metric=f"gpu_allocation_{resource}",
+        ))
     return charts
 
 
@@ -527,6 +595,70 @@ def _distribution_charts(comparison: dict[str, Any]) -> list[Chart]:
                     metric=field,
                 )
             )
+    return charts
+
+
+def _evaluation_comparison_charts(comparison: dict[str, Any]) -> list[Chart]:
+    """Keep every task, subset, filter, and metric in its own candidate chart."""
+    grouped: dict[tuple[str, ...], list[dict[str, Any]]] = defaultdict(list)
+    for row in comparison["scores"]:
+        if _numeric(row.get("value")) is not None:
+            identity = tuple(str(row.get(key) or "") for key in ("task", "level", "subset", "filter", "metric", "display_unit"))
+            grouped[identity].append(row)
+    methods = [method["label"] for method in comparison["methods"]]
+    charts = []
+    for index, (identity, rows) in enumerate(grouped.items(), 1):
+        task, level, subset, filter_name, metric, unit = identity
+        factor = float(rows[0].get("display_multiplier") or 1)
+        series = tuple(Series(
+            row["method"], (float(methods.index(row["method"])),),
+            (float(row["value"]) * factor,),
+            (float(row["stderr"]) * factor if _numeric(row.get("stderr")) is not None else None,),
+            (row,),
+        ) for row in rows)
+        charts.append(Chart(
+            f"evaluation-comparison-{index}-{re.sub('[^a-z0-9]+', '-', metric.lower()).strip('-')[:40]}",
+            " · ".join(part for part in (task, subset, filter_name, metric) if part),
+            "Deployment", f"{metric} ({unit})" if unit else metric,
+            series, tick_labels=tuple(methods), kind="scatter", metric=metric,
+        ))
+    return charts
+
+
+def _greedy_charts(comparison: dict[str, Any]) -> list[Chart]:
+    """Plot saved exact-match rates and divergence positions without counting failed requests."""
+    points = comparison["candidates"]
+    charts = []
+    selected = [(index, row) for index, row in enumerate(points) if row["exact_match_rate"] is not None]
+    if selected:
+        charts.append(Chart(
+            "greedy-exact-match", "Greedy exact match", "Candidate",
+            "Exact sequence match (%)",
+            tuple(Series(
+                row["label"], (float(index),), (row["exact_match_rate"] * 100,),
+                (None,), (row,),
+            ) for index, row in selected),
+            tick_labels=tuple(row["label"] for row in points), kind="scatter",
+            metric="exact_match_rate",
+        ))
+    divergence = []
+    for point in points:
+        rows = [row for row in comparison["samples"]
+                if row["candidate"] == point["label"] and row["first_divergence"] is not None]
+        if rows:
+            divergence.append(Series(
+                point["label"],
+                tuple(float(row["window"]) for row in rows),
+                tuple(float(row["first_divergence"]) for row in rows),
+                (None,) * len(rows),
+                tuple({**row, "method": point["method"]} for row in rows),
+            ))
+    if divergence:
+        charts.append(Chart(
+            "greedy-first-divergence", "First differing generated token by sample",
+            "Sample index", "First differing token position", tuple(divergence),
+            kind="scatter", metric="first_divergence",
+        ))
     return charts
 
 
