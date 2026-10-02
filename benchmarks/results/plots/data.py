@@ -60,6 +60,34 @@ def _numeric(value: Any) -> float | None:
     return None
 
 
+def _plot_conditions(bench: dict[str, Any]) -> dict[str, Any]:
+    """Expose fixed lengths and numeric SLO targets as axes without changing run conditions."""
+    conditions = dict(bench)
+    for minimum, maximum, axis in (
+        ("min_prompt_length", "max_prompt_length", "prompt_length"),
+        ("min_output_length", "max_output_length", "output_length"),
+    ):
+        length = _numeric(conditions.get(minimum))
+        if length is not None and length == _numeric(conditions.get(maximum)):
+            conditions.pop(minimum)
+            conditions.pop(maximum)
+            conditions[axis] = length
+    groups = conditions.get("slo_params")
+    if not isinstance(groups, list) or len(groups) != 1 or not isinstance(groups[0], dict):
+        return conditions
+    from benchmarks.integrations.evalscope.slo import parse_slo_criteria
+
+    rules = parse_slo_criteria(groups)[0]
+    if any(str(rule) in {"max", "min"} for rule in rules.values()):
+        return conditions
+    conditions.pop("slo_params")
+    for metric, rule in rules.items():
+        axis = f"slo_{metric}"
+        conditions[axis] = _numeric(rule.target)
+        conditions[f"{axis}_comparison"] = str(rule).split(maxsplit=1)[0]
+    return conditions
+
+
 def sweep_charts(
     points: list[dict[str, Any]],
     summary: list[dict[str, Any]],
@@ -98,7 +126,21 @@ def sweep_charts(
         "e2e_s",
         "denoise_s",
         "peak_gpu_memory_mb",
+        "slo_slo_attainment",
+        "slo_request_goodput",
+        "slo_token_goodput",
+        "speculative_decoding_acceptance_ratio",
+        "speculative_decoding_accepted_tokens_per_draft",
+        "speculative_decoding_draft_mean_seconds",
+        "speculative_decoding_target_forward_mean_seconds",
+        "speculative_decoding_draft_time_share_ratio",
+        "speculative_decoding_target_forward_time_share_ratio",
     }
+    default_metrics.update(
+        str(row["metric"])
+        for row in summary
+        if str(row["metric"]).startswith("gpu_allocation_gpu_hours_")
+    )
     rows_by_group: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = defaultdict(
         list
     )
@@ -119,11 +161,11 @@ def sweep_charts(
         rows_by_group[group].append(
             (
                 row,
-                {
+                _plot_conditions({
                     k: v
                     for k, v in bench.items()
                     if k != "service" and not k.startswith("_")
-                },
+                }),
             )
         )
 
@@ -157,10 +199,16 @@ def sweep_charts(
                 )
                 slices[(str(row["metric"]), fixed)].append((row, bench))
             for (metric, fixed), slice_rows in slices.items():
-                milliseconds = metric.startswith(("tpot_", "itl_")) and metric.endswith(
-                    "_seconds"
+                milliseconds = (
+                    metric.startswith(("tpot_", "itl_")) and metric.endswith("_seconds")
+                    or metric in {"speculative_decoding_draft_mean_seconds", "speculative_decoding_target_forward_mean_seconds"}
                 )
-                scale = 1000 if milliseconds else 1
+                ratio = metric in {
+                    "slo_slo_attainment", "speculative_decoding_acceptance_ratio",
+                    "speculative_decoding_draft_time_share_ratio",
+                    "speculative_decoding_target_forward_time_share_ratio",
+                }
+                scale = 1000 if milliseconds else 100 if ratio else 1
                 by_method: dict[str, list[tuple[float, dict[str, Any]]]] = defaultdict(
                     list
                 )
@@ -201,6 +249,8 @@ def sweep_charts(
                     if key in varying and key != axis
                 )
                 title = group + (f" · {shown}" if shown else "")
+                if metric.startswith("gpu_allocation_gpu_hours_"):
+                    title += f" · {metric.removeprefix('gpu_allocation_gpu_hours_')}"
                 base = _slug(
                     f"sweep-{group}-{metric}-{axis or 'configuration'}-{shown}"
                 )
@@ -218,22 +268,34 @@ def sweep_charts(
                     chart_names[name] += 1
                     if chart_names[name] > 1:
                         name += f"-{chart_names[name]}"
+                    if axis.startswith("slo_"):
+                        unit = {"slo_rps": "req/s", "slo_tps": "tokens/s"}.get(axis, "s")
+                        xlabel = f"{axis.removeprefix('slo_').replace('_', ' ').upper()} threshold ({unit})"
+                    else:
+                        conversation_rate = axis == "request_rate" and any(
+                            point_by_key.get((_method(row), str(row["combination"])), {}).get("multi_turn")
+                            for row, _ in slice_rows
+                        )
+                        xlabel = {
+                            "max_concurrency": "Concurrency limit",
+                            "request_rate": (
+                                "Conversation arrival rate (conv/s)" if conversation_rate
+                                else "Target request rate (req/s)"
+                            ),
+                            "duration": "Duration (s)",
+                            "prompt_length": "Input length (tokens)",
+                            "output_length": "Output length (tokens)",
+                        }.get(axis, axis.replace("_", " ")) if axis else "Configuration"
                     charts.append(
                         Chart(
                             name=name,
                             title=title,
-                            xlabel={
-                                "max_concurrency": "Concurrency limit",
-                                "request_rate": "Target request rate (req/s)",
-                                "duration": "Duration (s)",
-                            }.get(axis, axis.replace("_", " "))
-                            if axis
-                            else "Configuration",
+                            xlabel=xlabel,
                             ylabel=(
-                                metric.removesuffix("_seconds")
-                                .replace("_", " ")
-                                .upper()
-                                + " (ms)"
+                                {
+                                    "speculative_decoding_draft_mean_seconds": "Draft GPU time per step (ms)",
+                                    "speculative_decoding_target_forward_mean_seconds": "Target forward GPU time per step (ms)",
+                                }.get(metric, metric.removesuffix("_seconds").replace("_", " ").upper() + " (ms)")
                             )
                             if milliseconds
                             else {
@@ -244,7 +306,19 @@ def sweep_charts(
                                 "e2e_s": "Video E2E latency (s)",
                                 "denoise_s": "Denoise latency (s)",
                                 "peak_gpu_memory_mb": "Peak GPU memory (MiB)",
-                            }.get(metric, metric.replace("_", " ")),
+                                "slo_slo_attainment": "SLO attainment (%)",
+                                "slo_request_goodput": "Request goodput (req/s)",
+                                "slo_token_goodput": "Output goodput (tokens/s)",
+                                "speculative_decoding_acceptance_ratio": "Accepted draft tokens (%)",
+                                "speculative_decoding_accepted_tokens_per_draft": "Accepted tokens per draft",
+                                "speculative_decoding_draft_time_share_ratio": "Draft share of measured GPU time (%)",
+                                "speculative_decoding_target_forward_time_share_ratio": "Target forward share of measured GPU time (%)",
+                            }.get(
+                                metric,
+                                "GPU-hours" if metric.startswith("gpu_allocation_gpu_hours_")
+                                else "GPU-seconds" if metric.startswith(("gpu_allocation_gpu_seconds_", "gpu_allocation_observed_gpu_seconds_"))
+                                else metric.replace("_", " "),
+                            ),
                             series=tuple(panel_series),
                             tick_labels=(group,) if not axis else (),
                             metric=metric,

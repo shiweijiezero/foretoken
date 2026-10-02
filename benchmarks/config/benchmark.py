@@ -148,13 +148,19 @@ class ChatCompletionsGeneration:
                     "output length control conflicts with --extra-body fields: "
                     + ", ".join(sorted(conflicts))
                 )
+        payload_fields = {"prompt", "messages"} & self.extra_body.keys()
+        if payload_fields:
+            raise ValueError(
+                "request inputs come from the workload, not --extra-body: "
+                + ", ".join(sorted(payload_fields))
+            )
         if "stream" in self.extra_body:
             raise ValueError(
                 "stream must be set via --stream/--no-stream, not extra_body"
             )
 
     def sample_output_length(self) -> int | None:
-        """Choose an exact synthetic output target, or None for ordinary generation."""
+        """Choose an exact output target, or None when no length range is configured."""
         if self.min_output_length is None:
             return None
         return random.randint(self.min_output_length, self.max_output_length)
@@ -253,7 +259,6 @@ class ArrivalTraceSchedule:
     trace_selector: str = ""
     start_offset_seconds: float = 0.0
     duration_seconds: Optional[float] = None
-    max_concurrency: Optional[int] = None
     synthetic_prefix_reuse: bool = False
 
     def validate(self) -> None:
@@ -266,8 +271,6 @@ class ArrivalTraceSchedule:
             raise ValueError("--trace-start must be >= 0")
         if self.duration_seconds is not None and (not math.isfinite(self.duration_seconds) or self.duration_seconds <= 0):
             raise ValueError("--trace-duration must be > 0")
-        if self.max_concurrency is not None and self.max_concurrency <= 0:
-            raise ValueError("--trace-max-concurrency must be > 0")
 
 
 @dataclass
@@ -325,18 +328,21 @@ class ParameterSweepConfig:
 
 @dataclass
 class SloTuneConfig:
-    """Store SLO search criteria and concurrency bounds."""
+    """Store SLO criteria and an optional concurrency-search execution mode."""
 
     params: list[dict[str, str]] | None = None
+    search: bool = False
     num_runs: int = 1
     upper_bound: Optional[int] = None
     lower_bound: int = 1
 
     def validate(self) -> None:
-        """Validate SLO criteria and search bounds before starting a workload."""
+        """Validate request criteria or aggregate search criteria before starting a workload."""
         if self.params is None:
+            if self.search:
+                raise ValueError("--slo-search requires --slo-params")
             return
-        if not self.params or any(
+        if not isinstance(self.params, list) or not self.params or any(
             not isinstance(group, dict) or not group for group in self.params
         ):
             raise ValueError(
@@ -350,6 +356,16 @@ class SloTuneConfig:
             for group in self.params
         ):
             raise ValueError("--slo-params metric names and criteria must be strings")
+        from benchmarks.integrations.evalscope.slo import parse_slo_criteria
+
+        parse_slo_criteria(self.params)
+        if not self.search:
+            if len(self.params) != 1:
+                raise ValueError("measurement accepts one --slo-params object; use --slo-search for independent searches")
+            unknown = set(self.params[0]) - {"latency", "ttft", "tpot", "itl"}
+            if unknown:
+                raise ValueError("request SLO metrics are latency, ttft, tpot and itl; aggregate metrics require --slo-search")
+            return
         if self.num_runs < 1:
             raise ValueError("--num-runs must be >= 1")
         if self.lower_bound < 1:
@@ -411,14 +427,9 @@ class BenchmarkConfig:
 
     def slo_search_start(self) -> int:
         """Resolve the first concurrency probe for an SLO binary search."""
-        if self.trace.trace_selector:
-            configured = self.trace.max_concurrency
-        else:
-            configured = self.load.max_concurrency
-            if configured == -1:
-                raise ValueError(
-                    "--slo-params requires --max-concurrency >= 1"
-                )
+        configured = self.load.max_concurrency
+        if configured == -1:
+            raise ValueError("--slo-search requires --max-concurrency >= 1")
         low = self.slo.lower_bound
         high = self.slo.upper_bound
         start = low if configured is None else max(low, configured)
@@ -465,7 +476,7 @@ class BenchmarkConfig:
             raise ValueError("--trace cannot be combined with generated arrival patterns")
         self.slo.validate()
 
-        if self.slo.params:
+        if self.slo.search:
             self.slo_search_start()
 
         trace = self.trace
@@ -473,13 +484,6 @@ class BenchmarkConfig:
         if not has_trace and self.load.request_count is None and self.load.duration_seconds is None:
             raise ValueError("--num-prompts is required unless --duration is set")
         if not has_trace:
-            unsupported_body_fields = {"messages"} & self.generation.extra_body.keys()
-            if unsupported_body_fields:
-                names = ", ".join(sorted(unsupported_body_fields))
-                raise ValueError(
-                    "Conversation mode cannot use these --extra-body fields because "
-                    f"they replace the conversation: {names}"
-                )
             if not workload.fixed_prompt and not workload.dataset_selectors:
                 raise ValueError(
                     "No workload source. Pass --prompt or --dataset "
@@ -505,21 +509,15 @@ class BenchmarkConfig:
                 raise ValueError(
                     "--trace uses record timestamps; omit --request-rate"
                 )
-            if (
-                not self.slo.params
-                and (
-                    self.load.max_concurrency != HttpLoadSchedule().max_concurrency
-                    or (
-                        self.load.request_count is not None
-                        and self.load.request_count != HttpLoadSchedule().request_count
-                    )
-                    or self.load.arrival_rate != HttpLoadSchedule().arrival_rate
-                    or self.load.duration_seconds is not None
-                )
+            if not self.slo.search and (
+                self.load.request_count is not None
+                and self.load.request_count != HttpLoadSchedule().request_count
+                or self.load.arrival_rate != HttpLoadSchedule().arrival_rate
+                or self.load.duration_seconds is not None
             ):
                 raise ValueError(
                     "--trace replays the selected trace window; use "
-                    "--trace-max-concurrency instead of --max-concurrency/--num-prompts"
+                    "--trace-duration instead of --num-prompts/--request-rate/--duration"
                 )
             if same_dataset and workload.row_offset:
                 raise ValueError(
@@ -573,7 +571,6 @@ class BenchmarkConfig:
             "trace_path": self.trace.trace_selector,
             "trace_start": self.trace.start_offset_seconds,
             "trace_duration": self.trace.duration_seconds,
-            "trace_max_concurrency": self.trace.max_concurrency,
             "trace_synthetic_prefix_reuse": self.trace.synthetic_prefix_reuse,
         }
         if not self.trace.trace_selector:
@@ -615,6 +612,7 @@ class BenchmarkConfig:
                 "experiment_name": self.sweep.experiment_name,
             },
             "slo": {
+                "search": self.slo.search,
                 "params": self.slo.params,
                 "num_runs": self.slo.num_runs,
                 "upper_bound": self.slo.upper_bound,

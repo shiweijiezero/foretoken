@@ -186,6 +186,12 @@ impl RouterPipelineConfig {
         let filter = filter_descriptor(self.filter.algorithm.as_str())?;
         let scorer = scorer_descriptor(self.scorer.algorithm.as_str())?;
         let picker = picker_descriptor(self.picker.algorithm.as_str())?;
+        if scorer.name == "two_tier" && picker.name != "max" {
+            return Err(RouterPipelineConfigError::InvalidParameters {
+                name: scorer.name.into(),
+                message: "two_tier requires picker.algorithm: max".into(),
+            });
+        }
         let mut configured_filter = (filter.factory)();
         Arc::get_mut(&mut configured_filter)
             .expect("filter factory returns a new instance")

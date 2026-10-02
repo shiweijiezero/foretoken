@@ -61,8 +61,10 @@ def synchronize_source(
     return known - current
 
 
-def prepare_patches(core: Path, plugin: Path | None, version: str, metax: bool) -> None:
-    """Apply the source-stage vendor patches and standard model-server backports."""
+def prepare_patches(
+    core: Path, plugin: Path | None, version: str, metax: bool
+) -> dict[Path, set[str]]:
+    """Apply engine backports and return their package files for payload export."""
     patches = []
     if metax:
         configuration = json.loads((METAX_ROOT / "source-environment.json").read_text())
@@ -75,15 +77,20 @@ def prepare_patches(core: Path, plugin: Path | None, version: str, metax: bool) 
     patches.extend((core, patch) for patch in engine_patches(core, version, PATCH_ROOT))
     # A changed input may reset one file of a multi-file patch. Restore all patch
     # inputs together before applying the ordered series to avoid mixed states.
+    patched_files: dict[Path, set[str]] = {}
     for directory, patch in patches:
         originals = directory.parent / f"{directory.name}-inputs"
         for line in patch.read_text().splitlines():
             if line.startswith("+++ b/"):
                 name = line.split()[1].removeprefix("b/")
+                patched_files.setdefault(directory, set()).add(name)
                 if (originals / name).is_file():
                     shutil.copy2(originals / name, directory / name)
+                else:
+                    (directory / name).unlink(missing_ok=True)
     for directory, patch in patches:
         apply_patch(directory, patch)
+    return patched_files
 
 
 def package_directory(name: str) -> Path:
@@ -144,7 +151,12 @@ def compile_native(source: Path, cache: Path, version: str) -> None:
 
 
 def export_overlay(
-    source: Path | None, destination: Path, deleted: set[str], package: str, cache: Path
+    source: Path | None,
+    destination: Path,
+    deleted: set[str],
+    package: str,
+    cache: Path,
+    patched_files: set[str],
 ) -> None:
     """Assemble runtime files, retained native outputs and current source without image symlinks."""
     runtime = package_directory(package)
@@ -173,14 +185,18 @@ def export_overlay(
     # Source wins over generated Python files; compiled extensions remain in the payload.
     if source is not None:
         originals = source.parent / f"{source.name}-inputs"
-        for path in (originals / package).rglob("*"):
-            if path.is_file():
-                relative = path.relative_to(originals)
-                target = destination / relative
-                if target.is_dir():
-                    shutil.rmtree(target)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source / relative, target)
+        files = {
+            str(path.relative_to(originals))
+            for path in (originals / package).rglob("*")
+            if path.is_file()
+        }
+        files.update(name for name in patched_files if name.startswith(package + "/"))
+        for name in sorted(files):
+            target = destination / name
+            if target.is_dir():
+                shutil.rmtree(target)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source / name, target)
     for name in deleted:
         path = destination / name
         if path.is_file() or path.is_symlink():
@@ -356,7 +372,7 @@ def main() -> None:
     if plugin is not None and not metax:
         raise RuntimeError("a vllm-metax checkout requires a MetaX runtime")
     version = importlib.metadata.version("vllm")
-    prepare_patches(core, plugin, version, metax)
+    patched_files = prepare_patches(core, plugin, version, metax)
     if arguments.package_wheels:
         output = arguments.output.resolve()
         if plugin is None and (output / "engine/vllm_metax").is_dir():
@@ -383,7 +399,9 @@ def main() -> None:
     if engine.exists():
         shutil.rmtree(engine)
     engine.mkdir(parents=True)
-    export_overlay(core, engine, deleted_core, "vllm", cache)
+    export_overlay(
+        core, engine, deleted_core, "vllm", cache, patched_files.get(core, set())
+    )
     native = cache / "native-install"
     if metax and native.exists() and plugin is None:
         plugin = cache / "vllm-metax"
@@ -391,7 +409,14 @@ def main() -> None:
         originals = cache / "vllm-metax-inputs"
         deleted_plugin = {name for name in known if not (originals / name).is_file()}
     if plugin is not None:
-        export_overlay(plugin, engine, deleted_plugin, "vllm_metax", cache)
+        export_overlay(
+            plugin,
+            engine,
+            deleted_plugin,
+            "vllm_metax",
+            cache,
+            patched_files.get(plugin, set()),
+        )
     environment = {}
     if metax:
         # An image may already activate its own compiled plugin. Source updates

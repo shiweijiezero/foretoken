@@ -77,11 +77,14 @@ class SweepAdapter(Protocol, Generic[ConfigT]):
 
 def _axis_label(value: object) -> str:
     """Use a named compound choice's label rather than its full configuration in paths."""
-    return (
-        str(value["name"])
-        if isinstance(value, dict) and "name" in value
-        else str(value)
-    )
+    if isinstance(value, dict) and "name" in value:
+        return str(value["name"])
+    if isinstance(value, list) and all(isinstance(group, dict) for group in value):
+        return "-".join(
+            "+".join(f"{metric}{criterion}" for metric, criterion in group.items())
+            for group in value
+        )
+    return str(value)
 
 
 def sweep_point_name(point: SweepPoint) -> str:
@@ -182,8 +185,11 @@ def run_sweep(
     combinations = (
         load_sweep_points(definition, adapter) if combinations is None else combinations
     )
-    prepared = [(point, adapter.apply_point(config, point)) for point in combinations]
-    for _, point_config in prepared:
+    prepared = [
+        (f"point-{index}", point, adapter.apply_point(config, point))
+        for index, point in enumerate(combinations, start=1)
+    ]
+    for _, _, point_config in prepared:
         adapter.validate_point(point_config)
     name = definition.experiment_name.strip().replace("/", "-")
     directory = os.path.join(config.outputs.output_dir, name) if name else None
@@ -198,8 +204,8 @@ def run_sweep(
         "num_runs": definition.num_runs,
         "wandb_group": adapter.group_name(config),
         "combinations": [
-            {"dir": sweep_directory_name(sweep_point_name(point)), "bench": point}
-            for point in combinations
+            {"dir": point_name, "bench": point}
+            for point_name, point, _ in prepared
         ],
         "base": adapter.plan_base(config),
     }
@@ -233,11 +239,10 @@ def run_sweep(
         artifacts["config"] = write_json(experiment_dir, "config.json", plan)
         outputs.open(plan)
         try:
-            for combination, point_config in prepared:
+            for combination_name, combination, point_config in prepared:
                 point_config = replace(
                     point_config, outputs=point_config.outputs.for_child_run()
                 )
-                combination_name = sweep_directory_name(sweep_point_name(combination))
                 for run_number in range(definition.num_runs):
                     label = (
                         f"{combination_name}-run{run_number}"

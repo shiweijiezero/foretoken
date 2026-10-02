@@ -7,11 +7,11 @@ The Mooncake trace dataset records request lengths and shared prefix blocks, not
 ```bash
 foretoken perf examples/quickstart \
   --trace valeriol29/mooncake-traces:conversation \
-  --trace-start 57 --trace-duration 5 \
+  --trace-start 57 --trace-duration 480 \
   --dataset random \
   --random-seed 0 --trace-synthetic-prefix-reuse \
-  --trace-max-concurrency 16 --max-tokens 64 \
-  --output local,wandb
+  --max-concurrency 16 --max-tokens 64 \
+  --output local,wandb,plot
 ```
 
 Inputs reuse the trace's 512-token blocks. Server-side tokenization may change those boundaries; inspect service metrics for actual cache hits. Do not combine this mode with `--prefix-length`.

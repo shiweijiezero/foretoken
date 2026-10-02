@@ -19,6 +19,9 @@ Install the published command-line tool with pip:
 
 ```bash
 pip install foretoken
+
+# From a source checkout:
+# pip install -e .
 ```
 
 Or create and activate a virtual environment with uv:
@@ -29,7 +32,7 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-To start from an unpublished checkout, or update an older CLI to its code, run `pip install -e .` from the repository root instead. Run `foretoken --version` to check the installed CLI version.
+Run `foretoken --version` to check the installed CLI version.
 
 ## Install the Kubernetes platform
 

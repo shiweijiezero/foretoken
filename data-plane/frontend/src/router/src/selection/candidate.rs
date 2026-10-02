@@ -40,6 +40,8 @@ pub struct RouteCandidate {
     pub route_target_stats: Option<Arc<RouteTargetStats>>,
     /// Requests reserved by this frontend for the exact target and DP rank.
     pub local_load: crate::RoutingLoadSnapshot,
+    /// Router-owned stage eligibility for this scoring round.
+    pub stage_eligible: bool,
 }
 
 impl RouteCandidate {

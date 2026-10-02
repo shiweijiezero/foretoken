@@ -135,7 +135,7 @@ def format_benchmark_config(
             f"  Trace Window: start={trace.start_offset_seconds:g}s, "
             f"duration={duration}\n"
             "  Trace concurrency: "
-            f"{trace.max_concurrency or 'no limit'}\n"
+            f"{benchmark.load.max_concurrency if benchmark.load.max_concurrency > 0 else 'no limit'}\n"
         )
         if trace.synthetic_prefix_reuse:
             trace_lines += "  Trace Prefix: synthetic hash-id blocks\n"
@@ -149,7 +149,8 @@ def format_benchmark_config(
         concurrency_line = f"  Concurrency: {concurrency_label}\n"
         request_count_label = str(schedule.request_count)
         if schedule.arrival_rate > 0:
-            arrival_rate_label = f"{schedule.arrival_rate:g} req/s (Poisson arrivals)"
+            unit = "conv/s" if benchmark.is_multi_turn else "req/s"
+            arrival_rate_label = f"{schedule.arrival_rate:g} {unit} ({schedule.arrival_pattern} arrivals)"
         else:
             arrival_rate_label = "no rate limit"
         trace_lines = ""
@@ -163,12 +164,13 @@ def format_benchmark_config(
     slo = benchmark.slo
     if slo.params:
         params_label = str(slo.params)
-        slo_lines = (
-            f"  SLO params : {params_label}\n"
-            f"  SLO concurrency bounds="
-            f"[{slo.lower_bound}, {slo.upper_bound if slo.upper_bound is not None else 'none'}], "
-            f"num_runs={slo.num_runs}\n"
-        )
+        slo_lines = f"  SLO params : {params_label}\n"
+        if slo.search:
+            slo_lines += (
+                f"  SLO concurrency bounds="
+                f"[{slo.lower_bound}, {slo.upper_bound if slo.upper_bound is not None else 'none'}], "
+                f"num_runs={slo.num_runs}\n"
+            )
     else:
         slo_lines = ""
     return (
@@ -271,7 +273,7 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
     elif run_record.get("dataset"):
         lines.append(f"  Dataset    : {run_record['dataset']}")
     if float(rate) > 0:
-        lines.append(f"  Arrival rate: {rate} req/s")
+        lines.append(f"  Arrival rate: {rate} {'conv/s' if multi_turn else 'req/s'}")
     stream = bool(metrics["stream"])
     metric_lines = [
         _percentile_row("End-to-end latency (E2EL)", metrics["latency"]),
@@ -325,6 +327,42 @@ def log_benchmark_summary(run_record: dict[str, Any], metrics: dict[str, Any]) -
                 f"{_format_metric(slo.get('token_goodput'))}",
             ]
         )
+    speculative = metrics.get("speculative_decoding")
+    if isinstance(speculative, dict) and any(
+        speculative.get(key) is not None
+        for key in ("acceptance_ratio", "draft_mean_seconds", "target_forward_mean_seconds")
+    ):
+        lines.append("  Speculative decoding (Prometheus window estimate):")
+        for key, label, scale, unit in (
+            ("acceptance_ratio", "Accepted draft tokens", 100, "%"),
+            ("accepted_tokens_per_draft", "Accepted tokens per draft", 1, ""),
+            ("draft_mean_seconds", "Draft GPU time/step", 1000, "ms"),
+            ("target_forward_mean_seconds", "Target forward GPU time/step", 1000, "ms"),
+            ("draft_time_share_ratio", "Draft share of measured GPU time", 100, "%"),
+            ("target_forward_time_share_ratio", "Target forward share of measured GPU time", 100, "%"),
+        ):
+            value = speculative.get(key)
+            measured = value * scale if value is not None else None
+            lines.append(f"    {label}: {_format_metric(measured, 2)}{unit}")
+    allocation = metrics.get("gpu_allocation")
+    if isinstance(allocation, dict):
+        coverage = allocation["coverage"]
+        lines.append(
+            "  GPU allocation observation coverage: "
+            f"{_format_metric(coverage * 100 if coverage is not None else None, 2)}%"
+        )
+        for resource in sorted(set(allocation["observed_gpu_seconds"]) | set(allocation["gpu_seconds"] or {})):
+            seconds = (allocation["gpu_seconds"] or {}).get(resource)
+            hours = (allocation["gpu_hours"] or {}).get(resource)
+            lines.append(
+                f"    {resource}: GPU-seconds={_format_metric(seconds, 2)}, "
+                f"GPU-hours={_format_metric(hours, 4)}"
+            )
+            if seconds is None and resource in allocation["observed_gpu_seconds"]:
+                lines.append(
+                    "      Observed GPU-seconds (partial, not total): "
+                    f"{_format_metric(allocation['observed_gpu_seconds'][resource], 2)}"
+                )
     if multi_turn:
         conversation = metrics["conversation"]
         if conversation.get("per_dataset"):

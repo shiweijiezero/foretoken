@@ -10,9 +10,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from evalscope.perf.sla.sla_run import parse_sla_params
-
 from benchmarks.config.benchmark import BenchmarkConfig
+from benchmarks.integrations.evalscope.slo import parse_slo_criteria
 from benchmarks.model_service import ModelService
 from benchmarks.results.console import log_slo_results
 from benchmarks.results.output import (
@@ -91,7 +90,7 @@ def _check_slo(
         return False
     return all(
         average_values[name] is not None and rule.validate(average_values[name])
-        for name, rule in parse_sla_params([criteria])[0].items()
+        for name, rule in parse_slo_criteria([criteria])[0].items()
     )
 
 
@@ -133,10 +132,8 @@ class SloAutoTuneBenchmark:
             f"max-concurrency-{value}",
             f"run-{run_index + 1}",
         )
-        probe_benchmark = (
-            replace(probe_config, trace=replace(probe_config.trace, max_concurrency=value))
-            if probe_config.trace.trace_selector
-            else replace(probe_config, load=replace(probe_config.load, max_concurrency=value))
+        probe_benchmark = replace(
+            probe_config, load=replace(probe_config.load, max_concurrency=value)
         )
         return run_benchmark_point(
             probe_benchmark,
@@ -158,15 +155,17 @@ class SloAutoTuneBenchmark:
         best_run: BenchmarkRun | None = None
         best_peak: int | None = None
         best_limit: int | None = None
+        conversation_load = False
 
         def evaluate(value: int) -> tuple[bool, bool]:
             """Evaluate repeated probes and compare request peaks only when the limit increases."""
-            nonlocal best_run, best_peak, best_limit
+            nonlocal best_run, best_peak, best_limit, conversation_load
             runs = [
                 self._run_probe(value, group_index, index, criteria, base_dir, wandb_group)
                 for index in range(self.benchmark.slo.num_runs)
             ]
             metrics = [run.metrics for run in runs]
+            conversation_load = conversation_load or any(item.get("multi_turn", False) for item in metrics)
             average_values = _average_metric_values(metrics, criteria)
             satisfied = _check_slo(criteria, average_values, metrics)
             peaks = [item["request_concurrency"]["peak"] for item in metrics]
@@ -240,6 +239,7 @@ class SloAutoTuneBenchmark:
 
         summary = {
             "group": group_index,
+            "concurrency_limit_unit": "conversations" if conversation_load else "requests",
             "criteria": criteria,
             "best_peak_request_concurrency": best_peak,
             "best_max_concurrency": best_limit,
@@ -258,7 +258,6 @@ class SloAutoTuneBenchmark:
             "mode": "slo_search",
             "model": self.service.model,
             "label": self.label,
-            "concurrency_limit_unit": "conversations" if self.benchmark.is_multi_turn else "requests",
         }
 
         def sinks(directory: str) -> list[ResultSink]:
@@ -293,6 +292,10 @@ class SloAutoTuneBenchmark:
                 groups.append(summary)
                 if best_run is not None:
                     winning_run = best_run
+            record["concurrency_limit_unit"] = (
+                "conversations" if any(group["concurrency_limit_unit"] == "conversations" for group in groups)
+                else "requests"
+            )
             search = {
                 "concurrency_limit_unit": record["concurrency_limit_unit"],
                 "probes": probes,

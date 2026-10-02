@@ -40,7 +40,7 @@ git clone https://github.com/shiweijiezero/foretoken.git
 cd foretoken
 pip install foretoken
 
-# 首次使用尚未发布的源码时，改为：
+# 从源码目录安装：
 # pip install -e .
 ```
 

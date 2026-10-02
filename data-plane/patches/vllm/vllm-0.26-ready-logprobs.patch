@@ -1,7 +1,10 @@
 diff --git a/vllm/v1/engine/__init__.py b/vllm/v1/engine/__init__.py
 --- a/vllm/v1/engine/__init__.py
 +++ b/vllm/v1/engine/__init__.py
-@@ -83,3 +83,4 @@ class EngineCoreReadyResponse:
+@@ -88,6 +88,7 @@ class EngineCoreReadyResponse:
+     vllm_version: str
+     world_size: int
+     data_parallel_size: int
 +    max_logprobs: int | None = None
      # KV cache capacity (None for encoder-only/attention-free models).
      kv_cache_size_tokens: int | None = None

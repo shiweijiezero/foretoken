@@ -5,7 +5,7 @@
 
 [English](custom-deployment.md) | [中文](custom-deployment_zh.md)
 
-Build Foretoken in the target Kubernetes cluster and deploy changes from a local checkout. After installation, the same `foretoken deploy` command updates the code and deployment configuration.
+Build Foretoken from a local checkout and deploy source changes to Kubernetes.
 
 ## Install from source
 
@@ -29,7 +29,7 @@ For a local kind or k3d cluster, build and install without a registry:
 foretoken install -e .
 ```
 
-Builds run in dedicated Pods, and images are loaded directly into the cluster nodes. Installation waits for the Kubernetes platform to become ready. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
+Builds run in dedicated Pods, and images are loaded directly into the cluster nodes. For GPU setup in k3d, see [Deploy Foretoken with k3d](k3d-deployment.md).
 
 ### Remote clusters and private registries
 
@@ -70,8 +70,7 @@ After editing the checkout, run the same command again. It uses the saved instal
 
 Affected workloads restart and may reload model weights. The command waits for the selected code and serving routes to become active. Unchanged source and deployment configuration leave existing workloads running. Use the Quick Start's [request](../README.md#4-send-a-test-request) and [cleanup](../README.md#stop-and-uninstall) commands.
 
-Changes to CLI Python files take effect directly from the editable checkout; rerun `pip install -e .` when its Python dependencies change. For platform installation settings, rerun `foretoken install -e .`, retaining the values files, registry, and engine-source options. For source installations created before automatic updates were available, rerun the original installation command once to register the checkout.
-
+Changes to CLI Python files take effect directly from the editable checkout; rerun `pip install -e .` when its Python dependencies change.
 ## Edit an inference engine
 
 To modify vLLM, bind a Git checkout matching the runtime's Python, PyTorch, and accelerator environment. For a checkout at `../vllm`:

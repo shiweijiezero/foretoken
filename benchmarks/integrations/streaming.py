@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Measure Chat Completions streaming chunks using vLLM benchmark semantics."""
+"""Measure OpenAI completion chunks using the benchmark's shared streaming semantics."""
 
 from __future__ import annotations
 

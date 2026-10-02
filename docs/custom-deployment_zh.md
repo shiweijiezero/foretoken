@@ -5,7 +5,7 @@
 
 [English](custom-deployment.md) | [中文](custom-deployment_zh.md)
 
-在目标 Kubernetes 集群中构建 Foretoken，并部署本地源码目录中的改动。安装后，继续使用 `foretoken deploy` 更新代码和部署配置。
+从本地源码构建 Foretoken，并将源码改动部署到 Kubernetes 集群。
 
 ## 从源码安装
 
@@ -29,7 +29,7 @@ pip install -e .
 foretoken install -e .
 ```
 
-编译在专用 Pod 中执行，镜像直接载入集群节点；命令等待平台就绪后返回。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
+编译在专用 Pod 中执行，镜像直接载入集群节点。k3d 的 GPU 配置见[使用 k3d 部署 Foretoken](k3d-deployment_zh.md)。
 
 ### 远程集群与私有镜像仓库
 
@@ -70,8 +70,7 @@ foretoken deploy examples/quickstart --timeout 20m
 
 受影响的工作负载会重启，并可能重新加载模型权重。命令等待所选代码和服务路由生效后退出。源码和部署配置均未变化时，现有工作负载保持运行。请求与清理操作沿用快速开始中的[发送请求](../README_zh.md#4-发送测试请求)和[停止与卸载](../README_zh.md#停止与卸载)。
 
-CLI 的 Python 代码直接从 editable 源码目录加载；修改其 Python 依赖后，重新执行 `pip install -e .`。修改平台安装设置后，重新执行 `foretoken install -e .`，保留 values 文件、镜像仓库和引擎源码选项。若平台是在支持自动更新之前从源码安装的，先重新执行一次原安装命令，登记源码目录。
-
+CLI 的 Python 代码直接从 editable 源码目录加载；修改其 Python 依赖后，重新执行 `pip install -e .`。
 ## 修改推理引擎
 
 修改 vLLM 时，关联与运行时 Python、PyTorch 和设备环境匹配的 Git 源码目录。假设源码位于 `../vllm`：

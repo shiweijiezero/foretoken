@@ -170,7 +170,7 @@ spec:
   hostname: foretoken.example.com
 ```
 
-启用网关模式并部署快速开始示例，命令会按需安装 Envoy Gateway：
+启用网关模式并部署快速开始示例：
 
 ```bash
 foretoken install -e . --frontend-mode gateway

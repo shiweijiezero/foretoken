@@ -118,7 +118,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum((foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "expr": "sum((foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"})))",
           "instant": true,
           "interval": "5s",
           "legendFormat": "模型上报端点数",
@@ -2101,12 +2101,279 @@
       "type": "timeseries"
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "每个引擎仅在输出 rank 统计完整的推测解码 batch。GPU event 耗时包含内核间的主机间隙；目标模型 forward 包含验证但不含采样。均值是阶段耗时总和除以计时步数，不是请求延迟。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "无数据",
+          "unit": "s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#2a78d6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#1baf7a",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 103
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_target_forward_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) / ((sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) > 0)",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "目标模型 forward / {{model_name}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) / ((sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) > 0)",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "草稿 / {{model_name}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "推测解码阶段 GPU 时间",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "同一批计时步中，草稿与目标模型 forward 耗时分别除以两者之和。这不是墙钟时间占比或模型加速比；没有计时步则不显示比例。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "max": 1,
+          "min": 0,
+          "noValue": "无数据",
+          "unit": "percentunit"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "A"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#2a78d6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#1baf7a",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 103
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_target_forward_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) / ((((sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) + (sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_target_forward_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))) > 0)",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "目标模型 forward 占比 / {{model_name}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "(sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) / ((((sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) + (sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_target_forward_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))) > 0)",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "草稿占比 / {{model_name}}",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "推测解码 GPU 时间占比",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "使用 GPU 起草时自动采集的纯推测解码 batch 计时样本数（每秒）。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "fillOpacity": 8,
+            "lineWidth": 2,
+            "pointSize": 8,
+            "showPoints": "never"
+          },
+          "min": 0,
+          "noValue": "无数据",
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 113
+      },
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "repeatDirection": "h",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "expr": "sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))",
+          "instant": false,
+          "interval": "5s",
+          "legendFormat": "{{model_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "推测解码计时步数 / s",
+      "transparent": false,
+      "type": "timeseries"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 103
+        "y": 123
       },
       "id": 0,
       "panels": [],
@@ -2141,7 +2408,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 104
+        "y": 124
       },
       "options": {
         "legend": {
@@ -2232,7 +2499,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 104
+        "y": 124
       },
       "options": {
         "legend": {
@@ -2305,7 +2572,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 114
+        "y": 134
       },
       "options": {
         "legend": {
@@ -2326,7 +2593,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "((foretoken:model_server_runtime_cache_usage_ratio:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "expr": "((foretoken:model_server_runtime_cache_usage_ratio:max{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"}))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
           "legendFormat": "{{model_group_display}}",
           "range": true,
@@ -2364,7 +2631,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 114
+        "y": 134
       },
       "options": {
         "legend": {
@@ -2385,7 +2652,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "((foretoken:model_server_runtime_cache_available_bytes:min{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "expr": "((foretoken:model_server_runtime_cache_available_bytes:min{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"}))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
           "legendFormat": "{{model_group_display}}",
           "range": true,
@@ -2402,7 +2669,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 124
+        "y": 144
       },
       "id": 0,
       "panels": [],
@@ -2437,7 +2704,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 125
+        "y": 145
       },
       "options": {
         "legend": {
@@ -2458,7 +2725,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_utilization_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_utilization_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"})))",
           "instant": false,
           "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
           "range": true,
@@ -2497,7 +2764,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 125
+        "y": 145
       },
       "options": {
         "legend": {
@@ -2518,7 +2785,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_memory_usage_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_memory_usage_ratio{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"})))",
           "instant": false,
           "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
           "range": true,
@@ -2556,7 +2823,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 135
+        "y": 155
       },
       "options": {
         "legend": {
@@ -2577,7 +2844,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_power_watts{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"})))",
           "instant": false,
           "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
           "range": true,
@@ -2615,7 +2882,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 135
+        "y": 155
       },
       "options": {
         "legend": {
@@ -2636,7 +2903,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1)))",
+          "expr": "max by(vendor,node,device_id) ((foretoken:accelerator_gpu_temperature_celsius{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"})))",
           "instant": false,
           "legendFormat": "{{vendor}} / {{node}} / {{device_id}}",
           "range": true,
@@ -2674,7 +2941,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 145
+        "y": 165
       },
       "options": {
         "legend": {
@@ -2695,7 +2962,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(model_name) ((sum by(namespace,pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container=\"model-server\"}[$__rate_interval]))) * on(namespace,pod) group_left(model_name) (max by(namespace,pod,model_group) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\"}) * on(namespace,model_group) group_left(model_name) (max by(namespace,model_group,model_name) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))",
+          "expr": "sum by(model_name) ((sum by(namespace,pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container=\"model-server\"}[$__rate_interval]))) * on(namespace,pod) group_left(model_name) (max by(namespace,pod,model_group) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\"}) * on(namespace,model_group) group_left(model_name) (max by(namespace,model_group,model_name) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\"}))))",
           "instant": false,
           "interval": "30s",
           "legendFormat": "模型总计 / {{model_name}}",
@@ -2707,7 +2974,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "(sum by(namespace,pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container=\"model-server\"}[$__rate_interval])) * on(namespace,pod) group_left(model_group,node) (max by(namespace,pod,model_group,node) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"} and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "expr": "(sum by(namespace,pod) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\",container=\"model-server\"}[$__rate_interval])) * on(namespace,pod) group_left(model_group,node) (max by(namespace,pod,model_group,node) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"} and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"}))))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
           "interval": "30s",
           "legendFormat": "{{model_group_display}} / {{node}}",
@@ -2746,7 +3013,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 145
+        "y": 165
       },
       "options": {
         "legend": {
@@ -2767,7 +3034,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum by(model_name) ((sum by(namespace,pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"model-server\"})) * on(namespace,pod) group_left(model_name) (max by(namespace,pod,model_group) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\"}) * on(namespace,model_group) group_left(model_name) (max by(namespace,model_group,model_name) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))",
+          "expr": "sum by(model_name) ((sum by(namespace,pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"model-server\"})) * on(namespace,pod) group_left(model_name) (max by(namespace,pod,model_group) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\"}) * on(namespace,model_group) group_left(model_name) (max by(namespace,model_group,model_name) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\"}))))",
           "instant": false,
           "interval": "30s",
           "legendFormat": "模型总计 / {{model_name}}",
@@ -2779,7 +3046,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "(sum by(namespace,pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"model-server\"}) * on(namespace,pod) group_left(model_group,node) (max by(namespace,pod,model_group,node) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"} and on(namespace,model_group) (max by(namespace,model_group) (0 * (label_replace(label_replace(label_replace(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\")) + 1))))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
+          "expr": "(sum by(namespace,pod) (container_memory_working_set_bytes{namespace=~\"$namespace\",container=\"model-server\"}) * on(namespace,pod) group_left(model_group,node) (max by(namespace,pod,model_group,node) (foretoken:accelerator_workload_labels{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"} and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"}))))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
           "interval": "30s",
           "legendFormat": "{{model_group_display}} / {{node}}",
@@ -2797,7 +3064,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 155
+        "y": 175
       },
       "id": 0,
       "panels": [],
@@ -2832,7 +3099,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 156
+        "y": 176
       },
       "options": {
         "legend": {
@@ -2892,7 +3159,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 156
+        "y": 176
       },
       "options": {
         "legend": {
@@ -2952,7 +3219,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 166
+        "y": 186
       },
       "options": {
         "legend": {
@@ -3012,7 +3279,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 166
+        "y": 186
       },
       "options": {
         "legend": {
@@ -3051,7 +3318,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 176
+        "y": 196
       },
       "id": 0,
       "panels": [],
@@ -3100,7 +3367,7 @@
         "h": 4,
         "w": 8,
         "x": 0,
-        "y": 177
+        "y": 197
       },
       "options": {
         "colorMode": "value",
@@ -3182,7 +3449,7 @@
         "h": 4,
         "w": 8,
         "x": 8,
-        "y": 177
+        "y": 197
       },
       "options": {
         "colorMode": "value",
@@ -3267,7 +3534,7 @@
         "h": 4,
         "w": 8,
         "x": 16,
-        "y": 177
+        "y": 197
       },
       "options": {
         "colorMode": "value",
@@ -3380,7 +3647,7 @@
         "h": 10,
         "w": 12,
         "x": 0,
-        "y": 181
+        "y": 201
       },
       "options": {
         "legend": {
@@ -3444,7 +3711,7 @@
         "h": 10,
         "w": 12,
         "x": 12,
-        "y": 181
+        "y": 201
       },
       "options": {
         "legend": {
@@ -3551,7 +3818,7 @@
         "h": 10,
         "w": 8,
         "x": 0,
-        "y": 191
+        "y": 211
       },
       "options": {
         "legend": {
@@ -3666,7 +3933,7 @@
         "h": 10,
         "w": 8,
         "x": 8,
-        "y": 191
+        "y": 211
       },
       "options": {
         "legend": {
@@ -3726,7 +3993,7 @@
         "h": 10,
         "w": 8,
         "x": 16,
-        "y": 191
+        "y": 211
       },
       "options": {
         "legend": {
@@ -3764,7 +4031,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 201
+        "y": 221
       },
       "id": 0,
       "panels": [
@@ -3795,7 +4062,7 @@
             "h": 10,
             "w": 8,
             "x": 0,
-            "y": 202
+            "y": 222
           },
           "options": {
             "legend": {
@@ -3855,7 +4122,7 @@
             "h": 10,
             "w": 8,
             "x": 8,
-            "y": 202
+            "y": 222
           },
           "options": {
             "legend": {
@@ -3915,7 +4182,7 @@
             "h": 10,
             "w": 8,
             "x": 16,
-            "y": 202
+            "y": 222
           },
           "options": {
             "legend": {
@@ -3958,7 +4225,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 212
+        "y": 232
       },
       "id": 0,
       "panels": [],
@@ -3992,7 +4259,7 @@
         "h": 10,
         "w": 8,
         "x": 0,
-        "y": 213
+        "y": 233
       },
       "options": {
         "legend": {
@@ -4073,7 +4340,7 @@
         "h": 10,
         "w": 8,
         "x": 8,
-        "y": 213
+        "y": 233
       },
       "options": {
         "legend": {
@@ -4154,7 +4421,7 @@
         "h": 10,
         "w": 8,
         "x": 16,
-        "y": 213
+        "y": 233
       },
       "options": {
         "legend": {
@@ -4207,7 +4474,7 @@
         "h": 9,
         "w": 24,
         "x": 0,
-        "y": 223
+        "y": 243
       },
       "options": {
         "cellHeight": "sm",
@@ -4349,7 +4616,7 @@
         "label": "模型",
         "multi": true,
         "name": "model_name",
-        "query": "label_values(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\"}, model_name)",
+        "query": "label_values(foretoken:model_instance_info{namespace=~\"$namespace\"}, model_name)",
         "refresh": 1,
         "skipUrlSync": false,
         "sort": 1,
@@ -4369,7 +4636,7 @@
         "label": "模型实例",
         "multi": true,
         "name": "model_group",
-        "query": "query_result((label_replace(max by(namespace,inference_foretoken_io_model_group) (max_over_time(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\"}[$__range] @ end())), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\")) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1)))))",
+        "query": "query_result((max by(namespace,model_group) (max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\"}[$__range] @ end()))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1)))))",
         "refresh": 2,
         "regex": "/model_group=\"(?<value>[^\"]+)\".*model_group_display=\"(?<text>[^\"]+)\"/",
         "skipUrlSync": false,

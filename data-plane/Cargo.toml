@@ -39,6 +39,11 @@ vllm_patches = [
     "patches/vllm/vllm-rust-ready-logprobs.patch",
     "patches/vllm/vllm-logprob-padding-tokens.patch",
     "patches/vllm/vllm-offloading-event-identity.patch",
+    "patches/vllm/vllm-fused-gdn-declaration.patch",
+    "patches/vllm/vllm-rust-spec-decode-stage-timing.patch",
+    "patches/vllm/vllm-spec-decode-timing-collector.patch",
+    "patches/vllm/vllm-spec-decode-timing-hooks.patch",
+    "patches/vllm/vllm-spec-decode-stage-timing.patch",
 ]
 
 [workspace.package]

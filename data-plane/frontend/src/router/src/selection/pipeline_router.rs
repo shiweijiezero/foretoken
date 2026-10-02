@@ -124,6 +124,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                     route_target_stats: stats.clone(),
                     local_load: reservations
                         .snapshot(&(route.route_target_id.clone(), data_parallel_rank)),
+                    stage_eligible: false,
                 })
             })
             .collect()
@@ -136,7 +137,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
         request: &RouterRequest,
         routing_progress: &RoutingProgress<'_>,
         customized_context: &mut C,
-        eligible: impl Fn(&RouteCandidate, &[ScoredCandidate]) -> bool,
+        eligible: impl Fn(&RouteCandidate, &[RouteCandidate]) -> bool,
         error: RouteError,
     ) -> Result<RouteCandidate, RouteError> {
         let started = Instant::now();
@@ -171,7 +172,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 stage_started.elapsed(),
             );
             let mut seen_indexes = BTreeSet::new();
-            let filtered = filtered_indexes
+            let mut filtered = filtered_indexes
                 .into_iter()
                 .map(|index| {
                     if !seen_indexes.insert(index) {
@@ -183,6 +184,13 @@ impl<C: Send + 'static> PipelineRouter<C> {
                         .ok_or(RouteError::InvalidFilterIndex { index: index.0 })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            let eligibility = filtered
+                .iter()
+                .map(|candidate| eligible(candidate, &filtered))
+                .collect::<Vec<_>>();
+            for (candidate, eligible) in filtered.iter_mut().zip(eligibility) {
+                candidate.stage_eligible = eligible;
+            }
             metrics.candidates(&request.model, round, "filtered", filtered.len());
             let stage_started = Instant::now();
             let crate::algorithm::ScoringOutcome {
@@ -215,7 +223,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
                 .collect::<Vec<_>>();
             let selectable = scored
                 .iter()
-                .filter(|candidate| eligible(&candidate.candidate, &scored))
+                .filter(|candidate| candidate.candidate.stage_eligible)
                 .cloned()
                 .collect::<Vec<_>>();
             metrics.candidates(&request.model, round, "selectable", selectable.len());
@@ -271,11 +279,10 @@ impl<C: Send + 'static> PipelineRouter<C> {
         result
     }
 
-    fn future_stages_available(candidate: &RouteCandidate, scored: &[ScoredCandidate]) -> bool {
+    fn future_stages_available(candidate: &RouteCandidate, candidates: &[RouteCandidate]) -> bool {
         candidate.future_stages().iter().all(|role| {
-            scored.iter().any(|other| {
-                other.candidate.role == *role
-                    && other.candidate.pipeline_scope_id == candidate.pipeline_scope_id
+            candidates.iter().any(|other| {
+                other.role == *role && other.pipeline_scope_id == candidate.pipeline_scope_id
             })
         })
     }
@@ -301,7 +308,7 @@ impl<C: Send + 'static> PipelineRouter<C> {
             request,
             routing_progress,
             context,
-            |candidate, scored| match candidate.role {
+            |candidate, candidates| match candidate.role {
                 ModelServerRole::Aggregate => true,
                 ModelServerRole::Prefill => {
                     candidate
@@ -309,12 +316,12 @@ impl<C: Send + 'static> PipelineRouter<C> {
                         .as_ref()
                         .is_some_and(|pipeline_scope_id| {
                             !self.pipeline_scope_has_encoder(request, pipeline_scope_id)
-                                && Self::future_stages_available(candidate, scored)
+                                && Self::future_stages_available(candidate, candidates)
                         })
                 }
                 ModelServerRole::Encoder => {
                     candidate.pipeline_scope_id.is_some()
-                        && Self::future_stages_available(candidate, scored)
+                        && Self::future_stages_available(candidate, candidates)
                 }
                 ModelServerRole::Decode => false,
             },
@@ -337,10 +344,10 @@ impl<C: Send + 'static> PipelineRouter<C> {
             request,
             routing_progress,
             context,
-            |candidate, scored| {
+            |candidate, candidates| {
                 candidate.role == ModelServerRole::Prefill
                     && candidate.pipeline_scope_id.as_deref() == Some(pipeline_scope_id)
-                    && Self::future_stages_available(candidate, scored)
+                    && Self::future_stages_available(candidate, candidates)
             },
             RouteError::NoMatchingRouteTarget {
                 model: request.model.clone(),

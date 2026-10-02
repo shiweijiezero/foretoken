@@ -227,7 +227,7 @@ def _add_benchmark_arguments(
         "--request-rate",
         type=float,
         default=_default(HttpLoadSchedule, "arrival_rate"),
-        help="Target request arrival rate in req/s; -1 sends as fast as possible",
+        help="Target start rate in req/s, or conv/s for multi-turn workloads; -1 sends as fast as possible",
     )
     parser.add_argument(
         "--arrival-pattern",
@@ -255,8 +255,8 @@ def _add_benchmark_arguments(
         nargs="+",
         default=_default(ChatCompletionsGeneration, "max_tokens"),
         help=(
-            "Max generation tokens: one value (fixed) or two values "
-            "MIN MAX for uniform sampling per request"
+            "Generation limit when no row, sampled, or reference-answer output length applies: "
+            "one value or two values MIN MAX for uniform sampling per request"
         ),
     )
     parser.add_argument(
@@ -366,15 +366,6 @@ def _add_benchmark_arguments(
         help="Trace window duration in seconds; omit to replay to the end",
     )
     parser.add_argument(
-        "--trace-max-concurrency",
-        type=int,
-        default=_default(ArrivalTraceSchedule, "max_concurrency"),
-        help=(
-            "Optional cap on active trace requests; timestamps still control "
-            "arrival times"
-        ),
-    )
-    parser.add_argument(
         "--trace-synthetic-prefix-reuse",
         action="store_true",
         default=_default(ArrivalTraceSchedule, "synthetic_prefix_reuse"),
@@ -386,7 +377,7 @@ def _add_benchmark_arguments(
     parser.add_argument(
         "--tokenizer-path",
         default=_default(ChatRequestDataset, "tokenizer"),
-        help="Tokenizer override; random workloads infer it from the selected model service",
+        help="Tokenizer override for random inputs and reference-answer lengths; inferred from the request model",
     )
     parser.add_argument(
         "--random-seed",
@@ -446,12 +437,20 @@ def _add_benchmark_arguments(
     )
 
     parser.add_argument(
+        "--slo-search",
+        action="store_true",
+        default=_default(SloTuneConfig, "search"),
+        help="Search concurrency using aggregate --slo-params criteria instead of measuring the fixed load",
+    )
+    parser.add_argument(
         "--slo-params",
         type=json.loads,
         default=_default(SloTuneConfig, "params"),
         help=(
-            "JSON SLO criteria that enable search; metrics in one object are ANDed, "
-            "objects are searched independently"
+            "JSON array of SLO criteria; one object scores each request without search "
+            "(latency, ttft, tpot, itl). Duration thresholds accept s or ms, "
+            "e.g. <=2s or <=100ms; unitless durations use seconds. All conditions must hold. "
+            "With --slo-search, aggregate criteria objects are searched independently"
         ),
     )
     parser.add_argument(
@@ -474,16 +473,21 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
     models = tuple(namespace.model or ())
     if paths and urls:
         raise ValueError("provide Kustomize paths or --url values, not both")
-    if urls and len(models) not in (1, len(urls)):
-        raise ValueError("--model accepts one shared value or one value per --url")
+    sources = paths or urls
+    if models and len(models) not in (1, len(sources)):
+        raise ValueError("--model accepts one shared value or one value per service")
     service_choices = (
-        tuple({"name": Path(path).name, "path": path} for path in paths)
+        tuple(
+            {"name": Path(path).name, "path": path,
+             "model": models[0] if len(models) == 1 else models[index] if models else ""}
+            for index, path in enumerate(paths)
+        )
         if paths
         else tuple(
             {
                 "name": urlsplit(url).netloc or f"url-{index + 1}",
                 "url": url,
-                "model": models[0] if len(models) == 1 else models[index],
+                "model": models[0] if len(models) == 1 else models[index] if models else "",
             }
             for index, url in enumerate(urls)
         )
@@ -545,7 +549,6 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
             trace_selector=namespace.trace_path,
             start_offset_seconds=namespace.trace_start,
             duration_seconds=namespace.trace_duration,
-            max_concurrency=namespace.trace_max_concurrency,
             synthetic_prefix_reuse=namespace.trace_synthetic_prefix_reuse,
         ),
         outputs=BenchmarkOutputConfig(
@@ -565,6 +568,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
         ),
         # A sweep repeats the whole search; standalone SLO repeats each probe.
         slo=SloTuneConfig(
+            search=namespace.slo_search,
             params=namespace.slo_params,
             num_runs=1 if namespace.sweep else namespace.num_runs,
             upper_bound=namespace.slo_upper_bound,

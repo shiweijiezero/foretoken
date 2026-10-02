@@ -19,7 +19,6 @@ from benchmarks.datasets.huggingface import (
     resolve_hf_file_uri,
 )
 
-
 @dataclass(frozen=True)
 class Turn:
     """One Chat Completions message, including fields beyond role and content."""
@@ -36,6 +35,7 @@ class Task:
     id: str
     turns: tuple[Turn, ...]
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    prompt_token_ids: tuple[int, ...] | None = None
 
     def messages(self) -> list[dict[str, Any]]:
         """Return the turns as OpenAI Chat Completions messages."""
@@ -68,18 +68,37 @@ def iter_jsonl_rows(
             row_index += 1
 
 
+def _iter_dataset_file(path: Path, *, allow_comments: bool) -> Iterator[tuple[Path, int, int, Any]]:
+    """Stream JSON-array rows or read JSONL records without materializing a large corpus."""
+    if path.suffix != ".json":
+        yield from iter_jsonl_rows(path, allow_comments=allow_comments)
+        return
+    with path.open("r", encoding="utf-8") as stream:
+        first = stream.read(1)
+        while first and first.isspace():
+            first = stream.read(1)
+    if first != "[":
+        yield from iter_jsonl_rows(path, allow_comments=allow_comments)
+        return
+    import ijson
+
+    with path.open("rb") as stream:
+        for row_index, row in enumerate(ijson.items(stream, "item", use_float=True)):
+            yield path, row_index + 1, row_index, row
+
+
 def iter_dataset_rows(
     source: str | Path, *, allow_comments: bool = False
 ) -> Iterator[tuple[Path, int, int, Any]]:
-    """Yield normalized rows from a local JSONL file, Hub file, or Hub dataset."""
+    """Yield normalized rows from a local JSONL/JSON file, Hub file, or Hub dataset."""
     selector = str(source)
     local_path = Path(selector).expanduser()
     if local_path.is_file():
-        yield from iter_jsonl_rows(local_path, allow_comments=allow_comments)
+        yield from _iter_dataset_file(local_path, allow_comments=allow_comments)
         return
     if is_hf_file_uri(selector):
-        yield from iter_jsonl_rows(
-            resolve_hf_file_uri(selector), allow_comments=allow_comments
+        yield from _iter_dataset_file(
+            Path(resolve_hf_file_uri(selector)), allow_comments=allow_comments
         )
         return
     if is_hf_dataset_spec(selector):
@@ -96,8 +115,8 @@ def _extract_row_content(
     line_number: int,
     *,
     allow_sharegpt: bool = False,
-) -> tuple[Any, str | None]:
-    """Extract the common OpenAI, prompt, user, and optional ShareGPT fields."""
+) -> tuple[Any, str | list[int] | None]:
+    """Extract chat content or a pre-tokenized Completions prompt from a dataset row."""
     if isinstance(row, list):
         return row, None
     if not isinstance(row, dict):
@@ -115,7 +134,12 @@ def _extract_row_content(
             )
         return _sharegpt_messages(row, dataset_path, line_number), None
     if "prompt" in row:
-        return None, str(row["prompt"])
+        prompt = row["prompt"]
+        if isinstance(prompt, list):
+            if not prompt or any(isinstance(token, bool) or not isinstance(token, int) or token < 0 for token in prompt):
+                raise ValueError(f"Tokenized prompt must be a non-empty list of non-negative integers at {dataset_path}:{line_number}")
+            return None, prompt
+        return None, str(prompt)
     if "user" in row:
         user_message = row["user"]
         if user_message is None or str(user_message) == "":
@@ -194,6 +218,8 @@ def _request_task(
     """Read one row as an independent request whose tools, if any, travel in the task metadata."""
     messages, prompt = _extract_row_content(row, dataset_path, line_number)
     metadata = request_row_metadata(row, dataset_path, line_number)
+    if isinstance(prompt, list):
+        return Task(id=f"{dataset_path}:{row_index}", turns=(), metadata=metadata, prompt_token_ids=tuple(prompt))
     if prompt is not None:
         turns: tuple[Turn, ...] = (Turn(role="user", content=prompt),)
     else:
@@ -212,7 +238,7 @@ def _sharegpt_messages(
         raise ValueError(
             f"Invalid conversations at {dataset_path}:{line_number}"
         )
-    role_map = {"human": "user", "gpt": "assistant"}
+    role_map = {"human": "user", "gpt": "assistant", "system": "system"}
     messages: list[dict[str, Any]] = []
     for index, message in enumerate(conversations):
         if not isinstance(message, dict):
@@ -223,7 +249,7 @@ def _sharegpt_messages(
         speaker = message.get("from")
         if speaker not in role_map or "value" not in message:
             raise ValueError(
-                "ShareGPT messages must use from=human/gpt and value at "
+                "ShareGPT messages must use from=human/gpt/system and value at "
                 f"{dataset_path}:{line_number}"
             )
         messages.append(
@@ -245,13 +271,15 @@ def _conversation_task(
         line_number,
         allow_sharegpt=True,
     )
+    fields = request_row_metadata(row, dataset_path, line_number)
+    if isinstance(prompt, list):
+        return Task(id=f"{dataset_path}:{row_index}", turns=(), metadata=fields, prompt_token_ids=tuple(prompt))
     if prompt is not None:
         messages = [{"role": "user", "content": prompt}]
 
     turns = parse_message_turns(messages, dataset_path, line_number)
     if not any(turn.role == "user" for turn in turns):
         raise ValueError(f"Conversation has no user message at {dataset_path}:{line_number}")
-    fields = request_row_metadata(row, dataset_path, line_number)
     task = Task(id=f"{dataset_path}:{row_index}", turns=turns, metadata=fields)
     return task
 
@@ -359,8 +387,17 @@ def load_conversation_tasks(benchmark: BenchmarkConfig) -> list[Task]:
         ):
             if row_index < row_offset:
                 continue
+            if dataset_path.suffix == ".json" and isinstance(row, dict) and "conversations" in row and "messages" not in row:
+                # Unfiltered conversation arrays include empty and non-chat records.
+                try:
+                    messages = _sharegpt_messages(row, dataset_path, line_number)
+                except ValueError:
+                    continue
+                if not any(message["role"] == "user" for message in messages):
+                    continue
+                row = {**row, "messages": messages}
             task = _conversation_task(row, dataset_path, line_number, row_index)
-            turn_count = len(split_chat_conversation(task.messages()))
+            turn_count = 1 if task.prompt_token_ids is not None else len(split_chat_conversation(task.messages()))
             if workload.max_turns is not None and workload.max_turns > 0:
                 turn_count = min(turn_count, workload.max_turns)
             if request_budget is not None and request_count + turn_count > request_budget:

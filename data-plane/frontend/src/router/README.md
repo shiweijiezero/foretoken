@@ -27,6 +27,7 @@ Set `spec.routerPipeline` only when you want to change the routing strategy. By 
 | Scorer | `prefix` | Prefer reusable prompt cache blocks; tune match-length preference with `matchLengthWeight` and `matchLengthScaleTokens`. |
 | Scorer | `no_hit_lru` | Prefer endpoints not previously selected for cold requests, then least recently selected endpoints; retain up to `lruSize` entries. |
 | Scorer | `load_aware` | Score an empty waiting queue at 0.5 and decrease linearly to zero at `threshold`. |
+| Scorer | `two_tier` | Prefer lower active-request load when both imbalance thresholds are exceeded; otherwise prefer maximum Device-prefix overlap above `cache_threshold`. Requires the `max` picker. |
 | Picker | `gamble_sampling` (default) | Sample from the full score ranking: higher ranks are more likely, ties have equal probability, and lower-ranked targets remain eligible. |
 | Picker | `max` · `power_of_two_choices` | Choose the highest score · sample two distinct targets and choose the higher score (random on ties). |
 

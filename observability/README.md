@@ -21,11 +21,13 @@ The dashboard starts with the last 15 minutes. Change the time range to inspect 
 | --- | --- |
 | Is the model keeping up with demand? | Prompt/output token rates, completed requests, and running/waiting queues. |
 | Where is latency increasing? | First-token and end-to-end latency, output-token intervals, and queue/prefill/decode durations. |
-| Is speculative decoding helping? | For models using it, compare draft acceptance and accepted tokens per draft iteration with output throughput and latency. |
+| Is speculative decoding helping? | Compare draft acceptance, output throughput, latency, and automatically collected draft/target GPU time. |
 | Are caches or devices under pressure? | Cache occupancy and hit rates, filesystem space, GPU utilization and memory, and CPU/memory usage. |
 | How are requests and replicas distributed? | Routing selection shares within each model and role, and autoscaling recommendations versus applied replicas. |
 
-TTFT measures time to the first token; E2EL measures time through generation completion. Both use seconds. TPOT is the per-request average output-token interval; ITL measures individual token intervals. Both use milliseconds and include mean curves. Panel descriptions provide the detailed measurement definitions.
+TTFT measures time to the first token; E2EL measures time through generation completion. Both use seconds. TPOT is the per-request average output-token interval; ITL measures individual token intervals. Both use milliseconds and include mean curves. When samples are sparse, read latency quantiles alongside the observation rate and means. Panel descriptions provide the detailed measurement definitions.
+
+When GPU drafting is active, the dashboard automatically shows draft and target-forward GPU time alongside acceptance, throughput, and latency. Use these panels to compare the cost of the two stages. If the selected time range contains no qualifying samples, the panels remain empty.
 
 Shared frontend panels cover all models served by the selected frontend and record HTTP response starts. Control-plane panels describe the platform; autoscaling panels follow the selected model and autoscaling service.
 
@@ -58,7 +60,7 @@ Use the [alert reference](runbooks/alerts.md) to choose rules, thresholds, and t
 
 ## Platform settings
 
-The commands below update an existing platform. For a source installation, add the shown options to the original install command, running from the checkout root with `-e .`, and retaining registry settings and any `--engine-source` bindings. Reapply the original install command after upgrading Foretoken to update dashboards and telemetry together.
+For a source installation, run platform updates from the checkout root with `-e .`, retaining registry settings and any `--engine-source` bindings. Reapply the original install command after upgrading Foretoken to update dashboards and telemetry together.
 
 ### Grafana login
 

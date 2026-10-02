@@ -7,7 +7,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 [English](README.md) | 简体中文 · [评测与性能剖析](../../README_zh.md)
 
-使用 lm-evaluation-harness 或 EvalScope 评测运行中的模型。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的框架运行。添加 `--reference` 可[比较参考与候选模型的概率分布](distribution-comparison_zh.md)，查看 KL、位宽对比图和 logit 差异。
+使用 lm-evaluation-harness 或 EvalScope 评测运行中的模型。完成[准备步骤](../../README_zh.md#开始使用)后，选择下面的框架运行。添加 `--reference` 可[比较参考与候选模型](distribution-comparison_zh.md)：既能比较固定原文前缀下的概率分布，也能比较贪心生成的 token 序列。
 
 ## lm-evaluation-harness
 
@@ -43,6 +43,19 @@ foretoken eval examples/quickstart \
 
 候选答案评分默认使用原始文本，任务要求指令模型模板时添加 `--apply_chat_template`。困惑度评测使用原始语料，不套用聊天模板。
 
+## 比较多个部署的任务评分
+
+按[量化模型示例](../../../examples/quantized-model/README_zh.md)准备好部署后，将多个 Kustomize 目录写在任务参数之前，即可依次对相同任务评分：
+
+```bash
+foretoken eval examples/quantized-model/bf16 examples/quantized-model/bitsandbytes \
+  --tasks piqa --limit 100 --output local,wandb,plot
+```
+
+各部署依次评测。通过 `evaluation_comparison.csv` 比较任务得分及框架提供的标准误差；详细报告保存在各次运行的结果目录中。
+
+如需比较[参考模型与多个候选模型的概率分布或贪心生成序列](distribution-comparison_zh.md)，请显式添加 `--reference`。
+
 ## EvalScope
 
 ```bash
@@ -53,7 +66,7 @@ foretoken eval examples/quickstart \
   --output local,wandb
 ```
 
-汇总结果展示任务得分和已完成评分的样本数，各类别和子集的详细分数保存在报告与 W&B 中。通过 [EvalScope 原生参数](https://evalscope.readthedocs.io/zh-cn/latest/get_started/basic_usage.html)配置任务，例如 `--dataset-args` 和 `--generation-config`。
+汇总结果展示任务得分和样本数，各类别及子集的详细分数见保存的报告。通过 [EvalScope 原生参数](https://evalscope.readthedocs.io/zh-cn/latest/get_started/basic_usage.html)配置任务，例如 `--dataset-args` 和 `--generation-config`。
 
 两个框架都可去掉 `--limit`，运行完整的所选任务。提示词和判分规则由框架及任务定义。全部选项分别见 `foretoken eval --evaluator lm-eval --help` 和 `foretoken eval --evaluator evalscope --help`。
 
@@ -74,7 +87,7 @@ foretoken eval \
 
 ## 恢复中断的评测
 
-保留本地输出即可保存进度。中断后，在原命令中追加 `--resume`，指向该次运行打印的结果目录。将下面的 `results/previous-run` 换成实际目录：
+单部署评测保留本地输出即可保存进度。中断后，在原命令中追加 `--resume`，指向该次运行打印的结果目录。将下面的 `results/previous-run` 换成实际目录：
 
 ```bash
 foretoken eval examples/quickstart \
@@ -88,7 +101,7 @@ foretoken eval examples/quickstart \
 | --- | --- |
 | lm-evaluation-harness | 已完成的文本生成结果（包括多次采样），以及候选答案和困惑度任务已完成的似然评分窗口 |
 | EvalScope | 服务地址和评测设置不变时，复用独立样本已完成的预测和评分 |
-| 模型概率分布对比 | 已完成的评分窗口，见[恢复模型对比](distribution-comparison_zh.md#恢复模型对比) |
+| 模型概率分布对比 | 已完成的评分窗口，见[恢复概率分布对比](distribution-comparison_zh.md#恢复概率分布对比) |
 
 按上述方式恢复时，使用 `--resume`，不再指定原生 `--use_cache` 或 `--use-cache`。
 
@@ -102,6 +115,6 @@ foretoken eval examples/quickstart \
 | `native/` | 框架报告及其生成的逐样本记录 |
 | `evaluator.log` | 评测框架的运行日志 |
 
-W&B 提供任务指标、分数表，并将框架报告作为 artifact 供下载。输出位置与运行分组采用通用[结果设置](../../README_zh.md#查看和保存结果)。
+结果保存位置见[输出设置](../../README_zh.md#查看和保存结果)。
 
 比较分数时，使用相同的框架、任务配置和样本范围。

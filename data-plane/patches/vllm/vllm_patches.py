@@ -16,7 +16,14 @@ def engine_patches(directory: Path, version: str, patches: Path) -> list[Path]:
     ready = (
         "vllm-0.26-ready-logprobs.patch"
         if version.startswith("0.26.")
+        else "vllm-0.30-ready-logprobs.patch"
+        if version.startswith("0.30.0")
         else "vllm-ready-logprobs.patch"
+    )
+    profiler_result = (
+        "vllm-0.26-profiler-result.patch"
+        if version.startswith("0.26.")
+        else "vllm-0.30-profiler-result.patch"
     )
     names = ["vllm-python-profiling.patch", ready]
     if (
@@ -27,7 +34,44 @@ def engine_patches(directory: Path, version: str, patches: Path) -> list[Path]:
         ).is_file()
     ):
         names.append("vllm-offloading-event-identity.patch")
+    timing = (
+        "vllm-0.26-spec-decode-stage-timing.patch"
+        if version.startswith("0.26.")
+        else "vllm-0.30-spec-decode-stage-timing.patch"
+        if version.startswith("0.30.0")
+        else "vllm-spec-decode-stage-timing.patch"
+        if version.startswith("0.30.1")
+        else None
+    )
+    if timing is not None:
+        names.extend(
+            [
+                "vllm-spec-decode-timing-collector.patch",
+                "vllm-spec-decode-timing-hooks.patch",
+                timing,
+            ]
+        )
+    names.append(profiler_result)
     return [patches / name for name in names]
+
+
+def _patch_content_present(directory: Path, patch: Path) -> bool:
+    """Recognize a completed patch after a later patch changed its context lines."""
+    target = None
+    additions: dict[Path, list[str]] = {}
+    for line in patch.read_text().splitlines():
+        if line.startswith("+++ b/"):
+            target = Path(line.removeprefix("+++ b/"))
+            additions.setdefault(target, [])
+        elif target is not None and line.startswith("+") and not line.startswith("+++"):
+            additions[target].append(line[1:])
+    try:
+        return bool(additions) and all(
+            all(line in (directory / path).read_text().splitlines() for line in lines)
+            for path, lines in additions.items()
+        )
+    except OSError:
+        return False
 
 
 def apply_patch(directory: Path, patch: Path) -> None:
@@ -46,6 +90,9 @@ def apply_patch(directory: Path, patch: Path) -> None:
         check=False,
     )
     if applied.returncode:
+        if _patch_content_present(directory, patch):
+            print(f"vLLM patch already installed: {patch.name}", flush=True)
+            return
         subprocess.run(
             arguments + ["--batch", "--forward", "--no-backup-if-mismatch"], check=True
         )

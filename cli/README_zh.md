@@ -19,6 +19,9 @@ Foretoken 命令行工具通过统一的 `foretoken` 入口安装 Kubernetes 平
 
 ```bash
 pip install foretoken
+
+# 从源码目录安装：
+# pip install -e .
 ```
 
 或使用 uv 创建并激活虚拟环境后安装：
@@ -29,7 +32,7 @@ source .venv/bin/activate
 uv pip install foretoken
 ```
 
-首次使用尚未发布的源码，或将旧 CLI 更新到这份源码时，改为在仓库根目录运行 `pip install -e .`。运行 `foretoken --version` 查看已安装的 CLI 版本。
+运行 `foretoken --version` 查看已安装的 CLI 版本。
 
 ## 安装 Kubernetes 平台
 

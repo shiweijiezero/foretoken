@@ -7,14 +7,14 @@ After [setup](README.md#setup), replay a short populated window from the public 
 ```bash
 foretoken perf examples/quickstart \
   --trace KrisQ/StudyChat --dataset KrisQ/StudyChat \
-  --trace-start 18609050.546 --trace-duration 60 \
-  --trace-max-concurrency 4 --max-tokens 32 \
-  --output local,wandb
+  --trace-start 18609050.546 --trace-duration 480 \
+  --max-concurrency 16 --max-tokens 4096 \
+  --output local,wandb,plot
 ```
 
-`--trace` supplies arrival times; `--dataset` supplies content. Selecting the same source uses each record's own messages. The start offset is measured from the earliest timestamp in the dataset; gaps between records can be long. The command selects a 60-second window, not a wait of 18 million seconds before replay. Concurrency waits are included in replay-delay metrics.
+`--trace` supplies arrival times; `--dataset` supplies content. Selecting the same source uses each record's own messages. The start offset is measured from the earliest timestamp in the dataset; gaps between records can be long. The command selects an eight-minute window, not a wait of 18 million seconds before replay. Requests selected by the window may finish after the window closes; concurrency waits are included in replay-delay metrics.
 
-Each record is independent. Request count and timing come from the selected window, so omit `--num-prompts`, `--request-rate`, `--max-concurrency`, and positive `--max-turns`. Control in-flight requests with `--trace-max-concurrency`.
+Each trace record is independent rather than a causal multi-turn conversation. Request count and timing come from the selected window, so omit `--num-prompts` and `--request-rate`, and positive `--max-turns`. Control in-flight requests with `--max-concurrency`.
 
 ## Example output
 

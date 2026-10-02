@@ -95,6 +95,9 @@ ZH = {
     "Draft acceptance ratio": "草稿 token 接受率",
     "Accepted tokens per draft iteration": "每次草稿迭代接受 token 数",
     "Acceptance probability by position": "各草稿位置接受概率",
+    "Speculative stage GPU time": "推测解码阶段 GPU 时间",
+    "Speculative GPU time shares": "推测解码 GPU 时间占比",
+    "Timed speculative steps / s": "推测解码计时步数 / s",
     "Prompt length": "输入长度",
     "Output length": "输出长度",
     "KV Cache utilization": "KV 缓存使用率",
@@ -174,6 +177,15 @@ ZH = {
     "Draft / {{model_name}}": "草稿 / {{model_name}}",
     "Accepted / {{model_name}}": "接受 / {{model_name}}",
     "Position {{position}} / {{model_name}}": "位置 {{position}} / {{model_name}}",
+    "Target forward / {{model_name}}": "目标模型 forward / {{model_name}}",
+    "Draft share / {{model_name}}": "草稿占比 / {{model_name}}",
+    "Target forward share / {{model_name}}": "目标模型 forward 占比 / {{model_name}}",
+    "Only complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification but excludes sampling. The mean is stage duration sum divided by timed steps, not request latency.":
+        "每个引擎仅在输出 rank 统计完整的推测解码 batch。GPU event 耗时包含内核间的主机间隙；目标模型 forward 包含验证但不含采样。均值是阶段耗时总和除以计时步数，不是请求延迟。",
+    "Draft and target-forward durations each divided by their sum over the same measured steps. These are not wall-clock shares or model speedup; no timed steps produce no ratios.":
+        "同一批计时步中，草稿与目标模型 forward 耗时分别除以两者之和。这不是墙钟时间占比或模型加速比；没有计时步则不显示比例。",
+    "Timed pure speculative decode batches per second, collected automatically for GPU drafting.":
+        "使用 GPU 起草时自动采集的纯推测解码 batch 计时样本数（每秒）。",
     "ITL / {{model_name}}": "ITL / {{model_name}}",
     "TTFT / {{model_name}}": "TTFT / {{model_name}}",
     "E2EL / {{model_name}}": "E2EL / {{model_name}}",
@@ -339,8 +351,8 @@ def model_total(metric: str, *, rate: bool = False, roles: str = "") -> str:
 
 
 def selected_groups() -> str:
-    """Resolve model identity from engine gauges, including idle model instances."""
-    return f"max by(namespace,model_group) (0 * ({model_metric('vllm:kv_cache_usage_perc')}) + 1)"
+    """Resolve model identity from Service scrape targets even when engine metrics are absent."""
+    return 'max by(namespace,model_group) (foretoken:model_instance_info{namespace=~"$namespace",model_name=~"$model_name",model_group=~"$model_group"})'
 
 
 def scoped_group_metric(expr: str) -> str:
@@ -615,10 +627,9 @@ def render(locale: str) -> str:
 def build() -> dashboard_models.Dashboard:
     """Build both locales' shared operator view, ordered from model traffic to platform diagnostics."""
     instances = (
-        'label_replace(max by(namespace,inference_foretoken_io_model_group) ('
-        'max_over_time(vllm:kv_cache_usage_perc{endpoint="model-server",namespace=~"$namespace",'
-        'model_name=~"$model_name"}[$__range] @ end())), "model_group", "$1", '
-        '"inference_foretoken_io_model_group", "(.+)")'
+        'max by(namespace,model_group) ('
+        'max_over_time(foretoken:model_instance_info{namespace=~"$namespace",'
+        'model_name=~"$model_name"}[$__range] @ end()))'
     )
     board = (
         dashboard.Dashboard("Foretoken System Overview")
@@ -651,7 +662,7 @@ def build() -> dashboard_models.Dashboard:
         .with_variable(
             variable(
                 "model_name", "Model",
-                'label_values(vllm:kv_cache_usage_perc{endpoint="model-server",namespace=~"$namespace"}, model_name)',
+                'label_values(foretoken:model_instance_info{namespace=~"$namespace"}, model_name)',
             )
         )
         .with_variable(
@@ -967,6 +978,52 @@ def build() -> dashboard_models.Dashboard:
         )
     )
 
+    draft_time = model_total("vllm:spec_decode_draft_duration_seconds_sum", rate=True, roles="aggregate|decode")
+    target_time = model_total("vllm:spec_decode_target_forward_duration_seconds_sum", rate=True, roles="aggregate|decode")
+    timed_steps = model_total("vllm:spec_decode_draft_duration_seconds_count", rate=True, roles="aggregate|decode")
+    stage_time = f"(({draft_time}) + ({target_time}))"
+    board.with_panel(
+        series(
+            "Speculative stage GPU time",
+            "Only complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification but excludes sampling. The mean is stage duration sum divided by timed steps, not request latency.",
+            [
+                foretoken_query(f"({target_time}) / (({timed_steps}) > 0)", "Target forward / {{model_name}}"),
+                foretoken_query(f"({draft_time}) / (({timed_steps}) > 0)", "Draft / {{model_name}}"),
+            ],
+            unit="s",
+            span=12,
+        ).override_by_query("A", [
+            dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": BLUE}),
+        ]).override_by_query("B", [
+            dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": TEAL}),
+        ])
+    )
+    board.with_panel(
+        series(
+            "Speculative GPU time shares",
+            "Draft and target-forward durations each divided by their sum over the same measured steps. These are not wall-clock shares or model speedup; no timed steps produce no ratios.",
+            [
+                foretoken_query(f"({target_time}) / (({stage_time}) > 0)", "Target forward share / {{model_name}}"),
+                foretoken_query(f"({draft_time}) / (({stage_time}) > 0)", "Draft share / {{model_name}}"),
+            ],
+            unit="percentunit",
+            span=12,
+        ).override_by_query("A", [
+            dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": BLUE}),
+        ]).override_by_query("B", [
+            dashboard_models.DynamicConfigValue(id_val="color", value={"mode": "fixed", "fixedColor": TEAL}),
+        ])
+    )
+    board.with_panel(
+        series(
+            "Timed speculative steps / s",
+            "Timed pure speculative decode batches per second, collected automatically for GPU drafting.",
+            [foretoken_query(timed_steps, "{{model_name}}")],
+            unit="ops",
+            span=24,
+        )
+    )
+
     board.with_row(dashboard.Row("Cache"))
     board.with_panel(
         series(
@@ -1066,7 +1123,7 @@ def build() -> dashboard_models.Dashboard:
     model_pods = (
         'max by(namespace,pod,model_group) (foretoken:accelerator_workload_labels{namespace=~"$namespace"}) '
         '* on(namespace,model_group) group_left(model_name) '
-        f"(max by(namespace,model_group,model_name) (0 * ({model_metric('vllm:kv_cache_usage_perc', whole_model=True)}) + 1))"
+        '(max by(namespace,model_group,model_name) (foretoken:model_instance_info{namespace=~"$namespace",model_name=~"$model_name"}))'
     )
     board.with_panel(
         series(

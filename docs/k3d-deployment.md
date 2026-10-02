@@ -170,7 +170,7 @@ spec:
   hostname: foretoken.example.com
 ```
 
-Enable Gateway mode and deploy the Quick Start. The command installs Envoy Gateway when needed:
+Enable Gateway mode and deploy the Quick Start:
 
 ```bash
 foretoken install -e . --frontend-mode gateway

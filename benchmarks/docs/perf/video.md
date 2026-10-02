@@ -36,7 +36,7 @@ foretoken perf video \
   --output-dir results/video/ti2v
 ```
 
-The benchmark prints an aggregate summary, saves the generated videos and run metadata locally, and records per-request metrics in W&B. Add `--warmup-requests N` to complete the first N rows before measurement, or `--duration SECONDS` to stop admitting new rows at a deadline and drain requests already admitted. Use `--sweep benchmarks/examples/video-sweep.jsonl` to compare video generation and load settings. See [W&B output](wandb.md) for shared output settings.
+Generated videos are saved under `--output-dir`. Use `--warmup-requests N` to run N requests before measurement, or `--duration SECONDS` to set a time limit for sending requests; requests already sent are allowed to finish. To compare generation and load settings, add `--sweep benchmarks/examples/video-sweep.jsonl`.
 
 ![TI2V aggregate benchmark summary](../imgs/video-ti2v-benchmark-summary.png)
 
@@ -65,8 +65,6 @@ foretoken perf video \
   --output local,wandb \
   --output-dir results/video/tv2v
 ```
-
-The result layout and W&B reporting are the same as for TI2V:
 
 ![TV2V aggregate benchmark summary](../imgs/video-tv2v-benchmark-summary.png)
 

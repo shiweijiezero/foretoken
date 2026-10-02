@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
-"""Send measured Chat Completions requests through one OpenAI-compatible client."""
+"""Measure chat and tokenized text generation through one OpenAI-compatible client."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 import httpx
 from openai import APIError, AsyncOpenAI, AsyncStream
+from openai.types import Completion
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 
 from benchmarks.config.benchmark import BenchmarkConfig
@@ -20,8 +21,8 @@ from benchmarks.results.metrics import compute_tpot
 from benchmarks.datasets.conversations import Task
 
 
-class ChatCompletionsLoadClient:
-    """Own the Chat Completions client and generation settings for one workload point."""
+class OpenAILoadClient:
+    """Own one HTTP client and shared generation measurements for a workload point."""
 
     def __init__(
         self,
@@ -49,37 +50,58 @@ class ChatCompletionsLoadClient:
         )
         self._model = service.model
         self._models = service.models if service.model_service_refs or service.deployment is not None else ()
-        self._request_url = service.chat_completions_url
+        self._completions_url = service.api_root.rstrip("/") + "/completions"
+        self._request_url = (
+            service.api_root.rstrip("/") + "/chat/completions"
+            if service.chat_completions_url.rstrip("/") == self._completions_url
+            else service.chat_completions_url
+        )
 
-    async def __aenter__(self) -> ChatCompletionsLoadClient:
+    async def __aenter__(self) -> OpenAILoadClient:
         return self
 
     async def __aexit__(self, *args: object) -> None:
         await self._client.close()
 
+    def model_for(self, metadata: Mapping[str, Any]) -> str:
+        """Resolve the request model for workload tokenization and HTTP dispatch."""
+        model = metadata.get("model", self._request_overrides.get("model", self._model))
+        if not model:
+            raise ValueError("Dataset row must specify model when --model is omitted")
+        if self._models and model not in self._models:
+            raise ValueError(f"Dataset model {model!r} is not advertised by the deployment")
+        return model
+
     async def send(self, task: Task) -> dict[str, Any]:
         """Send one independent request for ``task`` and return its observation."""
-        return await self.send_messages(task.messages(), task.metadata)
+        return await self._send(task.messages(), task.metadata, prompt_token_ids=task.prompt_token_ids)
 
     async def send_messages(
         self,
         messages: list[dict[str, Any]],
         metadata: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Send one request and return timing, usage, and generated text for conversation drivers."""
+        """Send a chat turn and return timing, usage, and generated text for the conversation driver."""
+        return await self._send(messages, metadata)
+
+    async def _send(
+        self,
+        messages: list[dict[str, Any]],
+        metadata: Mapping[str, Any] | None,
+        *,
+        prompt_token_ids: tuple[int, ...] | None = None,
+    ) -> dict[str, Any]:
+        """Measure either endpoint with the same timing, exact-length, and failure rules."""
+        completion = prompt_token_ids is not None
         stream = self._generation.stream
         metadata = metadata or {}
         target_length = metadata.get("output_length")
         if target_length is None:
             target_length = self._generation.sample_output_length()
-        model = metadata.get("model", self._request_overrides.get("model", self._model))
-        if not model:
-            raise ValueError("Dataset row must specify model when --model is omitted")
-        if self._models and model not in self._models:
-            raise ValueError(f"Dataset model {model!r} is not advertised by the deployment")
+        model = self.model_for(metadata)
         request_fields: dict[str, Any] = {
             "model": model,
-            "messages": messages,
+            **({"prompt": list(prompt_token_ids)} if completion else {"messages": messages}),
             "max_tokens": target_length if target_length is not None else self._generation.sample_max_tokens(),
             "stream": stream,
         }
@@ -107,11 +129,11 @@ class ChatCompletionsLoadClient:
         success = True
         try:
             response = await self._client.post(
-                self._request_url,
+                self._completions_url if completion else self._request_url,
                 body=request_fields,
-                cast_to=ChatCompletion,
+                cast_to=Completion if completion else ChatCompletion,
                 stream=stream,
-                stream_cls=AsyncStream[ChatCompletionChunk],
+                stream_cls=AsyncStream[Completion] if completion else AsyncStream[ChatCompletionChunk],
             )
             status_code = httpx.codes.OK
             if stream:
@@ -120,12 +142,14 @@ class ChatCompletionsLoadClient:
                     payload = chunk.model_dump(exclude_none=True)
                     timing.observe(payload, received_at)
                     if chunk.choices:
-                        delta = chunk.choices[0].delta
-                        content = delta.content
-                        if content:
-                            generated_parts.append(content)
-                        if delta.tool_calls:
-                            tool_calls.extend(call.model_dump(exclude_none=True) for call in delta.tool_calls)
+                        if completion:
+                            generated_parts.append(chunk.choices[0].text)
+                        else:
+                            delta = chunk.choices[0].delta
+                            if delta.content:
+                                generated_parts.append(delta.content)
+                            if delta.tool_calls:
+                                tool_calls.extend(call.model_dump(exclude_none=True) for call in delta.tool_calls)
                     if chunk.usage is not None:
                         input_tokens = int(chunk.usage.prompt_tokens)
                         output_tokens = int(chunk.usage.completion_tokens)
@@ -133,12 +157,15 @@ class ChatCompletionsLoadClient:
                         if details is not None and details.cached_tokens is not None:
                             cached_input_tokens = int(details.cached_tokens)
             else:
-                message = response.choices[0].message if response.choices else None
-                if message is not None:
-                    if message.content:
-                        generated_parts.append(message.content)
-                    if message.tool_calls:
-                        tool_calls.extend(call.model_dump(exclude_none=True) for call in message.tool_calls)
+                if response.choices:
+                    if completion:
+                        generated_parts.append(response.choices[0].text)
+                    else:
+                        message = response.choices[0].message
+                        if message.content:
+                            generated_parts.append(message.content)
+                        if message.tool_calls:
+                            tool_calls.extend(call.model_dump(exclude_none=True) for call in message.tool_calls)
                 if response.usage is not None:
                     input_tokens = int(response.usage.prompt_tokens)
                     output_tokens = int(response.usage.completion_tokens)
@@ -155,6 +182,11 @@ class ChatCompletionsLoadClient:
             error_message = (
                 f"Output length mismatch: requested {target_length} tokens, service reported {output_tokens}; "
                 "verify min_tokens and ignore_eos support"
+            )
+        if success and completion and input_tokens != len(prompt_token_ids):
+            success = False
+            error_message = (
+                f"Input length mismatch: sent {len(prompt_token_ids)} token IDs, service reported {input_tokens}"
             )
         completed_at = (
             timing.last_output_at

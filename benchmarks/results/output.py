@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import os
@@ -341,6 +342,38 @@ def write_json(directory: str, filename: str, data: Any) -> Path:
     path = Path(directory) / filename
     with path.open("w", encoding="utf-8") as file:
         json.dump(data, file, indent=4, ensure_ascii=False)
+    return path
+
+
+def write_gpu_allocation_csv(directory: str, allocation: dict[str, Any]) -> Path:
+    """Write every GPU snapshot and failed-read boundary for local inspection."""
+    resources = sorted({
+        resource
+        for sample in allocation["samples"]
+        for resource in sample["gpu_counts"]
+    })
+    rows = [
+        {
+            "elapsed_time_s": sample["elapsed_time_s"],
+            "event": "sample",
+            **{resource: sample["gpu_counts"].get(resource) for resource in resources},
+        }
+        for sample in allocation["samples"]
+    ]
+    rows.extend(
+        {
+            "elapsed_time_s": elapsed,
+            "event": "failed_read",
+            **dict.fromkeys(resources),
+        }
+        for elapsed in allocation["failed_read_elapsed_s"]
+    )
+    rows.sort(key=lambda row: (float(row["elapsed_time_s"]), row["event"]))
+    path = Path(directory) / "gpu_allocation.csv"
+    with path.open("w", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=("elapsed_time_s", "event", *resources))
+        writer.writeheader()
+        writer.writerows(rows)
     return path
 
 
@@ -703,7 +736,21 @@ class ResultOutputs:
             if run.time_origin is None:
                 observer.close()
             else:
-                observations = observer.finish(run.time_origin)
+                observations = observer.finish(
+                    run.time_origin, float(run.metrics["benchmark_time"])
+                )
+                allocation = observer.gpu_allocation
+                if allocation is not None:
+                    run.metrics["gpu_allocation"] = {
+                        key: value for key, value in allocation.items()
+                        if key not in {"samples", "failed_read_elapsed_s"}
+                    }
+                    run.artifacts["gpu_allocation"] = write_json(
+                        self.execution_dir, "gpu_allocation.json", allocation,
+                    )
+                    run.artifacts["gpu_allocation_csv"] = write_gpu_allocation_csv(
+                        self.execution_dir, allocation,
+                    )
                 if observations:
                     run.artifacts["replica_observations"] = write_json(
                         self.execution_dir,
@@ -713,7 +760,12 @@ class ResultOutputs:
         prometheus_observer = self._prometheus_observer
         self._prometheus_observer = None
         if prometheus_observer is not None:
-            observations = prometheus_observer.finish(run.time_origin)
+            observations = prometheus_observer.finish(run.time_origin, run.metrics.get("benchmark_time"))
+            if observations["speculative_decoding"] is not None:
+                run.metrics["speculative_decoding"] = {
+                    key: value for key, value in observations["speculative_decoding"].items()
+                    if key not in {"queries", "window_end_unix_seconds"}
+                }
             run.artifacts["prometheus_observations"] = write_json(
                 self.execution_dir,
                 "prometheus_observations.json",
