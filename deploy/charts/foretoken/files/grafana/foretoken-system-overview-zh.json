@@ -1603,7 +1603,7 @@
           "refId": "B"
         }
       ],
-      "title": "每秒请求延迟记录数",
+      "title": "请求延迟采样数量",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1663,7 +1663,7 @@
           "refId": "A"
         }
       ],
-      "title": "每秒 Token 间隔记录数",
+      "title": "Token 间隔采样数量",
       "transparent": false,
       "type": "timeseries"
     },

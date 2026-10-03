@@ -48,8 +48,8 @@ ZH = {
     "No data": "无数据",
     "Generation latency": "生成延迟",
     "Request lengths": "请求长度分布",
-    "Request latency samples / s": "每秒请求延迟记录数",
-    "Token interval samples / s": "每秒 Token 间隔记录数",
+    "Request latency samples / s": "请求延迟采样数量",
+    "Token interval samples / s": "Token 间隔采样数量",
     "TTFT and E2EL histogram observations per second for each whole model.":
         "每个模型每秒记录的 TTFT 与 E2EL 直方图样本数。",
     "Output-token interval observations per second for each whole model. These count token intervals.":
