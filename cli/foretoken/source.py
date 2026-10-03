@@ -67,6 +67,12 @@ def pinned_rust_revision(root: Path) -> str:
     return fields[1]
 
 
+def image_tools_image(arguments: dict[str, str]) -> str:
+    """Select Bash and GNU tar for node image operations using the build's Docker mirror."""
+    registry = arguments.get("BASE_IMAGE_REGISTRY", "docker.io").rstrip("/")
+    return f"{registry}/library/debian:bookworm-slim"
+
+
 def build_configuration(
     root: Path, values: Sequence[dict[str, Any]], image_registry: str
 ) -> dict[str, str]:
@@ -376,6 +382,7 @@ def prepare_source_images(
                     configuration["image"],
                     binding,
                     command.timeout,
+                    tools_image=image_tools_image(arguments),
                     node=node,
                     containerd_socket=socket,
                     pull_secrets=secret_names,
@@ -420,6 +427,9 @@ def prepare_source_images(
                     image=image,
                     push=bool(registry),
                     arguments=component_arguments,
+                    reuse_image=installed.get(component, "")
+                    if image == references[component]
+                    else "",
                 )
                 final_dockerfile, final_target, final_arguments = (
                     dockerfile,
@@ -455,6 +465,7 @@ def prepare_source_images(
                         image=references[component],
                         push=bool(registry),
                         arguments=engine_arguments,
+                        reuse_image=installed.get(component, ""),
                     )
                     final_dockerfile, final_target, final_arguments = (
                         "deploy/inference-engines/source-build.Dockerfile",

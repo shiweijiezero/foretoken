@@ -741,7 +741,11 @@ class EditableDeployment:
         self, namespace: str, bundles: dict[str, dict[str, Any]], timeout: str
     ) -> bool:
         """Compile on separate storage and publish to the workload cache before rollout."""
-        from foretoken.source import ensure_build_cache, local_build_nodes
+        from foretoken.source import (
+            ensure_build_cache,
+            image_tools_image,
+            local_build_nodes,
+        )
         from foretoken.storage import DirectoryVolumes
 
         runtime = self.state["runtime"]
@@ -829,6 +833,7 @@ class EditableDeployment:
             build["configuration"]["image"],
             build["binding"],
             timeout,
+            tools_image=image_tools_image(build["arguments"]),
             node=node,
             containerd_socket=socket,
             pull_secrets=tuple(runtime["pull_secrets"]),
