@@ -8,13 +8,13 @@ from __future__ import annotations
 import json
 import re
 import shlex
-import shutil
 import subprocess
 from collections.abc import Iterable
 from typing import Any, NoReturn
 
 from foretoken.manifest import DeploymentError
 from foretoken.platform.config import PlatformConfig
+from foretoken.tools import resolve_tool
 from foretoken.platform.types import ReleaseRef
 
 
@@ -22,15 +22,14 @@ class HelmClient:
     """Execute Helm commands and read release-owned metadata."""
 
     def __init__(self, config: PlatformConfig) -> None:
-        if shutil.which("helm") is None:
-            raise DeploymentError("helm is required to install the Foretoken platform")
+        self._helm = resolve_tool("helm", "FORETOKEN_HELM")
         self._config = config
 
     def run(
         self, args: Iterable[str], *, input_text: str | None = None
     ) -> subprocess.CompletedProcess[str]:
         """Execute Helm with optional stdin and preserve its diagnostic output on failure."""
-        command = ["helm", *args]
+        command = [self._helm, *args]
         completed = self._execute(command, input_text=input_text)
         if completed.returncode:
             self._raise_command_error(command, completed)
@@ -60,7 +59,7 @@ class HelmClient:
     def release_exists(self, release: ReleaseRef) -> bool:
         """Return whether a release with the fixed identity exists."""
         command = [
-            "helm",
+            self._helm,
             "get",
             "metadata",
             release.name,

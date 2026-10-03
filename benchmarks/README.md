@@ -17,7 +17,7 @@ pip install foretoken
 # pip install -e .
 ```
 
-Run the examples from the repository checkout prepared by the [Quick Start](../README.md#quick-start). Run `wandb login` before first using W&B.
+Run the examples from the repository checkout prepared by the [Quick Start](../README.md#quick-start). Run `wandb login` before first using W&B. Random workloads reuse local model/cache tokenizers when available; set `FORETOKEN_HF_ENDPOINT` to choose a Hugging Face endpoint explicitly.
 
 Pass a Kustomize directory to use its model service. A single-model deployment supplies the model name automatically; use `--model` to choose among multiple models. To measure an existing endpoint, replace the directory with `--url` and provide its model name.
 

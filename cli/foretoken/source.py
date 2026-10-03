@@ -198,31 +198,42 @@ def remove_build_caches(kubectl: Kubectl, timeout: str) -> None:
 def local_build_nodes(
     kubectl: Kubectl, registry: str | None, socket: str = ""
 ) -> list[tuple[str, str, str]]:
-    """Use node-local image stores only for standard local kind and k3d contexts."""
+    """Resolve node-local image stores for local and K3s clusters without a registry."""
     if registry:
         return [("", "", "foretoken-source-build")]
+    nodes = [
+        node
+        for node in kubectl.list_resources(("nodes",), "")
+        if not node.get("spec", {}).get("unschedulable")
+    ]
+    if not nodes:
+        raise DeploymentError("source builds need a schedulable Kubernetes node")
     if not socket:
         context = kubectl.run(["config", "current-context"]).stdout.strip()
         if context.startswith("k3d-"):
             socket = "/run/k3s/containerd/containerd.sock"
         elif context.startswith("kind-"):
             socket = "/run/containerd/containerd.sock"
+        elif all(
+            "k3s"
+            in node.get("status", {})
+            .get("nodeInfo", {})
+            .get("containerRuntimeVersion", "")
+            for node in nodes
+        ):
+            socket = "/run/k3s/containerd/containerd.sock"
         else:
             raise DeploymentError(
                 "source installation on a remote cluster requires --registry"
             )
-    nodes = [
+    return [
         (
             node["metadata"]["name"],
             socket,
             "foretoken-source-build-" + node["metadata"]["uid"][:8],
         )
-        for node in kubectl.list_resources(("nodes",), "")
-        if not node.get("spec", {}).get("unschedulable")
+        for node in nodes
     ]
-    if not nodes:
-        raise DeploymentError("source builds need a schedulable Kubernetes node")
-    return nodes
 
 
 @contextmanager

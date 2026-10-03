@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 import time
 from collections.abc import Callable, Iterable
@@ -22,6 +21,7 @@ from foretoken.manifest import (
     deployment_path,
     parse_deployment,
 )
+from foretoken.tools import resolve_tool
 
 _METRICS_SCRAPER_LABEL = "inference.foretoken.io/metrics-scraper"
 _METRICS_SCRAPER_OWNER_ANNOTATION = (
@@ -60,15 +60,12 @@ class Kubectl:
 
     def __init__(self, context: str | None = None) -> None:
         self.context = context
-        if shutil.which("kubectl") is None:
-            raise DeploymentError(
-                "kubectl is required to deploy or inspect Foretoken services"
-            )
+        self.executable = resolve_tool("kubectl", "FORETOKEN_KUBECTL")
 
     def command(self, args: Iterable[str]) -> list[str]:
         """Build an invocation with the same cluster selection for text and streamed calls."""
         context = ["--context", self.context] if self.context is not None else []
-        return ["kubectl", *context, *args]
+        return [self.executable, *context, *args]
 
     def run(
         self,

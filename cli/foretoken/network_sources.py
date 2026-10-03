@@ -377,3 +377,28 @@ def select_source_build_sources(
         messages.append(f"{probe.name}: mirror {mirror:.2f}s, official {official_time}")
 
     return selected, tuple(messages), tuple(unavailable)
+
+
+@cache
+def select_huggingface_endpoint(
+    repository: str, explicit_endpoint: str | None = None
+) -> str | None:
+    """Select an explicit or reachable Hugging Face endpoint for one repository."""
+    if explicit_endpoint:
+        return explicit_endpoint.rstrip("/")
+
+    encoded = urllib.parse.quote(repository, safe="/")
+    endpoints = ("https://huggingface.co", "https://hf-mirror.com")
+    with ThreadPoolExecutor(max_workers=len(endpoints)) as executor:
+        futures = tuple(
+            executor.submit(_measure_url, f"{endpoint}/api/models/{encoded}")
+            for endpoint in endpoints
+        )
+        official, mirror = (future.result() for future in futures)
+    if _prefer_mirror(official, mirror):
+        return endpoints[1]
+    if official is not None:
+        return endpoints[0]
+    if mirror is not None:
+        return endpoints[1]
+    return None
