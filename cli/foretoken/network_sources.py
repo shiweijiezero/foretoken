@@ -35,6 +35,12 @@ SOURCE_SELECTION_POLICY = _SourceSelectionPolicy(
 )
 
 
+_GITHUB_MIRRORS = (
+    "https://gh-proxy.com/https://github.com",
+    "https://ghproxy.net/https://github.com",
+)
+
+
 @dataclass(frozen=True)
 class _SourceMirror:
     measure: Callable[[], float | None]
@@ -317,6 +323,28 @@ def select_platform_oci_reference(reference: str) -> str:
     return f"{scheme}{selected[0].value}/{path}" if selected else reference
 
 
+@cache
+def select_github_download(url: str, mirror: str | None = None) -> str:
+    """Select a source for a platform-owned GitHub download, preserving explicit overrides."""
+    prefix = "https://github.com"
+    if not url.startswith(prefix + "/"):
+        return url
+    path = url.removeprefix(prefix)
+    if mirror:
+        return mirror.rstrip("/") + path
+    mirrors = tuple(
+        _SourceMirror(partial(_measure_url, base + path), base + path)
+        for base in _GITHUB_MIRRORS
+    )
+    with ThreadPoolExecutor(max_workers=1 + len(mirrors)) as executor:
+        official = executor.submit(_measure_url, url)
+        futures = tuple(executor.submit(candidate.measure) for candidate in mirrors)
+        selected = _select_mirror(
+            official.result(), mirrors, tuple(future.result() for future in futures)
+        )
+    return selected[0].value if selected else url
+
+
 def select_source_build_sources(
     environment: Mapping[str, str],
 ) -> tuple[dict[str, str], tuple[str, ...], tuple[str, ...]]:
@@ -408,10 +436,7 @@ def select_source_build_sources(
                 partial(_measure_github, "https://github.com"),
                 tuple(
                     _SourceMirror(partial(_measure_github, base), base)
-                    for base in (
-                        "https://gh-proxy.com/https://github.com",
-                        "https://ghproxy.net/https://github.com",
-                    )
+                    for base in _GITHUB_MIRRORS
                 ),
             ),
         )

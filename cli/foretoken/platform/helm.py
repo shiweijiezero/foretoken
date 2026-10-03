@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tarfile
 import tempfile
 from pathlib import Path
@@ -16,6 +17,7 @@ import yaml
 from foretoken.manifest import DeploymentError, ResourceRef
 from foretoken.network_sources import (
     platform_image_reference,
+    select_github_download,
     select_platform_oci_reference,
 )
 from foretoken.platform.config import (
@@ -35,9 +37,11 @@ class Helm(HelmClient):
     """Build and execute Helm operations for platform-owned charts."""
 
     def _chart_source(self, source: str, version: str | None) -> str:
-        """Resolve a managed OCI chart without overriding an explicit mirror."""
-        if self._config.image_registry is not None or not source.startswith("oci://"):
+        """Resolve a managed chart source without overriding explicit registry choices."""
+        if self._config.image_registry is not None:
             return source
+        if not source.startswith("oci://"):
+            return select_github_download(source, os.environ.get("FORETOKEN_GITHUB_MIRROR"))
         reference = f"{source}:{version}" if version is not None else source
         selected = select_platform_oci_reference(reference)
         return selected.removesuffix(f":{version}") if version is not None else selected
