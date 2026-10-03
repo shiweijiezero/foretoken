@@ -41,7 +41,6 @@ curl -fsSL "https://nvidia.github.io/libnvidia-container/$distribution/libnvidia
 sudo apt-get update
 sudo apt-get install -y nvidia-container-toolkit
 sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
 ```
 
 Install k3d, kubectl, and Helm using their official installers, then verify the host:

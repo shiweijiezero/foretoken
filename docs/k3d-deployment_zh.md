@@ -41,7 +41,6 @@ curl -fsSL "https://nvidia.github.io/libnvidia-container/$distribution/libnvidia
 sudo apt-get update
 sudo apt-get install -y nvidia-container-toolkit
 sudo nvidia-ctk runtime configure --runtime=docker
-sudo systemctl restart docker
 ```
 
 安装 k3d、kubectl 和 Helm，然后检查主机：
