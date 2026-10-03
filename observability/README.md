@@ -25,7 +25,7 @@ The dashboard starts with the last 15 minutes. Change the time range to inspect 
 | Are caches or devices under pressure? | Cache occupancy and hit rates, filesystem space, GPU utilization and memory, and CPU/memory usage. |
 | How are requests and replicas distributed? | Routing selection shares within each model and role, and autoscaling recommendations versus applied replicas. |
 
-TTFT measures time to the first token; E2EL measures time through generation completion. Both use seconds. TPOT is the per-request average output-token interval; ITL measures individual token intervals. Both use milliseconds and include mean curves. When samples are sparse, read latency quantiles alongside the observation rate and means. Panel descriptions provide the detailed measurement definitions.
+TTFT measures time to the first token; E2EL measures time through generation completion. Both use seconds. TPOT is the per-request average output-token interval; ITL measures individual token intervals. Both use milliseconds and include mean curves. Panel descriptions provide the detailed measurement definitions.
 
 When GPU drafting is active, the dashboard automatically shows draft and target-forward GPU time alongside acceptance, throughput, and latency. Use these panels to compare the cost of the two stages.
 

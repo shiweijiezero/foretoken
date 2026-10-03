@@ -11,13 +11,13 @@ Select rules in the owning service's `spec.observability.alerts.rules`. An empty
 
 | Alert | Service | Trigger | Persistence | Required threshold or scope |
 | --- | --- | --- | --- | --- |
-| `ForetokenMetricsTargetDown` | `FrontendService` or `ModelService` | A discovered `/metrics` target cannot be scraped | 1 minute | The selected service's target |
+| `ForetokenMetricsTargetDown` | `FrontendService` or `ModelService` | A discovered `/metrics` endpoint cannot be scraped | 1 minute | The selected service's metrics endpoint |
 | `ForetokenFrontendHTTPResponseStart5xxRatioHigh` | `FrontendService` | More than 5% of response starts are 5xx while traffic is at least 0.1 response/s | 2 minutes | The selected FrontendService |
 | `ForetokenNVIDIAGPUTemperatureHigh` | `ModelService` | An attributed NVIDIA GPU reaches the configured temperature threshold | 2 minutes | `nvidiaTemperatureCelsius` (default 85°C); ModelGroup scope |
 | `ForetokenNVIDIAGPUPowerUsageHigh` | `ModelService` | An attributed NVIDIA GPU reaches the configured power threshold | 5 minutes | Select the rule and set positive `nvidiaPowerWatts`; ModelGroup scope |
 
-GPU temperature and power rules use only recording series attributed to the selected ModelService's ModelGroups. GPU utilization and memory-occupancy alerts are not provided, but their metrics remain available in the dashboard.
+GPU temperature and power rules use recording series attributed to the selected ModelService's ModelGroups. The dashboard also provides GPU utilization and memory-occupancy metrics.
 
-`ForetokenMetricsTargetDown` resolves when scraping resumes or the target leaves service discovery.
+`ForetokenMetricsTargetDown` resolves when scraping resumes or the metrics endpoint leaves service discovery.
 
 For delivery, configure a [Lark](../integrations/lark/README.md), [Slack](../integrations/slack/README.md), or [DingTalk](../integrations/dingtalk/README.md) receiver.

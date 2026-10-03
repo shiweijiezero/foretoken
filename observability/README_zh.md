@@ -25,7 +25,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 | 缓存或设备是否紧张？ | 缓存占用和命中率、文件系统空间、GPU 利用率与显存，以及 CPU／内存用量。 |
 | 路由与副本配置是否合适？ | 各模型、执行角色内的路由选择份额，以及扩缩容建议与实际副本数。 |
 
-TTFT 表示首 token 延迟，E2EL 计至生成完成，两者使用秒。TPOT 统计每个请求的平均输出 token 间隔，ITL 统计逐 token 间隔，两者使用毫秒并提供均值曲线。样本稀少时，结合观测速率与均值阅读延迟分位数；详细口径见各面板说明。
+TTFT 表示首 token 延迟，E2EL 计至生成完成，两者使用秒。TPOT 统计每个请求的平均输出 token 间隔，ITL 统计逐 token 间隔，两者使用毫秒并提供均值曲线；详细口径见各面板说明。
 
 启用 GPU 起草后，看板会自动展示草稿阶段和目标模型 forward 的 GPU 耗时。结合草稿接受率、吞吐和延迟，可以比较推测解码的收益与成本。
 

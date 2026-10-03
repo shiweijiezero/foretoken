@@ -1181,7 +1181,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "聚合和 Decode 引擎的输出 token 间隔，单位毫秒。分位数由直方图桶插值得到；样本稀少时对照均值和观测速率。",
+      "description": "聚合和 Decode 引擎的输出 token 间隔，单位毫秒。分位数由直方图桶插值得到。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1540,7 +1540,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个模型每秒记录的 TTFT 与 E2EL 直方图样本数；没有观测时不显示延迟分位数。",
+      "description": "每个模型每秒记录的 TTFT 与 E2EL 直方图样本数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1603,7 +1603,7 @@
           "refId": "B"
         }
       ],
-      "title": "请求延迟观测速率",
+      "title": "请求延迟采样速率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1612,7 +1612,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个模型每秒记录的输出 token 间隔样本数，计数单位是 token 间隔，不是请求。",
+      "description": "每个模型每秒记录的输出 token 间隔样本数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1663,7 +1663,7 @@
           "refId": "A"
         }
       ],
-      "title": "Token 间隔观测速率",
+      "title": "Token 间隔采样速率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1820,7 +1820,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个模型的草稿与接受 token 速率，表示推测解码工作量，不等同最终输出吞吐量。",
+      "description": "每个模型的草稿与接受 token 速率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1923,7 +1923,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "全部引擎接受的草稿 token 数除以提出的草稿 token 数；没有草稿时不显示比例，也不代表加速比。",
+      "description": "全部引擎接受的草稿 token 数除以提出的草稿 token 数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2044,7 +2044,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "各草稿位置（从 0 开始）的接受数除以全部引擎草稿迭代数；没有草稿时不显示比例。",
+      "description": "各草稿位置（从 0 开始）的接受数除以全部引擎草稿迭代数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2105,7 +2105,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个引擎仅在输出 rank 统计完整的推测解码 batch。GPU event 耗时包含内核间的主机间隙；目标模型 forward 包含验证但不含采样。均值是阶段耗时总和除以计时步数，不是请求延迟。",
+      "description": "每个引擎在一个输出 rank 上统计完整的推测解码 batch。GPU event 耗时包含排队内核之间的主机间隙；目标模型 forward 包含验证但不含采样。均值是阶段耗时总和除以计时步数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2208,7 +2208,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "同一批计时步中，草稿与目标模型 forward 耗时分别除以两者之和。这不是墙钟时间占比或模型加速比；没有计时步则不显示比例。",
+      "description": "同一批计时步中，草稿与目标模型 forward 耗时分别除以两者之和。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4460,7 +4460,7 @@
           "refId": "B"
         }
       ],
-      "title": "观测与评估数据时效",
+      "title": "距最近观测与评估",
       "transparent": false,
       "type": "timeseries"
     },

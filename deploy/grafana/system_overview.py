@@ -48,12 +48,12 @@ ZH = {
     "No data": "无数据",
     "Generation latency": "生成延迟",
     "Request lengths": "请求长度分布",
-    "Request latency samples / s": "请求延迟观测速率",
-    "Token interval samples / s": "Token 间隔观测速率",
-    "TTFT and E2EL histogram observations per second for each whole model. No observations leave latency quantiles unavailable.":
-        "每个模型每秒记录的 TTFT 与 E2EL 直方图样本数；没有观测时不显示延迟分位数。",
-    "Output-token interval observations per second for each whole model. These count token intervals, not requests.":
-        "每个模型每秒记录的输出 token 间隔样本数，计数单位是 token 间隔，不是请求。",
+    "Request latency samples / s": "请求延迟采样速率",
+    "Token interval samples / s": "Token 间隔采样速率",
+    "TTFT and E2EL histogram observations per second for each whole model.":
+        "每个模型每秒记录的 TTFT 与 E2EL 直方图样本数。",
+    "Output-token interval observations per second for each whole model. These count token intervals.":
+        "每个模型每秒记录的输出 token 间隔样本数。",
     "{{model_name}} / local": "{{model_name}} / 本地",
     "{{model_name}} / external": "{{model_name}} / 外部",
     "{{model_name}} / mean": "{{model_name}} / 均值",
@@ -119,7 +119,7 @@ ZH = {
     "Controller workqueues": "控制器工作队列",
     "Replica decisions": "副本决策",
     "Serving capacity": "服务容量",
-    "Observation and evaluation age": "观测与评估数据时效",
+    "Observation and evaluation age": "距最近观测与评估",
     "Latest autoscaling stage": "最新扩缩容阶段",
     "Data source": "数据源",
     "Namespace": "命名空间",
@@ -164,26 +164,26 @@ ZH = {
         "从前端开始处理请求到首个输出 token 的耗时，按模型统计，单位为秒。",
     "Whole-model time per output token, in milliseconds; each request contributes its average interval.":
         "每个请求的平均输出 token 间隔，按模型统计分位数和均值，单位为毫秒。",
-    "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets; compare the mean and observation rate when samples are sparse.":
-        "聚合和 Decode 引擎的输出 token 间隔，单位毫秒。分位数由直方图桶插值得到；样本稀少时对照均值和观测速率。",
-    "Draft and accepted token rates for each whole model. These are speculative work, not final output throughput.":
-        "每个模型的草稿与接受 token 速率，表示推测解码工作量，不等同最终输出吞吐量。",
-    "Accepted draft tokens divided by proposed draft tokens across all engines. No drafts produce no ratio; this is not a speedup estimate.":
-        "全部引擎接受的草稿 token 数除以提出的草稿 token 数；没有草稿时不显示比例，也不代表加速比。",
+    "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets.":
+        "聚合和 Decode 引擎的输出 token 间隔，单位毫秒。分位数由直方图桶插值得到。",
+    "Draft and accepted token rates for each whole model.":
+        "每个模型的草稿与接受 token 速率。",
+    "Accepted draft tokens divided by proposed draft tokens across all engines.":
+        "全部引擎接受的草稿 token 数除以提出的草稿 token 数。",
     "Accepted draft tokens per draft iteration across all engines; excludes bonus tokens.":
         "全部引擎每次草稿迭代接受的草稿 token 数，不包含额外 token。",
-    "Accepted tokens at each zero-based draft position divided by draft iterations across all engines. No drafts produce no ratio.":
-        "各草稿位置（从 0 开始）的接受数除以全部引擎草稿迭代数；没有草稿时不显示比例。",
+    "Accepted tokens at each zero-based draft position divided by draft iterations across all engines.":
+        "各草稿位置（从 0 开始）的接受数除以全部引擎草稿迭代数。",
     "Draft / {{model_name}}": "草稿 / {{model_name}}",
     "Accepted / {{model_name}}": "接受 / {{model_name}}",
     "Position {{position}} / {{model_name}}": "位置 {{position}} / {{model_name}}",
     "Target forward / {{model_name}}": "目标模型 forward / {{model_name}}",
     "Draft share / {{model_name}}": "草稿占比 / {{model_name}}",
     "Target forward share / {{model_name}}": "目标模型 forward 占比 / {{model_name}}",
-    "Only complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification but excludes sampling. The mean is stage duration sum divided by timed steps, not request latency.":
-        "每个引擎仅在输出 rank 统计完整的推测解码 batch。GPU event 耗时包含内核间的主机间隙；目标模型 forward 包含验证但不含采样。均值是阶段耗时总和除以计时步数，不是请求延迟。",
-    "Draft and target-forward durations each divided by their sum over the same measured steps. These are not wall-clock shares or model speedup; no timed steps produce no ratios.":
-        "同一批计时步中，草稿与目标模型 forward 耗时分别除以两者之和。这不是墙钟时间占比或模型加速比；没有计时步则不显示比例。",
+    "Complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification and excludes sampling. The mean is stage duration sum divided by timed steps.":
+        "每个引擎在一个输出 rank 上统计完整的推测解码 batch。GPU event 耗时包含排队内核之间的主机间隙；目标模型 forward 包含验证但不含采样。均值是阶段耗时总和除以计时步数。",
+    "Draft and target-forward durations each divided by their sum over the same measured steps.":
+        "同一批计时步中，草稿与目标模型 forward 耗时分别除以两者之和。",
     "Timed pure speculative decode batches per second, collected automatically for GPU drafting.":
         "使用 GPU 起草时自动采集的纯推测解码 batch 计时样本数（每秒）。",
     "ITL / {{model_name}}": "ITL / {{model_name}}",
@@ -843,7 +843,7 @@ def build() -> dashboard_models.Dashboard:
         latency(
             model_metric("vllm:inter_token_latency_seconds_bucket", rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~"aggregate|decode"'),
             "Inter-token latency (ITL)",
-            "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets; compare the mean and observation rate when samples are sparse.",
+            "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets.",
             unit="suffix: ms",
             scale=1_000,
             mean_rates=(
@@ -887,12 +887,12 @@ def build() -> dashboard_models.Dashboard:
     for title, description, observations in (
         (
             "Request latency samples / s",
-            "TTFT and E2EL histogram observations per second for each whole model. No observations leave latency quantiles unavailable.",
+            "TTFT and E2EL histogram observations per second for each whole model.",
             (("TTFT", "vllm:time_to_first_token_seconds_count"), ("E2EL", "vllm:e2e_request_latency_seconds_count")),
         ),
         (
             "Token interval samples / s",
-            "Output-token interval observations per second for each whole model. These count token intervals, not requests.",
+            "Output-token interval observations per second for each whole model. These count token intervals.",
             (("ITL", "vllm:inter_token_latency_seconds_count"),),
         ),
     ):
@@ -932,7 +932,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Draft and accepted tokens / s",
-            "Draft and accepted token rates for each whole model. These are speculative work, not final output throughput.",
+            "Draft and accepted token rates for each whole model.",
             [
                 foretoken_query(draft_tokens, "Draft / {{model_name}}"),
                 foretoken_query(accepted_tokens, "Accepted / {{model_name}}"),
@@ -948,7 +948,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Draft acceptance ratio",
-            "Accepted draft tokens divided by proposed draft tokens across all engines. No drafts produce no ratio; this is not a speedup estimate.",
+            "Accepted draft tokens divided by proposed draft tokens across all engines.",
             [foretoken_query(f"({accepted_tokens}) / (({draft_tokens}) > 0)", "{{model_name}}")],
             unit="percentunit",
             span=12,
@@ -966,7 +966,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Acceptance probability by position",
-            "Accepted tokens at each zero-based draft position divided by draft iterations across all engines. No drafts produce no ratio.",
+            "Accepted tokens at each zero-based draft position divided by draft iterations across all engines.",
             [foretoken_query(
                 f"sum by(model_name,position) ({model_metric('vllm:spec_decode_num_accepted_tokens_per_pos_total', rate=True, whole_model=True, extra='inference_foretoken_io_model_role=~\"aggregate|decode\"')}) "
                 f"/ on(model_name) group_left() (({draft_iterations}) > 0)",
@@ -984,7 +984,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Speculative stage GPU time",
-            "Only complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification but excludes sampling. The mean is stage duration sum divided by timed steps, not request latency.",
+            "Complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification and excludes sampling. The mean is stage duration sum divided by timed steps.",
             [
                 foretoken_query(f"({target_time}) / (({timed_steps}) > 0)", "Target forward / {{model_name}}"),
                 foretoken_query(f"({draft_time}) / (({timed_steps}) > 0)", "Draft / {{model_name}}"),
@@ -1000,7 +1000,7 @@ def build() -> dashboard_models.Dashboard:
     board.with_panel(
         series(
             "Speculative GPU time shares",
-            "Draft and target-forward durations each divided by their sum over the same measured steps. These are not wall-clock shares or model speedup; no timed steps produce no ratios.",
+            "Draft and target-forward durations each divided by their sum over the same measured steps.",
             [
                 foretoken_query(f"({target_time}) / (({stage_time}) > 0)", "Target forward share / {{model_name}}"),
                 foretoken_query(f"({draft_time}) / (({stage_time}) > 0)", "Draft share / {{model_name}}"),

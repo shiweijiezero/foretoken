@@ -1181,7 +1181,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets; compare the mean and observation rate when samples are sparse.",
+      "description": "Output-token intervals across aggregate and decode engines, in milliseconds. Quantiles interpolate histogram buckets.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1540,7 +1540,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "TTFT and E2EL histogram observations per second for each whole model. No observations leave latency quantiles unavailable.",
+      "description": "TTFT and E2EL histogram observations per second for each whole model.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1612,7 +1612,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Output-token interval observations per second for each whole model. These count token intervals, not requests.",
+      "description": "Output-token interval observations per second for each whole model. These count token intervals.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1820,7 +1820,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Draft and accepted token rates for each whole model. These are speculative work, not final output throughput.",
+      "description": "Draft and accepted token rates for each whole model.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1923,7 +1923,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Accepted draft tokens divided by proposed draft tokens across all engines. No drafts produce no ratio; this is not a speedup estimate.",
+      "description": "Accepted draft tokens divided by proposed draft tokens across all engines.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2044,7 +2044,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Accepted tokens at each zero-based draft position divided by draft iterations across all engines. No drafts produce no ratio.",
+      "description": "Accepted tokens at each zero-based draft position divided by draft iterations across all engines.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2105,7 +2105,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Only complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification but excludes sampling. The mean is stage duration sum divided by timed steps, not request latency.",
+      "description": "Complete speculative decode batches are timed on one output rank per engine. GPU event durations include host gaps between queued kernels; target forward includes verification and excludes sampling. The mean is stage duration sum divided by timed steps.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2208,7 +2208,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Draft and target-forward durations each divided by their sum over the same measured steps. These are not wall-clock shares or model speedup; no timed steps produce no ratios.",
+      "description": "Draft and target-forward durations each divided by their sum over the same measured steps.",
       "fieldConfig": {
         "defaults": {
           "color": {
