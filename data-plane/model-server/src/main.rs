@@ -73,6 +73,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
     let mut cache_server = if let Some(server_config) = cache_config.clone() {
+        config
+            .launch
+            .afd
+            .validate_port_range(
+                server_config.observation_port(),
+                1,
+                "cache observation listener",
+            )
+            .map_err(io::Error::other)?;
         let address = (config.listen_address.ip(), server_config.observation_port());
         let listener = TcpListener::bind(address).await?;
         let shutdown = cache_shutdown.clone();

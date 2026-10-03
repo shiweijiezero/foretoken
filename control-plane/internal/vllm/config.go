@@ -40,6 +40,7 @@ type LaunchPlanV1 struct {
 	Parallelism                           LaunchParallelism                  `json:"parallelism"`
 	KV                                    LaunchKVPlan                       `json:"kv"`
 	EC                                    *LaunchECPlan                      `json:"ec,omitempty"`
+	AFD                                   *LaunchAFDPlan                     `json:"afd,omitempty"`
 	Lifecycle                             LaunchLifecycle                    `json:"lifecycle"`
 	InternalGenerateRequestBodyLimitBytes int64                              `json:"internalGenerateRequestBodyLimitBytes"`
 	EngineArgs                            inferencev1alpha1.EngineArguments  `json:"engineArgs,omitempty"`
@@ -88,6 +89,17 @@ type LaunchECPlan struct {
 	Connector         string `json:"connector"`
 	Role              string `json:"role"`
 	SharedStoragePath string `json:"sharedStoragePath"`
+}
+
+// LaunchAFDPlan carries a controller-owned AFD pair's rendezvous and rank counts.
+// A nil plan keeps AFD absent from the private launch JSON.
+type LaunchAFDPlan struct {
+	Role              string `json:"role"`
+	Connector         string `json:"connector"`
+	RendezvousHost    string `json:"rendezvousHost"`
+	NumAttentionRanks uint32 `json:"numAttentionRanks"`
+	NumFFNRanks       uint32 `json:"numFfnRanks"`
+	ConnectorPort     uint16 `json:"connectorPort"`
 }
 
 type LaunchLifecycle struct {
