@@ -1617,6 +1617,13 @@ func (in *ModelPoolTemplate) DeepCopyInto(out *ModelPoolTemplate) {
 		**out = **in
 	}
 	in.Resources.DeepCopyInto(&out.Resources)
+	if in.NodeSelector != nil {
+		in, out := &in.NodeSelector, &out.NodeSelector
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	if in.EngineArgs != nil {
 		in, out := &in.EngineArgs, &out.EngineArgs
 		*out = new(EngineArguments)
@@ -1769,6 +1776,13 @@ func (in *ModelServiceSpec) DeepCopyInto(out *ModelServiceSpec) {
 		in, out := &in.Nodes, &out.Nodes
 		*out = new(int32)
 		**out = **in
+	}
+	if in.NodeSelector != nil {
+		in, out := &in.NodeSelector, &out.NodeSelector
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
 	}
 	if in.Resources != nil {
 		in, out := &in.Resources, &out.Resources
@@ -1988,6 +2002,13 @@ func (in *NormalizedPoolTemplate) DeepCopyInto(out *NormalizedPoolTemplate) {
 		**out = **in
 	}
 	in.Resources.DeepCopyInto(&out.Resources)
+	if in.NodeSelector != nil {
+		in, out := &in.NodeSelector, &out.NodeSelector
+		*out = make(map[string]string, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	if in.MaxInputTokens != nil {
 		in, out := &in.MaxInputTokens, &out.MaxInputTokens
 		*out = new(int32)

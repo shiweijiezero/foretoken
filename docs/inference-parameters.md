@@ -21,6 +21,26 @@ spec:
 
 Values are YAML booleans, numbers, strings, lists or objects. Omitted options retain engine defaults; `null` omits a native option. Supported values depend on the backend image, model and hardware.
 
+## Select serving nodes
+
+Use a Kubernetes label to place a service or Pool on a machine group. Assign the same key/value to every node in the group:
+
+```bash
+kubectl label node <node-a> workload-group=group-a --overwrite
+kubectl label node <node-b> workload-group=group-a --overwrite
+kubectl get nodes -L workload-group
+```
+
+Use that same key/value in the model YAML:
+
+```yaml
+spec:
+  nodeSelector:
+    workload-group: group-a
+```
+
+`ModelService.spec.nodeSelector` selects the default Pool. `modelPools[].nodeSelector` selects a different group for one Pool. The cluster scheduler places serving and runtime-preparation Pods on nodes carrying the selected label.
+
 ## Common vLLM options
 
 | Engine option | Purpose |

@@ -201,7 +201,11 @@ func ResolveModelPool(template inferencev1alpha1.NormalizedPoolTemplate, profile
 			return ModelGroupTemplate{}, fmt.Errorf("mcTracer requires a persistent RuntimeCache")
 		}
 	}
-	resolved := projectModelGroupTemplate(template, profile, resolvedModelRuntime{
+	nodeSelector, err := mergeNodeSelectors(template.NodeSelector, profile)
+	if err != nil {
+		return ModelGroupTemplate{}, err
+	}
+	resolved := projectModelGroupTemplate(template, profile, nodeSelector, resolvedModelRuntime{
 		Image: image, Model: effective.Model, Source: effective.Source,
 		Revision: effective.Revision, Tokenizer: effective.Tokenizer,
 		TokenizerRevision: effective.TokenizerRevision,
@@ -228,12 +232,34 @@ func resolveVLLMOmniPool(template inferencev1alpha1.NormalizedPoolTemplate, prof
 	if effective.Revision == "" {
 		return ModelGroupTemplate{}, fmt.Errorf("vLLM-Omni modelRevision is required before ModelGroup creation")
 	}
-	return projectModelGroupTemplate(template, profile, resolvedModelRuntime{
+	nodeSelector, err := mergeNodeSelectors(template.NodeSelector, profile)
+	if err != nil {
+		return ModelGroupTemplate{}, err
+	}
+	return projectModelGroupTemplate(template, profile, nodeSelector, resolvedModelRuntime{
 		Image: profile.OmniImage, Model: effective.Model, Source: effective.Source,
 		Revision: effective.Revision, Tokenizer: effective.Tokenizer,
 		TokenizerRevision: effective.TokenizerRevision,
 		EngineArgs:        effective.EngineArgs, Parallelism: effective.Parallelism,
 	}), nil
+}
+
+func mergeNodeSelectors(userSelector map[string]string, profile RuntimeProfile) (map[string]string, error) {
+	selector := make(map[string]string, len(userSelector)+1)
+	for key, value := range userSelector {
+		selector[key] = value
+	}
+	if profile.NodeSelectorKey == "" {
+		if len(selector) == 0 {
+			return nil, nil
+		}
+		return selector, nil
+	}
+	if value, exists := selector[profile.NodeSelectorKey]; exists && value != profile.NodeSelectorValue {
+		return nil, fmt.Errorf("nodeSelector %q=%q conflicts with platform accelerator selector %q=%q", profile.NodeSelectorKey, value, profile.NodeSelectorKey, profile.NodeSelectorValue)
+	}
+	selector[profile.NodeSelectorKey] = profile.NodeSelectorValue
+	return selector, nil
 }
 
 func validateRuntimeProfile(profile RuntimeProfile, maxPort int32) error {
@@ -249,11 +275,7 @@ func validateRuntimeProfile(profile RuntimeProfile, maxPort int32) error {
 	return nil
 }
 
-func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile, runtime resolvedModelRuntime) ModelGroupTemplate {
-	var nodeSelector map[string]string
-	if profile.NodeSelectorKey != "" {
-		nodeSelector = map[string]string{profile.NodeSelectorKey: profile.NodeSelectorValue}
-	}
+func projectModelGroupTemplate(template inferencev1alpha1.NormalizedPoolTemplate, profile RuntimeProfile, nodeSelector map[string]string, runtime resolvedModelRuntime) ModelGroupTemplate {
 	return ModelGroupTemplate{
 		Role: template.Role,
 		Artifacts: inferencev1alpha1.ModelGroupArtifacts{

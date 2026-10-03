@@ -132,6 +132,11 @@ type NormalizedPoolTemplate struct {
 
 	Resources ModelResources `json:"resources"`
 
+	// NodeSelector is the normalized Kubernetes placement constraint for this Pool.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=16
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
 	// MaxInputTokens is the immutable prompt admission limit for this Pool.
 	// +optional
 	// +kubebuilder:validation:Minimum=1

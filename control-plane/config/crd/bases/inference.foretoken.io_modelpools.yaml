@@ -259,6 +259,13 @@ spec:
                     format: int32
                     minimum: 1
                     type: integer
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    description: NodeSelector is the normalized Kubernetes placement
+                      constraint for this Pool.
+                    maxProperties: 16
+                    type: object
                   profiling:
                     description: Profiling is the service-selected instrumentation
                       for this Pool's processes.

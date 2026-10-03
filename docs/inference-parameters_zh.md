@@ -21,6 +21,26 @@ spec:
 
 值直接使用 YAML 布尔值、数字、字符串、列表或对象。未填写的选项沿用引擎默认值，`null` 表示不传该原生选项。具体取值需与引擎镜像、模型及硬件匹配。
 
+## 选择模型服务节点
+
+通过 Kubernetes 节点 label，将整个服务或某个 Pool 固定到指定机器组。为组内每台节点设置相同的 key/value：
+
+```bash
+kubectl label node <node-a> workload-group=group-a --overwrite
+kubectl label node <node-b> workload-group=group-a --overwrite
+kubectl get nodes -L workload-group
+```
+
+然后在模型 YAML 中使用同一组 key/value：
+
+```yaml
+spec:
+  nodeSelector:
+    workload-group: group-a
+```
+
+`ModelService.spec.nodeSelector` 选择默认 Pool，`modelPools[].nodeSelector` 为单个 Pool 选择另一组节点。Kubernetes 会把模型服务和运行时准备 Pod 调度到带有该 label 的节点。
+
 ## vLLM 常用参数
 
 | 引擎参数 | 用途 |

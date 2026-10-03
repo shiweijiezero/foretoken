@@ -372,6 +372,13 @@ spec:
                       minLength: 1
                       pattern: ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$
                       type: string
+                    nodeSelector:
+                      additionalProperties:
+                        type: string
+                      description: NodeSelector constrains this Pool's member Pods
+                        to matching Kubernetes nodes.
+                      maxProperties: 16
+                      type: object
                     nodes:
                       default: 1
                       description: Nodes is the number of distinct Kubernetes Nodes
@@ -488,6 +495,14 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              nodeSelector:
+                additionalProperties:
+                  type: string
+                description: |-
+                  NodeSelector constrains the default Pool's member Pods to matching Kubernetes nodes.
+                  A Pool-level selector replaces this service-level selector when specified.
+                maxProperties: 16
+                type: object
               nodes:
                 description: Nodes is the number of distinct Kubernetes Nodes used
                   by each ModelGroup; the compiler defaults it to 1.

@@ -117,6 +117,11 @@ type ModelPoolTemplate struct {
 
 	Resources ModelResources `json:"resources"`
 
+	// NodeSelector constrains this Pool's member Pods to matching Kubernetes nodes.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=16
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
 	// EngineArgs replaces service-level native options for this Pool when supplied.
 	// +optional
 	EngineArgs *EngineArguments `json:"engineArgs,omitempty"`
@@ -230,6 +235,12 @@ type ModelServiceSpec struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	Nodes *int32 `json:"nodes,omitempty"`
+
+	// NodeSelector constrains the default Pool's member Pods to matching Kubernetes nodes.
+	// A Pool-level selector replaces this service-level selector when specified.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=16
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 
 	// +optional
 	Resources *ModelResources `json:"resources,omitempty"`
