@@ -27,7 +27,7 @@
         "y": 0
       },
       "options": {
-        "content": "**模型总计**按命名空间和模型筛选；实例、角色和 rank 只筛选后端明细。**前端与路由**按前端服务筛选，共享前端包含所有模型的流量。\n\n速率使用滚动窗口。",
+        "content": "**模型总计**按命名空间和模型筛选；实例、角色和引擎编号只筛选后端明细。**前端与路由**按前端服务筛选，共享前端包含所有模型的流量。\n\n速率使用滚动窗口。",
         "mode": "markdown"
       },
       "repeatDirection": "h",
@@ -135,7 +135,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个模型全部实例和 rank 每秒处理的输入 token 总数。",
+      "description": "每个模型全部实例和引擎编号每秒处理的输入 token 总数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -217,7 +217,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个模型全部实例和 rank 每秒生成的输出 token 总数。",
+      "description": "每个模型全部实例和引擎编号每秒生成的输出 token 总数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -299,7 +299,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个模型全部实例、角色和 rank 中等待调度的执行请求总数。",
+      "description": "每个模型全部实例、角色和引擎编号中等待调度的执行请求总数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -397,7 +397,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "粗线展示每个模型全部实例和 rank 的总吞吐量，细线展示所选后端。模型总计不随实例、角色或 rank 筛选缩小。",
+      "description": "粗线展示每个模型全部实例和引擎编号的总吞吐量，细线展示所选后端。模型总计不随实例、角色或引擎编号筛选缩小。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -489,7 +489,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "粗线展示每个模型全部实例和 rank 的总吞吐量，细线展示所选后端。模型总计不随实例、角色或 rank 筛选缩小。",
+      "description": "粗线展示每个模型全部实例和引擎编号的总吞吐量，细线展示所选后端。模型总计不随实例、角色或引擎编号筛选缩小。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -581,7 +581,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "模型总计只统计一次聚合或 Decode 阶段的完成请求；后端曲线保留执行阶段和结束原因。",
+      "description": "模型总计只统计一次聚合或解码阶段的完成请求；后端曲线保留执行阶段和结束原因。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -723,7 +723,7 @@
           "expr": "(sum by(namespace,model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(vllm:num_requests_running{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "运行中 / {{model_group_display}} / rank {{engine}}",
+          "legendFormat": "运行中 / {{model_group_display}} / 编号 {{engine}}",
           "range": true,
           "refId": "C"
         },
@@ -735,7 +735,7 @@
           "expr": "(sum by(namespace,model_name,model_group,model_role,engine) (label_replace(label_replace(label_replace(vllm:num_requests_waiting{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\",engine=~\"$engine\"}, \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) * on(namespace,model_group) group_left(model_group_display) (max by(namespace,model_group,model_group_display) ((label_join((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) and on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1), \"model_group_display\", \" / \", \"model_group_display\", \"namespace\", \"model_instance_created_at\")) or ((label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) unless on(model_group_display) (count by(model_group_display) (label_join(max_over_time(foretoken:model_instance_info{namespace=~\"$namespace\"}[$__range] @ end()), \"model_group_display\", \" / \", \"modelservice\", \"model_pool\", \"model_instance\")) > 1))))",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "等待中 / {{model_group_display}} / rank {{engine}}",
+          "legendFormat": "等待中 / {{model_group_display}} / 编号 {{engine}}",
           "range": true,
           "refId": "D"
         }
@@ -1181,7 +1181,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "聚合和 Decode 引擎的输出 token 间隔，单位毫秒。分位数由直方图桶插值得到。",
+      "description": "聚合和解码引擎的输出 token 间隔，单位毫秒。分位数由直方图桶插值得到。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1338,7 +1338,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "本窗口内已完成请求在排队、Prefill 和 Decode 阶段的 P95 耗时，单位秒；请求完成时才记录各阶段耗时。",
+      "description": "本窗口内已完成请求在排队、预填充和解码阶段的 P95 耗时，单位秒；请求完成时才记录各阶段耗时。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1926,7 +1926,7 @@
           "refId": "B"
         }
       ],
-      "title": "草稿与接受 token / s",
+      "title": "草稿与接受 token 速率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1996,7 +1996,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "全部引擎每次草稿迭代接受的草稿 token 数，不包含额外 token。",
+      "description": "全部引擎每次草稿迭代接受的草稿 token 数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2117,7 +2117,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个引擎在一个输出 rank 上统计完整的推测解码 batch。GPU event 耗时包含排队内核之间的主机间隙；目标模型 forward 包含验证但不含采样。均值是阶段耗时总和除以计时步数。",
+      "description": "每个引擎在一个输出引擎编号上统计完整的推测解码批次。GPU 事件耗时包含排队内核之间的主机间隙；目标模型前向计算包含验证但不含采样。均值是阶段耗时总和除以计时步数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2194,7 +2194,7 @@
           "expr": "(sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_target_forward_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) / ((sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_count{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) > 0)",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "目标模型 forward / {{model_name}}",
+          "legendFormat": "目标模型前向计算 / {{model_name}}",
           "range": true,
           "refId": "A"
         },
@@ -2220,7 +2220,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "同一批计时步中，草稿与目标模型 forward 耗时分别除以两者之和。",
+      "description": "同一批计时步中，草稿与目标模型前向计算耗时分别除以两者之和。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2298,7 +2298,7 @@
           "expr": "(sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_target_forward_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) / ((((sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_draft_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))) + (sum by(model_name) (label_replace(label_replace(label_replace(rate(vllm:spec_decode_target_forward_duration_seconds_sum{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group!=\"\",inference_foretoken_io_model_role!=\"\",inference_foretoken_io_model_role=~\"aggregate|decode\"}[$__rate_interval]), \"model_group\", \"$1\", \"inference_foretoken_io_model_group\", \"(.+)\"), \"model_role\", \"$1\", \"inference_foretoken_io_model_role\", \"(.+)\"), \"pd_pipeline_scope\", \"$1\", \"inference_foretoken_io_pd_pipeline_scope\", \"(.+)\"))))) > 0)",
           "instant": false,
           "interval": "5s",
-          "legendFormat": "目标模型 forward 占比 / {{model_name}}",
+          "legendFormat": "目标模型前向计算占比 / {{model_name}}",
           "range": true,
           "refId": "A"
         },
@@ -2324,7 +2324,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "使用 GPU 起草时自动采集的纯推测解码 batch 计时样本数（每秒）。",
+      "description": "使用 GPU 起草时自动采集的纯推测解码批次计时数量（每秒）。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2375,7 +2375,7 @@
           "refId": "A"
         }
       ],
-      "title": "推测解码计时步数 / s",
+      "title": "推测解码计时步速率",
       "transparent": false,
       "type": "timeseries"
     },
@@ -2397,7 +2397,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "按模型实例和引擎 rank 展示 KV 缓存占用率。",
+      "description": "按模型实例和引擎编号展示 KV 缓存占用率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -2457,7 +2457,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "模型整体命中 token 数除以查询 token 数；本地和外部缓存分开统计，没有查询时不显示比例。",
+      "description": "模型整体命中 token 数除以查询 token 数；本地和外部缓存分开统计。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3088,7 +3088,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每个模型及执行角色内各后端的路由选择比例。一个后端对应一个模型实例和数据并行 rank，分母为该模型该角色的全部后端。",
+      "description": "每个模型及执行角色内各后端的路由选择比例。一个后端对应一个模型实例和数据并行副本，分母为该模型该角色的全部后端。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3209,7 +3209,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "所选 Frontend 副本的 Filter、Scorer 和 Picker P99 耗时。",
+      "description": "所选前端副本的筛选、评分和选择阶段 P99 耗时。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3269,7 +3269,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "每次路由选择中可用、筛选后和可选候选的平均数量；可选候选包含数据并行 rank。",
+      "description": "每次路由选择中可用、筛选后和可选候选的平均数量；可选候选包含数据并行副本。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3424,7 +3424,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "选定速率窗口内每秒开始的 Frontend 响应数。",
+      "description": "选定速率窗口内每秒开始的 HTTP 响应数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3492,12 +3492,12 @@
           "expr": "sum(label_replace(rate(http_requests_total{endpoint=\"http\",namespace=~\"$namespace\",inference_foretoken_io_frontend_service!=\"\",inference_foretoken_io_frontend_service=~\"$frontend_service\"}[$__rate_interval]), \"frontend_service\", \"$1\", \"inference_foretoken_io_frontend_service\", \"(.+)\"))",
           "instant": true,
           "interval": "5s",
-          "legendFormat": "前端响应开始速率",
+          "legendFormat": "HTTP 响应速率",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "前端响应开始速率",
+      "title": "HTTP 响应速率",
       "transparent": false,
       "type": "stat"
     },
@@ -3591,7 +3591,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "按 HTTP 状态类别分组的 Frontend 响应开始速率。",
+      "description": "按 HTTP 状态类别分组的响应速率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3688,7 +3688,7 @@
           "refId": "A"
         }
       ],
-      "title": "前端响应开始速率（按状态码）",
+      "title": "HTTP 响应速率（按状态码）",
       "transparent": false,
       "type": "timeseries"
     },
@@ -3697,7 +3697,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "按 HTTP 端点分组的 Frontend 响应开始速率。",
+      "description": "按 HTTP 接口分组的响应速率。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3752,7 +3752,7 @@
           "refId": "A"
         }
       ],
-      "title": "前端响应开始速率（按接口）",
+      "title": "HTTP 响应速率（按接口）",
       "transparent": false,
       "type": "timeseries"
     },
@@ -3883,7 +3883,7 @@
           "refId": "C"
         }
       ],
-      "title": "前端响应头延迟",
+      "title": "HTTP 响应头延迟",
       "transparent": false,
       "type": "timeseries"
     },
@@ -3982,7 +3982,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "健康 KV 事件源数除以已配置源数；索引禁用或不可用时为 0。",
+      "description": "健康 KV 事件源数除以已配置源数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -4686,7 +4686,7 @@
           "uid": "${DS_PROMETHEUS}"
         },
         "includeAll": true,
-        "label": "引擎 rank",
+        "label": "引擎编号",
         "multi": true,
         "name": "engine",
         "query": "label_values(vllm:kv_cache_usage_perc{endpoint=\"model-server\",namespace=~\"$namespace\",model_name=~\"$model_name\",inference_foretoken_io_model_group=~\"$model_group\",inference_foretoken_io_model_role=~\"$model_role\"}, engine)",

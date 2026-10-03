@@ -13,7 +13,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 从集群的监控入口打开 Grafana。Foretoken 托管的 Grafana Service 位于 `foretoken-platform` 命名空间，名称为 `foretoken-prometheus-grafana`，端口为 80，默认类型是 `ClusterIP`；集群外访问需要由集群管理员配置入口。复用 Grafana 时沿用已有访问方式。
 
-打开 Foretoken 系统概览，或英文版 Foretoken System Overview。先选择命名空间和模型，再按模型实例、执行角色、引擎编号（rank）查看后端明细。模型总量曲线始终汇总全部实例，明细曲线随这些筛选变化。
+打开 Foretoken 系统概览，或英文版 Foretoken System Overview。先选择命名空间和模型，再按模型实例、执行角色、引擎编号查看后端明细。模型总计曲线始终汇总全部实例，明细曲线随这些筛选变化。
 
 默认查看最近 15 分钟，调整时间范围可查看历史趋势；概览数值对应所选范围的终点。
 
@@ -27,9 +27,9 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 
 TTFT 表示首 token 延迟，E2EL 计至生成完成，两者使用秒。TPOT 统计每个请求的平均输出 token 间隔，ITL 统计逐 token 间隔，两者使用毫秒并提供均值曲线；详细口径见各面板说明。
 
-启用 GPU 起草后，看板会自动展示草稿阶段和目标模型 forward 的 GPU 耗时。结合草稿接受率、吞吐和延迟，可以比较推测解码的收益与成本。
+启用 GPU 起草后，看板会自动展示草稿阶段和目标模型前向计算的 GPU 耗时。结合草稿接受率、吞吐和延迟，可以比较推测解码的收益与成本。
 
-“共享前端”区域涵盖所选前端服务的全部模型流量，统计 HTTP 响应开始事件。“控制面”展示平台状态；扩缩容区域按所选模型和扩缩容服务展示。
+“共享前端”区域涵盖所选前端服务的全部模型流量，统计 HTTP 响应开始次数。“控制面”展示平台状态；扩缩容区域按所选模型和扩缩容服务展示。
 
 ## 查询日志
 

@@ -2457,7 +2457,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Whole-model cache hits divided by queried tokens. Local and external caches are separate; no queries produce no ratio.",
+      "description": "Whole-model cache hits divided by queried tokens. Local and external caches are separate.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3982,7 +3982,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Healthy KV event sources divided by configured sources; disabled or unavailable indexing reports zero.",
+      "description": "Healthy KV event sources divided by configured sources.",
       "fieldConfig": {
         "defaults": {
           "color": {

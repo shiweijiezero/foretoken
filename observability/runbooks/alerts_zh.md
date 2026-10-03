@@ -12,7 +12,7 @@ SPDX-FileCopyrightText: Copyright contributors to the Foretoken project
 | 告警 | 服务类型 | 触发条件 | 持续时间 | 必要阈值或作用域 |
 | --- | --- | --- | --- | --- |
 | `ForetokenMetricsTargetDown` | `FrontendService` 或 `ModelService` | 已发现的 `/metrics` 端点无法抓取 | 1 分钟 | 所选服务的指标端点 |
-| `ForetokenFrontendHTTPResponseStart5xxRatioHigh` | `FrontendService` | 流量至少为每秒 0.1 个响应开始事件时，5xx 比例超过 5% | 2 分钟 | 所选 FrontendService |
+| `ForetokenFrontendHTTPResponseStart5xxRatioHigh` | `FrontendService` | HTTP 响应速率至少为每秒 0.1 次时，5xx 比例超过 5% | 2 分钟 | 所选前端服务 |
 | `ForetokenNVIDIAGPUTemperatureHigh` | `ModelService` | 归属到该服务的 NVIDIA GPU 达到温度阈值 | 2 分钟 | `nvidiaTemperatureCelsius`（默认 85°C）；ModelGroup 作用域 |
 | `ForetokenNVIDIAGPUPowerUsageHigh` | `ModelService` | 归属到该服务的 NVIDIA GPU 达到功耗阈值 | 5 分钟 | 选择该规则并设置正数 `nvidiaPowerWatts`；ModelGroup 作用域 |
 
