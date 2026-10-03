@@ -27,7 +27,7 @@
         "y": 0
       },
       "options": {
-        "content": "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. **Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\nRates use a rolling window. **No data** means no observations, not zero. Scrape counts show reporting endpoints, not service readiness.",
+        "content": "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. **Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\nRates use a rolling window.",
         "mode": "markdown"
       },
       "repeatDirection": "h",
@@ -53,7 +53,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Prometheus targets currently reporting for the selected model groups and roles.",
+      "description": "Number of online model servers in the selected model groups and roles.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -121,12 +121,12 @@
           "expr": "sum((foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"})))",
           "instant": true,
           "interval": "5s",
-          "legendFormat": "Reporting model targets",
+          "legendFormat": "Online model servers",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Reporting model targets",
+      "title": "Online model servers",
       "transparent": false,
       "type": "stat"
     },
@@ -3330,7 +3330,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Prometheus targets currently reporting for the selected Frontend services.",
+      "description": "Number of online frontend services in the selected frontend services.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3398,12 +3398,12 @@
           "expr": "sum(foretoken:frontend_up:sum{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"})",
           "instant": true,
           "interval": "5s",
-          "legendFormat": "Reporting frontend targets",
+          "legendFormat": "Online frontend services",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "Reporting frontend targets",
+      "title": "Online frontend services",
       "transparent": false,
       "type": "stat"
     },

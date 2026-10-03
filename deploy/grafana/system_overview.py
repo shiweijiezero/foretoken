@@ -43,8 +43,8 @@ ZH = {
     "Foretoken System Overview": "Foretoken 系统概览",
     "Overview": "概览",
     "Reading this dashboard": "看板读法",
-    "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. **Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\nRates use a rolling window. **No data** means no observations, not zero. Scrape counts show reporting endpoints, not service readiness.":
-        "**模型总计**按命名空间和模型筛选；实例、角色和 rank 只筛选后端明细。**前端与路由**按前端服务筛选，共享前端包含所有模型的流量。\n\n速率使用滚动窗口。**无数据**表示没有观测，不代表零。上报端点数反映指标采集情况，不代表服务就绪。",
+    "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. **Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\nRates use a rolling window.":
+        "**模型总计**按命名空间和模型筛选；实例、角色和 rank 只筛选后端明细。**前端与路由**按前端服务筛选，共享前端包含所有模型的流量。\n\n速率使用滚动窗口。",
     "No data": "无数据",
     "Generation latency": "生成延迟",
     "Request lengths": "请求长度分布",
@@ -67,8 +67,8 @@ ZH = {
     "Routing decisions": "路由决策",
     "Control plane": "控制面",
     "Autoscaling decisions": "扩缩容决策",
-    "Reporting frontend targets": "前端上报端点数",
-    "Reporting model targets": "模型上报端点数",
+    "Online frontend services": "在线前端服务数",
+    "Online model servers": "在线模型服务数",
     "Frontend response starts / s": "前端响应开始速率",
     "Input throughput": "输入吞吐量",
     "Output throughput": "输出吞吐量",
@@ -140,10 +140,10 @@ ZH = {
     "routable / {{modelservice}} / {{target_name}} / {{role}}": "可路由 / {{modelservice}} / {{target_name}} / {{role}}",
     "observation / {{modelservice}} / {{target_name}} / {{role}}": "观测 / {{modelservice}} / {{target_name}} / {{role}}",
     "evaluation / {{modelservice}} / {{target_name}} / {{role}}": "评估 / {{modelservice}} / {{target_name}} / {{role}}",
-    "Prometheus targets currently reporting for the selected Frontend services.":
-        "所选前端服务中，最近一次指标抓取成功的端点数量。",
-    "Prometheus targets currently reporting for the selected model groups and roles.":
-        "所选模型组和执行角色中，最近一次指标抓取成功的端点数量。",
+    "Number of online frontend services in the selected frontend services.":
+        "所选前端服务中的在线前端服务数。",
+    "Number of online model servers in the selected model groups and roles.":
+        "所选模型组和执行角色中的在线模型服务数。",
     "Frontend responses started per second over the selected rate window.": "选定速率窗口内每秒开始的 Frontend 响应数。",
     "Input tokens per second for each whole model, across all instances and ranks.": "每个模型全部实例和 rank 每秒处理的输入 token 总数。",
     "Output tokens per second for each whole model, across all instances and ranks.": "每个模型全部实例和 rank 每秒生成的输出 token 总数。",
@@ -707,8 +707,7 @@ def build() -> dashboard_models.Dashboard:
         .content(
             "**Model totals** follow namespace and model; instance, role and rank narrow backend details only. "
             "**Frontend and routing** follow the frontend selector; shared frontend traffic includes every model.\n\n"
-            "Rates use a rolling window. **No data** means no observations, not zero. "
-            "Scrape counts show reporting endpoints, not service readiness."
+            "Rates use a rolling window."
         )
         .span(24)
         .height(4)
@@ -716,8 +715,8 @@ def build() -> dashboard_models.Dashboard:
     board.with_row(dashboard.Row("Overview"))
     board.with_panel(
         headline(
-            "Reporting model targets",
-            "Prometheus targets currently reporting for the selected model groups and roles.",
+            "Online model servers",
+            "Number of online model servers in the selected model groups and roles.",
             f"sum({scoped_group_metric(f'foretoken:model_server_up:sum{{{GROUP}}}')})",
             color=BLUE,
         )
@@ -1238,8 +1237,8 @@ def build() -> dashboard_models.Dashboard:
     board.with_row(dashboard.Row("Shared frontend"))
     board.with_panel(
         headline(
-            "Reporting frontend targets",
-            "Prometheus targets currently reporting for the selected Frontend services.",
+            "Online frontend services",
+            "Number of online frontend services in the selected frontend services.",
             f"sum(foretoken:frontend_up:sum{{{FRONTEND}}})",
             color=BLUE,
         ).span(8)

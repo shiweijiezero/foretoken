@@ -27,7 +27,7 @@
         "y": 0
       },
       "options": {
-        "content": "**模型总计**按命名空间和模型筛选；实例、角色和 rank 只筛选后端明细。**前端与路由**按前端服务筛选，共享前端包含所有模型的流量。\n\n速率使用滚动窗口。**无数据**表示没有观测，不代表零。上报端点数反映指标采集情况，不代表服务就绪。",
+        "content": "**模型总计**按命名空间和模型筛选；实例、角色和 rank 只筛选后端明细。**前端与路由**按前端服务筛选，共享前端包含所有模型的流量。\n\n速率使用滚动窗口。",
         "mode": "markdown"
       },
       "repeatDirection": "h",
@@ -53,7 +53,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "所选模型组和执行角色中，最近一次指标抓取成功的端点数量。",
+      "description": "所选模型组和执行角色中的在线模型服务数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -121,12 +121,12 @@
           "expr": "sum((foretoken:model_server_up:sum{namespace=~\"$namespace\",model_group=~\"$model_group\",model_role=~\"$model_role\"}) and on(namespace,model_group) (max by(namespace,model_group) (foretoken:model_instance_info{namespace=~\"$namespace\",model_name=~\"$model_name\",model_group=~\"$model_group\"})))",
           "instant": true,
           "interval": "5s",
-          "legendFormat": "模型上报端点数",
+          "legendFormat": "在线模型服务数",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "模型上报端点数",
+      "title": "在线模型服务数",
       "transparent": false,
       "type": "stat"
     },
@@ -3330,7 +3330,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "所选前端服务中，最近一次指标抓取成功的端点数量。",
+      "description": "所选前端服务中的在线前端服务数。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -3398,12 +3398,12 @@
           "expr": "sum(foretoken:frontend_up:sum{namespace=~\"$namespace\",frontend_service=~\"$frontend_service\"})",
           "instant": true,
           "interval": "5s",
-          "legendFormat": "前端上报端点数",
+          "legendFormat": "在线前端服务数",
           "range": false,
           "refId": "A"
         }
       ],
-      "title": "前端上报端点数",
+      "title": "在线前端服务数",
       "transparent": false,
       "type": "stat"
     },

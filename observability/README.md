@@ -15,7 +15,7 @@ Open Grafana through your cluster's monitoring entry point. The CLI-managed Graf
 
 Open Foretoken System Overview, or Foretoken 系统概览 for Chinese. Select a namespace and model, then use the instance, execution-role, and engine-rank filters to inspect individual backends. Whole-model total curves remain a reference across all instances; detail curves follow those filters.
 
-The dashboard starts with the last 15 minutes. Change the time range to inspect historical trends; overview values correspond to the range's end. Reporting-target counts describe metric collection, not service readiness.
+The dashboard starts with the last 15 minutes. Change the time range to inspect historical trends; overview values correspond to the range's end.
 
 | Question | Where to look |
 | --- | --- |
@@ -27,7 +27,7 @@ The dashboard starts with the last 15 minutes. Change the time range to inspect 
 
 TTFT measures time to the first token; E2EL measures time through generation completion. Both use seconds. TPOT is the per-request average output-token interval; ITL measures individual token intervals. Both use milliseconds and include mean curves. When samples are sparse, read latency quantiles alongside the observation rate and means. Panel descriptions provide the detailed measurement definitions.
 
-When GPU drafting is active, the dashboard automatically shows draft and target-forward GPU time alongside acceptance, throughput, and latency. Use these panels to compare the cost of the two stages. If the selected time range contains no qualifying samples, the panels remain empty.
+When GPU drafting is active, the dashboard automatically shows draft and target-forward GPU time alongside acceptance, throughput, and latency. Use these panels to compare the cost of the two stages.
 
 Shared frontend panels cover all models served by the selected frontend and record HTTP response starts. Control-plane panels describe the platform; autoscaling panels follow the selected model and autoscaling service.
 
