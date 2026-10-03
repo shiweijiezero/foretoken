@@ -1603,7 +1603,7 @@
           "refId": "B"
         }
       ],
-      "title": "请求延迟采样数量",
+      "title": "请求采样数量",
       "transparent": false,
       "type": "timeseries"
     },
@@ -1686,6 +1686,12 @@
         "uid": "${DS_PROMETHEUS}"
       },
       "description": "所选引擎每次请求的输入 token 数分布。",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "无数据"
+        },
+        "overrides": []
+      },
       "gridPos": {
         "h": 10,
         "w": 12,
@@ -1747,6 +1753,12 @@
         "uid": "${DS_PROMETHEUS}"
       },
       "description": "所选引擎每次请求的输出 token 数分布。",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "无数据"
+        },
+        "overrides": []
+      },
       "gridPos": {
         "h": 10,
         "w": 12,

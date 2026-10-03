@@ -48,7 +48,7 @@ ZH = {
     "No data": "无数据",
     "Generation latency": "生成延迟",
     "Request lengths": "请求长度分布",
-    "Request latency samples / s": "请求延迟采样数量",
+    "Request latency samples / s": "请求采样数量",
     "Token interval samples / s": "Token 间隔采样数量",
     "TTFT and E2EL histogram observations per second for each whole model.":
         "每个模型每秒记录的 TTFT 与 E2EL 直方图样本数。",
@@ -537,6 +537,7 @@ def distribution(title: str, description: str, metric: str) -> heatmap.Panel:
         .title(title)
         .description(description)
         .datasource(PROMETHEUS)
+        .no_value("No data")
         .with_target(
             prometheus.Dataquery()
             .datasource(PROMETHEUS)
