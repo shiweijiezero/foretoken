@@ -38,6 +38,8 @@ For a major change, first open an issue whose title starts with `[Proposal]`. In
 
 Obtain agreement from the maintainers of affected components before implementation. Proposal approval confirms the direction; the resulting code still requires normal review.
 
+For a new cross-component direction or platform capability, use a GitHub Issue titled `RFC: <short title>` to discuss the motivation, scope, design, alternatives, and validation before opening implementation PRs. Link the accepted RFC from the implementation PR; RFC discussion does not replace code review.
+
 ## Repository Areas
 
 - `data-plane/`: request handling, routing, inference-engine integration, and runtime data paths;
