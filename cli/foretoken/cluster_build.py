@@ -845,13 +845,18 @@ rm -rf "$incoming"
         if syntax_image:
             source = self.workspace + "/" + dockerfile
             generated = f"{self.workspace}/.foretoken-build/{uuid.uuid4().hex}/Dockerfile"
+            # BuildKit resolves Dockerfile-specific exclusions from the generated filename.
             self.run(
                 [
                     "sh",
                     "-ec",
-                    'mkdir -p "$(dirname "$3")"; first=$(head -n 1 "$2"); '
-                    'if case "$first" in "# syntax="*) true;; *) false;; esac; then '
-                    'tail -n +2 "$2" > "$3"; else cp "$2" "$3"; fi',
+                    (
+                        'mkdir -p "$(dirname "$3")"; first=$(head -n 1 "$2"); '
+                        'if case "$first" in "# syntax="*) true;; *) false;; esac; then '
+                        'tail -n +2 "$2" > "$3"; else cp "$2" "$3"; fi; '
+                        'if test -f "$2.dockerignore"; then '
+                        'cp "$2.dockerignore" "$3.dockerignore"; fi'
+                    ),
                     "rewrite",
                     syntax_image,
                     source,

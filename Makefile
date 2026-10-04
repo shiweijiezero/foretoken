@@ -144,4 +144,5 @@ image-mooncake: mooncake-source
 		$(if $(MOONCAKE_GO_IMAGE),--build-arg GO_IMAGE="$(MOONCAKE_GO_IMAGE)",) \
 		--build-arg GOPROXY \
 		--build-arg GOSUMDB \
+		--build-arg FORETOKEN_GITHUB_MIRROR \
 		-f deploy/mooncake/Dockerfile -t "$(MOONCAKE_IMAGE)" .
