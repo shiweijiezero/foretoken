@@ -1,6 +1,6 @@
 # Iteration Record
 
-Copy this file to the experiment result directory as `iteration.md`. Keep the record short and link to generated benchmark results, logs, profiles, and W&B runs instead of copying their contents.
+Copy this file to `results/<experiment-purpose>/iterations/<sequence>-<short-name>/record.md`. Keep the record short and link to generated benchmark results, logs, profiles, and W&B runs instead of copying their contents.
 
 ## Iteration
 
@@ -23,6 +23,7 @@ What change do we expect to help, and why?
 - **Source revision:**
 - **Files or configuration changed:**
 - **Deployment:**
+- **Changes snapshot:** `changes/`
 
 ## Work time
 

@@ -1,6 +1,6 @@
 # 迭代记录模板
 
-将此文件复制到实验结果目录，并命名为 `iteration.md`。记录应保持简洁；benchmark 结果、日志、profile 和 W&B 运行链接到原始位置，不要重复粘贴内容。
+将此文件复制到 `results/<experiment-purpose>/iterations/<sequence>-<short-name>/record.md`。记录应保持简洁；benchmark 结果、日志、profile 和 W&B 运行链接到原始位置，不要重复粘贴内容。
 
 ## 本轮迭代
 
@@ -23,6 +23,7 @@
 - **源码版本：**
 - **修改的文件或配置：**
 - **部署方式：**
+- **修改快照：** `changes/`
 
 ## 时间记录
 
