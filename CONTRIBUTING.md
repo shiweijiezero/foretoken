@@ -38,10 +38,6 @@ For a major change, first open an issue whose title starts with `[Proposal]`. In
 
 Obtain agreement from the maintainers of affected components before implementation. Proposal approval confirms the direction; the resulting code still requires normal review.
 
-### RFCs for major architectural changes
-
-Use a GitHub Issue titled `RFC: <short title>` when a change defines a new cross-component direction or platform capability. The RFC should explain the motivation, goals, non-goals, affected components, proposed design, alternatives, compatibility and rollback, validation, and long-term ownership. Discuss and refine the RFC in the Issue before opening implementation PRs; link the accepted RFC from those PRs. An RFC records the proposed direction and does not replace normal code review.
-
 ## Repository Areas
 
 - `data-plane/`: request handling, routing, inference-engine integration, and runtime data paths;

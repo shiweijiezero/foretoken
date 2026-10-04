@@ -11,7 +11,3 @@
 - `common/`：所有 playbook 共用的指导；
 - `guidance/`：架构、代码入口、参考资料和验证指导；
 - `tasks/`：具体优化任务的 playbook。
-
-这些文件服务于 Codex、Claude Code 等外部 Agent，不定义或托管 Agent 模型。
-
-整体设计方向见 [RFC：Agent-native Inference Infrastructure](https://github.com/shiweijiezero/foretoken/issues/242)。
