@@ -1,4 +1,4 @@
-# Agent Playbooks
+# Inference Optimization Playbooks
 
 English | [简体中文](README_zh.md)
 
@@ -8,7 +8,7 @@ Task playbooks for improving Foretoken inference systems.
 
 An inference optimization often crosses source code, deployment, workload design, runtime behavior, and observability. The relevant code, commands, metrics, and examples are easy to lose across those boundaries.
 
-These playbooks keep the useful context together and provide a known path from an optimization idea to a measured result. They can be followed by a person or an Agent.
+Each playbook gives an optimization task a clear starting point, the context to read, the steps to run, and the results to check. This makes it easier to move from an optimization idea to a measured result.
 
 ## How to use a playbook
 
