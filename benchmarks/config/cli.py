@@ -139,12 +139,17 @@ def _add_benchmark_arguments(
         "--output",
         type=_output_destinations,
         default=_default(BenchmarkOutputConfig, "destinations"),
-        help="Comma-separated outputs: local, wandb, plot, and quiet",
+        help="Comma-separated outputs: local, wandb, plot, experiment, and quiet",
     )
     parser.add_argument(
         "--output-dir",
         default=_default(BenchmarkOutputConfig, "output_dir"),
-        help="Directory for benchmark results and artifacts",
+        help="Result root or directory for benchmark artifacts",
+    )
+    parser.add_argument(
+        "--iteration",
+        default=_default(BenchmarkOutputConfig, "iteration"),
+        help="Experiment iteration name; experiment output creates or reuses this iteration",
     )
     parser.add_argument(
         "--wandb-project",
@@ -555,6 +560,7 @@ def _benchmark_config(namespace: argparse.Namespace) -> BenchmarkConfig:
         outputs=BenchmarkOutputConfig(
             destinations=namespace.output,
             output_dir=namespace.output_dir,
+            iteration=namespace.iteration,
         ),
         wandb=WandbRunConfig(
             project=namespace.wandb_project,

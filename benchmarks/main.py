@@ -22,6 +22,7 @@ from benchmarks.results.console import (
     format_benchmark_config,
     print_model_service,
 )
+from benchmarks.results.experiment import experiment_output
 from benchmarks.results.output import BenchmarkRun
 from benchmarks.runs.dispatch import measurement_runner
 from benchmarks.runs.slo import SloAutoTuneBenchmark
@@ -48,15 +49,16 @@ def _run_video(arguments: Sequence[str], *, command_name: str) -> None:
         command = parse_video_arguments(arguments, command_name=command_name)
         config = command.config
         configure_logging(not config.outputs.includes("quiet"))
-        result = (
-            run_video_sweep(config, dry_run=command.dry_run)
-            if config.sweep.path
-            else asyncio.run(run_video_benchmark(config, dry_run=command.dry_run))
-        )
+        with experiment_output(config, "perf-video", arguments) as config:
+            result = (
+                run_video_sweep(config, dry_run=command.dry_run)
+                if config.sweep.path
+                else asyncio.run(run_video_benchmark(config, dry_run=command.dry_run))
+            )
+            if not result.get("dry_run") and result["metrics"]["success_num"] == 0:
+                raise SystemExit(1)
     except (ValueError, wandb.errors.Error) as exc:
         raise SystemExit(str(exc)) from exc
-    if not result.get("dry_run") and result["metrics"]["success_num"] == 0:
-        raise SystemExit(1)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -69,17 +71,19 @@ def main(argv: Sequence[str] | None = None) -> None:
         benchmark = parse_benchmark_arguments(arguments)
         quiet = benchmark.outputs.includes("quiet")
         configure_logging(not quiet)
-        if benchmark.sweep.path or len(benchmark.service_choices) > 1:
-            run = ParameterSweepBenchmark(benchmark).run()
-        else:
-            benchmark.validate()
-            with resolve_benchmark_service(benchmark) as service:
-                if benchmark.service.kustomize_path and not quiet:
-                    print_model_service(service)
-                logger.info("%s", format_benchmark_config(benchmark, service))
-                run = run_benchmark(benchmark, service)
-        if run.metrics["success_num"] == 0:
-            raise SystemExit(1)
+        benchmark.outputs.validate()
+        with experiment_output(benchmark, "perf", arguments) as benchmark:
+            if benchmark.sweep.path or len(benchmark.service_choices) > 1:
+                run = ParameterSweepBenchmark(benchmark).run()
+            else:
+                benchmark.validate()
+                with resolve_benchmark_service(benchmark) as service:
+                    if benchmark.service.kustomize_path and not quiet:
+                        print_model_service(service)
+                    logger.info("%s", format_benchmark_config(benchmark, service))
+                    run = run_benchmark(benchmark, service)
+            if run.metrics["success_num"] == 0:
+                raise SystemExit(1)
     except (DeploymentError, ValueError, wandb.errors.Error) as exc:
         raise SystemExit(str(exc)) from exc
 

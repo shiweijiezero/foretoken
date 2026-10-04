@@ -117,12 +117,17 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
         "--output",
         default=output.destinations,
         type=lambda value: tuple(value.split(",")),
-        help="local,wandb,plot,quiet (default: local,wandb)",
+        help="local,wandb,plot,experiment,quiet (default: local,wandb)",
     )
     parser.add_argument(
         "--output-dir",
         default=output.output_dir,
-        help="parent directory for run artifacts (default: results)",
+        help="result root or directory for run artifacts (default: results)",
+    )
+    parser.add_argument(
+        "--iteration",
+        default=output.iteration,
+        help="experiment iteration name; experiment output creates or reuses this iteration",
     )
     parser.add_argument("--wandb-project", default=tracking.project)
     parser.add_argument("--wandb-entity", default=tracking.entity)
@@ -151,7 +156,9 @@ def parse_evaluation_arguments(argv: Sequence[str]) -> tuple[EvaluationConfig, b
         evaluator=None if comparison else options.evaluator or "lm-eval",
         resume=options.resume,
         arguments=tuple(native),
-        outputs=BenchmarkOutputConfig(options.output, options.output_dir),
+        outputs=BenchmarkOutputConfig(
+            options.output, options.output_dir, options.iteration
+        ),
         wandb=WandbRunConfig(
             project=options.wandb_project,
             entity=options.wandb_entity,
