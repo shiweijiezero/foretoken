@@ -161,8 +161,12 @@ def _command_arguments(arguments: Sequence[str]) -> list[str]:
         else:
             value = argument.partition("=")[2] if separator and name.startswith("--") else argument
             if "://" in value:
-                url = urlsplit(value)
-                value = urlunsplit((url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", ""))
+                try:
+                    url = urlsplit(value)
+                    value = urlunsplit((url.scheme, url.netloc.rsplit("@", 1)[-1], url.path, "", ""))
+                except ValueError:
+                    # Prompt text can resemble an invalid URL; recording must still work.
+                    value = "<redacted-url>"
                 argument = f"{name}={value}" if separator and name.startswith("--") else value
             result.append(argument)
     return result
