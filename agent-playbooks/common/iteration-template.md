@@ -1,66 +1,34 @@
-# Iteration Record
+# Iteration Notes
 
-Copy this file to `results/<experiment-purpose>/iterations/<sequence>-<short-name>/record.md`. Keep the record short and link to generated benchmark results, logs, profiles, and W&B runs instead of copying their contents.
+Use this template for `results/<goal>/<motivation>/iterations/<name>/notes/iteration.md`. Continue editing the note as the work progresses. Link automatically generated records under `../runs/`.
 
-## Iteration
+## Question and reference
 
-- **Name:**
-- **Status:** planned / running / completed / blocked / abandoned
-- **Started:**
-- **Finished:**
-- **Owner:**
+What does this trial investigate? Which earlier result or reference motivates it?
 
-## Question
+## Change and expectation
 
-What system behavior are we trying to improve or understand?
+What mechanism changed, and what outcome is expected? Link the relevant code snapshot or configuration.
 
-## Hypothesis
+## Experiment choice
 
-What change do we expect to help, and why?
-
-## Change
-
-- **Source revision:**
-- **Files or configuration changed:**
-- **Deployment:**
-- **Changes snapshot:** `changes/`
-
-## Work time
-
-| Stage | Duration | Waiting or work note |
-|---|---:|---|
-| Find references | | |
-| Read code and configuration | | |
-| Implement change | | |
-| Build and deploy | | |
-| Model startup and warmup | | |
-| Benchmark or profile | | |
-| Analyze results | | |
-
-## Experiment
-
-- **Reference run:**
-- **Candidate run:**
-- **Workload and parameters:**
-- **Result directories:**
-- **W&B runs:**
-- **Logs and profiles:**
-
-## Result
-
-What changed in the measured behavior? Link the detailed metrics and figures above.
+Why is this workload and sample size useful for the question? Link the commands and results actually used.
 
 ## Interpretation
 
-- **Observed improvement or regression:**
-- **Evidence for the explanation:**
-- **Controlled variables:**
-- **Remaining confounders or untested cases:**
+What do the results establish? Explain whether the change, workload, cache state, or another condition accounts for the observed difference.
+
+## Time spent
+
+Link measured run timings. Add work outside those measurements below and label estimates; do not add overlapping durations together.
+
+| Work | Duration or record link | Explanation |
+| --- | --- | --- |
+| References and code reading | | |
+| Implementation | | |
+| Environment and deployment | | |
+| Analysis | | |
 
 ## Decision
 
-What should be kept, reverted, or tested next?
-
-## Follow-up
-
-What should the next iteration start with?
+What should be kept, reverted, or tried next? Which finding is useful enough to add to the shared guidance?

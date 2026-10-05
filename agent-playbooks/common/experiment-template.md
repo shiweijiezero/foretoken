@@ -1,36 +1,23 @@
-# Experiment
+# Experiment Notes
 
-Copy this file to `results/<experiment-purpose>/experiment.md`. Keep information that stays constant across iterations here; put iteration-specific changes and results in `iterations/`.
+Use this template for `results/<goal>/<motivation>/notes/experiment.md`. Describe the research choices here; link execution facts from the run records.
 
-## Purpose
+## Goal
 
-What system behavior does this experiment study or improve?
+What behavior should improve, and what result would justify keeping a change?
 
-## Scope
+## Approach
 
-- **Models or systems:**
-- **Service or component:**
-- **Hardware and topology:**
-- **Owner:**
+Which models, components, and workloads should be compared, and why? Link the configurations rather than copying their values.
 
-## Method
+## Comparison
 
-- **Reference configuration:**
-- **Candidate configurations:**
-- **Workload or dataset:**
-- **Metrics:**
-- **Comparison method:**
+What varies between approaches, and what should stay the same? Identify the reference result and the measurements that answer the question.
 
-## Fixed conditions
+## Findings
 
-List conditions that should remain unchanged across iterations, such as model weights, runtime image, hardware allocation, workload seed, and request limits.
+Summarize the useful conclusions. Link the relevant iteration notes and supporting results.
 
-## Iterations
+## Follow-up
 
-| Sequence | Name | Status | Result |
-|---:|---|---|---|
-| | | | |
-
-## Conclusion
-
-Update this section when the experiment reaches a useful conclusion. Link the supporting iteration records and generated results.
+What should the next experiment investigate?
