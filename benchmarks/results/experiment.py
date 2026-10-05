@@ -48,7 +48,8 @@ def _numbered_directory(parent: Path, prefix: str = "") -> Path:
 
 
 def _create_note(path: Path, text: str) -> None:
-    """Create a note once, preserving edits from earlier commands in the iteration."""
+    """Create a blank note template once; later runs leave its contents to the author."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with path.open("x", encoding="utf-8") as handle:
             handle.write(text)
@@ -182,8 +183,10 @@ def experiment_output(config: _Config, command: str, arguments: Sequence[str]) -
     else:
         iteration = _numbered_directory(iterations)
     run = _numbered_directory(iteration / "runs", f"{command}-")
-    _create_note(root / "experiment.md", "# Experiment\n\n## Goal and motivation\n\n## Models, workloads and comparison\n\n## Findings\n")
-    _create_note(iteration / "iteration.md", f"# {iteration.name}\n\n## Based on and hypothesis\n\n## Changes and reasons\n\n## Results and attribution\n\n## Time spent\n\nReferences / implementation / deployment / analysis; link measured run timings and label estimates.\n\n## Next decision\n")
+    _create_note(root / "notes" / "experiment.md", "# Experiment\n\n## Goal and motivation\n\n## Models, workloads and comparison\n\n## Findings\n")
+    _create_note(iteration / "notes" / "iteration.md", "# Iteration\n\n## Based on and hypothesis\n\n## Changes and reasons\n\n## Results and attribution\n\n## Time spent\n\nReferences / implementation / deployment / analysis; link measured run timings and label estimates.\n\n## Next decision\n")
+    generated = run / "generated"
+    generated.mkdir()
     started = time.monotonic()
     context: dict[str, Any] = {
         "command": ["foretoken", *command.split("-"), *_command_arguments(arguments)],
@@ -192,7 +195,7 @@ def experiment_output(config: _Config, command: str, arguments: Sequence[str]) -
     }
 
     def write_context() -> None:
-        (run / "context.json").write_text(json.dumps(context, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
+        (generated / "context.json").write_text(json.dumps(context, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
 
     write_context()
     logger.info("Experiment run: %s", run)
@@ -201,13 +204,13 @@ def experiment_output(config: _Config, command: str, arguments: Sequence[str]) -
     run_outputs = replace(
         outputs,
         destinations=tuple(dict.fromkeys("local" if item == "experiment" else item for item in outputs.destinations)),
-        output_dir=str(run / "results"),
+        output_dir=str(run / "artifacts"),
         iteration="",
     )
     try:
-        with capture_run_logs(str(run), quiet=outputs.includes("quiet")):
+        with capture_run_logs(str(generated), quiet=outputs.includes("quiet")):
             capture_started = time.monotonic()
-            context["checkout"] = capture_changes(run / "changes", root)
+            context["checkout"] = capture_changes(generated / "changes", root)
             context["capture_seconds"] = time.monotonic() - capture_started
             write_context()
             yield replace(config, outputs=run_outputs)
