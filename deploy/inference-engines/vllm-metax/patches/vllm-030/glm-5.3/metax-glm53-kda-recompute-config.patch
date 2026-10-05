@@ -1,0 +1,28 @@
+--- a/vllm_metax/patch/bugfix/triton_support/kda.py
++++ b/vllm_metax/patch/bugfix/triton_support/kda.py
+@@ -2,16 +2,23 @@
+ # 2026 - Modified by MetaX Integrated Circuits (Shanghai) Co., Ltd. All Rights Reserved.
+ #
+ # -----------------------------------------------------------------------------
+-# Note: Limit Triton autotune `num_warps` for KDA kernels on MACA.
++# Note: Select compatible Triton launch configurations for KDA kernels on MACA.
+ #
+-# Affected versions: vLLM 0.29.1.dev0 (98dff2a81d), verified 2026-09-17.
++# Affected versions: vLLM 0.30 source runtime on MACA.
+ #
+-# Remove at: Upstream autotuning excludes warp counts unsupported by MACA.
++# Remove at: Upstream autotuning excludes launch configurations unsupported by MACA.
+ # -----------------------------------------------------------------------------
+
++from vllm.models.glm5next.nvidia.ops.third_party.kda.kernels import (
++    recompute_w_u_fwd_kernel as _glm_recompute_w_u,
++)
+ from vllm.triton_utils import tl, triton
+ from vllm.third_party.flash_linear_attention.ops.op import log
+ from vllm_metax.patch.utils import patch
++
++# The 8-warp, 2-stage schedule miscomputes W on MACA and destabilizes KDA state.
++# Select the validated schedule before any per-worker autotuning runs.
++_glm_recompute_w_u.fn.configs = [triton.Config({}, num_warps=8, num_stages=3)]
+
+ BT_LIST_AUTOTUNE = [32, 64, 128]

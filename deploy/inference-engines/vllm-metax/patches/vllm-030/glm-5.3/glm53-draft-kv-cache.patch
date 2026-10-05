@@ -1,0 +1,166 @@
+--- a/vllm/v1/core/kv_cache_utils.py
++++ b/vllm/v1/core/kv_cache_utils.py
+@@ -1215,12 +1215,19 @@
+         for name, spec in kv_cache_spec.items()
+         if not isinstance(spec, (MambaSpec, KpoolTailSpec))
+     }
+-    if not mamba_specs or not all(
+-        type(spec) is MLAAttentionSpec for spec in attn_specs.values()
+-    ):
++    mla_specs = {
++        name: spec
++        for name, spec in attn_specs.items()
++        if type(spec) is MLAAttentionSpec
++    }
++    draft_specs = {
++        name: spec
++        for name, spec in attn_specs.items()
++        if isinstance(spec, AttentionSpec) and not isinstance(spec, MLAAttentionSpec)
++    }
++    if not mamba_specs or len(mla_specs) + len(draft_specs) != len(attn_specs):
+         return None
+ 
+-    mla_specs = cast(dict[str, MLAAttentionSpec], attn_specs)
+     idx_pages = {
+         spec.page_size_bytes for spec in mla_specs.values() if spec.tokens_per_state > 1
+     }
+@@ -1233,7 +1240,7 @@
+     mla_pages = {mla_specs[name].page_size_bytes for name in mla_names}
+     assert len(mla_pages) == 1
+     mla_page = mla_pages.pop()
+-    uniform_spec = UniformTypeKVCacheSpecs.from_specs(attn_specs)
++    uniform_spec = UniformTypeKVCacheSpecs.from_specs(mla_specs)
+     assert uniform_spec is not None
+ 
+     tail_group: KVCacheGroupSpec | None = None
+@@ -1270,10 +1277,28 @@
+     for index, name in enumerate(mamba_specs):
+         mamba_grouped_names[index % num_groups].append(name)
+ 
++    # Draft attention keeps its own retention and block size. Its groups use
++    # the shared block pool to alias MLA pages, as the Mamba groups do.
++    padded_draft_specs: dict[str, KVCacheSpec] = {}
++    draft_buckets: dict[KVCacheSpec, list[str]] = defaultdict(list)
++    for name, spec in draft_specs.items():
++        if spec.page_size_bytes > mla_page:
++            return None
++        padded = replace(spec, page_size_padded=mla_page)
++        padded_draft_specs[name] = padded
++        draft_buckets[padded].append(name)
++    draft_grouped_names = []
++    for names in draft_buckets.values():
++        draft_group_count = cdiv(len(names), len(mla_names))
++        draft_grouped_names.extend(
++            names[i::draft_group_count] for i in range(draft_group_count)
++        )
++
+     return (
+-        [KVCacheGroupSpec(list(attn_specs), uniform_spec)]
++        [KVCacheGroupSpec(list(mla_specs), uniform_spec)]
+         + ([tail_group] if tail_group is not None else [])
+         + create_kv_cache_group_specs(padded_specs, mamba_grouped_names)
++        + create_kv_cache_group_specs(padded_draft_specs, draft_grouped_names)
+     )
+ 
+ 
+@@ -1301,6 +1326,12 @@
+     mamba_groups = [
+         group for group in kv_cache_groups if isinstance(group.kv_cache_spec, MambaSpec)
+     ]
++    alias_groups = mamba_groups + [
++        group
++        for group in kv_cache_groups
++        if isinstance(group.kv_cache_spec, AttentionSpec)
++        and not isinstance(group.kv_cache_spec, MLAAttentionSpec)
++    ]
+     attn_group: KVCacheGroupSpec | None = None
+     tail_group: KVCacheGroupSpec | None = None
+     for group in uniform_groups:
+@@ -1311,7 +1342,7 @@
+             tail_group = group
+     if attn_group is None or not mamba_groups:
+         return None
+-    if len(uniform_groups) + len(mamba_groups) != len(kv_cache_groups):
++    if len(uniform_groups) + len(alias_groups) != len(kv_cache_groups):
+         return None
+ 
+     attn_uniform = cast(UniformTypeKVCacheSpecs, attn_group.kv_cache_spec)
+@@ -1333,7 +1364,7 @@
+         return None
+     mla_page = mla_pages.pop()
+     idx_page = idx_pages.pop()
+-    if any(group.kv_cache_spec.page_size_bytes != mla_page for group in mamba_groups):
++    if any(group.kv_cache_spec.page_size_bytes != mla_page for group in alias_groups):
+         return None
+ 
+     tail_names: list[str] = []
+@@ -1355,7 +1386,7 @@
+ 
+     return (
+         attn_group,
+-        mamba_groups,
++        alias_groups,
+         mla_names,
+         idx_names,
+         mla_page,
+@@ -1593,8 +1624,8 @@
+ ) -> int:
+     """Return the largest cache group's bytes per block."""
+     if (glm5_layout := _glm5_next_tensor_layout(kv_cache_groups)) is not None:
+-        _, _, mla_names, idx_names, mla_page, idx_page, _, _ = glm5_layout
+-        return len(mla_names) * mla_page + len(idx_names) * idx_page
++        attn_group, *_ = glm5_layout
++        return attn_group.kv_cache_spec.page_size_bytes
+ 
+     bytes_per_block = max(
+         sum(
+@@ -1694,7 +1725,7 @@
+     if (glm5_layout := _glm5_next_tensor_layout(kv_cache_groups)) is not None:
+         (
+             attn_group,
+-            mamba_groups,
++            alias_groups,
+             mla_names,
+             idx_names,
+             mla_page,
+@@ -1702,7 +1733,7 @@
+             tail_names,
+             _,
+         ) = glm5_layout
+-        bytes_per_block = len(mla_names) * mla_page + len(idx_names) * idx_page
++        bytes_per_block = attn_group.kv_cache_spec.page_size_bytes
+         num_blocks = may_override_num_blocks(
+             vllm_config, available_memory // bytes_per_block
+         )
+@@ -1727,7 +1758,7 @@
+         for index, mla_name in enumerate(mla_names):
+             offset = index * mla_page * num_blocks
+             add_tensor(mla_name, attn_specs[mla_name], offset)
+-            for group in mamba_groups:
++            for group in alias_groups:
+                 if index < len(group.layer_names):
+                     add_tensor(group.layer_names[index], group.kv_cache_spec, offset)
+ 
+@@ -2433,7 +2464,7 @@
+     if (glm5_layout := _glm5_next_tensor_layout(kv_cache_groups)) is not None:
+         (
+             attn_group,
+-            mamba_groups,
++            alias_groups,
+             mla_names,
+             idx_names,
+             mla_page,
+@@ -2448,11 +2479,11 @@
+                 group.kv_cache_spec.max_memory_usage_bytes(vllm_config),
+                 group.kv_cache_spec.page_size_bytes,
+             )
+-            for group in mamba_groups
++            for group in alias_groups
+         )
+         if tail_names:
+             total_blocks += 1
+-        return total_blocks * (len(mla_names) * mla_page + len(idx_names) * idx_page)
++        return total_blocks * uniform_spec.page_size_bytes
+ 
+     bytes_per_block = _pool_bytes_per_block(kv_cache_groups)
+     total_blocks = 0

@@ -97,7 +97,14 @@ def apply_patch(directory: Path, patch: Path) -> None:
         check=False,
     )
     if applied.returncode:
-        if _patch_content_present(directory, patch):
+        forward = subprocess.run(
+            arguments + ["--batch", "--forward", "--dry-run"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        # Added lines elsewhere in a file do not make an applicable patch complete.
+        if forward.returncode and _patch_content_present(directory, patch):
             print(f"vLLM patch already installed: {patch.name}", flush=True)
             return
         subprocess.run(
