@@ -2,15 +2,15 @@
 
 English | [简体中文](README_zh.md)
 
-We want developers and agents to improve inference systems continuously with Foretoken: draw on existing research and practice, test ideas through code changes and real measurements, and use the results to choose the next experiment.
+We want agents to work autonomously and independently over sustained periods with Foretoken, improving inference performance, resource efficiency, and service quality.
 
-These playbooks bring together references, task instructions, and experiment note templates. Developers can follow them directly or use them to guide an agent. Methods and findings from experiments can then become part of the shared guidance for future work.
+We provide these playbooks to help developers and agents find references, conduct optimization experiments, and record iteration results. Developers can use them directly or to guide an agent. Methods and findings from experiments can then become part of the shared guidance for future work.
 
 ## Design goals
 
-- **Fast experiments:** provide relevant references, code entry points, and execution steps. Choose tests for the question at hand, record time spent at each stage, and reduce repeated setup.
-- **Reliable conclusions:** examine performance metrics alongside actual model outputs and operating conditions to determine whether a change accounts for the observed improvement. Retain the evidence needed to reproduce the result.
-- **Cumulative learning:** preserve the motivation, results, and decisions from successive trials. Find and update references during a task, and turn verified methods into reusable guidance.
+- Fast experiments: provide relevant references, code entry points, and execution steps. Choose tests for the question at hand, record time spent at each stage, and reduce repeated setup.
+- Reliable conclusions: examine performance metrics alongside actual model outputs and operating conditions to determine whether a change accounts for the observed improvement. Retain the evidence needed to reproduce the result.
+- Cumulative learning: preserve the motivation, results, and decisions from successive trials. Find and update references during a task, and turn verified methods into reusable guidance.
 
 ## Contents and use
 
@@ -26,8 +26,8 @@ Start with the shared experiment templates. References and task-specific playboo
 
 Organize records into experiments, iterations, and runs. For example, an experiment aimed at reducing time to first output might compare two routing approaches. Each approach is an iteration and can include several performance and quality evaluation runs.
 
-- **Experiment notes:** use the [experiment template](common/experiment-template.md) for the overall goal, comparison method, and findings. Update it as the investigation progresses.
-- **Iteration notes:** use one [iteration template](common/iteration-template.md) per approach to explain the change, expected outcome, results, and next step.
-- **Run records:** retain commands, configurations, and measurements separately for each execution, and link them from the iteration notes.
+- Experiment notes: use the [experiment template](common/experiment-template.md) for the overall goal, comparison method, and findings. Update it as the investigation progresses.
+- Iteration notes: use one [iteration template](common/iteration-template.md) per approach to explain the change, expected outcome, results, and next step.
+- Run records: retain commands, configurations, and measurements separately for each execution, and link them from the iteration notes.
 
 Keep records under `results/<goal>/<motivation>/`; see [common guidance](common/README.md) for the layout. Notes explain choices and conclusions, while execution evidence stays with its individual run.
