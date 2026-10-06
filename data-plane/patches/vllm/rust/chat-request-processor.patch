@@ -10,9 +10,36 @@
 +    pub fn with_model_dtype(backend: DynChatBackend, model_dtype: ModelDtype) -> Self {
 +        Self::new(backend, model_dtype)
      }
-
+ 
      /// Create a render-only processor that rejects multimodal requests.
-@@ -214,16 +219,26 @@
+@@ -174,10 +179,13 @@
+         Ok(Some(features))
+     }
+ 
+-    async fn prepare_text_request(&self, request: ChatRequest) -> Result<TextRequest> {
+-        // Stamp before rendering so render and tokenize count toward TTFT/e2e.
+-        let arrival_time = vllm_llm::current_unix_timestamp_secs();
+-        let rendered = self.backend.chat_renderer().render(&request)?;
++    /// Build a text request from one rendered prompt and final decoding options.
++    async fn finalize_text_request(
++        &self,
++        request: ChatRequest,
++        rendered: RenderedPrompt,
++        arrival_time: f64,
++    ) -> Result<TextRequest> {
+         let reasoning_parser_kwargs =
+             request
+                 .sampling_params
+@@ -208,23 +216,39 @@
+     /// Prepare one chat request for tokenization without constructing an output processor.
+     pub async fn prepare_for_tokenization(&self, request: ChatRequest) -> Result<TextRequest> {
+         request.validate()?;
+-        self.prepare_text_request(request).await
++        let arrival_time = vllm_llm::current_unix_timestamp_secs();
++        let rendered = self.backend.chat_renderer().render(&request)?;
++        self.finalize_text_request(request, rendered, arrival_time).await
+     }
+ 
      /// Prepare one chat request without submitting it to an engine.
      pub async fn prepare(
          &self,
@@ -29,6 +56,7 @@
                  reasoning_parser: &self.reasoning_parser,
              },
 -        )?;
+-        let text_request = self.prepare_text_request(request).await?;
 +        )
 +        .await
 +    }
@@ -40,7 +68,91 @@
 +        options: NewChatOutputProcessorOptions<'_>,
 +    ) -> Result<(TextRequest, DynChatOutputProcessor)> {
 +        request.validate()?;
++        // Resolve template controls once for the prompt, grammar and output parsing.
++        let arrival_time = vllm_llm::current_unix_timestamp_secs();
++        let rendered = self.backend.chat_renderer().render(&request)?;
++        request.chat_options.template_kwargs = rendered.effective_template_kwargs.clone();
 +        let output_processor = self.backend.new_chat_output_processor(&mut request, options)?;
-         let text_request = self.prepare_text_request(request).await?;
++        let text_request = self.finalize_text_request(request, rendered, arrival_time).await?;
          Ok((text_request, output_processor))
      }
+ }
+--- a/rust/src/chat/src/output/default/mod.rs
++++ b/rust/src/chat/src/output/default/mod.rs
+@@ -9,6 +9,7 @@
+ use std::sync::Once;
+ 
+ use futures::StreamExt as _;
++use serde_json::Value;
+ use tracing::info;
+ use vllm_parser::unified::{CombinedParser, UnifiedParser};
+ use vllm_text::tokenizer::DynTokenizer;
+@@ -19,9 +20,10 @@
+ use crate::error::Result;
+ use crate::output::{ChatOutputProcessor, DynChatEventStream, DynDecodedTextEventStream};
+ use crate::parser::ParserSelection;
+-use crate::parser::reasoning::{ReasoningParser, ReasoningParserFactory};
++use crate::parser::reasoning::{ReasoningParser, ReasoningParserFactory, names};
+ use crate::parser::tool::{ToolParser, ToolParserFactory};
+ use crate::parser::unified::UnifiedParserFactory;
++use crate::renderer::request_template_kwargs;
+ use crate::request::{ChatRequest, ChatTool};
+ use crate::{Error, Result as ChatResult};
+ 
+@@ -40,9 +42,8 @@
+     /// Build the default output processor and apply any parser-specific request
+     /// adjustments.
+     ///
+-    /// Parser resolution happens here so that request validation, prompt
+-    /// rendering, and streaming all observe the same parser-adjusted
+-    /// request state.
++    /// Parser resolution adjusts grammar constraints and decoding options before
++    /// the rendered request is submitted to the engine.
+     pub fn new(
+         request: &mut ChatRequest,
+         model_id: &str,
+@@ -69,8 +70,12 @@
+             } else {
+                 None
+             };
+-            let reasoning_parser =
+-                Self::resolve_optional_reasoning_parser(model_id, tokenizer, reasoning_parser)?;
++            let reasoning_parser = Self::resolve_optional_reasoning_parser(
++                request,
++                model_id,
++                tokenizer,
++                reasoning_parser,
++            )?;
+             Box::new(CombinedParser::new(reasoning_parser, tool_parser)) as Box<dyn UnifiedParser>
+         };
+ 
+@@ -146,6 +151,7 @@
+     }
+ 
+     fn resolve_optional_reasoning_parser(
++        request: &ChatRequest,
+         model_id: &str,
+         tokenizer: DynTokenizer,
+         selection: &ParserSelection,
+@@ -161,6 +167,21 @@
+             REASONING_PARSER_LOG_ONCE.call_once(|| info!("reasoning parsing disabled"));
+             return Ok(None);
+         };
++
++        if parser_name == names::GLM45 && request.sampling_params.structured_outputs.is_some() {
++            let kwargs = request_template_kwargs(request);
++            // GLM's grammar disables reasoning only when neither control enables it.
++            // Other parsers and unconstrained output retain prompt-based separation.
++            if matches!(
++                (kwargs.get("thinking"), kwargs.get("enable_thinking")),
++                (
++                    Some(Value::Bool(false)),
++                    None | Some(Value::Null | Value::Bool(false))
++                ) | (None | Some(Value::Null), Some(Value::Bool(false)))
++            ) {
++                return Ok(None);
++            }
++        }
+ 
+         let parser = factory.create(parser_name, tokenizer)?;
+ 
